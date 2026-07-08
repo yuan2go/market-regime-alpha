@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>market-regime-alpha</title>
+    <meta
+      name="description"
+      content="A-share market regime, dividend-T, ETF rotation and backtesting research toolkit."
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #17201d;
+        --muted: #5c6864;
+        --paper: #f7f8f4;
+        --panel: #ffffff;
+        --line: #d9ded6;
+        --green: #167a58;
+        --red: #b94732;
+        --gold: #c89a38;
+        --graphite: #28322f;
+        --focus: #0f6fff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(rgba(23, 32, 29, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(23, 32, 29, 0.04) 1px, transparent 1px),
+          var(--paper);
+        background-size: 28px 28px;
+        color: var(--ink);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.6;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      a:focus-visible,
+      button:focus-visible {
+        outline: 3px solid var(--focus);
+        outline-offset: 4px;
+      }
+
+      .page {
+        width: min(1120px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .hero {
+        min-height: 72vh;
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+        gap: clamp(28px, 5vw, 72px);
+        align-items: center;
+        padding: clamp(48px, 8vw, 96px) 0 36px;
+      }
+
+      .kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 18px;
+        color: var(--green);
+        font-size: 0.78rem;
+        font-weight: 760;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .kicker::before {
+        content: "";
+        width: 36px;
+        height: 2px;
+        background: var(--green);
+      }
+
+      h1 {
+        max-width: 760px;
+        margin: 0;
+        font-size: clamp(3rem, 8vw, 6.7rem);
+        line-height: 0.92;
+        letter-spacing: 0;
+        font-weight: 850;
+      }
+
+      .subtitle {
+        max-width: 680px;
+        margin: 26px 0 0;
+        color: var(--graphite);
+        font-size: clamp(1.08rem, 2vw, 1.35rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 34px;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 46px;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        border: 1px solid var(--ink);
+        border-radius: 4px;
+        padding: 10px 16px;
+        background: var(--ink);
+        color: white;
+        font-weight: 740;
+        text-decoration: none;
+      }
+
+      .button.secondary {
+        background: transparent;
+        color: var(--ink);
+      }
+
+      .ticker-panel {
+        position: relative;
+        border: 1px solid var(--ink);
+        border-radius: 6px;
+        background: var(--panel);
+        box-shadow: 12px 12px 0 rgba(22, 122, 88, 0.18);
+        overflow: hidden;
+      }
+
+      .ticker-strip {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        border-bottom: 1px solid var(--ink);
+        background: var(--graphite);
+        color: white;
+      }
+
+      .tick {
+        min-height: 72px;
+        border-right: 1px solid rgba(255, 255, 255, 0.24);
+        padding: 12px;
+      }
+
+      .tick:last-child {
+        border-right: 0;
+      }
+
+      .tick span {
+        display: block;
+        color: rgba(255, 255, 255, 0.68);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.7rem;
+      }
+
+      .tick strong {
+        display: block;
+        margin-top: 9px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: clamp(1rem, 2.4vw, 1.45rem);
+        line-height: 1;
+      }
+
+      .tick.up strong {
+        color: #78d6ad;
+      }
+
+      .tick.down strong {
+        color: #ff9a88;
+      }
+
+      .chart {
+        min-height: 330px;
+        padding: 26px;
+      }
+
+      .chart svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      .signal-table {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        border-top: 1px solid var(--line);
+      }
+
+      .signal {
+        padding: 18px;
+        border-right: 1px solid var(--line);
+      }
+
+      .signal:last-child {
+        border-right: 0;
+      }
+
+      .signal span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.74rem;
+        font-weight: 720;
+      }
+
+      .signal strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 1.05rem;
+      }
+
+      main {
+        padding-bottom: 72px;
+      }
+
+      .section {
+        padding: 58px 0 0;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        border-top: 2px solid var(--ink);
+        padding-top: 18px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: clamp(1.7rem, 4vw, 2.8rem);
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+
+      .section-note {
+        max-width: 480px;
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-top: 24px;
+      }
+
+      .card {
+        min-height: 178px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.86);
+        padding: 22px;
+      }
+
+      .card-label {
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.76rem;
+      }
+
+      .card h3 {
+        margin: 14px 0 9px;
+        font-size: 1.2rem;
+        line-height: 1.2;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .doc-list {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      .doc-link {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 14px;
+        align-items: center;
+        min-height: 74px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        padding: 16px;
+        text-decoration: none;
+      }
+
+      .doc-link:hover {
+        border-color: var(--green);
+      }
+
+      .doc-mark {
+        display: inline-grid;
+        width: 32px;
+        height: 32px;
+        place-items: center;
+        border-radius: 50%;
+        background: rgba(22, 122, 88, 0.11);
+        color: var(--green);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.78rem;
+        font-weight: 800;
+      }
+
+      .doc-title {
+        display: block;
+        font-weight: 780;
+      }
+
+      .doc-desc {
+        display: block;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .arrow {
+        color: var(--green);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-weight: 800;
+      }
+
+      .command-panel {
+        margin-top: 24px;
+        border: 1px solid var(--ink);
+        border-radius: 6px;
+        background: #101715;
+        color: #e9f4ef;
+        overflow: hidden;
+      }
+
+      .command-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+        padding: 14px 18px;
+        color: rgba(233, 244, 239, 0.7);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.78rem;
+      }
+
+      pre {
+        margin: 0;
+        overflow-x: auto;
+        padding: 20px;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.92rem;
+      }
+
+      .footer {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 16px;
+        border-top: 1px solid var(--line);
+        padding: 28px 0 44px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      @media (max-width: 880px) {
+        .page {
+          width: min(100% - 28px, 720px);
+        }
+
+        .hero {
+          min-height: auto;
+          grid-template-columns: 1fr;
+          padding-top: 44px;
+        }
+
+        .ticker-panel {
+          box-shadow: 8px 8px 0 rgba(22, 122, 88, 0.18);
+        }
+
+        .grid,
+        .doc-list {
+          grid-template-columns: 1fr;
+        }
+
+        .section-header {
+          display: block;
+        }
+
+        .section-note {
+          margin-top: 10px;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .ticker-strip,
+        .signal-table {
+          grid-template-columns: 1fr;
+        }
+
+        .tick,
+        .signal {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .tick:last-child,
+        .signal:last-child {
+          border-bottom: 0;
+        }
+
+        .actions {
+          display: grid;
+        }
+
+        .button {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <p class="kicker">A-share research toolkit</p>
+          <h1>market-regime-alpha</h1>
+          <p class="subtitle">
+            面向 A 股市场环境识别、红利做 T、ETF 轮动与回测验证的本地研究工具。
+            项目以可复用 Python 模块、清晰数据契约和可追溯研究文档为核心。
+          </p>
+          <nav class="actions" aria-label="Primary links">
+            <a class="button" href="./Usage-Manual.md">打开使用手册</a>
+            <a class="button secondary" href="https://github.com/yuan2go/market-regime-alpha">查看 GitHub 仓库</a>
+          </nav>
+        </div>
+
+        <aside class="ticker-panel" aria-label="Research dashboard preview">
+          <div class="ticker-strip">
+            <div class="tick up">
+              <span>REGIME</span>
+              <strong>ON</strong>
+            </div>
+            <div class="tick down">
+              <span>RISK</span>
+              <strong>GATED</strong>
+            </div>
+            <div class="tick up">
+              <span>ETF</span>
+              <strong>MA</strong>
+            </div>
+            <div class="tick">
+              <span>COSCO</span>
+              <strong>5MIN</strong>
+            </div>
+            <div class="tick up">
+              <span>ALERT</span>
+              <strong>FEISHU</strong>
+            </div>
+          </div>
+          <div class="chart" aria-hidden="true">
+            <svg viewBox="0 0 640 360" role="img">
+              <defs>
+                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#d9ded6" stroke-width="1" />
+                </pattern>
+              </defs>
+              <rect width="640" height="360" fill="url(#grid)" />
+              <path
+                d="M 22 286 C 70 270, 86 226, 132 238 C 184 252, 196 176, 250 182 C 302 188, 306 130, 360 142 C 404 152, 422 88, 474 100 C 526 112, 546 56, 618 64"
+                fill="none"
+                stroke="#167a58"
+                stroke-width="8"
+                stroke-linecap="round"
+              />
+              <path
+                d="M 22 310 C 84 308, 116 288, 166 294 C 232 302, 254 250, 314 254 C 380 258, 406 202, 462 210 C 526 220, 554 164, 618 174"
+                fill="none"
+                stroke="#b94732"
+                stroke-width="5"
+                stroke-linecap="round"
+                opacity="0.72"
+              />
+              <line x1="54" y1="316" x2="604" y2="316" stroke="#17201d" stroke-width="2" />
+              <line x1="54" y1="44" x2="54" y2="316" stroke="#17201d" stroke-width="2" />
+              <circle cx="474" cy="100" r="10" fill="#c89a38" stroke="#17201d" stroke-width="4" />
+              <circle cx="618" cy="64" r="10" fill="#167a58" stroke="#17201d" stroke-width="4" />
+            </svg>
+          </div>
+          <div class="signal-table">
+            <div class="signal">
+              <span>DATA</span>
+              <strong>OHLCV contract</strong>
+            </div>
+            <div class="signal">
+              <span>BACKTEST</span>
+              <strong>MA / dividend-T</strong>
+            </div>
+            <div class="signal">
+              <span>OUTPUT</span>
+              <strong>report first</strong>
+            </div>
+          </div>
+        </aside>
+      </header>
+
+      <main>
+        <section class="section" aria-labelledby="scope-title">
+          <div class="section-header">
+            <h2 id="scope-title">当前研究边界</h2>
+            <p class="section-note">
+              这个页面只承载项目入口；策略判断、数据权限、回测结论和本地 Dashboard 以仓库文档与代码为准。
+            </p>
+          </div>
+          <div class="grid">
+            <article class="card">
+              <span class="card-label">01 / MARKET</span>
+              <h3>市场环境与标的筛选</h3>
+              <p>围绕 A 股行情、红利观察池、ETF 均线交叉和多源行情适配沉淀研究模块。</p>
+            </article>
+            <article class="card">
+              <span class="card-label">02 / DIVIDEND-T</span>
+              <h3>红利做 T 平台骨架</h3>
+              <p>覆盖评分、时机、风控、观察池、手动面板和飞书提醒，不自动做资金决策。</p>
+            </article>
+            <article class="card">
+              <span class="card-label">03 / BACKTESTING</span>
+              <h3>回测与验证流程</h3>
+              <p>从样例 ETF 回测到中远海控红利做 T 回放，强调假设、数据、风险和结论记录。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="docs-title">
+          <div class="section-header">
+            <h2 id="docs-title">项目文档</h2>
+            <p class="section-note">从使用手册进入，再按数据、平台和结构文档定位具体模块。</p>
+          </div>
+          <div class="doc-list">
+            <a class="doc-link" href="./Usage-Manual.md">
+              <span class="doc-mark">UM</span>
+              <span>
+                <span class="doc-title">使用手册</span>
+                <span class="doc-desc">运行环境、关键命令、策略新增流程和模块说明</span>
+              </span>
+              <span class="arrow">-&gt;</span>
+            </a>
+            <a class="doc-link" href="./Dividend-T-Platform.md">
+              <span class="doc-mark">DT</span>
+              <span>
+                <span class="doc-title">红利做 T 平台</span>
+                <span class="doc-desc">长期红利、盘中时机、风控和通知链路</span>
+              </span>
+              <span class="arrow">-&gt;</span>
+            </a>
+            <a class="doc-link" href="./Data-Spec.md">
+              <span class="doc-mark">DS</span>
+              <span>
+                <span class="doc-title">数据规范</span>
+                <span class="doc-desc">OHLCV 字段、目录边界和数据使用规则</span>
+              </span>
+              <span class="arrow">-&gt;</span>
+            </a>
+            <a class="doc-link" href="./Project-Structure.md">
+              <span class="doc-mark">PS</span>
+              <span>
+                <span class="doc-title">项目结构</span>
+                <span class="doc-desc">源码、脚本、测试、文档和研究产物边界</span>
+              </span>
+              <span class="arrow">-&gt;</span>
+            </a>
+            <a class="doc-link" href="./Tushare-App.md">
+              <span class="doc-mark">TS</span>
+              <span>
+                <span class="doc-title">Tushare 页面</span>
+                <span class="doc-desc">A 股行情查询、本地页面和 CSV 抓取入口</span>
+              </span>
+              <span class="arrow">-&gt;</span>
+            </a>
+            <a class="doc-link" href="./退神股票涨跌理论-量化实现差距分析.md">
+              <span class="doc-mark">TH</span>
+              <span>
+                <span class="doc-title">理论量化差距分析</span>
+                <span class="doc-desc">退神股票涨跌理论与工程实现之间的差距</span>
+              </span>
+              <span class="arrow">-&gt;</span>
+            </a>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="quickstart-title">
+          <div class="section-header">
+            <h2 id="quickstart-title">快速运行</h2>
+            <p class="section-note">所有命令默认从仓库根目录执行，本地敏感配置放在 `.env`。</p>
+          </div>
+          <div class="command-panel">
+            <div class="command-title">
+              <span>local setup</span>
+              <span>python</span>
+            </div>
+            <pre><code>python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python3 backtesting/run_ma_crossover.py
+PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --host 127.0.0.1 --port 8010</code></pre>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>market-regime-alpha</span>
+        <span>Research tooling only. Not financial advice.</span>
+      </footer>
+    </div>
+  </body>
+</html>
