@@ -160,6 +160,34 @@ tmux new-session -d -s cosco-feishu 'cd /Users/yuan/projects/market-regime-alpha
 
 当前推送时间为交易日 `09:35`、`10:05`、`10:35`、`11:05`、`13:05`、`13:35`、`14:05`、`14:35`、`15:05`，所有消息只通过飞书机器人发送。
 
+## GitHub Pages 红利趋势定时发布
+
+本项目提供一个本地常驻任务，用于驱动 GitHub Pages 上的 20 支红利股票趋势看板：
+
+- 每 5 分钟拉取 `data/external/watchlists/dividend_t_watchlist.csv` 前 20 支股票的腾讯 1 分钟交易数据，并写入本地 DuckDB。
+- 每 10 分钟重新计算 20 支股票的未来 1 到 3 个交易日趋势倾向，写入 `docs/data/dividend_trends.json`。
+- 如果 JSON 有变化，脚本会自动提交并 `git push` 到当前仓库远端，GitHub Pages 会展示最新结果。
+
+先做一次单次验证，不推送：
+
+```bash
+PYTHONPATH=src ./.venv/bin/python scripts/dividend_trend_scheduler.py --once both --include-off-session --no-push
+```
+
+确认本地 git 远端、SSH key 和 GitHub Pages 都正常后，启动本地定时任务：
+
+```bash
+PYTHONPATH=src ./.venv/bin/python scripts/dividend_trend_scheduler.py
+```
+
+后台运行可以用 `tmux`：
+
+```bash
+tmux new-session -d -s dividend-trend 'cd /Users/yuan/projects/market-regime-alpha && PYTHONPATH=src ./.venv/bin/python scripts/dividend_trend_scheduler.py'
+```
+
+如果要在非交易时间测试完整流程，可以加 `--include-off-session`。该任务只生成研究快照并更新 Pages JSON，不自动下单；如果本地有未推送提交或远端拒绝 push，脚本会记录 git 发布失败并继续下一轮调度。
+
 ## 规则
 
 - 不提交 API key、账户、交易凭证。

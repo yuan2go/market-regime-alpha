@@ -289,6 +289,118 @@
         margin-top: 24px;
       }
 
+      .trend-panel {
+        margin-top: 24px;
+        border: 1px solid var(--ink);
+        border-radius: 6px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+
+      .trend-toolbar {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .trend-stat {
+        min-height: 88px;
+        border-right: 1px solid var(--line);
+        padding: 16px;
+      }
+
+      .trend-stat:last-child {
+        border-right: 0;
+      }
+
+      .trend-stat span {
+        display: block;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.74rem;
+      }
+
+      .trend-stat strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 1.35rem;
+        line-height: 1.1;
+      }
+
+      .trend-table-wrap {
+        overflow-x: auto;
+      }
+
+      .trend-table {
+        width: 100%;
+        min-width: 960px;
+        border-collapse: collapse;
+      }
+
+      .trend-table th,
+      .trend-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 13px 14px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .trend-table th {
+        background: rgba(23, 32, 29, 0.04);
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.72rem;
+        font-weight: 760;
+      }
+
+      .trend-table tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .symbol-cell strong,
+      .metric-main {
+        display: block;
+        font-weight: 780;
+      }
+
+      .symbol-cell span,
+      .metric-sub {
+        display: block;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .trend-badge {
+        display: inline-flex;
+        min-width: 72px;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 0.82rem;
+        font-weight: 800;
+      }
+
+      .trend-badge.bullish {
+        background: rgba(22, 122, 88, 0.13);
+        color: var(--green);
+      }
+
+      .trend-badge.neutral {
+        background: rgba(200, 154, 56, 0.16);
+        color: #8a641d;
+      }
+
+      .trend-badge.bearish,
+      .trend-badge.risk_off {
+        background: rgba(185, 71, 50, 0.12);
+        color: var(--red);
+      }
+
+      .trend-empty {
+        padding: 22px;
+        color: var(--muted);
+      }
+
       .doc-link {
         display: grid;
         grid-template-columns: auto 1fr auto;
@@ -399,6 +511,18 @@
           grid-template-columns: 1fr;
         }
 
+        .trend-toolbar {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .trend-stat:nth-child(2) {
+          border-right: 0;
+        }
+
+        .trend-stat:nth-child(-n + 2) {
+          border-bottom: 1px solid var(--line);
+        }
+
         .section-header {
           display: block;
         }
@@ -431,6 +555,20 @@
 
         .button {
           width: 100%;
+        }
+
+        .trend-toolbar {
+          grid-template-columns: 1fr;
+        }
+
+        .trend-stat,
+        .trend-stat:nth-child(2) {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .trend-stat:last-child {
+          border-bottom: 0;
         }
       }
     </style>
@@ -547,6 +685,53 @@
           </div>
         </section>
 
+        <section class="section" aria-labelledby="trend-title">
+          <div class="section-header">
+            <h2 id="trend-title">20 支红利股票趋势</h2>
+            <p class="section-note">本地定时任务每 10 分钟写入 GitHub Pages JSON；这里展示最近一次研究快照。</p>
+          </div>
+          <div class="trend-panel" aria-live="polite">
+            <div class="trend-toolbar">
+              <div class="trend-stat">
+                <span>UPDATED</span>
+                <strong data-trend-updated>等待数据</strong>
+              </div>
+              <div class="trend-stat">
+                <span>ROWS</span>
+                <strong data-trend-count>0 / 20</strong>
+              </div>
+              <div class="trend-stat">
+                <span>SOURCE</span>
+                <strong data-trend-source>未生成</strong>
+              </div>
+              <div class="trend-stat">
+                <span>HORIZON</span>
+                <strong data-trend-horizon>未来1-3个交易日</strong>
+              </div>
+            </div>
+            <div class="trend-table-wrap">
+              <table class="trend-table">
+                <thead>
+                  <tr>
+                    <th>标的</th>
+                    <th>趋势</th>
+                    <th>价格</th>
+                    <th>模型信号</th>
+                    <th>评分</th>
+                    <th>风控</th>
+                    <th>更新时间</th>
+                  </tr>
+                </thead>
+                <tbody data-trend-body>
+                  <tr>
+                    <td colspan="7" class="trend-empty">正在读取趋势快照...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         <section class="section" aria-labelledby="docs-title">
           <div class="section-header">
             <h2 id="docs-title">项目文档</h2>
@@ -629,5 +814,117 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
         <span>Research tooling only. Not financial advice.</span>
       </footer>
     </div>
+    <script>
+      const trendBody = document.querySelector("[data-trend-body]");
+      const trendUpdated = document.querySelector("[data-trend-updated]");
+      const trendCount = document.querySelector("[data-trend-count]");
+      const trendSource = document.querySelector("[data-trend-source]");
+      const trendHorizon = document.querySelector("[data-trend-horizon]");
+
+      fetch(`./data/dividend_trends.json?ts=${Date.now()}`, { cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then(renderTrendSnapshot)
+        .catch((error) => {
+          trendBody.innerHTML = "";
+          const row = document.createElement("tr");
+          const cell = document.createElement("td");
+          cell.colSpan = 7;
+          cell.className = "trend-empty";
+          cell.textContent = `还没有趋势快照。启动本地定时任务后会生成 docs/data/dividend_trends.json。${error.message}`;
+          row.appendChild(cell);
+          trendBody.appendChild(row);
+        });
+
+      function renderTrendSnapshot(snapshot) {
+        const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
+        trendUpdated.textContent = formatDateTime(snapshot.generated_at);
+        trendCount.textContent = `${snapshot.successful_count || 0} / ${snapshot.row_count || rows.length}`;
+        trendSource.textContent = snapshot.source || "unknown";
+        trendHorizon.textContent = snapshot.horizon || "未来1-3个交易日";
+        trendBody.innerHTML = "";
+
+        if (rows.length === 0) {
+          const row = document.createElement("tr");
+          const cell = document.createElement("td");
+          cell.colSpan = 7;
+          cell.className = "trend-empty";
+          cell.textContent = "趋势快照为空。";
+          row.appendChild(cell);
+          trendBody.appendChild(row);
+          return;
+        }
+
+        rows.forEach((item) => {
+          const row = document.createElement("tr");
+          row.appendChild(symbolCell(item));
+          row.appendChild(badgeCell(item));
+          row.appendChild(metricCell(formatNumber(item.latest_price), pctText(item.change_pct)));
+          row.appendChild(metricCell(item.signal_label || item.signal || "无信号", item.status === "ok" ? item.trend_state : item.scan_error));
+          row.appendChild(metricCell(formatNumber(item.total_score, 1), `F ${formatNumber(item.F_score, 1)} / T ${formatNumber(item.T_score, 1)}`));
+          row.appendChild(metricCell(`盈亏比 ${formatNumber(item.risk_reward_ratio, 2)}`, `卖压 ${formatNumber(item.sell_pressure, 2)}`));
+          row.appendChild(metricCell(item.bar_time || item.quote_time || "-", item.quote_source || "-"));
+          trendBody.appendChild(row);
+        });
+      }
+
+      function symbolCell(item) {
+        const cell = document.createElement("td");
+        cell.className = "symbol-cell";
+        const strong = document.createElement("strong");
+        strong.textContent = item.symbol || "-";
+        const span = document.createElement("span");
+        span.textContent = `${item.name || ""} ${item.industry || ""}`.trim();
+        cell.appendChild(strong);
+        cell.appendChild(span);
+        return cell;
+      }
+
+      function badgeCell(item) {
+        const cell = document.createElement("td");
+        const badge = document.createElement("span");
+        badge.className = `trend-badge ${item.future_trend || "neutral"}`;
+        badge.textContent = item.future_trend_label || "未知";
+        cell.appendChild(badge);
+        const sub = document.createElement("span");
+        sub.className = "metric-sub";
+        sub.textContent = `置信度 ${item.confidence || 0}`;
+        cell.appendChild(sub);
+        return cell;
+      }
+
+      function metricCell(mainText, subText) {
+        const cell = document.createElement("td");
+        const main = document.createElement("span");
+        main.className = "metric-main";
+        main.textContent = mainText == null || mainText === "" ? "-" : mainText;
+        const sub = document.createElement("span");
+        sub.className = "metric-sub";
+        sub.textContent = subText == null || subText === "" ? "-" : subText;
+        cell.appendChild(main);
+        cell.appendChild(sub);
+        return cell;
+      }
+
+      function formatNumber(value, digits = 2) {
+        if (value == null || Number.isNaN(Number(value))) return "-";
+        return Number(value).toFixed(digits);
+      }
+
+      function pctText(value) {
+        if (value == null || Number.isNaN(Number(value))) return "-";
+        const signed = Number(value) > 0 ? "+" : "";
+        return `${signed}${Number(value).toFixed(2)}%`;
+      }
+
+      function formatDateTime(value) {
+        if (!value) return "等待数据";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString("zh-CN", { hour12: false });
+      }
+    </script>
   </body>
 </html>
