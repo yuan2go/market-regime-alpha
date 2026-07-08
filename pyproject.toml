@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "market-regime-alpha"
+version = "0.1.0"
+description = "Market-regime-driven A-share stock selection and ETF rotation research tool."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "tushare>=1.4",
+    "akshare>=1.18",
+    "baostock>=0.9",
+    "yfinance>=0.2.66",
+    "pandas>=2.2",
+    "python-dotenv>=1.0",
+    "duckdb>=1.1",
+    "pyarrow>=16.0",
+    "polars>=1.0",
+    "apscheduler>=3.10",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.2",
+]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 140
+src = ["src", "tests", "scripts", "backtesting"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E402", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+files = [
+    "src/market_regime_alpha/dividend_t/cosco_timing.py",
+    "src/market_regime_alpha/dividend_t/cosco_timing_breakout.py",
+    "src/market_regime_alpha/dividend_t/cosco_timing_capital_flow.py",
+    "src/market_regime_alpha/dividend_t/cosco_timing_daily.py",
+    "src/market_regime_alpha/dividend_t/cosco_timing_intraday.py",
+    "src/market_regime_alpha/dividend_t/cosco_timing_manual.py",
+    "src/market_regime_alpha/dividend_t/cosco_timing_signal.py",
+    "src/market_regime_alpha/dividend_t/cosco_timing_types.py",
+    "src/market_regime_alpha/dividend_t/market_environment.py",
+    "src/market_regime_alpha/dividend_t/position_sizing.py",
+    "src/market_regime_alpha/dividend_t/strategy_modes.py",
+    "src/market_regime_alpha/dividend_t/universe.py",
+]
+ignore_missing_imports = true
+follow_imports = "silent"
+check_untyped_defs = false
+disallow_untyped_defs = false
+no_implicit_optional = true
+warn_unused_ignores = true
