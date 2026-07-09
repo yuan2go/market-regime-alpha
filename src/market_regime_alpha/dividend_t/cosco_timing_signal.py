@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from market_regime_alpha.dividend_t.buy_point_quality import (
+    BUY_ACTIONS,
+    calibrated_buy_win_rate_5d,
+)
 from market_regime_alpha.dividend_t.certainty import CertaintyScore
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS, ChanStructure
 from market_regime_alpha.dividend_t.cosco_timing_capital_flow import _capital_flow_confirms_buy
@@ -34,6 +38,7 @@ def _signal_strength(
     breakout_setup: BreakoutSetup,
     chan_structure: ChanStructure,
     risk_reward_ratio: float,
+    buy_point_subtype: str = "none",
 ) -> SignalStrength:
     score = _buy_signal_strength_score(
         force=force,
@@ -82,6 +87,11 @@ def _signal_strength(
         model_win_rate = max(model_win_rate, clamp(0.48 + (breakout_setup.score - 60.0) * 0.003, 0.45, 0.62))
     strength_win_rate = 0.46 + (score - 50.0) * 0.004
     estimated_win_rate = clamp(0.55 * model_win_rate + 0.45 * strength_win_rate, 0.38, 0.66)
+    if action in BUY_ACTIONS or buy_point_subtype != "none":
+        estimated_win_rate = calibrated_buy_win_rate_5d(
+            subtype=buy_point_subtype,
+            raw_estimated_win_rate=estimated_win_rate,
+        )
     kelly = max(0.0, estimated_win_rate - (1.0 - estimated_win_rate) / reward_risk)
     label = _signal_strength_label(score)
     reasons = (
@@ -91,6 +101,7 @@ def _signal_strength(
         f"量价结构={volume_price_structure.state}，V={volume_price_structure.score:.1f}，放量突破={volume_price_structure.volume_breakout_score:.1f}，VWAP={volume_price_structure.vwap_support_score:.1f}。",
         f"缠论结构={chan_structure.structure_type}，买点={chan_structure.buy_point_type}，卖点={chan_structure.sell_point_type}，C={chan_structure.score:.1f}。",
         f"资金流确认={capital_flow.confirmation_state}，确认分={capital_flow.confirmation_score:.1f}，来源={capital_flow.source_type}。",
+        f"买点子类型={buy_point_subtype}，估计胜率按 5 日历史命中率做收缩校准。",
         f"估计胜率={estimated_win_rate:.1%}，盈亏比={reward_risk:.2f}，Kelly={kelly:.1%}。",
         "Kelly 只用于手动仓位参考，回测会再做折扣、总仓位上限和单次主动买入约束。",
     )

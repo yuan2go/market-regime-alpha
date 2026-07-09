@@ -1,8 +1,8 @@
-# market-regime-alpha
+# A 股买卖点识别模型
 
-Market-regime-driven A-share stock selection, dividend-T, and ETF rotation research tool.
+A-share buy/sell point identification, signal validation, and backtesting research tool.
 
-本项目集中承载 A 股红利 / 做 T 模型、行情适配、回测、Dashboard、通知脚本和核心文档。
+本项目集中承载 A 股买点 / 卖点识别模型、行情适配、命中率验证、回测、Dashboard、通知脚本和核心文档。内部仍保留历史 `dividend_t` 包名和脚本名，避免破坏已有导入路径。
 
 完整使用手册见 [`docs/Usage-Manual.md`](docs/Usage-Manual.md)，目录边界见 [`docs/Project-Structure.md`](docs/Project-Structure.md)。
 
@@ -76,13 +76,13 @@ python3 backtesting/build_ma_crossover_visual.py
 
 样例 CSV 是合成数据，只用来验证数据契约和回测流程跑通，不代表策略在真实市场有效。
 
-运行中远海控长期红利做 T 模型回测：
+运行中远海控买卖点识别模型回测：
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python backtesting/run_cosco_dividend_t_backtest.py
 ```
 
-该脚本会回放优化后的 `DailyContext + IntradayContext` 时间尺度门控模型，输出 Markdown 报告到 `reports/backtests/cosco_dividend_t_backtest.md`。`reports/` 下生成的报告和 CSV 属于研究产物，不提交到 Git。严肃回测请传入更长的真实 5 分钟 CSV：
+该脚本会回放优化后的 `DailyContext + IntradayContext` 时间尺度门控模型，输出 Markdown 报告到 `reports/backtests/cosco_dividend_t_backtest.md`。`reports/` 下生成的报告和 CSV 属于研究产物，不提交到 Git。严肃评估请传入更长的真实 5 分钟 CSV：
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python backtesting/run_cosco_dividend_t_backtest.py --data data/raw/your_601919_5min.csv --symbol 601919.SH
@@ -93,6 +93,14 @@ PYTHONPATH=src ./.venv/bin/python backtesting/run_cosco_dividend_t_backtest.py -
 ```bash
 PYTHONPATH=src ./.venv/bin/python backtesting/run_dividend_watchlist_backtest.py --data-dir data/raw/dividend_t_5min
 ```
+
+评估买卖点 1 / 3 / 5 日命中率：
+
+```bash
+PYTHONPATH=src ./.venv/bin/python backtesting/run_buy_sell_point_hit_rate.py
+```
+
+该脚本输出 `reports/backtests/buy_sell_point_hit_rate.md` 以及总览、动作拆分、事件明细 CSV。买点命中定义为信号后未来收盘高于执行价；卖点命中定义为信号后未来收盘低于执行价。
 
 ## Tushare A股行情查询
 
@@ -125,9 +133,9 @@ python3 scripts/fetch_tushare_bars.py minute 600000.SH --freq 1min --start "2024
 
 详细说明见 `docs/Tushare-App.md`。
 
-## 长期 / 红利 / 做 T 交易平台
+## A 股买卖点识别模型
 
-本项目现在有一版长期红利做 T 模型平台骨架，覆盖 F/R/T/C 评分、退神买卖力、缠论结构、策略信号、风控检查、观察池、Paper/QMT/PTrade 交易网关接口和本地 Dashboard。
+本项目现在有一版 A 股买点 / 卖点识别模型平台骨架，覆盖 F/R/T/C 评分、退神买卖力、缠论结构、买卖点信号、风控检查、观察池、Paper/QMT/PTrade 交易网关接口和本地 Dashboard。
 当前已增加中远海控 `601919.SH` 的 5 分钟手动时机面板，只输出参考买入价、参考卖出价、止损价和理由，不自动下单。行情层已适配腾讯分时、EastMoney 直连、AKShare、BaoStock、Tushare 基础权限，默认按 `Tencent -> EastMoney -> AKShare -> BaoStock -> Tushare` 自动降级；自动模式会优先用腾讯分时聚合 5 分钟线，并用 BaoStock 只回补历史 K 线。面板会显示数据来源、K 线时间、数据年龄和数据新鲜度；如果数据过期，会禁止输出交易时机。
 
 启动页面：

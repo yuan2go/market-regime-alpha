@@ -54,6 +54,10 @@ class MultiPeriodTrend:
     weekly_state: str
     monthly_state: str
     reasons: tuple[str, ...] = field(default_factory=tuple)
+    trend_5_20_state: str = "INSUFFICIENT"
+    return_5d: float = 0.0
+    return_20d: float = 0.0
+    ma20_slope: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -185,6 +189,7 @@ class CoscoTimingSnapshot:
     manual_only: bool = True
     is_realtime: bool = False
     signal_blocked: bool = False
+    buy_point_subtype: str = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

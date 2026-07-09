@@ -14,7 +14,6 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from market_regime_alpha.data_sources.a_share_bars import TencentMinuteProvider  # noqa: E402
 from market_regime_alpha.data_sources.tencent_minute_cache import (  # noqa: E402
     DEFAULT_TENCENT_CACHE_DB,
     fetch_tencent_1min_frame,
@@ -160,7 +159,6 @@ class DividendTrendScheduler:
         snapshot = build_dividend_trend_snapshot(
             watchlist_path=self.watchlist_path,
             limit=self.limit,
-            provider=TencentMinuteProvider(timeout_seconds=self.timeout_seconds),
             timeout_seconds=self.timeout_seconds,
         )
         output = write_dividend_trend_snapshot(snapshot, output_path=self.output_path)

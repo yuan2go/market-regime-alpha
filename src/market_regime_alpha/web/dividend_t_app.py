@@ -77,7 +77,7 @@ class EvaluatePayload(BaseModel):
     position: PositionPayload = Field(default_factory=PositionPayload)
 
 
-app = FastAPI(title="Dividend T-Trading Platform", version="0.1.0")
+app = FastAPI(title="A-share Buy/Sell Point Identification Model", version="0.1.0")
 strategy = DividendTStrategy()
 risk_engine = RiskEngine()
 paper_broker = PaperBrokerAdapter()
@@ -87,11 +87,11 @@ ptrade_adapter = PTradeAdapter()
 SIGNAL_LABELS = {
     "BUILD_BASE": "建底仓",
     "HOLD": "持有观察",
-    "BUY_T": "正 T 买入",
-    "SELL_T": "卖出 T 仓",
-    "SELL_REVERSE_T": "倒 T 卖出",
-    "BUY_BACK_REVERSE_T": "倒 T 买回",
-    "STOP_T": "停止做 T",
+    "BUY_T": "买点",
+    "SELL_T": "卖点",
+    "SELL_REVERSE_T": "高位卖点",
+    "BUY_BACK_REVERSE_T": "回补买点",
+    "STOP_T": "风险卖点",
     "REDUCE": "减底仓",
     "CLEAR": "清仓",
 }
@@ -106,7 +106,7 @@ def page() -> str:
 def health() -> dict[str, object]:
     return {
         "status": "ok",
-        "platform": "long-term-dividend-t",
+        "platform": "buy-sell-point-identification",
         "brokers": [paper_broker.status(), qmt_adapter.status(), ptrade_adapter.status()],
     }
 
@@ -331,7 +331,7 @@ PAGE_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>长期红利做T平台</title>
+  <title>A股买卖点识别模型</title>
   <style>
     :root {
       color-scheme: light;
@@ -474,7 +474,7 @@ PAGE_HTML = """<!doctype html>
 </head>
 <body>
   <header>
-    <h1>长期 / 红利 / 做 T 交易平台</h1>
+    <h1>A 股买卖点识别模型</h1>
   </header>
   <main>
     <div class="layout">
@@ -560,7 +560,7 @@ PAGE_HTML = """<!doctype html>
 
       <div>
         <section>
-          <h2>中远海控 5 分钟手动时机</h2>
+          <h2>中远海控 5 分钟买卖点</h2>
           <div><span id="coscoAction" class="signal">加载中</span></div>
           <div class="manual">
             <div><span>现价</span><strong id="coscoCurrent">-</strong></div>
@@ -598,7 +598,7 @@ PAGE_HTML = """<!doctype html>
               <option value="yfinance">YFinance 历史分钟线</option>
               <option value="tushare">Tushare 基础权限</option>
             </select>
-            <button id="refreshCoscoBtn">刷新中远海控</button>
+            <button id="refreshCoscoBtn">刷新买卖点</button>
             <button class="secondary" id="sampleCoscoBtn">加载样例（非实时）</button>
           </div>
         </section>
@@ -699,11 +699,11 @@ PAGE_HTML = """<!doctype html>
       const labels = {
         BUILD_BASE: "建底仓",
         HOLD: "持有观察",
-        BUY_T: "正 T 买入",
-        SELL_T: "卖出 T 仓",
-        SELL_REVERSE_T: "倒 T 卖出",
-        BUY_BACK_REVERSE_T: "倒 T 买回",
-        STOP_T: "停止做 T",
+        BUY_T: "买点",
+        SELL_T: "卖点",
+        SELL_REVERSE_T: "高位卖点",
+        BUY_BACK_REVERSE_T: "回补买点",
+        STOP_T: "风险卖点",
         REDUCE: "减底仓",
         CLEAR: "清仓"
       };
@@ -711,16 +711,16 @@ PAGE_HTML = """<!doctype html>
     }
     function timingActionLabel(value) {
       const labels = {
-        BUY_T_TIMING: "正 T 买入时机",
+        BUY_T_TIMING: "买点",
         BREAKOUT_BUY_TIMING: "强势突破买入时机",
         WATCH_BREAKOUT_NEXT_DAY: "次日突破预警",
-        SELL_T_TIMING: "卖 T / 倒 T 时机",
-        STOP_T_WAIT: "停止做 T，等待",
+        SELL_T_TIMING: "卖点",
+        STOP_T_WAIT: "风险卖点，等待",
         WAIT_STALE_DATA: "数据过期，等待",
         WAIT_DAILY_WEAK: "日线偏弱，等待",
         WAIT_CONFIRMATION: "等待分时确认",
-        WAIT_LATE_SESSION: "尾盘不买回，等待",
-        WAIT_STRONG_TREND: "强趋势保护，暂不卖 T",
+        WAIT_LATE_SESSION: "尾盘等待",
+        WAIT_STRONG_TREND: "强趋势保护，暂不卖出",
         WAIT: "等待",
         NEED_DATA: "需要数据"
       };

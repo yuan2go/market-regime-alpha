@@ -1,6 +1,6 @@
-# market-regime-alpha 目录规划
+# A 股买卖点识别模型目录规划
 
-`market-regime-alpha` 是独立的可运行量化研究项目。后续量化代码、核心文档、脚本、测试、数据契约和报告都应优先放在本仓库内。
+`market-regime-alpha` 是独立的 A 股买点 / 卖点识别研究项目。后续量化代码、核心文档、脚本、测试、数据契约和报告都应优先放在本仓库内。
 
 ## 目录边界
 
@@ -56,5 +56,6 @@ python3 -m ruff check .
 python3 -m mypy src
 python3 backtesting/run_ma_crossover.py
 PYTHONPATH=src python3 backtesting/run_cosco_dividend_t_backtest.py
+PYTHONPATH=src python3 backtesting/run_buy_sell_point_hit_rate.py
 PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --host 127.0.0.1 --port 8010
 ```

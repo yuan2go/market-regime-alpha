@@ -17,6 +17,7 @@ if str(SRC_DIR) not in sys.path:
 from market_regime_alpha.data_sources.a_share_bars import fetch_a_share_5min_with_fallback
 from market_regime_alpha.dividend_t.backtest import (
     DEFAULT_SIGNAL_CACHE_DIR,
+    DEFAULT_SIGNAL_HISTORY_BARS,
     DividendTBacktestConfig,
     build_sample_cosco_backtest_bars,
     format_cosco_backtest_report,
@@ -33,7 +34,7 @@ def main() -> int:
     parser.add_argument("--data", type=Path, help="5-minute OHLCV CSV path. If omitted, use built-in sample data.")
     parser.add_argument("--symbol", default="601919.SH", help="Symbol to backtest.")
     parser.add_argument("--provider", choices=["auto", "qmt", "tencent", "eastmoney", "akshare", "baostock", "tushare"], help="Fetch 5-minute bars from a provider instead of CSV/sample.")
-    parser.add_argument("--days", type=int, default=10, help="Provider fetch lookback days.")
+    parser.add_argument("--days", type=int, default=45, help="Provider fetch lookback days.")
     parser.add_argument("--initial-cash", type=float, default=100_000.0)
     parser.add_argument("--base-pct", type=float, default=0.10, help="Initial base position ratio, constrained to 0.05-0.10.")
     parser.add_argument("--t-pct", type=float, default=1.00, help="Legacy alias for the default total position cap after a BUY signal, constrained to <=1.00.")
@@ -45,7 +46,7 @@ def main() -> int:
     parser.add_argument("--kelly-scale", type=float, default=0.65)
     parser.add_argument("--min-buy-strength", type=float, default=66.0)
     parser.add_argument("--min-lookback-bars", type=int, default=48)
-    parser.add_argument("--max-history-bars", type=int, default=240)
+    parser.add_argument("--max-history-bars", type=int, default=DEFAULT_SIGNAL_HISTORY_BARS)
     parser.add_argument("--signal-step-bars", type=int, default=1, help="Evaluate one signal every N bars. 1 means every 5-minute bar.")
     parser.add_argument("--base-rebalance-cooldown-bars", type=int, default=48, help="Cooldown before another base rebalance. 48 means about one trading day.")
     parser.add_argument("--no-reverse-t", action="store_true", help="Disable reverse-T sell and buyback loop.")

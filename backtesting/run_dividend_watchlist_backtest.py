@@ -31,6 +31,7 @@ from market_regime_alpha.data_sources.a_share_bars import (  # noqa: E402
 )
 from market_regime_alpha.dividend_t.backtest import (  # noqa: E402
     DEFAULT_SIGNAL_CACHE_DIR,
+    DEFAULT_SIGNAL_HISTORY_BARS,
     DividendTBacktestConfig,
     load_5min_bars_path,
     run_cosco_dividend_t_backtest,
@@ -89,7 +90,7 @@ def main() -> int:
     parser.add_argument("--watchlist", type=Path, help="Watchlist CSV path. Defaults to dividend_t_watchlist.csv.")
     parser.add_argument("--data-dir", type=Path, help="Directory containing per-symbol 5-minute CSV files.")
     parser.add_argument("--provider", choices=["none", "qmt", "eastmoney", "akshare", "baostock", "yfinance", "tushare"], default="none")
-    parser.add_argument("--days", type=int, default=35, help="Lookback calendar days for provider fetch.")
+    parser.add_argument("--days", type=int, default=45, help="Lookback calendar days for provider fetch.")
     parser.add_argument("--limit", type=int, default=0, help="Limit the number of watchlist symbols. 0 means all.")
     parser.add_argument("--symbols", nargs="*", default=None, help="Optional symbol filter, for example 601919.SH 600900.SH.")
     parser.add_argument("--timeout-seconds", type=float, default=35.0, help="Per-symbol provider timeout.")
@@ -109,7 +110,7 @@ def main() -> int:
     parser.add_argument("--kelly-scale", type=float, default=0.65)
     parser.add_argument("--min-buy-strength", type=float, default=66.0)
     parser.add_argument("--min-lookback-bars", type=int, default=48)
-    parser.add_argument("--max-history-bars", type=int, default=240)
+    parser.add_argument("--max-history-bars", type=int, default=DEFAULT_SIGNAL_HISTORY_BARS)
     parser.add_argument("--signal-step-bars", type=int, default=6, help="Evaluate one signal every N bars. 6 means about 30 minutes.")
     parser.add_argument("--base-rebalance-cooldown-bars", type=int, default=48, help="Cooldown before another base rebalance. 48 means about one trading day.")
     parser.add_argument("--no-reverse-t", action="store_true", help="Disable reverse-T sell and buyback loop.")

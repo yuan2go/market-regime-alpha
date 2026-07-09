@@ -57,9 +57,9 @@ class DividendTAppTests(unittest.TestCase):
         )
 
         self.assertEqual(data["signal"], "SELL_T")
-        self.assertEqual(data["signal_label"], "卖出 T 仓")
+        self.assertEqual(data["signal_label"], "卖点")
         self.assertEqual(data["order_intent"]["signal"], "SELL_T")
-        self.assertEqual(data["order_intent"]["signal_label"], "卖出 T 仓")
+        self.assertEqual(data["order_intent"]["signal_label"], "卖点")
 
     def test_sample_decisions_include_signal_label(self) -> None:
         with patch(

@@ -20,6 +20,7 @@ if str(SRC_DIR) not in sys.path:
 
 from market_regime_alpha.dividend_t.backtest import (  # noqa: E402
     DEFAULT_SIGNAL_CACHE_DIR,
+    DEFAULT_SIGNAL_HISTORY_BARS,
     DividendTBacktestConfig,
     load_5min_bars_path,
     run_cosco_dividend_t_backtest,
@@ -67,7 +68,7 @@ def main() -> int:
     parser.add_argument("--kelly-scale", type=float, default=0.65)
     parser.add_argument("--min-buy-strength", type=float, default=66.0)
     parser.add_argument("--min-lookback-bars", type=int, default=48)
-    parser.add_argument("--max-history-bars", type=int, default=240)
+    parser.add_argument("--max-history-bars", type=int, default=DEFAULT_SIGNAL_HISTORY_BARS)
     parser.add_argument("--signal-step-bars", type=int, default=24)
     parser.add_argument("--base-rebalance-cooldown-bars", type=int, default=48)
     parser.add_argument("--no-reverse-t", action="store_true")

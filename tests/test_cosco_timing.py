@@ -36,6 +36,11 @@ def _bars_for_buy_t() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _bars_for_buy_t_with_20d_uptrend() -> pd.DataFrame:
+    trend_closes = [13.55 + day * 0.035 for day in range(20)]
+    return pd.concat([_daily_context_rows_from("2026-05-01 09:35", trend_closes), _bars_for_buy_t()], ignore_index=True)
+
+
 def _bars_for_sell_t() -> pd.DataFrame:
     rows = []
     base = pd.Timestamp("2026-06-01 09:35")
@@ -132,6 +137,17 @@ def _daily_context_rows(closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _daily_context_rows_from(start: str, closes: list[float]) -> pd.DataFrame:
+    rows = []
+    start_time = pd.Timestamp(start)
+    for day_index, close in enumerate(closes):
+        base = start_time + pd.Timedelta(days=day_index)
+        for bar_index in range(4):
+            price = close + (bar_index - 3) * 0.004
+            rows.append(_bar(base, bar_index, price, 780_000))
+    return pd.DataFrame(rows)
+
+
 def _bar(base: pd.Timestamp, index: int, price: float, volume: float) -> dict[str, object]:
     return {
         "symbol": "601919.SH",
@@ -147,40 +163,52 @@ def _bar(base: pd.Timestamp, index: int, price: float, volume: float) -> dict[st
 
 
 class CoscoTimingTests(unittest.TestCase):
-    def test_buy_t_timing_outputs_manual_reference_prices(self) -> None:
-        snapshot = CoscoTimingEngine().evaluate(_bars_for_buy_t())
+    def test_high_volume_stall_pullback_is_downgraded_from_real_buy_point(self) -> None:
+        snapshot = CoscoTimingEngine().evaluate(_bars_for_buy_t_with_20d_uptrend())
 
-        self.assertEqual(snapshot.action, "BUY_T_TIMING")
+        self.assertEqual(snapshot.action, "WAIT_CONFIRMATION")
+        self.assertEqual(snapshot.multi_period_trend.trend_5_20_state, "PULLBACK_IN_UPTREND")
         self.assertTrue(snapshot.manual_only)
         self.assertFalse(snapshot.is_realtime)
         self.assertEqual(snapshot.data_source, "input_5min_bars")
         self.assertGreaterEqual(snapshot.data_age_minutes, 0)
         self.assertGreater(snapshot.force.force_ratio, 1.0)
         self.assertEqual(snapshot.intraday_context.state, "SUPPORT_CONFIRMED")
+        self.assertEqual(snapshot.volume_price_structure.state, "HIGH_VOLUME_STALL")
         self.assertGreater(snapshot.signal_strength.score, 0)
         self.assertGreaterEqual(snapshot.signal_strength.kelly_fraction, 0)
         self.assertGreater(snapshot.trend_probability.up_1d, 0.50)
-        self.assertIn(snapshot.signal_strength.label, {"试探", "中强", "强"})
-        self.assertIsNotNone(snapshot.prices.buy_reference_price)
-        self.assertIsNotNone(snapshot.prices.sell_reference_price)
-        self.assertLess(snapshot.prices.stop_price, snapshot.prices.buy_reference_price)
+        self.assertEqual(snapshot.signal_strength.label, "弱")
+        self.assertIsNone(snapshot.prices.buy_reference_price)
+        self.assertIsNone(snapshot.prices.sell_reference_price)
+        self.assertTrue(any("低量回踩" in item for item in snapshot.reasons))
 
-    def test_sell_t_timing_with_insufficient_daily_context_clears_buyback_price(self) -> None:
+    def test_one_day_context_does_not_emit_real_buy_point(self) -> None:
+        snapshot = CoscoTimingEngine().evaluate(_bars_for_buy_t())
+
+        self.assertEqual(snapshot.action, "WAIT_CONFIRMATION")
+        self.assertEqual(snapshot.multi_period_trend.trend_5_20_state, "INSUFFICIENT")
+        self.assertIsNone(snapshot.prices.buy_reference_price)
+        self.assertTrue(any("5-20 日趋势" in item for item in snapshot.reasons))
+
+    def test_unconfirmed_sell_timing_with_insufficient_daily_context_is_downgraded(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(_bars_for_sell_t())
 
-        self.assertEqual(snapshot.action, "SELL_T_TIMING")
+        self.assertEqual(snapshot.action, "WAIT_CONFIRMATION")
         self.assertTrue(snapshot.manual_only)
         self.assertLess(snapshot.force.force_ratio, 1.0)
-        self.assertIsNotNone(snapshot.prices.sell_reference_price)
+        self.assertIsNone(snapshot.prices.sell_reference_price)
         self.assertIsNone(snapshot.prices.buy_back_reference_price)
         self.assertEqual(snapshot.daily_context.state, "INSUFFICIENT")
+        self.assertTrue(any("卖点质量过滤" in item for item in snapshot.warnings))
 
-    def test_sell_t_timing_outputs_buyback_price_when_daily_context_is_strong(self) -> None:
+    def test_unconfirmed_sell_timing_when_daily_context_is_strong_is_downgraded(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(_bars_for_sell_t_with_daily_strength())
 
-        self.assertEqual(snapshot.action, "SELL_T_TIMING")
+        self.assertEqual(snapshot.action, "WAIT_CONFIRMATION")
         self.assertEqual(snapshot.daily_context.state, "STRONG")
-        self.assertIsNotNone(snapshot.prices.buy_back_reference_price)
+        self.assertIsNone(snapshot.prices.buy_back_reference_price)
+        self.assertTrue(any("卖点质量过滤" in item for item in snapshot.warnings))
 
     def test_strong_trend_protection_blocks_premature_reverse_t(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(_bars_for_strong_uptrend_near_resistance())
@@ -196,10 +224,11 @@ class CoscoTimingTests(unittest.TestCase):
         self.assertIsNone(snapshot.prices.sell_reference_price)
         self.assertTrue(any("强趋势保护" in item for item in snapshot.warnings))
 
-    def test_breakout_buy_signal_captures_fast_start(self) -> None:
+    def test_breakout_signal_is_downgraded_to_watch_for_5d_hit_rate(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(_bars_for_breakout_buy())
 
-        self.assertEqual(snapshot.action, "BREAKOUT_BUY_TIMING")
+        self.assertEqual(snapshot.action, "WATCH_BREAKOUT_NEXT_DAY")
+        self.assertEqual(snapshot.buy_point_subtype, "breakout_watch")
         self.assertEqual(snapshot.breakout_setup.state, "BREAKOUT_CONFIRMED")
         self.assertTrue(snapshot.breakout_setup.breakout_confirmed)
         self.assertGreaterEqual(snapshot.breakout_setup.score, 68.0)
@@ -207,7 +236,8 @@ class CoscoTimingTests(unittest.TestCase):
         self.assertIn("volume_price_structure", snapshot.to_dict())
         self.assertIsNotNone(snapshot.prices.buy_reference_price)
         self.assertIsNotNone(snapshot.prices.stop_price)
-        self.assertGreater(snapshot.prices.sell_reference_price, snapshot.prices.buy_reference_price)
+        self.assertIsNone(snapshot.prices.sell_reference_price)
+        self.assertLess(snapshot.signal_strength.estimated_win_rate, 0.50)
 
     def test_volume_price_structure_flags_high_volume_stall(self) -> None:
         structure = estimate_volume_price_structure(_bars_for_high_volume_stall())
@@ -239,19 +269,20 @@ class CoscoTimingTests(unittest.TestCase):
     def test_weak_daily_context_blocks_intraday_buy_timing(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(_bars_for_buy_t_with_daily_weakness())
 
-        self.assertEqual(snapshot.action, "WAIT_DAILY_WEAK")
+        self.assertEqual(snapshot.action, "WAIT_CONFIRMATION")
         self.assertEqual(snapshot.daily_context.state, "WEAK")
         self.assertTrue(snapshot.intraday_context.support_confirmed)
         self.assertIsNone(snapshot.prices.buy_reference_price)
-        self.assertTrue(any("时间尺度门控" in item for item in snapshot.warnings))
+        self.assertTrue(any("WAIT_DAILY_WEAK 降级为观察" in item for item in snapshot.warnings))
 
     def test_low_fundamental_profile_blocks_low_buy_timing(self) -> None:
         weak_profile = CoscoProfile(base_fundamental_score=52.0, dividend_sustainability_score=50.0)
         snapshot = CoscoTimingEngine(profile=weak_profile).evaluate(_bars_for_buy_t())
 
-        self.assertEqual(snapshot.action, "WAIT_DAILY_WEAK")
+        self.assertEqual(snapshot.action, "WAIT_CONFIRMATION")
         self.assertLess(snapshot.daily_context.fundamental_score, 55.0)
         self.assertEqual(snapshot.daily_context.position_multiplier, 0.0)
+        self.assertTrue(any("WAIT_DAILY_WEAK 降级为观察" in item for item in snapshot.warnings))
 
     def test_freshness_gate_blocks_stale_sell_signal(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(
@@ -269,7 +300,7 @@ class CoscoTimingTests(unittest.TestCase):
         self.assertIsNone(snapshot.prices.sell_reference_price)
         self.assertTrue(any("数据已过期" in item for item in snapshot.reasons))
 
-    def test_freshness_gate_allows_fresh_sell_signal(self) -> None:
+    def test_freshness_gate_allows_fresh_evaluation_before_sell_quality_filter(self) -> None:
         bars = _bars_for_sell_t()
         last_time = pd.to_datetime(bars.iloc[-1]["timestamp"]).to_pydatetime()
 
@@ -280,9 +311,10 @@ class CoscoTimingTests(unittest.TestCase):
             generated_at=last_time + timedelta(minutes=5),
         )
 
-        self.assertEqual(snapshot.action, "SELL_T_TIMING")
+        self.assertEqual(snapshot.action, "WAIT_CONFIRMATION")
         self.assertTrue(snapshot.data_fresh)
         self.assertFalse(snapshot.signal_blocked)
+        self.assertTrue(any("卖点质量过滤" in item for item in snapshot.warnings))
 
     def test_sample_snapshot_is_serializable(self) -> None:
         data = sample_cosco_timing().to_dict()

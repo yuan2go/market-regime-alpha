@@ -262,6 +262,32 @@ def _multi_period_trend(frame: Any) -> MultiPeriodTrend:
         daily_5d_state = "INSUFFICIENT"
         reasons.append("5 日线样本不足。")
 
+    trend_5_20_state = "INSUFFICIENT"
+    return_20d = 0.0
+    ma20_slope = 0.0
+    if len(daily) >= 20:
+        ma20 = float(close.tail(20).mean())
+        ma20_prev = float(close.iloc[:-1].tail(20).mean()) if len(daily) >= 21 else ma20
+        return_20d = latest_close / float(close.iloc[-20]) - 1.0
+        ma20_slope = ma20 / ma20_prev - 1.0 if ma20_prev > 0 else 0.0
+        if latest_close >= ma5 >= ma20 and ma20_slope >= -0.001 and return_20d >= -0.02:
+            trend_5_20_state = "UP"
+            daily_score += 6.0
+            reasons.append("5-20 日趋势向上，允许在回踩确认后寻找买点。")
+        elif latest_close >= ma20 * 0.985 and ma20_slope >= -0.0015 and return_20d >= -0.035:
+            trend_5_20_state = "PULLBACK_IN_UPTREND"
+            daily_score += 3.0
+            reasons.append("价格仍在 20 日趋势附近，按上行趋势内回踩处理。")
+        elif latest_close < ma20 and ma20_slope < -0.002 and return_20d < -0.035:
+            trend_5_20_state = "DOWN"
+            daily_score -= 10.0
+            reasons.append("5-20 日趋势向下，禁止用单日分时支撑推断买点。")
+        else:
+            trend_5_20_state = "RANGE"
+            reasons.append("5-20 日趋势震荡，买点必须降级等待更强确认。")
+    else:
+        reasons.append("20 日趋势样本不足，不能仅凭单日分时给真实买点。")
+
     weekly_state, weekly_score, weekly_reason = _period_trend_state(daily, period="W-FRI", min_periods=4, label="周线")
     monthly_state, monthly_score, monthly_reason = _period_trend_state(daily, period="ME", min_periods=3, label="月线")
     reasons.extend([weekly_reason, monthly_reason])
@@ -272,6 +298,10 @@ def _multi_period_trend(frame: Any) -> MultiPeriodTrend:
         weekly_state=weekly_state,
         monthly_state=monthly_state,
         reasons=tuple(item for item in reasons if item)[:5],
+        trend_5_20_state=trend_5_20_state,
+        return_5d=round(ret5, 6) if len(daily) >= 5 else 0.0,
+        return_20d=round(return_20d, 6),
+        ma20_slope=round(ma20_slope, 6),
     )
 
 

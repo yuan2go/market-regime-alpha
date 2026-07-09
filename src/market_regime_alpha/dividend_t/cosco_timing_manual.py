@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from market_regime_alpha.dividend_t.attention import AttentionScore
+from market_regime_alpha.dividend_t.buy_point_quality import (
+    breakout_buy_confirmation_allowed,
+    buy_point_overheat_reasons,
+)
 from market_regime_alpha.dividend_t.certainty import CertaintyScore
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS, ChanStructure
 from market_regime_alpha.dividend_t.cosco_profile import CoscoProfile
@@ -104,8 +108,21 @@ def _manual_action(
         )
         and volume_price_structure.high_volume_stall_score < 70.0
     )
+    overheat_reasons = buy_point_overheat_reasons(
+        trend_state=trend_state.value,
+        volume_price_state=volume_price_structure.state,
+        volume_price_score=volume_price_structure.score,
+        volume_breakout_score=volume_price_structure.volume_breakout_score,
+        high_volume_stall_score=volume_price_structure.high_volume_stall_score,
+        capital_flow_confirmation_state=capital_flow.confirmation_state,
+        up_probability_1d=trend_probability.up_1d,
+        pretrade_volume_ratio_to_prev=volume_price_structure.volume_expansion_ratio,
+        breakout_confirmed=breakout_setup.breakout_confirmed,
+        breakout_score=breakout_setup.score,
+    )
+    trend_5_20_allows_pullback = multi_period_trend.trend_5_20_state in {"UP", "PULLBACK_IN_UPTREND"}
 
-    if daily_context.state == "WEAK" and (near_support or intraday_context.support_confirmed):
+    if daily_context.state == "WEAK" and (near_support or intraday_context.support_confirmed) and not trend_5_20_allows_pullback:
         return (
             "WAIT_DAILY_WEAK",
             [
@@ -162,6 +179,27 @@ def _manual_action(
         return "SELL_T_TIMING", reasons + list(sell_pressure.reasons)[:2], list(force.reasons)[:1]
 
     if breakout_setup.breakout_confirmed and not intraday_context.late_session:
+        if not breakout_buy_confirmation_allowed(
+            sell_pressure_score=sell_pressure.score,
+            vwap_support_score=volume_price_structure.vwap_support_score,
+            post_breakout_volume_persistence_score=volume_price_structure.post_breakout_volume_persistence_score,
+            high_volume_stall_score=volume_price_structure.high_volume_stall_score,
+            up_probability_1d=trend_probability.up_1d,
+            overheated=bool(overheat_reasons),
+        ):
+            breakout_level = _fmt_optional_price(breakout_setup.breakout_level)
+            trigger_price = _fmt_optional_price(breakout_setup.trigger_price)
+            return (
+                "WATCH_BREAKOUT_NEXT_DAY",
+                [
+                    "5 日命中率优先：突破已确认，但未通过回踩/承接/降温的二次确认，先降级为观察点。",
+                    f"突破分 {breakout_setup.score:.1f}，突破位 {breakout_level}，触发价 {trigger_price}。",
+                    f"卖压 {sell_pressure.score:.1f}，VWAP 支撑 {volume_price_structure.vwap_support_score:.1f}，突破后量能延续 {volume_price_structure.post_breakout_volume_persistence_score:.1f}。",
+                    *list(overheat_reasons)[:3],
+                    *list(breakout_setup.reasons)[:2],
+                ],
+                ["突破买点已降级：只有放量后站稳、卖压低且不过热，才升级为 BREAKOUT_BUY_TIMING。"],
+            )
         breakout_level = _fmt_optional_price(breakout_setup.breakout_level)
         trigger_price = _fmt_optional_price(breakout_setup.trigger_price)
         reasons.extend(
@@ -188,6 +226,14 @@ def _manual_action(
         and trend_probability.down_1d < 0.60
     )
     if early_start_setup:
+        if overheat_reasons:
+            return _overheated_buy_wait(
+                label="强势启动早期买点",
+                overheat_reasons=overheat_reasons,
+                capital_flow=capital_flow,
+                volume_price_structure=volume_price_structure,
+                trend_probability=trend_probability,
+            )
         breakout_level = _fmt_optional_price(breakout_setup.breakout_level)
         trigger_price = _fmt_optional_price(breakout_setup.trigger_price)
         reasons.extend(
@@ -230,7 +276,7 @@ def _manual_action(
     if trend_state == TrendState.DOWNTREND and not force_reversal_setup:
         return "STOP_T_WAIT", ["5 分钟趋势进入空头结构，暂停正 T，只观察或等更低支撑。"], ["趋势破位时不要把 T 仓变成底仓。"]
 
-    if near_support and not daily_context.allow_t:
+    if near_support and not daily_context.allow_t and not trend_5_20_allows_pullback:
         return (
             "WAIT_DAILY_WEAK",
             [
@@ -242,6 +288,14 @@ def _manual_action(
         )
 
     if force_reversal_setup and not intraday_context.late_session:
+        if overheat_reasons:
+            return _overheated_buy_wait(
+                label="退神买盘优势买点",
+                overheat_reasons=overheat_reasons,
+                capital_flow=capital_flow,
+                volume_price_structure=volume_price_structure,
+                trend_probability=trend_probability,
+            )
         reasons.extend(
             [
                 "退神买盘优势触发：买量/卖量估算比和关注度正反馈同时改善。",
@@ -268,7 +322,7 @@ def _manual_action(
     )
 
     if low_buy_setup:
-        if not daily_context.allow_t:
+        if not daily_context.allow_t and not trend_5_20_allows_pullback:
             return (
                 "WAIT_DAILY_WEAK",
                 [
@@ -297,6 +351,14 @@ def _manual_action(
                 ],
                 ["尾盘买回需要日线强背景；当前只允许次日重新确认。"],
             )
+        if overheat_reasons:
+            return _overheated_buy_wait(
+                label="低吸买点",
+                overheat_reasons=overheat_reasons,
+                capital_flow=capital_flow,
+                volume_price_structure=volume_price_structure,
+                trend_probability=trend_probability,
+            )
         reasons.extend(
             [
                 "买量/卖量估算比大于 1，买盘力量占优。",
@@ -310,6 +372,37 @@ def _manual_action(
         if not low_buy_confirmed:
             warnings.append("这是试探型买 T：分时承接未完全确认，Kelly 仓位会自动压低。")
         return "BUY_T_TIMING", reasons + list(force.reasons), list(attention.reasons)[:1]
+
+    mid_trend_pullback_setup = (
+        trend_5_20_allows_pullback
+        and (intraday_context.support_confirmed or intraday_context.rebound_from_low or near_support)
+        and levels["risk_reward_ratio"] >= 1.20
+        and force.force_ratio >= 1.0
+        and certainty.score >= 48.0
+        and sell_pressure.score <= 70.0
+        and capital_flow.score >= 46.0
+        and multi_period_trend.score >= 48.0
+        and trend_probability.down_1d < 0.58
+    )
+    if mid_trend_pullback_setup:
+        if overheat_reasons:
+            return _overheated_buy_wait(
+                label="5-20 日趋势回踩买点",
+                overheat_reasons=overheat_reasons,
+                capital_flow=capital_flow,
+                volume_price_structure=volume_price_structure,
+                trend_probability=trend_probability,
+            )
+        reasons.extend(
+            [
+                "5-20 日趋势回踩买点：不再只看单日强弱，先确认 20 日趋势仍支持，再用 5 分钟支撑做买点。",
+                f"5-20 日状态 {multi_period_trend.trend_5_20_state}，5 日收益 {multi_period_trend.return_5d:.1%}，20 日收益 {multi_period_trend.return_20d:.1%}。",
+                f"分时状态 {intraday_context.state}，盈亏比 {levels['risk_reward_ratio']:.2f}，资金流 {capital_flow.score:.1f}。",
+            ]
+        )
+        if not daily_context.allow_t:
+            warnings.append("单日日线背景偏弱，但 5-20 日趋势仍处于上行回踩，允许小仓真实买点。")
+        return "BUY_T_TIMING", reasons + list(multi_period_trend.reasons)[:2], list(capital_flow.reasons)[:1]
 
     trend_follow_setup = (
         (daily_context.state == "STRONG" or (daily_context.state == "NEUTRAL" and force_buy_edge >= (64.0 if flow_confirmed else 70.0)))
@@ -334,6 +427,14 @@ def _manual_action(
         )
     )
     if trend_follow_setup:
+        if overheat_reasons:
+            return _overheated_buy_wait(
+                label="强趋势跟随买点",
+                overheat_reasons=overheat_reasons,
+                capital_flow=capital_flow,
+                volume_price_structure=volume_price_structure,
+                trend_probability=trend_probability,
+            )
         reasons.extend(
             [
                 "强趋势跟随买点：日线、5 分钟和多周期趋势同时保持向上。",
@@ -361,6 +462,14 @@ def _manual_action(
         and _probability_allows_attack(trend_probability, mode="attention_feedback")
     )
     if attention_feedback_setup:
+        if overheat_reasons:
+            return _overheated_buy_wait(
+                label="关注度正反馈买点",
+                overheat_reasons=overheat_reasons,
+                capital_flow=capital_flow,
+                volume_price_structure=volume_price_structure,
+                trend_probability=trend_probability,
+            )
         reasons.extend(
             [
                 "市场关注度正反馈买点：关注度、买卖力和资金流同步改善。",
@@ -392,6 +501,14 @@ def _manual_action(
         and _probability_allows_attack(trend_probability, mode="range_probe")
     )
     if range_probe_setup:
+        if overheat_reasons:
+            return _overheated_buy_wait(
+                label="震荡试探买点",
+                overheat_reasons=overheat_reasons,
+                capital_flow=capital_flow,
+                volume_price_structure=volume_price_structure,
+                trend_probability=trend_probability,
+            )
         reasons.extend(
             [
                 "震荡试探买点：价格在箱体下半区或从低位反抽，允许更高频 T 仓试探。",
@@ -457,6 +574,26 @@ def _manual_action(
         ]
     )
     return "WAIT", reasons + list(certainty.reasons)[:1] + list(memory.reasons)[:1], warnings
+
+
+def _overheated_buy_wait(
+    *,
+    label: str,
+    overheat_reasons: tuple[str, ...],
+    capital_flow: CapitalFlowEstimate,
+    volume_price_structure: VolumePriceStructure,
+    trend_probability: TrendProbability,
+) -> tuple[str, list[str], list[str]]:
+    return (
+        "WAIT_CONFIRMATION",
+        [
+            f"5 日命中率优先：{label}触发，但量价/概率结构显示追涨过热，先等待回踩或站稳确认。",
+            f"资金流 {capital_flow.score:.1f}（{capital_flow.confirmation_state}），量价 {volume_price_structure.state} / {volume_price_structure.score:.1f}。",
+            f"1 日上行概率 {trend_probability.up_1d:.1%}，3 日上行概率 {trend_probability.up_3d:.1%}。",
+            *list(overheat_reasons)[:3],
+        ],
+        ["过热过滤已拦截 BUY_T：不再把放量追涨直接计为买点。"],
+    )
 
 
 def _strong_trend_protects_sell(

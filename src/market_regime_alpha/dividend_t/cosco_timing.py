@@ -14,6 +14,11 @@ from typing import Any
 from market_regime_alpha.data_sources.a_share_bars import MultiSourceDataError, fetch_a_share_5min_with_fallback
 from market_regime_alpha.data_sources.tushare_client import TushareConfigError, TushareDataError, build_tushare_client
 from market_regime_alpha.dividend_t.attention import AttentionScore, estimate_attention
+from market_regime_alpha.dividend_t.buy_point_quality import (
+    BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY,
+    buy_point_overheat_reasons,
+    classify_buy_point_subtype,
+)
 from market_regime_alpha.dividend_t.certainty import CertaintyScore, estimate_certainty
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS, ChanStructure, analyze_chan_structure
 from market_regime_alpha.dividend_t.cosco_profile import COSCO_A_SYMBOL, CoscoProfile
@@ -174,6 +179,113 @@ class CoscoTimingEngine:
             chan_structure=chan_structure,
             profile=profile,
         )
+        initial_buy_point_subtype = classify_buy_point_subtype(
+            action=action,
+            intraday_state=intraday_context.state,
+            trend_state=trend_state.value,
+            breakout_state=breakout_setup.state,
+            breakout_confirmed=breakout_setup.breakout_confirmed,
+            pre_breakout_watch=breakout_setup.pre_breakout_watch,
+            breakout_score=breakout_setup.score,
+            volume_price_state=volume_price_structure.state,
+            low_volume_pullback_score=volume_price_structure.low_volume_pullback_score,
+            vwap_support_score=volume_price_structure.vwap_support_score,
+            price_up_volume_down_score=volume_price_structure.price_up_volume_down_score,
+            chan_buy_point_type=chan_structure.buy_point_type,
+            overheated=bool(
+                buy_point_overheat_reasons(
+                    trend_state=trend_state.value,
+                    volume_price_state=volume_price_structure.state,
+                    volume_price_score=volume_price_structure.score,
+                    volume_breakout_score=volume_price_structure.volume_breakout_score,
+                    high_volume_stall_score=volume_price_structure.high_volume_stall_score,
+                    capital_flow_confirmation_state=capital_flow.confirmation_state,
+                    up_probability_1d=trend_probability.up_1d,
+                    pretrade_volume_ratio_to_prev=volume_price_structure.volume_expansion_ratio,
+                    breakout_confirmed=breakout_setup.breakout_confirmed,
+                    breakout_score=breakout_setup.score,
+                )
+            ),
+        )
+        if action == "BREAKOUT_BUY_TIMING":
+            action = "WATCH_BREAKOUT_NEXT_DAY"
+            reasons = [
+                "5 日命中率优先：突破买点默认降级为观察点，等待回踩不破或下一交易日重新确认。",
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "突破类买点当前历史 5 日命中率不足，暂不作为真实买点输出。",
+            ]
+        elif action == "BUY_T_TIMING" and initial_buy_point_subtype != BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY:
+            action = "WAIT_CONFIRMATION"
+            reasons = [
+                "5 日命中率优先：非支撑/回踩型买点先降级为等待确认，不计入真实买点。",
+                f"原始买点子类型={initial_buy_point_subtype}，需要回踩支撑、分时收回或低吸结构确认后再升级。",
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "买点质量过滤已拦截：当前仅保留 pullback_low_buy 作为真实买点。",
+            ]
+        elif action == "BUY_T_TIMING" and not _trend_5_20_allows_buy(multi_period_trend):
+            action = "WAIT_CONFIRMATION"
+            reasons = [
+                "5-20 日趋势过滤：中期趋势没有支持真实买点，不能只凭单日或盘中支撑推断买入。",
+                f"5-20 日状态={multi_period_trend.trend_5_20_state}，5 日收益={multi_period_trend.return_5d:.1%}，20 日收益={multi_period_trend.return_20d:.1%}。",
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "买点趋势过滤已拦截：需要 5-20 日趋势向上或上升趋势内回踩，才输出真实买点。",
+            ]
+        elif action == "BUY_T_TIMING" and not _pullback_buy_quality_allows_5d(volume_price_structure, capital_flow):
+            action = "WAIT_CONFIRMATION"
+            reasons = [
+                "5 日命中率优先：真实买点必须是低量回踩，并且有 VWAP 承接或资金确认流入。",
+                f"量价状态={volume_price_structure.state}，VWAP 承接分={volume_price_structure.vwap_support_score:.1f}，资金确认={capital_flow.confirmation_state}。",
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "买点质量过滤已拦截：需要 LOW_VOLUME_PULLBACK，且 VWAP 承接 >=70 或资金确认流入。",
+            ]
+        elif action == "SELL_T_TIMING":
+            action = "WAIT_CONFIRMATION"
+            reasons = [
+                "5 日命中率优先：普通卖 T 的历史 5 日命中率没有过线，先降级为观察点。",
+                f"量价状态={volume_price_structure.state}，资金确认={capital_flow.confirmation_state}，卖压={sell_pressure.score:.1f}，概率状态={trend_probability.state}。",
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "卖点质量过滤已拦截：SELL_T_TIMING 暂不计入真实卖点，等待 STOP_T_WAIT 或结构破位确认。",
+            ]
+        elif action == "STOP_T_WAIT" and not _stop_wait_quality_allows_5d(
+            capital_flow=capital_flow,
+            volume_price_structure=volume_price_structure,
+        ):
+            action = "WAIT_CONFIRMATION"
+            reasons = [
+                "5 日命中率优先：STOP_T_WAIT 只有在资金不背离且 VWAP 承接转弱时才作为真实卖点。",
+                f"资金确认={capital_flow.confirmation_state}，资金分={capital_flow.score:.1f}，VWAP 承接分={volume_price_structure.vwap_support_score:.1f}。",
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "卖点质量过滤已拦截：STOP_T_WAIT 需要资金不背离且 VWAP 承接 < 50。",
+            ]
+        elif action == "WAIT_DAILY_WEAK":
+            action = "WAIT_CONFIRMATION"
+            reasons = [
+                "5 日命中率优先：日线弱只作为风险观察和禁止买入条件，不再计作主动卖点。",
+                "历史校准显示 WAIT_DAILY_WEAK 的 5 日方向命中率接近随机，等待 STOP_T 或强卖压确认。",
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "卖点质量过滤已拦截：WAIT_DAILY_WEAK 降级为观察，不输出卖点参考价。",
+            ]
         signal_blocked = False
         if require_fresh and not data_fresh:
             original_action = action
@@ -202,6 +314,34 @@ class CoscoTimingEngine:
             )
         )
         confidence = _confidence(force=force, daily_context=daily_context, intraday_context=intraday_context)
+        buy_point_subtype = classify_buy_point_subtype(
+            action=action,
+            intraday_state=intraday_context.state,
+            trend_state=trend_state.value,
+            breakout_state=breakout_setup.state,
+            breakout_confirmed=breakout_setup.breakout_confirmed,
+            pre_breakout_watch=breakout_setup.pre_breakout_watch,
+            breakout_score=breakout_setup.score,
+            volume_price_state=volume_price_structure.state,
+            low_volume_pullback_score=volume_price_structure.low_volume_pullback_score,
+            vwap_support_score=volume_price_structure.vwap_support_score,
+            price_up_volume_down_score=volume_price_structure.price_up_volume_down_score,
+            chan_buy_point_type=chan_structure.buy_point_type,
+            overheated=bool(
+                buy_point_overheat_reasons(
+                    trend_state=trend_state.value,
+                    volume_price_state=volume_price_structure.state,
+                    volume_price_score=volume_price_structure.score,
+                    volume_breakout_score=volume_price_structure.volume_breakout_score,
+                    high_volume_stall_score=volume_price_structure.high_volume_stall_score,
+                    capital_flow_confirmation_state=capital_flow.confirmation_state,
+                    up_probability_1d=trend_probability.up_1d,
+                    pretrade_volume_ratio_to_prev=volume_price_structure.volume_expansion_ratio,
+                    breakout_confirmed=breakout_setup.breakout_confirmed,
+                    breakout_score=breakout_setup.score,
+                )
+            ),
+        )
         signal_strength = _signal_strength(
             action=action,
             force=force,
@@ -216,6 +356,7 @@ class CoscoTimingEngine:
             breakout_setup=breakout_setup,
             chan_structure=chan_structure,
             risk_reward_ratio=levels["risk_reward_ratio"],
+            buy_point_subtype=buy_point_subtype,
         )
         return CoscoTimingSnapshot(
             symbol=profile.symbol,
@@ -254,6 +395,7 @@ class CoscoTimingEngine:
             manual_only=True,
             is_realtime=is_realtime,
             signal_blocked=signal_blocked,
+            buy_point_subtype=buy_point_subtype,
         )
 
 
@@ -425,6 +567,29 @@ def sample_cosco_timing() -> CoscoTimingSnapshot:
             "这是固定样例数据，只用于验证页面和模型计算链路，不代表实时行情。",
         ),
     )
+
+
+def _trend_5_20_allows_buy(multi_period_trend: MultiPeriodTrend) -> bool:
+    return multi_period_trend.trend_5_20_state in {"UP", "PULLBACK_IN_UPTREND"}
+
+
+def _pullback_buy_quality_allows_5d(
+    volume_price_structure: VolumePriceStructure,
+    capital_flow: CapitalFlowEstimate,
+) -> bool:
+    if volume_price_structure.state != "LOW_VOLUME_PULLBACK":
+        return False
+    if capital_flow.confirmation_state == "DIVERGENT":
+        return False
+    return volume_price_structure.vwap_support_score >= 70.0 or capital_flow.confirmation_state == "CONFIRMED_INFLOW"
+
+
+def _stop_wait_quality_allows_5d(
+    *,
+    capital_flow: CapitalFlowEstimate,
+    volume_price_structure: VolumePriceStructure,
+) -> bool:
+    return capital_flow.confirmation_state != "DIVERGENT" and volume_price_structure.vwap_support_score < 50.0
 
 
 def _prepare_bars(frame: Any) -> Any:

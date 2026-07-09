@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import asdict
 from datetime import datetime
 import json
@@ -9,7 +10,16 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from market_regime_alpha.data_sources.a_share_bars import AShareBarProvider, LatestQuote, TencentMinuteProvider, fetch_tencent_latest_quotes
+from market_regime_alpha.data_sources.a_share_bars import (
+    AShareBarProvider,
+    LatestQuote,
+    LocalCacheTencentProvider,
+    TencentMinuteProvider,
+    fetch_tencent_latest_quotes,
+)
+from market_regime_alpha.dividend_t.cosco_profile import profile_for_watchlist_item
+from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine
+from market_regime_alpha.dividend_t.fundamentals import build_fundamental_resolver
 from market_regime_alpha.dividend_t.indicators import estimate_levels, infer_technical_inputs
 from market_regime_alpha.dividend_t.models import FundamentalInputs, PositionState, RetreatInputs, Signal, StrategyDecision, TrendState, WatchlistItem
 from market_regime_alpha.dividend_t.scoring import clamp
@@ -19,6 +29,8 @@ from market_regime_alpha.dividend_t.strategy import DividendTStrategy
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_TREND_OUTPUT = PROJECT_ROOT / "docs" / "data" / "dividend_trends.json"
+DEFAULT_LOCAL_TIMING_CACHE_DIR = PROJECT_ROOT / "data" / "raw" / "dividend_t_5min_1y"
+DEFAULT_HIT_RATE_SUMMARY = PROJECT_ROOT / "reports" / "backtests" / "buy_sell_point_hit_rate_summary.csv"
 DEFAULT_MIN_BARS = 30
 
 SIGNAL_LABELS = {
@@ -40,6 +52,19 @@ TREND_LABELS = {
     "risk_off": "风险回避",
 }
 
+TIMING_ACTION_LABELS = {
+    "BUY_T_TIMING": "买点",
+    "BREAKOUT_BUY_TIMING": "突破买点",
+    "WATCH_BREAKOUT_NEXT_DAY": "突破观察",
+    "STOP_T_WAIT": "卖点",
+    "SELL_T_TIMING": "卖点观察",
+    "WAIT": "等待",
+    "WAIT_CONFIRMATION": "观察",
+    "WAIT_DAILY_WEAK": "日线弱观察",
+    "WAIT_STRONG_TREND": "强趋势持有",
+    "WAIT_STALE_DATA": "数据过期",
+}
+
 
 def build_dividend_trend_snapshot(
     *,
@@ -55,8 +80,11 @@ def build_dividend_trend_snapshot(
     generated = generated_at or datetime.now(SHANGHAI_TZ)
     items = load_watchlist(watchlist_path)[:limit]
     symbols = [item.symbol for item in items]
-    minute_provider = provider or TencentMinuteProvider(timeout_seconds=timeout_seconds)
     quote_map = quotes if quotes is not None else _safe_quote_fetch(symbols, timeout_seconds=timeout_seconds)
+    minute_provider = provider or LocalCacheTencentProvider(
+        cache_dir=DEFAULT_LOCAL_TIMING_CACHE_DIR,
+        tencent=TencentMinuteProvider(timeout_seconds=timeout_seconds),
+    )
     strategy = DividendTStrategy()
 
     rows: list[dict[str, Any]] = []
@@ -75,7 +103,8 @@ def build_dividend_trend_snapshot(
         "generated_timezone": "Asia/Shanghai",
         "watchlist_path": str(Path(watchlist_path)),
         "source": getattr(minute_provider, "data_source", getattr(minute_provider, "name", "unknown")),
-        "horizon": "未来1-3个交易日倾向",
+        "horizon": "未来1/3日概率与1/3/5日历史命中率",
+        "point_hit_rates": load_point_hit_rate_summary(),
         "row_count": len(rows),
         "successful_count": successful_count,
         "failed_count": failed_count,
@@ -116,6 +145,7 @@ def _build_symbol_row(
     levels = estimate_levels(bars, support_window=min(20, len(bars)), resistance_window=min(60, len(bars)))
     future_trend = classify_future_trend(decision=decision, technical=technical)
     score = asdict(decision.score)
+    timing = _timing_payload(item=item, bars=bars, data_source=_data_source(provider, bars))
     return {
         "status": "ok",
         "symbol": item.symbol,
@@ -145,6 +175,7 @@ def _build_symbol_row(
         "T_score": _round(score["T_score"], digits=1),
         "risk_reward_ratio": _round(retreat.risk_reward_ratio, digits=2),
         "sell_pressure": _round(retreat.sell_pressure, digits=2),
+        **timing,
         "reasons": list(decision.reasons),
         "warnings": list(decision.warnings),
     }
@@ -166,8 +197,120 @@ def _error_row(*, item: WatchlistItem, quote: LatestQuote | None, exc: Exception
         "confidence": 0,
         "signal": "NO_DATA",
         "signal_label": "数据不足",
+        "timing_status": "error",
+        "timing_action": "NO_DATA",
+        "timing_action_label": "数据不足",
+        "timing_point_type": "none",
+        "timing_point_label": "无信号",
+        "up_probability_1d": None,
+        "down_probability_1d": None,
+        "up_probability_3d": None,
+        "down_probability_3d": None,
+        "probability_state": "NO_DATA",
+        "buy_reference_price": None,
+        "sell_reference_price": None,
+        "stop_price": None,
+        "buy_back_reference_price": None,
         "scan_error": f"{type(exc).__name__}: {exc}",
     }
+
+
+def _timing_payload(*, item: WatchlistItem, bars: Any, data_source: str) -> dict[str, Any]:
+    try:
+        profile = profile_for_watchlist_item(item)
+        snapshot = CoscoTimingEngine(
+            profile=profile,
+            fundamental_resolver=build_fundamental_resolver(profile, source="profile"),
+        ).evaluate(bars, data_source=data_source)
+    except Exception as exc:  # noqa: BLE001 - keep the public row useful when the timing engine cannot evaluate.
+        return {
+            "timing_status": "error",
+            "timing_action": "ERROR",
+            "timing_action_label": "计算失败",
+            "timing_point_type": "none",
+            "timing_point_label": "无信号",
+            "timing_error": f"{type(exc).__name__}: {exc}",
+            "up_probability_1d": None,
+            "down_probability_1d": None,
+            "up_probability_3d": None,
+            "down_probability_3d": None,
+            "probability_state": "ERROR",
+            "buy_reference_price": None,
+            "sell_reference_price": None,
+            "stop_price": None,
+            "buy_back_reference_price": None,
+        }
+
+    probability = snapshot.trend_probability
+    prices = snapshot.prices
+    action = snapshot.action
+    point_type = _timing_point_type(action)
+    return {
+        "timing_status": "ok",
+        "timing_action": action,
+        "timing_action_label": TIMING_ACTION_LABELS.get(action, action),
+        "timing_point_type": point_type,
+        "timing_point_label": _timing_point_label(point_type),
+        "buy_point_subtype": snapshot.buy_point_subtype,
+        "signal_strength_score": _round(snapshot.signal_strength.score, digits=1),
+        "signal_strength_label": snapshot.signal_strength.label,
+        "estimated_win_rate": _round(snapshot.signal_strength.estimated_win_rate, digits=4),
+        "up_probability_1d": _round(probability.up_1d, digits=4),
+        "down_probability_1d": _round(probability.down_1d, digits=4),
+        "up_probability_3d": _round(probability.up_3d, digits=4),
+        "down_probability_3d": _round(probability.down_3d, digits=4),
+        "probability_state": probability.state,
+        "buy_reference_price": _round(prices.buy_reference_price),
+        "sell_reference_price": _round(prices.sell_reference_price),
+        "stop_price": _round(prices.stop_price),
+        "buy_back_reference_price": _round(prices.buy_back_reference_price),
+    }
+
+
+def _timing_point_type(action: str) -> str:
+    if action in {"BUY_T_TIMING", "BREAKOUT_BUY_TIMING"}:
+        return "buy"
+    if action == "STOP_T_WAIT":
+        return "sell"
+    if action in {"WATCH_BREAKOUT_NEXT_DAY", "SELL_T_TIMING", "WAIT_CONFIRMATION", "WAIT_DAILY_WEAK", "WAIT_STRONG_TREND"}:
+        return "watch"
+    return "none"
+
+
+def _timing_point_label(point_type: str) -> str:
+    return {
+        "buy": "买点",
+        "sell": "卖点",
+        "watch": "观察",
+    }.get(point_type, "无信号")
+
+
+def _data_source(provider: AShareBarProvider, bars: Any) -> str:
+    attrs = getattr(bars, "attrs", {})
+    return str(attrs.get("data_source") or getattr(provider, "data_source", getattr(provider, "name", "unknown")))
+
+
+def load_point_hit_rate_summary(path: str | Path = DEFAULT_HIT_RATE_SUMMARY) -> dict[str, Any]:
+    summary_path = Path(path)
+    if not summary_path.exists():
+        return {"status": "missing", "source": str(summary_path), "rows": [], "by_type": {}}
+    rows: list[dict[str, Any]] = []
+    by_type: dict[str, dict[str, dict[str, Any]]] = {}
+    with summary_path.open(newline="", encoding="utf-8") as file:
+        for row in csv.DictReader(file):
+            point_type = str(row.get("point_type") or row.get("group") or "")
+            horizon = str(int(float(row.get("horizon_days") or 0)))
+            payload = {
+                "point_type": point_type,
+                "horizon_days": int(horizon),
+                "sample_count": int(float(row.get("sample_count") or 0)),
+                "hit_count": int(float(row.get("hit_count") or 0)),
+                "hit_rate": _round(float(row["hit_rate"]), digits=4) if row.get("hit_rate") else None,
+                "average_future_return": _round(float(row["average_future_return"]), digits=6) if row.get("average_future_return") else None,
+            }
+            rows.append(payload)
+            by_type.setdefault(point_type, {})[horizon] = payload
+    return {"status": "ok", "source": str(summary_path), "rows": rows, "by_type": by_type}
 
 
 def infer_retreat_inputs(bars: Any, technical: Any) -> RetreatInputs:

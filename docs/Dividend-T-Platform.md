@@ -1,11 +1,11 @@
-# 长期 / 红利 / 做 T 交易平台
+# A 股买卖点识别模型
 
-本文档对应 `strategies/ideas/Long-Term-Dividend-T-Model.md` 的第一版工程实现。
+本文档对应历史 `strategies/ideas/Long-Term-Dividend-T-Model.md` 的第一版工程实现。当前对外定位已收敛为“买点 / 卖点识别模型”，不把它描述成自动交易或完整做 T 平台。
 
 当前实盘边界：
 
 ```text
-程序只提供中远海控 A 股的手动下单时机和参考价格。
+程序只提供 A 股买点 / 卖点识别信号和参考价格。
 不会自动下单。
 不会调用 QMT / PTrade 发出真实委托。
 ```

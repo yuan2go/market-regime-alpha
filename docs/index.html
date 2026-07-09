@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>market-regime-alpha</title>
+    <title>A 股买卖点识别模型</title>
     <meta
       name="description"
       content="A-share market regime, dividend-T, ETF rotation and backtesting research toolkit."
@@ -327,13 +327,52 @@
         line-height: 1.1;
       }
 
+      .point-ribbon {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-bottom: 1px solid var(--line);
+        background: rgba(23, 32, 29, 0.025);
+      }
+
+      .point-card {
+        min-height: 104px;
+        border-right: 1px solid var(--line);
+        padding: 16px;
+      }
+
+      .point-card:last-child {
+        border-right: 0;
+      }
+
+      .point-card span {
+        display: block;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.72rem;
+        font-weight: 760;
+      }
+
+      .point-card strong {
+        display: block;
+        margin-top: 8px;
+        font-size: clamp(1.35rem, 3vw, 2.15rem);
+        line-height: 1;
+      }
+
+      .point-card small {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
       .trend-table-wrap {
         overflow-x: auto;
       }
 
       .trend-table {
         width: 100%;
-        min-width: 960px;
+        min-width: 1080px;
         border-collapse: collapse;
       }
 
@@ -394,6 +433,38 @@
       .trend-badge.risk_off {
         background: rgba(185, 71, 50, 0.12);
         color: var(--red);
+      }
+
+      .point-chip {
+        display: inline-flex;
+        min-width: 64px;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 0.82rem;
+        font-weight: 800;
+      }
+
+      .point-chip.buy {
+        background: rgba(22, 122, 88, 0.13);
+        color: var(--green);
+      }
+
+      .point-chip.sell {
+        background: rgba(185, 71, 50, 0.12);
+        color: var(--red);
+      }
+
+      .point-chip.watch,
+      .point-chip.none {
+        background: rgba(200, 154, 56, 0.16);
+        color: #8a641d;
+      }
+
+      .reference-line {
+        display: block;
+        color: var(--muted);
+        font-size: 0.82rem;
       }
 
       .trend-empty {
@@ -515,11 +586,17 @@
           grid-template-columns: repeat(2, 1fr);
         }
 
-        .trend-stat:nth-child(2) {
+        .point-ribbon {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .trend-stat:nth-child(2),
+        .point-card:nth-child(2) {
           border-right: 0;
         }
 
-        .trend-stat:nth-child(-n + 2) {
+        .trend-stat:nth-child(-n + 2),
+        .point-card:nth-child(-n + 2) {
           border-bottom: 1px solid var(--line);
         }
 
@@ -561,13 +638,20 @@
           grid-template-columns: 1fr;
         }
 
+        .point-ribbon {
+          grid-template-columns: 1fr;
+        }
+
         .trend-stat,
-        .trend-stat:nth-child(2) {
+        .trend-stat:nth-child(2),
+        .point-card,
+        .point-card:nth-child(2) {
           border-right: 0;
           border-bottom: 1px solid var(--line);
         }
 
-        .trend-stat:last-child {
+        .trend-stat:last-child,
+        .point-card:last-child {
           border-bottom: 0;
         }
       }
@@ -577,10 +661,10 @@
     <div class="page">
       <header class="hero">
         <div>
-          <p class="kicker">A-share research toolkit</p>
-          <h1>market-regime-alpha</h1>
+          <p class="kicker">A-share timing model</p>
+          <h1>A 股买卖点识别模型</h1>
           <p class="subtitle">
-            面向 A 股市场环境识别、红利做 T、ETF 轮动与回测验证的本地研究工具。
+            面向 A 股买点、卖点、风险卖点和未来 1/3/5 日命中率验证的本地研究工具。
             项目以可复用 Python 模块、清晰数据契约和可追溯研究文档为核心。
           </p>
           <nav class="actions" aria-label="Primary links">
@@ -592,16 +676,16 @@
         <aside class="ticker-panel" aria-label="Research dashboard preview">
           <div class="ticker-strip">
             <div class="tick up">
-              <span>REGIME</span>
-              <strong>ON</strong>
+              <span>BUY</span>
+              <strong>POINT</strong>
             </div>
             <div class="tick down">
-              <span>RISK</span>
-              <strong>GATED</strong>
+              <span>SELL</span>
+              <strong>POINT</strong>
             </div>
             <div class="tick up">
-              <span>ETF</span>
-              <strong>MA</strong>
+              <span>HIT</span>
+              <strong>1/3/5D</strong>
             </div>
             <div class="tick">
               <span>COSCO</span>
@@ -648,7 +732,7 @@
             </div>
             <div class="signal">
               <span>BACKTEST</span>
-              <strong>MA / dividend-T</strong>
+              <strong>point hit-rate</strong>
             </div>
             <div class="signal">
               <span>OUTPUT</span>
@@ -669,18 +753,18 @@
           <div class="grid">
             <article class="card">
               <span class="card-label">01 / MARKET</span>
-              <h3>市场环境与标的筛选</h3>
-              <p>围绕 A 股行情、红利观察池、ETF 均线交叉和多源行情适配沉淀研究模块。</p>
+              <h3>行情与标的池</h3>
+              <p>围绕 A 股行情、观察池、5 分钟 K 线和多源行情适配沉淀研究模块。</p>
             </article>
             <article class="card">
-              <span class="card-label">02 / DIVIDEND-T</span>
-              <h3>红利做 T 平台骨架</h3>
-              <p>覆盖评分、时机、风控、观察池、手动面板和飞书提醒，不自动做资金决策。</p>
+              <span class="card-label">02 / POINTS</span>
+              <h3>买卖点识别</h3>
+              <p>覆盖买点、卖点、风险卖点、观察池、手动面板和飞书提醒，不自动做资金决策。</p>
             </article>
             <article class="card">
               <span class="card-label">03 / BACKTESTING</span>
               <h3>回测与验证流程</h3>
-              <p>从样例 ETF 回测到中远海控红利做 T 回放，强调假设、数据、风险和结论记录。</p>
+              <p>从样例 ETF 回测到买卖点命中率报告，强调假设、数据、风险和结论记录。</p>
             </article>
           </div>
         </section>
@@ -709,16 +793,38 @@
                 <strong data-trend-horizon>未来1-3个交易日</strong>
               </div>
             </div>
+            <div class="point-ribbon">
+              <div class="point-card">
+                <span>BUY 5D HIT</span>
+                <strong data-buy-hit-rate>--</strong>
+                <small data-buy-hit-detail>等待命中率报告</small>
+              </div>
+              <div class="point-card">
+                <span>SELL 5D HIT</span>
+                <strong data-sell-hit-rate>--</strong>
+                <small data-sell-hit-detail>等待命中率报告</small>
+              </div>
+              <div class="point-card">
+                <span>CURRENT BUY</span>
+                <strong data-current-buy-count>0</strong>
+                <small data-current-buy-detail>真实买点数量</small>
+              </div>
+              <div class="point-card">
+                <span>CURRENT SELL</span>
+                <strong data-current-sell-count>0</strong>
+                <small data-current-sell-detail>真实卖点数量</small>
+              </div>
+            </div>
             <div class="trend-table-wrap">
               <table class="trend-table">
                 <thead>
                   <tr>
                     <th>标的</th>
-                    <th>趋势</th>
+                    <th>买卖点</th>
+                    <th>预测概率</th>
                     <th>价格</th>
-                    <th>模型信号</th>
-                    <th>评分</th>
-                    <th>风控</th>
+                    <th>趋势</th>
+                    <th>评分/风控</th>
                     <th>更新时间</th>
                   </tr>
                 </thead>
@@ -749,8 +855,8 @@
             <a class="doc-link" href="./Dividend-T-Platform.md">
               <span class="doc-mark">DT</span>
               <span>
-                <span class="doc-title">红利做 T 平台</span>
-                <span class="doc-desc">长期红利、盘中时机、风控和通知链路</span>
+                <span class="doc-title">买卖点识别模型</span>
+                <span class="doc-desc">买点、卖点、风控和通知链路</span>
               </span>
               <span class="arrow">-&gt;</span>
             </a>
@@ -810,7 +916,7 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
       </main>
 
       <footer class="footer">
-        <span>market-regime-alpha</span>
+        <span>A 股买卖点识别模型</span>
         <span>Research tooling only. Not financial advice.</span>
       </footer>
     </div>
@@ -820,6 +926,14 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
       const trendCount = document.querySelector("[data-trend-count]");
       const trendSource = document.querySelector("[data-trend-source]");
       const trendHorizon = document.querySelector("[data-trend-horizon]");
+      const buyHitRate = document.querySelector("[data-buy-hit-rate]");
+      const sellHitRate = document.querySelector("[data-sell-hit-rate]");
+      const buyHitDetail = document.querySelector("[data-buy-hit-detail]");
+      const sellHitDetail = document.querySelector("[data-sell-hit-detail]");
+      const currentBuyCount = document.querySelector("[data-current-buy-count]");
+      const currentSellCount = document.querySelector("[data-current-sell-count]");
+      const currentBuyDetail = document.querySelector("[data-current-buy-detail]");
+      const currentSellDetail = document.querySelector("[data-current-sell-detail]");
 
       fetch(`./data/dividend_trends.json?ts=${Date.now()}`, { cache: "no-store" })
         .then((response) => {
@@ -844,6 +958,7 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
         trendCount.textContent = `${snapshot.successful_count || 0} / ${snapshot.row_count || rows.length}`;
         trendSource.textContent = snapshot.source || "unknown";
         trendHorizon.textContent = snapshot.horizon || "未来1-3个交易日";
+        renderPointSummary(snapshot, rows);
         trendBody.innerHTML = "";
 
         if (rows.length === 0) {
@@ -860,14 +975,35 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
         rows.forEach((item) => {
           const row = document.createElement("tr");
           row.appendChild(symbolCell(item));
-          row.appendChild(badgeCell(item));
+          row.appendChild(pointCell(item));
+          row.appendChild(probabilityCell(item));
           row.appendChild(metricCell(formatNumber(item.latest_price), pctText(item.change_pct)));
-          row.appendChild(metricCell(item.signal_label || item.signal || "无信号", item.status === "ok" ? item.trend_state : item.scan_error));
-          row.appendChild(metricCell(formatNumber(item.total_score, 1), `F ${formatNumber(item.F_score, 1)} / T ${formatNumber(item.T_score, 1)}`));
-          row.appendChild(metricCell(`盈亏比 ${formatNumber(item.risk_reward_ratio, 2)}`, `卖压 ${formatNumber(item.sell_pressure, 2)}`));
+          row.appendChild(badgeCell(item));
+          row.appendChild(
+            metricCell(
+              `总分 ${formatNumber(item.total_score, 1)}`,
+              `F ${formatNumber(item.F_score, 1)} / T ${formatNumber(item.T_score, 1)} · 盈亏比 ${formatNumber(item.risk_reward_ratio, 2)}`
+            )
+          );
           row.appendChild(metricCell(item.bar_time || item.quote_time || "-", item.quote_source || "-"));
           trendBody.appendChild(row);
         });
+      }
+
+      function renderPointSummary(snapshot, rows) {
+        const buy5 = hitRate(snapshot, "buy", 5);
+        const sell5 = hitRate(snapshot, "sell", 5);
+        buyHitRate.textContent = hitRateText(buy5);
+        sellHitRate.textContent = hitRateText(sell5);
+        buyHitDetail.textContent = hitDetailText(buy5);
+        sellHitDetail.textContent = hitDetailText(sell5);
+
+        const buyRows = rows.filter((item) => item.status === "ok" && item.timing_point_type === "buy");
+        const sellRows = rows.filter((item) => item.status === "ok" && item.timing_point_type === "sell");
+        currentBuyCount.textContent = String(buyRows.length);
+        currentSellCount.textContent = String(sellRows.length);
+        currentBuyDetail.textContent = topSymbolsText(buyRows, "暂无真实买点");
+        currentSellDetail.textContent = topSymbolsText(sellRows, "暂无真实卖点");
       }
 
       function symbolCell(item) {
@@ -895,6 +1031,33 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
         return cell;
       }
 
+      function pointCell(item) {
+        const cell = document.createElement("td");
+        const badge = document.createElement("span");
+        const pointType = item.timing_point_type || "none";
+        badge.className = `point-chip ${pointType}`;
+        badge.textContent = item.timing_point_label || "无信号";
+        cell.appendChild(badge);
+
+        const main = document.createElement("span");
+        main.className = "metric-main";
+        main.textContent = item.timing_action_label || item.timing_action || item.signal_label || "观察";
+        cell.appendChild(main);
+
+        const ref = document.createElement("span");
+        ref.className = "reference-line";
+        ref.textContent = referenceText(item);
+        cell.appendChild(ref);
+        return cell;
+      }
+
+      function probabilityCell(item) {
+        return metricCell(
+          `上行 ${probabilityText(item.up_probability_1d)} / ${probabilityText(item.up_probability_3d)}`,
+          `下行 ${probabilityText(item.down_probability_1d)} / ${probabilityText(item.down_probability_3d)} · ${item.probability_state || "-"}`
+        );
+      }
+
       function metricCell(mainText, subText) {
         const cell = document.createElement("td");
         const main = document.createElement("span");
@@ -917,6 +1080,46 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
         if (value == null || Number.isNaN(Number(value))) return "-";
         const signed = Number(value) > 0 ? "+" : "";
         return `${signed}${Number(value).toFixed(2)}%`;
+      }
+
+      function probabilityText(value) {
+        if (value == null || Number.isNaN(Number(value))) return "-";
+        return `${(Number(value) * 100).toFixed(1)}%`;
+      }
+
+      function hitRate(snapshot, pointType, horizonDays) {
+        return snapshot.point_hit_rates?.by_type?.[pointType]?.[String(horizonDays)] || null;
+      }
+
+      function hitRateText(item) {
+        if (!item || item.hit_rate == null) return "--";
+        return probabilityText(item.hit_rate);
+      }
+
+      function hitDetailText(item) {
+        if (!item) return "等待命中率报告";
+        return `${item.hit_count}/${item.sample_count} 命中 · ${item.horizon_days}日`;
+      }
+
+      function topSymbolsText(rows, fallback) {
+        if (rows.length === 0) return fallback;
+        return rows
+          .slice(0, 3)
+          .map((item) => item.name || item.symbol)
+          .join("、");
+      }
+
+      function referenceText(item) {
+        if (item.timing_point_type === "buy" && item.buy_reference_price != null) {
+          return `买入参考 ${formatNumber(item.buy_reference_price)}`;
+        }
+        if (item.timing_point_type === "sell") {
+          if (item.sell_reference_price != null) return `卖出参考 ${formatNumber(item.sell_reference_price)}`;
+          if (item.stop_price != null) return `止损参考 ${formatNumber(item.stop_price)}`;
+        }
+        if (item.buy_back_reference_price != null) return `买回参考 ${formatNumber(item.buy_back_reference_price)}`;
+        if (item.timing_status === "error") return item.timing_error || "买卖点计算失败";
+        return `强度 ${formatNumber(item.signal_strength_score, 1)} · ${item.signal_strength_label || "观察"}`;
       }
 
       function formatDateTime(value) {

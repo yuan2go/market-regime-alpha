@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "market-regime-alpha"
 version = "0.1.0"
-description = "Market-regime-driven A-share stock selection and ETF rotation research tool."
+description = "A-share buy/sell point identification and backtesting research tool."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

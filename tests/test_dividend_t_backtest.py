@@ -21,6 +21,7 @@ from market_regime_alpha.dividend_t.backtest import (  # noqa: E402
     ATTACK_INACTIVE,
     ATTACK_WATCH,
     BacktestSignal,
+    DEFAULT_SIGNAL_HISTORY_BARS,
     DividendTBacktestConfig,
     TradeExecutionConstraints,
     VOLUME_PRICE_DISTRIBUTION,
@@ -62,6 +63,10 @@ from market_regime_alpha.dividend_t.position_sizing import PositionBudget  # noq
 
 
 class DividendTBacktestTests(unittest.TestCase):
+    def test_default_signal_history_covers_twenty_trading_days(self) -> None:
+        self.assertEqual(DEFAULT_SIGNAL_HISTORY_BARS, 48 * 20)
+        self.assertEqual(DividendTBacktestConfig().max_history_bars, DEFAULT_SIGNAL_HISTORY_BARS)
+
     def test_sample_backtest_runs_end_to_end(self) -> None:
         bars = _short_sample()
 
@@ -1810,7 +1815,7 @@ class DividendTBacktestTests(unittest.TestCase):
         self.assertLess(weak_target, 0.60)
         self.assertEqual(strong_target, 1.00)
 
-    def test_risk_on_continuation_add_promotes_strong_wait_signal(self) -> None:
+    def test_risk_on_continuation_add_does_not_promote_breakout_watch_signal(self) -> None:
         config = DividendTBacktestConfig(
             t_trade_pct=1.00,
             max_signal_position_pct=1.00,
@@ -1833,7 +1838,7 @@ class DividendTBacktestTests(unittest.TestCase):
 
         promoted = _apply_risk_on_continuation_add(signal, config)
 
-        self.assertEqual(promoted.action, "BREAKOUT_BUY_TIMING")
+        self.assertEqual(promoted.action, "WAIT_STRONG_TREND")
 
     def test_low_force_ratio_does_not_cap_confirmed_volume_price_add(self) -> None:
         config = DividendTBacktestConfig(

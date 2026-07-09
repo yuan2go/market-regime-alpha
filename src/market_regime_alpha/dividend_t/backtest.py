@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine
+from market_regime_alpha.dividend_t.buy_point_quality import BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY, classify_buy_point_subtype
 from market_regime_alpha.dividend_t.market_environment import (
     MARKET_CAUTION,
     MARKET_NEUTRAL,
@@ -31,7 +32,8 @@ from market_regime_alpha.dividend_t.strategy_modes import apply_strategy_mode
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SIGNAL_CACHE_DIR = PROJECT_ROOT / "data" / "processed" / "dividend_t_signal_cache"
-SIGNAL_CACHE_VERSION = "v22_profit_diffusion_volume_filter"
+SIGNAL_CACHE_VERSION = "v30_sell_observe_stop_vwap_quality"
+DEFAULT_SIGNAL_HISTORY_BARS = 48 * 20
 ATTACK_INACTIVE = "INACTIVE"
 ATTACK_WATCH = "WATCH"
 ATTACK_CONFIRMED = "CONFIRMED"
@@ -80,6 +82,7 @@ class DividendTBacktestConfig:
     min_base_rebalance_buy_quality_score: float = 0.50
     min_risk_on_add_quality_score: float = 0.50
     min_risk_on_add_main_rise_quality_score: float = 0.58
+    enable_point_hit_rate_sell_calibration: bool = False
     buy_t_failure_cooldown_bars: int = 96
     max_signal_position_pct: float = 1.00
     strong_trend_signal_position_pct: float = 0.80
@@ -184,7 +187,7 @@ class DividendTBacktestConfig:
     profit_protect_trigger_pct: float = 0.012
     profit_protect_sell_fraction: float = 0.50
     periods_per_year: int = 252 * 48
-    max_history_bars: int = 240
+    max_history_bars: int = DEFAULT_SIGNAL_HISTORY_BARS
     signal_step_bars: int = 1
     signal_cache_dir: Path | None = None
     signal_cache_save_every: int = 200
@@ -353,12 +356,14 @@ class DividendTBacktestPoint:
     beta_hold_distribution_confirm_streak: int = 0
     attack_exit_confirm_streak: int = 0
     trend_state: str = "RANGE"
+    buy_point_subtype: str = "none"
     buy_signal_strength: float = 0.0
     breakout_score: float = 0.0
     breakout_state: str = "NONE"
     breakout_confirmed: bool = False
     pre_breakout_watch: bool = False
     volume_price_score: float = 50.0
+    volume_price_state: str = "NEUTRAL"
     volume_breakout_score: float = 50.0
     post_breakout_volume_persistence_score: float = 50.0
     vwap_support_score: float = 50.0
@@ -463,6 +468,7 @@ class BacktestSignal:
     down_probability_1d: float = 0.50
     down_probability_3d: float = 0.50
     probability_state: str = "RANGE"
+    buy_point_subtype: str = "none"
     breakout_score: float = 0.0
     breakout_state: str = "NONE"
     breakout_confirmed: bool = False
@@ -564,6 +570,7 @@ class BacktestSignal:
             down_probability_1d=float(getattr(trend_probability, "down_1d", 0.50)),
             down_probability_3d=float(getattr(trend_probability, "down_3d", 0.50)),
             probability_state=str(getattr(trend_probability, "state", "RANGE")),
+            buy_point_subtype=str(getattr(snapshot, "buy_point_subtype", "none")),
             breakout_score=float(getattr(breakout_setup, "score", 0.0)),
             breakout_state=str(getattr(breakout_setup, "state", "NONE")),
             breakout_confirmed=bool(getattr(breakout_setup, "breakout_confirmed", False)),
@@ -702,6 +709,7 @@ class BacktestSignalCache:
                 down_probability_1d=float(row.get("down_probability_1d", 0.50)),
                 down_probability_3d=float(row.get("down_probability_3d", 0.50)),
                 probability_state=str(row.get("probability_state", "RANGE")),
+                buy_point_subtype=str(row.get("buy_point_subtype", "none")),
                 breakout_score=float(row.get("breakout_score", 0.0)),
                 breakout_state=str(row.get("breakout_state", "NONE")),
                 breakout_confirmed=_optional_bool(row.get("breakout_confirmed")),
@@ -1154,6 +1162,8 @@ def run_cosco_dividend_t_backtest(
                 attack_state=attack_state,
             )
             signal = _apply_risk_on_continuation_add(signal, signal_cfg)
+            if signal_cfg.enable_point_hit_rate_sell_calibration:
+                signal = _apply_sell_point_hit_rate_calibration(signal)
             if _buy_t_failure_cooldown_blocks_signal(
                 signal,
                 signal_cfg,
@@ -1648,12 +1658,14 @@ def run_cosco_dividend_t_backtest(
                 beta_hold_distribution_confirm_streak=beta_hold_distribution_confirm_streak,
                 attack_exit_confirm_streak=attack_exit_confirm_streak,
                 trend_state=str(getattr(point_signal, "trend_state", "RANGE")),
+                buy_point_subtype=str(getattr(point_signal, "buy_point_subtype", "none")),
                 buy_signal_strength=round(float(getattr(point_signal, "buy_signal_strength", 0.0)), 2),
                 breakout_score=round(float(getattr(point_signal, "breakout_score", 0.0)), 2),
                 breakout_state=str(getattr(point_signal, "breakout_state", "NONE")),
                 breakout_confirmed=bool(getattr(point_signal, "breakout_confirmed", False)),
                 pre_breakout_watch=bool(getattr(point_signal, "pre_breakout_watch", False)),
                 volume_price_score=round(float(getattr(point_signal, "volume_price_score", 50.0)), 2),
+                volume_price_state=str(getattr(point_signal, "volume_price_state", "NEUTRAL")),
                 volume_breakout_score=round(float(getattr(point_signal, "volume_breakout_score", 50.0)), 2),
                 post_breakout_volume_persistence_score=round(
                     float(getattr(point_signal, "post_breakout_volume_persistence_score", 50.0)),
@@ -3511,7 +3523,7 @@ def _apply_risk_on_continuation_add(signal: BacktestSignal, config: DividendTBac
     if not _risk_on_continuation_add_signal(signal, config):
         return signal
     next_action = "BREAKOUT_BUY_TIMING" if signal.breakout_confirmed or signal.breakout_score >= 88.0 else "BUY_T_TIMING"
-    return replace(signal, action=next_action)
+    return _with_buy_point_subtype(replace(signal, action=next_action))
 
 
 def _risk_on_continuation_add_signal(signal: BacktestSignal, config: DividendTBacktestConfig) -> bool:
@@ -3527,7 +3539,11 @@ def _risk_on_continuation_add_signal(signal: BacktestSignal, config: DividendTBa
         "WAIT_LATE_SESSION",
         "WAIT_CONFIRMATION",
         "WAIT_STALE_DATA",
+        "WATCH_BREAKOUT_NEXT_DAY",
+        "WAIT_BREAKOUT_FOLLOW_THROUGH",
     }:
+        return False
+    if _signal_buy_point_subtype(replace(signal, action="BUY_T_TIMING")) != BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY:
         return False
     if signal.market_environment_state != MARKET_RISK_ON:
         return False
@@ -3639,6 +3655,27 @@ def _signal_with_market_environment(
         model_holding_win_rate=point.model_holding_win_rate,
         model_holding_profit_spread=point.model_holding_profit_spread,
         model_new_buy_success_rate=point.model_new_buy_success_rate,
+    )
+
+
+def _apply_sell_point_hit_rate_calibration(signal: BacktestSignal) -> BacktestSignal:
+    if signal.action == "SELL_T_TIMING":
+        return replace(
+            signal,
+            action="WAIT_CONFIRMATION",
+            sell_reference_price=None,
+            buy_back_reference_price=None,
+        )
+    if signal.action != "STOP_T_WAIT":
+        return signal
+    if signal.capital_flow_confirmation_state != "DIVERGENT" and signal.vwap_support_score < 50.0:
+        return signal
+    return replace(
+        signal,
+        action="WAIT_CONFIRMATION",
+        sell_reference_price=None,
+        buy_back_reference_price=None,
+        stop_price=None,
     )
 
 
@@ -6931,8 +6968,13 @@ def _with_pretrade_volume_price_context(
         min_return_pct=config.volume_price_continuation_min_return_pct,
         max_volume_ratio=config.volume_price_continuation_max_volume_ratio,
     )
+    buy_point_subtype = _signal_buy_point_subtype(
+        signal,
+        pretrade_volume_price_state=str(features["volume_price_state"]),
+    )
     return replace(
         signal,
+        buy_point_subtype=buy_point_subtype,
         pretrade_volume_price_state_12=str(short_features["volume_price_state"]),
         pretrade_price_return_pct_12=float(short_features["price_return_pct"]),
         pretrade_volume_ratio_to_prev_12=float(short_features["volume_ratio_to_prev"]),
@@ -6943,6 +6985,32 @@ def _with_pretrade_volume_price_context(
         pretrade_volume_price_lookback_bars=int(features["actual_bars"]),
         pretrade_price_return_pct=float(features["price_return_pct"]),
         pretrade_volume_ratio_to_prev=float(features["volume_ratio_to_prev"]),
+    )
+
+
+def _with_buy_point_subtype(signal: BacktestSignal) -> BacktestSignal:
+    return replace(signal, buy_point_subtype=_signal_buy_point_subtype(signal))
+
+
+def _signal_buy_point_subtype(
+    signal: BacktestSignal,
+    *,
+    pretrade_volume_price_state: str | None = None,
+) -> str:
+    return classify_buy_point_subtype(
+        action=signal.action,
+        intraday_state=signal.intraday_state,
+        trend_state=signal.trend_state,
+        breakout_state=signal.breakout_state,
+        breakout_confirmed=signal.breakout_confirmed,
+        pre_breakout_watch=signal.pre_breakout_watch,
+        breakout_score=signal.breakout_score,
+        volume_price_state=signal.volume_price_state,
+        low_volume_pullback_score=signal.low_volume_pullback_score,
+        vwap_support_score=signal.vwap_support_score,
+        price_up_volume_down_score=signal.price_up_volume_down_score,
+        chan_buy_point_type=signal.chan_buy_point_type,
+        pretrade_volume_price_state=pretrade_volume_price_state or signal.pretrade_volume_price_state,
     )
 
 

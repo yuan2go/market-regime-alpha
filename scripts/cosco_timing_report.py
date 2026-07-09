@@ -13,14 +13,14 @@ from market_regime_alpha.notifications import send_notifications
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 POSITION_FILE = PROJECT_ROOT / "data" / "local" / "portfolio" / "positions.json"
 ACTION_LABELS = {
-    "BUY_T_TIMING": "正 T 买入时机",
-    "SELL_T_TIMING": "卖 T / 倒 T 时机",
-    "STOP_T_WAIT": "停止做 T，等待",
+    "BUY_T_TIMING": "买点",
+    "SELL_T_TIMING": "卖点",
+    "STOP_T_WAIT": "风险卖点，等待",
     "WAIT_STALE_DATA": "数据过期，等待",
     "WAIT_DAILY_WEAK": "日线偏弱，等待",
     "WAIT_CONFIRMATION": "等待分时确认",
-    "WAIT_LATE_SESSION": "尾盘不买回，等待",
-    "WAIT_STRONG_TREND": "强趋势保护，暂不卖 T",
+    "WAIT_LATE_SESSION": "尾盘等待",
+    "WAIT_STRONG_TREND": "强趋势保护，暂不卖出",
     "WAIT": "等待",
 }
 
@@ -55,7 +55,7 @@ def format_report(data: dict[str, Any]) -> str:
         attempts = _format_attempts(data.get("data_attempts") or [])
         steps = "\n".join(f"- {item}" for item in data.get("required_user_steps") or [])
         return (
-            f"中远海控量化提醒\n"
+            f"中远海控买卖点识别提醒\n"
             f"生成时间：{now}\n"
             f"状态：数据不可用\n"
             f"原因：{data.get('message')}\n"
@@ -75,7 +75,7 @@ def format_report(data: dict[str, Any]) -> str:
     warnings = "\n".join(f"- {item}" for item in (data.get("warnings") or [])[:4]) or "- 无"
 
     return (
-        f"中远海控量化提醒\n"
+        f"中远海控买卖点识别提醒\n"
         f"生成时间：{data.get('generated_at') or now}\n"
         f"数据源：{data.get('data_source')}\n"
         f"K线时间：{data.get('timestamp')}，数据年龄：{data.get('data_age_minutes')} 分钟，"

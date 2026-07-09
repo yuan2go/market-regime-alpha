@@ -1,11 +1,11 @@
-# market-regime-alpha 使用手册
+# A 股买卖点识别模型使用手册
 
 ## 1. 项目定位
 
-`market-regime-alpha` 是独立的可运行量化研究项目，当前重点不是直接实盘交易，而是把 A 股红利 / 做 T 研究流程拆成可验证的工程模块：
+`market-regime-alpha` 是独立的可运行量化研究项目，当前重点不是直接实盘交易，而是把 A 股买点 / 卖点识别流程拆成可验证的工程模块：
 
 - 多源行情读取与标准化
-- 红利观察池和中远海控 5 分钟手动择时
+- 观察池和中远海控 5 分钟买卖点识别
 - 策略假设、回测报告和风险控制
 - 本地 Dashboard 与飞书提醒
 - 样例 ETF 均线回测，用于验证最小回测链路
@@ -42,7 +42,7 @@ market-regime-alpha/
 | --- | --- |
 | `README.md` | 项目总览和第一个回测的快速说明 |
 | `docs/Data-Spec.md` | OHLCV 数据字段规范和数据目录规则 |
-| `docs/Dividend-T-Platform.md` | 红利做 T 平台说明 |
+| `docs/Dividend-T-Platform.md` | 买卖点识别模型说明 |
 | `docs/theory/退神股票涨跌理论.md` | 策略理论原文 |
 | `data/raw/sample_etf_ohlcv.csv` | 合成 ETF 日线样例数据 |
 | `src/market_regime_alpha/backtesting.py` | 最小回测工具：数据读取、均线、回测指标 |
@@ -52,9 +52,11 @@ market-regime-alpha/
 | `src/market_regime_alpha/dividend_t/cosco_timing_capital_flow.py` | 资金流和买入确认 |
 | `src/market_regime_alpha/dividend_t/cosco_timing_breakout.py` | 突破/次日预警识别 |
 | `src/market_regime_alpha/dividend_t/cosco_timing_manual.py` | 手动动作状态机 |
-| `src/market_regime_alpha/dividend_t/backtest.py` | 红利做 T 回测引擎 |
+| `src/market_regime_alpha/dividend_t/backtest.py` | 买卖点回测引擎 |
+| `src/market_regime_alpha/dividend_t/point_hit_rate.py` | 买卖点 1/3/5 日命中率统计 |
 | `backtesting/run_ma_crossover.py` | ETF 均线交叉回测命令行入口 |
-| `backtesting/run_dividend_watchlist_backtest.py` | 红利观察池批量回测入口 |
+| `backtesting/run_dividend_watchlist_backtest.py` | 观察池批量回测入口 |
+| `backtesting/run_buy_sell_point_hit_rate.py` | 买卖点命中率报告入口 |
 | `backtesting/README.md` | 回测实验说明 |
 | `strategies/ideas/Strategy-Idea-Template.md` | 策略想法模板 |
 | `reports/backtests/Backtest-Report-Template.md` | 回测报告模板 |
@@ -202,7 +204,7 @@ print(result.max_drawdown)
 python3 -m unittest discover -s tests
 ```
 
-当前测试覆盖样例回测、红利做 T 策略、COSCO 时机引擎、A 股行情标准化、回测交易闭环、Web API 和通知模块。
+当前测试覆盖样例回测、买卖点策略、COSCO 时机引擎、A 股行情标准化、回测交易闭环、Web API 和通知模块。
 
 注意：直接运行 `python3 -m unittest` 在当前项目结构下不会可靠发现测试，请使用上面的显式 discovery 命令。
 
