@@ -372,7 +372,7 @@
 
       .trend-table {
         width: 100%;
-        min-width: 1080px;
+        min-width: 1180px;
         border-collapse: collapse;
       }
 
@@ -821,7 +821,9 @@
                   <tr>
                     <th>标的</th>
                     <th>买卖点</th>
-                    <th>预测概率</th>
+                    <th>1天上涨</th>
+                    <th>3天上涨</th>
+                    <th>5天上涨</th>
                     <th>价格</th>
                     <th>趋势</th>
                     <th>评分/风控</th>
@@ -830,7 +832,7 @@
                 </thead>
                 <tbody data-trend-body>
                   <tr>
-                    <td colspan="7" class="trend-empty">正在读取趋势快照...</td>
+                    <td colspan="9" class="trend-empty">正在读取趋势快照...</td>
                   </tr>
                 </tbody>
               </table>
@@ -945,7 +947,7 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
           trendBody.innerHTML = "";
           const row = document.createElement("tr");
           const cell = document.createElement("td");
-          cell.colSpan = 7;
+          cell.colSpan = 9;
           cell.className = "trend-empty";
           cell.textContent = `还没有趋势快照。启动本地定时任务后会生成 docs/data/dividend_trends.json。${error.message}`;
           row.appendChild(cell);
@@ -964,7 +966,7 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
         if (rows.length === 0) {
           const row = document.createElement("tr");
           const cell = document.createElement("td");
-          cell.colSpan = 7;
+          cell.colSpan = 9;
           cell.className = "trend-empty";
           cell.textContent = "趋势快照为空。";
           row.appendChild(cell);
@@ -976,7 +978,9 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
           const row = document.createElement("tr");
           row.appendChild(symbolCell(item));
           row.appendChild(pointCell(item));
-          row.appendChild(probabilityCell(item));
+          row.appendChild(upProbabilityCell(item, "1d"));
+          row.appendChild(upProbabilityCell(item, "3d"));
+          row.appendChild(upProbabilityCell(item, "5d"));
           row.appendChild(metricCell(formatNumber(item.latest_price), pctText(item.change_pct)));
           row.appendChild(badgeCell(item));
           row.appendChild(
@@ -1051,11 +1055,14 @@ PYTHONPATH=src uvicorn market_regime_alpha.web.dividend_t_app:app --reload --hos
         return cell;
       }
 
-      function probabilityCell(item) {
-        return metricCell(
-          `上行 ${probabilityText(item.up_probability_1d)} / ${probabilityText(item.up_probability_3d)}`,
-          `下行 ${probabilityText(item.down_probability_1d)} / ${probabilityText(item.down_probability_3d)} · ${item.probability_state || "-"}`
-        );
+      function upProbabilityCell(item, horizon) {
+        if (horizon === "1d") {
+          return metricCell(probabilityText(item.up_probability_1d), `下行 ${probabilityText(item.down_probability_1d)}`);
+        }
+        if (horizon === "3d") {
+          return metricCell(probabilityText(item.up_probability_3d), `下行 ${probabilityText(item.down_probability_3d)}`);
+        }
+        return metricCell(probabilityText(item.up_probability_5d), item.up_probability_5d_source ? "5-20日估算" : "-");
       }
 
       function metricCell(mainText, subText) {

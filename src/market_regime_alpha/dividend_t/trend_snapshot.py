@@ -103,7 +103,7 @@ def build_dividend_trend_snapshot(
         "generated_timezone": "Asia/Shanghai",
         "watchlist_path": str(Path(watchlist_path)),
         "source": getattr(minute_provider, "data_source", getattr(minute_provider, "name", "unknown")),
-        "horizon": "未来1/3日概率与1/3/5日历史命中率",
+        "horizon": "未来1/3/5日上涨概率与1/3/5日历史命中率",
         "point_hit_rates": load_point_hit_rate_summary(),
         "row_count": len(rows),
         "successful_count": successful_count,
@@ -206,6 +206,8 @@ def _error_row(*, item: WatchlistItem, quote: LatestQuote | None, exc: Exception
         "down_probability_1d": None,
         "up_probability_3d": None,
         "down_probability_3d": None,
+        "up_probability_5d": None,
+        "up_probability_5d_source": "unavailable",
         "probability_state": "NO_DATA",
         "buy_reference_price": None,
         "sell_reference_price": None,
@@ -234,6 +236,8 @@ def _timing_payload(*, item: WatchlistItem, bars: Any, data_source: str) -> dict
             "down_probability_1d": None,
             "up_probability_3d": None,
             "down_probability_3d": None,
+            "up_probability_5d": None,
+            "up_probability_5d_source": "unavailable",
             "probability_state": "ERROR",
             "buy_reference_price": None,
             "sell_reference_price": None,
@@ -259,6 +263,8 @@ def _timing_payload(*, item: WatchlistItem, bars: Any, data_source: str) -> dict
         "down_probability_1d": _round(probability.down_1d, digits=4),
         "up_probability_3d": _round(probability.up_3d, digits=4),
         "down_probability_3d": _round(probability.down_3d, digits=4),
+        "up_probability_5d": _round(_estimate_up_probability_5d(snapshot), digits=4),
+        "up_probability_5d_source": "derived_from_3d_probability_and_5_20_trend",
         "probability_state": probability.state,
         "buy_reference_price": _round(prices.buy_reference_price),
         "sell_reference_price": _round(prices.sell_reference_price),
@@ -288,6 +294,33 @@ def _timing_point_label(point_type: str) -> str:
 def _data_source(provider: AShareBarProvider, bars: Any) -> str:
     attrs = getattr(bars, "attrs", {})
     return str(attrs.get("data_source") or getattr(provider, "data_source", getattr(provider, "name", "unknown")))
+
+
+def _estimate_up_probability_5d(snapshot: Any) -> float:
+    probability = snapshot.trend_probability
+    multi_period = snapshot.multi_period_trend
+    capital_flow = snapshot.capital_flow
+    daily_context = snapshot.daily_context
+    sell_pressure = snapshot.sell_pressure
+
+    flow_score = 0.55 * capital_flow.score + 0.45 * capital_flow.confirmation_score
+    sell_inverse = 100.0 - sell_pressure.score
+    estimate = (
+        0.45 * probability.up_3d
+        + 0.24 * clamp(multi_period.score / 100.0, 0.0, 1.0)
+        + 0.16 * clamp(daily_context.score / 100.0, 0.0, 1.0)
+        + 0.10 * clamp(flow_score / 100.0, 0.0, 1.0)
+        + 0.05 * clamp(sell_inverse / 100.0, 0.0, 1.0)
+    )
+    if multi_period.trend_5_20_state == "UP":
+        estimate += 0.04
+    elif multi_period.trend_5_20_state == "PULLBACK_IN_UPTREND":
+        estimate += 0.02
+    elif multi_period.trend_5_20_state == "DOWN":
+        estimate -= 0.05
+    if probability.state == "DOWN_RISK":
+        estimate -= 0.04
+    return clamp(estimate, 0.05, 0.95)
 
 
 def load_point_hit_rate_summary(path: str | Path = DEFAULT_HIT_RATE_SUMMARY) -> dict[str, Any]:

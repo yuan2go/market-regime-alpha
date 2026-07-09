@@ -43,13 +43,15 @@ class DividendTrendSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot["row_count"], 2)
         self.assertEqual(snapshot["successful_count"], 2)
         self.assertEqual(snapshot["failed_count"], 0)
-        self.assertEqual(snapshot["horizon"], "未来1/3日概率与1/3/5日历史命中率")
+        self.assertEqual(snapshot["horizon"], "未来1/3/5日上涨概率与1/3/5日历史命中率")
         self.assertIn("point_hit_rates", snapshot)
         self.assertEqual(snapshot["rows"][0]["symbol"], "601919.SH")
         self.assertIn(snapshot["rows"][0]["future_trend"], {"bullish", "neutral", "bearish", "risk_off"})
         self.assertIn("signal_label", snapshot["rows"][0])
         self.assertIn("timing_action_label", snapshot["rows"][0])
         self.assertIn("up_probability_1d", snapshot["rows"][0])
+        self.assertIn("up_probability_3d", snapshot["rows"][0])
+        self.assertIn("up_probability_5d", snapshot["rows"][0])
         self.assertEqual(snapshot["rows"][0]["latest_price"], 14.92)
 
     def test_symbol_error_is_returned_as_error_row(self) -> None:
