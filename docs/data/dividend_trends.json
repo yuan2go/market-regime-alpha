@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-10T09:38:01.385729+08:00",
+  "generated_at": "2026-07-10T09:48:01.380135+08:00",
   "generated_timezone": "Asia/Shanghai",
   "watchlist_path": "/Users/yuan/projects/market-regime-alpha/data/external/watchlists/dividend_t_watchlist.csv",
   "source": "tencent_minute_query_1min_to_5min",
@@ -15,16 +15,16 @@
       "name": "中远海控",
       "industry": "航运",
       "is_cycle_stock": true,
-      "latest_price": 13.83,
-      "change_pct": -0.65,
-      "quote_time": "20260710093759",
+      "latest_price": 13.91,
+      "change_pct": -0.07,
+      "quote_time": "20260710094759",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -32,16 +32,16 @@
       "name": "中国神华",
       "industry": "煤炭",
       "is_cycle_stock": true,
-      "latest_price": 41.51,
-      "change_pct": -1.47,
-      "quote_time": "20260710093759",
+      "latest_price": 41.81,
+      "change_pct": -0.76,
+      "quote_time": "20260710094759",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -49,16 +49,16 @@
       "name": "陕西煤业",
       "industry": "煤炭",
       "is_cycle_stock": true,
-      "latest_price": 22.31,
-      "change_pct": -2.19,
-      "quote_time": "20260710093757",
+      "latest_price": 22.48,
+      "change_pct": -1.45,
+      "quote_time": "20260710094757",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -68,14 +68,14 @@
       "is_cycle_stock": false,
       "latest_price": 27.63,
       "change_pct": -0.5,
-      "quote_time": "20260710093759",
+      "quote_time": "20260710094759",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -83,16 +83,16 @@
       "name": "国投电力",
       "industry": "电力",
       "is_cycle_stock": false,
-      "latest_price": 13.61,
-      "change_pct": -0.87,
-      "quote_time": "20260710093759",
+      "latest_price": 13.52,
+      "change_pct": -1.53,
+      "quote_time": "20260710094759",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -102,14 +102,14 @@
       "is_cycle_stock": false,
       "latest_price": 7.26,
       "change_pct": -0.14,
-      "quote_time": "20260710093758",
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -117,16 +117,16 @@
       "name": "建设银行",
       "industry": "银行",
       "is_cycle_stock": false,
-      "latest_price": 9.87,
-      "change_pct": -0.2,
-      "quote_time": "20260710093757",
+      "latest_price": 9.95,
+      "change_pct": 0.61,
+      "quote_time": "20260710094757",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -136,14 +136,14 @@
       "is_cycle_stock": false,
       "latest_price": 6.1,
       "change_pct": -0.16,
-      "quote_time": "20260710093758",
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -151,16 +151,16 @@
       "name": "招商银行",
       "industry": "银行",
       "is_cycle_stock": false,
-      "latest_price": 36.37,
-      "change_pct": -0.49,
-      "quote_time": "20260710093758",
+      "latest_price": 36.51,
+      "change_pct": -0.11,
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -168,16 +168,16 @@
       "name": "中国移动",
       "industry": "运营商",
       "is_cycle_stock": false,
-      "latest_price": 88.32,
-      "change_pct": -0.44,
-      "quote_time": "20260710093758",
+      "latest_price": 88.21,
+      "change_pct": -0.56,
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -185,16 +185,16 @@
       "name": "中国电信",
       "industry": "运营商",
       "is_cycle_stock": false,
-      "latest_price": 5.59,
-      "change_pct": 0.36,
-      "quote_time": "20260710093759",
+      "latest_price": 5.58,
+      "change_pct": 0.18,
+      "quote_time": "20260710094759",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -202,16 +202,16 @@
       "name": "中国联通",
       "industry": "运营商",
       "is_cycle_stock": false,
-      "latest_price": 4.08,
-      "change_pct": -0.49,
-      "quote_time": "20260710093758",
+      "latest_price": 4.09,
+      "change_pct": -0.24,
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -219,16 +219,16 @@
       "name": "上港集团",
       "industry": "港口",
       "is_cycle_stock": true,
-      "latest_price": 5.03,
-      "change_pct": -0.79,
-      "quote_time": "20260710093759",
+      "latest_price": 5.04,
+      "change_pct": -0.59,
+      "quote_time": "20260710094759",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -236,16 +236,16 @@
       "name": "招商港口",
       "industry": "港口",
       "is_cycle_stock": true,
-      "latest_price": 20.6,
-      "change_pct": -1.15,
-      "quote_time": "20260710093757",
+      "latest_price": 20.59,
+      "change_pct": -1.2,
+      "quote_time": "20260710094757",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -255,14 +255,14 @@
       "is_cycle_stock": false,
       "latest_price": 12.46,
       "change_pct": -1.81,
-      "quote_time": "20260710093758",
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -270,16 +270,16 @@
       "name": "招商公路",
       "industry": "高速公路",
       "is_cycle_stock": false,
-      "latest_price": 9.69,
-      "change_pct": 0.0,
-      "quote_time": "20260710093757",
+      "latest_price": 9.59,
+      "change_pct": -1.03,
+      "quote_time": "20260710094757",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -289,14 +289,14 @@
       "is_cycle_stock": true,
       "latest_price": 4.66,
       "change_pct": -0.21,
-      "quote_time": "20260710093758",
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -306,14 +306,14 @@
       "is_cycle_stock": true,
       "latest_price": 4.74,
       "change_pct": -1.46,
-      "quote_time": "20260710093758",
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -321,16 +321,16 @@
       "name": "中国石油",
       "industry": "石油石化",
       "is_cycle_stock": true,
-      "latest_price": 9.2,
-      "change_pct": -2.13,
-      "quote_time": "20260710093758",
+      "latest_price": 9.18,
+      "change_pct": -2.34,
+      "quote_time": "20260710094758",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     },
     {
       "status": "error",
@@ -338,16 +338,16 @@
       "name": "贵州茅台",
       "industry": "消费",
       "is_cycle_stock": false,
-      "latest_price": 1172.02,
-      "change_pct": -0.86,
-      "quote_time": "20260710093757",
+      "latest_price": 1172.78,
+      "change_pct": -0.8,
+      "quote_time": "20260710094757",
       "quote_source": "tencent_qt_quote",
       "future_trend": "neutral",
       "future_trend_label": "数据不足",
       "confidence": 0,
       "signal": "NO_DATA",
       "signal_label": "数据不足",
-      "scan_error": "ValueError: 5分钟K线只有 2 根，至少需要 30 根"
+      "scan_error": "ValueError: 5分钟K线只有 4 根，至少需要 30 根"
     }
   ],
   "notice": "模型输出仅用于研究复盘，不构成投资建议。"
