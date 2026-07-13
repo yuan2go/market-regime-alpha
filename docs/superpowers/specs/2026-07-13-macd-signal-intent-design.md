@@ -2,7 +2,9 @@
 
 Date: 2026-07-13
 
-Status: Frozen for final specification review; production implementation is not yet authorized.
+Status: Final specification approved for staged implementation.
+
+Production promotion remains unauthorized pending Stage 7 review.
 
 Scope: Dividend T technical scoring, simplified strategy, COSCO 5-minute timing engine, snapshots, API, and offline backtests.
 
@@ -23,7 +25,7 @@ The design must:
 - support four independent ablation arms and leakage-safe out-of-sample validation;
 - preserve legacy behavior whenever MACD data is not ready or the baseline policy profile is active.
 
-This document does not authorize a broad production-code change. Implementation must follow the staged plan and stop at each review and rollback point.
+This document authorizes only the staged implementation described by the approved plan. Production promotion remains unauthorized: the production defaults must stay at `score_weight=0.0` and `conflict_gate_enabled=False` until the Stage 7 out-of-sample report has completed independent review. Implementation must stop at each review and rollback point.
 
 ## 2. Current-System Findings
 
