@@ -310,6 +310,10 @@ class TimingDecisionTrace:
     macd_sizing_owner: str | None = None
     macd_policy_applied: bool = False
     macd_policy_changed_candidate: bool = False
+    macd_score: float = 50.0
+    macd_cross: str = "NONE"
+    macd_zero_axis: str = "STRADDLING"
+    macd_histogram_trend: str = "FLAT"
     macd_contract_version: str = MACD_CONTRACT_VERSION
     macd_algorithm_version: str = MACD_ALGORITHM_VERSION
     macd_policy_version: str = MACD_POLICY_VERSION

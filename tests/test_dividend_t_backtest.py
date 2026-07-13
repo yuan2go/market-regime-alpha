@@ -22,6 +22,7 @@ from market_regime_alpha.dividend_t.backtest import (  # noqa: E402
     ATTACK_INACTIVE,
     ATTACK_WATCH,
     BacktestSignal,
+    CounterfactualExecutionContext,
     DEFAULT_SIGNAL_HISTORY_BARS,
     DividendTBacktestConfig,
     TradeExecutionConstraints,
@@ -52,6 +53,9 @@ from market_regime_alpha.dividend_t.backtest import (  # noqa: E402
     _sell_point_continuation_hold_signal,
     _signal_target_position_pct,
     _volume_price_distribution_state,
+    counterfactual_event_from_signal,
+    evaluate_sizing_counterfactual_paths,
+    resolve_counterfactual_execution,
     validate_execution_after_signal,
 )
 from market_regime_alpha.dividend_t.market_environment import (  # noqa: E402
@@ -65,6 +69,7 @@ from market_regime_alpha.dividend_t.market_environment import (  # noqa: E402
 from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine  # noqa: E402
 from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig  # noqa: E402
 from market_regime_alpha.dividend_t.macd_experiments import (  # noqa: E402
+    CounterfactualPathOutcome,
     build_experiment_identity,
     experiment_config_hash,
     signal_cache_path,
@@ -201,6 +206,231 @@ class DividendTBacktestTests(unittest.TestCase):
         validate_execution_after_signal("2026-07-13 10:05:00", "2026-07-13 10:10:00")
         with self.assertRaisesRegex(ValueError, "EXECUTION_NOT_AFTER_SIGNAL_BAR"):
             validate_execution_after_signal("2026-07-13 10:05:00", "2026-07-13 10:05:00")
+
+    def test_counterfactual_uses_next_bar_open_and_actual_fee_slippage_rules(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="BUY_T_TIMING"),
+            candidate_signal="BUY_T",
+            candidate_without_macd_score="BUY_T",
+            candidate_with_macd_score="BUY_T",
+            final_signal="HOLD",
+            primary_setup_code="pullback_low_buy",
+            signal_intent="MEAN_REVERSION_T",
+            risk_enforcement="NONE",
+            macd_score=20.0,
+            macd_cross="BEARISH",
+            macd_zero_axis="BELOW",
+            macd_histogram_trend="EXPANDING",
+            experiment_config_hash="hash-full",
+            macd_policy_changed_candidate=True,
+        )
+        event = counterfactual_event_from_signal(
+            signal,
+            symbol="601919.SH",
+            next_eligible_execution_time="2026-07-13 10:10:00",
+            original_suggested_trade_pct=0.20,
+            adjusted_suggested_trade_pct=0.0,
+        )
+        config = DividendTBacktestConfig(enable_a_share_constraints=False)
+        context = CounterfactualExecutionContext(equity_before=100_000.0, cash=100_000.0)
+        next_bar = {
+            "timestamp": "2026-07-13 10:10:00",
+            "open": 10.0,
+            "high": 20.0,
+            "low": 1.0,
+            "close": 12.0,
+            "volume": 1_000_000.0,
+            "feature_adjusted_close": 5.0,
+        }
+
+        resolved = resolve_counterfactual_execution(
+            event,
+            next_bar=next_bar,
+            context=context,
+            config=config,
+            trade_pct=event.original_suggested_trade_pct,
+        )
+
+        self.assertTrue(resolved.executable)
+        self.assertAlmostEqual(resolved.reference_fill_price, 10.0 * (1 + config.slippage_bps / 10_000))
+        self.assertNotIn(resolved.reference_fill_price, {next_bar["high"], next_bar["low"], next_bar["feature_adjusted_close"]})
+        self.assertGreater(resolved.fee_amount, 0.0)
+        self.assertGreater(resolved.slippage_amount, 0.0)
+
+    def test_score_suppressed_counterfactual_executes_pre_macd_candidate(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="WAIT"),
+            candidate_signal="HOLD",
+            candidate_without_macd_score="BUY_T",
+            candidate_with_macd_score="HOLD",
+            final_signal="HOLD",
+            primary_setup_code="breakout_confirmed",
+            signal_intent="TREND_FOLLOWING",
+            experiment_config_hash="hash-score-only",
+            macd_score_changed_candidate=True,
+        )
+        event = counterfactual_event_from_signal(
+            signal,
+            symbol="601919.SH",
+            next_eligible_execution_time="2026-07-13 10:10:00",
+            original_suggested_trade_pct=0.20,
+            adjusted_suggested_trade_pct=0.20,
+        )
+
+        resolved = resolve_counterfactual_execution(
+            event,
+            next_bar={
+                "timestamp": "2026-07-13 10:10:00",
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.9,
+                "close": 10.0,
+                "volume": 1_000_000.0,
+            },
+            context=CounterfactualExecutionContext(equity_before=100_000.0, cash=100_000.0),
+            config=DividendTBacktestConfig(enable_a_share_constraints=False),
+            trade_pct=0.20,
+        )
+
+        self.assertTrue(resolved.executable)
+        self.assertGreater(resolved.shares, 0)
+
+    def test_non_macd_final_hold_is_not_attributed_to_policy(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="WAIT_STALE"),
+            candidate_signal="BUY_T",
+            candidate_without_macd_score="BUY_T",
+            candidate_with_macd_score="BUY_T",
+            final_signal="HOLD",
+            primary_setup_code="breakout_confirmed",
+            signal_intent="TREND_FOLLOWING",
+            experiment_config_hash="hash-full",
+            macd_policy_changed_candidate=False,
+        )
+
+        event = counterfactual_event_from_signal(
+            signal,
+            symbol="601919.SH",
+            next_eligible_execution_time="2026-07-13 10:10:00",
+            original_suggested_trade_pct=0.20,
+            adjusted_suggested_trade_pct=0.20,
+        )
+
+        self.assertEqual(event.candidate_before_policy, "BUY_T")
+        self.assertEqual(event.candidate_after_policy, "BUY_T")
+        self.assertEqual(event.event_type.value, "UNCHANGED")
+
+    def test_sized_counterfactual_computes_adjusted_and_original_paths(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="BUY_T_TIMING"),
+            candidate_signal="BUY_T",
+            candidate_without_macd_score="BUY_T",
+            candidate_with_macd_score="BUY_T",
+            final_signal="BUY_T",
+            primary_setup_code="pullback_low_buy",
+            signal_intent="MEAN_REVERSION_T",
+            risk_enforcement="NONE",
+            experiment_config_hash="hash-full",
+            macd_sizing_multiplier=0.5,
+            macd_policy_changed_candidate=True,
+        )
+        event = counterfactual_event_from_signal(
+            signal,
+            symbol="601919.SH",
+            next_eligible_execution_time="2026-07-13 10:10:00",
+            original_suggested_trade_pct=0.20,
+            adjusted_suggested_trade_pct=0.10,
+        )
+        next_bar = {
+            "timestamp": "2026-07-13 10:10:00",
+            "open": 10.0,
+            "high": 10.1,
+            "low": 9.9,
+            "close": 10.0,
+            "volume": 1_000_000.0,
+        }
+        forward_bars = ({"timestamp": "2026-07-13 10:15:00", "open": 10.1},)
+
+        def resolve_outcome(_event, resolution, bars):
+            self.assertIs(bars, forward_bars)
+            return CounterfactualPathOutcome(
+                net_pnl=round(resolution.shares * 0.10 - resolution.fee_amount, 2),
+                holding_period_bars=1,
+                max_adverse_excursion=-0.01,
+            )
+
+        evaluated = evaluate_sizing_counterfactual_paths(
+            event,
+            next_bar=next_bar,
+            context=CounterfactualExecutionContext(equity_before=100_000.0, cash=100_000.0),
+            config=DividendTBacktestConfig(enable_a_share_constraints=False),
+            forward_bars=forward_bars,
+            outcome_resolver=resolve_outcome,
+        )
+
+        self.assertTrue(evaluated.adjusted_path_executable)
+        self.assertTrue(evaluated.original_path_executable)
+        self.assertGreater(evaluated.original_path_shares, evaluated.adjusted_path_shares)
+        self.assertGreater(evaluated.original_path_net_pnl, evaluated.adjusted_path_net_pnl)
+        self.assertEqual(evaluated.adjusted_path_holding_period_bars, 1)
+        self.assertEqual(evaluated.original_path_max_adverse_excursion, -0.01)
+
+    def test_counterfactual_honors_limit_and_t1_constraints(self) -> None:
+        buy_signal = replace(
+            _risk_on_confirmed_signal(action="BUY_T_TIMING"),
+            candidate_signal="BUY_T",
+            final_signal="HOLD",
+            signal_intent="TREND_FOLLOWING",
+            primary_setup_code="breakout_confirmed",
+            risk_enforcement="NONE",
+            experiment_config_hash="hash-full",
+        )
+        buy_event = counterfactual_event_from_signal(
+            buy_signal,
+            symbol="601919.SH",
+            next_eligible_execution_time="2026-07-13 10:10:00",
+            original_suggested_trade_pct=0.20,
+            adjusted_suggested_trade_pct=0.0,
+        )
+        limit_bar = {
+            "timestamp": "2026-07-13 10:10:00",
+            "open": 11.0,
+            "high": 11.0,
+            "low": 11.0,
+            "close": 11.0,
+            "volume": 1_000_000.0,
+        }
+        blocked_buy = resolve_counterfactual_execution(
+            buy_event,
+            next_bar=limit_bar,
+            context=CounterfactualExecutionContext(equity_before=100_000.0, cash=100_000.0, previous_daily_close=10.0),
+            config=DividendTBacktestConfig(),
+            trade_pct=0.20,
+        )
+        self.assertFalse(blocked_buy.executable)
+        self.assertEqual(blocked_buy.block_reason, "LIMIT_UP")
+
+        sell_event = replace(
+            buy_event,
+            candidate_before_policy="SELL_T",
+            candidate_after_policy="HOLD",
+            signal_intent="MEAN_REVERSION_T",
+        )
+        blocked_sell = resolve_counterfactual_execution(
+            sell_event,
+            next_bar={**limit_bar, "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+            context=CounterfactualExecutionContext(
+                equity_before=100_000.0,
+                cash=10_000.0,
+                total_sell_shares=1_000,
+                sellable_shares=0,
+                previous_daily_close=10.0,
+            ),
+            config=DividendTBacktestConfig(),
+            trade_pct=0.10,
+        )
+        self.assertFalse(blocked_sell.executable)
+        self.assertEqual(blocked_sell.block_reason, "T1_LOCK")
 
     def test_backtest_signal_copies_candidate_identity_without_reclassification(self) -> None:
         snapshot = SimpleNamespace(

@@ -379,6 +379,12 @@ class CoscoTimingEngine:
                 policy_trace
                 and (policy_trace.signal_downgraded or policy_trace.macd_sizing_multiplier != 1.0)
             ),
+            macd_score=macd_result.score if macd_result is not None else 50.0,
+            macd_cross=macd_result.cross.value if macd_result is not None else "NONE",
+            macd_zero_axis=macd_result.zero_axis.value if macd_result is not None else "STRADDLING",
+            macd_histogram_trend=(
+                macd_result.histogram_trend.value if macd_result is not None else "FLAT"
+            ),
         )
         signal_strength = _signal_strength(
             action=action,

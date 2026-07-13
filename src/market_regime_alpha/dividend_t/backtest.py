@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine
 from market_regime_alpha.dividend_t.buy_point_quality import BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY, classify_buy_point_subtype
@@ -26,6 +26,10 @@ from market_regime_alpha.dividend_t.market_environment import (
     market_environment_point_with_model_state,
 )
 from market_regime_alpha.dividend_t.macd_experiments import (
+    CounterfactualEvent,
+    CounterfactualEventType,
+    CounterfactualPathOutcome,
+    ExecutionResolution,
     LEGACY_CACHE_COMPATIBILITY_MODE,
     MACD_CACHE_SCHEMA_VERSION,
     MACDExperimentIdentity,
@@ -507,6 +511,7 @@ class BacktestSignal:
     macd_filtered_action: str = "WAIT"
     freshness_filtered_action: str = "WAIT"
     final_action: str = "WAIT"
+    final_signal: str = Signal.HOLD.value
     signal_downgraded: bool = False
     downgrade_source: str | None = None
     downgrade_reason: str | None = None
@@ -523,6 +528,10 @@ class BacktestSignal:
     candidate_with_macd_score: str | None = None
     macd_score_changed_candidate: bool = False
     macd_policy_changed_candidate: bool = False
+    macd_score: float = 50.0
+    macd_cross: str = "NONE"
+    macd_zero_axis: str = "STRADDLING"
+    macd_histogram_trend: str = "FLAT"
     experiment_config_hash: str | None = None
     cache_schema_version: str | None = None
     git_commit: str | None = None
@@ -645,6 +654,7 @@ class BacktestSignal:
             macd_filtered_action=str(getattr(decision_trace, "macd_filtered_action", snapshot.action)),
             freshness_filtered_action=str(getattr(decision_trace, "freshness_filtered_action", snapshot.action)),
             final_action=str(getattr(decision_trace, "final_action", snapshot.action)),
+            final_signal=str(getattr(decision_trace, "final_signal", Signal.HOLD.value)),
             signal_downgraded=bool(getattr(decision_trace, "signal_downgraded", False)),
             downgrade_source=_optional_text(getattr(decision_trace, "downgrade_source", None)),
             downgrade_reason=_optional_text(getattr(decision_trace, "downgrade_reason", None)),
@@ -667,6 +677,10 @@ class BacktestSignal:
                     getattr(decision_trace, "macd_policy_changed_candidate", False),
                 )
             ),
+            macd_score=float(getattr(decision_trace, "macd_score", 50.0)),
+            macd_cross=str(getattr(decision_trace, "macd_cross", "NONE")),
+            macd_zero_axis=str(getattr(decision_trace, "macd_zero_axis", "STRADDLING")),
+            macd_histogram_trend=str(getattr(decision_trace, "macd_histogram_trend", "FLAT")),
             buy_point_subtype=str(getattr(snapshot, "buy_point_subtype", "none")),
             breakout_score=float(getattr(breakout_setup, "score", 0.0)),
             breakout_state=str(getattr(breakout_setup, "state", "NONE")),
@@ -707,6 +721,198 @@ class TradeExecutionConstraints:
     at_limit_up: bool = False
     at_limit_down: bool = False
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class CounterfactualExecutionContext:
+    equity_before: float
+    cash: float
+    total_sell_shares: int = 0
+    sellable_shares: int = 0
+    previous_daily_close: float | None = None
+
+
+def counterfactual_event_from_signal(
+    signal: BacktestSignal,
+    *,
+    symbol: str,
+    next_eligible_execution_time: str,
+    original_suggested_trade_pct: float,
+    adjusted_suggested_trade_pct: float,
+) -> CounterfactualEvent:
+    """Create an offline event from persisted score, policy, intent, and MACD trace fields."""
+
+    if not signal.experiment_config_hash:
+        raise ValueError("COUNTERFACTUAL_EXPERIMENT_HASH_REQUIRED")
+    candidate_before = signal.candidate_with_macd_score or signal.candidate_signal
+    candidate_after = signal.final_signal if signal.macd_policy_changed_candidate else candidate_before
+    return CounterfactualEvent.create(
+        symbol=symbol,
+        candidate_bar_close_time=signal.timestamp,
+        next_eligible_execution_time=next_eligible_execution_time,
+        candidate_without_macd_score=signal.candidate_without_macd_score,
+        candidate_with_macd_score=signal.candidate_with_macd_score,
+        candidate_before_policy=candidate_before,
+        candidate_after_policy=candidate_after,
+        original_suggested_trade_pct=original_suggested_trade_pct,
+        adjusted_suggested_trade_pct=adjusted_suggested_trade_pct,
+        signal_intent=signal.signal_intent,
+        primary_setup_code=signal.primary_setup_code,
+        risk_enforcement=signal.risk_enforcement,
+        macd_score=signal.macd_score,
+        macd_cross=signal.macd_cross,
+        macd_zero_axis=signal.macd_zero_axis,
+        macd_histogram_trend=signal.macd_histogram_trend,
+        experiment_config_hash=signal.experiment_config_hash,
+        macd_score_changed_candidate=signal.macd_score_changed_candidate,
+        macd_policy_changed_candidate=signal.macd_policy_changed_candidate,
+    )
+
+
+def resolve_counterfactual_execution(
+    event: CounterfactualEvent,
+    *,
+    next_bar: Any,
+    context: CounterfactualExecutionContext,
+    config: DividendTBacktestConfig,
+    trade_pct: float,
+) -> ExecutionResolution:
+    """Apply the production execution rules at the next eligible bar open."""
+
+    import pandas as pd
+
+    execution_time = str(next_bar["timestamp"])
+    validate_execution_after_signal(event.candidate_bar_close_time, execution_time)
+    if pd.Timestamp(execution_time) != pd.Timestamp(event.next_eligible_execution_time):
+        raise ValueError("COUNTERFACTUAL_NOT_NEXT_ELIGIBLE_BAR")
+    if not math.isfinite(trade_pct) or trade_pct < 0.0:
+        raise ValueError("counterfactual trade_pct must be finite and non-negative")
+    constraints = _trade_execution_constraints(
+        next_bar,
+        symbol=event.symbol,
+        previous_daily_close=context.previous_daily_close,
+        config=config,
+    )
+    raw_open = float(next_bar["open"])
+    signal = event.candidate_before_policy
+    if event.event_type is CounterfactualEventType.SCORE_SUPPRESSED:
+        signal = event.candidate_without_macd_score
+    if signal == Signal.BUY_T.value:
+        if not constraints.can_buy:
+            return _blocked_counterfactual(execution_time, constraints.reason or "BUY_BLOCKED")
+        fill = _buy_price(raw_open, config)
+        budget = min(context.equity_before * trade_pct, context.cash)
+        shares = _floor_lot(
+            min(budget / fill, context.cash / _buy_cost_per_share(fill, config)),
+            config.min_lot,
+        )
+        if shares <= 0:
+            return _blocked_counterfactual(execution_time, "CASH_OR_MIN_LOT")
+        gross = fill * shares
+        fee = _buy_cost(fill, shares, config) - gross
+        return ExecutionResolution(
+            True,
+            None,
+            execution_time,
+            fill,
+            shares,
+            (fill - raw_open) * shares,
+            fee,
+        )
+    if signal in {Signal.SELL_T.value, Signal.CLEAR.value, Signal.REDUCE.value, Signal.STOP_T.value}:
+        if not constraints.can_sell:
+            return _blocked_counterfactual(execution_time, constraints.reason or "SELL_BLOCKED")
+        sellable = context.sellable_shares if config.enable_a_share_constraints and config.enable_t1 else context.total_sell_shares
+        if context.total_sell_shares > 0 and sellable <= 0:
+            return _blocked_counterfactual(execution_time, "T1_LOCK")
+        fill = _sell_price(raw_open, config)
+        shares = _floor_lot(min(sellable, context.equity_before * trade_pct / fill), config.min_lot)
+        if shares <= 0:
+            return _blocked_counterfactual(execution_time, "POSITION_OR_MIN_LOT")
+        gross = fill * shares
+        fee = gross - _sell_proceeds(fill, shares, config)
+        return ExecutionResolution(
+            True,
+            None,
+            execution_time,
+            fill,
+            shares,
+            (raw_open - fill) * shares,
+            fee,
+        )
+    return _blocked_counterfactual(execution_time, "UNSUPPORTED_CANDIDATE_SIGNAL")
+
+
+def evaluate_sizing_counterfactual_paths(
+    event: CounterfactualEvent,
+    *,
+    next_bar: Any,
+    context: CounterfactualExecutionContext,
+    config: DividendTBacktestConfig,
+    forward_bars: object | None = None,
+    outcome_resolver: (
+        Callable[[CounterfactualEvent, ExecutionResolution, object], CounterfactualPathOutcome] | None
+    ) = None,
+) -> CounterfactualEvent:
+    """Evaluate actual adjusted sizing and its original-size counterfactual under identical execution."""
+
+    adjusted = resolve_counterfactual_execution(
+        event,
+        next_bar=next_bar,
+        context=context,
+        config=config,
+        trade_pct=event.adjusted_suggested_trade_pct,
+    )
+    original = resolve_counterfactual_execution(
+        event,
+        next_bar=next_bar,
+        context=context,
+        config=config,
+        trade_pct=event.original_suggested_trade_pct,
+    )
+    if (forward_bars is None) != (outcome_resolver is None):
+        raise ValueError("COUNTERFACTUAL_OUTCOME_INPUTS_INCOMPLETE")
+    adjusted_outcome = (
+        outcome_resolver(event, adjusted, forward_bars)
+        if outcome_resolver is not None and adjusted.executable
+        else None
+    )
+    original_outcome = (
+        outcome_resolver(event, original, forward_bars)
+        if outcome_resolver is not None and original.executable
+        else None
+    )
+    return replace(
+        event,
+        adjusted_path_executable=adjusted.executable,
+        adjusted_path_fill_price=adjusted.reference_fill_price,
+        adjusted_path_shares=adjusted.shares,
+        adjusted_path_slippage_amount=adjusted.slippage_amount,
+        adjusted_path_fee_amount=adjusted.fee_amount,
+        adjusted_path_net_pnl=adjusted_outcome.net_pnl if adjusted_outcome is not None else None,
+        adjusted_path_holding_period_bars=(
+            adjusted_outcome.holding_period_bars if adjusted_outcome is not None else None
+        ),
+        adjusted_path_max_adverse_excursion=(
+            adjusted_outcome.max_adverse_excursion if adjusted_outcome is not None else None
+        ),
+        original_path_executable=original.executable,
+        original_path_fill_price=original.reference_fill_price,
+        original_path_shares=original.shares,
+        original_path_slippage_amount=original.slippage_amount,
+        original_path_fee_amount=original.fee_amount,
+        original_path_net_pnl=original_outcome.net_pnl if original_outcome is not None else None,
+        original_path_holding_period_bars=(
+            original_outcome.holding_period_bars if original_outcome is not None else None
+        ),
+        original_path_max_adverse_excursion=(
+            original_outcome.max_adverse_excursion if original_outcome is not None else None
+        ),
+    )
+
+
+def _blocked_counterfactual(execution_time: str, reason: str) -> ExecutionResolution:
+    return ExecutionResolution(False, reason, execution_time, None, 0, 0.0, 0.0)
 
 
 class BacktestSignalCache:
@@ -831,6 +1037,7 @@ class BacktestSignalCache:
                 macd_filtered_action=str(row.get("macd_filtered_action", row["action"])),
                 freshness_filtered_action=str(row.get("freshness_filtered_action", row["action"])),
                 final_action=str(row.get("final_action", row["action"])),
+                final_signal=str(row.get("final_signal", Signal.HOLD.value)),
                 signal_downgraded=_optional_bool(row.get("signal_downgraded")),
                 downgrade_source=_optional_text(row.get("downgrade_source")),
                 downgrade_reason=_optional_text(row.get("downgrade_reason")),
@@ -847,6 +1054,10 @@ class BacktestSignalCache:
                 candidate_with_macd_score=_optional_text(row.get("candidate_with_macd_score")),
                 macd_score_changed_candidate=_optional_bool(row.get("macd_score_changed_candidate")),
                 macd_policy_changed_candidate=_optional_bool(row.get("macd_policy_changed_candidate")),
+                macd_score=float(row.get("macd_score", 50.0)),
+                macd_cross=str(row.get("macd_cross", "NONE")),
+                macd_zero_axis=str(row.get("macd_zero_axis", "STRADDLING")),
+                macd_histogram_trend=str(row.get("macd_histogram_trend", "FLAT")),
                 experiment_config_hash=_optional_text(row.get("experiment_config_hash")),
                 cache_schema_version=_optional_text(row.get("cache_schema_version")),
                 git_commit=_optional_text(row.get("git_commit")),
@@ -7401,7 +7612,7 @@ def _with_pretrade_volume_price_context(
         pretrade_volume_price_state_24=str(mid_features["volume_price_state"]),
         pretrade_price_return_pct_24=float(mid_features["price_return_pct"]),
         pretrade_volume_ratio_to_prev_24=float(mid_features["volume_ratio_to_prev"]),
-        pretrade_volume_price_state=features["volume_price_state"],
+        pretrade_volume_price_state=str(features["volume_price_state"]),
         pretrade_volume_price_lookback_bars=int(features["actual_bars"]),
         pretrade_price_return_pct=float(features["price_return_pct"]),
         pretrade_volume_ratio_to_prev=float(features["volume_ratio_to_prev"]),

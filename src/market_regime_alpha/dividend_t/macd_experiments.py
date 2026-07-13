@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import replace
+from datetime import datetime
 from enum import Enum
 import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from market_regime_alpha.dividend_t.macd import (
     BAR_CONTRACT_VERSION,
@@ -38,6 +40,179 @@ MACD_CACHE_SCHEMA_VERSION = "macd-signal-cache-v2"
 RISK_ENFORCEMENT_VERSION = "risk-enforcement-v1"
 MACD_PROFILE_NAMES = ("baseline", "score-only", "policy-only", "full")
 LEGACY_CACHE_COMPATIBILITY_MODE = "legacy-baseline-only"
+
+
+class CounterfactualEventType(str, Enum):
+    UNCHANGED = "UNCHANGED"
+    SCORE_SUPPRESSED = "SCORE_SUPPRESSED"
+    POLICY_DOWNGRADED = "POLICY_DOWNGRADED"
+    POLICY_SIZED = "POLICY_SIZED"
+    SCORE_AND_POLICY_INTERACTION = "SCORE_AND_POLICY_INTERACTION"
+
+
+@dataclass(frozen=True)
+class ExecutionResolution:
+    executable: bool
+    block_reason: str | None
+    execution_time: str | None
+    reference_fill_price: float | None
+    shares: int
+    slippage_amount: float
+    fee_amount: float
+
+
+@dataclass(frozen=True)
+class CounterfactualPathOutcome:
+    net_pnl: float
+    holding_period_bars: int
+    max_adverse_excursion: float
+
+
+@dataclass(frozen=True)
+class CounterfactualEvent:
+    symbol: str
+    candidate_bar_close_time: str
+    next_eligible_execution_time: str
+    candidate_without_macd_score: str | None
+    candidate_with_macd_score: str | None
+    candidate_before_policy: str | None
+    candidate_after_policy: str | None
+    original_suggested_trade_pct: float
+    adjusted_suggested_trade_pct: float
+    signal_intent: str
+    primary_setup_code: str | None
+    risk_enforcement: str
+    macd_score: float
+    macd_cross: str
+    macd_zero_axis: str
+    macd_histogram_trend: str
+    experiment_config_hash: str
+    macd_score_changed_candidate: bool
+    macd_policy_changed_candidate: bool
+    event_type: CounterfactualEventType
+    executable: bool = False
+    block_reason: str | None = None
+    reference_fill_price: float | None = None
+    counterfactual_shares: int = 0
+    slippage_amount: float = 0.0
+    fee_amount: float = 0.0
+    counterfactual_net_pnl: float | None = None
+    holding_period_bars: int | None = None
+    adjusted_path_executable: bool = False
+    adjusted_path_fill_price: float | None = None
+    adjusted_path_shares: int = 0
+    adjusted_path_slippage_amount: float = 0.0
+    adjusted_path_fee_amount: float = 0.0
+    adjusted_path_net_pnl: float | None = None
+    adjusted_path_holding_period_bars: int | None = None
+    adjusted_path_max_adverse_excursion: float | None = None
+    original_path_executable: bool = False
+    original_path_fill_price: float | None = None
+    original_path_shares: int = 0
+    original_path_slippage_amount: float = 0.0
+    original_path_fee_amount: float = 0.0
+    original_path_net_pnl: float | None = None
+    original_path_holding_period_bars: int | None = None
+    original_path_max_adverse_excursion: float | None = None
+    max_adverse_excursion: float | None = None
+    avoided_tail_loss_amount: float = 0.0
+
+    @classmethod
+    def create(cls, **values: Any) -> "CounterfactualEvent":
+        candidate_time = str(values["candidate_bar_close_time"])
+        execution_time = str(values["next_eligible_execution_time"])
+        if datetime.fromisoformat(execution_time) <= datetime.fromisoformat(candidate_time):
+            raise ValueError("COUNTERFACTUAL_EXECUTION_NOT_AFTER_CANDIDATE")
+        original = float(values["original_suggested_trade_pct"])
+        adjusted = float(values["adjusted_suggested_trade_pct"])
+        if any(not math.isfinite(item) or item < 0.0 for item in (original, adjusted)):
+            raise ValueError("counterfactual trade percentages must be finite and non-negative")
+        config_hash = values.get("experiment_config_hash")
+        if not isinstance(config_hash, str) or not config_hash.strip():
+            raise ValueError("counterfactual event requires experiment_config_hash")
+        macd_score = float(values["macd_score"])
+        if not math.isfinite(macd_score) or not 0.0 <= macd_score <= 100.0:
+            raise ValueError("counterfactual macd_score must be in [0, 100]")
+        policy_changed = values.get("candidate_before_policy") != values.get("candidate_after_policy") or not math.isclose(
+            original,
+            adjusted,
+            rel_tol=0.0,
+            abs_tol=1e-15,
+        )
+        values["macd_policy_changed_candidate"] = bool(values["macd_policy_changed_candidate"]) or policy_changed
+        event_type = classify_counterfactual_event(
+            score_changed=bool(values["macd_score_changed_candidate"]),
+            candidate_before_policy=values.get("candidate_before_policy"),
+            candidate_after_policy=values.get("candidate_after_policy"),
+            original_suggested_trade_pct=original,
+            adjusted_suggested_trade_pct=adjusted,
+        )
+        return cls(**values, event_type=event_type)
+
+    @property
+    def policy_eligible(self) -> bool:
+        return self.signal_intent in {"MEAN_REVERSION_T", "TREND_FOLLOWING"} and self.candidate_before_policy not in {
+            None,
+            "HOLD",
+        }
+
+    @property
+    def policy_blocked(self) -> bool:
+        return self.policy_eligible and self.candidate_after_policy == "HOLD"
+
+    @property
+    def policy_resized(self) -> bool:
+        return self.policy_eligible and self.candidate_after_policy != "HOLD" and not math.isclose(
+            self.original_suggested_trade_pct,
+            self.adjusted_suggested_trade_pct,
+            rel_tol=0.0,
+            abs_tol=1e-15,
+        )
+
+
+@dataclass(frozen=True)
+class MACDGateMetrics:
+    event_count: int
+    score_suppression_rate: float
+    policy_block_rate: float
+    policy_resize_rate: float
+    effective_block_rate: float
+    wrong_block_rate: float
+    avoided_loss_amount: float
+    missed_profit_amount: float
+    net_block_benefit: float
+    zero_pnl_block_count: int
+    coverage_change: float
+    average_holding_period_change: float
+    drawdown_change: float
+    turnover_change: float
+    hard_risk_event_count: int
+    hard_risk_max_adverse_excursion: float | None
+    hard_risk_avoided_loss_amount: float
+
+
+@dataclass(frozen=True)
+class FactorialAttribution:
+    baseline: float
+    score_only: float
+    policy_only: float
+    full: float
+    score_effect: float
+    policy_effect: float
+    interaction_effect: float
+    total_effect: float
+
+
+@dataclass(frozen=True)
+class AblationArmContext:
+    profile: str
+    experiment_config_hash: str
+    dataset_version: str
+    train_range: tuple[str, str]
+    validation_range: tuple[str, str]
+    test_range: tuple[str, str]
+    execution_config_hash: str
+    random_seed: int
 
 
 @dataclass(frozen=True)
@@ -167,7 +342,7 @@ def experiment_config_hash(identity: MACDExperimentIdentity) -> str:
 def execution_config_hash(config: Any) -> str:
     """Hash all execution semantics while excluding cache location/flush controls."""
 
-    if not is_dataclass(config):
+    if not is_dataclass(config) or isinstance(config, type):
         raise TypeError("execution config must be a dataclass instance")
     payload = asdict(config)
     for non_semantic in ("signal_cache_dir", "signal_cache_save_every", "signal_cache_tag"):
@@ -263,6 +438,197 @@ def validate_runtime_identity(
     mismatches = [name for name, value in expected.items() if getattr(identity, name) != value]
     if mismatches:
         raise ValueError(f"EXPERIMENT_IDENTITY_RUNTIME_MISMATCH: {','.join(sorted(mismatches))}")
+
+
+def classify_counterfactual_event(
+    *,
+    score_changed: bool,
+    candidate_before_policy: str | None,
+    candidate_after_policy: str | None,
+    original_suggested_trade_pct: float,
+    adjusted_suggested_trade_pct: float,
+) -> CounterfactualEventType:
+    """Classify the score and policy contributions without conflating the two layers."""
+
+    policy_changed = candidate_before_policy != candidate_after_policy
+    sizing_changed = not math.isclose(
+        original_suggested_trade_pct,
+        adjusted_suggested_trade_pct,
+        rel_tol=0.0,
+        abs_tol=1e-15,
+    )
+    if score_changed and (policy_changed or sizing_changed):
+        return CounterfactualEventType.SCORE_AND_POLICY_INTERACTION
+    if score_changed:
+        return CounterfactualEventType.SCORE_SUPPRESSED
+    if policy_changed and candidate_after_policy == "HOLD":
+        return CounterfactualEventType.POLICY_DOWNGRADED
+    if sizing_changed:
+        return CounterfactualEventType.POLICY_SIZED
+    return CounterfactualEventType.UNCHANGED
+
+
+def evaluate_counterfactual(
+    event: CounterfactualEvent,
+    *,
+    next_bar: object,
+    execution_resolver: Callable[[CounterfactualEvent, object], ExecutionResolution],
+) -> CounterfactualEvent:
+    """Resolve a counterfactual on the raw next eligible bar, never on candidate-bar extrema."""
+
+    resolution = execution_resolver(event, next_bar)
+    if resolution.execution_time is not None:
+        execution_time = datetime.fromisoformat(resolution.execution_time)
+        candidate_time = datetime.fromisoformat(event.candidate_bar_close_time)
+        eligible_time = datetime.fromisoformat(event.next_eligible_execution_time)
+        if execution_time <= candidate_time or execution_time < eligible_time:
+            raise ValueError("COUNTERFACTUAL_EXECUTION_TIME_INVALID")
+    return replace(
+        event,
+        executable=resolution.executable,
+        block_reason=resolution.block_reason,
+        reference_fill_price=resolution.reference_fill_price,
+        counterfactual_shares=resolution.shares,
+        slippage_amount=resolution.slippage_amount,
+        fee_amount=resolution.fee_amount,
+    )
+
+
+def summarize_macd_events(
+    events: Sequence[CounterfactualEvent],
+    *,
+    baseline_coverage: float = 0.0,
+    experiment_coverage: float = 0.0,
+    baseline_average_holding_period: float = 0.0,
+    experiment_average_holding_period: float = 0.0,
+    baseline_max_drawdown: float = 0.0,
+    experiment_max_drawdown: float = 0.0,
+    baseline_turnover: float = 0.0,
+    experiment_turnover: float = 0.0,
+) -> MACDGateMetrics:
+    """Aggregate ordinary policy outcomes and hard-risk diagnostics separately."""
+
+    hard_risk = [event for event in events if event.risk_enforcement == "HARD"]
+    ordinary = [event for event in events if event.risk_enforcement != "HARD"]
+    score_suppressed = [
+        event
+        for event in ordinary
+        if event.macd_score_changed_candidate
+        and event.event_type
+        in {CounterfactualEventType.SCORE_SUPPRESSED, CounterfactualEventType.SCORE_AND_POLICY_INTERACTION}
+    ]
+    policy_eligible = [event for event in ordinary if event.policy_eligible]
+    policy_blocked = [event for event in policy_eligible if event.policy_blocked]
+    policy_resized = [event for event in policy_eligible if event.policy_resized]
+    evaluated_blocks = [
+        event for event in policy_blocked if event.executable and event.counterfactual_net_pnl is not None
+    ]
+    evaluated_pnls = [
+        float(event.counterfactual_net_pnl)
+        for event in evaluated_blocks
+        if event.counterfactual_net_pnl is not None
+    ]
+    avoided_loss = sum(-pnl for pnl in evaluated_pnls if pnl < 0)
+    missed_profit = sum(pnl for pnl in evaluated_pnls if pnl > 0)
+    zero_pnl = sum(pnl == 0 for pnl in evaluated_pnls)
+    adverse = [event.max_adverse_excursion for event in hard_risk if event.max_adverse_excursion is not None]
+    return MACDGateMetrics(
+        event_count=len(events),
+        score_suppression_rate=_rate(len(score_suppressed), len(ordinary)),
+        policy_block_rate=_rate(len(policy_blocked), len(policy_eligible)),
+        policy_resize_rate=_rate(len(policy_resized), len(policy_eligible)),
+        effective_block_rate=_rate(
+            sum(pnl < 0 for pnl in evaluated_pnls), len(evaluated_pnls)
+        ),
+        wrong_block_rate=_rate(
+            sum(pnl > 0 for pnl in evaluated_pnls), len(evaluated_pnls)
+        ),
+        avoided_loss_amount=avoided_loss,
+        missed_profit_amount=missed_profit,
+        net_block_benefit=avoided_loss - missed_profit,
+        zero_pnl_block_count=zero_pnl,
+        coverage_change=experiment_coverage - baseline_coverage,
+        average_holding_period_change=experiment_average_holding_period - baseline_average_holding_period,
+        drawdown_change=experiment_max_drawdown - baseline_max_drawdown,
+        turnover_change=experiment_turnover - baseline_turnover,
+        hard_risk_event_count=len(hard_risk),
+        hard_risk_max_adverse_excursion=min(adverse) if adverse else None,
+        hard_risk_avoided_loss_amount=sum(event.avoided_tail_loss_amount for event in hard_risk),
+    )
+
+
+def intent_bucket(event: CounterfactualEvent) -> str:
+    """Return stable research strata without applying ordinary hit-rate semantics to hard risk."""
+
+    if event.signal_intent == "MEAN_REVERSION_T":
+        side = "SELL" if event.candidate_before_policy == "SELL_T" else "BUY"
+        return f"MEAN_REVERSION_T_{side}"
+    if event.signal_intent == "TREND_FOLLOWING":
+        side = "SELL" if event.candidate_before_policy == "SELL_T" else "BUY"
+        return f"TREND_FOLLOWING_{side}"
+    if event.signal_intent == "RISK_REDUCTION":
+        return f"RISK_REDUCTION_{event.risk_enforcement}"
+    if event.signal_intent == "BASE_ACCUMULATION":
+        return "BASE_ACCUMULATION"
+    return event.signal_intent
+
+
+def summarize_macd_events_by_intent(
+    events: Sequence[CounterfactualEvent],
+) -> dict[str, MACDGateMetrics]:
+    grouped: dict[str, list[CounterfactualEvent]] = {}
+    for event in events:
+        grouped.setdefault(intent_bucket(event), []).append(event)
+    return {bucket: summarize_macd_events(items) for bucket, items in sorted(grouped.items())}
+
+
+def factorial_attribution(
+    *, baseline: float, score_only: float, policy_only: float, full: float
+) -> FactorialAttribution:
+    """Compute the 2x2 score, policy, and score-policy interaction effects."""
+
+    score_effect = score_only - baseline
+    policy_effect = policy_only - baseline
+    interaction_effect = full - score_only - policy_only + baseline
+    return FactorialAttribution(
+        baseline=baseline,
+        score_only=score_only,
+        policy_only=policy_only,
+        full=full,
+        score_effect=score_effect,
+        policy_effect=policy_effect,
+        interaction_effect=interaction_effect,
+        total_effect=full - baseline,
+    )
+
+
+def validate_four_arm_contexts(contexts: Mapping[str, AblationArmContext]) -> None:
+    """Guarantee that only MACD score/policy configuration differs between ablation arms."""
+
+    expected = set(MACD_PROFILE_NAMES)
+    if set(contexts) != expected:
+        raise ValueError("ABLATION_PROFILES_INCOMPLETE")
+    hashes = [contexts[name].experiment_config_hash for name in MACD_PROFILE_NAMES]
+    if len(set(hashes)) != len(hashes):
+        raise ValueError("ABLATION_CONFIG_HASH_NOT_UNIQUE")
+    reference = contexts["baseline"]
+    shared_fields = (
+        "dataset_version",
+        "train_range",
+        "validation_range",
+        "test_range",
+        "execution_config_hash",
+        "random_seed",
+    )
+    for name in MACD_PROFILE_NAMES[1:]:
+        candidate = contexts[name]
+        mismatches = [field for field in shared_fields if getattr(candidate, field) != getattr(reference, field)]
+        if mismatches:
+            raise ValueError(f"ABLATION_CONTEXT_MISMATCH: {name}: {','.join(mismatches)}")
+
+
+def _rate(numerator: int, denominator: int) -> float:
+    return numerator / denominator if denominator else 0.0
 
 
 def _canonical_value(value: Any) -> Any:
