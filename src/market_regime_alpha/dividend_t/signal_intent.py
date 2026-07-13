@@ -54,6 +54,11 @@ class PrimarySetupCode(str, Enum):
     INTRADAY_REVERSAL = "intraday_reversal"
     RANGE_LOW_BUY = "range_low_buy"
     PRESSURE_SELL_T = "pressure_sell_t"
+    TAKE_PROFIT_T = "take_profit_t"
+    TAKE_PROFIT_REDUCE_T = "take_profit_reduce_t"
+    RISK_REDUCE_T = "risk_reduce_t"
+    EXIT_T_SOFT = "exit_t_soft"
+    EXIT_T_HARD = "exit_t_hard"
     REVERSE_T_SELL = "reverse_t_sell"
     FORCE_REVERSAL_PROBE = "force_reversal_probe"
     TREND_FOLLOW = "trend_follow"
@@ -69,6 +74,7 @@ class PrimarySetupCode(str, Enum):
     STRUCTURE_BREAK = "structure_break"
     CHAN_SELL_RISK = "chan_sell_risk"
     TOP_DIVERGENCE_RISK = "top_divergence_risk"
+    CLEAR_BASE = "clear_base"
     BUILD_BASE = "build_base"
 
 
@@ -78,6 +84,11 @@ SETUP_INTENT_MAP: dict[PrimarySetupCode, SignalIntent] = {
     PrimarySetupCode.INTRADAY_REVERSAL: SignalIntent.MEAN_REVERSION_T,
     PrimarySetupCode.RANGE_LOW_BUY: SignalIntent.MEAN_REVERSION_T,
     PrimarySetupCode.PRESSURE_SELL_T: SignalIntent.MEAN_REVERSION_T,
+    PrimarySetupCode.TAKE_PROFIT_T: SignalIntent.MEAN_REVERSION_T,
+    PrimarySetupCode.TAKE_PROFIT_REDUCE_T: SignalIntent.MEAN_REVERSION_T,
+    PrimarySetupCode.RISK_REDUCE_T: SignalIntent.RISK_REDUCTION,
+    PrimarySetupCode.EXIT_T_SOFT: SignalIntent.RISK_REDUCTION,
+    PrimarySetupCode.EXIT_T_HARD: SignalIntent.RISK_REDUCTION,
     PrimarySetupCode.REVERSE_T_SELL: SignalIntent.MEAN_REVERSION_T,
     PrimarySetupCode.FORCE_REVERSAL_PROBE: SignalIntent.MEAN_REVERSION_T,
     PrimarySetupCode.TREND_FOLLOW: SignalIntent.TREND_FOLLOWING,
@@ -93,6 +104,7 @@ SETUP_INTENT_MAP: dict[PrimarySetupCode, SignalIntent] = {
     PrimarySetupCode.STRUCTURE_BREAK: SignalIntent.RISK_REDUCTION,
     PrimarySetupCode.CHAN_SELL_RISK: SignalIntent.RISK_REDUCTION,
     PrimarySetupCode.TOP_DIVERGENCE_RISK: SignalIntent.RISK_REDUCTION,
+    PrimarySetupCode.CLEAR_BASE: SignalIntent.RISK_REDUCTION,
     PrimarySetupCode.BUILD_BASE: SignalIntent.BASE_ACCUMULATION,
 }
 

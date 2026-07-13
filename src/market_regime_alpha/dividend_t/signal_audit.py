@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
 
@@ -42,6 +43,26 @@ class ThresholdComparison(StrEnum):
     BETWEEN = "BETWEEN"
 
 
+class DailyHorizonMode(StrEnum):
+    MARKET_TRADING_DAY = "market_trading_day_horizon"
+    SYMBOL_TRADABLE_DAY = "symbol_tradable_day_horizon"
+
+
+@dataclass(frozen=True)
+class CalibrationRequirements:
+    """Minimum sample gates for validity claims, never for display."""
+
+    minimum_calibration_samples: int = 100
+    minimum_samples_per_bin: int = 10
+    minimum_samples_per_stratum: int = 30
+
+    def __post_init__(self) -> None:
+        for name in ("minimum_calibration_samples", "minimum_samples_per_bin", "minimum_samples_per_stratum"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+
+
 def label_candidate_outcomes(
     candidates: Any,
     bars: Any,
@@ -52,6 +73,9 @@ def label_candidate_outcomes(
     execution_config: DividendTBacktestConfig | None = None,
     benchmark_bars: Any | None = None,
     industry_bars: Any | None = None,
+    buyback_expiry_bars: int = 24,
+    buyback_expiry_trade_days: int | None = None,
+    daily_horizon_mode: DailyHorizonMode = DailyHorizonMode.MARKET_TRADING_DAY,
 ) -> Any:
     """Label candidates from their first actually executable post-signal bar.
 
@@ -66,13 +90,16 @@ def label_candidate_outcomes(
     _require_columns(candidates, _CANDIDATE_COLUMNS, name="candidates")
     _require_columns(bars, _BAR_COLUMNS, name="bars")
     _validate_horizons(intraday_horizons, daily_horizons)
+    _validate_buyback_expiry(buyback_expiry_bars, buyback_expiry_trade_days)
+    if not isinstance(daily_horizon_mode, DailyHorizonMode):
+        raise ValueError("daily_horizon_mode must use DailyHorizonMode")
     if daily_horizons and trading_calendar is None:
         raise ValueError("TRADING_CALENDAR_REQUIRED_FOR_DAILY_HORIZONS")
     config = execution_config or DividendTBacktestConfig()
     ordered = bars.copy()
     ordered["timestamp"] = pd.to_datetime(ordered["timestamp"])
     ordered = ordered.sort_values(["symbol", "timestamp"]).reset_index(drop=True)
-    calendar_dates = _calendar_dates(trading_calendar) if trading_calendar is not None else ()
+    calendar = _calendar_sessions(trading_calendar) if trading_calendar is not None else {}
     rows: list[dict[str, object]] = []
     for candidate in candidates.copy().assign(timestamp=lambda frame: pd.to_datetime(frame["timestamp"])).to_dict(orient="records"):
         symbol = str(candidate["symbol"])
@@ -116,7 +143,13 @@ def label_candidate_outcomes(
                 base, candidate, symbol_bars, entry_index, target_index, f"bar_{horizon}", entry_price, side, industry_bars, "industry"
             )
         for horizon in daily_horizons:
-            daily_target_index, daily_reason = _daily_target_index(symbol_bars, entry_index, calendar_dates, horizon)
+            daily_target_index, daily_reason = _daily_target_index(
+                symbol_bars,
+                entry_index,
+                calendar,
+                horizon,
+                mode=daily_horizon_mode,
+            )
             _write_horizon(
                 base,
                 symbol_bars,
@@ -130,7 +163,16 @@ def label_candidate_outcomes(
                 unavailable_reason=daily_reason,
             )
         if side == "SELL":
-            _write_completed_t_cycle(base, symbol_bars, entry_index, resolution, context, config)
+            _write_completed_t_cycle(
+                base,
+                symbol_bars,
+                entry_index,
+                resolution,
+                context,
+                config,
+                expiry_bars=_candidate_int(candidate, "buyback_expiry_bars", buyback_expiry_bars),
+                expiry_trade_days=_candidate_optional_int(candidate, "buyback_expiry_trade_days", buyback_expiry_trade_days),
+            )
         rows.append(base)
     return pd.DataFrame(rows)
 
@@ -141,6 +183,7 @@ def calibration_report(
     horizon: str,
     bins: int = 10,
     strata: Sequence[str] = ("market_regime", "symbol_type"),
+    requirements: CalibrationRequirements = CalibrationRequirements(),
 ) -> dict[str, object]:
     """Report calibration for exactly one ``up_probability_<horizon>`` pair."""
 
@@ -152,6 +195,7 @@ def calibration_report(
         outcome_column=f"success_{horizon}",
         bins=bins,
         strata=strata,
+        requirements=requirements,
     )
 
 
@@ -204,6 +248,41 @@ def local_threshold_sensitivity(
             row["success_rate"] = float(selected[success_column].mean()) if count else None
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def local_threshold_neighborhood(
+    labels: Any,
+    *,
+    feature: str,
+    baseline: float,
+    perturbations: Iterable[float],
+    return_column: str,
+    success_column: str | None = None,
+    comparison: ThresholdComparison = ThresholdComparison.GREATER_EQUAL,
+) -> Any:
+    """Build a local grid around the active configuration and report stability."""
+
+    if comparison is ThresholdComparison.BETWEEN:
+        raise ValueError("BETWEEN requires explicit ranges via local_threshold_sensitivity")
+    if not math.isfinite(baseline):
+        raise ValueError("baseline must be finite")
+    offsets = tuple(float(item) for item in perturbations)
+    if not offsets or any(not math.isfinite(item) for item in offsets):
+        raise ValueError("perturbations must be finite and non-empty")
+    result = local_threshold_sensitivity(
+        labels,
+        feature=feature,
+        thresholds=tuple(baseline + item for item in offsets),
+        return_column=return_column,
+        success_column=success_column,
+        comparison=comparison,
+    )
+    values = [float(value) for value in result["mean_return"].dropna()]
+    stability = _sample_std(values)
+    result["baseline"] = baseline
+    result["neighborhood_stability"] = stability
+    result["neighborhood_stable"] = stability is not None and stability <= 0.01
+    return result
 
 
 def sell_side_gap_report(labels: Any) -> dict[str, object]:
@@ -383,7 +462,12 @@ def _write_completed_t_cycle(
     sell: ExecutionResolution,
     context: CounterfactualExecutionContext,
     config: DividendTBacktestConfig,
+    *,
+    expiry_bars: int,
+    expiry_trade_days: int | None,
 ) -> None:
+    base["buyback_expiry_bars"] = expiry_bars
+    base["buyback_expiry_trade_days"] = expiry_trade_days
     target = context.pending_buyback_target_price
     if target is None:
         base["completed_t_cycle_reason"] = "BUYBACK_TARGET_MISSING"
@@ -397,7 +481,19 @@ def _write_completed_t_cycle(
         pending_buyback_shares=sell.shares,
         pending_buyback_target_price=target,
     )
-    for _, row in bars.iloc[entry_index + 1 :].iterrows():
+    execution_date = _bar_trade_date(bars.iloc[entry_index])
+    eligible_rows = bars.iloc[entry_index + 1 :]
+    window: list[Any] = []
+    for offset, (_, row) in enumerate(eligible_rows.iterrows(), start=1):
+        if offset > expiry_bars:
+            base["completed_t_cycle_reason"] = "BUYBACK_EXPIRED_BARS"
+            _write_buyback_path_metrics(base, window, target)
+            return
+        if expiry_trade_days is not None and _trading_day_distance(execution_date, _bar_trade_date(row)) > expiry_trade_days:
+            base["completed_t_cycle_reason"] = "BUYBACK_EXPIRED_TRADE_DAYS"
+            _write_buyback_path_metrics(base, window, target)
+            return
+        window.append(row)
         resolution = resolve_execution_request(
             signal="BUY_BACK_REVERSE_T",
             symbol=str(row["symbol"]),
@@ -407,10 +503,11 @@ def _write_completed_t_cycle(
             config=config,
             trade_pct=1.0,
         )
-        if resolution.block_reason in _TEMPORARY_EXECUTION_BLOCKS:
+        if resolution.block_reason in _TEMPORARY_EXECUTION_BLOCKS | {"BUYBACK_TARGET_NOT_REACHED"}:
             continue
         if not resolution.executable:
             base["completed_t_cycle_reason"] = resolution.block_reason
+            _write_buyback_path_metrics(base, window, target)
             return
         _write_buyback(base, resolution)
         proceeds = sell.reference_fill_price * sell.shares - sell.fee_amount
@@ -419,16 +516,34 @@ def _write_completed_t_cycle(
             if resolution.reference_fill_price is not None
             else math.inf
         )
-        base["completed_t_cycle_label"] = int(resolution.shares == sell.shares and proceeds > cost)
+        net_pnl = proceeds - cost
+        base["completed_t_cycle_net_pnl"] = net_pnl
+        base["completed_t_cycle_return"] = net_pnl / max(cost, 1e-12)
+        base["completed_t_cycle_label"] = int(resolution.shares == sell.shares and net_pnl > 0.0)
         base["completed_t_cycle_reason"] = "COMPLETED" if base["completed_t_cycle_label"] else "PARTIAL_OR_UNPROFITABLE_BUYBACK"
+        _write_buyback_path_metrics(base, window, target)
         return
-    base["completed_t_cycle_reason"] = "BUYBACK_NOT_REACHED"
+    base["completed_t_cycle_reason"] = "BUYBACK_EXPIRED_DATA_END"
+    _write_buyback_path_metrics(base, window, target)
 
 
 def _empty_completed_t_cycle(base: dict[str, object]) -> None:
     base["completed_t_cycle_label"] = None
     base["completed_t_cycle_reason"] = None
-    for name in ("buyback_execution_time", "buyback_execution_price", "buyback_execution_quantity", "buyback_execution_cost"):
+    for name in (
+        "buyback_execution_time",
+        "buyback_execution_price",
+        "buyback_execution_quantity",
+        "buyback_execution_cost",
+        "buyback_expiry_bars",
+        "buyback_expiry_trade_days",
+        "completed_t_cycle_net_pnl",
+        "completed_t_cycle_return",
+        "buyback_holding_bars",
+        "buyback_fill_ratio",
+        "buyback_mae",
+        "buyback_mfe",
+    ):
         base[name] = None
 
 
@@ -437,22 +552,32 @@ def _write_buyback(base: dict[str, object], resolution: ExecutionResolution) -> 
     base["buyback_execution_price"] = resolution.reference_fill_price
     base["buyback_execution_quantity"] = resolution.shares
     base["buyback_execution_cost"] = resolution.execution_cost
+    original_quantity = _optional_float(base.get("execution_quantity")) or 0.0
+    base["buyback_fill_ratio"] = resolution.shares / original_quantity if original_quantity > 0.0 else None
 
 
-def _calendar_dates(calendar: Any) -> tuple[object, ...]:
+def _calendar_sessions(calendar: Any) -> dict[object, object]:
     import pandas as pd
 
-    _require_columns(calendar, {"trade_date"}, name="trading_calendar")
-    dates = tuple(sorted({pd.Timestamp(value).date() for value in calendar["trade_date"]}))
-    if not dates:
+    _require_columns(calendar, {"trade_date", "session_close"}, name="trading_calendar")
+    sessions = {pd.Timestamp(row["trade_date"]).date(): pd.Timestamp(row["session_close"]) for row in calendar.to_dict(orient="records")}
+    if not sessions:
         raise ValueError("TRADING_CALENDAR_EMPTY")
-    return dates
+    return sessions
 
 
-def _daily_target_index(bars: Any, entry_index: int, calendar_dates: tuple[object, ...], horizon: int) -> tuple[int | None, str | None]:
+def _daily_target_index(
+    bars: Any,
+    entry_index: int,
+    calendar_sessions: dict[object, object],
+    horizon: int,
+    *,
+    mode: DailyHorizonMode,
+) -> tuple[int | None, str | None]:
     import pandas as pd
 
     entry_date = pd.Timestamp(bars.iloc[entry_index]["timestamp"]).date()
+    calendar_dates = tuple(sorted(calendar_sessions))
     try:
         date_index = calendar_dates.index(entry_date)
     except ValueError as exc:
@@ -461,8 +586,51 @@ def _daily_target_index(bars: Any, entry_index: int, calendar_dates: tuple[objec
     if target_position >= len(calendar_dates):
         return None, "HORIZON_OUT_OF_RANGE"
     target_date = calendar_dates[target_position]
+    if mode is DailyHorizonMode.SYMBOL_TRADABLE_DAY:
+        target_date = _symbol_tradable_target_date(bars, entry_date, horizon)
+        if target_date is None:
+            return None, "HORIZON_OUT_OF_RANGE"
     indices = bars.index[pd.to_datetime(bars["timestamp"]).dt.date == target_date]
-    return (int(indices[-1]), None) if len(indices) else (None, "HORIZON_BAR_MISSING")
+    if not len(indices):
+        return None, "HORIZON_BAR_MISSING"
+    target_index = int(indices[-1])
+    if pd.Timestamp(bars.iloc[target_index]["timestamp"]) != calendar_sessions.get(target_date):
+        return None, "HORIZON_SESSION_CLOSE_MISSING"
+    return target_index, None
+
+
+def _symbol_tradable_target_date(bars: Any, entry_date: object, horizon: int) -> object | None:
+    import pandas as pd
+
+    data = bars.copy()
+    data["trade_date"] = pd.to_datetime(data["timestamp"]).dt.date
+    if "is_suspended" in data.columns:
+        data = data.loc[~data["is_suspended"].astype(bool)]
+    dates = tuple(sorted(date for date in set(data["trade_date"]) if date > entry_date))
+    return dates[horizon - 1] if len(dates) >= horizon else None
+
+
+def _bar_trade_date(row: Any) -> object:
+    import pandas as pd
+
+    return pd.Timestamp(row["timestamp"]).date()
+
+
+def _trading_day_distance(start: object, end: object) -> int:
+    return max(0, (cast(Any, end) - cast(Any, start)).days)
+
+
+def _write_buyback_path_metrics(base: dict[str, object], window: list[Any], target: float) -> None:
+    if not window:
+        base["buyback_holding_bars"] = 0
+        base["buyback_mae"] = None
+        base["buyback_mfe"] = None
+        return
+    lows = [float(row["low"]) for row in window]
+    highs = [float(row["high"]) for row in window]
+    base["buyback_holding_bars"] = len(window)
+    base["buyback_mae"] = min(lows) / target - 1.0
+    base["buyback_mfe"] = max(highs) / target - 1.0
 
 
 def _write_reference_return(
@@ -515,7 +683,13 @@ def _write_reference_return(
 
 
 def _calibration_report_for_columns(
-    labels: Any, *, probability_column: str, outcome_column: str, bins: int, strata: Sequence[str]
+    labels: Any,
+    *,
+    probability_column: str,
+    outcome_column: str,
+    bins: int,
+    strata: Sequence[str],
+    requirements: CalibrationRequirements,
 ) -> dict[str, object]:
     if isinstance(bins, bool) or not isinstance(bins, int) or bins < 2:
         raise ValueError("bins must be an integer >= 2")
@@ -527,15 +701,23 @@ def _calibration_report_for_columns(
         raise ValueError("probabilities must be finite values in [0, 1]")
     if any(value not in {0.0, 1.0} for value in outcomes):
         raise ValueError("calibration outcomes must be binary")
-    report = _calibration_values(probabilities, outcomes, bins=bins)
+    report = _calibration_values(probabilities, outcomes, bins=bins, minimum_samples_per_bin=requirements.minimum_samples_per_bin)
     report["horizon_probability_column"] = probability_column
     report["horizon_outcome_column"] = outcome_column
+    report["minimum_calibration_samples"] = requirements.minimum_calibration_samples
+    report["minimum_samples_per_bin"] = requirements.minimum_samples_per_bin
+    report["minimum_samples_per_stratum"] = requirements.minimum_samples_per_stratum
+    report["valid_for_inference"] = len(probabilities) >= requirements.minimum_calibration_samples
+    report["display_only_reason"] = None if report["valid_for_inference"] else "MINIMUM_CALIBRATION_SAMPLES"
     by_stratum: dict[str, dict[str, object]] = {}
     for stratum in strata:
         if stratum in valid.columns:
             by_stratum[stratum] = {
-                str(name): _calibration_values(
-                    [float(value) for value in group[probability_column]], [float(value) for value in group[outcome_column]], bins=bins
+                str(name): _calibration_stratum(
+                    [float(value) for value in group[probability_column]],
+                    [float(value) for value in group[outcome_column]],
+                    bins=bins,
+                    requirements=requirements,
                 )
                 for name, group in valid.groupby(stratum, dropna=False, sort=True)
             }
@@ -560,6 +742,35 @@ def _normalized_thresholds(
 def _validate_horizons(intraday: Sequence[int], daily: Sequence[int]) -> None:
     if any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in (*intraday, *daily)):
         raise ValueError("label horizons must be positive integers")
+
+
+def _validate_buyback_expiry(expiry_bars: int, expiry_trade_days: int | None) -> None:
+    if isinstance(expiry_bars, bool) or not isinstance(expiry_bars, int) or expiry_bars < 1:
+        raise ValueError("buyback_expiry_bars must be a positive integer")
+    if expiry_trade_days is not None and (
+        isinstance(expiry_trade_days, bool) or not isinstance(expiry_trade_days, int) or expiry_trade_days < 1
+    ):
+        raise ValueError("buyback_expiry_trade_days must be a positive integer or None")
+
+
+def _candidate_int(candidate: dict[str, object], name: str, default: int) -> int:
+    value = candidate.get(name, default)
+    if value is None:
+        return default
+    try:
+        number = int(cast(int | str | float, value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if isinstance(value, bool) or number < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return number
+
+
+def _candidate_optional_int(candidate: dict[str, object], name: str, default: int | None) -> int | None:
+    value = candidate.get(name, default)
+    if value is None:
+        return None
+    return _candidate_int({name: value}, name, 1)
 
 
 def _round_trip_cost(entry: float, exit_price: float, config: DividendTBacktestConfig, side: str) -> float:
@@ -624,7 +835,9 @@ def _required_float(candidate: dict[str, object], name: str) -> float:
     return number
 
 
-def _calibration_values(probabilities: list[float], outcomes: list[float], *, bins: int) -> dict[str, object]:
+def _calibration_values(
+    probabilities: list[float], outcomes: list[float], *, bins: int, minimum_samples_per_bin: int = 1
+) -> dict[str, object]:
     if not probabilities:
         return {"count": 0, "brier_score": None, "log_loss": None, "reliability_curve": []}
     brier = sum((p - y) ** 2 for p, y in zip(probabilities, outcomes, strict=True)) / len(probabilities)
@@ -642,11 +855,29 @@ def _calibration_values(probabilities: list[float], outcomes: list[float], *, bi
             "count": len(items),
             "mean_predicted": sum(p for p, _ in items) / len(items),
             "observed_rate": sum(y for _, y in items) / len(items),
+            "valid_for_inference": len(items) >= minimum_samples_per_bin,
+            "display_only_reason": None if len(items) >= minimum_samples_per_bin else "MINIMUM_SAMPLES_PER_BIN",
         }
         for i, items in enumerate(grouped)
         if items
     ]
     return {"count": len(probabilities), "brier_score": brier, "log_loss": log_loss, "reliability_curve": curve}
+
+
+def _sample_std(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    mean_value = sum(values) / len(values)
+    return math.sqrt(sum((value - mean_value) ** 2 for value in values) / (len(values) - 1))
+
+
+def _calibration_stratum(
+    probabilities: list[float], outcomes: list[float], *, bins: int, requirements: CalibrationRequirements
+) -> dict[str, object]:
+    result = _calibration_values(probabilities, outcomes, bins=bins, minimum_samples_per_bin=requirements.minimum_samples_per_bin)
+    result["valid_for_inference"] = len(probabilities) >= requirements.minimum_samples_per_stratum
+    result["display_only_reason"] = None if result["valid_for_inference"] else "MINIMUM_SAMPLES_PER_STRATUM"
+    return result
 
 
 def _ordinary_sell_summary(frame: Any) -> dict[str, object]:

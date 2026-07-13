@@ -86,7 +86,7 @@ def main() -> int:
         min_t_trade_pct=args.min_t_pct,
         max_signal_position_pct=args.max_signal_position_pct,
         strategy_mode=args.strategy_mode,
-        enable_point_hit_rate_sell_calibration=True,
+        enable_point_hit_rate_sell_calibration=False,
         min_lookback_bars=args.min_lookback_bars,
         max_history_bars=args.max_history_bars,
         signal_step_bars=args.signal_step_bars,
@@ -295,7 +295,7 @@ def _format_report(
         f"- 未来窗口：{', '.join(str(day) for day in _parse_horizons(args.horizons))} 个交易日；"
         f"每交易日 {args.bars_per_trading_day} 根 5 分钟 K 线\n"
         f"- 买点动作：`BUY_T_TIMING`、`BREAKOUT_BUY_TIMING`；买点子类型按 5 日命中率优先口径拆分\n"
-        f"- 卖点动作：`SELL_T_TIMING`、`STOP_T_WAIT`、`WAIT_DAILY_WEAK`\n"
+        f"- 旧卖点动作诊断：`SELL_T_TIMING`、`STOP_T_WAIT`、`WAIT_DAILY_WEAK`（`LEGACY_DIAGNOSTIC_ONLY`，不得用于参数选择、MACD promotion、sealed test 或生产结论）\n"
         f"- 命中定义：买点后未来收盘高于执行价算命中；卖点后未来收盘低于执行价算命中。\n"
         f"- 信号缓存命中/未命中：{total_cache_hits} / {total_cache_misses}\n\n"
         "## 买卖点总览\n\n"

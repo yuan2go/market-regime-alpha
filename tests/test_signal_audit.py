@@ -5,10 +5,13 @@ import pytest
 
 from market_regime_alpha.dividend_t.backtest import DividendTBacktestConfig
 from market_regime_alpha.dividend_t.signal_audit import (
+    CalibrationRequirements,
+    DailyHorizonMode,
     ThresholdComparison,
     audit_report,
     calibration_report,
     label_candidate_outcomes,
+    local_threshold_neighborhood,
     local_threshold_sensitivity,
     sell_side_gap_report,
 )
@@ -162,6 +165,34 @@ def test_calibration_and_threshold_sensitivity_are_stratified_and_deterministic(
     assert list(sensitivity["selected_count"]) == [3, 2, 1]
 
 
+def test_calibration_low_sample_output_is_display_only_and_local_grid_reports_stability() -> None:
+    labels = pd.DataFrame(
+        [
+            {"up_probability_bar_6": 0.8, "success_bar_6": 1, "market_regime": "BULL", "force_buy_edge": 60.0, "net_return": 0.01},
+            {"up_probability_bar_6": 0.2, "success_bar_6": 0, "market_regime": "BULL", "force_buy_edge": 61.0, "net_return": 0.02},
+        ]
+    )
+
+    calibration = calibration_report(
+        labels,
+        horizon="bar_6",
+        requirements=CalibrationRequirements(minimum_calibration_samples=10, minimum_samples_per_bin=3, minimum_samples_per_stratum=5),
+    )
+    neighborhood = local_threshold_neighborhood(
+        labels,
+        feature="force_buy_edge",
+        baseline=60.0,
+        perturbations=(-1.0, 0.0, 1.0),
+        return_column="net_return",
+    )
+
+    assert calibration["valid_for_inference"] is False
+    assert calibration["display_only_reason"] == "MINIMUM_CALIBRATION_SAMPLES"
+    assert all("valid_for_inference" in item for item in calibration["reliability_curve"])
+    assert set(neighborhood["threshold"]) == {59.0, 60.0, 61.0}
+    assert "neighborhood_stability" in neighborhood.columns
+
+
 def test_daily_horizon_uses_explicit_trading_calendar_and_each_horizon_has_own_path_metrics() -> None:
     bars = pd.DataFrame(
         [
@@ -170,7 +201,12 @@ def test_daily_horizon_uses_explicit_trading_calendar_and_each_horizon_has_own_p
             {"symbol": "510300.SH", "timestamp": "2026-01-08 09:35", "open": 4.2, "high": 4.21, "low": 3.9, "close": 4.0, "volume": 1000},
         ]
     )
-    calendar = pd.DataFrame({"trade_date": ["2026-01-05", "2026-01-06", "2026-01-08"]})
+    calendar = pd.DataFrame(
+        {
+            "trade_date": ["2026-01-05", "2026-01-06", "2026-01-08"],
+            "session_close": ["2026-01-05 14:55", "2026-01-06 09:35", "2026-01-08 09:35"],
+        }
+    )
     candidates = pd.DataFrame(
         [
             {
@@ -193,6 +229,73 @@ def test_daily_horizon_uses_explicit_trading_calendar_and_each_horizon_has_own_p
     assert labels.loc[0, "horizon_reason_day_2"] == "HORIZON_OUT_OF_RANGE"
     assert labels.loc[0, "mfe_bar_1"] != labels.loc[0, "mfe_bar_2"]
     assert labels.loc[0, "stop_triggered_day_1"] is None
+
+
+def test_daily_horizon_distinguishes_market_and_symbol_tradable_days_and_requires_session_close() -> None:
+    bars = pd.DataFrame(
+        [
+            {
+                "symbol": "600000.SH",
+                "timestamp": "2026-01-05 14:55",
+                "open": 10.0,
+                "high": 10.0,
+                "low": 10.0,
+                "close": 10.0,
+                "volume": 1000,
+            },
+            {
+                "symbol": "600000.SH",
+                "timestamp": "2026-01-05 14:50",
+                "open": 10.0,
+                "high": 10.0,
+                "low": 10.0,
+                "close": 10.0,
+                "volume": 1000,
+            },
+            {
+                "symbol": "600000.SH",
+                "timestamp": "2026-01-07 14:55",
+                "open": 10.1,
+                "high": 10.2,
+                "low": 10.0,
+                "close": 10.1,
+                "volume": 1000,
+            },
+        ]
+    )
+    calendar = pd.DataFrame(
+        {
+            "trade_date": ["2026-01-05", "2026-01-06", "2026-01-07"],
+            "session_close": ["2026-01-05 14:55", "2026-01-06 14:55", "2026-01-07 14:55"],
+        }
+    )
+    candidates = pd.DataFrame(
+        [
+            {
+                "symbol": "600000.SH",
+                "timestamp": "2026-01-05 14:50",
+                "action": "BUY_T",
+                "primary_setup_code": "pullback_low_buy",
+                "signal_intent": "MEAN_REVERSION_T",
+                "equity_before": 10000,
+                "cash": 10000,
+                "suggested_trade_pct": 0.2,
+            }
+        ]
+    )
+
+    market = label_candidate_outcomes(candidates, bars, intraday_horizons=(), daily_horizons=(1,), trading_calendar=calendar)
+    tradable = label_candidate_outcomes(
+        candidates,
+        bars,
+        intraday_horizons=(),
+        daily_horizons=(1,),
+        trading_calendar=calendar,
+        daily_horizon_mode=DailyHorizonMode.SYMBOL_TRADABLE_DAY,
+    )
+
+    assert market.loc[0, "horizon_reason_day_1"] == "HORIZON_BAR_MISSING"
+    assert tradable.loc[0, "horizon_end_time_day_1"] == "2026-01-07 14:55:00"
 
 
 def test_sell_labels_separate_directional_decline_from_completed_t_cycle() -> None:
@@ -236,6 +339,62 @@ def test_sell_labels_separate_directional_decline_from_completed_t_cycle() -> No
     assert labels.loc[0, "directional_decline_label_bar_1"] == 1
     assert labels.loc[0, "completed_t_cycle_label"] == 1
     assert labels.loc[0, "buyback_execution_quantity"] == labels.loc[0, "execution_quantity"]
+    assert labels.loc[0, "buyback_expiry_bars"] == 24
+    assert labels.loc[0, "buyback_holding_bars"] == 1
+    assert labels.loc[0, "buyback_fill_ratio"] == 1.0
+    assert labels.loc[0, "completed_t_cycle_net_pnl"] > 0.0
+
+
+def test_buyback_cycle_expires_instead_of_scanning_the_rest_of_the_dataset() -> None:
+    bars = pd.DataFrame(
+        [
+            {
+                "symbol": "600000.SH",
+                "timestamp": "2026-01-05 10:00",
+                "open": 10.0,
+                "high": 10.0,
+                "low": 10.0,
+                "close": 10.0,
+                "volume": 1000,
+            },
+            {
+                "symbol": "600000.SH",
+                "timestamp": "2026-01-05 10:05",
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.95,
+                "close": 10.0,
+                "volume": 1000,
+            },
+            {"symbol": "600000.SH", "timestamp": "2026-01-05 10:10", "open": 9.7, "high": 9.8, "low": 9.7, "close": 9.7, "volume": 1000},
+            {"symbol": "600000.SH", "timestamp": "2026-01-05 10:15", "open": 9.5, "high": 9.6, "low": 9.4, "close": 9.5, "volume": 1000},
+        ]
+    )
+    candidate = pd.DataFrame(
+        [
+            {
+                "symbol": "600000.SH",
+                "timestamp": "2026-01-05 10:00",
+                "action": "SELL_T",
+                "primary_setup_code": "pressure_sell_t",
+                "signal_intent": "MEAN_REVERSION_T",
+                "equity_before": 10000,
+                "cash": 0,
+                "suggested_trade_pct": 0.2,
+                "t_shares": 300,
+                "sellable_qty": 300,
+                "buyback_target_price": 9.6,
+                "buyback_expiry_bars": 1,
+            }
+        ]
+    )
+
+    labels = label_candidate_outcomes(
+        candidate, bars, intraday_horizons=(), daily_horizons=(), execution_config=DividendTBacktestConfig(enable_t_sell=True)
+    )
+
+    assert labels.loc[0, "completed_t_cycle_label"] is None
+    assert labels.loc[0, "completed_t_cycle_reason"] == "BUYBACK_EXPIRED_BARS"
 
 
 def test_reference_series_must_match_candidate_identity_and_timestamp_exactly() -> None:

@@ -21,3 +21,8 @@
 ## 当前卖点缺口
 
 当前普通 `SELL_T_TIMING` 常被质量/等待链路降级，且缺少稳定的 `TAKE_PROFIT_T`、`REDUCE_T`、`EXIT_T` 和 `REVERSE_T_SELL` 研究标签。下一轮候选契约应显式记录：持仓成本、持有 bar 数、最高浮盈、ATR trailing 状态、MFE 回撤、时间止损、setup invalidation 与风险强制等级。该补齐前，卖点研究只能报告现有 `SELL_T_TIMING` 覆盖率及风险退出的尾部保护，不应宣称卖点优于买点。
+
+Task 11A.7 已将减仓动作拆分为 `TAKE_PROFIT_REDUCE_T`（`MEAN_REVERSION_T/NONE`）和
+`RISK_REDUCE_T`（`RISK_REDUCTION/SOFT`），保留既有 intent/enforcement 不变量。旧
+`point_hit_rate.py` 是 `LEGACY_DIAGNOSTIC_ONLY`，其将 `SELL_T_TIMING`、`STOP_T_WAIT` 与
+`WAIT_DAILY_WEAK` 合并的历史统计不得进入正式卖点报告或任何 promotion 决策。

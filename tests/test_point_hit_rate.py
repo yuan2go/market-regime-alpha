@@ -5,10 +5,15 @@ from types import SimpleNamespace
 import pandas as pd
 
 from market_regime_alpha.dividend_t.point_hit_rate import (
+    LEGACY_DIAGNOSTIC_ONLY,
     build_point_hit_rate_events,
     point_type_for_action,
     summarize_point_hit_rate_events,
 )
+
+
+def test_point_hit_rate_is_explicitly_legacy_diagnostic_only() -> None:
+    assert LEGACY_DIAGNOSTIC_ONLY is True
 
 
 def test_point_type_for_action_classifies_buy_and_sell_points() -> None:

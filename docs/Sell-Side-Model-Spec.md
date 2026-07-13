@@ -8,14 +8,16 @@
 | Action | SignalIntent | RiskEnforcement | 持仓对象 | 主触发 | 建议比例 | 等待 | MACD | 买回 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `TAKE_PROFIT_T` | `MEAN_REVERSION_T` | `NONE` | T 仓 | 达到收益目标且出现压力/衰减确认 | 可配置 25–100% T 仓 | 允许 | 允许非对称 policy（强多头无确认时阻断；有确认时缩仓） | 不自动 |
-| `REDUCE_T` | `MEAN_REVERSION_T` | `SOFT` | T 仓 | 进攻状态下调、时间止损或浮盈回撤 | 可配置部分 T 仓 | 允许 | 仅诊断或 policy 缩仓；不覆盖软风险等待语义 | 不自动 |
-| `EXIT_T` | `RISK_REDUCTION` | `SOFT` 或 `HARD` | T 仓 | setup 失效或可配置风险阈值 | 100% 可卖 T 仓 | SOFT 可等；HARD 不可等 | 不阻断/缩仓，仅记录 | 不自动 |
+| `TAKE_PROFIT_REDUCE_T` | `MEAN_REVERSION_T` | `NONE` | T 仓 | 浮盈回撤/时间条件下的主动止盈减仓 | 可配置部分 T 仓 | 允许 | 允许非对称 policy | 不自动 |
+| `RISK_REDUCE_T` | `RISK_REDUCTION` | `SOFT` | T 仓 | 进攻状态下调或软风险阈值 | 可配置部分 T 仓 | 允许 | 不阻断/缩仓，仅记录 | 不自动 |
+| `EXIT_T_SOFT` / `EXIT_T_HARD` | `RISK_REDUCTION` | `SOFT` / `HARD` | T 仓 | setup 失效或风险阈值 | 100% 可卖 T 仓 | SOFT 可等；HARD 不可等 | 不阻断/缩仓，仅记录 | 不自动 |
 | `STOP_T` | `RISK_REDUCTION` | `HARD` | T 仓，再按契约可扩展至总仓 | 硬止损、结构破位、尾部风险 | 100% 可卖范围 | 不允许 | 完全豁免 | 不自动 |
 | `REVERSE_T_SELL` | `MEAN_REVERSION_T` | `NONE` | 可卖底仓 | 压力位高抛并建立待买回义务 | 受核心仓位下限约束 | 允许 | 强多头无 exit confirmation 时阻断；有确认时缩仓 | 必须，创建 pending buyback |
 | `CLEAR_BASE` | `RISK_REDUCTION` | `HARD` | 底仓与 T 仓 | 硬止损、结构破位或组合级强制退出 | 100% 可卖总仓 | 不允许 | 完全豁免 | 不允许 |
 
 同一候选只允许一个 `primary_setup_code`、一个动作、一个 `SignalIntent` 与一个
-`RiskEnforcement`。`STOP_T_WAIT` 是 `SOFT` 风险的等待状态，不能由 action 文案
+`RiskEnforcement`。非 `RISK_REDUCTION` intent 只能使用 `NONE` enforcement，因此不得再使用
+`REDUCE_T = MEAN_REVERSION_T + SOFT` 的混合定义。`STOP_T_WAIT` 是 `SOFT` 风险的等待状态，不能由 action 文案
 倒推为 HARD；HARD 风控永远不经过 MACD policy。
 
 ## 持仓生命周期上下文
@@ -38,10 +40,10 @@ atr_trailing_level
 - ATR trailing：以当前已收盘 bar 的 ATR、最高收盘/最高价与配置倍数计算。触发仅在
   下一可执行 bar 执行；不得使用同 bar 的最低价成交。
 - MFE 回撤退出：达到最小 `max_unrealized_return` 后，`drawdown_from_peak` 超过阈值，
-  生成 `TAKE_PROFIT_T` 或 `REDUCE_T`，而不是硬编码成 `STOP_T`。
-- 时间止损：超过 setup 的 `max_holding_bars` 且没有后续确认，生成 `REDUCE_T` 或
-  `EXIT_T(SOFT)`；不能把持有时间本身当作 HARD 风险。
-- setup invalidation：由结构模块输出 `NONE/SOFT/HARD`。`HARD` 生成 `EXIT_T` 或
+生成 `TAKE_PROFIT_T` 或 `TAKE_PROFIT_REDUCE_T`，而不是硬编码成 `STOP_T`。
+- 时间止损：超过 setup 的 `max_holding_bars` 且没有后续确认，生成 `RISK_REDUCE_T` 或
+  `EXIT_T_SOFT`；不能把持有时间本身当作 HARD 风险。
+- setup invalidation：由结构模块输出 `NONE/SOFT/HARD`。`HARD` 生成 `EXIT_T_HARD` 或
   `CLEAR_BASE` 并带 `RiskEnforcement.HARD`；`SOFT` 可以保留等待确认。
 
 ## reverse-T 买回状态机
@@ -72,4 +74,5 @@ READY
 ## 实施边界
 
 Task 11A.5 只冻结数据/状态/动作设计。现有 `SELL_T_TIMING -> WAIT` 逻辑没有在本任务
-改写；后续实现必须以小步提交、失败测试、共享 execution/policy seam 和独立回归为前提。
+改写；`point_hit_rate.py` 为 `LEGACY_DIAGNOSTIC_ONLY`，不得用于参数选择、MACD promotion、
+sealed test 或生产结论。后续实现必须以小步提交、失败测试、共享 execution/policy seam 和独立回归为前提。

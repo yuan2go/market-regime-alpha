@@ -1,4 +1,4 @@
-"""Buy/sell point hit-rate analysis for timing signals."""
+"""Legacy timing hit-rate diagnostics; not a sell-side evaluation contract."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import pandas as pd
 
 BUY_POINT_ACTIONS = frozenset({"BUY_T_TIMING", "BREAKOUT_BUY_TIMING"})
 SELL_POINT_ACTIONS = frozenset({"SELL_T_TIMING", "STOP_T_WAIT", "WAIT_DAILY_WEAK"})
+LEGACY_DIAGNOSTIC_ONLY = True
 DEFAULT_HORIZON_DAYS = (1, 3, 5)
 DEFAULT_BARS_PER_TRADING_DAY = 48
 
@@ -48,6 +49,8 @@ class PointHitRateSummary:
 
 
 def point_type_for_action(action: str) -> str | None:
+    """Classify only for historical diagnostics, never parameter selection."""
+
     normalized = str(action).strip().upper()
     if normalized in BUY_POINT_ACTIONS:
         return "buy"

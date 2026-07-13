@@ -1648,7 +1648,7 @@ def run_cosco_dividend_t_backtest(
             )
             signal = _apply_risk_on_continuation_add(signal, signal_cfg)
             if signal_cfg.enable_point_hit_rate_sell_calibration:
-                signal = _apply_sell_point_hit_rate_calibration(signal)
+                raise ValueError("LEGACY_POINT_HIT_RATE_CALIBRATION_FORBIDDEN")
             if _buy_t_failure_cooldown_blocks_signal(
                 signal,
                 signal_cfg,

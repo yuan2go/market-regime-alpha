@@ -68,6 +68,11 @@ def test_primary_setup_uniquely_maps_to_intent() -> None:
     assert intent_for_setup(PrimarySetupCode.THIRD_BUY_FOLLOW) is SignalIntent.TREND_FOLLOWING
     assert intent_for_setup(PrimarySetupCode.STRUCTURE_BREAK) is SignalIntent.RISK_REDUCTION
     assert intent_for_setup(PrimarySetupCode.BUILD_BASE) is SignalIntent.BASE_ACCUMULATION
+    assert intent_for_setup(PrimarySetupCode.TAKE_PROFIT_REDUCE_T) is SignalIntent.MEAN_REVERSION_T
+    assert intent_for_setup(PrimarySetupCode.RISK_REDUCE_T) is SignalIntent.RISK_REDUCTION
+    assert intent_for_setup(PrimarySetupCode.EXIT_T_SOFT) is SignalIntent.RISK_REDUCTION
+    assert intent_for_setup(PrimarySetupCode.EXIT_T_HARD) is SignalIntent.RISK_REDUCTION
+    assert intent_for_setup(PrimarySetupCode.CLEAR_BASE) is SignalIntent.RISK_REDUCTION
 
 
 def test_macd_profiles_keep_production_baseline_disabled() -> None:
@@ -382,7 +387,11 @@ def test_sizing_owner_applies_multiplier_once_and_zero_becomes_hold() -> None:
             sizing_owner="test_owner",
         )
 
-    zero = apply_macd_policy(candidate, ready_policy_state(cross=MACDCross.BEARISH, axis=MACDZeroAxis.BELOW, histogram=-0.2), experimental_policy(mean_reversion_size_multiplier=0.0))
+    zero = apply_macd_policy(
+        candidate,
+        ready_policy_state(cross=MACDCross.BEARISH, axis=MACDZeroAxis.BELOW, histogram=-0.2),
+        experimental_policy(mean_reversion_size_multiplier=0.0),
+    )
     zero_sized = apply_macd_sizing_once(
         zero,
         original_suggested_trade_pct=0.20,
