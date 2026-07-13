@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,9 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from market_regime_alpha.dividend_t.models import FundamentalInputs, PositionState, RetreatInputs, Signal, TechnicalInputs, TrendState
+from market_regime_alpha.dividend_t.indicators import technical_macd_fields
+from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig, MACDCross, MACDDataReason, MACDHistogramTrend, MACDZeroAxis, calculate_macd
+from market_regime_alpha.dividend_t.scoring import technical_score
 from market_regime_alpha.dividend_t.strategy import DividendTStrategy
 
 
@@ -149,6 +153,56 @@ class DividendTStrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.signal, Signal.CLEAR)
         self.assertIsNotNone(decision.order_intent)
+
+    def test_technical_inputs_default_to_unavailable_neutral_macd(self) -> None:
+        technical = TechnicalInputs(70, 70, 70, 70)
+
+        self.assertIsNone(technical.macd_dif)
+        self.assertIsNone(technical.macd_dea)
+        self.assertIsNone(technical.macd_histogram)
+        self.assertIsNone(technical.macd_histogram_delta)
+        self.assertIs(technical.macd_histogram_trend, MACDHistogramTrend.FLAT)
+        self.assertIs(technical.macd_cross, MACDCross.NONE)
+        self.assertIsNone(technical.macd_cross_age)
+        self.assertIs(technical.macd_zero_axis, MACDZeroAxis.STRADDLING)
+        self.assertFalse(technical.macd_data_ready)
+        self.assertIs(technical.macd_data_reason, MACDDataReason.INSUFFICIENT_BARS)
+        self.assertEqual(technical.macd_score, 50.0)
+
+    def test_unavailable_macd_does_not_change_legacy_technical_score(self) -> None:
+        technical = TechnicalInputs(82, 71, 66, 59, chan_score=74)
+
+        self.assertEqual(technical_score(technical), 72.03)
+
+    def test_unready_macd_preserves_distinct_data_reason(self) -> None:
+        for reason in (
+            MACDDataReason.INSUFFICIENT_BARS,
+            MACDDataReason.INVALID_CLOSE,
+            MACDDataReason.PRICE_ADJUSTMENT_UNAVAILABLE,
+            MACDDataReason.EXPECTED_BAR_MISSING,
+        ):
+            with self.subTest(reason=reason):
+                technical = TechnicalInputs(70, 70, 70, 70, macd_data_reason=reason)
+                self.assertIs(technical.macd_data_reason, reason)
+
+    def test_inconsistent_unready_macd_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unready MACD must use neutral score and cross"):
+            TechnicalInputs(70, 70, 70, 70, macd_score=49.0)
+
+    def test_ready_macd_requires_raw_values_and_ready_reason(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ready MACD requires READY reason"):
+            TechnicalInputs(70, 70, 70, 70, macd_data_ready=True)
+
+    def test_only_formal_macd_result_can_populate_technical_inputs(self) -> None:
+        result = calculate_macd([10.0 + index * 0.1 for index in range(40)], MACDConfig(bar_interval=BarInterval.DAY_1))
+        fields = technical_macd_fields(result)
+
+        technical = TechnicalInputs(70, 70, 70, 70, **fields)
+
+        self.assertTrue(technical.macd_data_ready)
+        self.assertEqual(technical.macd_score, result.score)
+        with self.assertRaisesRegex(ValueError, "provisional MACD cannot populate TechnicalInputs"):
+            technical_macd_fields(replace(result, provisional=True))
 
 
 if __name__ == "__main__":

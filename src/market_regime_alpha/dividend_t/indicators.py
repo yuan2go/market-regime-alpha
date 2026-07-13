@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from market_regime_alpha.dividend_t.chan import analyze_chan_structure
+from market_regime_alpha.dividend_t.macd import MACDCross, MACDDataReason, MACDHistogramTrend, MACDResult, MACDZeroAxis
 from market_regime_alpha.dividend_t.models import TechnicalInputs, TrendState
 
 
@@ -55,7 +56,7 @@ def estimate_levels(frame: Any, *, support_window: int = 20, resistance_window: 
     return TechnicalLevels(close=close, support=support, resistance=resistance, risk_reward_ratio=ratio)
 
 
-def infer_technical_inputs(frame: Any) -> TechnicalInputs:
+def infer_technical_inputs(frame: Any, *, macd_result: MACDResult | None = None) -> TechnicalInputs:
     """Infer a conservative technical snapshot from daily bars."""
     data = add_daily_indicators(frame) if "ma20" not in frame.columns else frame.copy()
     latest = data.iloc[-1]
@@ -101,6 +102,8 @@ def infer_technical_inputs(frame: Any) -> TechnicalInputs:
     volume_structure = 80.0 if shrinking_pullback else 45.0 if volume_stalling else 65.0
     intraday_support = 80.0 if near_support and (shrinking_pullback or intraday_reversal) else 55.0
 
+    if macd_result is not None and macd_result.provisional:
+        raise ValueError("provisional MACD cannot populate TechnicalInputs")
     return TechnicalInputs(
         position_quality=position_quality,
         volume_structure=volume_structure,
@@ -122,7 +125,53 @@ def infer_technical_inputs(frame: Any) -> TechnicalInputs:
         chan_pivot_low=chan.pivot_low,
         chan_pivot_high=chan.pivot_high,
         chan_invalid_price=chan.invalid_price,
+        macd_dif=macd_result.dif if macd_result is not None else None,
+        macd_dea=macd_result.dea if macd_result is not None else None,
+        macd_histogram=macd_result.histogram if macd_result is not None else None,
+        macd_histogram_delta=macd_result.histogram_delta if macd_result is not None else None,
+        macd_histogram_trend=macd_result.histogram_trend if macd_result is not None else MACDHistogramTrend.FLAT,
+        macd_cross=macd_result.cross if macd_result is not None else MACDCross.NONE,
+        macd_cross_age=macd_result.cross_age if macd_result is not None else None,
+        macd_zero_axis=macd_result.zero_axis if macd_result is not None else MACDZeroAxis.STRADDLING,
+        macd_data_ready=macd_result.data_ready if macd_result is not None else False,
+        macd_data_reason=macd_result.data_reason if macd_result is not None else MACDDataReason.INSUFFICIENT_BARS,
+        macd_score=macd_result.score if macd_result is not None else 50.0,
     )
+
+
+def technical_macd_fields(result: MACDResult) -> dict[str, object]:
+    """Convert one formal MACD result into flat TechnicalInputs fields."""
+
+    if result.provisional:
+        raise ValueError("provisional MACD cannot populate TechnicalInputs")
+    return {
+        "macd_dif": result.dif,
+        "macd_dea": result.dea,
+        "macd_histogram": result.histogram,
+        "macd_histogram_delta": result.histogram_delta,
+        "macd_histogram_trend": result.histogram_trend,
+        "macd_cross": result.cross,
+        "macd_cross_age": result.cross_age,
+        "macd_zero_axis": result.zero_axis,
+        "macd_data_ready": result.data_ready,
+        "macd_data_reason": result.data_reason,
+        "macd_score": result.score,
+    }
+
+
+def provisional_macd_payload(result: MACDResult) -> dict[str, object]:
+    """Return an explicitly provisional UI-only payload."""
+
+    if not result.provisional:
+        raise ValueError("preview payload requires provisional MACD")
+    return {
+        "provisional": True,
+        "bar_interval": result.config.bar_interval.value,
+        "dif": result.dif,
+        "dea": result.dea,
+        "histogram": result.histogram,
+        "score": result.score,
+    }
 
 
 def _float_or_none(value: Any) -> float | None:

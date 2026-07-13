@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import math
+
+from market_regime_alpha.dividend_t.macd import MACDCross, MACDDataReason, MACDHistogramTrend, MACDZeroAxis
 
 
 class Signal(str, Enum):
@@ -65,6 +68,74 @@ class TechnicalInputs:
     chan_pivot_low: float | None = None
     chan_pivot_high: float | None = None
     chan_invalid_price: float | None = None
+    macd_dif: float | None = None
+    macd_dea: float | None = None
+    macd_histogram: float | None = None
+    macd_histogram_delta: float | None = None
+    macd_histogram_trend: MACDHistogramTrend = MACDHistogramTrend.FLAT
+    macd_cross: MACDCross = MACDCross.NONE
+    macd_cross_age: int | None = None
+    macd_zero_axis: MACDZeroAxis = MACDZeroAxis.STRADDLING
+    macd_data_ready: bool = False
+    macd_data_reason: MACDDataReason = MACDDataReason.INSUFFICIENT_BARS
+    macd_score: float = 50.0
+
+    def __post_init__(self) -> None:
+        validate_macd_consistency(self)
+
+
+def validate_macd_consistency(technical: TechnicalInputs) -> None:
+    """Validate the flat TechnicalInputs representation of MACD state."""
+
+    if not isinstance(technical.macd_data_ready, bool):
+        raise ValueError("macd_data_ready must be boolean")
+    if not isinstance(technical.macd_data_reason, MACDDataReason):
+        raise ValueError("macd_data_reason must be a MACDDataReason")
+    if not isinstance(technical.macd_histogram_trend, MACDHistogramTrend):
+        raise ValueError("macd_histogram_trend must be a MACDHistogramTrend")
+    if not isinstance(technical.macd_cross, MACDCross):
+        raise ValueError("macd_cross must be a MACDCross")
+    if not isinstance(technical.macd_zero_axis, MACDZeroAxis):
+        raise ValueError("macd_zero_axis must be a MACDZeroAxis")
+
+    raw = (technical.macd_dif, technical.macd_dea, technical.macd_histogram)
+    if technical.macd_data_ready:
+        if technical.macd_data_reason is not MACDDataReason.READY or any(value is None for value in raw):
+            raise ValueError("ready MACD requires READY reason and DIF/DEA/Histogram")
+        assert technical.macd_dif is not None and technical.macd_dea is not None and technical.macd_histogram is not None
+        ready_values = tuple(float(value) for value in raw if value is not None)
+        if any(not math.isfinite(value) for value in ready_values):
+            raise ValueError("ready MACD raw values must be finite")
+        if technical.macd_histogram_delta is not None and not math.isfinite(float(technical.macd_histogram_delta)):
+            raise ValueError("macd histogram delta must be finite when present")
+        if not math.isfinite(float(technical.macd_score)) or not 0.0 <= technical.macd_score <= 100.0:
+            raise ValueError("macd score must be in [0, 100]")
+        if technical.macd_cross is MACDCross.NONE and technical.macd_cross_age is not None:
+            raise ValueError("NONE cross cannot have an age")
+        if technical.macd_cross is not MACDCross.NONE:
+            if isinstance(technical.macd_cross_age, bool) or not isinstance(technical.macd_cross_age, int) or technical.macd_cross_age < 0:
+                raise ValueError("live cross requires a non-negative cross age")
+        dif = float(technical.macd_dif)
+        dea = float(technical.macd_dea)
+        expected_axis = (
+            MACDZeroAxis.ABOVE
+            if dif > 0.0 and dea > 0.0
+            else MACDZeroAxis.BELOW
+            if dif < 0.0 and dea < 0.0
+            else MACDZeroAxis.STRADDLING
+        )
+        if technical.macd_zero_axis is not expected_axis:
+            raise ValueError("macd_zero_axis must match unrounded DIF and DEA")
+        return
+
+    if technical.macd_data_reason is MACDDataReason.READY:
+        raise ValueError("unready MACD cannot use READY reason")
+    if technical.macd_score != 50.0 or technical.macd_cross is not MACDCross.NONE or technical.macd_cross_age is not None:
+        raise ValueError("unready MACD must use neutral score and cross")
+    if any(value is not None for value in (*raw, technical.macd_histogram_delta)):
+        raise ValueError("unready MACD raw fields must be None")
+    if technical.macd_histogram_trend is not MACDHistogramTrend.FLAT or technical.macd_zero_axis is not MACDZeroAxis.STRADDLING:
+        raise ValueError("unready MACD must use neutral trend and zero axis")
 
 
 @dataclass(frozen=True)

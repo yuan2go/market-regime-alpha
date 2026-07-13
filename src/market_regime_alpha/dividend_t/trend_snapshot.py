@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
 import json
@@ -21,7 +22,17 @@ from market_regime_alpha.dividend_t.cosco_profile import profile_for_watchlist_i
 from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine
 from market_regime_alpha.dividend_t.fundamentals import build_fundamental_resolver
 from market_regime_alpha.dividend_t.indicators import estimate_levels, infer_technical_inputs
-from market_regime_alpha.dividend_t.models import FundamentalInputs, PositionState, RetreatInputs, Signal, StrategyDecision, TrendState, WatchlistItem
+from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig, snapshot_macd_metadata
+from market_regime_alpha.dividend_t.models import (
+    FundamentalInputs,
+    PositionState,
+    RetreatInputs,
+    Signal,
+    StrategyDecision,
+    TechnicalInputs,
+    TrendState,
+    WatchlistItem,
+)
 from market_regime_alpha.dividend_t.scoring import clamp
 from market_regime_alpha.dividend_t.storage import DEFAULT_WATCHLIST_PATH, PROJECT_ROOT, load_watchlist
 from market_regime_alpha.dividend_t.strategy import DividendTStrategy
@@ -32,6 +43,8 @@ DEFAULT_TREND_OUTPUT = PROJECT_ROOT / "docs" / "data" / "dividend_trends.json"
 DEFAULT_LOCAL_TIMING_CACHE_DIR = PROJECT_ROOT / "data" / "raw" / "dividend_t_5min_1y"
 DEFAULT_HIT_RATE_SUMMARY = PROJECT_ROOT / "reports" / "backtests" / "buy_sell_point_hit_rate_summary.csv"
 DEFAULT_MIN_BARS = 30
+DEFAULT_DAILY_MACD_CONFIG = MACDConfig(bar_interval=BarInterval.DAY_1)
+DEFAULT_TIMING_5M_MACD_CONFIG = MACDConfig(bar_interval=BarInterval.MINUTE_5)
 
 SIGNAL_LABELS = {
     "BUILD_BASE": "建底仓",
@@ -75,6 +88,8 @@ def build_dividend_trend_snapshot(
     timeout_seconds: float = 4.0,
     generated_at: datetime | None = None,
     min_bars: int = DEFAULT_MIN_BARS,
+    daily_macd_config: MACDConfig = DEFAULT_DAILY_MACD_CONFIG,
+    timing_5m_macd_config: MACDConfig = DEFAULT_TIMING_5M_MACD_CONFIG,
 ) -> dict[str, Any]:
     """Scan the dividend watchlist and return a JSON-serializable trend snapshot."""
     generated = generated_at or datetime.now(SHANGHAI_TZ)
@@ -98,7 +113,8 @@ def build_dividend_trend_snapshot(
     successful_count = sum(1 for row in rows if row["status"] == "ok")
     failed_count = len(rows) - successful_count
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "model_metadata": snapshot_macd_metadata(daily_macd_config, timing_5m_macd_config),
         "generated_at": generated.isoformat(),
         "generated_timezone": "Asia/Shanghai",
         "watchlist_path": str(Path(watchlist_path)),
@@ -118,6 +134,34 @@ def write_dividend_trend_snapshot(snapshot: dict[str, Any], *, output_path: str 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def normalize_dividend_trend_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade schema 1 additively while preserving every existing value."""
+
+    normalized = deepcopy(snapshot)
+    version = normalized.get("schema_version", 1)
+    if not isinstance(version, int) or version not in {1, 2}:
+        raise ValueError("supported dividend trend snapshot schemas are 1 and 2")
+
+    metadata = normalized.setdefault("model_metadata", {})
+    if not isinstance(metadata, dict):
+        raise ValueError("snapshot model_metadata must be an object")
+    for key, value in snapshot_macd_metadata(DEFAULT_DAILY_MACD_CONFIG, DEFAULT_TIMING_5M_MACD_CONFIG).items():
+        metadata.setdefault(key, value)
+
+    rows = normalized.setdefault("rows", [])
+    if not isinstance(rows, list):
+        raise ValueError("snapshot rows must be a list")
+    defaults = _neutral_macd_row_fields()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("snapshot rows must contain objects")
+        for key, value in defaults.items():
+            row.setdefault(key, value)
+
+    normalized["schema_version"] = 2
+    return normalized
 
 
 def _build_symbol_row(
@@ -173,6 +217,7 @@ def _build_symbol_row(
         "F_score": _round(score["F_score"], digits=1),
         "R_score": _round(score["R_score"], digits=1),
         "T_score": _round(score["T_score"], digits=1),
+        **_technical_macd_row_fields(technical),
         "risk_reward_ratio": _round(retreat.risk_reward_ratio, digits=2),
         "sell_pressure": _round(retreat.sell_pressure, digits=2),
         **timing,
@@ -213,8 +258,29 @@ def _error_row(*, item: WatchlistItem, quote: LatestQuote | None, exc: Exception
         "sell_reference_price": None,
         "stop_price": None,
         "buy_back_reference_price": None,
+        **_neutral_macd_row_fields(),
         "scan_error": f"{type(exc).__name__}: {exc}",
     }
+
+
+def _technical_macd_row_fields(technical: Any) -> dict[str, Any]:
+    return {
+        "macd_dif": technical.macd_dif,
+        "macd_dea": technical.macd_dea,
+        "macd_histogram": technical.macd_histogram,
+        "macd_histogram_delta": technical.macd_histogram_delta,
+        "macd_histogram_trend": technical.macd_histogram_trend.value,
+        "macd_cross": technical.macd_cross.value,
+        "macd_cross_age": technical.macd_cross_age,
+        "macd_zero_axis": technical.macd_zero_axis.value,
+        "macd_data_ready": technical.macd_data_ready,
+        "macd_data_reason": technical.macd_data_reason.value,
+        "macd_score": technical.macd_score,
+    }
+
+
+def _neutral_macd_row_fields() -> dict[str, Any]:
+    return _technical_macd_row_fields(TechnicalInputs(0.0, 0.0, 0.0, 0.0))
 
 
 def _timing_payload(*, item: WatchlistItem, bars: Any, data_source: str) -> dict[str, Any]:

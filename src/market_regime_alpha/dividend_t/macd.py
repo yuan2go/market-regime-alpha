@@ -455,3 +455,53 @@ def calculate_macd(closes: Sequence[object], config: MACDConfig) -> MACDResult:
         score=score_breakdown.clamped_macd_score,
         score_breakdown=score_breakdown,
     )
+
+
+def serialize_macd_config(config: MACDConfig) -> dict[str, object]:
+    """Serialize every configuration field that affects MACD identity."""
+
+    return {
+        "bar_interval": config.bar_interval.value,
+        "fast_period": config.fast_period,
+        "slow_period": config.slow_period,
+        "signal_period": config.signal_period,
+        "cross_lookback_bars": config.cross_lookback_bars,
+        "closed_bars_only": config.closed_bars_only,
+        "price_field": config.price_field.value,
+        "price_adjustment_mode": config.price_adjustment_mode.value,
+        "histogram_tolerance_mode": config.histogram_tolerance_mode.value,
+        "histogram_flat_tolerance": config.histogram_flat_tolerance,
+        "algorithm_version": config.algorithm_version,
+    }
+
+
+def snapshot_macd_metadata(daily: MACDConfig, timing_5m: MACDConfig) -> dict[str, object]:
+    """Build unambiguous per-pipeline MACD metadata for snapshots."""
+
+    if daily.bar_interval is not BarInterval.DAY_1 or timing_5m.bar_interval is not BarInterval.MINUTE_5:
+        raise ValueError("snapshot MACD configs must be explicitly 1d and 5m")
+    return {
+        "macd_contract_version": MACD_CONTRACT_VERSION,
+        "daily_macd_config": serialize_macd_config(daily),
+        "timing_5m_macd_config": serialize_macd_config(timing_5m),
+    }
+
+
+def serialize_macd_result_metadata(result: MACDResult) -> dict[str, object]:
+    """Serialize calculation and data-quality identity without rounding values."""
+
+    return {
+        "macd_contract_version": MACD_CONTRACT_VERSION,
+        "macd_algorithm_version": result.config.algorithm_version,
+        "bar_interval": result.config.bar_interval.value,
+        "closed_bars_only": result.config.closed_bars_only,
+        "price_field": result.config.price_field.value,
+        "price_adjustment_mode": result.config.price_adjustment_mode.value,
+        "histogram_tolerance_mode": result.config.histogram_tolerance_mode.value,
+        "histogram_flat_tolerance": result.config.histogram_flat_tolerance,
+        "provisional": result.provisional,
+        "last_closed_bar_time": result.last_closed_bar_time,
+        "bar_contract_version": result.bar_contract_version,
+        "price_adjustment_version": result.price_adjustment_version,
+        "data_quality_rule_version": result.data_quality_rule_version,
+    }

@@ -16,7 +16,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from market_regime_alpha.data_sources.a_share_bars import LatestQuote  # noqa: E402
-from market_regime_alpha.dividend_t.trend_snapshot import build_dividend_trend_snapshot, write_dividend_trend_snapshot  # noqa: E402
+from market_regime_alpha.dividend_t.trend_snapshot import (  # noqa: E402
+    build_dividend_trend_snapshot,
+    normalize_dividend_trend_snapshot,
+    write_dividend_trend_snapshot,
+)
 
 
 class DividendTrendSnapshotTests(unittest.TestCase):
@@ -41,6 +45,10 @@ class DividendTrendSnapshotTests(unittest.TestCase):
             )
 
         self.assertEqual(snapshot["row_count"], 2)
+        self.assertEqual(snapshot["schema_version"], 2)
+        self.assertEqual(snapshot["model_metadata"]["daily_macd_config"]["bar_interval"], "1d")
+        self.assertEqual(snapshot["model_metadata"]["timing_5m_macd_config"]["bar_interval"], "5m")
+        self.assertEqual(snapshot["model_metadata"]["daily_macd_config"]["closed_bars_only"], True)
         self.assertEqual(snapshot["successful_count"], 2)
         self.assertEqual(snapshot["failed_count"], 0)
         self.assertEqual(snapshot["horizon"], "未来1/3/5日上涨概率与1/3/5日历史命中率")
@@ -53,6 +61,11 @@ class DividendTrendSnapshotTests(unittest.TestCase):
         self.assertIn("up_probability_3d", snapshot["rows"][0])
         self.assertIn("up_probability_5d", snapshot["rows"][0])
         self.assertEqual(snapshot["rows"][0]["latest_price"], 14.92)
+        self.assertFalse(snapshot["rows"][0]["macd_data_ready"])
+        self.assertEqual(snapshot["rows"][0]["macd_data_reason"], "INSUFFICIENT_BARS")
+        self.assertEqual(snapshot["rows"][0]["macd_score"], 50.0)
+        self.assertEqual(snapshot["rows"][0]["macd_cross"], "NONE")
+        self.assertIsNone(snapshot["rows"][0]["macd_cross_age"])
 
     def test_symbol_error_is_returned_as_error_row(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -72,6 +85,37 @@ class DividendTrendSnapshotTests(unittest.TestCase):
 
             self.assertEqual(written, path)
             self.assertIn('"schema_version": 1', path.read_text(encoding="utf-8"))
+
+    def test_schema_1_snapshot_is_upgraded_additively_with_neutral_macd(self) -> None:
+        legacy = {
+            "schema_version": 1,
+            "generated_at": "2026-07-09T10:10:00+08:00",
+            "row_count": 1,
+            "rows": [{"symbol": "601919.SH", "signal": "BUY_T", "suggested_trade_pct": 0.03, "reasons": ["legacy"]}],
+        }
+
+        normalized = normalize_dividend_trend_snapshot(legacy)
+
+        self.assertEqual(normalized["schema_version"], 2)
+        self.assertEqual(normalized["generated_at"], legacy["generated_at"])
+        self.assertEqual(normalized["rows"][0]["symbol"], "601919.SH")
+        self.assertEqual(normalized["rows"][0]["signal"], "BUY_T")
+        self.assertEqual(normalized["rows"][0]["suggested_trade_pct"], 0.03)
+        self.assertEqual(normalized["rows"][0]["reasons"], ["legacy"])
+        self.assertFalse(normalized["rows"][0]["macd_data_ready"])
+        self.assertEqual(normalized["rows"][0]["macd_score"], 50.0)
+        self.assertEqual(normalized["rows"][0]["macd_cross"], "NONE")
+        self.assertIsNone(normalized["rows"][0]["macd_cross_age"])
+
+    def test_schema_1_upgrade_does_not_overwrite_existing_additive_values(self) -> None:
+        snapshot = {
+            "schema_version": 1,
+            "rows": [{"symbol": "601919.SH", "macd_data_ready": False, "macd_data_reason": "INVALID_CLOSE", "macd_score": 50.0}],
+        }
+
+        normalized = normalize_dividend_trend_snapshot(snapshot)
+
+        self.assertEqual(normalized["rows"][0]["macd_data_reason"], "INVALID_CLOSE")
 
 
 class FakeProvider:

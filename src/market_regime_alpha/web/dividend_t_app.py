@@ -4,15 +4,26 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+from typing import Self
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError, TencentMinuteProvider, fetch_tencent_latest_quotes, provider_options
 from market_regime_alpha.dividend_t.brokers import PaperBrokerAdapter, PTradeAdapter, QMTAdapter
 from market_regime_alpha.dividend_t.cosco_timing import get_cosco_timing_from_free_sources, sample_cosco_timing
 from market_regime_alpha.dividend_t.indicators import estimate_levels, infer_technical_inputs
+from market_regime_alpha.dividend_t.macd import (
+    MACD_CONTRACT_VERSION,
+    BarInterval,
+    MACDConfig,
+    MACDCross,
+    MACDDataReason,
+    MACDHistogramTrend,
+    MACDZeroAxis,
+    serialize_macd_config,
+)
 from market_regime_alpha.dividend_t.models import FundamentalInputs, PositionState, RetreatInputs, TechnicalInputs, TrendState
 from market_regime_alpha.dividend_t.risk import RiskEngine
 from market_regime_alpha.dividend_t.scoring import clamp
@@ -56,6 +67,29 @@ class TechnicalPayload(BaseModel):
     chan_pivot_low: float | None = None
     chan_pivot_high: float | None = None
     chan_invalid_price: float | None = None
+    bar_interval: BarInterval | None = None
+    macd_dif: float | None = None
+    macd_dea: float | None = None
+    macd_histogram: float | None = None
+    macd_histogram_delta: float | None = None
+    macd_histogram_trend: MACDHistogramTrend = MACDHistogramTrend.FLAT
+    macd_cross: MACDCross = MACDCross.NONE
+    macd_cross_age: int | None = None
+    macd_zero_axis: MACDZeroAxis = MACDZeroAxis.STRADDLING
+    macd_data_ready: bool = False
+    macd_data_reason: MACDDataReason = MACDDataReason.INSUFFICIENT_BARS
+    macd_score: float = 50.0
+
+    @model_validator(mode="after")
+    def validate_macd_contract(self) -> Self:
+        has_raw_macd = any(value is not None for value in (self.macd_dif, self.macd_dea, self.macd_histogram, self.macd_histogram_delta))
+        if has_raw_macd and self.bar_interval is None:
+            raise ValueError("bar_interval is required with MACD values")
+        self.to_domain()
+        return self
+
+    def to_domain(self) -> TechnicalInputs:
+        return TechnicalInputs(**self.model_dump(exclude={"bar_interval"}))
 
 
 class PositionPayload(BaseModel):
@@ -174,11 +208,12 @@ def evaluate(payload: EvaluatePayload) -> dict[str, object]:
 
 
 def _evaluate_payload(payload: EvaluatePayload) -> dict[str, object]:
+    technical = payload.technical.to_domain()
     decision = strategy.evaluate(
         symbol=payload.symbol.strip().upper(),
         fundamental=FundamentalInputs(**payload.fundamental.model_dump()),
         retreat=RetreatInputs(**payload.retreat.model_dump()),
-        technical=TechnicalInputs(**payload.technical.model_dump()),
+        technical=technical,
         position=PositionState(**payload.position.model_dump()),
     )
     position = PositionState(**payload.position.model_dump())
@@ -191,6 +226,7 @@ def _evaluate_payload(payload: EvaluatePayload) -> dict[str, object]:
     result["signal"] = decision.signal.value
     result["signal_label"] = SIGNAL_LABELS.get(decision.signal.value, decision.signal.value)
     result["risk_check"] = asdict(risk)
+    result["macd"] = _macd_api_payload(technical, bar_interval=payload.technical.bar_interval)
     if result.get("order_intent"):
         order_signal = result["order_intent"].get("signal")
         if hasattr(order_signal, "value"):
@@ -198,6 +234,26 @@ def _evaluate_payload(payload: EvaluatePayload) -> dict[str, object]:
         result["order_intent"]["signal"] = order_signal
         result["order_intent"]["signal_label"] = SIGNAL_LABELS.get(str(order_signal), str(order_signal))
     return result
+
+
+def _macd_api_payload(technical: TechnicalInputs, *, bar_interval: BarInterval | None) -> dict[str, object]:
+    effective_config = MACDConfig(bar_interval=bar_interval) if bar_interval is not None else None
+    return {
+        "macd_contract_version": MACD_CONTRACT_VERSION,
+        "bar_interval": bar_interval.value if bar_interval is not None else None,
+        "effective_config": serialize_macd_config(effective_config) if effective_config is not None else None,
+        "dif": technical.macd_dif,
+        "dea": technical.macd_dea,
+        "histogram": technical.macd_histogram,
+        "histogram_delta": technical.macd_histogram_delta,
+        "histogram_trend": technical.macd_histogram_trend.value,
+        "cross": technical.macd_cross.value,
+        "cross_age": technical.macd_cross_age,
+        "zero_axis": technical.macd_zero_axis.value,
+        "data_ready": technical.macd_data_ready,
+        "data_reason": technical.macd_data_reason.value,
+        "score": technical.macd_score,
+    }
 
 
 def _watchlist_payload(
