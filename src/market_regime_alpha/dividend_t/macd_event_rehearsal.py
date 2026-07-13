@@ -37,6 +37,11 @@ from market_regime_alpha.dividend_t.macd_experiments import (
 from market_regime_alpha.dividend_t.macd_oos import write_immutable_run_artifact
 from market_regime_alpha.dividend_t.models import Signal, TechnicalInputs
 from market_regime_alpha.dividend_t.scoring import technical_score_diagnostics
+from market_regime_alpha.dividend_t.sell_side import (
+    PendingBuyback,
+    ResearchExecutionState,
+    execute_research_action,
+)
 from market_regime_alpha.dividend_t.signal_audit import audit_report, label_candidate_outcomes
 from market_regime_alpha.dividend_t.signal_intent import (
     EntryConfirmation,
@@ -95,8 +100,7 @@ def run_controlled_event_rehearsal() -> ControlledEventRehearsal:
     events_by_profile: dict[str, tuple[CounterfactualEvent, ...]] = {}
     for profile_name, policy in ablation_profiles().items():
         events_by_profile[profile_name] = tuple(
-            _evaluate_scenario(scenario, policy=policy, profile_name=profile_name)
-            for scenario in scenarios
+            _evaluate_scenario(scenario, policy=policy, profile_name=profile_name) for scenario in scenarios
         )
     all_events = tuple(event for events in events_by_profile.values() for event in events)
     checks = _execution_checks(events_by_profile)
@@ -176,7 +180,9 @@ def _scenarios() -> tuple[_Scenario, ...]:
             _candidate(Signal.SELL_T, PrimarySetupCode.PRESSURE_SELL_T, exits={ExitConfirmation.RESISTANCE_REJECTION}),
             strong_bull,
             0.20,
-            context=CounterfactualExecutionContext(100_000.0, 50_000.0, total_sell_shares=2_000, sellable_shares=2_000, previous_daily_close=10.0),
+            context=CounterfactualExecutionContext(
+                100_000.0, 50_000.0, total_sell_shares=2_000, sellable_shares=2_000, previous_daily_close=10.0
+            ),
             next_bar=_normal_bar(),
         ),
         _Scenario(
@@ -184,7 +190,9 @@ def _scenarios() -> tuple[_Scenario, ...]:
             _candidate(Signal.CLEAR, PrimarySetupCode.CLEAR, risk=RiskEnforcement.HARD),
             strong_bull,
             0.20,
-            context=CounterfactualExecutionContext(100_000.0, 50_000.0, total_sell_shares=2_000, sellable_shares=2_000, previous_daily_close=10.0),
+            context=CounterfactualExecutionContext(
+                100_000.0, 50_000.0, total_sell_shares=2_000, sellable_shares=2_000, previous_daily_close=10.0
+            ),
             next_bar=_normal_bar(),
         ),
         _Scenario(
@@ -192,7 +200,9 @@ def _scenarios() -> tuple[_Scenario, ...]:
             _candidate(Signal.STOP_T, PrimarySetupCode.STOP_T, risk=RiskEnforcement.SOFT),
             strong_bear,
             0.20,
-            context=CounterfactualExecutionContext(100_000.0, 50_000.0, total_sell_shares=2_000, sellable_shares=2_000, previous_daily_close=10.0),
+            context=CounterfactualExecutionContext(
+                100_000.0, 50_000.0, total_sell_shares=2_000, sellable_shares=2_000, previous_daily_close=10.0
+            ),
             next_bar=_normal_bar(),
         ),
     )
@@ -345,7 +355,16 @@ def _score_threshold_suppressed() -> bool:
 
 
 def _normal_bar() -> dict[str, object]:
-    return {"timestamp": _NEXT_EXECUTION_TIME, "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.1, "volume": 1_000_000.0, "prev_close": 10.0, "is_suspended": False}
+    return {
+        "timestamp": _NEXT_EXECUTION_TIME,
+        "open": 10.0,
+        "high": 10.2,
+        "low": 9.9,
+        "close": 10.1,
+        "volume": 1_000_000.0,
+        "prev_close": 10.0,
+        "is_suspended": False,
+    }
 
 
 def _forward_bars() -> tuple[dict[str, object], ...]:
@@ -379,20 +398,89 @@ def _execution_checks(events_by_profile: dict[str, tuple[CounterfactualEvent, ..
         config=config,
         trade_pct=0.20,
     )
-    next_resolution = resolve_counterfactual_execution(event, next_bar=_normal_bar(), context=CounterfactualExecutionContext(100_000.0, 100_000.0), config=config, trade_pct=0.20)
-    sell_event = next(event for event in events_by_profile["policy-only"] if event.primary_setup_code == PrimarySetupCode.PRESSURE_SELL_T.value)
-    t1 = resolve_counterfactual_execution(sell_event, next_bar=_normal_bar(), context=CounterfactualExecutionContext(100_000.0, 10_000.0, total_sell_shares=1_000, sellable_shares=0, previous_daily_close=10.0), config=config, trade_pct=0.20)
-    limit_up = resolve_counterfactual_execution(event, next_bar={**_normal_bar(), "open": 11.0}, context=CounterfactualExecutionContext(100_000.0, 100_000.0, previous_daily_close=10.0), config=config, trade_pct=0.20)
-    limit_down = resolve_counterfactual_execution(sell_event, next_bar={**_normal_bar(), "open": 9.0}, context=CounterfactualExecutionContext(100_000.0, 10_000.0, total_sell_shares=1_000, sellable_shares=1_000, previous_daily_close=10.0), config=config, trade_pct=0.20)
-    cash = resolve_counterfactual_execution(event, next_bar=_normal_bar(), context=CounterfactualExecutionContext(100_000.0, 0.0), config=config, trade_pct=0.20)
+    next_resolution = resolve_counterfactual_execution(
+        event, next_bar=_normal_bar(), context=CounterfactualExecutionContext(100_000.0, 100_000.0), config=config, trade_pct=0.20
+    )
+    sell_event = next(
+        event for event in events_by_profile["policy-only"] if event.primary_setup_code == PrimarySetupCode.PRESSURE_SELL_T.value
+    )
+    t1 = resolve_counterfactual_execution(
+        sell_event,
+        next_bar=_normal_bar(),
+        context=CounterfactualExecutionContext(100_000.0, 10_000.0, total_sell_shares=1_000, sellable_shares=0, previous_daily_close=10.0),
+        config=config,
+        trade_pct=0.20,
+    )
+    limit_up = resolve_counterfactual_execution(
+        event,
+        next_bar={**_normal_bar(), "open": 11.0},
+        context=CounterfactualExecutionContext(100_000.0, 100_000.0, previous_daily_close=10.0),
+        config=config,
+        trade_pct=0.20,
+    )
+    limit_down = resolve_counterfactual_execution(
+        sell_event,
+        next_bar={**_normal_bar(), "open": 9.0},
+        context=CounterfactualExecutionContext(
+            100_000.0, 10_000.0, total_sell_shares=1_000, sellable_shares=1_000, previous_daily_close=10.0
+        ),
+        config=config,
+        trade_pct=0.20,
+    )
+    cash = resolve_counterfactual_execution(
+        event, next_bar=_normal_bar(), context=CounterfactualExecutionContext(100_000.0, 0.0), config=config, trade_pct=0.20
+    )
+    lifecycle = execute_research_action(
+        ResearchExecutionState(
+            cash=2_000.0,
+            base_shares=0,
+            t_shares=0,
+            trade_date="2026-01-05",
+            pending_buyback=PendingBuyback(200, 2_000.0, 9.8, 1, "2026-01-05", 3, 2),
+        ),
+        signal=Signal.BUY_BACK_REVERSE_T,
+        symbol=_SYMBOL,
+        candidate_bar_close_time="2026-01-06 09:30:00",
+        next_bar={
+            **_normal_bar(),
+            "timestamp": "2026-01-06 09:35:00",
+            "open": 9.7,
+            "high": 9.8,
+            "low": 9.6,
+            "close": 9.7,
+            "research_max_fill_shares": 100,
+        },
+        config=DividendTBacktestConfig(enable_t_sell=True),
+        trade_pct=1.0,
+        bar_index=2,
+    )
     sized = [event for events in events_by_profile.values() for event in events if event.event_type is CounterfactualEventType.POLICY_SIZED]
     return {
-        "suspension_skip": RehearsalExecutionCheck(suspended_resolution.block_reason == "SUSPENDED" and next_resolution.executable, "09:55 candidate skips suspended 10:00 and resolves at 10:05 open"),
+        "suspension_skip": RehearsalExecutionCheck(
+            suspended_resolution.block_reason == "SUSPENDED" and next_resolution.executable,
+            "09:55 candidate skips suspended 10:00 and resolves at 10:05 open",
+        ),
         "t1_lock": RehearsalExecutionCheck(t1.block_reason == "T1_LOCK", "sell requires sellable T shares"),
         "limit_up": RehearsalExecutionCheck(limit_up.block_reason == "LIMIT_UP", "buy cannot fill at limit up"),
         "limit_down": RehearsalExecutionCheck(limit_down.block_reason == "LIMIT_DOWN", "sell cannot fill at limit down"),
         "cash_limit": RehearsalExecutionCheck(cash.block_reason == "CASH_OR_MIN_LOT", "buy respects cash and lot constraint"),
-        "sized_paths": RehearsalExecutionCheck(bool(sized) and all(event.adjusted_path_executable and event.original_path_executable and event.adjusted_path_shares < event.original_path_shares for event in sized), "sized events retain adjusted and original next-open paths"),
+        "sized_paths": RehearsalExecutionCheck(
+            bool(sized)
+            and all(
+                event.adjusted_path_executable
+                and event.original_path_executable
+                and event.adjusted_path_shares < event.original_path_shares
+                for event in sized
+            ),
+            "sized events retain adjusted and original next-open paths",
+        ),
+        "research_buyback_partial_fill": RehearsalExecutionCheck(
+            lifecycle.resolution.executable
+            and lifecycle.resolution.shares == 100
+            and lifecycle.state.pending_buyback is not None
+            and lifecycle.state.pending_buyback.remaining_shares == 100,
+            "research state applies a partial buyback fill without sealed data",
+        ),
     }
 
 
@@ -420,7 +508,13 @@ def _event_attribution(events_by_profile: dict[str, tuple[CounterfactualEvent, .
         profile: sum(event.event_type is not CounterfactualEventType.UNCHANGED for event in events)
         for profile, events in events_by_profile.items()
     }
-    return {"changed_event_count": asdict(factorial_attribution(baseline=changed["baseline"], score_only=changed["score-only"], policy_only=changed["policy-only"], full=changed["full"]))}
+    return {
+        "changed_event_count": asdict(
+            factorial_attribution(
+                baseline=changed["baseline"], score_only=changed["score-only"], policy_only=changed["policy-only"], full=changed["full"]
+            )
+        )
+    }
 
 
 def _audit_fixture_report() -> dict[str, object]:
@@ -431,9 +525,33 @@ def _audit_fixture_report() -> dict[str, object]:
         price = 10.0 + index * 0.05
         bars.extend(
             [
-                {"symbol": _SYMBOL, "timestamp": start, "open": price, "high": price + 0.1, "low": price - 0.1, "close": price, "volume": 1000},
-                {"symbol": _SYMBOL, "timestamp": start + pd.Timedelta(minutes=5), "open": price + 0.02, "high": price + 0.14, "low": price - 0.03, "close": price + (0.08 if index % 2 == 0 else -0.05), "volume": 1000},
-                {"symbol": _SYMBOL, "timestamp": start + pd.Timedelta(minutes=10), "open": price + 0.03, "high": price + 0.16, "low": price - 0.06, "close": price + (0.10 if index % 3 else -0.07), "volume": 1000},
+                {
+                    "symbol": _SYMBOL,
+                    "timestamp": start,
+                    "open": price,
+                    "high": price + 0.1,
+                    "low": price - 0.1,
+                    "close": price,
+                    "volume": 1000,
+                },
+                {
+                    "symbol": _SYMBOL,
+                    "timestamp": start + pd.Timedelta(minutes=5),
+                    "open": price + 0.02,
+                    "high": price + 0.14,
+                    "low": price - 0.03,
+                    "close": price + (0.08 if index % 2 == 0 else -0.05),
+                    "volume": 1000,
+                },
+                {
+                    "symbol": _SYMBOL,
+                    "timestamp": start + pd.Timedelta(minutes=10),
+                    "open": price + 0.03,
+                    "high": price + 0.16,
+                    "low": price - 0.06,
+                    "close": price + (0.10 if index % 3 else -0.07),
+                    "volume": 1000,
+                },
             ]
         )
         if index % 5 == 0:
@@ -452,34 +570,36 @@ def _audit_fixture_report() -> dict[str, object]:
             action = "BUY_T"
             setup = "pullback_low_buy"
             intent = "MEAN_REVERSION_T"
-        candidates.append({
-            "symbol": _SYMBOL,
-            "timestamp": start,
-            "action": action,
-            "primary_setup_code": setup,
-            "signal_intent": intent,
-            "market_regime": "RANGE" if index % 2 else "BULL",
-            "industry": "transport",
-            "symbol_type": "A_SHARE",
-            "volatility_bucket": "HIGH" if index % 3 else "LOW",
-            "trend_state": "UPTREND" if index % 2 else "RANGE",
-            "holding_period_bucket": "INTRADAY_1BAR",
-            "up_probability_bar_1": 0.65 if index % 2 else 0.35,
-            "equity_before": 100_000.0,
-            "cash": 100_000.0,
-            "suggested_trade_pct": 0.2,
-            "t_shares": 10_000,
-            "sellable_qty": 10_000,
-            "force_buy_edge": 50.0 + index * 2.0,
-            "buy_strength_score": 58.0 + index,
-            "sell_pressure": 55.0 + index,
-            "capital_flow": 52.0 + index,
-            "multi_period_trend": 54.0 + index,
-            "risk_reward": 1.0 + index * 0.05,
-            "breakout": 70.0 + index,
-            "macd_score_weight": 0.15,
-            "mean_reversion_size_multiplier": 0.5,
-        })
+        candidates.append(
+            {
+                "symbol": _SYMBOL,
+                "timestamp": start,
+                "action": action,
+                "primary_setup_code": setup,
+                "signal_intent": intent,
+                "market_regime": "RANGE" if index % 2 else "BULL",
+                "industry": "transport",
+                "symbol_type": "A_SHARE",
+                "volatility_bucket": "HIGH" if index % 3 else "LOW",
+                "trend_state": "UPTREND" if index % 2 else "RANGE",
+                "holding_period_bucket": "INTRADAY_1BAR",
+                "up_probability_bar_1": 0.65 if index % 2 else 0.35,
+                "equity_before": 100_000.0,
+                "cash": 100_000.0,
+                "suggested_trade_pct": 0.2,
+                "t_shares": 10_000,
+                "sellable_qty": 10_000,
+                "force_buy_edge": 50.0 + index * 2.0,
+                "buy_strength_score": 58.0 + index,
+                "sell_pressure": 55.0 + index,
+                "capital_flow": 52.0 + index,
+                "multi_period_trend": 54.0 + index,
+                "risk_reward": 1.0 + index * 0.05,
+                "breakout": 70.0 + index,
+                "macd_score_weight": 0.15,
+                "mean_reversion_size_multiplier": 0.5,
+            }
+        )
     labels = label_candidate_outcomes(pd.DataFrame(candidates), pd.DataFrame(bars), intraday_horizons=(1,), daily_horizons=())
     return audit_report(labels)
 
@@ -489,7 +609,9 @@ def _format_report(rehearsal: ControlledEventRehearsal, attribution: dict[str, o
         dict[str, int],
         _event_metrics(tuple(event for events in rehearsal.events_by_profile.values() for event in events))["event_types"],
     )
-    checks = "\n".join(f"- {name}: {'PASS' if value.passed else 'FAIL'} — {value.detail}" for name, value in rehearsal.execution_checks.items())
+    checks = "\n".join(
+        f"- {name}: {'PASS' if value.passed else 'FAIL'} — {value.detail}" for name, value in rehearsal.execution_checks.items()
+    )
     return (
         "# MACD Non-empty Event Rehearsal\n\n"
         "- Classification: `REHEARSAL`\n"
@@ -513,7 +635,9 @@ def _write_json(path: Path, payload: object) -> None:
 
 
 def _write_jsonl(path: Path, events: tuple[CounterfactualEvent, ...]) -> None:
-    path.write_text("".join(json.dumps(_json_value(asdict(event)), ensure_ascii=True, sort_keys=True) + "\n" for event in events), encoding="utf-8")
+    path.write_text(
+        "".join(json.dumps(_json_value(asdict(event)), ensure_ascii=True, sort_keys=True) + "\n" for event in events), encoding="utf-8"
+    )
 
 
 def _json_value(value: object) -> Any:

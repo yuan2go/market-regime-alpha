@@ -35,6 +35,12 @@ atr_trailing_level
 `buyback_target_price` 与已分配反向卖出所得。候选生成阶段负责计算这些当前 bar
 状态；quality、MACD、回测和执行层只能消费，不能重新分类。
 
+Task 11A.8 的最小 research 实现以 `ResearchExecutionState` 承载现金、底仓/T 仓、T+1
+锁定数量、交易日与 `PendingBuyback`。跨日转移解锁同日买入数量；买回允许受控 partial
+fill，更新现金、持仓及剩余买回义务；超过 `buyback_expiry_bars` 或
+`buyback_expiry_trade_days` 后过期；HARD 风险退出取消 pending buyback。该状态机仅被标签和
+受控 rehearsal 使用，尚未接入生产策略 profile。
+
 ## 标准化退出组件
 
 - ATR trailing：以当前已收盘 bar 的 ATR、最高收盘/最高价与配置倍数计算。触发仅在
@@ -45,6 +51,10 @@ atr_trailing_level
   `EXIT_T_SOFT`；不能把持有时间本身当作 HARD 风险。
 - setup invalidation：由结构模块输出 `NONE/SOFT/HARD`。`HARD` 生成 `EXIT_T_HARD` 或
   `CLEAR_BASE` 并带 `RiskEnforcement.HARD`；`SOFT` 可以保留等待确认。
+
+最小选择器的固定优先级为：`HARD invalidation` → `ATR trailing` → `SOFT invalidation` →
+`MFE drawdown` → `time stop`。它的输出仍是 research action；没有修改当前生产 action
+路由或 MACD 默认 profile。
 
 ## reverse-T 买回状态机
 

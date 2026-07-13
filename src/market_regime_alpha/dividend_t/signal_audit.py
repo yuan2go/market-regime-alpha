@@ -20,6 +20,8 @@ from .backtest import (
     resolve_execution_request,
 )
 from .macd_experiments import ExecutionResolution
+from .models import Signal
+from .sell_side import PendingBuyback, ResearchExecutionState, execute_research_action
 
 
 _BAR_COLUMNS = {"symbol", "timestamp", "open", "high", "low", "close"}
@@ -475,51 +477,59 @@ def _write_completed_t_cycle(
     if sell.reference_fill_price is None:
         base["completed_t_cycle_reason"] = "SELL_NOT_EXECUTED"
         return
-    buyback_context = CounterfactualExecutionContext(
-        equity_before=context.equity_before,
+    state = ResearchExecutionState(
         cash=context.cash + sell.reference_fill_price * sell.shares - sell.fee_amount,
-        pending_buyback_shares=sell.shares,
-        pending_buyback_target_price=target,
+        base_shares=0,
+        t_shares=0,
+        trade_date=_bar_trade_date_text(bars.iloc[entry_index]),
+        pending_buyback=PendingBuyback(
+            remaining_shares=sell.shares,
+            allocated_proceeds=sell.reference_fill_price * sell.shares - sell.fee_amount,
+            target_price=target,
+            created_bar_index=entry_index,
+            created_trade_date=_bar_trade_date_text(bars.iloc[entry_index]),
+            expiry_bars=expiry_bars,
+            expiry_trade_days=expiry_trade_days,
+        ),
     )
-    execution_date = _bar_trade_date(bars.iloc[entry_index])
-    eligible_rows = bars.iloc[entry_index + 1 :]
     window: list[Any] = []
-    for offset, (_, row) in enumerate(eligible_rows.iterrows(), start=1):
-        if offset > expiry_bars:
-            base["completed_t_cycle_reason"] = "BUYBACK_EXPIRED_BARS"
-            _write_buyback_path_metrics(base, window, target)
-            return
-        if expiry_trade_days is not None and _trading_day_distance(execution_date, _bar_trade_date(row)) > expiry_trade_days:
-            base["completed_t_cycle_reason"] = "BUYBACK_EXPIRED_TRADE_DAYS"
-            _write_buyback_path_metrics(base, window, target)
-            return
+    total_buyback_cost = 0.0
+    total_buyback_shares = 0
+    for offset, (_, row) in enumerate(bars.iloc[entry_index + 1 :].iterrows(), start=1):
         window.append(row)
-        resolution = resolve_execution_request(
-            signal="BUY_BACK_REVERSE_T",
+        transition = execute_research_action(
+            state,
+            signal=Signal.BUY_BACK_REVERSE_T,
             symbol=str(row["symbol"]),
             candidate_bar_close_time=sell.execution_time or str(row["timestamp"]),
             next_bar=row,
-            context=buyback_context,
             config=config,
             trade_pct=1.0,
+            bar_index=entry_index + offset,
         )
+        state = transition.state
+        resolution = transition.resolution
+        if resolution.executable:
+            total_buyback_shares += resolution.shares
+            total_buyback_cost += (resolution.reference_fill_price or 0.0) * resolution.shares + resolution.fee_amount
+            _write_buyback(base, resolution, cumulative_shares=total_buyback_shares, cumulative_cost=total_buyback_cost)
+        if transition.pending_buyback_event in {"BUYBACK_EXPIRED_BARS", "BUYBACK_EXPIRED_TRADE_DAYS"}:
+            base["completed_t_cycle_reason"] = transition.pending_buyback_event
+            _write_buyback_path_metrics(base, window, target)
+            return
         if resolution.block_reason in _TEMPORARY_EXECUTION_BLOCKS | {"BUYBACK_TARGET_NOT_REACHED"}:
             continue
         if not resolution.executable:
             base["completed_t_cycle_reason"] = resolution.block_reason
             _write_buyback_path_metrics(base, window, target)
             return
-        _write_buyback(base, resolution)
+        if state.pending_buyback is not None:
+            continue
         proceeds = sell.reference_fill_price * sell.shares - sell.fee_amount
-        cost = (
-            resolution.reference_fill_price * resolution.shares + resolution.fee_amount
-            if resolution.reference_fill_price is not None
-            else math.inf
-        )
-        net_pnl = proceeds - cost
+        net_pnl = proceeds - total_buyback_cost
         base["completed_t_cycle_net_pnl"] = net_pnl
-        base["completed_t_cycle_return"] = net_pnl / max(cost, 1e-12)
-        base["completed_t_cycle_label"] = int(resolution.shares == sell.shares and net_pnl > 0.0)
+        base["completed_t_cycle_return"] = net_pnl / max(total_buyback_cost, 1e-12)
+        base["completed_t_cycle_label"] = int(total_buyback_shares == sell.shares and net_pnl > 0.0)
         base["completed_t_cycle_reason"] = "COMPLETED" if base["completed_t_cycle_label"] else "PARTIAL_OR_UNPROFITABLE_BUYBACK"
         _write_buyback_path_metrics(base, window, target)
         return
@@ -547,13 +557,13 @@ def _empty_completed_t_cycle(base: dict[str, object]) -> None:
         base[name] = None
 
 
-def _write_buyback(base: dict[str, object], resolution: ExecutionResolution) -> None:
+def _write_buyback(base: dict[str, object], resolution: ExecutionResolution, *, cumulative_shares: int, cumulative_cost: float) -> None:
     base["buyback_execution_time"] = resolution.execution_time
     base["buyback_execution_price"] = resolution.reference_fill_price
-    base["buyback_execution_quantity"] = resolution.shares
-    base["buyback_execution_cost"] = resolution.execution_cost
+    base["buyback_execution_quantity"] = cumulative_shares
+    base["buyback_execution_cost"] = cumulative_cost
     original_quantity = _optional_float(base.get("execution_quantity")) or 0.0
-    base["buyback_fill_ratio"] = resolution.shares / original_quantity if original_quantity > 0.0 else None
+    base["buyback_fill_ratio"] = cumulative_shares / original_quantity if original_quantity > 0.0 else None
 
 
 def _calendar_sessions(calendar: Any) -> dict[object, object]:
@@ -614,6 +624,10 @@ def _bar_trade_date(row: Any) -> object:
     import pandas as pd
 
     return pd.Timestamp(row["timestamp"]).date()
+
+
+def _bar_trade_date_text(row: Any) -> str:
+    return str(_bar_trade_date(row))
 
 
 def _trading_day_distance(start: object, end: object) -> int:

@@ -33,6 +33,7 @@ def test_controlled_rehearsal_exercises_non_empty_four_arm_events_and_intents() 
     assert rehearsal.execution_checks["limit_down"].passed
     assert rehearsal.execution_checks["cash_limit"].passed
     assert rehearsal.execution_checks["sized_paths"].passed
+    assert rehearsal.execution_checks["research_buyback_partial_fill"].passed
 
     sized = [
         event
