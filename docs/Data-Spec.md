@@ -148,3 +148,40 @@ A 股买卖点识别模型会优先使用真实资金流字段；如果这些字
 
 - `data/raw/sample_etf_ohlcv.csv`：合成 ETF 日线样例，字段严格对应上面的 OHLCV 规范。
 - 样例数据只用于验证读取、策略和回测流程，不作为真实行情或投资结论。
+
+## MACD 正式候选数据集（封存测试前置）
+
+本节定义 `FORMAL_FINAL_CANDIDATE` 的输入门槛。它是正式样本外候选集的构建规格，不授权读取或运行 sealed test。当前 `data/raw/top1000_largecap_5min_2y/*.csv` 只含 OHLCV/成交额，缺少可信 `bar_final`、PIT 复权、PIT universe、停牌和涨跌停 sidecar，因此**不得**直接标记为正式候选数据集。
+
+### 覆盖范围与来源
+
+- 20–50 个 A 股或 ETF，至少连续两年；标的清单必须由逐日可得的 PIT universe 决定，不能按今天的成分股回填历史。
+- 时间范围在冻结前显式覆盖上涨、震荡、下跌及至少一个主题退潮阶段；每个 regime 的划分输入和版本进入 Manifest。
+- 5 分钟成交 bar 由具备历史可追溯性的授权行情源或交易所/券商归档提供；日线基准、行业指数、行业分类、停牌、涨跌停与公司行为必须各有独立可哈希来源文件。
+- Tencent 起始标签、历史 CSV 的 `bar_final`、以及 Tushare 的 PIT 复权，不由 MACD 层推断。可信数据适配层必须将它们转换为本节字段，否则构建失败。
+
+### 必需 bar 与 sidecar 字段
+
+| 数据集 | 必需字段 | 约束 |
+| --- | --- | --- |
+| 5 分钟 bar | `symbol,timestamp,open,high,low,close,volume,amount,vwap,bar_final,source_freq` | `timestamp` 为区间结束时间；`source_freq=5min`；只接受 `bar_final=true`。 |
+| PIT 复权 | `symbol,effective_time,raw_close,pit_adjustment_factor,adjustment_as_of,corporate_action_id` | 因子和公司行为必须在 `adjustment_as_of` 时点可获得；不得使用未来复权因子重写历史。 |
+| 交易资格 | `symbol,timestamp,is_suspended,is_st,limit_up_price,limit_down_price,prev_close` | 缺失交易资格不补前值；停牌/涨跌停保留为事实，不伪造可交易 bar。 |
+| PIT universe | `as_of_date,symbol,universe_id,eligible,listing_status` | 记录每个标的纳入/剔除日期与来源版本。 |
+| 市场与行业 | `timestamp,index_symbol,index_close,industry_id,industry_close,theme_state,market_regime` | 指数、行业和主题输入均按当时可得口径。 |
+| 日历 | `trade_date,expected_5m_close_times,session_version` | 午休、集合竞价、尾盘及节假日规则明确；正常非交易时段不插 bar。 |
+
+`vwap` 为当日截至该已收盘 bar 的成交额/成交量口径；如源端只提供区间成交，适配层必须写入可复算的累计成交额和累计成交量，不能以 close 代替 VWAP。
+
+### 复权、缺失与质量规则
+
+- 正式 MACD 使用 `close` 的 `POINT_IN_TIME_ADJUSTED` 序列；回测成交仍使用同一时点的可交易原始 open，并在 Manifest 中同时记录价格字段与复权模式。
+- 节假日、午休、隔夜和停牌日不产生伪造 bar。应存在而缺失的 5 分钟 bar 记录为质量错误；不得用前收或零量填充 EMA。
+- 同一 `(symbol,timestamp)` 重复、非正或非有限价、`bar_final` 缺失/为假、无效公司行为、调整后价格非正、日历外时间戳、无法解释的 `amount/volume` 均阻断正式构建。
+- 数据质量报告至少按标的、日期和来源统计：finalized/provisional、missing/unexpected、重复、停牌、涨跌停、无效价、复权覆盖、VWAP 覆盖和行业/指数覆盖。
+
+### Manifest 与切分
+
+Dataset Manifest 在已有文件哈希、标的、时间范围、bar 数、日历、停牌和公司行为哈希外，增加：`source_receipt_hash`、`universe_membership_hash`、`limit_rule_hash`、`industry_classification_hash`、`regime_input_hash`、`vwap_coverage` 和每个源的许可证/拉取时间。所有 sidecar 必须可独立复算 SHA-256。
+
+冻结前按交易日确定边界，推荐初始比例为 60% train、15% validation、10% rehearsal、15% sealed test；具体日期写入 `DataSplitManifest` 后不可改写。标的划分使用固定、哈希化的 75% development / 25% symbol-holdout。参数选择只可使用 development 的 train/validation/rehearsal；holdout rehearsal 只作为泛化诊断，不反馈阈值；sealed test 仅在独立复核后读取一次，并同时按时间和标的留出层报告。

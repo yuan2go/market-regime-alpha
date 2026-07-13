@@ -252,3 +252,14 @@ PYTHONPATH=src ./.venv/bin/python scripts/fetch_baostock_5min_batch.py \
 - 每只股票成功、跳过或失败都会写 checkpoint；中断后直接重跑命令即可从本地 CSV 和 checkpoint 续跑。
 - `--mode incremental` 会读取已有 CSV 的最后一根 K 线，只请求缺失日期，再按 `timestamp` 去重合并。
 - `--request-timeout` 和 `--login-timeout` 会中断卡住的 BaoStock socket 调用；单票失败会写入 failures 并继续后续标的。
+
+## 非空 MACD 事件 Rehearsal
+
+以下命令只写入受控 `REHEARSAL` 产物，用于验证 score suppression、policy downgrade、policy sizing 和下一可执行 bar 的反事实执行。它不会读取 sealed test，也不会启用生产 MACD：
+
+```bash
+PYTHONPATH=src ./.venv/bin/python backtesting/run_macd_event_rehearsal.py \
+  --run-id event-rehearsal-manual-review
+```
+
+输出目录不可覆盖，并包含四组 event ledger、执行约束证据、研究标签/校准报告和 checksums。该 fixture 仅验证管道与契约，不可作为买卖点或 MACD 盈利能力的证据。正式候选数据集要求见 `docs/Data-Spec.md` 的“MACD 正式候选数据集”章节。
