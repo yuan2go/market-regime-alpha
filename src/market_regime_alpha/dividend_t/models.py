@@ -5,8 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import math
+from typing import TYPE_CHECKING
 
 from market_regime_alpha.dividend_t.macd import MACDCross, MACDDataReason, MACDHistogramTrend, MACDZeroAxis
+
+if TYPE_CHECKING:
+    from market_regime_alpha.dividend_t.signal_intent import DecisionTrace
 
 
 class Signal(str, Enum):
@@ -184,6 +188,7 @@ class StrategyDecision:
     reasons: tuple[str, ...] = field(default_factory=tuple)
     warnings: tuple[str, ...] = field(default_factory=tuple)
     order_intent: OrderIntent | None = None
+    decision_trace: DecisionTrace | None = None
 
 
 @dataclass(frozen=True)

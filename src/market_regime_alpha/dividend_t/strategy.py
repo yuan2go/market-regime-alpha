@@ -7,6 +7,7 @@ from market_regime_alpha.dividend_t.models import (
     OrderIntent,
     PositionState,
     RetreatInputs,
+    ScoreBreakdown,
     Signal,
     StrategyDecision,
     TechnicalInputs,
@@ -14,6 +15,16 @@ from market_regime_alpha.dividend_t.models import (
 )
 from market_regime_alpha.dividend_t.scoring import base_position_limit, build_score_breakdown
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS
+from market_regime_alpha.dividend_t.signal_intent import (
+    CandidateSignal,
+    PrimarySetupCode,
+    candidate_for,
+    decision_trace_for,
+    no_candidate,
+)
+
+
+LEGACY_CURRENT_BAR = "CURRENT_DECISION_BAR"
 
 
 class DividendTStrategy:
@@ -27,112 +38,182 @@ class DividendTStrategy:
         retreat: RetreatInputs,
         technical: TechnicalInputs,
         position: PositionState | None = None,
+        decision_bar_time: str = LEGACY_CURRENT_BAR,
     ) -> StrategyDecision:
         position = position or PositionState()
         score = build_score_breakdown(fundamental, retreat, technical)
         base_limit = base_position_limit(score.F_score)
-        reasons: list[str] = []
+        candidate = select_simplified_candidate(
+            score=score,
+            retreat=retreat,
+            technical=technical,
+            position=position,
+            decision_bar_time=decision_bar_time,
+        )
+        signal = candidate.candidate_signal or Signal.HOLD
+        reasons = candidate.candidate_reasons
+        trace = decision_trace_for(candidate, final_signal=signal)
 
-        if score.F_score < 50:
-            reasons.append("F < 50，标的不合格，停止做 T 并准备清仓。")
-            return StrategyDecision(
-                symbol=symbol,
-                signal=Signal.CLEAR,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=min(position.symbol_position_pct, 0.20),
-                reasons=tuple(reasons),
-                warnings=("基本面不支持底仓。",),
-                order_intent=_order(symbol, "SELL", "base", Signal.CLEAR, min(position.symbol_position_pct, 0.20), reasons[0]),
-            )
-
-        if score.F_score < 55:
-            reasons.append("F < 55，分红或周期逻辑偏弱，优先减底仓。")
-            return StrategyDecision(
-                symbol=symbol,
-                signal=Signal.REDUCE,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=min(position.symbol_position_pct, 0.10),
-                reasons=tuple(reasons),
-                warnings=("基本面评分低于减底仓阈值。",),
-                order_intent=_order(symbol, "SELL", "base", Signal.REDUCE, min(position.symbol_position_pct, 0.10), reasons[0]),
-            )
-
-        stop_reasons = _stop_t_reasons(score.F_score, technical, position)
-        if stop_reasons:
-            return StrategyDecision(
-                symbol=symbol,
-                signal=Signal.STOP_T,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=0.0,
-                reasons=tuple(stop_reasons),
-                warnings=("暂停 T 仓交易，只保留复盘和底仓管理。",),
-            )
-
-        if _can_buy_t(score, retreat, technical):
-            target_pct = _target_position_pct(score.total_score)
-            pct = max(0.0, target_pct - position.symbol_position_pct)
-            reasons.extend(
-                [
-                    "F/R/T 同时满足买入主动仓位门槛。",
-                    _buy_location_reason(technical),
-                    f"卖压未超过阈值，板块和趋势没有破位，目标总仓位约 {target_pct:.0%}。",
-                ]
-            )
-            return StrategyDecision(
-                symbol=symbol,
-                signal=Signal.BUY_T,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=pct,
-                reasons=tuple(reasons),
-                order_intent=_order(symbol, "BUY", "t", Signal.BUY_T, pct, "买入主动仓位"),
-            )
-
-        if _should_sell_t(retreat, technical):
-            active_position_pct = max(position.t_position_pct, position.symbol_position_pct - position.base_position_pct)
-            pct = min(active_position_pct, _sell_t_pct(retreat.sell_pressure, technical))
-            signal = Signal.SELL_T
-            reasons.extend(
-                [
-                    "价格接近压力或出现放量滞涨，卖出主动仓位。",
-                    "盈亏比下降，卖压上升。",
-                ]
-            )
+        if signal is Signal.CLEAR:
+            pct = min(position.symbol_position_pct, 0.20)
             return StrategyDecision(
                 symbol=symbol,
                 signal=signal,
                 score=score,
                 base_position_limit_pct=base_limit,
                 suggested_trade_pct=pct,
-                reasons=tuple(reasons),
-                order_intent=_order(symbol, "SELL", "t", signal, pct, "卖出主动仓位"),
+                reasons=reasons,
+                warnings=("基本面不支持底仓。",),
+                order_intent=_order(symbol, "SELL", "base", signal, pct, reasons[0]),
+                decision_trace=trace,
             )
 
-        if position.symbol_position_pct < min(base_limit, 0.20) and score.F_score >= 70:
-            reasons.append("F >= 70 且当前底仓不足，可分批建立观察底仓。")
+        if signal is Signal.REDUCE:
+            pct = min(position.symbol_position_pct, 0.10)
+            return StrategyDecision(
+                symbol=symbol,
+                signal=signal,
+                score=score,
+                base_position_limit_pct=base_limit,
+                suggested_trade_pct=pct,
+                reasons=reasons,
+                warnings=("基本面评分低于减底仓阈值。",),
+                order_intent=_order(symbol, "SELL", "base", signal, pct, reasons[0]),
+                decision_trace=trace,
+            )
+
+        if signal is Signal.STOP_T:
+            return StrategyDecision(
+                symbol=symbol,
+                signal=signal,
+                score=score,
+                base_position_limit_pct=base_limit,
+                suggested_trade_pct=0.0,
+                reasons=reasons,
+                warnings=("暂停 T 仓交易，只保留复盘和底仓管理。",),
+                decision_trace=trace,
+            )
+
+        if signal is Signal.BUY_T:
+            target_pct = _target_position_pct(score.total_score)
+            pct = max(0.0, target_pct - position.symbol_position_pct)
+            return StrategyDecision(
+                symbol=symbol,
+                signal=signal,
+                score=score,
+                base_position_limit_pct=base_limit,
+                suggested_trade_pct=pct,
+                reasons=reasons,
+                order_intent=_order(symbol, "BUY", "t", signal, pct, "买入主动仓位"),
+                decision_trace=trace,
+            )
+
+        if signal is Signal.SELL_T:
+            active_position_pct = max(position.t_position_pct, position.symbol_position_pct - position.base_position_pct)
+            pct = min(active_position_pct, _sell_t_pct(retreat.sell_pressure, technical))
+            return StrategyDecision(
+                symbol=symbol,
+                signal=signal,
+                score=score,
+                base_position_limit_pct=base_limit,
+                suggested_trade_pct=pct,
+                reasons=reasons,
+                order_intent=_order(symbol, "SELL", "t", signal, pct, "卖出主动仓位"),
+                decision_trace=trace,
+            )
+
+        if signal is Signal.BUILD_BASE:
             pct = min(0.05, base_limit - position.symbol_position_pct)
             return StrategyDecision(
                 symbol=symbol,
-                signal=Signal.BUILD_BASE,
+                signal=signal,
                 score=score,
                 base_position_limit_pct=base_limit,
                 suggested_trade_pct=max(0.0, pct),
-                reasons=tuple(reasons),
-                order_intent=_order(symbol, "BUY", "base", Signal.BUILD_BASE, max(0.0, pct), "分批建底仓"),
+                reasons=reasons,
+                order_intent=_order(symbol, "BUY", "base", signal, max(0.0, pct), "分批建底仓"),
+                decision_trace=trace,
             )
 
-        reasons.append("没有触发买 T、卖 T、减仓或停手机制。")
         return StrategyDecision(
             symbol=symbol,
-            signal=Signal.HOLD,
+            signal=signal,
             score=score,
             base_position_limit_pct=base_limit,
             suggested_trade_pct=0.0,
-            reasons=tuple(reasons),
+            reasons=reasons,
+            decision_trace=trace,
         )
+
+
+def select_simplified_candidate(
+    *,
+    score: ScoreBreakdown,
+    retreat: RetreatInputs,
+    technical: TechnicalInputs,
+    position: PositionState,
+    decision_bar_time: str,
+) -> CandidateSignal:
+    """Select one primary setup before assigning the candidate intent."""
+
+    if score.F_score < 50:
+        clear_reasons = ("F < 50，标的不合格，停止做 T 并准备清仓。",)
+        return candidate_for(Signal.CLEAR, PrimarySetupCode.CLEAR, technical, decision_bar_time, reasons=clear_reasons)
+    if score.F_score < 55:
+        reduce_reasons = ("F < 55，分红或周期逻辑偏弱，优先减底仓。",)
+        return candidate_for(Signal.REDUCE, PrimarySetupCode.REDUCE, technical, decision_bar_time, reasons=reduce_reasons)
+
+    stop_reasons = tuple(_stop_t_reasons(score.F_score, technical, position))
+    if stop_reasons:
+        return candidate_for(Signal.STOP_T, _primary_stop_setup(technical), technical, decision_bar_time, reasons=stop_reasons)
+
+    if _can_buy_t(score, retreat, technical):
+        target_pct = _target_position_pct(score.total_score)
+        buy_reasons = (
+            "F/R/T 同时满足买入主动仓位门槛。",
+            _buy_location_reason(technical),
+            f"卖压未超过阈值，板块和趋势没有破位，目标总仓位约 {target_pct:.0%}。",
+        )
+        return candidate_for(Signal.BUY_T, _primary_buy_setup(technical), technical, decision_bar_time, reasons=buy_reasons)
+
+    if _should_sell_t(retreat, technical):
+        sell_reasons = (
+            "价格接近压力或出现放量滞涨，卖出主动仓位。",
+            "盈亏比下降，卖压上升。",
+        )
+        return candidate_for(Signal.SELL_T, _primary_sell_setup(technical), technical, decision_bar_time, reasons=sell_reasons)
+
+    if position.symbol_position_pct < min(base_position_limit(score.F_score), 0.20) and score.F_score >= 70:
+        build_reasons = ("F >= 70 且当前底仓不足，可分批建立观察底仓。",)
+        return candidate_for(Signal.BUILD_BASE, PrimarySetupCode.BUILD_BASE, technical, decision_bar_time, reasons=build_reasons)
+
+    return no_candidate(decision_bar_time, reasons=("没有触发买 T、卖 T、减仓或停手机制。",))
+
+
+def _primary_stop_setup(technical: TechnicalInputs) -> PrimarySetupCode:
+    if technical.chan_structure_type == "breakdown":
+        return PrimarySetupCode.STRUCTURE_BREAK
+    if technical.chan_sell_point_type == "sell3":
+        return PrimarySetupCode.THIRD_SELL
+    if technical.chan_sell_point_type in {"sell1", "sell2"}:
+        return PrimarySetupCode.CHAN_SELL_RISK
+    return PrimarySetupCode.STOP_T
+
+
+def _primary_buy_setup(technical: TechnicalInputs) -> PrimarySetupCode:
+    if technical.chan_buy_point_type == "buy3":
+        return PrimarySetupCode.THIRD_BUY_FOLLOW
+    if technical.chan_structure_type == "breakout":
+        return PrimarySetupCode.BREAKOUT_CONFIRMED
+    if technical.intraday_reversal:
+        return PrimarySetupCode.INTRADAY_REVERSAL
+    return PrimarySetupCode.PULLBACK_LOW_BUY
+
+
+def _primary_sell_setup(technical: TechnicalInputs) -> PrimarySetupCode:
+    if technical.chan_divergence_type == "top":
+        return PrimarySetupCode.TOP_DIVERGENCE_RISK
+    return PrimarySetupCode.PRESSURE_SELL_T
 
 
 def _can_buy_t(score, retreat: RetreatInputs, technical: TechnicalInputs) -> bool:

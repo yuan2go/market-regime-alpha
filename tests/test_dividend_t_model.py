@@ -16,6 +16,7 @@ from market_regime_alpha.dividend_t.indicators import technical_macd_fields
 from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig, MACDCross, MACDDataReason, MACDHistogramTrend, MACDZeroAxis, calculate_macd
 from market_regime_alpha.dividend_t.scoring import technical_score
 from market_regime_alpha.dividend_t.strategy import DividendTStrategy
+from market_regime_alpha.dividend_t.signal_intent import PrimarySetupCode, SignalIntent
 
 
 class DividendTStrategyTests(unittest.TestCase):
@@ -46,6 +47,9 @@ class DividendTStrategyTests(unittest.TestCase):
         self.assertIsNotNone(decision.order_intent)
         self.assertGreater(decision.score.total_score, 75)
         self.assertGreater(decision.score.C_score, 0)
+        self.assertIsNotNone(decision.decision_trace)
+        self.assertIs(decision.decision_trace.candidate_signal_intent, SignalIntent.MEAN_REVERSION_T)
+        self.assertIs(decision.decision_trace.primary_setup_code, PrimarySetupCode.INTRADAY_REVERSAL)
 
     def test_buy3_can_trigger_without_near_support_when_other_gates_pass(self) -> None:
         decision = self.strategy.evaluate(
@@ -75,6 +79,8 @@ class DividendTStrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.signal, Signal.BUY_T)
         self.assertIn("buy3", " ".join(decision.reasons))
+        self.assertIs(decision.decision_trace.primary_setup_code, PrimarySetupCode.THIRD_BUY_FOLLOW)
+        self.assertIs(decision.decision_trace.candidate_signal_intent, SignalIntent.TREND_FOLLOWING)
 
     def test_chan_sell_point_blocks_buy_and_stops_t(self) -> None:
         decision = self.strategy.evaluate(
@@ -101,6 +107,7 @@ class DividendTStrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.signal, Signal.STOP_T)
         self.assertIsNone(decision.order_intent)
+        self.assertIs(decision.decision_trace.candidate_signal_intent, SignalIntent.RISK_REDUCTION)
 
     def test_sell_t_signal_when_pressure_area_gets_stalled(self) -> None:
         decision = self.strategy.evaluate(
@@ -122,6 +129,7 @@ class DividendTStrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.signal, Signal.SELL_T)
         self.assertIsNotNone(decision.order_intent)
+        self.assertIs(decision.decision_trace.primary_setup_code, PrimarySetupCode.PRESSURE_SELL_T)
 
     def test_stop_t_when_trend_breaks(self) -> None:
         decision = self.strategy.evaluate(
@@ -153,6 +161,7 @@ class DividendTStrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.signal, Signal.CLEAR)
         self.assertIsNotNone(decision.order_intent)
+        self.assertIs(decision.decision_trace.candidate_signal_intent, SignalIntent.RISK_REDUCTION)
 
     def test_technical_inputs_default_to_unavailable_neutral_macd(self) -> None:
         technical = TechnicalInputs(70, 70, 70, 70)
