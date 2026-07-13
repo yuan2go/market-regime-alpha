@@ -79,6 +79,29 @@ from market_regime_alpha.dividend_t.signal_intent import CandidateContractError,
 
 
 class DividendTBacktestTests(unittest.TestCase):
+    def test_backtest_calls_explicit_macd_provider_only_at_signal_boundaries(self) -> None:
+        calls = []
+
+        def provider(history):
+            calls.append(str(history["timestamp"].iloc[-1]))
+            return None
+
+        config = DividendTBacktestConfig(
+            min_lookback_bars=48,
+            max_history_bars=96,
+            signal_step_bars=24,
+            signal_cache_dir=None,
+        )
+        run_cosco_dividend_t_backtest(
+            _short_sample(),
+            config=config,
+            engine=_ScriptedStrongTrendEngine(),
+            macd_result_provider=provider,
+        )
+
+        self.assertGreater(len(calls), 0)
+        self.assertEqual(len(calls), len(set(calls)))
+
     def test_backtest_is_the_single_macd_sizing_owner(self) -> None:
         signal = replace(
             _risk_on_confirmed_signal(action="BUY_T_TIMING"),

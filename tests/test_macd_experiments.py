@@ -59,6 +59,7 @@ def test_canonical_identity_contains_required_fields() -> None:
     required = {
         "git_commit",
         "dataset_version",
+        "data_split_hash",
         "pipeline_id",
         "macd_contract_version",
         "macd_algorithm_version",
@@ -95,6 +96,7 @@ def test_canonical_identity_contains_required_fields() -> None:
     [
         {"git_commit": "different"},
         {"dataset_version": "dataset-v2"},
+        {"data_split_hash": "split-v2"},
         {"pipeline_id": "other-pipeline"},
         {"macd_contract_version": "macd-data-v2"},
         {"macd_algorithm_version": "macd-v2"},

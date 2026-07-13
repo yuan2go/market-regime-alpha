@@ -40,6 +40,7 @@ MACD_CACHE_SCHEMA_VERSION = "macd-signal-cache-v2"
 RISK_ENFORCEMENT_VERSION = "risk-enforcement-v1"
 MACD_PROFILE_NAMES = ("baseline", "score-only", "policy-only", "full")
 LEGACY_CACHE_COMPATIBILITY_MODE = "legacy-baseline-only"
+LEGACY_DATA_SPLIT_HASH = "legacy-unspecified-split-v1"
 
 
 class CounterfactualEventType(str, Enum):
@@ -219,6 +220,7 @@ class AblationArmContext:
 class MACDExperimentIdentity:
     git_commit: str
     dataset_version: str
+    data_split_hash: str
     pipeline_id: str
     macd_contract_version: str
     macd_algorithm_version: str
@@ -261,6 +263,7 @@ def build_experiment_identity(
     policy_config: MACDPolicyConfig,
     execution_config: Any,
     sizing_owner: str,
+    data_split_hash: str = LEGACY_DATA_SPLIT_HASH,
 ) -> MACDExperimentIdentity:
     """Build the complete result-affecting identity from validated configs."""
 
@@ -269,12 +272,14 @@ def build_experiment_identity(
         ("dataset_version", dataset_version),
         ("pipeline_id", pipeline_id),
         ("sizing_owner", sizing_owner),
+        ("data_split_hash", data_split_hash),
     ):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} must be non-empty")
     return MACDExperimentIdentity(
         git_commit=git_commit.strip(),
         dataset_version=dataset_version.strip(),
+        data_split_hash=data_split_hash.strip(),
         pipeline_id=pipeline_id.strip(),
         macd_contract_version=MACD_CONTRACT_VERSION,
         macd_algorithm_version=macd_config.algorithm_version or MACD_ALGORITHM_VERSION,

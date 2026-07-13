@@ -460,6 +460,7 @@ class DividendTBacktestResult:
     cash_dividend_total: float = 0.0
     trades: tuple[DividendTTrade, ...] = field(default_factory=tuple)
     equity_curve: tuple[DividendTBacktestPoint, ...] = field(default_factory=tuple)
+    signals: tuple[BacktestSignal, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
@@ -1222,6 +1223,7 @@ def run_cosco_dividend_t_backtest(
     market_filter: MarketEnvironmentFilter | None = None,
     experiment_identity: MACDExperimentIdentity | None = None,
     pipeline_id: str = "cosco-dividend-t-5m",
+    macd_result_provider: Callable[[Any], Any] | None = None,
 ) -> DividendTBacktestResult:
     data = normalize_backtest_bars(bars)
     cfg = config or DividendTBacktestConfig()
@@ -1324,6 +1326,7 @@ def run_cosco_dividend_t_backtest(
     last_active_position_cap_pct = cfg.default_active_position_cap_pct
     last_core_position_floor_pct = 0.0
     last_point_signal: BacktestSignal | None = None
+    signal_trace: list[BacktestSignal] = []
 
     for index in range(1, len(data)):
         active_position_added_this_bar = False
@@ -1490,7 +1493,19 @@ def run_cosco_dividend_t_backtest(
             signal_key = str(history["timestamp"].iloc[-1])
             signal = signal_cache.get(signal_key) if signal_cache is not None else None
             if signal is None:
-                snapshot = timing_engine.evaluate(history, require_fresh=False, generated_at=generated_at)
+                if macd_result_provider is None:
+                    snapshot = timing_engine.evaluate(
+                        history,
+                        require_fresh=False,
+                        generated_at=generated_at,
+                    )
+                else:
+                    snapshot = timing_engine.evaluate(
+                        history,
+                        require_fresh=False,
+                        generated_at=generated_at,
+                        macd_result=macd_result_provider(history),
+                    )
                 signal = BacktestSignal.from_snapshot(snapshot)
             signal = _with_pretrade_volume_price_context(signal, history, cfg)
             if experiment_identity is None:
@@ -1761,6 +1776,7 @@ def run_cosco_dividend_t_backtest(
             last_max_total_position_pct = max_total_position_pct
             last_active_position_cap_pct = active_position_cap_pct
             last_core_position_floor_pct = point_core_position_floor_pct
+            signal_trace.append(signal)
             last_point_signal = signal
             action_counts[action] = action_counts.get(action, 0) + 1
             regime_counts[market_regime_state] = regime_counts.get(market_regime_state, 0) + 1
@@ -2148,6 +2164,7 @@ def run_cosco_dividend_t_backtest(
         cash_dividend_total=round(cash_dividend_total, 2),
         trades=tuple(trades),
         equity_curve=tuple(equity_curve),
+        signals=tuple(signal_trace),
     )
 
 

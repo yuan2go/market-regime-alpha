@@ -1,5 +1,35 @@
 # Backtesting Experiments
 
+## MACD four-arm sealed rehearsal
+
+`run_macd_ablation.py` runs the fixed `baseline`, `score-only`, `policy-only`, and `full`
+profiles against one content-addressed dataset and split manifest. Development runs may select only
+`train`, `validation`, or `rehearsal`; the `test` segment is rejected unless `--final-test` is explicit.
+
+The runner requires bar files with explicit `bar_final`, plus point-in-time universe, corporate-action,
+suspension, and exchange-calendar sidecars. It writes through a temporary sibling directory and only
+publishes a checksummed `COMPLETED` artifact after all four profiles succeed. Existing run ids are never
+overwritten and there is intentionally no force option.
+
+```bash
+PYTHONPATH=src ./.venv/bin/python backtesting/run_macd_ablation.py \
+  --data /path/to/rehearsal-bars.csv \
+  --split-manifest /path/to/split.json \
+  --universe /path/to/universe.json \
+  --corporate-actions /path/to/corporate-actions.json \
+  --suspensions /path/to/suspensions.json \
+  --trading-calendar /path/to/trading-calendar.json \
+  --trading-calendar-version sse-calendar-v1 \
+  --data-source sealed-research-source-v1 \
+  --dataset-classification REHEARSAL \
+  --pit-adjustment-complete \
+  --segment rehearsal \
+  --dry-run
+```
+
+Production remains `baseline`: `score_weight=0.0`, `conflict_gate_enabled=False`. Neither the 15% score
+weight nor the MACD policy is authorized for production by this runner.
+
 ## ETF Moving-Average Crossover
 
 Run the first prototype from the project root:

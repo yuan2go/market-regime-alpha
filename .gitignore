@@ -27,6 +27,7 @@ reports/**/*.csv
 reports/**/*.html
 reports/**/*.json
 reports/**/*.md
+artifacts/macd_oos/
 !reports/**/
 !reports/backtests/Backtest-Report-Template.md
 *.db
