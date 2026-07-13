@@ -431,9 +431,9 @@ def _audit_fixture_report() -> dict[str, object]:
         price = 10.0 + index * 0.05
         bars.extend(
             [
-                {"symbol": _SYMBOL, "timestamp": start, "open": price, "high": price + 0.1, "low": price - 0.1, "close": price, "suspended": False, "at_limit_up": False, "at_limit_down": False},
-                {"symbol": _SYMBOL, "timestamp": start + pd.Timedelta(minutes=5), "open": price + 0.02, "high": price + 0.14, "low": price - 0.03, "close": price + (0.08 if index % 2 == 0 else -0.05), "suspended": False, "at_limit_up": False, "at_limit_down": False},
-                {"symbol": _SYMBOL, "timestamp": start + pd.Timedelta(minutes=10), "open": price + 0.03, "high": price + 0.16, "low": price - 0.06, "close": price + (0.10 if index % 3 else -0.07), "suspended": False, "at_limit_up": False, "at_limit_down": False},
+                {"symbol": _SYMBOL, "timestamp": start, "open": price, "high": price + 0.1, "low": price - 0.1, "close": price, "volume": 1000},
+                {"symbol": _SYMBOL, "timestamp": start + pd.Timedelta(minutes=5), "open": price + 0.02, "high": price + 0.14, "low": price - 0.03, "close": price + (0.08 if index % 2 == 0 else -0.05), "volume": 1000},
+                {"symbol": _SYMBOL, "timestamp": start + pd.Timedelta(minutes=10), "open": price + 0.03, "high": price + 0.16, "low": price - 0.06, "close": price + (0.10 if index % 3 else -0.07), "volume": 1000},
             ]
         )
         if index % 5 == 0:
@@ -464,7 +464,12 @@ def _audit_fixture_report() -> dict[str, object]:
             "volatility_bucket": "HIGH" if index % 3 else "LOW",
             "trend_state": "UPTREND" if index % 2 else "RANGE",
             "holding_period_bucket": "INTRADAY_1BAR",
-            "up_probability": 0.65 if index % 2 else 0.35,
+            "up_probability_bar_1": 0.65 if index % 2 else 0.35,
+            "equity_before": 100_000.0,
+            "cash": 100_000.0,
+            "suggested_trade_pct": 0.2,
+            "t_shares": 10_000,
+            "sellable_qty": 10_000,
             "force_buy_edge": 50.0 + index * 2.0,
             "buy_strength_score": 58.0 + index,
             "sell_pressure": 55.0 + index,
@@ -476,8 +481,6 @@ def _audit_fixture_report() -> dict[str, object]:
             "mean_reversion_size_multiplier": 0.5,
         })
     labels = label_candidate_outcomes(pd.DataFrame(candidates), pd.DataFrame(bars), intraday_horizons=(1,), daily_horizons=())
-    labels["success"] = labels["success_bar_1"].fillna(0).astype(int)
-    labels["net_return"] = labels["cost_adjusted_return_bar_1"].fillna(0.0)
     return audit_report(labels)
 
 

@@ -60,6 +60,8 @@ class ExecutionResolution:
     shares: int
     slippage_amount: float
     fee_amount: float
+    execution_cost: float = 0.0
+    execution_constraint_version: str = "a-share-execution-v1"
 
 
 @dataclass(frozen=True)
@@ -163,11 +165,15 @@ class CounterfactualEvent:
 
     @property
     def policy_resized(self) -> bool:
-        return self.policy_eligible and self.candidate_after_policy != "HOLD" and not math.isclose(
-            self.original_suggested_trade_pct,
-            self.adjusted_suggested_trade_pct,
-            rel_tol=0.0,
-            abs_tol=1e-15,
+        return (
+            self.policy_eligible
+            and self.candidate_after_policy != "HOLD"
+            and not math.isclose(
+                self.original_suggested_trade_pct,
+                self.adjusted_suggested_trade_pct,
+                rel_tol=0.0,
+                abs_tol=1e-15,
+            )
         )
 
 
@@ -519,20 +525,13 @@ def summarize_macd_events(
         event
         for event in ordinary
         if event.macd_score_changed_candidate
-        and event.event_type
-        in {CounterfactualEventType.SCORE_SUPPRESSED, CounterfactualEventType.SCORE_AND_POLICY_INTERACTION}
+        and event.event_type in {CounterfactualEventType.SCORE_SUPPRESSED, CounterfactualEventType.SCORE_AND_POLICY_INTERACTION}
     ]
     policy_eligible = [event for event in ordinary if event.policy_eligible]
     policy_blocked = [event for event in policy_eligible if event.policy_blocked]
     policy_resized = [event for event in policy_eligible if event.policy_resized]
-    evaluated_blocks = [
-        event for event in policy_blocked if event.executable and event.counterfactual_net_pnl is not None
-    ]
-    evaluated_pnls = [
-        float(event.counterfactual_net_pnl)
-        for event in evaluated_blocks
-        if event.counterfactual_net_pnl is not None
-    ]
+    evaluated_blocks = [event for event in policy_blocked if event.executable and event.counterfactual_net_pnl is not None]
+    evaluated_pnls = [float(event.counterfactual_net_pnl) for event in evaluated_blocks if event.counterfactual_net_pnl is not None]
     avoided_loss = sum(-pnl for pnl in evaluated_pnls if pnl < 0)
     missed_profit = sum(pnl for pnl in evaluated_pnls if pnl > 0)
     zero_pnl = sum(pnl == 0 for pnl in evaluated_pnls)
@@ -542,12 +541,8 @@ def summarize_macd_events(
         score_suppression_rate=_rate(len(score_suppressed), len(ordinary)),
         policy_block_rate=_rate(len(policy_blocked), len(policy_eligible)),
         policy_resize_rate=_rate(len(policy_resized), len(policy_eligible)),
-        effective_block_rate=_rate(
-            sum(pnl < 0 for pnl in evaluated_pnls), len(evaluated_pnls)
-        ),
-        wrong_block_rate=_rate(
-            sum(pnl > 0 for pnl in evaluated_pnls), len(evaluated_pnls)
-        ),
+        effective_block_rate=_rate(sum(pnl < 0 for pnl in evaluated_pnls), len(evaluated_pnls)),
+        wrong_block_rate=_rate(sum(pnl > 0 for pnl in evaluated_pnls), len(evaluated_pnls)),
         avoided_loss_amount=avoided_loss,
         missed_profit_amount=missed_profit,
         net_block_benefit=avoided_loss - missed_profit,
@@ -587,9 +582,7 @@ def summarize_macd_events_by_intent(
     return {bucket: summarize_macd_events(items) for bucket, items in sorted(grouped.items())}
 
 
-def factorial_attribution(
-    *, baseline: float, score_only: float, policy_only: float, full: float
-) -> FactorialAttribution:
+def factorial_attribution(*, baseline: float, score_only: float, policy_only: float, full: float) -> FactorialAttribution:
     """Compute the 2x2 score, policy, and score-policy interaction effects."""
 
     score_effect = score_only - baseline

@@ -731,6 +731,17 @@ class CounterfactualExecutionContext:
     total_sell_shares: int = 0
     sellable_shares: int = 0
     previous_daily_close: float | None = None
+    base_shares: int = 0
+    base_locked_shares: int = 0
+    t_shares: int = 0
+    t_locked_shares: int = 0
+    core_position_floor_pct: float = 0.0
+    hard_risk_exit: bool = False
+    pending_buyback_shares: int = 0
+    pending_buyback_target_price: float | None = None
+
+
+EXECUTION_CONSTRAINT_VERSION = "a-share-execution-v1"
 
 
 def counterfactual_event_from_signal(
@@ -788,25 +799,84 @@ def resolve_counterfactual_execution(
         raise ValueError("COUNTERFACTUAL_NOT_NEXT_ELIGIBLE_BAR")
     if not math.isfinite(trade_pct) or trade_pct < 0.0:
         raise ValueError("counterfactual trade_pct must be finite and non-negative")
+    signal = event.candidate_before_policy
+    if event.event_type is CounterfactualEventType.SCORE_SUPPRESSED:
+        signal = event.candidate_without_macd_score
+    return resolve_execution_request(
+        signal=signal,
+        symbol=event.symbol,
+        candidate_bar_close_time=event.candidate_bar_close_time,
+        next_bar=next_bar,
+        context=context,
+        config=config,
+        trade_pct=trade_pct,
+        expected_execution_time=event.next_eligible_execution_time,
+    )
+
+
+def resolve_execution_request(
+    *,
+    signal: str | None,
+    symbol: str,
+    candidate_bar_close_time: str,
+    next_bar: Any,
+    context: CounterfactualExecutionContext,
+    config: DividendTBacktestConfig,
+    trade_pct: float,
+    expected_execution_time: str | None = None,
+) -> ExecutionResolution:
+    """Resolve one offline execution with the same A-share constraints as replay.
+
+    This is deliberately public so candidate labeling and counterfactual replay
+    cannot grow separate interpretations of tradability, T+1, costs, or lots.
+    """
+
+    import pandas as pd
+
+    execution_time = str(next_bar["timestamp"])
+    validate_execution_after_signal(candidate_bar_close_time, execution_time)
+    if expected_execution_time is not None and pd.Timestamp(execution_time) != pd.Timestamp(expected_execution_time):
+        raise ValueError("COUNTERFACTUAL_NOT_NEXT_ELIGIBLE_BAR")
+    if not math.isfinite(trade_pct) or trade_pct < 0.0:
+        raise ValueError("counterfactual trade_pct must be finite and non-negative")
     constraints = _trade_execution_constraints(
         next_bar,
-        symbol=event.symbol,
+        symbol=symbol,
         previous_daily_close=context.previous_daily_close,
         config=config,
     )
     raw_open = float(next_bar["open"])
-    signal = event.candidate_before_policy
-    if event.event_type is CounterfactualEventType.SCORE_SUPPRESSED:
-        signal = event.candidate_without_macd_score
-    if signal == Signal.BUY_T.value:
+    normalized_signal = str(signal or "")
+    buy_signals = {Signal.BUY_T.value, "BUY_BACK_REVERSE_T", "BUILD_BASE"}
+    sell_signals = {
+        Signal.SELL_T.value,
+        Signal.CLEAR.value,
+        Signal.REDUCE.value,
+        Signal.STOP_T.value,
+        "TAKE_PROFIT_T",
+        "REDUCE_T",
+        "EXIT_T",
+        "REVERSE_T_SELL",
+    }
+    if normalized_signal in buy_signals:
         if not constraints.can_buy:
             return _blocked_counterfactual(execution_time, constraints.reason or "BUY_BLOCKED")
-        fill = _buy_price(raw_open, config)
-        budget = min(context.equity_before * trade_pct, context.cash)
-        shares = _floor_lot(
-            min(budget / fill, context.cash / _buy_cost_per_share(fill, config)),
-            config.min_lot,
-        )
+        buyback = normalized_signal == "BUY_BACK_REVERSE_T"
+        if buyback and (context.pending_buyback_shares <= 0 or context.pending_buyback_target_price is None):
+            return _blocked_counterfactual(execution_time, "BUYBACK_CONTEXT_MISSING")
+        buyback_target = context.pending_buyback_target_price
+        if buyback:
+            if buyback_target is None:
+                return _blocked_counterfactual(execution_time, "BUYBACK_CONTEXT_MISSING")
+            if float(next_bar["low"]) > buyback_target:
+                return _blocked_counterfactual(execution_time, "BUYBACK_TARGET_NOT_REACHED")
+            raw_price = min(raw_open, buyback_target)
+        else:
+            raw_price = raw_open
+        fill = _buy_price(raw_price, config)
+        requested = context.pending_buyback_shares if buyback else context.equity_before * trade_pct / fill
+        budget = min(context.equity_before * trade_pct, context.cash) if not buyback else context.cash
+        shares = _floor_lot(min(requested, budget / fill, context.cash / _buy_cost_per_share(fill, config)), config.min_lot)
         if shares <= 0:
             return _blocked_counterfactual(execution_time, "CASH_OR_MIN_LOT")
         gross = fill * shares
@@ -817,19 +887,39 @@ def resolve_counterfactual_execution(
             execution_time,
             fill,
             shares,
-            (fill - raw_open) * shares,
+            (fill - raw_price) * shares,
             fee,
+            fee + abs((fill - raw_price) * shares),
+            EXECUTION_CONSTRAINT_VERSION,
         )
-    if signal in {Signal.SELL_T.value, Signal.CLEAR.value, Signal.REDUCE.value, Signal.STOP_T.value}:
+    if normalized_signal in sell_signals:
         if not constraints.can_sell:
             return _blocked_counterfactual(execution_time, constraints.reason or "SELL_BLOCKED")
-        sellable = context.sellable_shares if config.enable_a_share_constraints and config.enable_t1 else context.total_sell_shares
-        if context.total_sell_shares > 0 and sellable <= 0:
+        reverse_t = normalized_signal == "REVERSE_T_SELL"
+        if reverse_t and not _t_mode_allows_reverse_t(config):
+            return _blocked_counterfactual(execution_time, "REVERSE_T_NOT_ALLOWED")
+        if reverse_t and context.pending_buyback_shares > 0:
+            return _blocked_counterfactual(execution_time, "PENDING_BUYBACK")
+        t_total = context.t_shares or context.total_sell_shares
+        t_locked = context.t_locked_shares
+        total = context.base_shares + context.t_shares if context.base_shares + context.t_shares > 0 else context.total_sell_shares
+        if normalized_signal in {Signal.CLEAR.value, "EXIT_T", Signal.STOP_T.value}:
+            eligible = _sellable_shares(total, context.base_locked_shares + context.t_locked_shares, config=config)
+        elif reverse_t:
+            eligible = _sellable_shares(context.base_shares, context.base_locked_shares, config=config)
+        else:
+            eligible = _sellable_shares(t_total, t_locked, config=config)
+            if context.t_shares <= 0 and context.total_sell_shares > 0 and config.enable_a_share_constraints and config.enable_t1:
+                eligible = context.sellable_shares
+        if (context.total_sell_shares > 0 or t_total > 0 or total > 0) and eligible <= 0:
             return _blocked_counterfactual(execution_time, "T1_LOCK")
         fill = _sell_price(raw_open, config)
-        shares = _floor_lot(min(sellable, context.equity_before * trade_pct / fill), config.min_lot)
+        if config.enable_core_position_floor and not context.hard_risk_exit and context.core_position_floor_pct > 0.0:
+            floor_shares = math.ceil((context.equity_before * context.core_position_floor_pct / fill) / config.min_lot) * config.min_lot
+            eligible = min(eligible, max(total - floor_shares, 0))
+        shares = _floor_lot(min(eligible, context.equity_before * trade_pct / fill), config.min_lot)
         if shares <= 0:
-            return _blocked_counterfactual(execution_time, "POSITION_OR_MIN_LOT")
+            return _blocked_counterfactual(execution_time, "CORE_POSITION_FLOOR" if eligible <= 0 else "POSITION_OR_MIN_LOT")
         gross = fill * shares
         fee = gross - _sell_proceeds(fill, shares, config)
         return ExecutionResolution(
@@ -840,6 +930,8 @@ def resolve_counterfactual_execution(
             shares,
             (raw_open - fill) * shares,
             fee,
+            fee + abs((raw_open - fill) * shares),
+            EXECUTION_CONSTRAINT_VERSION,
         )
     return _blocked_counterfactual(execution_time, "UNSUPPORTED_CANDIDATE_SIGNAL")
 
@@ -851,9 +943,7 @@ def evaluate_sizing_counterfactual_paths(
     context: CounterfactualExecutionContext,
     config: DividendTBacktestConfig,
     forward_bars: object | None = None,
-    outcome_resolver: (
-        Callable[[CounterfactualEvent, ExecutionResolution, object], CounterfactualPathOutcome] | None
-    ) = None,
+    outcome_resolver: (Callable[[CounterfactualEvent, ExecutionResolution, object], CounterfactualPathOutcome] | None) = None,
 ) -> CounterfactualEvent:
     """Evaluate actual adjusted sizing and its original-size counterfactual under identical execution."""
 
@@ -873,16 +963,8 @@ def evaluate_sizing_counterfactual_paths(
     )
     if (forward_bars is None) != (outcome_resolver is None):
         raise ValueError("COUNTERFACTUAL_OUTCOME_INPUTS_INCOMPLETE")
-    adjusted_outcome = (
-        outcome_resolver(event, adjusted, forward_bars)
-        if outcome_resolver is not None and adjusted.executable
-        else None
-    )
-    original_outcome = (
-        outcome_resolver(event, original, forward_bars)
-        if outcome_resolver is not None and original.executable
-        else None
-    )
+    adjusted_outcome = outcome_resolver(event, adjusted, forward_bars) if outcome_resolver is not None and adjusted.executable else None
+    original_outcome = outcome_resolver(event, original, forward_bars) if outcome_resolver is not None and original.executable else None
     return replace(
         event,
         adjusted_path_executable=adjusted.executable,
@@ -891,29 +973,21 @@ def evaluate_sizing_counterfactual_paths(
         adjusted_path_slippage_amount=adjusted.slippage_amount,
         adjusted_path_fee_amount=adjusted.fee_amount,
         adjusted_path_net_pnl=adjusted_outcome.net_pnl if adjusted_outcome is not None else None,
-        adjusted_path_holding_period_bars=(
-            adjusted_outcome.holding_period_bars if adjusted_outcome is not None else None
-        ),
-        adjusted_path_max_adverse_excursion=(
-            adjusted_outcome.max_adverse_excursion if adjusted_outcome is not None else None
-        ),
+        adjusted_path_holding_period_bars=(adjusted_outcome.holding_period_bars if adjusted_outcome is not None else None),
+        adjusted_path_max_adverse_excursion=(adjusted_outcome.max_adverse_excursion if adjusted_outcome is not None else None),
         original_path_executable=original.executable,
         original_path_fill_price=original.reference_fill_price,
         original_path_shares=original.shares,
         original_path_slippage_amount=original.slippage_amount,
         original_path_fee_amount=original.fee_amount,
         original_path_net_pnl=original_outcome.net_pnl if original_outcome is not None else None,
-        original_path_holding_period_bars=(
-            original_outcome.holding_period_bars if original_outcome is not None else None
-        ),
-        original_path_max_adverse_excursion=(
-            original_outcome.max_adverse_excursion if original_outcome is not None else None
-        ),
+        original_path_holding_period_bars=(original_outcome.holding_period_bars if original_outcome is not None else None),
+        original_path_max_adverse_excursion=(original_outcome.max_adverse_excursion if original_outcome is not None else None),
     )
 
 
 def _blocked_counterfactual(execution_time: str, reason: str) -> ExecutionResolution:
-    return ExecutionResolution(False, reason, execution_time, None, 0, 0.0, 0.0)
+    return ExecutionResolution(False, reason, execution_time, None, 0, 0.0, 0.0, 0.0, EXECUTION_CONSTRAINT_VERSION)
 
 
 class BacktestSignalCache:
@@ -1248,9 +1322,7 @@ def run_cosco_dividend_t_backtest(
             expected_pipeline_id=pipeline_id,
             expected_sizing_owner="dividend_t_backtest_execution",
         )
-    elif isinstance(policy_config, MACDPolicyConfig) and (
-        policy_config.score_weight != 0.0 or policy_config.conflict_gate_enabled
-    ):
+    elif isinstance(policy_config, MACDPolicyConfig) and (policy_config.score_weight != 0.0 or policy_config.conflict_gate_enabled):
         raise ValueError("MACD_EXPERIMENT_IDENTITY_REQUIRED")
     previous_daily_closes = _previous_daily_close_by_date(data)
     first_bar = data.iloc[0]
@@ -1295,7 +1367,7 @@ def run_cosco_dividend_t_backtest(
     attack_distribution_confirm_streak = 0
     core_position_floor_pct = 0.0
     active_peak_profit_pct = 0.0
-    last_base_rebalance_index = -10**9
+    last_base_rebalance_index = -(10**9)
     stock_risk_on_bars_remaining = 0
     buy_t_failure_cooldown_remaining = 0
     breakout_follow_through_cooldown_remaining = 0
@@ -1563,7 +1635,9 @@ def run_cosco_dividend_t_backtest(
                     config=cfg,
                     stock_risk_on_active=stock_risk_on_bars_remaining > 0,
                 )
-                market_environment_state = signal.market_environment_state if signal.market_environment_state != "UNFILTERED" else market_environment.state
+                market_environment_state = (
+                    signal.market_environment_state if signal.market_environment_state != "UNFILTERED" else market_environment.state
+                )
                 market_environment_score = market_environment.score
                 market_environment_metrics = _market_environment_point_metrics(market_environment)
             signal_cfg = _effective_signal_config(
@@ -1610,14 +1684,11 @@ def run_cosco_dividend_t_backtest(
                 else 0.0
             )
             active_peak_for_state_pct = max(active_peak_profit_pct, active_profit_for_state_pct)
-            beta_hold_exit_risk = (
-                attack_state == ATTACK_BETA_HOLD
-                and _beta_hold_hard_exit_signal(
-                    signal,
-                    signal_cfg,
-                    active_profit_pct=active_profit_for_state_pct,
-                    active_peak_profit_pct=active_peak_for_state_pct,
-                )
+            beta_hold_exit_risk = attack_state == ATTACK_BETA_HOLD and _beta_hold_hard_exit_signal(
+                signal,
+                signal_cfg,
+                active_profit_pct=active_profit_for_state_pct,
+                active_peak_profit_pct=active_peak_for_state_pct,
             )
             if beta_hold_exit_risk:
                 beta_hold_exit_confirm_streak += 1
@@ -1685,16 +1756,17 @@ def run_cosco_dividend_t_backtest(
                 attack_distribution_confirm_streak += 1
             else:
                 attack_distribution_confirm_streak = 0
-            beta_hold_exit_confirmed = (
-                beta_hold_exit_confirm_streak >= max(1, signal_cfg.beta_hold_exit_confirm_bars)
-                or _beta_hold_catastrophic_exit_signal(
-                    signal,
-                    signal_cfg,
-                    active_profit_pct=active_profit_for_state_pct,
-                )
+            beta_hold_exit_confirmed = beta_hold_exit_confirm_streak >= max(
+                1, signal_cfg.beta_hold_exit_confirm_bars
+            ) or _beta_hold_catastrophic_exit_signal(
+                signal,
+                signal_cfg,
+                active_profit_pct=active_profit_for_state_pct,
             )
             beta_hold_soft_exit_confirmed = beta_hold_soft_exit_confirm_streak >= max(1, signal_cfg.beta_hold_soft_exit_confirm_bars)
-            beta_hold_distribution_confirmed = beta_hold_distribution_confirm_streak >= max(1, signal_cfg.beta_hold_distribution_confirm_bars)
+            beta_hold_distribution_confirmed = beta_hold_distribution_confirm_streak >= max(
+                1, signal_cfg.beta_hold_distribution_confirm_bars
+            )
             attack_exit_confirmed = attack_exit_confirm_streak >= max(1, signal_cfg.attack_exit_confirm_bars)
             attack_distribution_confirmed = attack_distribution_confirm_streak >= max(1, signal_cfg.attack_distribution_confirm_bars)
             attack_state, attack_confirm_streak = _next_attack_state(
@@ -1807,7 +1879,13 @@ def run_cosco_dividend_t_backtest(
                     config=signal_cfg,
                 )
             else:
-                rebalance = {"cash": cash, "base_shares": base_shares, "base_locked_shares": base_locked_shares, "trade": None, "blocked": None}
+                rebalance = {
+                    "cash": cash,
+                    "base_shares": base_shares,
+                    "base_locked_shares": base_locked_shares,
+                    "trade": None,
+                    "blocked": None,
+                }
             cash = rebalance["cash"]
             base_shares = rebalance["base_shares"]
             base_locked_shares = rebalance["base_locked_shares"]
@@ -2037,7 +2115,11 @@ def run_cosco_dividend_t_backtest(
             active_peak_profit_pct = 0.0
         else:
             close_active_profit_pct = _active_position_profit_pct(price=close, t_shares=t_shares, t_cost_basis=t_cost_basis)
-            active_peak_profit_pct = max(0.0, close_active_profit_pct) if active_position_added_this_bar else max(active_peak_profit_pct, close_active_profit_pct)
+            active_peak_profit_pct = (
+                max(0.0, close_active_profit_pct)
+                if active_position_added_this_bar
+                else max(active_peak_profit_pct, close_active_profit_pct)
+            )
         equity = _mark_to_market(cash, base_shares, t_shares, close)
         point_signal = last_point_signal
         equity_curve.append(
@@ -2369,7 +2451,13 @@ def _rebalance_base_position(
                 "blocked": "REBALANCE_BASE_UP_LOW_QUALITY",
             }
         if not constraints.can_buy:
-            return {"cash": cash, "base_shares": base_shares, "base_locked_shares": base_locked_shares, "trade": trade, "blocked": _block_key("REBALANCE_BASE_UP", constraints)}
+            return {
+                "cash": cash,
+                "base_shares": base_shares,
+                "base_locked_shares": base_locked_shares,
+                "trade": trade,
+                "blocked": _block_key("REBALANCE_BASE_UP", constraints),
+            }
         buy_price = _buy_price(price, config)
         gap_pct = min(target_pct - current_base_pct, config.base_rebalance_step_pct)
         target_notional = equity_before * gap_pct
@@ -2403,7 +2491,13 @@ def _rebalance_base_position(
                 "blocked": "REBALANCE_BASE_DOWN_TREND_HOLD",
             }
         if not constraints.can_sell:
-            return {"cash": cash, "base_shares": base_shares, "base_locked_shares": base_locked_shares, "trade": trade, "blocked": _block_key("REBALANCE_BASE_DOWN", constraints)}
+            return {
+                "cash": cash,
+                "base_shares": base_shares,
+                "base_locked_shares": base_locked_shares,
+                "trade": trade,
+                "blocked": _block_key("REBALANCE_BASE_DOWN", constraints),
+            }
         sell_price = _sell_price(price, config)
         gap_pct = min(current_base_pct - target_pct, config.base_rebalance_step_pct)
         target_notional = equity_before * gap_pct
@@ -2722,10 +2816,7 @@ def _candidate_entry_start_reason(
 ) -> str:
     if market_environment is None or abs(effective_target_pct - configured_target_pct) < 1e-9:
         return "候选池验证期启动仓，避免等待滞后信号错过主升段"
-    return (
-        "候选池验证期启动仓，市场环境"
-        f"{market_environment.state}先降到{effective_target_pct:.0%}，等待个股强确认再加仓"
-    )
+    return f"候选池验证期启动仓，市场环境{market_environment.state}先降到{effective_target_pct:.0%}，等待个股强确认再加仓"
 
 
 def _target_engine_state(
@@ -2831,7 +2922,9 @@ def _reduce_attack_position(
             "breakout_t_locked_shares": breakout_t_locked_shares,
             "breakout_t_cost_basis": breakout_t_cost_basis,
             "trade": trade,
-            "blocked": "REDUCE_ATTACK_POSITION_CORE_FLOOR" if sellable_t_shares > 0 else ("REDUCE_ATTACK_POSITION_T1_LOCK" if t_shares > 0 else None),
+            "blocked": "REDUCE_ATTACK_POSITION_CORE_FLOOR"
+            if sellable_t_shares > 0
+            else ("REDUCE_ATTACK_POSITION_T1_LOCK" if t_shares > 0 else None),
         }
 
     sell_price = _sell_price(price, config)
@@ -3202,7 +3295,9 @@ def _execute_action(
                 sell_price = _sell_price(price, config)
                 shares = _floor_lot(breakout_t_shares * sell_fraction, config.min_lot)
                 if shares <= 0:
-                    shares = min(breakout_t_shares, config.min_lot) if config.t_position_mode == T_POSITION_MODE_LIGHT else breakout_t_shares
+                    shares = (
+                        min(breakout_t_shares, config.min_lot) if config.t_position_mode == T_POSITION_MODE_LIGHT else breakout_t_shares
+                    )
                 core_sellable_t_shares = _core_floor_sellable_t_shares(
                     price=price,
                     equity_before=equity_before,
@@ -3279,7 +3374,19 @@ def _execute_action(
                 if pending_buyback_shares == 0:
                     pending_reverse_proceeds = 0.0
                     pending_buyback_target_price = None
-                trade = _trade(timestamp, "BUY_BACK_LIMIT", "BUY_BACK_REVERSE_T", shares, buy_price, cash, base_shares, t_shares, close_for_mark, "倒 T 到达计划价买回", realized)
+                trade = _trade(
+                    timestamp,
+                    "BUY_BACK_LIMIT",
+                    "BUY_BACK_REVERSE_T",
+                    shares,
+                    buy_price,
+                    cash,
+                    base_shares,
+                    t_shares,
+                    close_for_mark,
+                    "倒 T 到达计划价买回",
+                    realized,
+                )
     elif action in {"BUY_T_TIMING", "BREAKOUT_BUY_TIMING"}:
         if not _t_mode_allows_timing_buy(action, config):
             return _execution_state(
@@ -3485,7 +3592,9 @@ def _execute_action(
                 sell_fraction = sizing.adjusted_suggested_trade_pct / max_sell_trade_pct
             requested_shares = _floor_lot(raw_sellable_t_shares * sell_fraction, config.min_lot)
             if requested_shares <= 0 and raw_sellable_t_shares > 0:
-                requested_shares = min(raw_sellable_t_shares, config.min_lot) if config.t_position_mode == T_POSITION_MODE_LIGHT else raw_sellable_t_shares
+                requested_shares = (
+                    min(raw_sellable_t_shares, config.min_lot) if config.t_position_mode == T_POSITION_MODE_LIGHT else raw_sellable_t_shares
+                )
             shares = min(requested_shares, sellable_t_shares)
             if shares <= 0:
                 blocked = "SELL_T_TIMING_CORE_FLOOR" if raw_sellable_t_shares > 0 else "SELL_T_TIMING_T1_LOCK"
@@ -4088,11 +4197,7 @@ def _effective_signal_config(
         return config
     selected_mode = _select_dynamic_strategy_mode(signal, market_environment)
     selected_config = apply_strategy_mode(config, selected_mode)
-    if (
-        selected_mode == "defensive"
-        and config.enable_attack_state_machine
-        and attack_state != ATTACK_INACTIVE
-    ):
+    if selected_mode == "defensive" and config.enable_attack_state_machine and attack_state != ATTACK_INACTIVE:
         return replace(
             selected_config,
             enable_attack_state_machine=True,
@@ -4126,11 +4231,9 @@ def _select_dynamic_strategy_mode(signal: BacktestSignal, market_environment: Ma
         min_strength=62.0,
         allow_soft_action=True,
     )
-    if (
-        market_environment.state == MARKET_RISK_ON
-        or signal.market_environment_state == MARKET_RISK_ON
-        or beta_hold_candidate
-    ) and (_offensive_signal_eligible(signal) or beta_hold_candidate):
+    if (market_environment.state == MARKET_RISK_ON or signal.market_environment_state == MARKET_RISK_ON or beta_hold_candidate) and (
+        _offensive_signal_eligible(signal) or beta_hold_candidate
+    ):
         return "offensive"
     return "defensive"
 
@@ -4203,9 +4306,7 @@ def _risk_on_continuation_add_signal(signal: BacktestSignal, config: DividendTBa
         return False
     non_force_confirmations = _non_force_position_confirmation_count(signal)
     force_confirmed = signal.force_ratio >= 1.18 or signal.force_weighted_score >= 68.0
-    if non_force_confirmations < config.risk_on_continuation_min_confirmations and not (
-        non_force_confirmations >= 1 and force_confirmed
-    ):
+    if non_force_confirmations < config.risk_on_continuation_min_confirmations and not (non_force_confirmations >= 1 and force_confirmed):
         return False
     if signal.sell_pressure_score >= config.attack_exit_sell_pressure_score:
         return False
@@ -4398,15 +4499,12 @@ def _stock_risk_on_sustain_signal(signal: BacktestSignal, config: DividendTBackt
         return False
     if signal.action in {"SELL_T_TIMING", "STOP_T_WAIT", "WAIT_DAILY_WEAK", "WAIT_MARKET_CAUTION"}:
         return False
-    constructive = (
-        signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND", "TREND_WATCH"}
-        and (
-            signal.trend_state == "UPTREND"
-            or signal.breakout_score >= 82.0
-            or (signal.chan_buy_point_type == "buy3" and signal.chan_score >= 72.0)
-            or signal.post_breakout_volume_persistence_score >= 68.0
-            or signal.vwap_support_score >= 68.0
-        )
+    constructive = signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND", "TREND_WATCH"} and (
+        signal.trend_state == "UPTREND"
+        or signal.breakout_score >= 82.0
+        or (signal.chan_buy_point_type == "buy3" and signal.chan_score >= 72.0)
+        or signal.post_breakout_volume_persistence_score >= 68.0
+        or signal.vwap_support_score >= 68.0
     )
     support = (
         _signal_capital_flow_confirmed(signal, min_score=58.0)
@@ -4730,11 +4828,7 @@ def _attack_soft_exit_defer_signal(
         return False
     if _trend_follow_hold_signal(signal, config) or _offensive_hold_extension_signal(signal, config):
         return True
-    trend_intact = (
-        signal.trend_state == "UPTREND"
-        or signal.breakout_score >= 82.0
-        or signal.chan_buy_point_type == "buy3"
-    )
+    trend_intact = signal.trend_state == "UPTREND" or signal.breakout_score >= 82.0 or signal.chan_buy_point_type == "buy3"
     support_intact = (
         signal.vwap_support_score >= 64.0
         or signal.post_breakout_volume_persistence_score >= 64.0
@@ -4771,13 +4865,10 @@ def _attack_volume_distribution_next_state(
         return ATTACK_CONFIRMED
     if current_state == ATTACK_CONFIRMED:
         return ATTACK_WATCH
-    if (
-        current_state == ATTACK_WATCH
-        and (
-            signal.sell_pressure_score >= config.attack_exit_sell_pressure_score
-            or signal.down_probability_1d >= config.attack_exit_down_probability
-            or signal.down_probability_3d >= config.attack_hard_exit_down_probability
-        )
+    if current_state == ATTACK_WATCH and (
+        signal.sell_pressure_score >= config.attack_exit_sell_pressure_score
+        or signal.down_probability_1d >= config.attack_exit_down_probability
+        or signal.down_probability_3d >= config.attack_hard_exit_down_probability
     ):
         return ATTACK_INACTIVE
     return None
@@ -4800,9 +4891,8 @@ def _offensive_volume_distribution_reduce_signal(
     )
     low_absorption = _offensive_volume_distribution_low_absorption_signal(signal, config)
     if state == VOLUME_PRICE_DISTRIBUTION:
-        return (
-            _volume_price_distribution_hard_breakdown_signal(signal, config)
-            and (high_profit_position or low_absorption or active_profit_pct <= -config.offensive_stop_hold_loss_pct)
+        return _volume_price_distribution_hard_breakdown_signal(signal, config) and (
+            high_profit_position or low_absorption or active_profit_pct <= -config.offensive_stop_hold_loss_pct
         )
     if state != VOLUME_PRICE_WARNING:
         return False
@@ -5091,12 +5181,8 @@ def _volume_price_distribution_hard_breakdown_signal(
         return False
 
     persistent_divergence = pressure_count >= max(3, config.offensive_volume_distribution_distribution_pressure_count)
-    hard_divergence = (
-        signal.price_up_volume_down_score >= config.offensive_volume_distribution_hard_up_down_score
-        and (
-            signal.high_volume_stall_score >= config.offensive_volume_distribution_hard_stall_score
-            or repeated_up_volume_down
-        )
+    hard_divergence = signal.price_up_volume_down_score >= config.offensive_volume_distribution_hard_up_down_score and (
+        signal.high_volume_stall_score >= config.offensive_volume_distribution_hard_stall_score or repeated_up_volume_down
     )
     if not (persistent_divergence or hard_divergence):
         return False
@@ -5202,11 +5288,15 @@ def _trend_follow_hold_signal(signal: BacktestSignal, config: DividendTBacktestC
         return False
     if signal.chan_sell_point_type in {"sell1", "sell2", "sell3"} or signal.chan_structure_type == "breakdown":
         return False
-    constructive_trend = signal.trend_state == "UPTREND" or (
-        signal.breakout_score >= 84.0
-        and signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND", "TREND_WATCH"}
-        and signal.sell_pressure_score < 66.0
-    ) or (signal.chan_buy_point_type == "buy3" and signal.chan_score >= 72.0)
+    constructive_trend = (
+        signal.trend_state == "UPTREND"
+        or (
+            signal.breakout_score >= 84.0
+            and signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND", "TREND_WATCH"}
+            and signal.sell_pressure_score < 66.0
+        )
+        or (signal.chan_buy_point_type == "buy3" and signal.chan_score >= 72.0)
+    )
     return (
         signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND", "TREND_WATCH"}
         and constructive_trend
@@ -5268,7 +5358,10 @@ def _offensive_soft_stop_extension_signal(signal: BacktestSignal, config: Divide
         return False
     if signal.sell_pressure_score >= config.attack_hard_exit_sell_pressure_score:
         return False
-    if signal.down_probability_1d >= config.attack_hard_exit_down_probability or signal.down_probability_3d >= config.attack_hard_exit_down_probability:
+    if (
+        signal.down_probability_1d >= config.attack_hard_exit_down_probability
+        or signal.down_probability_3d >= config.attack_hard_exit_down_probability
+    ):
         return False
     return (
         signal.trend_state == "UPTREND"
@@ -5299,7 +5392,10 @@ def _sell_point_continuation_hold_signal(
         return False
     if signal.sell_pressure_score >= config.attack_hard_exit_sell_pressure_score:
         return False
-    if signal.down_probability_1d >= config.attack_hard_exit_down_probability or signal.down_probability_3d >= config.attack_hard_exit_down_probability:
+    if (
+        signal.down_probability_1d >= config.attack_hard_exit_down_probability
+        or signal.down_probability_3d >= config.attack_hard_exit_down_probability
+    ):
         return False
     if action in {"STOP_T_WAIT", "WAIT_DAILY_WEAK"} and active_profit_pct < -(config.offensive_stop_hold_loss_pct * 1.25):
         return False
@@ -5329,7 +5425,11 @@ def _sell_point_continuation_quality_score(signal: BacktestSignal, config: Divid
         clamp((signal.post_breakout_volume_persistence_score - 56.0) / 28.0, 0.0, 1.0),
         clamp((signal.low_volume_pullback_score - 62.0) / 24.0, 0.0, 1.0),
     )
-    flow = 1.0 if _signal_capital_flow_confirmed(signal, min_score=60.0) else clamp((signal.capital_flow_confirmation_score - 50.0) / 28.0, 0.0, 1.0)
+    flow = (
+        1.0
+        if _signal_capital_flow_confirmed(signal, min_score=60.0)
+        else clamp((signal.capital_flow_confirmation_score - 50.0) / 28.0, 0.0, 1.0)
+    )
     force = max(
         clamp((signal.force_ratio - 0.72) / 0.56, 0.0, 1.0),
         clamp((signal.force_weighted_score - 44.0) / 30.0, 0.0, 1.0),
@@ -5342,15 +5442,7 @@ def _sell_point_continuation_quality_score(signal: BacktestSignal, config: Divid
         1.0,
     )
     volume = _risk_on_volume_price_quality(signal)
-    score = (
-        0.24 * trend
-        + 0.20 * support
-        + 0.16 * flow
-        + 0.14 * volume
-        + 0.12 * confirmations
-        + 0.08 * force
-        + 0.06 * probability
-    )
+    score = 0.24 * trend + 0.20 * support + 0.16 * flow + 0.14 * volume + 0.12 * confirmations + 0.08 * force + 0.06 * probability
     if signal.chan_sell_point_type in {"sell1", "sell2"}:
         score -= 0.14
     if signal.sell_pressure_score >= 72.0:
@@ -5380,7 +5472,10 @@ def _stop_wait_observation_signal(
         return False
     if signal.sell_pressure_score >= config.attack_hard_exit_sell_pressure_score:
         return False
-    if signal.down_probability_1d >= config.attack_hard_exit_down_probability or signal.down_probability_3d >= config.attack_hard_exit_down_probability:
+    if (
+        signal.down_probability_1d >= config.attack_hard_exit_down_probability
+        or signal.down_probability_3d >= config.attack_hard_exit_down_probability
+    ):
         return False
 
     max_observation_loss = config.beta_hold_hard_stop_loss_pct if beta_hold else config.offensive_stop_hold_loss_pct * 1.6
@@ -5413,7 +5508,12 @@ def _stop_wait_observation_signal(
         and signal.down_probability_3d < config.attack_hard_exit_down_probability
     )
     continuation_quality = _sell_point_continuation_quality_score(signal, config)
-    return trend_intact and support_intact and risk_mild and continuation_quality >= max(0.38, config.sell_point_continuation_quality_score - 0.12)
+    return (
+        trend_intact
+        and support_intact
+        and risk_mild
+        and continuation_quality >= max(0.38, config.sell_point_continuation_quality_score - 0.12)
+    )
 
 
 def _profit_protection_defer_signal(
@@ -5430,13 +5530,10 @@ def _profit_protection_defer_signal(
         return True
     if signal.probability_state == "DOWN_RISK" or signal.chan_sell_point_type == "sell3" or signal.chan_structure_type == "breakdown":
         return False
-    hard_pressure = (
-        signal.sell_pressure_score >= config.attack_hard_exit_sell_pressure_score
-        and (
-            signal.down_probability_1d >= config.attack_exit_down_probability
-            or signal.down_probability_3d >= config.attack_exit_down_probability
-            or signal.force_ratio < 0.72
-        )
+    hard_pressure = signal.sell_pressure_score >= config.attack_hard_exit_sell_pressure_score and (
+        signal.down_probability_1d >= config.attack_exit_down_probability
+        or signal.down_probability_3d >= config.attack_exit_down_probability
+        or signal.force_ratio < 0.72
     )
     hard_probability = (
         signal.down_probability_1d >= config.attack_hard_exit_down_probability
@@ -5453,20 +5550,14 @@ def _profit_protection_defer_signal(
         or signal.down_probability_1d >= config.attack_exit_down_probability
         or signal.down_probability_3d >= config.attack_exit_down_probability
     )
-    force_break = (
-        signal.force_ratio < 0.72
-        and signal.force_weighted_score < config.offensive_volume_distribution_low_force_score
-    )
+    force_break = signal.force_ratio < 0.72 and signal.force_weighted_score < config.offensive_volume_distribution_low_force_score
     distribution_exit = _offensive_volume_distribution_hard_exit_signal(
         signal,
         config,
         active_profit_pct=breakout_profit_pct,
         active_peak_profit_pct=peak_profit,
     )
-    confirmed_pullback = (
-        peak_profit >= config.offensive_trailing_profit_mid_pct
-        and pullback >= config.offensive_trailing_pullback_mid_pct
-    )
+    confirmed_pullback = peak_profit >= config.offensive_trailing_profit_mid_pct and pullback >= config.offensive_trailing_pullback_mid_pct
 
     if continuation:
         return True
@@ -5518,7 +5609,10 @@ def _offensive_risk_on_continuation_signal(signal: BacktestSignal, config: Divid
         return False
     if signal.sell_pressure_score >= config.attack_hard_exit_sell_pressure_score:
         return False
-    if signal.down_probability_1d >= config.attack_hard_exit_down_probability or signal.down_probability_3d >= config.attack_hard_exit_down_probability:
+    if (
+        signal.down_probability_1d >= config.attack_hard_exit_down_probability
+        or signal.down_probability_3d >= config.attack_hard_exit_down_probability
+    ):
         return False
     buy3_confirmed = signal.chan_buy_point_type == "buy3" and signal.chan_score >= 74.0
     breakout_confirmed = signal.breakout_confirmed or signal.breakout_score >= 86.0
@@ -5532,12 +5626,7 @@ def _offensive_risk_on_continuation_signal(signal: BacktestSignal, config: Divid
         )
         and signal.high_volume_stall_score < 72.0
     )
-    return (
-        buy3_confirmed
-        or breakout_confirmed
-        or flow_confirmed
-        or volume_confirmed
-    ) and (
+    return (buy3_confirmed or breakout_confirmed or flow_confirmed or volume_confirmed) and (
         signal.buy_signal_strength >= config.attack_confirm_min_buy_strength - 4.0
         or (stock_trend_risk_on and _non_force_position_confirmation_count(signal) >= 3)
     )
@@ -5620,7 +5709,9 @@ def _beta_hold_core_signal(
         return False
     if signal.buy_signal_strength < min_strength and not strong_structure:
         return False
-    if _offensive_volume_distribution_blocks_entry_signal(signal, config) and not _offensive_volume_distribution_continuation_confirmed(signal, config):
+    if _offensive_volume_distribution_blocks_entry_signal(signal, config) and not _offensive_volume_distribution_continuation_confirmed(
+        signal, config
+    ):
         return False
     return True
 
@@ -5773,7 +5864,8 @@ def _beta_hold_distribution_reduce_signal(
     return (
         high_profit
         and low_absorption
-        and _offensive_volume_distribution_pressure_count(signal, config) >= max(2, config.offensive_volume_distribution_reduce_pressure_count)
+        and _offensive_volume_distribution_pressure_count(signal, config)
+        >= max(2, config.offensive_volume_distribution_reduce_pressure_count)
     )
 
 
@@ -5797,7 +5889,9 @@ def _beta_hold_distribution_hard_exit_signal(
         or signal.down_probability_1d >= config.attack_exit_down_probability
         or signal.down_probability_3d >= config.attack_exit_down_probability
     )
-    peak_giveback = active_peak_profit_pct >= config.offensive_trailing_profit_mid_pct and active_profit_pct <= active_peak_profit_pct * 0.45
+    peak_giveback = (
+        active_peak_profit_pct >= config.offensive_trailing_profit_mid_pct and active_profit_pct <= active_peak_profit_pct * 0.45
+    )
     return hard_distribution and hard_pressure and peak_giveback
 
 
@@ -5852,8 +5946,7 @@ def _exit_support_broken_signal(signal: BacktestSignal, config: DividendTBacktes
         and signal.force_weighted_score < config.offensive_volume_distribution_low_force_score
     )
     absorbed_pullback = (
-        signal.vwap_support_score >= config.offensive_volume_distribution_absorption_vwap_score
-        and signal.low_volume_pullback_score >= 78.0
+        signal.vwap_support_score >= config.offensive_volume_distribution_absorption_vwap_score and signal.low_volume_pullback_score >= 78.0
     )
     if absorbed_pullback and not (weak_vwap and weak_persistence):
         return False
@@ -5928,9 +6021,8 @@ def _stop_wait_false_break_deescalation_signal(
     if not mild_sell_pressure or not absorbed_pullback:
         return False
 
-    mild_probability = (
-        signal.down_probability_1d < min(config.attack_exit_down_probability, 0.56)
-        and signal.down_probability_3d < min(config.attack_exit_down_probability, 0.56)
+    mild_probability = signal.down_probability_1d < min(config.attack_exit_down_probability, 0.56) and signal.down_probability_3d < min(
+        config.attack_exit_down_probability, 0.56
     )
     hard_loss = active_profit_pct <= -max(config.beta_hold_hard_stop_loss_pct, config.offensive_stop_hold_loss_pct * 2.0)
     if hard_loss and not structure_break and not pressure_confirmed and mild_probability:
@@ -5942,11 +6034,7 @@ def _stop_wait_false_break_deescalation_signal(
         and signal.down_probability_1d < min(config.attack_exit_down_probability + 0.012, 0.612)
         and signal.down_probability_3d < min(config.attack_exit_down_probability, 0.60)
     )
-    return (
-        structure_break
-        and probability_only_confirmation
-        and active_profit_pct > -config.offensive_stop_hold_loss_pct
-    )
+    return structure_break and probability_only_confirmation and active_profit_pct > -config.offensive_stop_hold_loss_pct
 
 
 def _stop_wait_exit_fraction(
@@ -6121,7 +6209,9 @@ def _offensive_exit_sell_fraction(
         return stop_wait_fraction
     if attack_state not in {ATTACK_WATCH, ATTACK_CONFIRMED, ATTACK_FULL}:
         if config.offensive_hold_extension_enabled and signal.market_environment_state == MARKET_RISK_ON:
-            if action == "SELL_T_TIMING" and (_offensive_hold_extension_signal(signal, config) or _trend_follow_hold_signal(signal, config)):
+            if action == "SELL_T_TIMING" and (
+                _offensive_hold_extension_signal(signal, config) or _trend_follow_hold_signal(signal, config)
+            ):
                 return 0.0
             if action in {"STOP_T_WAIT", "WAIT_DAILY_WEAK"} and _stop_wait_observation_signal(
                 signal=signal,
@@ -6298,14 +6388,11 @@ def _sell_timing_defer_signal(
         return False
     continuation_quality = _sell_point_continuation_quality_score(signal, config)
     required = max(0.38, config.sell_point_continuation_quality_score - 0.12)
-    constructive = (
-        signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND", "TREND_WATCH"}
-        and (
-            signal.trend_state == "UPTREND"
-            or signal.breakout_score >= 78.0
-            or signal.vwap_support_score >= 64.0
-            or signal.post_breakout_volume_persistence_score >= 64.0
-        )
+    constructive = signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND", "TREND_WATCH"} and (
+        signal.trend_state == "UPTREND"
+        or signal.breakout_score >= 78.0
+        or signal.vwap_support_score >= 64.0
+        or signal.post_breakout_volume_persistence_score >= 64.0
     )
     risk_mild = (
         signal.sell_pressure_score < config.attack_exit_sell_pressure_score
@@ -6454,13 +6541,17 @@ def _signal_t_trade_cap(signal: BacktestSignal, config: DividendTBacktestConfig,
             breakout_direct_cap_limit = config.breakout_direct_buy_probe_target_pct
         strength_cap = _signal_strength_position_cap_floor(signal, config, attack_state=attack_state)
         if _offensive_full_add_signal(signal, config):
-            return _signal_filtered_cap(signal, min(config.attack_full_position_pct, config.max_signal_position_pct, breakout_direct_cap_limit))
+            return _signal_filtered_cap(
+                signal, min(config.attack_full_position_pct, config.max_signal_position_pct, breakout_direct_cap_limit)
+            )
         if _offensive_trend_add_signal(signal, config):
             cap = max(config.offensive_trend_add_floor_pct, config.attack_confirm_position_pct, strength_cap)
             return _signal_filtered_cap(signal, min(cap, config.max_signal_position_pct, breakout_direct_cap_limit))
         attack_cap = _attack_position_floor_pct(attack_state, config)
         if attack_state in {ATTACK_CONFIRMED, ATTACK_FULL}:
-            return _signal_filtered_cap(signal, min(max(attack_cap, strength_cap), config.max_signal_position_pct, breakout_direct_cap_limit))
+            return _signal_filtered_cap(
+                signal, min(max(attack_cap, strength_cap), config.max_signal_position_pct, breakout_direct_cap_limit)
+            )
         if signal.action == "BREAKOUT_BUY_TIMING":
             breakout_cap = 0.30
             if signal.chan_buy_point_type == "buy3" and signal.chan_score >= 76.0:
@@ -6550,7 +6641,10 @@ def _base_rebalance_sell_quality_holds(signal: BacktestSignal, config: DividendT
         return False
     if signal.sell_pressure_score >= config.attack_hard_exit_sell_pressure_score:
         return False
-    if signal.down_probability_1d >= config.attack_hard_exit_down_probability or signal.down_probability_3d >= config.attack_hard_exit_down_probability:
+    if (
+        signal.down_probability_1d >= config.attack_hard_exit_down_probability
+        or signal.down_probability_3d >= config.attack_hard_exit_down_probability
+    ):
         return False
     if signal.market_regime_state != "DEFENSIVE":
         return False
@@ -6583,7 +6677,10 @@ def _buy_point_quality_allows_entry(signal: BacktestSignal, config: DividendTBac
         return False
     if signal.sell_pressure_score >= min(config.attack_hard_exit_sell_pressure_score, 86.0):
         return False
-    if signal.down_probability_1d >= config.attack_hard_exit_down_probability or signal.down_probability_3d >= config.attack_hard_exit_down_probability:
+    if (
+        signal.down_probability_1d >= config.attack_hard_exit_down_probability
+        or signal.down_probability_3d >= config.attack_hard_exit_down_probability
+    ):
         return False
     if _offensive_volume_distribution_blocks_entry_signal(signal, config):
         return False
@@ -6624,10 +6721,14 @@ def _buy_point_quality_score(signal: BacktestSignal, config: DividendTBacktestCo
     if signal.breakout_confirmed:
         breakout = max(breakout, 0.86)
     chan = clamp((signal.chan_score - 66.0) / 24.0, 0.0, 1.0) if signal.chan_buy_point_type == "buy3" else 0.0
-    flow = 1.0 if _signal_capital_flow_confirmed(signal, min_score=62.0) else clamp(
-        (0.55 * signal.capital_flow_score + 0.45 * signal.capital_flow_confirmation_score - 50.0) / 36.0,
-        0.0,
-        1.0,
+    flow = (
+        1.0
+        if _signal_capital_flow_confirmed(signal, min_score=62.0)
+        else clamp(
+            (0.55 * signal.capital_flow_score + 0.45 * signal.capital_flow_confirmation_score - 50.0) / 36.0,
+            0.0,
+            1.0,
+        )
     )
     volume = _risk_on_volume_price_quality(signal)
     force = max(
@@ -6649,16 +6750,7 @@ def _buy_point_quality_score(signal: BacktestSignal, config: DividendTBacktestCo
     elif signal.trend_state == "UPTREND":
         trend = 0.45
     confirmations = min(_non_force_position_confirmation_count(signal) / 4.0, 1.0)
-    score = (
-        0.22 * strength
-        + 0.15 * breakout
-        + 0.10 * chan
-        + 0.16 * flow
-        + 0.16 * volume
-        + 0.08 * force
-        + 0.07 * probability
-        + 0.06 * trend
-    )
+    score = 0.22 * strength + 0.15 * breakout + 0.10 * chan + 0.16 * flow + 0.16 * volume + 0.08 * force + 0.07 * probability + 0.06 * trend
     score += 0.08 * confirmations
     score += 0.08 * (_buy_volume_price_window_quality_score(signal, config) - 0.50)
     if signal.action == "BREAKOUT_BUY_TIMING":
@@ -6693,10 +6785,14 @@ def _main_rise_buy_quality_score(signal: BacktestSignal, config: DividendTBackte
         0.70 * clamp((signal.volume_price_score - 58.0) / 30.0, 0.0, 1.0),
     )
     vwap = clamp((signal.vwap_support_score - 58.0) / 28.0, 0.0, 1.0)
-    flow = 1.0 if _signal_capital_flow_confirmed(signal, min_score=64.0) else clamp(
-        (signal.capital_flow_confirmation_score - 52.0) / 30.0,
-        0.0,
-        1.0,
+    flow = (
+        1.0
+        if _signal_capital_flow_confirmed(signal, min_score=64.0)
+        else clamp(
+            (signal.capital_flow_confirmation_score - 52.0) / 30.0,
+            0.0,
+            1.0,
+        )
     )
     force = max(
         clamp((signal.force_ratio - 0.82) / 0.58, 0.0, 1.0),
@@ -6716,14 +6812,7 @@ def _main_rise_buy_quality_score(signal: BacktestSignal, config: DividendTBackte
     )
     confirmations = min(_non_force_position_confirmation_count(signal) / 4.0, 1.0)
     score = (
-        0.16 * trend
-        + 0.18 * breakout
-        + 0.16 * volume
-        + 0.12 * vwap
-        + 0.14 * flow
-        + 0.10 * force
-        + 0.08 * elasticity
-        + 0.06 * probability
+        0.16 * trend + 0.18 * breakout + 0.16 * volume + 0.12 * vwap + 0.14 * flow + 0.10 * force + 0.08 * elasticity + 0.06 * probability
     )
     score += 0.08 * confirmations
     score += 0.10 * (_buy_volume_price_window_quality_score(signal, config) - 0.50)
@@ -6733,15 +6822,9 @@ def _main_rise_buy_quality_score(signal: BacktestSignal, config: DividendTBackte
         score += 0.04
     if signal.market_environment_state == MARKET_RISK_ON:
         score += 0.03
-    low_elasticity = (
-        signal.force_ratio < 0.86
-        and signal.force_weighted_score < 52.0
-        and signal.attention_score < 58.0
-    )
+    low_elasticity = signal.force_ratio < 0.86 and signal.force_weighted_score < 52.0 and signal.attention_score < 58.0
     low_volume = (
-        signal.volume_price_score < 60.0
-        and signal.volume_breakout_score < 58.0
-        and signal.post_breakout_volume_persistence_score < 58.0
+        signal.volume_price_score < 60.0 and signal.volume_breakout_score < 58.0 and signal.post_breakout_volume_persistence_score < 58.0
     )
     if low_elasticity:
         score -= 0.14
@@ -6783,9 +6866,8 @@ def _buy_volume_price_window_filter_allows(signal: BacktestSignal, config: Divid
     )
     if weak_contract:
         return False
-    distribution_volume = (
-        mid_state == "price_down_volume_up"
-        or (short_state == "price_down_volume_up" and signal.pretrade_price_return_pct_12 <= -config.buy_volume_price_filter_min_return_pct)
+    distribution_volume = mid_state == "price_down_volume_up" or (
+        short_state == "price_down_volume_up" and signal.pretrade_price_return_pct_12 <= -config.buy_volume_price_filter_min_return_pct
     )
     if distribution_volume and (signal.sell_pressure_score >= 64.0 or signal.down_probability_1d >= 0.56):
         return False
@@ -6851,7 +6933,10 @@ def _volume_price_window_state_score(
     if state == "price_up_volume_up":
         return 1.00
     if state == "price_up_volume_down":
-        if price_return >= config.buy_volume_price_filter_min_return_pct * 2.0 and volume_ratio <= config.buy_volume_price_filter_max_contract_ratio:
+        if (
+            price_return >= config.buy_volume_price_filter_min_return_pct * 2.0
+            and volume_ratio <= config.buy_volume_price_filter_max_contract_ratio
+        ):
             return 0.82
         return 0.66
     if state == "flat_volume_expand":
@@ -7051,7 +7136,9 @@ def _risk_on_position_target_pct(
 
     target_action = "BREAKOUT_BUY_TIMING" if signal.breakout_confirmed or signal.breakout_score >= 88.0 else "BUY_T_TIMING"
     target_signal = replace(signal, action=target_action)
-    if not beta_hold_core_add and not _buy_point_quality_allows_entry(target_signal, config, min_score=config.min_risk_on_add_quality_score):
+    if not beta_hold_core_add and not _buy_point_quality_allows_entry(
+        target_signal, config, min_score=config.min_risk_on_add_quality_score
+    ):
         return 0.0
     model_target = _signal_target_position_pct(target_signal, config, attack_state=attack_state)
     if attack_state == ATTACK_BETA_HOLD and beta_hold_core_add:
@@ -7201,7 +7288,8 @@ def _risk_on_staged_add_allows_signal(
     if (
         attack_state == ATTACK_BETA_HOLD
         and _beta_hold_main_rise_core_floor_signal(signal, config)
-        and current_position_pct < min(max(config.beta_hold_main_rise_core_floor_pct, config.risk_on_core_floor_l3_pct), config.max_signal_position_pct)
+        and current_position_pct
+        < min(max(config.beta_hold_main_rise_core_floor_pct, config.risk_on_core_floor_l3_pct), config.max_signal_position_pct)
     ):
         return True
     if current_position_pct < 0.30:
@@ -7295,9 +7383,7 @@ def _runtime_breakout_alpha_score(signal: BacktestSignal) -> float:
     if flow_confirmed:
         score += 0.02
     if _breakout_stall_pressure_signal(signal) and not (
-        signal.vwap_support_score >= 76.0
-        and signal.post_breakout_volume_persistence_score >= 76.0
-        and flow_confirmed
+        signal.vwap_support_score >= 76.0 and signal.post_breakout_volume_persistence_score >= 76.0 and flow_confirmed
     ):
         score -= 0.08
     return round(clamp(score, 0.0, 1.0), 4)
@@ -7309,20 +7395,14 @@ def _breakout_stall_pressure_signal(signal: BacktestSignal) -> bool:
 
 def _high_quality_breakout_add_signal(signal: BacktestSignal, config: DividendTBacktestConfig) -> bool:
     strong_volume = (
-        signal.volume_price_score >= 78.0
-        and signal.volume_breakout_score >= 74.0
-        and signal.post_breakout_volume_persistence_score >= 76.0
+        signal.volume_price_score >= 78.0 and signal.volume_breakout_score >= 74.0 and signal.post_breakout_volume_persistence_score >= 76.0
     )
     strong_flow = (
         signal.capital_flow_confirmation_state == "CONFIRMED_INFLOW"
         and signal.capital_flow_confirmation_score >= 72.0
         and signal.capital_flow_confidence >= 0.50
     )
-    pressure_clean = (
-        signal.sell_pressure_score < 64.0
-        and signal.down_probability_1d < 0.56
-        and signal.down_probability_3d < 0.58
-    )
+    pressure_clean = signal.sell_pressure_score < 64.0 and signal.down_probability_1d < 0.56 and signal.down_probability_3d < 0.58
     return (
         _runtime_breakout_alpha_score(signal) >= 0.90
         and (signal.breakout_confirmed or signal.breakout_score >= 92.0)
@@ -7408,9 +7488,7 @@ def _risk_on_target_add_confirmation_signal(signal: BacktestSignal, config: Divi
     breakout_confirmed = signal.breakout_confirmed or signal.breakout_score >= 88.0
     vwap_confirmed = signal.vwap_support_score >= 70.0
     volume_confirmed = (
-        signal.volume_price_score >= 70.0
-        and signal.volume_breakout_score >= 68.0
-        and signal.post_breakout_volume_persistence_score >= 70.0
+        signal.volume_price_score >= 70.0 and signal.volume_breakout_score >= 68.0 and signal.post_breakout_volume_persistence_score >= 70.0
     )
     flow_confirmed = _signal_capital_flow_confirmed(signal, min_score=66.0)
     main_rise_confirmed = _main_rise_buy_quality_score(signal, config) >= config.min_risk_on_add_main_rise_quality_score
@@ -7419,14 +7497,7 @@ def _risk_on_target_add_confirmation_signal(signal: BacktestSignal, config: Divi
         and signal.down_probability_1d < min(config.attack_exit_down_probability, 0.60)
         and signal.down_probability_3d < min(config.attack_hard_exit_down_probability, 0.66)
     )
-    return (
-        breakout_confirmed
-        and vwap_confirmed
-        and volume_confirmed
-        and flow_confirmed
-        and main_rise_confirmed
-        and pressure_clean
-    )
+    return breakout_confirmed and vwap_confirmed and volume_confirmed and flow_confirmed and main_rise_confirmed and pressure_clean
 
 
 def _buy_t_failure_cooldown_blocks_signal(
@@ -7569,11 +7640,7 @@ def _future_vwap_support_holds(future: Any, *, buy_price: float, tolerance_pct: 
         return False
     if not vwaps:
         return True
-    checks = [
-        close >= vwap * (1.0 - tolerance)
-        for close, vwap in zip(closes, vwaps, strict=False)
-        if vwap > 0.0
-    ]
+    checks = [close >= vwap * (1.0 - tolerance) for close, vwap in zip(closes, vwaps, strict=False) if vwap > 0.0]
     if not checks:
         return True
     return sum(1 for passed in checks if passed) / len(checks) >= 0.70
@@ -7731,12 +7798,9 @@ def _late_stage_stall_entry_blocks(
     stall_count = _late_stage_consecutive_stall_bars(history, config)
     last_bar = history.iloc[-1]
     last_structure = _bar_structure(last_bar)
-    weak_last_bar = (
-        last_structure["range_pct"] >= config.late_stage_min_range_pct
-        and (
-            last_structure["upper_shadow_ratio"] >= config.late_stage_max_upper_shadow_ratio
-            or last_structure["body_progress_ratio"] <= config.late_stage_min_body_progress_ratio
-        )
+    weak_last_bar = last_structure["range_pct"] >= config.late_stage_min_range_pct and (
+        last_structure["upper_shadow_ratio"] >= config.late_stage_max_upper_shadow_ratio
+        or last_structure["body_progress_ratio"] <= config.late_stage_min_body_progress_ratio
     )
     distribution_signal = (
         signal.high_volume_stall_score >= config.offensive_volume_stall_reduce_score
@@ -7868,9 +7932,8 @@ def _candidate_entry_confirm_signal(signal: BacktestSignal, config: DividendTBac
     if config.candidate_entry_confirm_requires_follow_through and not _candidate_entry_confirm_follow_through_signal(signal, config):
         return False
 
-    strong_trend = (
-        signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND"}
-        and (signal.trend_state == "UPTREND" or signal.breakout_score >= 84.0)
+    strong_trend = signal.market_regime_state in {"BREAKOUT_ATTACK", "STRONG_TREND"} and (
+        signal.trend_state == "UPTREND" or signal.breakout_score >= 84.0
     )
     if not strong_trend and signal.action not in {"BUY_T_TIMING", "BREAKOUT_BUY_TIMING", "WAIT_STRONG_TREND", "WATCH_BREAKOUT_NEXT_DAY"}:
         return False
@@ -7966,7 +8029,11 @@ def _kelly_target_trade_pct(signal: BacktestSignal, config: DividendTBacktestCon
 def _layered_position_floor_pct(signal: BacktestSignal, config: DividendTBacktestConfig, *, attack_state: str = ATTACK_INACTIVE) -> float:
     if signal.action not in {"BUY_T_TIMING", "BREAKOUT_BUY_TIMING"}:
         return config.initial_base_position_pct
-    if signal.probability_state == "DOWN_RISK" or signal.sell_pressure_score >= 86.0 or signal.chan_sell_point_type in {"sell1", "sell2", "sell3"}:
+    if (
+        signal.probability_state == "DOWN_RISK"
+        or signal.sell_pressure_score >= 86.0
+        or signal.chan_sell_point_type in {"sell1", "sell2", "sell3"}
+    ):
         return config.initial_base_position_pct + config.min_t_trade_pct
     attack_floor = _attack_position_floor_pct(attack_state, config)
     flow_floor_bonus = 0.12 if _signal_capital_flow_confirmed(signal, min_score=62.0) else 0.0
@@ -7980,9 +8047,23 @@ def _layered_position_floor_pct(signal: BacktestSignal, config: DividendTBacktes
     if signal.high_volume_stall_score >= 74.0 or signal.price_up_volume_down_score >= 80.0:
         volume_floor_bonus = min(volume_floor_bonus, 0.02)
     if _offensive_full_add_signal(signal, config):
-        return round(min(config.offensive_full_add_floor_pct, _signal_t_trade_cap(signal, config, attack_state=attack_state), config.max_signal_position_pct), 4)
+        return round(
+            min(
+                config.offensive_full_add_floor_pct,
+                _signal_t_trade_cap(signal, config, attack_state=attack_state),
+                config.max_signal_position_pct,
+            ),
+            4,
+        )
     if _offensive_trend_add_signal(signal, config):
-        return round(min(config.offensive_trend_add_floor_pct, _signal_t_trade_cap(signal, config, attack_state=attack_state), config.max_signal_position_pct), 4)
+        return round(
+            min(
+                config.offensive_trend_add_floor_pct,
+                _signal_t_trade_cap(signal, config, attack_state=attack_state),
+                config.max_signal_position_pct,
+            ),
+            4,
+        )
     if signal.action == "BREAKOUT_BUY_TIMING":
         if signal.buy_signal_strength >= 86.0 and signal.breakout_score >= 92.0 and signal.sell_pressure_score < 64.0:
             floor = 0.60
@@ -8073,8 +8154,7 @@ def _position_signal_score(signal: BacktestSignal, config: DividendTBacktestConf
         flow = max(flow, 0.75)
     volume = _volume_price_score(signal)
     force = clamp(
-        0.55 * clamp((signal.force_ratio - 0.85) / 0.65, 0.0, 1.0)
-        + 0.45 * clamp((signal.force_weighted_score - 45.0) / 35.0, 0.0, 1.0),
+        0.55 * clamp((signal.force_ratio - 0.85) / 0.65, 0.0, 1.0) + 0.45 * clamp((signal.force_weighted_score - 45.0) / 35.0, 0.0, 1.0),
         0.0,
         1.0,
     )
@@ -8186,10 +8266,7 @@ def _volume_price_confirmed(signal: BacktestSignal) -> bool:
             or signal.vwap_support_score >= 70.0
             or signal.low_volume_pullback_score >= 74.0
         )
-        and (
-            signal.high_volume_stall_score < 72.0
-            or _offensive_volume_distribution_absorbed(signal, DividendTBacktestConfig())
-        )
+        and (signal.high_volume_stall_score < 72.0 or _offensive_volume_distribution_absorbed(signal, DividendTBacktestConfig()))
     )
 
 
@@ -8335,7 +8412,13 @@ def _validate_config(config: DividendTBacktestConfig) -> None:
         raise ValueError("risk_on_target_add_min_target_pct must be in [initial_base_position_pct, max_signal_position_pct]")
     if not 0 <= config.risk_on_target_add_bonus_pct <= 1:
         raise ValueError("risk_on_target_add_bonus_pct must be in [0, 1]")
-    if not config.initial_base_position_pct <= config.risk_on_first_add_cap_pct <= config.risk_on_low_position_add_cap_pct <= config.risk_on_mid_position_add_cap_pct <= config.max_signal_position_pct:
+    if (
+        not config.initial_base_position_pct
+        <= config.risk_on_first_add_cap_pct
+        <= config.risk_on_low_position_add_cap_pct
+        <= config.risk_on_mid_position_add_cap_pct
+        <= config.max_signal_position_pct
+    ):
         raise ValueError("risk_on staged caps must satisfy base <= first <= low <= mid <= max_signal_position_pct")
     if not config.risk_on_mid_position_add_cap_pct <= config.risk_on_high_position_reinforce_cap_pct <= config.max_signal_position_pct:
         raise ValueError("risk_on_high_position_reinforce_cap_pct must be in [risk_on_mid_position_add_cap_pct, max_signal_position_pct]")
@@ -8343,8 +8426,14 @@ def _validate_config(config: DividendTBacktestConfig) -> None:
         raise ValueError("risk_on_full_add_min_quality_score must be in [0, 1]")
     if not 0 <= config.risk_on_full_add_min_main_rise_quality_score <= 1:
         raise ValueError("risk_on_full_add_min_main_rise_quality_score must be in [0, 1]")
-    if not config.risk_on_mid_position_add_cap_pct <= config.risk_on_high_quality_breakout_upgrade_target_pct <= config.max_signal_position_pct:
-        raise ValueError("risk_on_high_quality_breakout_upgrade_target_pct must be in [risk_on_mid_position_add_cap_pct, max_signal_position_pct]")
+    if (
+        not config.risk_on_mid_position_add_cap_pct
+        <= config.risk_on_high_quality_breakout_upgrade_target_pct
+        <= config.max_signal_position_pct
+    ):
+        raise ValueError(
+            "risk_on_high_quality_breakout_upgrade_target_pct must be in [risk_on_mid_position_add_cap_pct, max_signal_position_pct]"
+        )
     if not 0 <= config.risk_on_secondary_add_quality_buffer <= 1:
         raise ValueError("risk_on_secondary_add_quality_buffer must be in [0, 1]")
     if not 0 <= config.risk_on_secondary_add_main_rise_quality_buffer <= 1:
@@ -8391,7 +8480,13 @@ def _validate_config(config: DividendTBacktestConfig) -> None:
         raise ValueError("late_stage_min_body_progress_ratio must be in [0, 1]")
     if not 0 <= config.late_stage_min_range_pct <= 1:
         raise ValueError("late_stage_min_range_pct must be in [0, 1]")
-    if not config.initial_base_position_pct <= config.risk_on_core_floor_l1_pct <= config.risk_on_core_floor_l2_pct <= config.risk_on_core_floor_l3_pct <= config.max_signal_position_pct:
+    if (
+        not config.initial_base_position_pct
+        <= config.risk_on_core_floor_l1_pct
+        <= config.risk_on_core_floor_l2_pct
+        <= config.risk_on_core_floor_l3_pct
+        <= config.max_signal_position_pct
+    ):
         raise ValueError("risk_on_core_floor levels must satisfy base <= l1 <= l2 <= l3 <= max_signal_position_pct")
     if not 0 < config.risk_on_core_floor_ramp_step_pct <= 1:
         raise ValueError("risk_on_core_floor_ramp_step_pct must be in (0, 1]")
@@ -8471,9 +8566,21 @@ def _validate_config(config: DividendTBacktestConfig) -> None:
     config.default_position_budget.validate(label="default buy position budget")
     if config.initial_base_position_pct + config.min_t_trade_pct > config.default_buy_total_cap_pct:
         raise ValueError("default buy total-position cap must cover initial_base_position_pct + min_t_trade_pct")
-    if not 0 < config.range_signal_position_pct <= config.trend_watch_signal_position_pct <= config.strong_trend_signal_position_pct <= config.max_signal_position_pct:
+    if (
+        not 0
+        < config.range_signal_position_pct
+        <= config.trend_watch_signal_position_pct
+        <= config.strong_trend_signal_position_pct
+        <= config.max_signal_position_pct
+    ):
         raise ValueError("regime signal position caps must satisfy 0 < range <= trend_watch <= strong_trend <= max_signal")
-    if not 0 < config.attack_watch_position_pct <= config.attack_confirm_position_pct <= config.attack_full_position_pct <= config.max_signal_position_pct:
+    if (
+        not 0
+        < config.attack_watch_position_pct
+        <= config.attack_confirm_position_pct
+        <= config.attack_full_position_pct
+        <= config.max_signal_position_pct
+    ):
         raise ValueError("attack position caps must satisfy 0 < watch <= confirm <= full <= max_signal")
     if not 0 <= config.attack_watch_min_breakout_score <= config.attack_confirm_min_breakout_score <= 100:
         raise ValueError("attack breakout scores must satisfy 0 <= watch <= confirm <= 100")
@@ -8495,11 +8602,23 @@ def _validate_config(config: DividendTBacktestConfig) -> None:
         raise ValueError("beta_hold_min_bars must be non-negative")
     if not 0 <= config.beta_hold_hard_stop_loss_pct <= 1:
         raise ValueError("beta_hold_hard_stop_loss_pct must be in [0, 1]")
-    if not 0 <= config.beta_hold_soft_exit_sell_fraction <= config.beta_hold_soft_stop_sell_fraction <= config.beta_hold_distribution_sell_fraction <= 1.0:
+    if (
+        not 0
+        <= config.beta_hold_soft_exit_sell_fraction
+        <= config.beta_hold_soft_stop_sell_fraction
+        <= config.beta_hold_distribution_sell_fraction
+        <= 1.0
+    ):
         raise ValueError("beta hold sell fractions must satisfy 0 <= soft_exit <= soft_stop <= distribution <= 1")
     if config.beta_hold_trailing_pullback_multiplier < 1.0:
         raise ValueError("beta_hold_trailing_pullback_multiplier must be >= 1")
-    if not 0 <= config.beta_hold_trailing_light_sell_fraction <= config.beta_hold_trailing_mid_sell_fraction <= config.beta_hold_trailing_hard_sell_fraction <= 1.0:
+    if (
+        not 0
+        <= config.beta_hold_trailing_light_sell_fraction
+        <= config.beta_hold_trailing_mid_sell_fraction
+        <= config.beta_hold_trailing_hard_sell_fraction
+        <= 1.0
+    ):
         raise ValueError("beta hold trailing sell fractions must satisfy 0 <= light <= mid <= hard <= 1")
     if not 0 <= config.attack_exit_sell_pressure_score <= 100:
         raise ValueError("attack_exit_sell_pressure_score must be in [0, 100]")
@@ -8519,11 +8638,29 @@ def _validate_config(config: DividendTBacktestConfig) -> None:
         raise ValueError("offensive_stop_hold_loss_pct must be in [0, 0.20]")
     if not 0 <= config.offensive_trend_add_floor_pct <= config.offensive_full_add_floor_pct <= config.max_signal_position_pct:
         raise ValueError("offensive add floors must satisfy 0 <= trend <= full <= max_signal")
-    if not 0 <= config.offensive_trailing_profit_trigger_pct <= config.offensive_trailing_profit_mid_pct <= config.offensive_trailing_profit_high_pct <= 1.0:
+    if (
+        not 0
+        <= config.offensive_trailing_profit_trigger_pct
+        <= config.offensive_trailing_profit_mid_pct
+        <= config.offensive_trailing_profit_high_pct
+        <= 1.0
+    ):
         raise ValueError("offensive trailing profit thresholds must satisfy 0 <= trigger <= mid <= high <= 1")
-    if not 0 <= config.offensive_trailing_pullback_pct <= config.offensive_trailing_pullback_mid_pct <= config.offensive_trailing_pullback_high_pct <= 0.50:
+    if (
+        not 0
+        <= config.offensive_trailing_pullback_pct
+        <= config.offensive_trailing_pullback_mid_pct
+        <= config.offensive_trailing_pullback_high_pct
+        <= 0.50
+    ):
         raise ValueError("offensive trailing pullbacks must satisfy 0 <= base <= mid <= high <= 0.50")
-    if not 0 <= config.offensive_trailing_light_sell_fraction <= config.offensive_trailing_mid_sell_fraction <= config.offensive_trailing_hard_sell_fraction <= 1.0:
+    if (
+        not 0
+        <= config.offensive_trailing_light_sell_fraction
+        <= config.offensive_trailing_mid_sell_fraction
+        <= config.offensive_trailing_hard_sell_fraction
+        <= 1.0
+    ):
         raise ValueError("offensive trailing sell fractions must satisfy 0 <= light <= mid <= hard <= 1")
     if config.offensive_beta_trend_pullback_multiplier < 1.0:
         raise ValueError("offensive_beta_trend_pullback_multiplier must be >= 1")
