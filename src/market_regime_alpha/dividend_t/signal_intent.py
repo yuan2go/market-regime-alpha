@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS
+from market_regime_alpha.dividend_t.macd import MACDCross, MACDHistogramTrend, MACDZeroAxis
 from market_regime_alpha.dividend_t.models import Signal, TechnicalInputs
 
 
@@ -20,6 +22,12 @@ class SignalIntent(str, Enum):
     TREND_FOLLOWING = "TREND_FOLLOWING"
     RISK_REDUCTION = "RISK_REDUCTION"
     BASE_ACCUMULATION = "BASE_ACCUMULATION"
+
+
+class RiskEnforcement(str, Enum):
+    NONE = "NONE"
+    SOFT = "SOFT"
+    HARD = "HARD"
 
 
 class EntryConfirmation(str, Enum):
@@ -114,6 +122,7 @@ class CandidateSignal:
     entry_confirmations: frozenset[EntryConfirmation]
     exit_confirmations: frozenset[ExitConfirmation]
     candidate_reasons: tuple[str, ...] = ()
+    risk_enforcement: RiskEnforcement = RiskEnforcement.NONE
 
 
 @dataclass(frozen=True)
@@ -132,16 +141,18 @@ class DecisionTrace:
     exit_confirmations: tuple[str, ...]
     candidate_reasons: tuple[str, ...]
     final_signal: Signal
+    risk_enforcement: RiskEnforcement = RiskEnforcement.NONE
     contract_trace_codes: tuple[str, ...] = ()
     macd_policy_applied: bool = False
     signal_downgraded: bool = False
     downgrade_source: str | None = None
     downgrade_reason: str | None = None
     original_suggested_trade_pct: float | None = None
-    sizing_multiplier: float = 1.0
+    macd_sizing_multiplier: float = 1.0
     adjusted_suggested_trade_pct: float | None = None
     sizing_adjustment_source: str | None = None
-    sizing_adjustment_applied: bool = False
+    macd_sizing_applied: bool = False
+    macd_sizing_owner: str | None = None
 
 
 def validate_candidate(candidate: CandidateSignal, *, strict: bool) -> CandidateValidation:
@@ -160,6 +171,12 @@ def validate_candidate(candidate: CandidateSignal, *, strict: bool) -> Candidate
             errors.append("SETUP_INTENT_MISMATCH")
     if candidate.candidate_setup_code != candidate.primary_setup_code:
         errors.append("candidate_setup_code must equal primary_setup_code in v1")
+    if not isinstance(candidate.risk_enforcement, RiskEnforcement):
+        errors.append("risk_enforcement must be a RiskEnforcement")
+    elif candidate.candidate_signal_intent is SignalIntent.RISK_REDUCTION and candidate.risk_enforcement is RiskEnforcement.NONE:
+        errors.append("RISK_ENFORCEMENT_REQUIRED")
+    elif candidate.candidate_signal_intent is not SignalIntent.RISK_REDUCTION and candidate.risk_enforcement is not RiskEnforcement.NONE:
+        errors.append("RISK_ENFORCEMENT_ONLY_FOR_RISK_INTENT")
 
     if not candidate.decision_bar_time or not candidate.confirmation_bar_time:
         errors.append("candidate bar time must be explicit")
@@ -213,6 +230,7 @@ def candidate_for(
     decision_bar_time: str,
     *,
     reasons: tuple[str, ...] = (),
+    risk_enforcement: RiskEnforcement = RiskEnforcement.NONE,
 ) -> CandidateSignal:
     """Construct a live candidate and assign its intent exactly once."""
 
@@ -228,6 +246,7 @@ def candidate_for(
         entry_confirmations=entry or frozenset({EntryConfirmation.NONE}),
         exit_confirmations=exit_ or frozenset({ExitConfirmation.NONE}),
         candidate_reasons=reasons,
+        risk_enforcement=risk_enforcement,
     )
     validate_candidate(candidate, strict=True)
     return candidate
@@ -244,6 +263,7 @@ def no_candidate(decision_bar_time: str, *, reasons: tuple[str, ...] = ()) -> Ca
         entry_confirmations=frozenset({EntryConfirmation.NONE}),
         exit_confirmations=frozenset({ExitConfirmation.NONE}),
         candidate_reasons=reasons,
+        risk_enforcement=RiskEnforcement.NONE,
     )
     validate_candidate(candidate, strict=True)
     return candidate
@@ -264,5 +284,269 @@ def decision_trace_for(
         exit_confirmations=tuple(sorted(item.value for item in candidate.exit_confirmations)),
         candidate_reasons=candidate.candidate_reasons,
         final_signal=final_signal,
+        risk_enforcement=candidate.risk_enforcement,
         contract_trace_codes=contract_trace_codes,
+    )
+
+
+DEFAULT_ACCEPTED_ENTRY_CONFIRMATIONS = frozenset(
+    {
+        EntryConfirmation.INTRADAY_REVERSAL,
+        EntryConfirmation.CHAN_BUY_POINT,
+        EntryConfirmation.SUPPORT_HOLD,
+        EntryConfirmation.VWAP_RECLAIM,
+    }
+)
+DEFAULT_ACCEPTED_EXIT_CONFIRMATIONS = frozenset(
+    {
+        ExitConfirmation.VOLUME_STALLING,
+        ExitConfirmation.RESISTANCE_REJECTION,
+        ExitConfirmation.CHAN_SELL_POINT,
+        ExitConfirmation.TOP_DIVERGENCE,
+    }
+)
+
+
+@dataclass(frozen=True)
+class MACDPolicyConfig:
+    score_weight: float = 0.0
+    conflict_gate_enabled: bool = False
+    mean_reversion_size_multiplier: float = 0.5
+    minimum_executable_trade_pct: float = 0.0
+    trend_buy_block_bearish_cross: bool = True
+    trend_buy_block_zero_axis_states: frozenset[MACDZeroAxis] = frozenset({MACDZeroAxis.BELOW, MACDZeroAxis.STRADDLING})
+    mean_reversion_buy_accepted_confirmations: frozenset[EntryConfirmation] = DEFAULT_ACCEPTED_ENTRY_CONFIRMATIONS
+    mean_reversion_sell_accepted_confirmations: frozenset[ExitConfirmation] = DEFAULT_ACCEPTED_EXIT_CONFIRMATIONS
+    policy_version: str = MACD_POLICY_VERSION
+
+    def __post_init__(self) -> None:
+        for name in ("score_weight", "mean_reversion_size_multiplier", "minimum_executable_trade_pct"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be finite and in [0, 1]")
+        for name in ("conflict_gate_enabled", "trend_buy_block_bearish_cross"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be bool")
+        if any(not isinstance(item, MACDZeroAxis) for item in self.trend_buy_block_zero_axis_states):
+            raise ValueError("trend buy zero-axis states must use MACDZeroAxis")
+        if not self.mean_reversion_buy_accepted_confirmations or any(
+            not isinstance(item, EntryConfirmation) or item is EntryConfirmation.NONE
+            for item in self.mean_reversion_buy_accepted_confirmations
+        ):
+            raise ValueError("accepted entry confirmations must be non-empty and exclude NONE")
+        if not self.mean_reversion_sell_accepted_confirmations or any(
+            not isinstance(item, ExitConfirmation) or item is ExitConfirmation.NONE
+            for item in self.mean_reversion_sell_accepted_confirmations
+        ):
+            raise ValueError("accepted exit confirmations must be non-empty and exclude NONE")
+        if not isinstance(self.policy_version, str) or not self.policy_version.strip():
+            raise ValueError("policy_version must be non-empty")
+
+
+@dataclass(frozen=True)
+class MACDPolicyState:
+    data_ready: bool
+    cross: MACDCross
+    zero_axis: MACDZeroAxis
+    histogram: float | None
+    histogram_trend: MACDHistogramTrend
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.data_ready, bool):
+            raise ValueError("MACD policy readiness must be boolean")
+        if not isinstance(self.cross, MACDCross) or not isinstance(self.zero_axis, MACDZeroAxis):
+            raise ValueError("MACD policy cross and zero axis must use enums")
+        if not isinstance(self.histogram_trend, MACDHistogramTrend):
+            raise ValueError("MACD policy histogram trend must use enum")
+        if self.data_ready and (self.histogram is None or not math.isfinite(float(self.histogram))):
+            raise ValueError("ready MACD policy state requires finite histogram")
+        if not self.data_ready and self.histogram is not None:
+            raise ValueError("unready MACD policy state cannot carry histogram")
+
+    @classmethod
+    def neutral(cls) -> "MACDPolicyState":
+        return cls(False, MACDCross.NONE, MACDZeroAxis.STRADDLING, None, MACDHistogramTrend.FLAT)
+
+    @classmethod
+    def from_technical(cls, technical: TechnicalInputs) -> "MACDPolicyState":
+        return cls(
+            technical.macd_data_ready,
+            technical.macd_cross,
+            technical.macd_zero_axis,
+            technical.macd_histogram,
+            technical.macd_histogram_trend,
+        )
+
+
+@dataclass(frozen=True)
+class PolicyDecision:
+    final_signal: Signal
+    macd_sizing_multiplier: float
+    trace: DecisionTrace
+
+
+@dataclass(frozen=True)
+class SizingDecision:
+    final_signal: Signal
+    adjusted_suggested_trade_pct: float
+    trace: DecisionTrace
+
+
+def apply_macd_policy(
+    candidate: CandidateSignal,
+    macd: MACDPolicyState,
+    config: MACDPolicyConfig,
+    *,
+    strict_contracts: bool = True,
+) -> PolicyDecision:
+    """Apply the one shared asymmetric policy without performing size arithmetic."""
+
+    signal = candidate.candidate_signal or Signal.HOLD
+    validation = validate_candidate(candidate, strict=strict_contracts)
+    if not validation.policy_applicable:
+        return _policy_decision(candidate, signal, contract_trace_codes=validation.trace_codes)
+    if candidate.risk_enforcement is RiskEnforcement.HARD:
+        return _policy_decision(candidate, signal)
+    if not macd.data_ready or not config.conflict_gate_enabled:
+        return _policy_decision(candidate, signal)
+    if candidate.candidate_signal_intent in {SignalIntent.RISK_REDUCTION, SignalIntent.BASE_ACCUMULATION, SignalIntent.NONE}:
+        return _policy_decision(candidate, signal, policy_applied=candidate.candidate_signal_intent is not SignalIntent.NONE)
+
+    trend_conflict = (
+        candidate.candidate_signal_intent is SignalIntent.TREND_FOLLOWING
+        and signal is Signal.BUY_T
+        and config.trend_buy_block_bearish_cross
+        and macd.cross is MACDCross.BEARISH
+        and macd.zero_axis in config.trend_buy_block_zero_axis_states
+    )
+    if trend_conflict:
+        return _policy_decision(candidate, Signal.HOLD, downgrade_source="MACD_CONFLICT", policy_applied=True)
+
+    if candidate.candidate_signal_intent is not SignalIntent.MEAN_REVERSION_T:
+        return _policy_decision(candidate, signal, policy_applied=True)
+    opposing_buy = (
+        signal is Signal.BUY_T
+        and macd.cross is MACDCross.BEARISH
+        and macd.zero_axis in {MACDZeroAxis.BELOW, MACDZeroAxis.STRADDLING}
+        and macd.histogram is not None
+        and macd.histogram < 0.0
+        and macd.histogram_trend is MACDHistogramTrend.EXPANDING
+    )
+    opposing_sell = (
+        signal is Signal.SELL_T
+        and macd.cross is MACDCross.BULLISH
+        and macd.zero_axis in {MACDZeroAxis.ABOVE, MACDZeroAxis.STRADDLING}
+        and macd.histogram is not None
+        and macd.histogram > 0.0
+        and macd.histogram_trend is MACDHistogramTrend.EXPANDING
+    )
+    if not opposing_buy and not opposing_sell:
+        return _policy_decision(candidate, signal, policy_applied=True)
+    accepted = (
+        bool(candidate.entry_confirmations & config.mean_reversion_buy_accepted_confirmations)
+        if opposing_buy
+        else bool(candidate.exit_confirmations & config.mean_reversion_sell_accepted_confirmations)
+    )
+    if not accepted:
+        return _policy_decision(candidate, Signal.HOLD, downgrade_source="MACD_CONFIRMATION_REQUIRED", policy_applied=True)
+    return _policy_decision(
+        candidate,
+        signal,
+        macd_sizing_multiplier=float(config.mean_reversion_size_multiplier),
+        sizing_source="MACD_MEAN_REVERSION",
+        policy_applied=True,
+    )
+
+
+def apply_macd_sizing_once(
+    policy: PolicyDecision,
+    *,
+    original_suggested_trade_pct: float,
+    effective_minimum_trade_pct: float,
+    sizing_owner: str,
+) -> SizingDecision:
+    """The sole arithmetic owner used once at each position-aware boundary."""
+
+    if policy.trace.macd_sizing_applied:
+        raise CandidateContractError("DUPLICATE_SIZING_ADJUSTMENT")
+    original = float(original_suggested_trade_pct)
+    minimum = float(effective_minimum_trade_pct)
+    if any(not math.isfinite(value) or value < 0.0 for value in (original, minimum)):
+        raise ValueError("trade percentages must be finite and non-negative")
+    if not isinstance(sizing_owner, str) or not sizing_owner.strip():
+        raise ValueError("sizing_owner must be non-empty")
+    multiplier = policy.macd_sizing_multiplier
+    if policy.final_signal is Signal.HOLD:
+        trace = _sized_trace(policy.trace, original, 0.0, applied=False, owner=None)
+        return SizingDecision(policy.final_signal, 0.0, trace)
+    if multiplier == 1.0:
+        trace = _sized_trace(policy.trace, original, original, applied=False, owner=None)
+        return SizingDecision(policy.final_signal, original, trace)
+    adjusted = original * multiplier
+    if adjusted <= minimum:
+        trace = _sized_trace(
+            policy.trace,
+            original,
+            0.0,
+            applied=True,
+            owner=sizing_owner,
+            downgrade_source="MACD_SIZING_TO_ZERO",
+        )
+        return SizingDecision(Signal.HOLD, 0.0, trace)
+    trace = _sized_trace(policy.trace, original, adjusted, applied=True, owner=sizing_owner)
+    return SizingDecision(policy.final_signal, adjusted, trace)
+
+
+def _policy_decision(
+    candidate: CandidateSignal,
+    final_signal: Signal,
+    *,
+    macd_sizing_multiplier: float = 1.0,
+    downgrade_source: str | None = None,
+    sizing_source: str | None = None,
+    contract_trace_codes: tuple[str, ...] = (),
+    policy_applied: bool = False,
+) -> PolicyDecision:
+    trace = DecisionTrace(
+        candidate_signal=candidate.candidate_signal,
+        candidate_signal_intent=candidate.candidate_signal_intent,
+        candidate_setup_code=candidate.candidate_setup_code,
+        primary_setup_code=candidate.primary_setup_code,
+        entry_confirmations=tuple(sorted(item.value for item in candidate.entry_confirmations)),
+        exit_confirmations=tuple(sorted(item.value for item in candidate.exit_confirmations)),
+        candidate_reasons=candidate.candidate_reasons,
+        final_signal=final_signal,
+        risk_enforcement=candidate.risk_enforcement,
+        contract_trace_codes=contract_trace_codes,
+        macd_policy_applied=policy_applied,
+        signal_downgraded=final_signal is not (candidate.candidate_signal or Signal.HOLD),
+        downgrade_source=downgrade_source,
+        downgrade_reason=downgrade_source,
+        macd_sizing_multiplier=macd_sizing_multiplier,
+        sizing_adjustment_source=sizing_source,
+    )
+    return PolicyDecision(final_signal, macd_sizing_multiplier, trace)
+
+
+def _sized_trace(
+    trace: DecisionTrace,
+    original: float,
+    adjusted: float,
+    *,
+    applied: bool,
+    owner: str | None,
+    downgrade_source: str | None = None,
+) -> DecisionTrace:
+    from dataclasses import replace
+
+    return replace(
+        trace,
+        final_signal=Signal.HOLD if downgrade_source else trace.final_signal,
+        signal_downgraded=trace.signal_downgraded or downgrade_source is not None,
+        downgrade_source=downgrade_source or trace.downgrade_source,
+        downgrade_reason=downgrade_source or trace.downgrade_reason,
+        original_suggested_trade_pct=original,
+        adjusted_suggested_trade_pct=adjusted,
+        macd_sizing_applied=applied,
+        macd_sizing_owner=owner,
     )

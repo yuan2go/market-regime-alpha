@@ -16,7 +16,7 @@ from market_regime_alpha.dividend_t.indicators import technical_macd_fields
 from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig, MACDCross, MACDDataReason, MACDHistogramTrend, MACDZeroAxis, calculate_macd
 from market_regime_alpha.dividend_t.scoring import technical_score, technical_score_diagnostics
 from market_regime_alpha.dividend_t.strategy import DividendTStrategy
-from market_regime_alpha.dividend_t.signal_intent import PrimarySetupCode, SignalIntent
+from market_regime_alpha.dividend_t.signal_intent import MACDPolicyConfig, PrimarySetupCode, RiskEnforcement, SignalIntent
 
 
 class DividendTStrategyTests(unittest.TestCase):
@@ -280,6 +280,102 @@ class DividendTStrategyTests(unittest.TestCase):
         self.assertEqual(decision.macd_diagnostics.technical_score_with_macd, 76.2)
         self.assertTrue(decision.macd_diagnostics.macd_score_changed_candidate)
         self.assertFalse(decision.macd_diagnostics.macd_policy_changed_candidate)
+
+    def test_simplified_mean_reversion_policy_uses_single_sizing_owner(self) -> None:
+        technical = TechnicalInputs(
+            82,
+            78,
+            78,
+            80,
+            trend_state=TrendState.RANGE,
+            near_support=True,
+            shrinking_pullback=True,
+            intraday_reversal=True,
+            macd_dif=-0.1,
+            macd_dea=-0.05,
+            macd_histogram=-0.2,
+            macd_histogram_trend=MACDHistogramTrend.EXPANDING,
+            macd_cross=MACDCross.BEARISH,
+            macd_cross_age=0,
+            macd_zero_axis=MACDZeroAxis.BELOW,
+            macd_data_ready=True,
+            macd_data_reason=MACDDataReason.READY,
+            macd_score=20,
+        )
+        baseline = self.strategy.evaluate(
+            symbol="601919.SH",
+            fundamental=self.good_fundamental,
+            retreat=RetreatInputs(4.0, 3.8, 2.3, 2.2),
+            technical=technical,
+            position=PositionState(symbol_position_pct=0.12),
+        )
+        experimental = self.strategy.evaluate(
+            symbol="601919.SH",
+            fundamental=self.good_fundamental,
+            retreat=RetreatInputs(4.0, 3.8, 2.3, 2.2),
+            technical=technical,
+            position=PositionState(symbol_position_pct=0.12),
+            macd_policy_config=MACDPolicyConfig(conflict_gate_enabled=True),
+        )
+
+        self.assertEqual(experimental.signal, Signal.BUY_T)
+        self.assertEqual(experimental.suggested_trade_pct, baseline.suggested_trade_pct * 0.5)
+        assert experimental.decision_trace is not None
+        self.assertTrue(experimental.decision_trace.macd_sizing_applied)
+        self.assertEqual(experimental.decision_trace.macd_sizing_owner, "simplified_strategy")
+
+    def test_simplified_trend_policy_downgrades_without_zero_size_signal(self) -> None:
+        technical = TechnicalInputs(
+            82,
+            82,
+            82,
+            72,
+            chan_score=84,
+            trend_state=TrendState.BREAKOUT,
+            chan_structure_type="breakout",
+            chan_buy_point_type="buy3",
+            sector_healthy=True,
+            macd_dif=-0.1,
+            macd_dea=-0.05,
+            macd_histogram=-0.2,
+            macd_histogram_trend=MACDHistogramTrend.EXPANDING,
+            macd_cross=MACDCross.BEARISH,
+            macd_cross_age=0,
+            macd_zero_axis=MACDZeroAxis.BELOW,
+            macd_data_ready=True,
+            macd_data_reason=MACDDataReason.READY,
+            macd_score=20,
+        )
+
+        decision = self.strategy.evaluate(
+            symbol="601919.SH",
+            fundamental=self.good_fundamental,
+            retreat=RetreatInputs(4.2, 4.0, 2.4, 2.1),
+            technical=technical,
+            position=PositionState(symbol_position_pct=0.12),
+            macd_policy_config=MACDPolicyConfig(conflict_gate_enabled=True),
+        )
+
+        self.assertEqual(decision.signal, Signal.HOLD)
+        self.assertEqual(decision.suggested_trade_pct, 0.0)
+        self.assertIsNone(decision.order_intent)
+        assert decision.decision_trace is not None
+        self.assertEqual(decision.decision_trace.downgrade_source, "MACD_CONFLICT")
+
+    def test_hard_risk_enforcement_survives_enabled_policy(self) -> None:
+        decision = self.strategy.evaluate(
+            symbol="601919.SH",
+            fundamental=FundamentalInputs(40, 45, 35, 45, 40),
+            retreat=RetreatInputs(3.0, 3.0, 2.0, 3.0),
+            technical=TechnicalInputs(70, 70, 70, 70),
+            position=PositionState(symbol_position_pct=0.20),
+            macd_policy_config=MACDPolicyConfig(conflict_gate_enabled=True),
+        )
+
+        self.assertEqual(decision.signal, Signal.CLEAR)
+        assert decision.decision_trace is not None
+        self.assertIs(decision.decision_trace.risk_enforcement, RiskEnforcement.HARD)
+        self.assertFalse(decision.decision_trace.macd_policy_applied)
 
     def test_unready_macd_preserves_distinct_data_reason(self) -> None:
         for reason in (

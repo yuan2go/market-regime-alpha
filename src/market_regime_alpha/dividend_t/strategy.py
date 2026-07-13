@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from market_regime_alpha.dividend_t.models import (
     FundamentalInputs,
     MACDDualUseDiagnostics,
@@ -22,9 +24,13 @@ from market_regime_alpha.dividend_t.scoring import (
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS
 from market_regime_alpha.dividend_t.signal_intent import (
     CandidateSignal,
+    MACDPolicyConfig,
+    MACDPolicyState,
     PrimarySetupCode,
+    RiskEnforcement,
+    apply_macd_policy,
+    apply_macd_sizing_once,
     candidate_for,
-    decision_trace_for,
     no_candidate,
 )
 
@@ -44,10 +50,13 @@ class DividendTStrategy:
         technical: TechnicalInputs,
         position: PositionState | None = None,
         decision_bar_time: str = LEGACY_CURRENT_BAR,
-        macd_score_weight: float = 0.0,
+        macd_score_weight: float | None = None,
+        macd_policy_config: MACDPolicyConfig | None = None,
     ) -> StrategyDecision:
         position = position or PositionState()
-        score_diagnostics = technical_score_diagnostics(technical, macd_weight=macd_score_weight)
+        policy_config = macd_policy_config or MACDPolicyConfig()
+        effective_score_weight = policy_config.score_weight if macd_score_weight is None else macd_score_weight
+        score_diagnostics = technical_score_diagnostics(technical, macd_weight=effective_score_weight)
         legacy_score = build_score_breakdown_with_t_score(
             fundamental,
             retreat,
@@ -82,107 +91,89 @@ class DividendTStrategy:
             candidate_with_macd_score=candidate,
             macd_score_changed_candidate=legacy_candidate != candidate,
         )
-        signal = candidate.candidate_signal or Signal.HOLD
+        candidate_signal = candidate.candidate_signal or Signal.HOLD
         reasons = candidate.candidate_reasons
-        trace = decision_trace_for(candidate, final_signal=signal)
-
-        if signal is Signal.CLEAR:
-            pct = min(position.symbol_position_pct, 0.20)
-            return StrategyDecision(
-                symbol=symbol,
-                signal=signal,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=pct,
-                reasons=reasons,
-                warnings=("基本面不支持底仓。",),
-                order_intent=_order(symbol, "SELL", "base", signal, pct, reasons[0]),
-                decision_trace=trace,
-                macd_diagnostics=macd_diagnostics,
-            )
-
-        if signal is Signal.REDUCE:
-            pct = min(position.symbol_position_pct, 0.10)
-            return StrategyDecision(
-                symbol=symbol,
-                signal=signal,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=pct,
-                reasons=reasons,
-                warnings=("基本面评分低于减底仓阈值。",),
-                order_intent=_order(symbol, "SELL", "base", signal, pct, reasons[0]),
-                decision_trace=trace,
-                macd_diagnostics=macd_diagnostics,
-            )
-
-        if signal is Signal.STOP_T:
-            return StrategyDecision(
-                symbol=symbol,
-                signal=signal,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=0.0,
-                reasons=reasons,
-                warnings=("暂停 T 仓交易，只保留复盘和底仓管理。",),
-                decision_trace=trace,
-                macd_diagnostics=macd_diagnostics,
-            )
-
-        if signal is Signal.BUY_T:
-            target_pct = _target_position_pct(score.total_score)
-            pct = max(0.0, target_pct - position.symbol_position_pct)
-            return StrategyDecision(
-                symbol=symbol,
-                signal=signal,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=pct,
-                reasons=reasons,
-                order_intent=_order(symbol, "BUY", "t", signal, pct, "买入主动仓位"),
-                decision_trace=trace,
-                macd_diagnostics=macd_diagnostics,
-            )
-
-        if signal is Signal.SELL_T:
-            active_position_pct = max(position.t_position_pct, position.symbol_position_pct - position.base_position_pct)
-            pct = min(active_position_pct, _sell_t_pct(retreat.sell_pressure, technical))
-            return StrategyDecision(
-                symbol=symbol,
-                signal=signal,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=pct,
-                reasons=reasons,
-                order_intent=_order(symbol, "SELL", "t", signal, pct, "卖出主动仓位"),
-                decision_trace=trace,
-                macd_diagnostics=macd_diagnostics,
-            )
-
-        if signal is Signal.BUILD_BASE:
-            pct = min(0.05, base_limit - position.symbol_position_pct)
-            return StrategyDecision(
-                symbol=symbol,
-                signal=signal,
-                score=score,
-                base_position_limit_pct=base_limit,
-                suggested_trade_pct=max(0.0, pct),
-                reasons=reasons,
-                order_intent=_order(symbol, "BUY", "base", signal, max(0.0, pct), "分批建底仓"),
-                decision_trace=trace,
-                macd_diagnostics=macd_diagnostics,
-            )
-
+        original_pct = _original_suggested_trade_pct(
+            candidate_signal,
+            score=score,
+            retreat=retreat,
+            technical=technical,
+            position=position,
+            base_limit=base_limit,
+        )
+        policy = apply_macd_policy(candidate, MACDPolicyState.from_technical(technical), policy_config)
+        sized = apply_macd_sizing_once(
+            policy,
+            original_suggested_trade_pct=original_pct,
+            effective_minimum_trade_pct=policy_config.minimum_executable_trade_pct,
+            sizing_owner="simplified_strategy",
+        )
+        signal = sized.final_signal
+        pct = 0.0 if signal is Signal.HOLD else sized.adjusted_suggested_trade_pct
+        warnings = _signal_warnings(candidate_signal)
+        macd_diagnostics = replace(
+            macd_diagnostics,
+            macd_policy_changed_candidate=(signal is not candidate_signal or pct != original_pct),
+        )
         return StrategyDecision(
             symbol=symbol,
             signal=signal,
             score=score,
             base_position_limit_pct=base_limit,
-            suggested_trade_pct=0.0,
+            suggested_trade_pct=pct,
             reasons=reasons,
-            decision_trace=trace,
+            warnings=warnings,
+            order_intent=_final_order(symbol, signal, pct, reasons),
+            decision_trace=sized.trace,
             macd_diagnostics=macd_diagnostics,
         )
+
+
+def _original_suggested_trade_pct(
+    signal: Signal,
+    *,
+    score: ScoreBreakdown,
+    retreat: RetreatInputs,
+    technical: TechnicalInputs,
+    position: PositionState,
+    base_limit: float,
+) -> float:
+    if signal is Signal.CLEAR:
+        return min(position.symbol_position_pct, 0.20)
+    if signal is Signal.REDUCE:
+        return min(position.symbol_position_pct, 0.10)
+    if signal is Signal.BUY_T:
+        return max(0.0, _target_position_pct(score.total_score) - position.symbol_position_pct)
+    if signal is Signal.SELL_T:
+        active_position_pct = max(position.t_position_pct, position.symbol_position_pct - position.base_position_pct)
+        return min(active_position_pct, _sell_t_pct(retreat.sell_pressure, technical))
+    if signal is Signal.BUILD_BASE:
+        return max(0.0, min(0.05, base_limit - position.symbol_position_pct))
+    return 0.0
+
+
+def _signal_warnings(signal: Signal) -> tuple[str, ...]:
+    if signal is Signal.CLEAR:
+        return ("基本面不支持底仓。",)
+    if signal is Signal.REDUCE:
+        return ("基本面评分低于减底仓阈值。",)
+    if signal is Signal.STOP_T:
+        return ("暂停 T 仓交易，只保留复盘和底仓管理。",)
+    return ()
+
+
+def _final_order(symbol: str, signal: Signal, pct: float, reasons: tuple[str, ...]) -> OrderIntent | None:
+    if signal is Signal.CLEAR:
+        return _order(symbol, "SELL", "base", signal, pct, reasons[0])
+    if signal is Signal.REDUCE:
+        return _order(symbol, "SELL", "base", signal, pct, reasons[0])
+    if signal is Signal.BUY_T:
+        return _order(symbol, "BUY", "t", signal, pct, "买入主动仓位")
+    if signal is Signal.SELL_T:
+        return _order(symbol, "SELL", "t", signal, pct, "卖出主动仓位")
+    if signal is Signal.BUILD_BASE:
+        return _order(symbol, "BUY", "base", signal, pct, "分批建底仓")
+    return None
 
 
 def select_simplified_candidate(
@@ -197,14 +188,35 @@ def select_simplified_candidate(
 
     if score.F_score < 50:
         clear_reasons = ("F < 50，标的不合格，停止做 T 并准备清仓。",)
-        return candidate_for(Signal.CLEAR, PrimarySetupCode.CLEAR, technical, decision_bar_time, reasons=clear_reasons)
+        return candidate_for(
+            Signal.CLEAR,
+            PrimarySetupCode.CLEAR,
+            technical,
+            decision_bar_time,
+            reasons=clear_reasons,
+            risk_enforcement=RiskEnforcement.HARD,
+        )
     if score.F_score < 55:
         reduce_reasons = ("F < 55，分红或周期逻辑偏弱，优先减底仓。",)
-        return candidate_for(Signal.REDUCE, PrimarySetupCode.REDUCE, technical, decision_bar_time, reasons=reduce_reasons)
+        return candidate_for(
+            Signal.REDUCE,
+            PrimarySetupCode.REDUCE,
+            technical,
+            decision_bar_time,
+            reasons=reduce_reasons,
+            risk_enforcement=RiskEnforcement.HARD,
+        )
 
     stop_reasons = tuple(_stop_t_reasons(score.F_score, technical, position))
     if stop_reasons:
-        return candidate_for(Signal.STOP_T, _primary_stop_setup(technical), technical, decision_bar_time, reasons=stop_reasons)
+        return candidate_for(
+            Signal.STOP_T,
+            _primary_stop_setup(technical),
+            technical,
+            decision_bar_time,
+            reasons=stop_reasons,
+            risk_enforcement=RiskEnforcement.HARD,
+        )
 
     if _can_buy_t(score, retreat, technical):
         target_pct = _target_position_pct(score.total_score)

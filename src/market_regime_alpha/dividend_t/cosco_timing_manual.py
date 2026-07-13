@@ -24,7 +24,7 @@ from market_regime_alpha.dividend_t.memory import MemoryScore
 from market_regime_alpha.dividend_t.models import Signal, TrendState
 from market_regime_alpha.dividend_t.scoring import clamp
 from market_regime_alpha.dividend_t.sell_pressure import SellPressureEstimate
-from market_regime_alpha.dividend_t.signal_intent import EntryConfirmation, ExitConfirmation, PrimarySetupCode
+from market_regime_alpha.dividend_t.signal_intent import EntryConfirmation, ExitConfirmation, PrimarySetupCode, RiskEnforcement
 
 def _probability_allows_attack(trend_probability: TrendProbability, *, mode: str) -> bool:
     if mode == "force_reversal":
@@ -95,6 +95,7 @@ def _manual_action(
         setup: PrimarySetupCode | None,
         branch_reasons: list[str],
         branch_warnings: list[str],
+        risk_enforcement: RiskEnforcement = RiskEnforcement.NONE,
     ) -> ManualCandidateDecision:
         return manual_candidate(
             action,
@@ -105,6 +106,7 @@ def _manual_action(
             exit_confirmations=exit_confirmations,
             reasons=tuple(branch_reasons),
             warnings=tuple(branch_warnings),
+            risk_enforcement=risk_enforcement,
         )
 
     low_buy_confirmed = intraday_context.support_confirmed or (
@@ -172,6 +174,7 @@ def _manual_action(
                 *list(chan_structure.reasons)[:3],
             ],
             ["结构失效优先级高于退神评分；跌回中枢下方不做买入修正。"],
+            RiskEnforcement.HARD,
         )
 
     if chan_sell_point or chan_structure.divergence_type == "top":
@@ -185,7 +188,7 @@ def _manual_action(
         if not daily_context.buyback_allowed:
             warnings.append("日线背景不允许买回；本次只给卖出 T 参考，不给倒 T 买回价。")
         setup = PrimarySetupCode.TOP_DIVERGENCE_RISK if chan_structure.divergence_type == "top" else PrimarySetupCode.CHAN_SELL_RISK
-        return emit("SELL_T_TIMING", Signal.SELL_T, setup, reasons, warnings)
+        return emit("SELL_T_TIMING", Signal.SELL_T, setup, reasons, warnings, RiskEnforcement.SOFT)
 
     high_pressure_sell, high_pressure_reasons = _high_pressure_sell_setup(
         force=force,
@@ -299,9 +302,10 @@ def _manual_action(
         return emit(
             "STOP_T_WAIT",
             Signal.STOP_T,
-            PrimarySetupCode.STRUCTURE_BREAK,
+            PrimarySetupCode.STOP_T,
             ["5 分钟趋势进入空头结构，暂停正 T，只观察或等更低支撑。"],
             ["趋势破位时不要把 T 仓变成底仓。"],
+            RiskEnforcement.SOFT,
         )
 
     if near_support and not daily_context.allow_t and not trend_5_20_allows_pullback:

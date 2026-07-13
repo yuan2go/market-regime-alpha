@@ -15,6 +15,7 @@ from market_regime_alpha.dividend_t.signal_intent import (
     EntryConfirmation,
     ExitConfirmation,
     PrimarySetupCode,
+    RiskEnforcement,
     SignalIntent,
     intent_for_setup,
     validate_candidate,
@@ -179,6 +180,7 @@ class ManualCandidateDecision:
     exit_confirmations: frozenset[ExitConfirmation]
     reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    risk_enforcement: RiskEnforcement = RiskEnforcement.NONE
 
 
 def manual_candidate(
@@ -191,6 +193,7 @@ def manual_candidate(
     exit_confirmations: frozenset[ExitConfirmation] = frozenset({ExitConfirmation.NONE}),
     reasons: tuple[str, ...] = (),
     warnings: tuple[str, ...] = (),
+    risk_enforcement: RiskEnforcement = RiskEnforcement.NONE,
 ) -> ManualCandidateDecision:
     """Assign a branch-selected setup's intent exactly once."""
 
@@ -207,6 +210,7 @@ def manual_candidate(
         exit_confirmations=exit_confirmations,
         reasons=reasons,
         warnings=warnings,
+        risk_enforcement=risk_enforcement,
     )
     validate_candidate(policy_candidate_from_manual(candidate), strict=True)
     return candidate
@@ -225,6 +229,7 @@ def policy_candidate_from_manual(candidate: ManualCandidateDecision) -> Candidat
         entry_confirmations=candidate.entry_confirmations,
         exit_confirmations=candidate.exit_confirmations,
         candidate_reasons=candidate.reasons,
+        risk_enforcement=candidate.risk_enforcement,
     )
 
 
@@ -237,6 +242,7 @@ class CandidateTraceFields(TypedDict):
     confirmation_bar_time: str
     entry_confirmations: tuple[str, ...]
     exit_confirmations: tuple[str, ...]
+    risk_enforcement: str
 
 
 def candidate_trace_fields(candidate: ManualCandidateDecision) -> CandidateTraceFields:
@@ -251,6 +257,7 @@ def candidate_trace_fields(candidate: ManualCandidateDecision) -> CandidateTrace
         "confirmation_bar_time": candidate.confirmation_bar_time,
         "entry_confirmations": tuple(sorted(item.value for item in candidate.entry_confirmations)),
         "exit_confirmations": tuple(sorted(item.value for item in candidate.exit_confirmations)),
+        "risk_enforcement": candidate.risk_enforcement.value,
     }
 
 
@@ -260,6 +267,7 @@ class TimingDecisionTrace:
     candidate_setup_code: str | None = None
     primary_setup_code: str | None = None
     candidate_signal_intent: str = SignalIntent.NONE.value
+    risk_enforcement: str = RiskEnforcement.NONE.value
     decision_bar_time: str = ""
     confirmation_bar_time: str = ""
     entry_confirmations: tuple[str, ...] = (EntryConfirmation.NONE.value,)
