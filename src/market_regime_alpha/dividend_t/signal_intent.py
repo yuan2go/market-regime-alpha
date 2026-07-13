@@ -14,7 +14,6 @@ from market_regime_alpha.dividend_t.models import Signal, TechnicalInputs
 SIGNAL_INTENT_MAPPING_VERSION = "signal-intent-map-v1"
 CONFIRMATION_RULE_VERSION = "confirmation-rules-v1"
 MACD_POLICY_VERSION = "signal-intent-macd-v1"
-MACD_PROFILE_NAMES = ("baseline", "score-only", "policy-only", "full")
 
 
 class SignalIntent(str, Enum):
@@ -342,21 +341,6 @@ class MACDPolicyConfig:
             raise ValueError("accepted exit confirmations must be non-empty and exclude NONE")
         if not isinstance(self.policy_version, str) or not self.policy_version.strip():
             raise ValueError("policy_version must be non-empty")
-
-
-def macd_policy_config_for_profile(profile: str) -> MACDPolicyConfig:
-    """Resolve explicit research profiles while keeping baseline the caller default."""
-
-    profiles = {
-        "baseline": MACDPolicyConfig(score_weight=0.0, conflict_gate_enabled=False),
-        "score-only": MACDPolicyConfig(score_weight=0.15, conflict_gate_enabled=False),
-        "policy-only": MACDPolicyConfig(score_weight=0.0, conflict_gate_enabled=True),
-        "full": MACDPolicyConfig(score_weight=0.15, conflict_gate_enabled=True),
-    }
-    try:
-        return profiles[profile]
-    except KeyError as exc:
-        raise ValueError(f"unknown MACD profile: {profile}") from exc
 
 
 @dataclass(frozen=True)

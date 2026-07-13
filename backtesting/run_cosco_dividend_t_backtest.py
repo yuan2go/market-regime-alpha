@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
+import subprocess
 import sys
 
 
@@ -25,7 +26,12 @@ from market_regime_alpha.dividend_t.backtest import (
     run_cosco_dividend_t_backtest,
 )
 from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine
-from market_regime_alpha.dividend_t.signal_intent import MACD_PROFILE_NAMES, macd_policy_config_for_profile
+from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig
+from market_regime_alpha.dividend_t.macd_experiments import (
+    MACD_PROFILE_NAMES,
+    build_experiment_identity,
+    macd_policy_config_for_profile,
+)
 
 
 DEFAULT_REPORT_PATH = PROJECT_ROOT / "reports" / "backtests" / "cosco_dividend_t_backtest.md"
@@ -74,6 +80,10 @@ def main() -> int:
         default="baseline",
         help="MACD research profile; production default remains baseline.",
     )
+    parser.add_argument(
+        "--dataset-version",
+        help="Required content/version identity for non-baseline MACD experiments.",
+    )
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT_PATH)
     args = parser.parse_args()
 
@@ -119,10 +129,28 @@ def main() -> int:
         signal_cache_tag=f"{args.signal_cache_tag}-{args.macd_profile}",
         signal_cache_save_every=args.signal_cache_save_every,
     )
+    policy_config = macd_policy_config_for_profile(args.macd_profile)
+    if args.macd_profile != "baseline" and not args.dataset_version:
+        parser.error("non-baseline --macd-profile requires --dataset-version")
+    experiment_identity = (
+        build_experiment_identity(
+            git_commit=_git_commit(),
+            dataset_version=args.dataset_version,
+            pipeline_id="cosco-dividend-t-5m",
+            macd_config=MACDConfig(bar_interval=BarInterval.MINUTE_5),
+            policy_config=policy_config,
+            execution_config=config,
+            sizing_owner="dividend_t_backtest_execution",
+        )
+        if args.dataset_version
+        else None
+    )
     result = run_cosco_dividend_t_backtest(
         bars,
         config=config,
-        engine=CoscoTimingEngine(macd_policy_config=macd_policy_config_for_profile(args.macd_profile)),
+        engine=CoscoTimingEngine(macd_policy_config=policy_config),
+        experiment_identity=experiment_identity,
+        pipeline_id="cosco-dividend-t-5m",
     )
     report = format_cosco_backtest_report(result)
     report += f"\n## 数据来源\n\n- {data_note}\n"
@@ -160,6 +188,16 @@ def _fetch_provider_bars(symbol: str, *, provider: str, days: int) -> object:
 
 def _fmt_pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.2%}"
+
+
+def _git_commit() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 if __name__ == "__main__":

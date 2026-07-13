@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
@@ -61,8 +62,15 @@ from market_regime_alpha.dividend_t.market_environment import (  # noqa: E402
     MarketEnvironmentPoint,
     build_market_environment_filter,
 )
+from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine  # noqa: E402
+from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig  # noqa: E402
+from market_regime_alpha.dividend_t.macd_experiments import (  # noqa: E402
+    build_experiment_identity,
+    experiment_config_hash,
+    signal_cache_path,
+)
 from market_regime_alpha.dividend_t.position_sizing import PositionBudget  # noqa: E402
-from market_regime_alpha.dividend_t.signal_intent import CandidateContractError  # noqa: E402
+from market_regime_alpha.dividend_t.signal_intent import CandidateContractError, MACDPolicyConfig  # noqa: E402
 
 
 class DividendTBacktestTests(unittest.TestCase):
@@ -311,6 +319,81 @@ class DividendTBacktestTests(unittest.TestCase):
         self.assertEqual(second.cache_misses, 0)
         self.assertEqual(second.total_return, first.total_return)
         self.assertEqual(second.action_counts, first.action_counts)
+
+    def test_nonbaseline_profile_requires_complete_experiment_identity(self) -> None:
+        bars = build_sample_cosco_backtest_bars()
+        policy = MACDPolicyConfig(score_weight=0.15, conflict_gate_enabled=False)
+
+        with self.assertRaisesRegex(ValueError, "MACD_EXPERIMENT_IDENTITY_REQUIRED"):
+            run_cosco_dividend_t_backtest(
+                bars,
+                config=DividendTBacktestConfig(min_lookback_bars=30, signal_cache_dir=None),
+                engine=CoscoTimingEngine(macd_policy_config=policy),
+            )
+
+    def test_experiment_cache_uses_and_persists_canonical_identity(self) -> None:
+        bars = build_sample_cosco_backtest_bars()
+        with tempfile.TemporaryDirectory() as directory:
+            config = DividendTBacktestConfig(
+                min_lookback_bars=30,
+                signal_step_bars=6,
+                signal_cache_dir=Path(directory),
+            )
+            policy = MACDPolicyConfig(score_weight=0.15, conflict_gate_enabled=False)
+            identity = build_experiment_identity(
+                git_commit="03548f0",
+                dataset_version="dataset-v1",
+                pipeline_id="cosco-dividend-t-5m",
+                macd_config=MACDConfig(bar_interval=BarInterval.MINUTE_5),
+                policy_config=policy,
+                execution_config=config,
+                sizing_owner="dividend_t_backtest_execution",
+            )
+            engine = CoscoTimingEngine(macd_policy_config=policy)
+
+            first = run_cosco_dividend_t_backtest(
+                bars,
+                config=config,
+                engine=engine,
+                experiment_identity=identity,
+            )
+            second = run_cosco_dividend_t_backtest(
+                bars,
+                config=config,
+                engine=engine,
+                experiment_identity=identity,
+            )
+            path = signal_cache_path(Path(directory), symbol="601919.SH", identity=identity)
+            cache_data = pd.read_csv(path)
+
+        self.assertGreater(first.cache_misses, 0)
+        self.assertGreater(second.cache_hits, 0)
+        self.assertEqual(set(cache_data["_experiment_config_hash"]), {experiment_config_hash(identity)})
+        self.assertEqual(set(cache_data["experiment_config_hash"]), {experiment_config_hash(identity)})
+        self.assertEqual(set(cache_data["pipeline_id"]), {"cosco-dividend-t-5m"})
+        self.assertIn("risk_enforcement", cache_data)
+        self.assertIn("macd_sizing_owner", cache_data)
+
+    def test_runtime_policy_mismatch_invalidates_identity(self) -> None:
+        bars = build_sample_cosco_backtest_bars()
+        config = DividendTBacktestConfig(min_lookback_bars=30, signal_cache_dir=None)
+        identity = build_experiment_identity(
+            git_commit="03548f0",
+            dataset_version="dataset-v1",
+            pipeline_id="cosco-dividend-t-5m",
+            macd_config=MACDConfig(bar_interval=BarInterval.MINUTE_5),
+            policy_config=MACDPolicyConfig(),
+            execution_config=config,
+            sizing_owner="dividend_t_backtest_execution",
+        )
+
+        with self.assertRaisesRegex(ValueError, "EXPERIMENT_IDENTITY_RUNTIME_MISMATCH"):
+            run_cosco_dividend_t_backtest(
+                bars,
+                config=config,
+                engine=CoscoTimingEngine(macd_policy_config=MACDPolicyConfig(conflict_gate_enabled=True)),
+                experiment_identity=identity,
+            )
 
     def test_reverse_t_buyback_closes_when_limit_price_is_touched(self) -> None:
         bars = build_sample_cosco_backtest_bars().head(70).copy()

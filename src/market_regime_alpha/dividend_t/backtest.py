@@ -25,6 +25,15 @@ from market_regime_alpha.dividend_t.market_environment import (
     MarketEnvironmentPoint,
     market_environment_point_with_model_state,
 )
+from market_regime_alpha.dividend_t.macd_experiments import (
+    LEGACY_CACHE_COMPATIBILITY_MODE,
+    MACD_CACHE_SCHEMA_VERSION,
+    MACDExperimentIdentity,
+    cache_metadata,
+    experiment_config_hash,
+    signal_cache_path,
+    validate_runtime_identity,
+)
 from market_regime_alpha.dividend_t.bar_store import load_raw_5min_bars_csv, load_raw_5min_bars_path
 from market_regime_alpha.dividend_t.position_sizing import MAX_BASE_POSITION_PCT, MIN_BASE_POSITION_PCT, PositionBudget
 from market_regime_alpha.dividend_t.models import Signal
@@ -35,6 +44,7 @@ from market_regime_alpha.dividend_t.signal_intent import (
     RiskEnforcement,
     SignalIntent,
     SizingDecision,
+    MACDPolicyConfig,
     apply_macd_sizing_once,
 )
 from market_regime_alpha.dividend_t.strategy_modes import apply_strategy_mode
@@ -513,6 +523,12 @@ class BacktestSignal:
     candidate_with_macd_score: str | None = None
     macd_score_changed_candidate: bool = False
     macd_policy_changed_candidate: bool = False
+    experiment_config_hash: str | None = None
+    cache_schema_version: str | None = None
+    git_commit: str | None = None
+    dataset_version: str | None = None
+    pipeline_id: str | None = None
+    cache_compatibility_mode: str | None = None
     buy_point_subtype: str = "none"
     breakout_score: float = 0.0
     breakout_state: str = "NONE"
@@ -694,8 +710,9 @@ class TradeExecutionConstraints:
 
 
 class BacktestSignalCache:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, expected_metadata: dict[str, str] | None = None) -> None:
         self.path = path
+        self.expected_metadata = expected_metadata
         self.records: dict[str, BacktestSignal] = {}
         self.dirty = False
         self.unsaved_count = 0
@@ -704,9 +721,18 @@ class BacktestSignalCache:
         self._load()
 
     @classmethod
-    def for_symbol(cls, symbol: str, config: DividendTBacktestConfig) -> "BacktestSignalCache | None":
+    def for_symbol(
+        cls,
+        symbol: str,
+        config: DividendTBacktestConfig,
+        *,
+        identity: MACDExperimentIdentity | None = None,
+    ) -> "BacktestSignalCache | None":
         if config.signal_cache_dir is None:
             return None
+        if identity is not None:
+            path = signal_cache_path(Path(config.signal_cache_dir), symbol=symbol, identity=identity)
+            return cls(path, expected_metadata=cache_metadata(identity))
         safe_symbol = symbol.replace(".", "_")
         safe_tag = _safe_cache_part(config.signal_cache_tag)
         path = Path(config.signal_cache_dir) / f"{safe_symbol}_mh{config.max_history_bars}_{safe_tag}_{SIGNAL_CACHE_VERSION}.csv"
@@ -732,6 +758,8 @@ class BacktestSignalCache:
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = [asdict(signal) for signal in sorted(self.records.values(), key=lambda item: item.timestamp)]
+        if self.expected_metadata is not None:
+            payload = [{**row, **self.expected_metadata} for row in payload]
         pd.DataFrame(payload).to_csv(self.path, index=False)
         self.dirty = False
         self.unsaved_count = 0
@@ -742,6 +770,7 @@ class BacktestSignalCache:
         import pandas as pd
 
         data = pd.read_csv(self.path)
+        self._validate_metadata(data)
         required = {
             "timestamp",
             "action",
@@ -818,6 +847,12 @@ class BacktestSignalCache:
                 candidate_with_macd_score=_optional_text(row.get("candidate_with_macd_score")),
                 macd_score_changed_candidate=_optional_bool(row.get("macd_score_changed_candidate")),
                 macd_policy_changed_candidate=_optional_bool(row.get("macd_policy_changed_candidate")),
+                experiment_config_hash=_optional_text(row.get("experiment_config_hash")),
+                cache_schema_version=_optional_text(row.get("cache_schema_version")),
+                git_commit=_optional_text(row.get("git_commit")),
+                dataset_version=_optional_text(row.get("dataset_version")),
+                pipeline_id=_optional_text(row.get("pipeline_id")),
+                cache_compatibility_mode=_optional_text(row.get("cache_compatibility_mode")),
                 buy_point_subtype=str(row.get("buy_point_subtype", "none")),
                 breakout_score=float(row.get("breakout_score", 0.0)),
                 breakout_state=str(row.get("breakout_state", "NONE")),
@@ -869,6 +904,18 @@ class BacktestSignalCache:
                 model_holding_profit_spread=float(row.get("model_holding_profit_spread", 0.50)),
                 model_new_buy_success_rate=float(row.get("model_new_buy_success_rate", 0.50)),
             )
+
+    def _validate_metadata(self, data: Any) -> None:
+        if self.expected_metadata is None:
+            return
+        missing = sorted(set(self.expected_metadata) - set(data.columns))
+        if missing:
+            raise ValueError(f"CACHE_IDENTITY_MISSING: {','.join(missing)}")
+        for key, expected in self.expected_metadata.items():
+            actual_values = {str(value) for value in data[key].dropna().unique()}
+            if actual_values != {expected}:
+                code = "CACHE_CONFIG_HASH_MISMATCH" if key == "_experiment_config_hash" else "CACHE_IDENTITY_MISMATCH"
+                raise ValueError(f"{code}: {key}")
 
 
 def load_5min_bars_csv(path: str | Path, *, symbol: str | None = None) -> Any:
@@ -962,6 +1009,8 @@ def run_cosco_dividend_t_backtest(
     config: DividendTBacktestConfig | None = None,
     engine: CoscoTimingEngine | None = None,
     market_filter: MarketEnvironmentFilter | None = None,
+    experiment_identity: MACDExperimentIdentity | None = None,
+    pipeline_id: str = "cosco-dividend-t-5m",
 ) -> DividendTBacktestResult:
     data = normalize_backtest_bars(bars)
     cfg = config or DividendTBacktestConfig()
@@ -975,9 +1024,24 @@ def run_cosco_dividend_t_backtest(
     symbol = next(iter(symbols))
 
     timing_engine = engine or CoscoTimingEngine()
+    policy_config = getattr(timing_engine, "macd_policy_config", None)
+    if experiment_identity is not None:
+        if not isinstance(policy_config, MACDPolicyConfig):
+            raise ValueError("EXPERIMENT_IDENTITY_REQUIRES_MACD_POLICY_CONFIG")
+        validate_runtime_identity(
+            experiment_identity,
+            policy_config=policy_config,
+            execution_config=cfg,
+            expected_pipeline_id=pipeline_id,
+            expected_sizing_owner="dividend_t_backtest_execution",
+        )
+    elif isinstance(policy_config, MACDPolicyConfig) and (
+        policy_config.score_weight != 0.0 or policy_config.conflict_gate_enabled
+    ):
+        raise ValueError("MACD_EXPERIMENT_IDENTITY_REQUIRED")
     previous_daily_closes = _previous_daily_close_by_date(data)
     first_bar = data.iloc[0]
-    signal_cache = BacktestSignalCache.for_symbol(symbol, cfg)
+    signal_cache = BacktestSignalCache.for_symbol(symbol, cfg, identity=experiment_identity)
     cash = float(cfg.initial_cash)
     base_entry_price = _buy_price(float(first_bar["open"]), cfg)
     base_shares = _floor_lot((cfg.initial_cash * cfg.initial_base_position_pct) / base_entry_price, cfg.min_lot)
@@ -1218,6 +1282,18 @@ def run_cosco_dividend_t_backtest(
                 snapshot = timing_engine.evaluate(history, require_fresh=False, generated_at=generated_at)
                 signal = BacktestSignal.from_snapshot(snapshot)
             signal = _with_pretrade_volume_price_context(signal, history, cfg)
+            if experiment_identity is None:
+                signal = replace(signal, cache_compatibility_mode=LEGACY_CACHE_COMPATIBILITY_MODE)
+            else:
+                signal = replace(
+                    signal,
+                    experiment_config_hash=experiment_config_hash(experiment_identity),
+                    cache_schema_version=MACD_CACHE_SCHEMA_VERSION,
+                    git_commit=experiment_identity.git_commit,
+                    dataset_version=experiment_identity.dataset_version,
+                    pipeline_id=experiment_identity.pipeline_id,
+                    cache_compatibility_mode=None,
+                )
             if signal_cache is not None:
                 signal_cache.set(signal)
                 if signal_cache.unsaved_count >= cfg.signal_cache_save_every:

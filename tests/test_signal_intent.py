@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from market_regime_alpha.dividend_t.models import PositionState, RetreatInputs, ScoreBreakdown, Signal, TechnicalInputs, TrendState
+from market_regime_alpha.dividend_t.macd_experiments import macd_policy_config_for_profile
 from market_regime_alpha.dividend_t.macd import (
     BarInterval,
     MACDConfig,
@@ -29,7 +30,6 @@ from market_regime_alpha.dividend_t.signal_intent import (
     candidate_for,
     intent_for_setup,
     no_candidate,
-    macd_policy_config_for_profile,
     validate_candidate,
 )
 from market_regime_alpha.dividend_t.strategy import select_simplified_candidate
