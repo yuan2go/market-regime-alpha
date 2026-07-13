@@ -3,7 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
+
+from market_regime_alpha.dividend_t.macd import MACD_ALGORITHM_VERSION, MACD_CONTRACT_VERSION
+from market_regime_alpha.dividend_t.models import Signal
+from market_regime_alpha.dividend_t.signal_intent import (
+    CONFIRMATION_RULE_VERSION,
+    MACD_POLICY_VERSION,
+    SIGNAL_INTENT_MAPPING_VERSION,
+    CandidateSignal,
+    EntryConfirmation,
+    ExitConfirmation,
+    PrimarySetupCode,
+    SignalIntent,
+    intent_for_setup,
+    validate_candidate,
+)
 
 if TYPE_CHECKING:
     from market_regime_alpha.dividend_t.attention import AttentionScore
@@ -150,6 +165,128 @@ class IntradayContext:
 
 
 @dataclass(frozen=True)
+class ManualCandidateDecision:
+    """Winning 5-minute setup before quality, freshness, or policy filters."""
+
+    action: str
+    candidate_signal: Signal | None
+    candidate_setup_code: PrimarySetupCode | None
+    primary_setup_code: PrimarySetupCode | None
+    signal_intent: SignalIntent
+    decision_bar_time: str
+    confirmation_bar_time: str
+    entry_confirmations: frozenset[EntryConfirmation]
+    exit_confirmations: frozenset[ExitConfirmation]
+    reasons: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+def manual_candidate(
+    action: str,
+    candidate_signal: Signal | None,
+    setup: PrimarySetupCode | None,
+    *,
+    decision_bar_time: str,
+    entry_confirmations: frozenset[EntryConfirmation] = frozenset({EntryConfirmation.NONE}),
+    exit_confirmations: frozenset[ExitConfirmation] = frozenset({ExitConfirmation.NONE}),
+    reasons: tuple[str, ...] = (),
+    warnings: tuple[str, ...] = (),
+) -> ManualCandidateDecision:
+    """Assign a branch-selected setup's intent exactly once."""
+
+    intent = SignalIntent.NONE if setup is None else intent_for_setup(setup)
+    candidate = ManualCandidateDecision(
+        action=action,
+        candidate_signal=candidate_signal,
+        candidate_setup_code=setup,
+        primary_setup_code=setup,
+        signal_intent=intent,
+        decision_bar_time=decision_bar_time,
+        confirmation_bar_time=decision_bar_time,
+        entry_confirmations=entry_confirmations,
+        exit_confirmations=exit_confirmations,
+        reasons=reasons,
+        warnings=warnings,
+    )
+    validate_candidate(policy_candidate_from_manual(candidate), strict=True)
+    return candidate
+
+
+def policy_candidate_from_manual(candidate: ManualCandidateDecision) -> CandidateSignal:
+    """Copy a manual candidate into the shared policy contract without inference."""
+
+    return CandidateSignal(
+        candidate_signal=candidate.candidate_signal,
+        candidate_setup_code=candidate.candidate_setup_code,
+        primary_setup_code=candidate.primary_setup_code,
+        candidate_signal_intent=candidate.signal_intent,
+        decision_bar_time=candidate.decision_bar_time,
+        confirmation_bar_time=candidate.confirmation_bar_time,
+        entry_confirmations=candidate.entry_confirmations,
+        exit_confirmations=candidate.exit_confirmations,
+        candidate_reasons=candidate.reasons,
+    )
+
+
+class CandidateTraceFields(TypedDict):
+    candidate_signal: str | None
+    candidate_setup_code: str | None
+    primary_setup_code: str | None
+    candidate_signal_intent: str
+    decision_bar_time: str
+    confirmation_bar_time: str
+    entry_confirmations: tuple[str, ...]
+    exit_confirmations: tuple[str, ...]
+
+
+def candidate_trace_fields(candidate: ManualCandidateDecision) -> CandidateTraceFields:
+    """Serialize candidate identity without parsing actions or reason text."""
+
+    return {
+        "candidate_signal": candidate.candidate_signal.value if candidate.candidate_signal else None,
+        "candidate_setup_code": candidate.candidate_setup_code.value if candidate.candidate_setup_code else None,
+        "primary_setup_code": candidate.primary_setup_code.value if candidate.primary_setup_code else None,
+        "candidate_signal_intent": candidate.signal_intent.value,
+        "decision_bar_time": candidate.decision_bar_time,
+        "confirmation_bar_time": candidate.confirmation_bar_time,
+        "entry_confirmations": tuple(sorted(item.value for item in candidate.entry_confirmations)),
+        "exit_confirmations": tuple(sorted(item.value for item in candidate.exit_confirmations)),
+    }
+
+
+@dataclass(frozen=True)
+class TimingDecisionTrace:
+    candidate_signal: str | None = None
+    candidate_setup_code: str | None = None
+    primary_setup_code: str | None = None
+    candidate_signal_intent: str = SignalIntent.NONE.value
+    decision_bar_time: str = ""
+    confirmation_bar_time: str = ""
+    entry_confirmations: tuple[str, ...] = (EntryConfirmation.NONE.value,)
+    exit_confirmations: tuple[str, ...] = (ExitConfirmation.NONE.value,)
+    raw_candidate_action: str = "WAIT"
+    quality_filtered_action: str = "WAIT"
+    macd_filtered_action: str = "WAIT"
+    freshness_filtered_action: str = "WAIT"
+    final_action: str = "WAIT"
+    final_signal: str = Signal.HOLD.value
+    signal_downgraded: bool = False
+    downgrade_source: str | None = None
+    downgrade_reason: str | None = None
+    original_suggested_trade_pct: float | None = None
+    macd_sizing_multiplier: float = 1.0
+    adjusted_suggested_trade_pct: float | None = None
+    sizing_adjustment_source: str | None = None
+    macd_sizing_applied: bool = False
+    macd_policy_applied: bool = False
+    macd_contract_version: str = MACD_CONTRACT_VERSION
+    macd_algorithm_version: str = MACD_ALGORITHM_VERSION
+    macd_policy_version: str = MACD_POLICY_VERSION
+    signal_intent_mapping_version: str = SIGNAL_INTENT_MAPPING_VERSION
+    confirmation_rule_version: str = CONFIRMATION_RULE_VERSION
+
+
+@dataclass(frozen=True)
 class CoscoTimingSnapshot:
     symbol: str
     name: str
@@ -182,6 +319,7 @@ class CoscoTimingSnapshot:
     trend_state: str
     daily_context: DailyContext
     intraday_context: IntradayContext
+    decision_trace: TimingDecisionTrace
     reasons: tuple[str, ...] = field(default_factory=tuple)
     warnings: tuple[str, ...] = field(default_factory=tuple)
     data_attempts: tuple[dict[str, object], ...] = field(default_factory=tuple)

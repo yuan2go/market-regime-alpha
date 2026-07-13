@@ -63,6 +63,45 @@ from market_regime_alpha.dividend_t.position_sizing import PositionBudget  # noq
 
 
 class DividendTBacktestTests(unittest.TestCase):
+    def test_backtest_signal_copies_candidate_identity_without_reclassification(self) -> None:
+        snapshot = SimpleNamespace(
+            timestamp="2026-07-13 10:05:00",
+            action="WAIT_CONFIRMATION",
+            daily_context=SimpleNamespace(
+                state="STRONG",
+                position_multiplier=1.0,
+                fundamental_score=70.0,
+                base_position_limit_pct=0.5,
+            ),
+            intraday_context=SimpleNamespace(state="SUPPORT_CONFIRMED"),
+            prices=SimpleNamespace(
+                buy_reference_price=14.0,
+                sell_reference_price=None,
+                buy_back_reference_price=None,
+                stop_price=13.5,
+            ),
+            decision_trace=SimpleNamespace(
+                candidate_signal="BUY_T",
+                candidate_setup_code="pullback_low_buy",
+                primary_setup_code="pullback_low_buy",
+                candidate_signal_intent="MEAN_REVERSION_T",
+                entry_confirmations=("SUPPORT_HOLD",),
+                exit_confirmations=("NONE",),
+                raw_candidate_action="BUY_T_TIMING",
+                quality_filtered_action="WAIT_CONFIRMATION",
+                macd_filtered_action="WAIT_CONFIRMATION",
+                freshness_filtered_action="WAIT_CONFIRMATION",
+                final_action="WAIT_CONFIRMATION",
+            ),
+        )
+
+        signal = BacktestSignal.from_snapshot(snapshot)
+
+        self.assertEqual(signal.primary_setup_code, "pullback_low_buy")
+        self.assertEqual(signal.signal_intent, "MEAN_REVERSION_T")
+        self.assertEqual(signal.raw_candidate_action, "BUY_T_TIMING")
+        self.assertEqual(signal.final_action, "WAIT_CONFIRMATION")
+
     def test_default_signal_history_covers_twenty_trading_days(self) -> None:
         self.assertEqual(DEFAULT_SIGNAL_HISTORY_BARS, 48 * 20)
         self.assertEqual(DividendTBacktestConfig().max_history_bars, DEFAULT_SIGNAL_HISTORY_BARS)
@@ -152,6 +191,8 @@ class DividendTBacktestTests(unittest.TestCase):
         sides = [trade.side for trade in result.trades]
         self.assertIn("SELL_REVERSE_T", sides)
         self.assertIn("BUY_BACK_REVERSE_T", sides)
+        reverse_sell = next(trade for trade in result.trades if trade.side == "SELL_REVERSE_T")
+        self.assertEqual(reverse_sell.execution_setup_code, "reverse_t_sell")
         self.assertGreater(result.buyback_trade_count, 0)
 
     def test_strong_buy_signal_uses_fractional_kelly_position_size(self) -> None:

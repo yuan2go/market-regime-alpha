@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from market_regime_alpha.dividend_t.buy_point_quality import (
     BUY_POINT_SUBTYPE_BREAKOUT_CONFIRMED,
-    BUY_POINT_SUBTYPE_OVERHEAT_BLOCKED,
     BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY,
     breakout_buy_confirmation_allowed,
     buy_point_overheat_reasons,
     calibrated_buy_win_rate_5d,
     classify_buy_point_subtype,
 )
+from market_regime_alpha.dividend_t.signal_intent import PrimarySetupCode
 
 
 def test_overheat_reasons_flag_uptrend_volume_breakout_inflow_cluster() -> None:
@@ -48,32 +48,14 @@ def test_breakout_confirmation_requires_low_heat_follow_through() -> None:
     )
 
 
-def test_classify_buy_point_subtype_prioritizes_overheat_and_pullback() -> None:
-    assert (
-        classify_buy_point_subtype(
-            action="BUY_T_TIMING",
-            trend_state="UPTREND",
-            volume_price_state="VOLUME_BREAKOUT",
-            overheated=True,
-        )
-        == BUY_POINT_SUBTYPE_OVERHEAT_BLOCKED
-    )
-    assert (
-        classify_buy_point_subtype(
-            action="BUY_T_TIMING",
-            volume_price_state="LOW_VOLUME_PULLBACK",
-            low_volume_pullback_score=76.0,
-        )
-        == BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY
-    )
-    assert (
-        classify_buy_point_subtype(
-            action="BREAKOUT_BUY_TIMING",
-            breakout_confirmed=True,
-            breakout_score=90.0,
-        )
-        == BUY_POINT_SUBTYPE_BREAKOUT_CONFIRMED
-    )
+def test_classify_buy_point_subtype_uses_primary_setup_only() -> None:
+    assert classify_buy_point_subtype(PrimarySetupCode.PULLBACK_LOW_BUY) == BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY
+    assert classify_buy_point_subtype(PrimarySetupCode.BREAKOUT_CONFIRMED) == BUY_POINT_SUBTYPE_BREAKOUT_CONFIRMED
+    assert classify_buy_point_subtype(None) == "none"
+
+
+def test_reporting_subtype_does_not_parse_reason_or_market_features() -> None:
+    assert classify_buy_point_subtype(PrimarySetupCode.TREND_FOLLOW) == "trend_follow"
 
 
 def test_calibrated_buy_win_rate_shrinks_breakout_raw_estimate() -> None:

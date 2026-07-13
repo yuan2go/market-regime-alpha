@@ -32,7 +32,7 @@ from market_regime_alpha.dividend_t.strategy_modes import apply_strategy_mode
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SIGNAL_CACHE_DIR = PROJECT_ROOT / "data" / "processed" / "dividend_t_signal_cache"
-SIGNAL_CACHE_VERSION = "v30_sell_observe_stop_vwap_quality"
+SIGNAL_CACHE_VERSION = "v31_structured_candidate"
 DEFAULT_SIGNAL_HISTORY_BARS = 48 * 20
 ATTACK_INACTIVE = "INACTIVE"
 ATTACK_WATCH = "WATCH"
@@ -306,6 +306,7 @@ class DividendTTrade:
     equity_after: float
     reason: str
     realized_pnl: float | None = None
+    execution_setup_code: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -468,6 +469,17 @@ class BacktestSignal:
     down_probability_1d: float = 0.50
     down_probability_3d: float = 0.50
     probability_state: str = "RANGE"
+    candidate_signal: str | None = None
+    candidate_setup_code: str | None = None
+    primary_setup_code: str | None = None
+    signal_intent: str = "NONE"
+    entry_confirmations: tuple[str, ...] = ("NONE",)
+    exit_confirmations: tuple[str, ...] = ("NONE",)
+    raw_candidate_action: str = "WAIT"
+    quality_filtered_action: str = "WAIT"
+    macd_filtered_action: str = "WAIT"
+    freshness_filtered_action: str = "WAIT"
+    final_action: str = "WAIT"
     buy_point_subtype: str = "none"
     breakout_score: float = 0.0
     breakout_state: str = "NONE"
@@ -534,6 +546,7 @@ class BacktestSignal:
         breakout_setup = getattr(snapshot, "breakout_setup", None)
         volume_price = getattr(snapshot, "volume_price_structure", None)
         chan_structure = getattr(snapshot, "chan_structure", None)
+        decision_trace = getattr(snapshot, "decision_trace", None)
         base_limit = float(snapshot.daily_context.base_position_limit_pct)
         base_target = float(getattr(market_regime, "base_position_target_pct", min(base_limit, MAX_BASE_POSITION_PCT)))
         legacy_total_cap = float(getattr(market_regime, "t_trade_limit_pct", 0.10))
@@ -570,6 +583,17 @@ class BacktestSignal:
             down_probability_1d=float(getattr(trend_probability, "down_1d", 0.50)),
             down_probability_3d=float(getattr(trend_probability, "down_3d", 0.50)),
             probability_state=str(getattr(trend_probability, "state", "RANGE")),
+            candidate_signal=getattr(decision_trace, "candidate_signal", None),
+            candidate_setup_code=getattr(decision_trace, "candidate_setup_code", None),
+            primary_setup_code=getattr(decision_trace, "primary_setup_code", None),
+            signal_intent=str(getattr(decision_trace, "candidate_signal_intent", "NONE")),
+            entry_confirmations=tuple(getattr(decision_trace, "entry_confirmations", ("NONE",))),
+            exit_confirmations=tuple(getattr(decision_trace, "exit_confirmations", ("NONE",))),
+            raw_candidate_action=str(getattr(decision_trace, "raw_candidate_action", snapshot.action)),
+            quality_filtered_action=str(getattr(decision_trace, "quality_filtered_action", snapshot.action)),
+            macd_filtered_action=str(getattr(decision_trace, "macd_filtered_action", snapshot.action)),
+            freshness_filtered_action=str(getattr(decision_trace, "freshness_filtered_action", snapshot.action)),
+            final_action=str(getattr(decision_trace, "final_action", snapshot.action)),
             buy_point_subtype=str(getattr(snapshot, "buy_point_subtype", "none")),
             breakout_score=float(getattr(breakout_setup, "score", 0.0)),
             breakout_state=str(getattr(breakout_setup, "state", "NONE")),
@@ -709,6 +733,17 @@ class BacktestSignalCache:
                 down_probability_1d=float(row.get("down_probability_1d", 0.50)),
                 down_probability_3d=float(row.get("down_probability_3d", 0.50)),
                 probability_state=str(row.get("probability_state", "RANGE")),
+                candidate_signal=_optional_text(row.get("candidate_signal")),
+                candidate_setup_code=_optional_text(row.get("candidate_setup_code")),
+                primary_setup_code=_optional_text(row.get("primary_setup_code")),
+                signal_intent=str(row.get("signal_intent", "NONE")),
+                entry_confirmations=_cached_string_tuple(row.get("entry_confirmations"), default=("NONE",)),
+                exit_confirmations=_cached_string_tuple(row.get("exit_confirmations"), default=("NONE",)),
+                raw_candidate_action=str(row.get("raw_candidate_action", row["action"])),
+                quality_filtered_action=str(row.get("quality_filtered_action", row["action"])),
+                macd_filtered_action=str(row.get("macd_filtered_action", row["action"])),
+                freshness_filtered_action=str(row.get("freshness_filtered_action", row["action"])),
+                final_action=str(row.get("final_action", row["action"])),
                 buy_point_subtype=str(row.get("buy_point_subtype", "none")),
                 breakout_score=float(row.get("breakout_score", 0.0)),
                 breakout_state=str(row.get("breakout_state", "NONE")),
@@ -2971,7 +3006,20 @@ def _execute_action(
             breakout_t_shares -= breakout_reduce_shares
             breakout_t_cost_basis -= breakout_cost_portion
             reason = "卖出 T 仓" if sell_fraction >= 0.999 else f"offensive 普通卖点只降主动仓 {sell_fraction:.0%}，延展趋势持仓"
-            trade = _trade(timestamp, action, "SELL_T", shares, sell_price, cash, base_shares, t_shares, close_for_mark, reason, realized)
+            trade = _trade(
+                timestamp,
+                action,
+                "SELL_T",
+                shares,
+                sell_price,
+                cash,
+                base_shares,
+                t_shares,
+                close_for_mark,
+                reason,
+                realized,
+                execution_setup_code=signal.primary_setup_code,
+            )
         elif _t_mode_allows_reverse_t(config) and pending_buyback_shares == 0:
             if _core_floor_protects_action(
                 action="SELL_REVERSE_T",
@@ -3010,7 +3058,20 @@ def _execute_action(
                 pending_buyback_shares += shares
                 pending_reverse_proceeds += proceeds
                 pending_buyback_target_price = signal.buy_back_reference_price or price * 0.985
-                trade = _trade(timestamp, action, "SELL_REVERSE_T", shares, sell_price, cash, base_shares, t_shares, close_for_mark, "倒 T 卖出", None)
+                trade = _trade(
+                    timestamp,
+                    action,
+                    "SELL_REVERSE_T",
+                    shares,
+                    sell_price,
+                    cash,
+                    base_shares,
+                    t_shares,
+                    close_for_mark,
+                    "倒 T 卖出",
+                    None,
+                    execution_setup_code="reverse_t_sell",
+                )
 
     elif action in {"STOP_T_WAIT", "WAIT_DAILY_WEAK"} and t_shares > 0:
         t_profit_pct = _active_position_profit_pct(price=price, t_shares=t_shares, t_cost_basis=t_cost_basis)
@@ -3154,6 +3215,35 @@ def _optional_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        import pandas as pd
+
+        if pd.isna(value):
+            return None
+    except Exception:  # noqa: BLE001
+        pass
+    text = str(value).strip()
+    return text or None
+
+
+def _cached_string_tuple(value: Any, *, default: tuple[str, ...]) -> tuple[str, ...]:
+    text = _optional_text(value)
+    if text is None:
+        return default
+    import ast
+
+    try:
+        parsed = ast.literal_eval(text)
+    except (SyntaxError, ValueError):
+        return (text,)
+    if isinstance(parsed, (tuple, list)) and all(isinstance(item, str) for item in parsed):
+        return tuple(parsed)
+    return default
 
 
 def _execution_state(
@@ -6997,21 +7087,10 @@ def _signal_buy_point_subtype(
     *,
     pretrade_volume_price_state: str | None = None,
 ) -> str:
-    return classify_buy_point_subtype(
-        action=signal.action,
-        intraday_state=signal.intraday_state,
-        trend_state=signal.trend_state,
-        breakout_state=signal.breakout_state,
-        breakout_confirmed=signal.breakout_confirmed,
-        pre_breakout_watch=signal.pre_breakout_watch,
-        breakout_score=signal.breakout_score,
-        volume_price_state=signal.volume_price_state,
-        low_volume_pullback_score=signal.low_volume_pullback_score,
-        vwap_support_score=signal.vwap_support_score,
-        price_up_volume_down_score=signal.price_up_volume_down_score,
-        chan_buy_point_type=signal.chan_buy_point_type,
-        pretrade_volume_price_state=pretrade_volume_price_state or signal.pretrade_volume_price_state,
-    )
+    del pretrade_volume_price_state
+    if signal.buy_point_subtype != "none":
+        return signal.buy_point_subtype
+    return classify_buy_point_subtype(signal.primary_setup_code)
 
 
 def _pretrade_volume_price_window_features(
@@ -7624,6 +7703,8 @@ def _trade(
     close: float,
     reason: str,
     realized_pnl: float | None,
+    *,
+    execution_setup_code: str | None = None,
 ) -> DividendTTrade:
     return DividendTTrade(
         timestamp=timestamp,
@@ -7635,6 +7716,7 @@ def _trade(
         equity_after=round(_mark_to_market(cash, base_shares, t_shares, close), 2),
         reason=reason,
         realized_pnl=round(realized_pnl, 2) if realized_pnl is not None else None,
+        execution_setup_code=execution_setup_code,
     )
 
 

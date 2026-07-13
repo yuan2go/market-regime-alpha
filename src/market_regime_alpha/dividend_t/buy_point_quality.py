@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from market_regime_alpha.dividend_t.signal_intent import PrimarySetupCode
+
 BUY_POINT_SUBTYPE_NONE = "none"
 BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY = "pullback_low_buy"
 BUY_POINT_SUBTYPE_VWAP_RECLAIM = "vwap_reclaim"
@@ -37,52 +39,30 @@ BUY_POINT_5D_PRIORS: dict[str, BuyPointPrior] = {
 }
 
 
-def classify_buy_point_subtype(
-    *,
-    action: str,
-    intraday_state: str = "UNKNOWN",
-    trend_state: str = "RANGE",
-    breakout_state: str = "NONE",
-    breakout_confirmed: bool = False,
-    pre_breakout_watch: bool = False,
-    breakout_score: float = 0.0,
-    volume_price_state: str = "NEUTRAL",
-    low_volume_pullback_score: float = 50.0,
-    vwap_support_score: float = 50.0,
-    price_up_volume_down_score: float = 0.0,
-    chan_buy_point_type: str = "none",
-    pretrade_volume_price_state: str = "UNKNOWN",
-    overheated: bool = False,
-) -> str:
-    """Return the operational buy-point subtype for reporting and calibration."""
+BUY_POINT_SUBTYPE_BY_SETUP: dict[PrimarySetupCode, str] = {
+    PrimarySetupCode.PULLBACK_LOW_BUY: BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY,
+    PrimarySetupCode.VWAP_RECLAIM: BUY_POINT_SUBTYPE_VWAP_RECLAIM,
+    PrimarySetupCode.INTRADAY_REVERSAL: "reversal",
+    PrimarySetupCode.RANGE_LOW_BUY: "range_low",
+    PrimarySetupCode.FORCE_REVERSAL_PROBE: "reversal",
+    PrimarySetupCode.TREND_FOLLOW: BUY_POINT_SUBTYPE_TREND_FOLLOW,
+    PrimarySetupCode.TREND_PULLBACK_FOLLOW: "trend_pullback",
+    PrimarySetupCode.BREAKOUT_CONFIRMED: BUY_POINT_SUBTYPE_BREAKOUT_CONFIRMED,
+    PrimarySetupCode.THIRD_BUY_FOLLOW: "third_buy",
+    PrimarySetupCode.STRONG_LAUNCH_FOLLOW: "strong_launch",
+    PrimarySetupCode.ATTENTION_FEEDBACK_FOLLOW: "attention_feedback",
+}
 
-    normalized_action = str(action).upper()
-    if normalized_action in WATCH_BREAKOUT_ACTIONS or pre_breakout_watch:
-        return BUY_POINT_SUBTYPE_BREAKOUT_WATCH
-    if overheated:
-        return BUY_POINT_SUBTYPE_OVERHEAT_BLOCKED
-    if normalized_action not in BUY_ACTIONS:
-        return BUY_POINT_SUBTYPE_NONE
-    if normalized_action == "BREAKOUT_BUY_TIMING" or breakout_confirmed or breakout_state == "BREAKOUT_CONFIRMED" or breakout_score >= 88.0:
-        return BUY_POINT_SUBTYPE_BREAKOUT_CONFIRMED
-    if (
-        str(volume_price_state).upper() == "LOW_VOLUME_PULLBACK"
-        or low_volume_pullback_score >= 70.0
-        or chan_buy_point_type in {"buy1", "buy2", "range_buy"}
-        or "SUPPORT" in str(intraday_state).upper()
-        or "REBOUND" in str(intraday_state).upper()
-    ):
-        return BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY
-    if (
-        str(volume_price_state).upper() in {"VWAP_ACCUMULATION", "PRICE_UP_VOLUME_DOWN", "NEUTRAL"}
-        or str(pretrade_volume_price_state).lower() == "price_up_volume_down"
-        or vwap_support_score >= 68.0
-        or price_up_volume_down_score >= 72.0
-    ):
-        return BUY_POINT_SUBTYPE_VWAP_RECLAIM
-    if trend_state == "UPTREND" or chan_buy_point_type == "buy3":
-        return BUY_POINT_SUBTYPE_TREND_FOLLOW
-    return BUY_POINT_SUBTYPE_VWAP_RECLAIM
+
+def classify_buy_point_subtype(primary_setup_code: PrimarySetupCode | str | None) -> str:
+    """Return a stable reporting subtype from the branch-owned primary setup."""
+
+    if isinstance(primary_setup_code, str):
+        try:
+            primary_setup_code = PrimarySetupCode(primary_setup_code)
+        except ValueError:
+            return BUY_POINT_SUBTYPE_NONE
+    return BUY_POINT_SUBTYPE_BY_SETUP.get(primary_setup_code, BUY_POINT_SUBTYPE_NONE)
 
 
 def buy_point_overheat_reasons(

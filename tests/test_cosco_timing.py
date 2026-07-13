@@ -181,7 +181,7 @@ class CoscoTimingTests(unittest.TestCase):
         self.assertEqual(snapshot.signal_strength.label, "弱")
         self.assertIsNone(snapshot.prices.buy_reference_price)
         self.assertIsNone(snapshot.prices.sell_reference_price)
-        self.assertTrue(any("低量回踩" in item for item in snapshot.reasons))
+        self.assertTrue(any("非支撑/回踩型买点" in item for item in snapshot.reasons))
 
     def test_one_day_context_does_not_emit_real_buy_point(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(_bars_for_buy_t())
@@ -238,6 +238,13 @@ class CoscoTimingTests(unittest.TestCase):
         self.assertIsNotNone(snapshot.prices.stop_price)
         self.assertIsNone(snapshot.prices.sell_reference_price)
         self.assertLess(snapshot.signal_strength.estimated_win_rate, 0.50)
+        self.assertEqual(snapshot.decision_trace.primary_setup_code, "breakout_confirmed")
+        self.assertEqual(snapshot.decision_trace.candidate_signal_intent, "TREND_FOLLOWING")
+        self.assertEqual(snapshot.decision_trace.raw_candidate_action, "BREAKOUT_BUY_TIMING")
+        self.assertEqual(snapshot.decision_trace.quality_filtered_action, "WATCH_BREAKOUT_NEXT_DAY")
+        self.assertEqual(snapshot.decision_trace.macd_filtered_action, "WATCH_BREAKOUT_NEXT_DAY")
+        self.assertEqual(snapshot.decision_trace.final_action, "WATCH_BREAKOUT_NEXT_DAY")
+        self.assertFalse(snapshot.decision_trace.macd_policy_applied)
 
     def test_volume_price_structure_flags_high_volume_stall(self) -> None:
         structure = estimate_volume_price_structure(_bars_for_high_volume_stall())
@@ -299,6 +306,15 @@ class CoscoTimingTests(unittest.TestCase):
         self.assertEqual(snapshot.confidence, 0.0)
         self.assertIsNone(snapshot.prices.sell_reference_price)
         self.assertTrue(any("数据已过期" in item for item in snapshot.reasons))
+        self.assertEqual(snapshot.decision_trace.candidate_signal, "SELL_T")
+        self.assertEqual(snapshot.decision_trace.primary_setup_code, "pressure_sell_t")
+        self.assertEqual(snapshot.decision_trace.candidate_signal_intent, "MEAN_REVERSION_T")
+        self.assertEqual(snapshot.decision_trace.raw_candidate_action, "SELL_T_TIMING")
+        self.assertEqual(snapshot.decision_trace.quality_filtered_action, "WAIT_CONFIRMATION")
+        self.assertEqual(snapshot.decision_trace.freshness_filtered_action, "WAIT_STALE_DATA")
+        self.assertEqual(snapshot.decision_trace.final_action, "WAIT_STALE_DATA")
+        self.assertEqual(snapshot.decision_trace.decision_bar_time, snapshot.timestamp)
+        self.assertEqual(snapshot.decision_trace.confirmation_bar_time, snapshot.timestamp)
 
     def test_freshness_gate_allows_fresh_evaluation_before_sell_quality_filter(self) -> None:
         bars = _bars_for_sell_t()

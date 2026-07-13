@@ -15,6 +15,7 @@ from market_regime_alpha.data_sources.a_share_bars import MultiSourceDataError, 
 from market_regime_alpha.data_sources.tushare_client import TushareConfigError, TushareDataError, build_tushare_client
 from market_regime_alpha.dividend_t.attention import AttentionScore, estimate_attention
 from market_regime_alpha.dividend_t.buy_point_quality import (
+    BUY_POINT_SUBTYPE_BREAKOUT_WATCH,
     BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY,
     buy_point_overheat_reasons,
     classify_buy_point_subtype,
@@ -26,7 +27,7 @@ from market_regime_alpha.dividend_t.dynamic_weights import build_dynamic_weights
 from market_regime_alpha.dividend_t.force_ratio import ForceRatioEstimate, estimate_force_ratio
 from market_regime_alpha.dividend_t.indicators import add_daily_indicators
 from market_regime_alpha.dividend_t.memory import MemoryScore, classify_current_setup, estimate_memory
-from market_regime_alpha.dividend_t.models import TrendState
+from market_regime_alpha.dividend_t.models import Signal, TrendState
 from market_regime_alpha.dividend_t.position_sizing import PositionBudget
 from market_regime_alpha.dividend_t.scoring import clamp
 from market_regime_alpha.dividend_t.sell_pressure import SellPressureEstimate, estimate_sell_pressure
@@ -48,7 +49,9 @@ from market_regime_alpha.dividend_t.cosco_timing_types import (
     MultiPeriodTrend,
     ReferencePrices,
     TrendProbability,
+    TimingDecisionTrace,
     VolumePriceStructure,
+    candidate_trace_fields,
 )
 from market_regime_alpha.dividend_t.tuishen_volume_price import estimate_volume_price_structure
 
@@ -161,7 +164,7 @@ class CoscoTimingEngine:
             chan_structure=chan_structure,
             profile=profile,
         )
-        action, reasons, warnings = _manual_action(
+        candidate = _manual_action(
             force=force,
             attention=attention,
             certainty=certainty,
@@ -178,34 +181,24 @@ class CoscoTimingEngine:
             breakout_setup=breakout_setup,
             chan_structure=chan_structure,
             profile=profile,
+            decision_bar_time=timestamp,
         )
-        initial_buy_point_subtype = classify_buy_point_subtype(
-            action=action,
-            intraday_state=intraday_context.state,
+        raw_candidate_action = candidate.action
+        action = raw_candidate_action
+        reasons = list(candidate.reasons)
+        warnings = list(candidate.warnings)
+        initial_buy_point_subtype = classify_buy_point_subtype(candidate.primary_setup_code)
+        overheat_reasons = buy_point_overheat_reasons(
             trend_state=trend_state.value,
-            breakout_state=breakout_setup.state,
-            breakout_confirmed=breakout_setup.breakout_confirmed,
-            pre_breakout_watch=breakout_setup.pre_breakout_watch,
-            breakout_score=breakout_setup.score,
             volume_price_state=volume_price_structure.state,
-            low_volume_pullback_score=volume_price_structure.low_volume_pullback_score,
-            vwap_support_score=volume_price_structure.vwap_support_score,
-            price_up_volume_down_score=volume_price_structure.price_up_volume_down_score,
-            chan_buy_point_type=chan_structure.buy_point_type,
-            overheated=bool(
-                buy_point_overheat_reasons(
-                    trend_state=trend_state.value,
-                    volume_price_state=volume_price_structure.state,
-                    volume_price_score=volume_price_structure.score,
-                    volume_breakout_score=volume_price_structure.volume_breakout_score,
-                    high_volume_stall_score=volume_price_structure.high_volume_stall_score,
-                    capital_flow_confirmation_state=capital_flow.confirmation_state,
-                    up_probability_1d=trend_probability.up_1d,
-                    pretrade_volume_ratio_to_prev=volume_price_structure.volume_expansion_ratio,
-                    breakout_confirmed=breakout_setup.breakout_confirmed,
-                    breakout_score=breakout_setup.score,
-                )
-            ),
+            volume_price_score=volume_price_structure.score,
+            volume_breakout_score=volume_price_structure.volume_breakout_score,
+            high_volume_stall_score=volume_price_structure.high_volume_stall_score,
+            capital_flow_confirmation_state=capital_flow.confirmation_state,
+            up_probability_1d=trend_probability.up_1d,
+            pretrade_volume_ratio_to_prev=volume_price_structure.volume_expansion_ratio,
+            breakout_confirmed=breakout_setup.breakout_confirmed,
+            breakout_score=breakout_setup.score,
         )
         if action == "BREAKOUT_BUY_TIMING":
             action = "WATCH_BREAKOUT_NEXT_DAY"
@@ -216,6 +209,18 @@ class CoscoTimingEngine:
             warnings = [
                 *list(warnings),
                 "突破类买点当前历史 5 日命中率不足，暂不作为真实买点输出。",
+            ]
+        elif candidate.candidate_signal is Signal.BUY_T and overheat_reasons:
+            action = "WAIT_CONFIRMATION"
+            reasons = [
+                "5 日命中率优先：原始买点触发，但量价/概率结构显示追涨过热，先等待回踩或站稳确认。",
+                f"原始主 setup={candidate.primary_setup_code.value if candidate.primary_setup_code else 'none'}。",
+                *list(overheat_reasons)[:3],
+                *list(reasons),
+            ]
+            warnings = [
+                *list(warnings),
+                "过热质量过滤已拦截 BUY_T；原始 setup 和 intent 仅保留在 DecisionTrace。",
             ]
         elif action == "BUY_T_TIMING" and initial_buy_point_subtype != BUY_POINT_SUBTYPE_PULLBACK_LOW_BUY:
             action = "WAIT_CONFIRMATION"
@@ -286,6 +291,8 @@ class CoscoTimingEngine:
                 *list(warnings),
                 "卖点质量过滤已拦截：WAIT_DAILY_WEAK 降级为观察，不输出卖点参考价。",
             ]
+        quality_filtered_action = action
+        macd_filtered_action = quality_filtered_action
         signal_blocked = False
         if require_fresh and not data_fresh:
             original_action = action
@@ -300,6 +307,7 @@ class CoscoTimingEngine:
                 f"原始模型动作 {original_action} 已被数据新鲜度门禁拦截。",
                 "BaoStock 只允许作为历史回补；不能用过期历史线生成盘中主信号。",
             ]
+        freshness_filtered_action = action
         prices = (
             _blocked_reference_prices(levels)
             if signal_blocked
@@ -314,33 +322,22 @@ class CoscoTimingEngine:
             )
         )
         confidence = _confidence(force=force, daily_context=daily_context, intraday_context=intraday_context)
-        buy_point_subtype = classify_buy_point_subtype(
-            action=action,
-            intraday_state=intraday_context.state,
-            trend_state=trend_state.value,
-            breakout_state=breakout_setup.state,
-            breakout_confirmed=breakout_setup.breakout_confirmed,
-            pre_breakout_watch=breakout_setup.pre_breakout_watch,
-            breakout_score=breakout_setup.score,
-            volume_price_state=volume_price_structure.state,
-            low_volume_pullback_score=volume_price_structure.low_volume_pullback_score,
-            vwap_support_score=volume_price_structure.vwap_support_score,
-            price_up_volume_down_score=volume_price_structure.price_up_volume_down_score,
-            chan_buy_point_type=chan_structure.buy_point_type,
-            overheated=bool(
-                buy_point_overheat_reasons(
-                    trend_state=trend_state.value,
-                    volume_price_state=volume_price_structure.state,
-                    volume_price_score=volume_price_structure.score,
-                    volume_breakout_score=volume_price_structure.volume_breakout_score,
-                    high_volume_stall_score=volume_price_structure.high_volume_stall_score,
-                    capital_flow_confirmation_state=capital_flow.confirmation_state,
-                    up_probability_1d=trend_probability.up_1d,
-                    pretrade_volume_ratio_to_prev=volume_price_structure.volume_expansion_ratio,
-                    breakout_confirmed=breakout_setup.breakout_confirmed,
-                    breakout_score=breakout_setup.score,
-                )
-            ),
+        buy_point_subtype = initial_buy_point_subtype
+        if candidate.primary_setup_code is not None and candidate.primary_setup_code.value == "breakout_confirmed" and action == "WATCH_BREAKOUT_NEXT_DAY":
+            buy_point_subtype = BUY_POINT_SUBTYPE_BREAKOUT_WATCH
+        final_signal = (
+            candidate.candidate_signal.value
+            if candidate.candidate_signal is not None and freshness_filtered_action == raw_candidate_action
+            else Signal.HOLD.value
+        )
+        decision_trace = TimingDecisionTrace(
+            **candidate_trace_fields(candidate),
+            raw_candidate_action=raw_candidate_action,
+            quality_filtered_action=quality_filtered_action,
+            macd_filtered_action=macd_filtered_action,
+            freshness_filtered_action=freshness_filtered_action,
+            final_action=action,
+            final_signal=final_signal,
         )
         signal_strength = _signal_strength(
             action=action,
@@ -390,6 +387,7 @@ class CoscoTimingEngine:
             trend_state=trend_state.value,
             daily_context=daily_context,
             intraday_context=intraday_context,
+            decision_trace=decision_trace,
             reasons=tuple(reasons),
             warnings=tuple(warnings),
             manual_only=True,
