@@ -85,6 +85,25 @@ class MACDDataReason(str, Enum):
     READY = "READY"
     INSUFFICIENT_BARS = "INSUFFICIENT_BARS"
     INVALID_CLOSE = "INVALID_CLOSE"
+    EXPECTED_BAR_MISSING = "EXPECTED_BAR_MISSING"
+    PRICE_ADJUSTMENT_UNAVAILABLE = "PRICE_ADJUSTMENT_UNAVAILABLE"
+
+
+class BarInterval(str, Enum):
+    DAY_1 = "1d"
+    MINUTE_5 = "5m"
+
+
+class MACDPriceField(str, Enum):
+    CLOSE = "close"
+
+
+class PriceAdjustmentMode(str, Enum):
+    POINT_IN_TIME_ADJUSTED = "POINT_IN_TIME_ADJUSTED"
+
+
+class HistogramToleranceMode(str, Enum):
+    ABSOLUTE = "ABSOLUTE"
 ```
 
 ### 4.2 `MACDConfig`
@@ -92,10 +111,15 @@ class MACDDataReason(str, Enum):
 ```python
 @dataclass(frozen=True)
 class MACDConfig:
+    bar_interval: BarInterval
     fast_period: int = 12
     slow_period: int = 26
     signal_period: int = 9
     cross_lookback_bars: int = 3
+    closed_bars_only: bool = True
+    price_field: MACDPriceField = MACDPriceField.CLOSE
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.POINT_IN_TIME_ADJUSTED
+    histogram_tolerance_mode: HistogramToleranceMode = HistogramToleranceMode.ABSOLUTE
     histogram_flat_tolerance: float = 0.0
     algorithm_version: str = "macd-v1"
 ```
@@ -106,12 +130,19 @@ Validation rules:
 - periods must be positive;
 - `fast_period < slow_period`;
 - `cross_lookback_bars >= 1`;
+- `bar_interval` must be `1d` or `5m` in v1 and is required rather than inferred from row spacing;
+- `closed_bars_only` must be an actual boolean and must be `True` for formal scoring, policy, snapshots, and backtests;
+- `price_field` must be `close` in v1;
+- `price_adjustment_mode` must be `POINT_IN_TIME_ADJUSTED` in v1;
+- `histogram_tolerance_mode` must be `ABSOLUTE` in v1;
 - `histogram_flat_tolerance >= 0` and finite;
 - `algorithm_version` must be non-empty after trimming.
 
 Invalid configuration raises a dedicated configuration exception. It must not be converted into `INSUFFICIENT_BARS`.
 
-`histogram_flat_tolerance` is an absolute tolerance in the same price unit as the MACD histogram. In v1 it applies only to adjacent histogram absolute-value comparisons. Relative tolerance is outside v1.
+`histogram_flat_tolerance` is an absolute tolerance in the same price unit as the MACD histogram. In v1 it applies only to adjacent histogram absolute-value comparisons. A value of `0.0` means strict comparison. Relative and ATR-normalized modes are outside v1.
+
+Tolerance is scoped to one effective MACD configuration for one bar interval and symbol/config resolver result. A non-zero absolute tolerance must not become an implicit global default across symbols with materially different price scales. Effective mode and tolerance are recorded per pipeline and row. Daily and 5-minute pipelines may use different effective configurations even when both use 12/26/9.
 
 ### 4.3 Flat additions to `TechnicalInputs`
 
@@ -130,6 +161,23 @@ macd_data_ready: bool = False
 macd_data_reason: MACDDataReason = INSUFFICIENT_BARS
 macd_score: float = 50.0
 ```
+
+Every result also carries calculation metadata:
+
+```text
+bar_interval
+closed_bars_only
+price_field
+price_adjustment_mode
+histogram_tolerance_mode
+provisional
+last_closed_bar_time
+bar_contract_version
+price_adjustment_version
+data_quality_rule_version
+```
+
+`provisional=False` is mandatory for any result used by formal score, signal policy, snapshot publication, or backtest execution. A UI-only preview may set `provisional=True`, but it must travel through a distinct preview response and must never be converted into `TechnicalInputs` used for decisions.
 
 Raw numeric fields use `None` when not calculated or unavailable. They must never use `0.0` as a missing-value sentinel.
 
@@ -157,13 +205,57 @@ The first ready bar is a valid exception only for `macd_histogram_delta`, which 
 
 ## 5. MACD Calculation Rules v1
 
-### 5.1 Input validation
+### 5.1 Bar-time, price, calendar, and quality contract
+
+Formal MACD uses completed bars only. `closed_bars_only=True` is invariant for scoring, candidate generation, policy, and backtesting.
+
+Bar-close rules:
+
+- a 5-minute bar timestamp is its interval end; the first continuous-auction bar ends at 09:35 and the final bar ends at 15:00;
+- only bars whose interval end is at or before the evaluation time and whose source status is finalized are eligible;
+- the 09:15-09:25 opening call auction is excluded from v1 MACD unless a future separately versioned adapter standardizes it;
+- the lunch break contains no bars; no 11:35-12:55 placeholders are inserted;
+- the overnight interval contains no bars;
+- the final 14:55-15:00 bar becomes eligible only after its 15:00 close is finalized;
+- a daily bar becomes eligible only after the official daily close is finalized.
+
+An unfinished 5-minute or daily bar may be calculated for UI preview only. Preview metadata must set `provisional=True`; preview values cannot enter `TechnicalInputs`, `T_score`, SignalIntent policy, published formal snapshots, caches used by formal backtests, or orders.
+
+Backtest timing rules:
+
+- signal time equals or follows the close timestamp of the newest input bar;
+- the earliest executable price is from the next eligible bar after signal time;
+- no open, high, low, close, or volume that occurred before the signal bar closed may be reused as a post-signal fill;
+- same-bar signal-and-fill behavior is forbidden and covered by a regression test.
+
+Trading-calendar and gap rules:
+
+- exchange holidays and verified suspension days produce no synthetic bars;
+- normal non-trading sessions, lunch, and overnight periods produce no forward-filled bars;
+- a missing 5-minute bar is never filled with the previous close;
+- EMA advances only over actual, valid, finalized trading bars;
+- if the calendar, suspension state, and source contract say a bar should exist but it is absent, formal MACD returns `EXPECTED_BAR_MISSING` and records the missing interval in data-quality diagnostics;
+- if absence is explained by a holiday or verified suspension, it is not a data gap and EMA continues on the next actual trading bar.
+
+Price contract:
+
+- `price_field=close` identifies the source field before the configured adjustment transform;
+- formal daily and 5-minute historical MACD use `POINT_IN_TIME_ADJUSTED` prices built only from corporate actions effective and knowable at the evaluation time;
+- execution, slippage, commission, stamp duty, price-limit, and PnL calculations continue to use contemporaneous raw tradable prices;
+- live 5-minute bars use raw exchange prices for the current corporate-action basis, while earlier history is rebased to that same basis using only already-effective dividend, split, bonus-share, or ETF-distribution events;
+- backtest and live feature preparation use the same adjustment adapter and configuration;
+- future corporate actions must not alter an earlier point-in-time feature snapshot;
+- if an adjustment event needed to make the series continuous is unavailable, formal MACD returns `PRICE_ADJUSTMENT_UNAVAILABLE` rather than allowing an ex-right or distribution jump to create a false cross.
+
+The calculation input therefore consists of one explicitly versioned interval, one finalized-bar series, and one point-in-time price basis. Daily and 5-minute results with identical numeric parameters remain distinct features because `bar_interval`, bar-close semantics, and effective price basis are part of the result identity.
+
+### 5.2 Input validation
 
 Every close in the complete input sequence participates in the validity check. Every value must be convertible to a finite positive float.
 
 Any `None`, `NaN`, positive or negative infinity, non-numeric value, zero, or negative close makes the entire result `INVALID_CLOSE`. The implementation must not inspect only the latest warm-up window because the current EMA depends on all earlier recursive values.
 
-### 5.2 EMA definition
+### 5.3 EMA definition
 
 The normative definition is:
 
@@ -175,7 +267,7 @@ EMA_t = alpha * close_t + (1 - alpha) * EMA_t-1
 
 A pandas implementation must use `ewm(span=period, adjust=False)`. The recursive definition, rather than a library's undocumented default behavior, governs compatibility with future pandas, NumPy, TA-Lib, or other calculation engines.
 
-### 5.3 MACD values
+### 5.4 MACD values
 
 ```text
 EMA_fast = EMA(close, fast_period)
@@ -188,7 +280,7 @@ HistogramDelta = Histogram_t - Histogram_t-1
 
 All state and score calculations use unrounded values.
 
-### 5.4 Warm-up boundary
+### 5.5 Warm-up boundary
 
 ```text
 minimum_required_bars = slow_period + signal_period - 1
@@ -220,7 +312,7 @@ Starting at the 35th bar:
 - no crossing between a pre-ready bar and the first ready bar is recognized;
 - no pre-warm-up cross is backfilled.
 
-### 5.5 Histogram trend
+### 5.6 Histogram trend
 
 HistogramDelta remains signed. HistogramTrend describes absolute bar-size change only:
 
@@ -237,7 +329,7 @@ otherwise
 
 The bullish or bearish direction is determined separately by whether the current histogram is positive or negative. A negative expanding bar must not be described as bullish expansion.
 
-### 5.6 Zero axis
+### 5.7 Zero axis
 
 ```text
 ABOVE: DIF > 0 and DEA > 0
@@ -247,7 +339,7 @@ STRADDLING: all other cases, including either value exactly equal to zero
 
 v1 uses strict raw-value comparison and no tolerance for ZeroAxis.
 
-### 5.7 True-cross detection and age
+### 5.8 True-cross detection and age
 
 A true cross occurs only when the ordering changes:
 
@@ -464,6 +556,15 @@ An empty confirmation state is represented as `{NONE}` at the contract boundary 
 
 The confirmation rules are versioned as `confirmation-rules-v1`.
 
+v1 uses the current-bar-only validity model. Confirmation sets describe conditions that the signal generator recomputed and found valid on the current finalized decision bar. They do not persist across bars and carry no implicit lookback age. Every new decision bar rebuilds both sets from source features; copying a prior candidate's confirmations is a contract violation.
+
+This deliberately chooses the simpler confirmation-expiry scheme:
+
+- a confirmation that was true two bars ago but is false now is absent now;
+- candidate and confirmation source time must equal the current decision bar time;
+- quality and MACD policy layers consume the immutable current-bar sets;
+- tests must prove a prior support hold, reversal, VWAP reclaim, resistance rejection, or stall cannot authorize a later candidate after it expires.
+
 ### 10.2 Rule ownership
 
 Signal generation converts source-specific observations into standardized confirmations exactly once. Examples:
@@ -496,6 +597,22 @@ class MACDPolicyConfig:
     trend_buy_block_zero_axis_states: frozenset[MACDZeroAxis] = frozenset(
         {MACDZeroAxis.BELOW, MACDZeroAxis.STRADDLING}
     )
+    mean_reversion_buy_accepted_confirmations: frozenset[EntryConfirmation] = frozenset(
+        {
+            EntryConfirmation.INTRADAY_REVERSAL,
+            EntryConfirmation.CHAN_BUY_POINT,
+            EntryConfirmation.SUPPORT_HOLD,
+            EntryConfirmation.VWAP_RECLAIM,
+        }
+    )
+    mean_reversion_sell_accepted_confirmations: frozenset[ExitConfirmation] = frozenset(
+        {
+            ExitConfirmation.VOLUME_STALLING,
+            ExitConfirmation.RESISTANCE_REJECTION,
+            ExitConfirmation.CHAN_SELL_POINT,
+            ExitConfirmation.TOP_DIVERGENCE,
+        }
+    )
     policy_version: str = "signal-intent-macd-v1"
 ```
 
@@ -506,7 +623,12 @@ Validation rules:
 - `0 <= minimum_executable_trade_pct <= 1` and finite;
 - booleans must be actual booleans;
 - the zero-axis set contains only `MACDZeroAxis` values;
+- the accepted buy set contains only non-`NONE` `EntryConfirmation` values;
+- the accepted sell set contains only non-`NONE` `ExitConfirmation` values;
+- neither accepted set may be empty in the v1 experimental profile;
 - `policy_version` is non-empty.
+
+The accepted sets are explicit experiment configuration, not a hard-coded rule accepting every non-`NONE` confirmation. Their canonical sorted values enter the experiment hash and cache identity. The effective `confirmation_rule_version` is the base rule version plus a short hash of the current-bar rule and both accepted sets, so a set change cannot retain the same effective confirmation version accidentally.
 
 The runtime exposes two named profiles rather than silently changing production behavior:
 
@@ -523,6 +645,19 @@ conflict_gate_enabled=True
 The 15% weight and trend-buy conflict rule are explicit model hypotheses pending ablation and out-of-sample validation. Production runtime remains on the baseline profile until a separate promotion decision is reviewed.
 
 ## 12. Technical-Score Integration
+
+Every component entering `T_score` is normalized to the closed interval `[0, 100]` at the scoring boundary:
+
+```text
+position_quality
+volume_structure
+trend_quality
+intraday_support
+chan_score
+macd_score
+```
+
+Feature modules remain responsible for meaningful domain scaling. The scoring boundary rejects non-finite values and applies the documented 0-to-100 clamp before weighting; it never combines raw ratios, prices, or unbounded oscillator values directly. When every enabled component equals 50, `T_score` equals 50.
 
 When `macd_data_ready=True` and `score_weight > 0`, existing technical-score weights are scaled proportionally by `1 - score_weight`, then MACD receives `score_weight`.
 
@@ -547,6 +682,40 @@ When MACD is not ready:
 - final score, candidate signal, suggested size, order intent, reasons, and warnings remain equal to legacy output.
 
 `score_weight` and `conflict_gate_enabled` are independent, enabling score-only, gate-only, full, and baseline experiments.
+
+### 12.1 Dual-use diagnostics
+
+MACD intentionally participates twice: first through `T_score`, then through SignalIntent policy. Research and backtest diagnostics must separate those effects.
+
+For every evaluation point, research mode records:
+
+```text
+technical_score_without_macd
+technical_score_with_macd
+candidate_without_macd_score
+candidate_with_macd_score
+macd_score_changed_candidate
+macd_policy_changed_candidate
+```
+
+Definitions:
+
+- `technical_score_without_macd` uses the exact legacy weights and non-MACD inputs;
+- `technical_score_with_macd` uses the effective MACD score weight when data is ready;
+- `candidate_without_macd_score` is generated from the legacy technical score with the same point-in-time non-MACD inputs and before MACD policy;
+- `candidate_with_macd_score` is generated from the MACD-weighted score and before MACD policy;
+- `macd_score_changed_candidate` compares those two pre-policy candidates;
+- `macd_policy_changed_candidate` compares the weighted pre-policy candidate with the final post-policy candidate or size.
+
+The research evaluator may run the pure candidate selector twice to obtain these counterfactuals. Production Trace may retain only the two booleans and score pair if storage is constrained, but offline event files retain all six fields.
+
+Reports classify each event into mutually inspectable groups:
+
+- candidate absent because MACD score changed the score threshold;
+- candidate generated but downgraded by MACD policy;
+- candidate generated but resized by MACD policy;
+- candidate affected by both score and policy;
+- candidate unaffected by either layer.
 
 ## 13. Intent-Aware Asymmetric MACD Policy
 
@@ -598,7 +767,7 @@ The policy then checks standardized entry confirmations.
 - If at least one accepted entry confirmation is present, the candidate remains a buy and its original suggested active-trade percentage is multiplied once by `mean_reversion_size_multiplier`.
 - If the strong opposing-momentum condition is absent, MACD does not alter the candidate size; `macd_score` may still influence `T_score`.
 
-The accepted v1 set is all non-`NONE` `EntryConfirmation` values defined in section 10. Changes require a new confirmation-rule version.
+The accepted set is `mean_reversion_buy_accepted_confirmations` from the effective policy config. `SELLING_PRESSURE_EXHAUSTION` is deliberately not sufficient by itself in the v1 default set.
 
 ### 13.4 Mean-reversion sell
 
@@ -617,7 +786,7 @@ The policy then checks standardized exit confirmations.
 - With at least one accepted exit confirmation, the candidate remains a sell and its original suggested active-trade percentage is multiplied once by `mean_reversion_size_multiplier`.
 - A bullish cross in `BELOW` does not block or shrink the mean-reversion sell.
 
-The accepted v1 set is all non-`NONE` `ExitConfirmation` values defined in section 10.
+The accepted set is `mean_reversion_sell_accepted_confirmations` from the effective policy config. `MOMENTUM_EXHAUSTION` is deliberately not sufficient by itself in the v1 default set.
 
 ### 13.5 Risk reduction
 
@@ -739,7 +908,22 @@ macd_policy_version = "signal-intent-macd-v1"
 technical_score_version = "technical-score-macd-v1"
 signal_intent_mapping_version = "signal-intent-map-v1"
 confirmation_rule_version = "confirmation-rules-v1"
+bar_contract_version = "closed-bars-a-share-v1"
+price_adjustment_version = "point-in-time-adjust-v1"
+data_quality_rule_version = "macd-data-quality-v1"
 ```
+
+Each MACD result, API response, snapshot pipeline, backtest signal, and experiment config also records its effective:
+
+```text
+bar_interval
+closed_bars_only
+price_field
+price_adjustment_mode
+histogram_tolerance_mode
+```
+
+If the daily simplified pipeline and 5-minute timing pipeline use different effective configs, snapshot metadata contains separate named entries such as `daily_macd_config` and `timing_5m_macd_config`. They must not be collapsed into one global config.
 
 They also record the effective MACD and policy configuration, not only version names.
 
@@ -774,6 +958,9 @@ macd_policy_version
 technical_score_version
 signal_intent_mapping_version
 confirmation_rule_version
+bar_contract_version
+price_adjustment_version
+data_quality_rule_version
 fast_period
 slow_period
 signal_period
@@ -785,6 +972,13 @@ mean_reversion_size_multiplier
 minimum_executable_trade_pct
 trend_buy_block_bearish_cross
 trend_buy_block_zero_axis_states
+bar_interval
+closed_bars_only
+price_field
+price_adjustment_mode
+histogram_tolerance_mode
+mean_reversion_buy_accepted_confirmations
+mean_reversion_sell_accepted_confirmations
 ```
 
 Serialized sets use sorted values before hashing. Cache keys use canonical JSON or an equivalent deterministic representation.
@@ -842,6 +1036,7 @@ bars -> Cosco feature engines + MACD
 ### New production modules
 
 - `src/market_regime_alpha/dividend_t/macd.py`: data contract, config validation, EMA/MACD calculation, warm-up, true-cross scanner, score diagnostics.
+- `src/market_regime_alpha/dividend_t/macd_bars.py`: finalized-bar filtering, interval/session validation, expected-gap diagnostics, and point-in-time price adjustment before MACD.
 - `src/market_regime_alpha/dividend_t/signal_intent.py`: `SignalIntent`, setup codes, mapping version, confirmations, candidate contract, policy config, Decision Trace, intent-aware policy.
 
 ### Existing production modules
@@ -893,6 +1088,22 @@ bars -> Cosco feature engines + MACD
 - repeat execution yields identical states and scores;
 - display rounding does not change internal score, cross, zero axis, or policy;
 - all-history invalid-close cases: `None`, NaN, infinities, zero, negative, and non-numeric.
+- `1d` and `5m` with identical numeric parameters remain different result identities and cache keys;
+- an unfinished bar is excluded from formal calculation and may appear only in a provisional preview;
+- formal signal timestamp is not earlier than the newest input bar close;
+- the next-bar execution path cannot use a same-bar pre-close price;
+- point-in-time adjustment removes an ex-right/distribution discontinuity without using a future event;
+- missing adjustment data returns `PRICE_ADJUSTMENT_UNAVAILABLE`.
+
+### 20.2.1 Calendar and data quality
+
+- holidays and verified suspensions do not create gaps or synthetic bars;
+- lunch and overnight intervals produce no bars;
+- a missing expected 5-minute bar returns `EXPECTED_BAR_MISSING`;
+- missing bars are never forward-filled;
+- the first bar ends at 09:35 and the final bar becomes eligible at 15:00;
+- opening call-auction data is excluded in v1;
+- EMA advances over actual finalized bars only.
 
 ### 20.3 Explicit 33/34/35 fixtures
 
@@ -929,6 +1140,11 @@ bars -> Cosco feature engines + MACD
 - final range 0 to 100;
 - weight normalization for arbitrary allowed `score_weight`;
 - unavailable MACD restores legacy weights exactly.
+- every T-score component is finite and normalized to `[0, 100]` before weighting;
+- all enabled components at 50 produce `T_score == 50`;
+- one component at either boundary cannot move the final score outside `[0, 100]`;
+- `score_weight=0` is digit-for-digit equal to the legacy score;
+- score-only and policy-only candidate diagnostics are independently observable.
 
 ### 20.7 Legacy regression
 
@@ -957,6 +1173,10 @@ With unavailable MACD or the baseline runtime profile, compare the old and new p
 - near-support alone does not produce `SUPPORT_HOLD`;
 - serialized confirmations are deterministic sorted lists;
 - MACD policy responds to enum sets and is unaffected by reason wording changes.
+- only the policy-configured accepted entry and exit sets authorize resizing;
+- changing either accepted set changes effective confirmation version, experiment hash, and cache key;
+- a confirmation valid on a prior bar but absent on the current finalized bar cannot authorize the current candidate;
+- copying a prior candidate's confirmation set is rejected in strict mode.
 
 ### 20.10 Intent-aware policy
 
@@ -990,9 +1210,18 @@ With unavailable MACD or the baseline runtime profile, compare the old and new p
 - API and snapshot contain effective config and all versions;
 - snapshot schema is 2 and existing fields remain available;
 - any config or mapping-version change changes the cache key;
+- interval, closed-bar flag, price field, adjustment mode, tolerance mode, and both accepted confirmation sets change the cache key;
 - set serialization order does not change the cache key;
 - old cache schema is rejected cleanly;
 - Pages can read schema 2 while ignoring additive fields.
+
+### 20.13 Dual-use diagnostic tests
+
+- score-only MACD can change a pre-policy candidate while policy remains disabled;
+- policy-only MACD can change a candidate or size while the legacy score remains exact;
+- full MACD records when both layers affect one event;
+- research output distinguishes score-suppressed, policy-blocked, policy-resized, both-layer, and unaffected candidates;
+- production baseline records neither a score nor policy behavior change.
 
 ## 21. Four-Arm Ablation and Out-of-Sample Validation
 
@@ -1086,6 +1315,31 @@ Zero-PnL blocked counterfactuals remain in the denominator of effective/wrong bl
 
 All monetary metrics use net-of-cost counterfactual results. A higher win rate alone is insufficient evidence if it is achieved by materially reducing coverage.
 
+### 21.4 Reproducible final-test artifacts
+
+Every final out-of-sample run records:
+
+```text
+git_commit
+dataset_version
+experiment_config_hash
+train_range
+validation_range
+test_range
+cache_schema_version
+run_timestamp
+```
+
+`dataset_version` is a content-addressed manifest hash over input files, corporate-action data, trading-calendar/suspension data, symbol universe, and relevant source metadata. `experiment_config_hash` is a canonical hash over all indicator, interval, price-basis, confirmation, policy, score, execution, and version fields.
+
+Final-test artifacts are written to an immutable directory:
+
+```text
+reports/backtests/macd/final/<run_timestamp>-<experiment_config_hash>-<git_short_sha>/
+```
+
+Creation must fail if the directory already exists. Files are never overwritten in place. The directory contains the manifest, effective config, metrics, per-intent tables, counterfactual ledger, and human-readable report. The final-test command requires an explicit final-test flag and records that the test split is sealed; results from that directory are reporting-only and cannot be used by the same experiment run to alter parameters.
+
 ## 22. Staged Implementation, Tests, and Rollback Points
 
 ### Stage 1: Shared MACD calculation only
@@ -1093,7 +1347,9 @@ All monetary metrics use net-of-cost counterfactual results. A higher win rate a
 Changes:
 
 - add `macd.py`;
+- add `macd_bars.py` with explicit `1d`/`5m`, finalized-bar, session/gap, and point-in-time adjustment contracts;
 - add golden, recursive-equivalence, invalid-input, 33/34/35, histogram, zero-axis, and cross-age tests;
+- add no-same-bar-lookahead, provisional-preview exclusion, calendar-gap, and ex-right continuity tests;
 - optionally route Chan's low-level calculation through the shared primitive only if Chan golden results remain identical.
 
 Behavior:
@@ -1109,6 +1365,7 @@ Rollback point:
 Changes:
 
 - add flat neutral MACD fields, enums, consistency validation, metadata, and snapshot schema support;
+- record separate effective daily and 5-minute MACD configs, including price and interval contracts;
 - add internal score diagnostics;
 - keep runtime on baseline profile.
 
@@ -1142,6 +1399,7 @@ Rollback point:
 Changes:
 
 - implement normalized MACD score weight;
+- enforce `[0, 100]` scale at the scoring boundary and add score-vs-policy dual-use diagnostics;
 - baseline runtime remains weight 0;
 - expose score-only experiment profile.
 
@@ -1177,6 +1435,7 @@ Changes:
 - expand canonical cache identity;
 - invalidate old cache schema;
 - add counterfactual ledger and stratified metrics;
+- add content-addressed dataset manifests and canonical experiment config hashes;
 - add named CLI/config experiment profiles.
 
 Tests:
@@ -1193,6 +1452,7 @@ Changes:
 
 - run the four arms on fixed train/validation/final-test splits;
 - produce intent-stratified and counterfactual reports;
+- write the final test once to an immutable hash-named artifact directory with complete reproducibility metadata;
 - do not change model parameters after final-test inspection.
 
 Promotion rule:
