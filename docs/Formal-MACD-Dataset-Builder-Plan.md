@@ -74,3 +74,16 @@ dataset manifest 至少记录所有原始/派生文件 hash、数据源、symbol
 当前仓库尚无能够同时提供可信 finalized 5m、PIT adjustment、PIT universe、交易资格和
 sidecar 的正式适配数据。因此**不具备真实 train/validation/rehearsal 建设条件**；现有
 fixture rehearsal 只验证执行与归因管道，不能作为买卖点或 MACD 有效性证据。
+
+## Task 11A.10 MVP（research-only）
+
+`formal_dataset_builder.py` 实现了一个故意收紧的 `REHEARSAL` Builder：只接受 5–10 个标的、
+3–6 个自然月、`POINT_IN_TIME_ADJUSTED`、完整 `bar_final`、`vwap`、日历 session-close、
+PIT universe、交易资格和市场/行业 sidecar 的输入。它产出内容寻址 Manifest 与不可覆盖的
+`manifest.json/quality.json/REHEARSAL_ONLY` artifact；它不支持 sealed-test 选择，也不会拉取、
+猜测或修复源数据。
+
+受控 fixture 已验证所有 adapter 输入、sidecar coverage、质量 gate 与 artifact 不覆盖。现有
+`data/raw` CSV/Parquet 会因缺少 `bar_final`（以及后续 PIT/sidecar）明确被拒绝，故 MVP 证明
+的是构建器和门禁，不是正式市场数据可用性。真实 train/validation/rehearsal 仍依赖
+`Formal-Data-Source-Capability-Audit.md` 中列明的外部数据前置项。
