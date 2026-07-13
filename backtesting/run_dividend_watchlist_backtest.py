@@ -44,6 +44,10 @@ from market_regime_alpha.dividend_t.market_environment import (  # noqa: E402
     build_market_environment_filter,
 )
 from market_regime_alpha.dividend_t.storage import load_watchlist  # noqa: E402
+from market_regime_alpha.dividend_t.signal_intent import (  # noqa: E402
+    MACD_PROFILE_NAMES,
+    macd_policy_config_for_profile,
+)
 from market_regime_alpha.dividend_t.strategy_modes import STRATEGY_MODES, apply_strategy_mode  # noqa: E402
 
 
@@ -139,6 +143,12 @@ def main() -> int:
     parser.add_argument("--signal-cache-dir", type=Path, default=DEFAULT_SIGNAL_CACHE_DIR, help="Directory for reusable timing signal cache.")
     parser.add_argument("--signal-cache-save-every", type=int, default=200, help="Persist signal cache after this many new signals.")
     parser.add_argument("--no-signal-cache", action="store_true", help="Disable reusable timing signal cache.")
+    parser.add_argument(
+        "--macd-profile",
+        choices=MACD_PROFILE_NAMES,
+        default="baseline",
+        help="MACD research profile; production default remains baseline.",
+    )
     parser.add_argument("--no-industry-params", action="store_true", help="Disable industry-specific profile and position parameters.")
     parser.add_argument("--fundamental-source", choices=["auto", "tushare", "profile"], default="auto", help="Fundamental F source for industry profiles.")
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
@@ -209,6 +219,7 @@ def main() -> int:
         worker_mode=args.worker_mode,
         use_industry_params=not args.no_industry_params,
         fundamental_source=args.fundamental_source,
+        macd_profile=args.macd_profile,
     )
     report = _format_batch_report(
         rows,
@@ -250,6 +261,7 @@ def _run_batch(
     worker_mode: str,
     use_industry_params: bool,
     fundamental_source: str,
+    macd_profile: str,
 ) -> list[BatchRow]:
     if workers <= 1:
         return [
@@ -263,6 +275,7 @@ def _run_batch(
                 timeout_seconds=timeout_seconds,
                 use_industry_params=use_industry_params,
                 fundamental_source=fundamental_source,
+                macd_profile=macd_profile,
             )
             for item in items
         ]
@@ -280,6 +293,7 @@ def _run_batch(
             timeout_seconds=timeout_seconds,
             use_industry_params=use_industry_params,
             fundamental_source=fundamental_source,
+            macd_profile=macd_profile,
         ): item
         for item in items
     }
@@ -374,6 +388,7 @@ def _run_one(
     timeout_seconds: float,
     use_industry_params: bool,
     fundamental_source: str,
+    macd_profile: str,
 ) -> BatchRow:
     try:
         bars, data_source = _load_bars(item.symbol, data_dir=data_dir, provider=provider, days=days, timeout_seconds=timeout_seconds)
@@ -382,7 +397,16 @@ def _run_one(
         profile = profile_for_watchlist_item(item)
         resolver = build_fundamental_resolver(profile, source=fundamental_source) if use_industry_params else None
         effective_config = _config_for_profile(config, profile=profile, fundamental_source=fundamental_source) if use_industry_params else config
-        engine = CoscoTimingEngine(profile=profile, fundamental_resolver=resolver) if use_industry_params else None
+        effective_config = replace(
+            effective_config,
+            signal_cache_tag=f"{effective_config.signal_cache_tag}-{macd_profile}",
+        )
+        policy_config = macd_policy_config_for_profile(macd_profile)
+        engine = CoscoTimingEngine(
+            profile=profile if use_industry_params else None,
+            fundamental_resolver=resolver,
+            macd_policy_config=policy_config,
+        )
         result = run_cosco_dividend_t_backtest(bars, config=effective_config, engine=engine, market_filter=market_filter)
         gate_count = sum(result.gate_counts.values())
         return BatchRow(

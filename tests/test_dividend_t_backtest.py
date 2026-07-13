@@ -30,6 +30,7 @@ from market_regime_alpha.dividend_t.backtest import (  # noqa: E402
     format_cosco_backtest_report,
     run_cosco_dividend_t_backtest,
     _apply_market_environment_filter,
+    _apply_backtest_macd_sizing,
     _apply_risk_on_continuation_add,
     _beta_hold_blocks_soft_exit,
     _buy_t_failure_cooldown_blocks_signal,
@@ -50,6 +51,7 @@ from market_regime_alpha.dividend_t.backtest import (  # noqa: E402
     _sell_point_continuation_hold_signal,
     _signal_target_position_pct,
     _volume_price_distribution_state,
+    validate_execution_after_signal,
 )
 from market_regime_alpha.dividend_t.market_environment import (  # noqa: E402
     MARKET_NEUTRAL,
@@ -60,9 +62,138 @@ from market_regime_alpha.dividend_t.market_environment import (  # noqa: E402
     build_market_environment_filter,
 )
 from market_regime_alpha.dividend_t.position_sizing import PositionBudget  # noqa: E402
+from market_regime_alpha.dividend_t.signal_intent import CandidateContractError  # noqa: E402
 
 
 class DividendTBacktestTests(unittest.TestCase):
+    def test_backtest_is_the_single_macd_sizing_owner(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="BUY_T_TIMING"),
+            candidate_signal="BUY_T",
+            candidate_setup_code="pullback_low_buy",
+            primary_setup_code="pullback_low_buy",
+            signal_intent="MEAN_REVERSION_T",
+            entry_confirmations=("SUPPORT_HOLD",),
+            risk_enforcement="NONE",
+            macd_sizing_multiplier=0.5,
+            sizing_adjustment_source="MACD_MEAN_REVERSION",
+        )
+
+        sized = _apply_backtest_macd_sizing(signal, original_trade_pct=0.20, minimum_trade_pct=0.01)
+
+        self.assertEqual(sized.adjusted_suggested_trade_pct, 0.10)
+        self.assertTrue(sized.trace.macd_sizing_applied)
+        self.assertEqual(sized.trace.macd_sizing_owner, "dividend_t_backtest_execution")
+        self.assertEqual(sized.trace.original_suggested_trade_pct, 0.20)
+        self.assertEqual(sized.trace.adjusted_suggested_trade_pct, 0.10)
+
+    def test_backtest_rejects_duplicate_macd_sizing(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="BUY_T_TIMING"),
+            candidate_signal="BUY_T",
+            candidate_setup_code="pullback_low_buy",
+            primary_setup_code="pullback_low_buy",
+            signal_intent="MEAN_REVERSION_T",
+            entry_confirmations=("SUPPORT_HOLD",),
+            risk_enforcement="NONE",
+            macd_sizing_multiplier=0.5,
+            macd_sizing_applied=True,
+            macd_sizing_owner="unexpected_prior_owner",
+        )
+
+        with self.assertRaisesRegex(CandidateContractError, "DUPLICATE_SIZING_ADJUSTMENT"):
+            _apply_backtest_macd_sizing(signal, original_trade_pct=0.20, minimum_trade_pct=0.01)
+
+    def test_hard_risk_reduction_never_consumes_macd_multiplier(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="STOP_T_WAIT"),
+            candidate_signal="STOP_T",
+            candidate_setup_code="stop_t",
+            primary_setup_code="stop_t",
+            signal_intent="RISK_REDUCTION",
+            risk_enforcement="HARD",
+            macd_sizing_multiplier=0.0,
+        )
+
+        sized = _apply_backtest_macd_sizing(signal, original_trade_pct=0.20, minimum_trade_pct=0.01)
+
+        self.assertEqual(sized.final_signal.value, "STOP_T")
+        self.assertEqual(sized.adjusted_suggested_trade_pct, 0.20)
+        self.assertFalse(sized.trace.macd_sizing_applied)
+        self.assertIsNone(sized.trace.macd_sizing_owner)
+
+    def test_zero_macd_size_becomes_hold_before_order(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="BUY_T_TIMING"),
+            candidate_signal="BUY_T",
+            candidate_setup_code="pullback_low_buy",
+            primary_setup_code="pullback_low_buy",
+            signal_intent="MEAN_REVERSION_T",
+            entry_confirmations=("SUPPORT_HOLD",),
+            risk_enforcement="NONE",
+            macd_sizing_multiplier=0.0,
+            sizing_adjustment_source="MACD_MEAN_REVERSION",
+        )
+
+        sized = _apply_backtest_macd_sizing(signal, original_trade_pct=0.20, minimum_trade_pct=0.0)
+
+        self.assertEqual(sized.final_signal.value, "HOLD")
+        self.assertEqual(sized.adjusted_suggested_trade_pct, 0.0)
+        self.assertEqual(sized.trace.downgrade_source, "MACD_SIZING_TO_ZERO")
+
+    def test_execution_persists_single_macd_sizing_application(self) -> None:
+        signal = replace(
+            _risk_on_confirmed_signal(action="BUY_T_TIMING"),
+            candidate_signal="BUY_T",
+            candidate_setup_code="pullback_low_buy",
+            primary_setup_code="pullback_low_buy",
+            signal_intent="MEAN_REVERSION_T",
+            entry_confirmations=("SUPPORT_HOLD",),
+            risk_enforcement="NONE",
+            macd_sizing_multiplier=0.5,
+            sizing_adjustment_source="MACD_MEAN_REVERSION",
+        )
+        config = DividendTBacktestConfig(
+            initial_base_position_pct=0.10,
+            min_t_trade_pct=0.01,
+            enable_a_share_constraints=False,
+        )
+
+        state = _execute_action(
+            action="BUY_T_TIMING",
+            execution={"timestamp": "2026-07-13 10:10:00", "open": 10.0, "close": 10.0, "low": 9.9},
+            signal=signal,
+            equity_before=100_000.0,
+            cash=90_000.0,
+            base_shares=1_000,
+            base_locked_shares=0,
+            t_shares=0,
+            t_locked_shares=0,
+            t_cost_basis=0.0,
+            breakout_t_shares=0,
+            breakout_t_locked_shares=0,
+            breakout_t_cost_basis=0.0,
+            pending_buyback_shares=0,
+            pending_reverse_proceeds=0.0,
+            pending_buyback_target_price=None,
+            attack_state=ATTACK_INACTIVE,
+            active_peak_profit_pct=0.0,
+            constraints=TradeExecutionConstraints(),
+            config=config,
+        )
+
+        trade = state["trade"]
+        self.assertIsNotNone(trade)
+        self.assertTrue(trade.macd_sizing_applied)
+        self.assertEqual(trade.macd_sizing_owner, "dividend_t_backtest_execution")
+        self.assertEqual(trade.macd_sizing_multiplier, 0.5)
+        self.assertAlmostEqual(trade.adjusted_suggested_trade_pct, trade.original_suggested_trade_pct * 0.5)
+
+    def test_execution_timestamp_must_be_after_signal_bar_close(self) -> None:
+        validate_execution_after_signal("2026-07-13 10:05:00", "2026-07-13 10:10:00")
+        with self.assertRaisesRegex(ValueError, "EXECUTION_NOT_AFTER_SIGNAL_BAR"):
+            validate_execution_after_signal("2026-07-13 10:05:00", "2026-07-13 10:05:00")
+
     def test_backtest_signal_copies_candidate_identity_without_reclassification(self) -> None:
         snapshot = SimpleNamespace(
             timestamp="2026-07-13 10:05:00",

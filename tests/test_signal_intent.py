@@ -5,7 +5,14 @@ from dataclasses import replace
 import pytest
 
 from market_regime_alpha.dividend_t.models import PositionState, RetreatInputs, ScoreBreakdown, Signal, TechnicalInputs, TrendState
-from market_regime_alpha.dividend_t.macd import MACDCross, MACDHistogramTrend, MACDZeroAxis
+from market_regime_alpha.dividend_t.macd import (
+    BarInterval,
+    MACDConfig,
+    MACDCross,
+    MACDHistogramTrend,
+    MACDZeroAxis,
+    calculate_macd,
+)
 from market_regime_alpha.dividend_t.signal_intent import (
     SETUP_INTENT_MAP,
     CandidateContractError,
@@ -22,6 +29,7 @@ from market_regime_alpha.dividend_t.signal_intent import (
     candidate_for,
     intent_for_setup,
     no_candidate,
+    macd_policy_config_for_profile,
     validate_candidate,
 )
 from market_regime_alpha.dividend_t.strategy import select_simplified_candidate
@@ -60,6 +68,30 @@ def test_primary_setup_uniquely_maps_to_intent() -> None:
     assert intent_for_setup(PrimarySetupCode.THIRD_BUY_FOLLOW) is SignalIntent.TREND_FOLLOWING
     assert intent_for_setup(PrimarySetupCode.STRUCTURE_BREAK) is SignalIntent.RISK_REDUCTION
     assert intent_for_setup(PrimarySetupCode.BUILD_BASE) is SignalIntent.BASE_ACCUMULATION
+
+
+def test_macd_profiles_keep_production_baseline_disabled() -> None:
+    baseline = macd_policy_config_for_profile("baseline")
+    score_only = macd_policy_config_for_profile("score-only")
+    policy_only = macd_policy_config_for_profile("policy-only")
+    full = macd_policy_config_for_profile("full")
+
+    assert baseline.score_weight == 0.0 and baseline.conflict_gate_enabled is False
+    assert score_only.score_weight > 0.0 and score_only.conflict_gate_enabled is False
+    assert policy_only.score_weight == 0.0 and policy_only.conflict_gate_enabled is True
+    assert full.score_weight > 0.0 and full.conflict_gate_enabled is True
+
+
+def test_policy_state_accepts_only_formal_matching_interval_result() -> None:
+    closes = [10.0 + index * 0.1 for index in range(40)]
+    ready_5m = calculate_macd(closes, MACDConfig(bar_interval=BarInterval.MINUTE_5))
+    ready_1d = calculate_macd(closes, MACDConfig(bar_interval=BarInterval.DAY_1))
+
+    assert MACDPolicyState.from_result(ready_5m, expected_interval=BarInterval.MINUTE_5).data_ready
+    with pytest.raises(CandidateContractError, match="PROVISIONAL_MACD_NOT_ALLOWED"):
+        MACDPolicyState.from_result(replace(ready_5m, provisional=True), expected_interval=BarInterval.MINUTE_5)
+    with pytest.raises(CandidateContractError, match="MACD_INTERVAL_MISMATCH"):
+        MACDPolicyState.from_result(ready_1d, expected_interval=BarInterval.MINUTE_5)
 
 
 def test_every_primary_setup_has_one_non_none_intent() -> None:

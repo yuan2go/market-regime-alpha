@@ -24,6 +24,8 @@ from market_regime_alpha.dividend_t.backtest import (
     load_5min_bars_csv,
     run_cosco_dividend_t_backtest,
 )
+from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine
+from market_regime_alpha.dividend_t.signal_intent import MACD_PROFILE_NAMES, macd_policy_config_for_profile
 
 
 DEFAULT_REPORT_PATH = PROJECT_ROOT / "reports" / "backtests" / "cosco_dividend_t_backtest.md"
@@ -66,6 +68,12 @@ def main() -> int:
     parser.add_argument("--signal-cache-tag", default="profile")
     parser.add_argument("--signal-cache-save-every", type=int, default=200)
     parser.add_argument("--no-signal-cache", action="store_true")
+    parser.add_argument(
+        "--macd-profile",
+        choices=MACD_PROFILE_NAMES,
+        default="baseline",
+        help="MACD research profile; production default remains baseline.",
+    )
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT_PATH)
     args = parser.parse_args()
 
@@ -108,10 +116,14 @@ def main() -> int:
         trend_follow_min_hold_bars=args.trend_follow_min_hold_bars,
         confirmed_flow_position_bonus_pct=args.confirmed_flow_position_bonus_pct,
         signal_cache_dir=None if args.no_signal_cache else args.signal_cache_dir,
-        signal_cache_tag=args.signal_cache_tag,
+        signal_cache_tag=f"{args.signal_cache_tag}-{args.macd_profile}",
         signal_cache_save_every=args.signal_cache_save_every,
     )
-    result = run_cosco_dividend_t_backtest(bars, config=config)
+    result = run_cosco_dividend_t_backtest(
+        bars,
+        config=config,
+        engine=CoscoTimingEngine(macd_policy_config=macd_policy_config_for_profile(args.macd_profile)),
+    )
     report = format_cosco_backtest_report(result)
     report += f"\n## 数据来源\n\n- {data_note}\n"
     args.report.parent.mkdir(parents=True, exist_ok=True)

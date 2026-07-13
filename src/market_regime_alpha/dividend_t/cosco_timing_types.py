@@ -17,6 +17,10 @@ from market_regime_alpha.dividend_t.signal_intent import (
     PrimarySetupCode,
     RiskEnforcement,
     SignalIntent,
+    MACDPolicyConfig,
+    MACDPolicyState,
+    PolicyDecision,
+    apply_macd_policy,
     intent_for_setup,
     validate_candidate,
 )
@@ -261,6 +265,23 @@ def candidate_trace_fields(candidate: ManualCandidateDecision) -> CandidateTrace
     }
 
 
+def apply_timing_macd_policy(
+    candidate: ManualCandidateDecision,
+    *,
+    quality_filtered_action: str,
+    macd: MACDPolicyState,
+    config: MACDPolicyConfig,
+) -> tuple[str, PolicyDecision | None]:
+    """Apply shared policy after quality without owning position sizing."""
+
+    if quality_filtered_action != candidate.action:
+        return quality_filtered_action, None
+    decision = apply_macd_policy(policy_candidate_from_manual(candidate), macd, config)
+    if decision.final_signal is Signal.HOLD and candidate.candidate_signal not in {None, Signal.HOLD}:
+        return "WAIT_MACD_POLICY", decision
+    return quality_filtered_action, decision
+
+
 @dataclass(frozen=True)
 class TimingDecisionTrace:
     candidate_signal: str | None = None
@@ -286,7 +307,9 @@ class TimingDecisionTrace:
     adjusted_suggested_trade_pct: float | None = None
     sizing_adjustment_source: str | None = None
     macd_sizing_applied: bool = False
+    macd_sizing_owner: str | None = None
     macd_policy_applied: bool = False
+    macd_policy_changed_candidate: bool = False
     macd_contract_version: str = MACD_CONTRACT_VERSION
     macd_algorithm_version: str = MACD_ALGORITHM_VERSION
     macd_policy_version: str = MACD_POLICY_VERSION

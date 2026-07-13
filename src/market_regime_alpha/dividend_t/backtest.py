@@ -27,12 +27,22 @@ from market_regime_alpha.dividend_t.market_environment import (
 )
 from market_regime_alpha.dividend_t.bar_store import load_raw_5min_bars_csv, load_raw_5min_bars_path
 from market_regime_alpha.dividend_t.position_sizing import MAX_BASE_POSITION_PCT, MIN_BASE_POSITION_PCT, PositionBudget
+from market_regime_alpha.dividend_t.models import Signal
+from market_regime_alpha.dividend_t.signal_intent import (
+    CandidateContractError,
+    DecisionTrace,
+    PolicyDecision,
+    RiskEnforcement,
+    SignalIntent,
+    SizingDecision,
+    apply_macd_sizing_once,
+)
 from market_regime_alpha.dividend_t.strategy_modes import apply_strategy_mode
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SIGNAL_CACHE_DIR = PROJECT_ROOT / "data" / "processed" / "dividend_t_signal_cache"
-SIGNAL_CACHE_VERSION = "v31_structured_candidate"
+SIGNAL_CACHE_VERSION = "v32_macd_policy_trace"
 DEFAULT_SIGNAL_HISTORY_BARS = 48 * 20
 ATTACK_INACTIVE = "INACTIVE"
 ATTACK_WATCH = "WATCH"
@@ -307,6 +317,12 @@ class DividendTTrade:
     reason: str
     realized_pnl: float | None = None
     execution_setup_code: str | None = None
+    risk_enforcement: str = RiskEnforcement.NONE.value
+    original_suggested_trade_pct: float | None = None
+    macd_sizing_multiplier: float = 1.0
+    adjusted_suggested_trade_pct: float | None = None
+    macd_sizing_applied: bool = False
+    macd_sizing_owner: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -473,6 +489,7 @@ class BacktestSignal:
     candidate_setup_code: str | None = None
     primary_setup_code: str | None = None
     signal_intent: str = "NONE"
+    risk_enforcement: str = RiskEnforcement.NONE.value
     entry_confirmations: tuple[str, ...] = ("NONE",)
     exit_confirmations: tuple[str, ...] = ("NONE",)
     raw_candidate_action: str = "WAIT"
@@ -480,6 +497,16 @@ class BacktestSignal:
     macd_filtered_action: str = "WAIT"
     freshness_filtered_action: str = "WAIT"
     final_action: str = "WAIT"
+    signal_downgraded: bool = False
+    downgrade_source: str | None = None
+    downgrade_reason: str | None = None
+    original_suggested_trade_pct: float | None = None
+    macd_sizing_multiplier: float = 1.0
+    adjusted_suggested_trade_pct: float | None = None
+    sizing_adjustment_source: str | None = None
+    macd_sizing_applied: bool = False
+    macd_sizing_owner: str | None = None
+    macd_policy_applied: bool = False
     technical_score_without_macd: float = 50.0
     technical_score_with_macd: float = 50.0
     candidate_without_macd_score: str | None = None
@@ -594,6 +621,7 @@ class BacktestSignal:
             candidate_setup_code=getattr(decision_trace, "candidate_setup_code", None),
             primary_setup_code=getattr(decision_trace, "primary_setup_code", None),
             signal_intent=str(getattr(decision_trace, "candidate_signal_intent", "NONE")),
+            risk_enforcement=str(getattr(decision_trace, "risk_enforcement", RiskEnforcement.NONE.value)),
             entry_confirmations=tuple(getattr(decision_trace, "entry_confirmations", ("NONE",))),
             exit_confirmations=tuple(getattr(decision_trace, "exit_confirmations", ("NONE",))),
             raw_candidate_action=str(getattr(decision_trace, "raw_candidate_action", snapshot.action)),
@@ -601,12 +629,28 @@ class BacktestSignal:
             macd_filtered_action=str(getattr(decision_trace, "macd_filtered_action", snapshot.action)),
             freshness_filtered_action=str(getattr(decision_trace, "freshness_filtered_action", snapshot.action)),
             final_action=str(getattr(decision_trace, "final_action", snapshot.action)),
+            signal_downgraded=bool(getattr(decision_trace, "signal_downgraded", False)),
+            downgrade_source=_optional_text(getattr(decision_trace, "downgrade_source", None)),
+            downgrade_reason=_optional_text(getattr(decision_trace, "downgrade_reason", None)),
+            original_suggested_trade_pct=_optional_float(getattr(decision_trace, "original_suggested_trade_pct", None)),
+            macd_sizing_multiplier=float(getattr(decision_trace, "macd_sizing_multiplier", 1.0)),
+            adjusted_suggested_trade_pct=_optional_float(getattr(decision_trace, "adjusted_suggested_trade_pct", None)),
+            sizing_adjustment_source=_optional_text(getattr(decision_trace, "sizing_adjustment_source", None)),
+            macd_sizing_applied=bool(getattr(decision_trace, "macd_sizing_applied", False)),
+            macd_sizing_owner=_optional_text(getattr(decision_trace, "macd_sizing_owner", None)),
+            macd_policy_applied=bool(getattr(decision_trace, "macd_policy_applied", False)),
             technical_score_without_macd=float(getattr(macd_diagnostics, "technical_score_without_macd", 50.0)),
             technical_score_with_macd=float(getattr(macd_diagnostics, "technical_score_with_macd", 50.0)),
             candidate_without_macd_score=_candidate_signal_value(getattr(macd_diagnostics, "candidate_without_macd_score", None)),
             candidate_with_macd_score=_candidate_signal_value(getattr(macd_diagnostics, "candidate_with_macd_score", None)),
             macd_score_changed_candidate=bool(getattr(macd_diagnostics, "macd_score_changed_candidate", False)),
-            macd_policy_changed_candidate=bool(getattr(macd_diagnostics, "macd_policy_changed_candidate", False)),
+            macd_policy_changed_candidate=bool(
+                getattr(
+                    macd_diagnostics,
+                    "macd_policy_changed_candidate",
+                    getattr(decision_trace, "macd_policy_changed_candidate", False),
+                )
+            ),
             buy_point_subtype=str(getattr(snapshot, "buy_point_subtype", "none")),
             breakout_score=float(getattr(breakout_setup, "score", 0.0)),
             breakout_state=str(getattr(breakout_setup, "state", "NONE")),
@@ -750,6 +794,7 @@ class BacktestSignalCache:
                 candidate_setup_code=_optional_text(row.get("candidate_setup_code")),
                 primary_setup_code=_optional_text(row.get("primary_setup_code")),
                 signal_intent=str(row.get("signal_intent", "NONE")),
+                risk_enforcement=str(row.get("risk_enforcement", RiskEnforcement.NONE.value)),
                 entry_confirmations=_cached_string_tuple(row.get("entry_confirmations"), default=("NONE",)),
                 exit_confirmations=_cached_string_tuple(row.get("exit_confirmations"), default=("NONE",)),
                 raw_candidate_action=str(row.get("raw_candidate_action", row["action"])),
@@ -757,6 +802,16 @@ class BacktestSignalCache:
                 macd_filtered_action=str(row.get("macd_filtered_action", row["action"])),
                 freshness_filtered_action=str(row.get("freshness_filtered_action", row["action"])),
                 final_action=str(row.get("final_action", row["action"])),
+                signal_downgraded=_optional_bool(row.get("signal_downgraded")),
+                downgrade_source=_optional_text(row.get("downgrade_source")),
+                downgrade_reason=_optional_text(row.get("downgrade_reason")),
+                original_suggested_trade_pct=_optional_float(row.get("original_suggested_trade_pct")),
+                macd_sizing_multiplier=float(row.get("macd_sizing_multiplier", 1.0)),
+                adjusted_suggested_trade_pct=_optional_float(row.get("adjusted_suggested_trade_pct")),
+                sizing_adjustment_source=_optional_text(row.get("sizing_adjustment_source")),
+                macd_sizing_applied=_optional_bool(row.get("macd_sizing_applied")),
+                macd_sizing_owner=_optional_text(row.get("macd_sizing_owner")),
+                macd_policy_applied=_optional_bool(row.get("macd_policy_applied")),
                 technical_score_without_macd=float(row.get("technical_score_without_macd", 50.0)),
                 technical_score_with_macd=float(row.get("technical_score_with_macd", 50.0)),
                 candidate_without_macd_score=_optional_text(row.get("candidate_without_macd_score")),
@@ -1425,6 +1480,7 @@ def run_cosco_dividend_t_backtest(
             attack_counts[attack_state] = attack_counts.get(attack_state, 0) + 1
             strategy_mode_counts[point_strategy_mode] = strategy_mode_counts.get(point_strategy_mode, 0) + 1
             execution = data.iloc[index]
+            validate_execution_after_signal(signal.timestamp, execution["timestamp"])
             constraints = _trade_execution_constraints(
                 execution,
                 symbol=symbol,
@@ -2664,6 +2720,88 @@ def _t_mode_scaled_sell_fraction(sell_fraction: float, config: DividendTBacktest
     return sell_fraction
 
 
+def _apply_backtest_macd_sizing(
+    signal: BacktestSignal,
+    *,
+    original_trade_pct: float,
+    minimum_trade_pct: float,
+) -> SizingDecision:
+    """Apply the MACD multiplier once at the position-aware execution boundary."""
+
+    try:
+        candidate_signal = Signal(signal.candidate_signal) if signal.candidate_signal is not None else _signal_for_action(signal.action)
+        intent = SignalIntent(signal.signal_intent)
+        risk_enforcement = RiskEnforcement(signal.risk_enforcement)
+    except ValueError as exc:
+        raise CandidateContractError(f"INVALID_BACKTEST_SIGNAL_CONTRACT: {exc}") from exc
+    multiplier = float(signal.macd_sizing_multiplier)
+    if not math.isfinite(multiplier) or not 0.0 <= multiplier <= 1.0:
+        raise CandidateContractError("INVALID_MACD_SIZING_MULTIPLIER")
+    trace = DecisionTrace(
+        candidate_signal=candidate_signal,
+        candidate_signal_intent=intent,
+        candidate_setup_code=signal.candidate_setup_code,
+        primary_setup_code=signal.primary_setup_code,
+        entry_confirmations=signal.entry_confirmations,
+        exit_confirmations=signal.exit_confirmations,
+        candidate_reasons=(),
+        final_signal=candidate_signal,
+        risk_enforcement=risk_enforcement,
+        macd_policy_applied=signal.macd_policy_applied,
+        signal_downgraded=signal.signal_downgraded,
+        downgrade_source=signal.downgrade_source,
+        downgrade_reason=signal.downgrade_reason,
+        original_suggested_trade_pct=signal.original_suggested_trade_pct,
+        macd_sizing_multiplier=multiplier,
+        adjusted_suggested_trade_pct=signal.adjusted_suggested_trade_pct,
+        sizing_adjustment_source=signal.sizing_adjustment_source,
+        macd_sizing_applied=signal.macd_sizing_applied,
+        macd_sizing_owner=signal.macd_sizing_owner,
+    )
+    if risk_enforcement is RiskEnforcement.HARD or intent in {
+        SignalIntent.RISK_REDUCTION,
+        SignalIntent.BASE_ACCUMULATION,
+        SignalIntent.NONE,
+    }:
+        return SizingDecision(
+            candidate_signal,
+            float(original_trade_pct),
+            replace(
+                trace,
+                original_suggested_trade_pct=float(original_trade_pct),
+                adjusted_suggested_trade_pct=float(original_trade_pct),
+                macd_sizing_applied=False,
+                macd_sizing_owner=None,
+            ),
+        )
+    if multiplier != 1.0 and intent is not SignalIntent.MEAN_REVERSION_T:
+        raise CandidateContractError("MACD_SIZING_NOT_ALLOWED_FOR_INTENT")
+    policy = PolicyDecision(candidate_signal, multiplier, trace)
+    return apply_macd_sizing_once(
+        policy,
+        original_suggested_trade_pct=original_trade_pct,
+        effective_minimum_trade_pct=minimum_trade_pct,
+        sizing_owner="dividend_t_backtest_execution",
+    )
+
+
+def _signal_for_action(action: str) -> Signal:
+    if action in {"BUY_T_TIMING", "BREAKOUT_BUY_TIMING"}:
+        return Signal.BUY_T
+    if action == "SELL_T_TIMING":
+        return Signal.SELL_T
+    return Signal.HOLD
+
+
+def validate_execution_after_signal(signal_time: str, execution_time: Any) -> None:
+    """Reject same-bar or earlier execution to prevent close-bar look-ahead."""
+
+    import pandas as pd
+
+    if pd.Timestamp(execution_time) <= pd.Timestamp(signal_time):
+        raise ValueError("EXECUTION_NOT_AFTER_SIGNAL_BAR")
+
+
 def _execute_action(
     *,
     action: str,
@@ -2884,6 +3022,29 @@ def _execute_action(
             config=config,
         )
         add_pct = max(target_pct - current_position_pct, 0.0)
+        sizing = _apply_backtest_macd_sizing(
+            signal,
+            original_trade_pct=add_pct,
+            minimum_trade_pct=config.min_t_trade_pct,
+        )
+        if sizing.final_signal is Signal.HOLD:
+            return _execution_state(
+                cash=cash,
+                base_shares=base_shares,
+                base_locked_shares=base_locked_shares,
+                t_shares=t_shares,
+                t_locked_shares=t_locked_shares,
+                t_cost_basis=t_cost_basis,
+                breakout_t_shares=breakout_t_shares,
+                breakout_t_locked_shares=breakout_t_locked_shares,
+                breakout_t_cost_basis=breakout_t_cost_basis,
+                pending_buyback_shares=pending_buyback_shares,
+                pending_reverse_proceeds=pending_reverse_proceeds,
+                pending_buyback_target_price=pending_buyback_target_price,
+                trade=None,
+                blocked="MACD_SIZING_TO_ZERO",
+            )
+        add_pct = sizing.adjusted_suggested_trade_pct
         target_notional = equity_before * add_pct
         shares = _floor_lot(min(target_notional / buy_price, cash / _buy_cost_per_share(buy_price, config)), config.min_lot)
         if shares > 0:
@@ -2911,6 +3072,7 @@ def _execute_action(
                 close_for_mark,
                 f"主动仓位买入，强度 {signal.buy_signal_strength:.1f}，Kelly {signal.kelly_fraction:.1%}，突破分 {signal.breakout_score:.1f}，目标总仓位 {target_pct:.1%}",
                 None,
+                sizing_trace=sizing.trace,
             )
 
     elif action == "SELL_T_TIMING":
@@ -2992,6 +3154,31 @@ def _execute_action(
                 core_position_floor_pct=core_position_floor_pct,
                 active_profit_pct=t_profit_pct,
             )
+            max_sell_trade_pct = (raw_sellable_t_shares * sell_price / equity_before) if equity_before > 0 else 0.0
+            sizing = _apply_backtest_macd_sizing(
+                signal,
+                original_trade_pct=max_sell_trade_pct * sell_fraction,
+                minimum_trade_pct=config.min_t_trade_pct,
+            )
+            if sizing.final_signal is Signal.HOLD:
+                return _execution_state(
+                    cash=cash,
+                    base_shares=base_shares,
+                    base_locked_shares=base_locked_shares,
+                    t_shares=t_shares,
+                    t_locked_shares=t_locked_shares,
+                    t_cost_basis=t_cost_basis,
+                    breakout_t_shares=breakout_t_shares,
+                    breakout_t_locked_shares=breakout_t_locked_shares,
+                    breakout_t_cost_basis=breakout_t_cost_basis,
+                    pending_buyback_shares=pending_buyback_shares,
+                    pending_reverse_proceeds=pending_reverse_proceeds,
+                    pending_buyback_target_price=pending_buyback_target_price,
+                    trade=None,
+                    blocked="MACD_SIZING_TO_ZERO",
+                )
+            if max_sell_trade_pct > 0.0:
+                sell_fraction = sizing.adjusted_suggested_trade_pct / max_sell_trade_pct
             requested_shares = _floor_lot(raw_sellable_t_shares * sell_fraction, config.min_lot)
             if requested_shares <= 0 and raw_sellable_t_shares > 0:
                 requested_shares = min(raw_sellable_t_shares, config.min_lot) if config.t_position_mode == T_POSITION_MODE_LIGHT else raw_sellable_t_shares
@@ -3038,6 +3225,7 @@ def _execute_action(
                 reason,
                 realized,
                 execution_setup_code=signal.primary_setup_code,
+                sizing_trace=sizing.trace,
             )
         elif _t_mode_allows_reverse_t(config) and pending_buyback_shares == 0:
             if _core_floor_protects_action(
@@ -3065,7 +3253,30 @@ def _execute_action(
                     trade=None,
                     blocked=blocked,
                 )
-            target_notional = equity_before * _signal_t_trade_cap(signal, config, attack_state=attack_state)
+            original_trade_pct = _signal_t_trade_cap(signal, config, attack_state=attack_state)
+            sizing = _apply_backtest_macd_sizing(
+                signal,
+                original_trade_pct=original_trade_pct,
+                minimum_trade_pct=config.min_t_trade_pct,
+            )
+            if sizing.final_signal is Signal.HOLD:
+                return _execution_state(
+                    cash=cash,
+                    base_shares=base_shares,
+                    base_locked_shares=base_locked_shares,
+                    t_shares=t_shares,
+                    t_locked_shares=t_locked_shares,
+                    t_cost_basis=t_cost_basis,
+                    breakout_t_shares=breakout_t_shares,
+                    breakout_t_locked_shares=breakout_t_locked_shares,
+                    breakout_t_cost_basis=breakout_t_cost_basis,
+                    pending_buyback_shares=pending_buyback_shares,
+                    pending_reverse_proceeds=pending_reverse_proceeds,
+                    pending_buyback_target_price=pending_buyback_target_price,
+                    trade=None,
+                    blocked="MACD_SIZING_TO_ZERO",
+                )
+            target_notional = equity_before * sizing.adjusted_suggested_trade_pct
             sellable_base_shares = _sellable_shares(base_shares, base_locked_shares, config=config)
             shares = _floor_lot(min(sellable_base_shares, target_notional / sell_price), config.min_lot)
             if shares <= 0 and base_shares > 0:
@@ -3090,6 +3301,7 @@ def _execute_action(
                     "倒 T 卖出",
                     None,
                     execution_setup_code="reverse_t_sell",
+                    sizing_trace=sizing.trace,
                 )
 
     elif action in {"STOP_T_WAIT", "WAIT_DAILY_WEAK"} and t_shares > 0:
@@ -3185,7 +3397,21 @@ def _execute_action(
         breakout_t_shares -= breakout_reduce_shares
         breakout_t_cost_basis -= breakout_cost_portion
         reason = "T 仓止损/失效卖出" if sell_fraction >= 0.999 else f"offensive 软止损只降主动仓 {sell_fraction:.0%}，等待趋势确认"
-        trade = _trade(timestamp, action, "STOP_T", shares, sell_price, cash, base_shares, t_shares, close_for_mark, reason, realized)
+        trade = _trade(
+            timestamp,
+            action,
+            "STOP_T",
+            shares,
+            sell_price,
+            cash,
+            base_shares,
+            t_shares,
+            close_for_mark,
+            reason,
+            realized,
+            execution_setup_code=signal.primary_setup_code,
+            risk_enforcement=RiskEnforcement(signal.risk_enforcement),
+        )
 
     return {
         "cash": cash,
@@ -7733,6 +7959,8 @@ def _trade(
     realized_pnl: float | None,
     *,
     execution_setup_code: str | None = None,
+    sizing_trace: DecisionTrace | None = None,
+    risk_enforcement: RiskEnforcement = RiskEnforcement.NONE,
 ) -> DividendTTrade:
     return DividendTTrade(
         timestamp=timestamp,
@@ -7745,6 +7973,12 @@ def _trade(
         reason=reason,
         realized_pnl=round(realized_pnl, 2) if realized_pnl is not None else None,
         execution_setup_code=execution_setup_code,
+        risk_enforcement=risk_enforcement.value,
+        original_suggested_trade_pct=sizing_trace.original_suggested_trade_pct if sizing_trace else None,
+        macd_sizing_multiplier=sizing_trace.macd_sizing_multiplier if sizing_trace else 1.0,
+        adjusted_suggested_trade_pct=sizing_trace.adjusted_suggested_trade_pct if sizing_trace else None,
+        macd_sizing_applied=sizing_trace.macd_sizing_applied if sizing_trace else False,
+        macd_sizing_owner=sizing_trace.macd_sizing_owner if sizing_trace else None,
     )
 
 

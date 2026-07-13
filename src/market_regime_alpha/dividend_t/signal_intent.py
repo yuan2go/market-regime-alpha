@@ -7,13 +7,14 @@ from enum import Enum
 import math
 
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS
-from market_regime_alpha.dividend_t.macd import MACDCross, MACDHistogramTrend, MACDZeroAxis
+from market_regime_alpha.dividend_t.macd import BarInterval, MACDCross, MACDHistogramTrend, MACDResult, MACDZeroAxis
 from market_regime_alpha.dividend_t.models import Signal, TechnicalInputs
 
 
 SIGNAL_INTENT_MAPPING_VERSION = "signal-intent-map-v1"
 CONFIRMATION_RULE_VERSION = "confirmation-rules-v1"
 MACD_POLICY_VERSION = "signal-intent-macd-v1"
+MACD_PROFILE_NAMES = ("baseline", "score-only", "policy-only", "full")
 
 
 class SignalIntent(str, Enum):
@@ -343,6 +344,21 @@ class MACDPolicyConfig:
             raise ValueError("policy_version must be non-empty")
 
 
+def macd_policy_config_for_profile(profile: str) -> MACDPolicyConfig:
+    """Resolve explicit research profiles while keeping baseline the caller default."""
+
+    profiles = {
+        "baseline": MACDPolicyConfig(score_weight=0.0, conflict_gate_enabled=False),
+        "score-only": MACDPolicyConfig(score_weight=0.15, conflict_gate_enabled=False),
+        "policy-only": MACDPolicyConfig(score_weight=0.0, conflict_gate_enabled=True),
+        "full": MACDPolicyConfig(score_weight=0.15, conflict_gate_enabled=True),
+    }
+    try:
+        return profiles[profile]
+    except KeyError as exc:
+        raise ValueError(f"unknown MACD profile: {profile}") from exc
+
+
 @dataclass(frozen=True)
 class MACDPolicyState:
     data_ready: bool
@@ -375,6 +391,24 @@ class MACDPolicyState:
             technical.macd_zero_axis,
             technical.macd_histogram,
             technical.macd_histogram_trend,
+        )
+
+    @classmethod
+    def from_result(cls, result: MACDResult, *, expected_interval: BarInterval) -> "MACDPolicyState":
+        """Accept only formal, closed-bar MACD results for a matching pipeline."""
+
+        if result.provisional:
+            raise CandidateContractError("PROVISIONAL_MACD_NOT_ALLOWED")
+        if result.config.bar_interval is not expected_interval:
+            raise CandidateContractError(
+                f"MACD_INTERVAL_MISMATCH: expected {expected_interval.value}, got {result.config.bar_interval.value}"
+            )
+        return cls(
+            result.data_ready,
+            result.cross,
+            result.zero_axis,
+            result.histogram,
+            result.histogram_trend,
         )
 
 

@@ -15,6 +15,15 @@ if str(SRC_DIR) not in sys.path:
 
 from market_regime_alpha.dividend_t.cosco_profile import CoscoProfile
 from market_regime_alpha.dividend_t.cosco_timing import CoscoTimingEngine, sample_cosco_timing
+from market_regime_alpha.dividend_t.cosco_timing_types import apply_timing_macd_policy, manual_candidate
+from market_regime_alpha.dividend_t.macd import MACDCross, MACDHistogramTrend, MACDZeroAxis
+from market_regime_alpha.dividend_t.models import Signal
+from market_regime_alpha.dividend_t.signal_intent import (
+    EntryConfirmation,
+    MACDPolicyConfig,
+    MACDPolicyState,
+    PrimarySetupCode,
+)
 from market_regime_alpha.dividend_t.tuishen_volume_price import estimate_volume_price_structure
 
 
@@ -163,6 +172,56 @@ def _bar(base: pd.Timestamp, index: int, price: float, volume: float) -> dict[st
 
 
 class CoscoTimingTests(unittest.TestCase):
+    def test_timing_policy_records_multiplier_but_does_not_apply_sizing(self) -> None:
+        candidate = manual_candidate(
+            "BUY_T_TIMING",
+            Signal.BUY_T,
+            PrimarySetupCode.PULLBACK_LOW_BUY,
+            decision_bar_time="2026-07-13 10:05:00",
+            entry_confirmations=frozenset({EntryConfirmation.SUPPORT_HOLD}),
+        )
+        state = MACDPolicyState(
+            True,
+            MACDCross.BEARISH,
+            MACDZeroAxis.BELOW,
+            -0.2,
+            MACDHistogramTrend.EXPANDING,
+        )
+
+        action, decision = apply_timing_macd_policy(
+            candidate,
+            quality_filtered_action="BUY_T_TIMING",
+            macd=state,
+            config=MACDPolicyConfig(conflict_gate_enabled=True),
+        )
+
+        self.assertEqual(action, "BUY_T_TIMING")
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.macd_sizing_multiplier, 0.5)
+        self.assertTrue(decision.trace.macd_policy_applied)
+        self.assertFalse(decision.trace.macd_sizing_applied)
+        self.assertIsNone(decision.trace.macd_sizing_owner)
+
+    def test_timing_policy_does_not_reopen_quality_filtered_candidate(self) -> None:
+        candidate = manual_candidate(
+            "BUY_T_TIMING",
+            Signal.BUY_T,
+            PrimarySetupCode.PULLBACK_LOW_BUY,
+            decision_bar_time="2026-07-13 10:05:00",
+            entry_confirmations=frozenset({EntryConfirmation.SUPPORT_HOLD}),
+        )
+
+        action, decision = apply_timing_macd_policy(
+            candidate,
+            quality_filtered_action="WAIT_CONFIRMATION",
+            macd=MACDPolicyState.neutral(),
+            config=MACDPolicyConfig(conflict_gate_enabled=True),
+        )
+
+        self.assertEqual(action, "WAIT_CONFIRMATION")
+        self.assertIsNone(decision)
+
     def test_high_volume_stall_pullback_is_downgraded_from_real_buy_point(self) -> None:
         snapshot = CoscoTimingEngine().evaluate(_bars_for_buy_t_with_20d_uptrend())
 

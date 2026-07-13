@@ -28,6 +28,7 @@ from market_regime_alpha.dividend_t.force_ratio import ForceRatioEstimate, estim
 from market_regime_alpha.dividend_t.indicators import add_daily_indicators
 from market_regime_alpha.dividend_t.memory import MemoryScore, classify_current_setup, estimate_memory
 from market_regime_alpha.dividend_t.models import Signal, TrendState
+from market_regime_alpha.dividend_t.macd import BarInterval, MACDResult
 from market_regime_alpha.dividend_t.position_sizing import PositionBudget
 from market_regime_alpha.dividend_t.scoring import clamp
 from market_regime_alpha.dividend_t.sell_pressure import SellPressureEstimate, estimate_sell_pressure
@@ -51,16 +52,24 @@ from market_regime_alpha.dividend_t.cosco_timing_types import (
     TrendProbability,
     TimingDecisionTrace,
     VolumePriceStructure,
+    apply_timing_macd_policy,
     candidate_trace_fields,
 )
+from market_regime_alpha.dividend_t.signal_intent import MACDPolicyConfig, MACDPolicyState
 from market_regime_alpha.dividend_t.tuishen_volume_price import estimate_volume_price_structure
 
 
 
 class CoscoTimingEngine:
-    def __init__(self, profile: CoscoProfile | None = None, fundamental_resolver: Any | None = None) -> None:
+    def __init__(
+        self,
+        profile: CoscoProfile | None = None,
+        fundamental_resolver: Any | None = None,
+        macd_policy_config: MACDPolicyConfig | None = None,
+    ) -> None:
         self.profile = profile or CoscoProfile()
         self.fundamental_resolver = fundamental_resolver
+        self.macd_policy_config = macd_policy_config or MACDPolicyConfig()
 
     def evaluate(
         self,
@@ -71,6 +80,7 @@ class CoscoTimingEngine:
         require_fresh: bool = False,
         freshness_limit_minutes: float = 10.0,
         generated_at: datetime | None = None,
+        macd_result: MACDResult | None = None,
     ) -> CoscoTimingSnapshot:
         data = _prepare_bars(bars)
         if len(data) < 30:
@@ -292,7 +302,24 @@ class CoscoTimingEngine:
                 "卖点质量过滤已拦截：WAIT_DAILY_WEAK 降级为观察，不输出卖点参考价。",
             ]
         quality_filtered_action = action
-        macd_filtered_action = quality_filtered_action
+        policy_state = (
+            MACDPolicyState.neutral()
+            if macd_result is None
+            else MACDPolicyState.from_result(macd_result, expected_interval=BarInterval.MINUTE_5)
+        )
+        macd_filtered_action, policy_decision = apply_timing_macd_policy(
+            candidate,
+            quality_filtered_action=quality_filtered_action,
+            macd=policy_state,
+            config=self.macd_policy_config,
+        )
+        action = macd_filtered_action
+        if policy_decision is not None and policy_decision.final_signal is Signal.HOLD:
+            reasons = [
+                f"MACD policy 已将候选 {candidate.candidate_signal.value if candidate.candidate_signal else 'NONE'} 降级为 HOLD。",
+                *reasons,
+            ]
+            warnings = [*warnings, f"MACD policy 原因：{policy_decision.trace.downgrade_reason}。"]
         signal_blocked = False
         if require_fresh and not data_fresh:
             original_action = action
@@ -325,11 +352,13 @@ class CoscoTimingEngine:
         buy_point_subtype = initial_buy_point_subtype
         if candidate.primary_setup_code is not None and candidate.primary_setup_code.value == "breakout_confirmed" and action == "WATCH_BREAKOUT_NEXT_DAY":
             buy_point_subtype = BUY_POINT_SUBTYPE_BREAKOUT_WATCH
+        policy_signal = policy_decision.final_signal if policy_decision is not None else candidate.candidate_signal
         final_signal = (
-            candidate.candidate_signal.value
-            if candidate.candidate_signal is not None and freshness_filtered_action == raw_candidate_action
+            policy_signal.value
+            if policy_signal is not None and freshness_filtered_action == raw_candidate_action
             else Signal.HOLD.value
         )
+        policy_trace = policy_decision.trace if policy_decision is not None else None
         decision_trace = TimingDecisionTrace(
             **candidate_trace_fields(candidate),
             raw_candidate_action=raw_candidate_action,
@@ -338,6 +367,18 @@ class CoscoTimingEngine:
             freshness_filtered_action=freshness_filtered_action,
             final_action=action,
             final_signal=final_signal,
+            signal_downgraded=bool(policy_trace and policy_trace.signal_downgraded),
+            downgrade_source=policy_trace.downgrade_source if policy_trace else None,
+            downgrade_reason=policy_trace.downgrade_reason if policy_trace else None,
+            macd_sizing_multiplier=policy_decision.macd_sizing_multiplier if policy_decision else 1.0,
+            sizing_adjustment_source=policy_trace.sizing_adjustment_source if policy_trace else None,
+            macd_sizing_applied=False,
+            macd_sizing_owner=None,
+            macd_policy_applied=bool(policy_trace and policy_trace.macd_policy_applied),
+            macd_policy_changed_candidate=bool(
+                policy_trace
+                and (policy_trace.signal_downgraded or policy_trace.macd_sizing_multiplier != 1.0)
+            ),
         )
         signal_strength = _signal_strength(
             action=action,

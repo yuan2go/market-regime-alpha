@@ -320,6 +320,7 @@ class DividendTStrategyTests(unittest.TestCase):
 
         self.assertEqual(experimental.signal, Signal.BUY_T)
         self.assertEqual(experimental.suggested_trade_pct, baseline.suggested_trade_pct * 0.5)
+        self.assertTrue(experimental.macd_diagnostics.macd_policy_changed_candidate)
         assert experimental.decision_trace is not None
         self.assertTrue(experimental.decision_trace.macd_sizing_applied)
         self.assertEqual(experimental.decision_trace.macd_sizing_owner, "simplified_strategy")
