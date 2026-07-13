@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from market_regime_alpha.dividend_t.macd import MACDCross, MACDDataReason, MACDHistogramTrend, MACDZeroAxis
 
 if TYPE_CHECKING:
-    from market_regime_alpha.dividend_t.signal_intent import DecisionTrace
+    from market_regime_alpha.dividend_t.signal_intent import CandidateSignal, DecisionTrace
 
 
 class Signal(str, Enum):
@@ -189,6 +189,17 @@ class StrategyDecision:
     warnings: tuple[str, ...] = field(default_factory=tuple)
     order_intent: OrderIntent | None = None
     decision_trace: DecisionTrace | None = None
+    macd_diagnostics: MACDDualUseDiagnostics | None = None
+
+
+@dataclass(frozen=True)
+class MACDDualUseDiagnostics:
+    technical_score_without_macd: float
+    technical_score_with_macd: float
+    candidate_without_macd_score: CandidateSignal
+    candidate_with_macd_score: CandidateSignal
+    macd_score_changed_candidate: bool
+    macd_policy_changed_candidate: bool = False
 
 
 @dataclass(frozen=True)

@@ -93,6 +93,14 @@ class DividendTBacktestTests(unittest.TestCase):
                 freshness_filtered_action="WAIT_CONFIRMATION",
                 final_action="WAIT_CONFIRMATION",
             ),
+            macd_diagnostics=SimpleNamespace(
+                technical_score_without_macd=72.0,
+                technical_score_with_macd=76.2,
+                candidate_without_macd_score=SimpleNamespace(candidate_signal=None),
+                candidate_with_macd_score=SimpleNamespace(candidate_signal="BUY_T"),
+                macd_score_changed_candidate=True,
+                macd_policy_changed_candidate=False,
+            ),
         )
 
         signal = BacktestSignal.from_snapshot(snapshot)
@@ -101,6 +109,10 @@ class DividendTBacktestTests(unittest.TestCase):
         self.assertEqual(signal.signal_intent, "MEAN_REVERSION_T")
         self.assertEqual(signal.raw_candidate_action, "BUY_T_TIMING")
         self.assertEqual(signal.final_action, "WAIT_CONFIRMATION")
+        self.assertEqual(signal.technical_score_without_macd, 72.0)
+        self.assertEqual(signal.technical_score_with_macd, 76.2)
+        self.assertTrue(signal.macd_score_changed_candidate)
+        self.assertFalse(signal.macd_policy_changed_candidate)
 
     def test_default_signal_history_covers_twenty_trading_days(self) -> None:
         self.assertEqual(DEFAULT_SIGNAL_HISTORY_BARS, 48 * 20)

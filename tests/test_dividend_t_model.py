@@ -14,7 +14,7 @@ if str(SRC_DIR) not in sys.path:
 from market_regime_alpha.dividend_t.models import FundamentalInputs, PositionState, RetreatInputs, Signal, TechnicalInputs, TrendState
 from market_regime_alpha.dividend_t.indicators import technical_macd_fields
 from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig, MACDCross, MACDDataReason, MACDHistogramTrend, MACDZeroAxis, calculate_macd
-from market_regime_alpha.dividend_t.scoring import technical_score
+from market_regime_alpha.dividend_t.scoring import technical_score, technical_score_diagnostics
 from market_regime_alpha.dividend_t.strategy import DividendTStrategy
 from market_regime_alpha.dividend_t.signal_intent import PrimarySetupCode, SignalIntent
 
@@ -182,6 +182,104 @@ class DividendTStrategyTests(unittest.TestCase):
         technical = TechnicalInputs(82, 71, 66, 59, chan_score=74)
 
         self.assertEqual(technical_score(technical), 72.03)
+
+    def test_all_neutral_technical_components_score_50_with_ready_macd(self) -> None:
+        technical = TechnicalInputs(
+            50,
+            50,
+            50,
+            50,
+            chan_score=50,
+            macd_dif=0.1,
+            macd_dea=0.05,
+            macd_histogram=0.1,
+            macd_zero_axis=MACDZeroAxis.ABOVE,
+            macd_data_ready=True,
+            macd_data_reason=MACDDataReason.READY,
+            macd_score=50,
+        )
+
+        diagnostics = technical_score_diagnostics(technical, macd_weight=0.15)
+
+        self.assertEqual(diagnostics.technical_score_without_macd, 50.0)
+        self.assertEqual(diagnostics.technical_score_with_macd, 50.0)
+        self.assertAlmostEqual(sum(weight for _, weight in diagnostics.effective_weights), 1.0)
+
+    def test_zero_weight_and_not_ready_are_digit_equal_to_legacy_score(self) -> None:
+        ready = TechnicalInputs(
+            82,
+            71,
+            66,
+            59,
+            chan_score=74,
+            macd_dif=-0.1,
+            macd_dea=-0.05,
+            macd_histogram=-0.1,
+            macd_zero_axis=MACDZeroAxis.BELOW,
+            macd_data_ready=True,
+            macd_data_reason=MACDDataReason.READY,
+            macd_score=3,
+        )
+        not_ready = TechnicalInputs(82, 71, 66, 59, chan_score=74)
+
+        self.assertEqual(technical_score_diagnostics(ready, macd_weight=0).technical_score_with_macd, technical_score(ready))
+        self.assertEqual(technical_score_diagnostics(not_ready, macd_weight=0.15).technical_score_with_macd, technical_score(not_ready))
+
+    def test_out_of_range_component_is_normalized_at_scoring_boundary(self) -> None:
+        technical = TechnicalInputs(
+            150,
+            -10,
+            50,
+            50,
+            chan_score=50,
+            macd_dif=0.1,
+            macd_dea=0.05,
+            macd_histogram=0.1,
+            macd_zero_axis=MACDZeroAxis.ABOVE,
+            macd_data_ready=True,
+            macd_data_reason=MACDDataReason.READY,
+            macd_score=100,
+        )
+
+        diagnostics = technical_score_diagnostics(technical, macd_weight=0.15)
+
+        self.assertGreaterEqual(diagnostics.technical_score_with_macd, 0.0)
+        self.assertLessEqual(diagnostics.technical_score_with_macd, 100.0)
+
+    def test_macd_score_and_candidate_diagnostics_are_research_visible(self) -> None:
+        technical = TechnicalInputs(
+            72,
+            72,
+            72,
+            72,
+            chan_score=72,
+            trend_state=TrendState.RANGE,
+            near_support=True,
+            shrinking_pullback=True,
+            macd_dif=0.1,
+            macd_dea=0.05,
+            macd_histogram=0.1,
+            macd_zero_axis=MACDZeroAxis.ABOVE,
+            macd_data_ready=True,
+            macd_data_reason=MACDDataReason.READY,
+            macd_score=100,
+        )
+
+        decision = self.strategy.evaluate(
+            symbol="601919.SH",
+            fundamental=self.good_fundamental,
+            retreat=RetreatInputs(4.0, 4.0, 2.5, 2.0),
+            technical=technical,
+            position=PositionState(symbol_position_pct=0.20),
+            macd_score_weight=0.15,
+        )
+
+        self.assertIsNotNone(decision.macd_diagnostics)
+        assert decision.macd_diagnostics is not None
+        self.assertEqual(decision.macd_diagnostics.technical_score_without_macd, 72.0)
+        self.assertEqual(decision.macd_diagnostics.technical_score_with_macd, 76.2)
+        self.assertTrue(decision.macd_diagnostics.macd_score_changed_candidate)
+        self.assertFalse(decision.macd_diagnostics.macd_policy_changed_candidate)
 
     def test_unready_macd_preserves_distinct_data_reason(self) -> None:
         for reason in (

@@ -480,6 +480,12 @@ class BacktestSignal:
     macd_filtered_action: str = "WAIT"
     freshness_filtered_action: str = "WAIT"
     final_action: str = "WAIT"
+    technical_score_without_macd: float = 50.0
+    technical_score_with_macd: float = 50.0
+    candidate_without_macd_score: str | None = None
+    candidate_with_macd_score: str | None = None
+    macd_score_changed_candidate: bool = False
+    macd_policy_changed_candidate: bool = False
     buy_point_subtype: str = "none"
     breakout_score: float = 0.0
     breakout_state: str = "NONE"
@@ -547,6 +553,7 @@ class BacktestSignal:
         volume_price = getattr(snapshot, "volume_price_structure", None)
         chan_structure = getattr(snapshot, "chan_structure", None)
         decision_trace = getattr(snapshot, "decision_trace", None)
+        macd_diagnostics = getattr(snapshot, "macd_diagnostics", None)
         base_limit = float(snapshot.daily_context.base_position_limit_pct)
         base_target = float(getattr(market_regime, "base_position_target_pct", min(base_limit, MAX_BASE_POSITION_PCT)))
         legacy_total_cap = float(getattr(market_regime, "t_trade_limit_pct", 0.10))
@@ -594,6 +601,12 @@ class BacktestSignal:
             macd_filtered_action=str(getattr(decision_trace, "macd_filtered_action", snapshot.action)),
             freshness_filtered_action=str(getattr(decision_trace, "freshness_filtered_action", snapshot.action)),
             final_action=str(getattr(decision_trace, "final_action", snapshot.action)),
+            technical_score_without_macd=float(getattr(macd_diagnostics, "technical_score_without_macd", 50.0)),
+            technical_score_with_macd=float(getattr(macd_diagnostics, "technical_score_with_macd", 50.0)),
+            candidate_without_macd_score=_candidate_signal_value(getattr(macd_diagnostics, "candidate_without_macd_score", None)),
+            candidate_with_macd_score=_candidate_signal_value(getattr(macd_diagnostics, "candidate_with_macd_score", None)),
+            macd_score_changed_candidate=bool(getattr(macd_diagnostics, "macd_score_changed_candidate", False)),
+            macd_policy_changed_candidate=bool(getattr(macd_diagnostics, "macd_policy_changed_candidate", False)),
             buy_point_subtype=str(getattr(snapshot, "buy_point_subtype", "none")),
             breakout_score=float(getattr(breakout_setup, "score", 0.0)),
             breakout_state=str(getattr(breakout_setup, "state", "NONE")),
@@ -744,6 +757,12 @@ class BacktestSignalCache:
                 macd_filtered_action=str(row.get("macd_filtered_action", row["action"])),
                 freshness_filtered_action=str(row.get("freshness_filtered_action", row["action"])),
                 final_action=str(row.get("final_action", row["action"])),
+                technical_score_without_macd=float(row.get("technical_score_without_macd", 50.0)),
+                technical_score_with_macd=float(row.get("technical_score_with_macd", 50.0)),
+                candidate_without_macd_score=_optional_text(row.get("candidate_without_macd_score")),
+                candidate_with_macd_score=_optional_text(row.get("candidate_with_macd_score")),
+                macd_score_changed_candidate=_optional_bool(row.get("macd_score_changed_candidate")),
+                macd_policy_changed_candidate=_optional_bool(row.get("macd_policy_changed_candidate")),
                 buy_point_subtype=str(row.get("buy_point_subtype", "none")),
                 breakout_score=float(row.get("breakout_score", 0.0)),
                 breakout_state=str(row.get("breakout_state", "NONE")),
@@ -3229,6 +3248,15 @@ def _optional_text(value: Any) -> str | None:
         pass
     text = str(value).strip()
     return text or None
+
+
+def _candidate_signal_value(candidate: Any) -> str | None:
+    if candidate is None:
+        return None
+    signal = getattr(candidate, "candidate_signal", candidate)
+    if signal is None:
+        return None
+    return str(getattr(signal, "value", signal))
 
 
 def _cached_string_tuple(value: Any, *, default: tuple[str, ...]) -> tuple[str, ...]:

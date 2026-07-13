@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from market_regime_alpha.dividend_t.models import (
     FundamentalInputs,
+    MACDDualUseDiagnostics,
     OrderIntent,
     PositionState,
     RetreatInputs,
@@ -13,7 +14,11 @@ from market_regime_alpha.dividend_t.models import (
     TechnicalInputs,
     TrendState,
 )
-from market_regime_alpha.dividend_t.scoring import base_position_limit, build_score_breakdown
+from market_regime_alpha.dividend_t.scoring import (
+    base_position_limit,
+    build_score_breakdown_with_t_score,
+    technical_score_diagnostics,
+)
 from market_regime_alpha.dividend_t.chan import BUY_POINTS, SELL_POINTS
 from market_regime_alpha.dividend_t.signal_intent import (
     CandidateSignal,
@@ -39,16 +44,43 @@ class DividendTStrategy:
         technical: TechnicalInputs,
         position: PositionState | None = None,
         decision_bar_time: str = LEGACY_CURRENT_BAR,
+        macd_score_weight: float = 0.0,
     ) -> StrategyDecision:
         position = position or PositionState()
-        score = build_score_breakdown(fundamental, retreat, technical)
+        score_diagnostics = technical_score_diagnostics(technical, macd_weight=macd_score_weight)
+        legacy_score = build_score_breakdown_with_t_score(
+            fundamental,
+            retreat,
+            technical,
+            t_score=score_diagnostics.technical_score_without_macd,
+        )
+        score = build_score_breakdown_with_t_score(
+            fundamental,
+            retreat,
+            technical,
+            t_score=score_diagnostics.technical_score_with_macd,
+        )
         base_limit = base_position_limit(score.F_score)
+        legacy_candidate = select_simplified_candidate(
+            score=legacy_score,
+            retreat=retreat,
+            technical=technical,
+            position=position,
+            decision_bar_time=decision_bar_time,
+        )
         candidate = select_simplified_candidate(
             score=score,
             retreat=retreat,
             technical=technical,
             position=position,
             decision_bar_time=decision_bar_time,
+        )
+        macd_diagnostics = MACDDualUseDiagnostics(
+            technical_score_without_macd=score_diagnostics.technical_score_without_macd,
+            technical_score_with_macd=score_diagnostics.technical_score_with_macd,
+            candidate_without_macd_score=legacy_candidate,
+            candidate_with_macd_score=candidate,
+            macd_score_changed_candidate=legacy_candidate != candidate,
         )
         signal = candidate.candidate_signal or Signal.HOLD
         reasons = candidate.candidate_reasons
@@ -66,6 +98,7 @@ class DividendTStrategy:
                 warnings=("基本面不支持底仓。",),
                 order_intent=_order(symbol, "SELL", "base", signal, pct, reasons[0]),
                 decision_trace=trace,
+                macd_diagnostics=macd_diagnostics,
             )
 
         if signal is Signal.REDUCE:
@@ -80,6 +113,7 @@ class DividendTStrategy:
                 warnings=("基本面评分低于减底仓阈值。",),
                 order_intent=_order(symbol, "SELL", "base", signal, pct, reasons[0]),
                 decision_trace=trace,
+                macd_diagnostics=macd_diagnostics,
             )
 
         if signal is Signal.STOP_T:
@@ -92,6 +126,7 @@ class DividendTStrategy:
                 reasons=reasons,
                 warnings=("暂停 T 仓交易，只保留复盘和底仓管理。",),
                 decision_trace=trace,
+                macd_diagnostics=macd_diagnostics,
             )
 
         if signal is Signal.BUY_T:
@@ -106,6 +141,7 @@ class DividendTStrategy:
                 reasons=reasons,
                 order_intent=_order(symbol, "BUY", "t", signal, pct, "买入主动仓位"),
                 decision_trace=trace,
+                macd_diagnostics=macd_diagnostics,
             )
 
         if signal is Signal.SELL_T:
@@ -120,6 +156,7 @@ class DividendTStrategy:
                 reasons=reasons,
                 order_intent=_order(symbol, "SELL", "t", signal, pct, "卖出主动仓位"),
                 decision_trace=trace,
+                macd_diagnostics=macd_diagnostics,
             )
 
         if signal is Signal.BUILD_BASE:
@@ -133,6 +170,7 @@ class DividendTStrategy:
                 reasons=reasons,
                 order_intent=_order(symbol, "BUY", "base", signal, max(0.0, pct), "分批建底仓"),
                 decision_trace=trace,
+                macd_diagnostics=macd_diagnostics,
             )
 
         return StrategyDecision(
@@ -143,6 +181,7 @@ class DividendTStrategy:
             suggested_trade_pct=0.0,
             reasons=reasons,
             decision_trace=trace,
+            macd_diagnostics=macd_diagnostics,
         )
 
 
