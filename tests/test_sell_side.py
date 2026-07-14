@@ -16,6 +16,7 @@ from market_regime_alpha.dividend_t.sell_side import (
     execute_research_action,
     select_research_sell_action,
     sell_action_spec,
+    shadow_research_sell_action,
 )
 from market_regime_alpha.dividend_t.signal_intent import PrimarySetupCode, RiskEnforcement, SignalIntent
 
@@ -151,7 +152,9 @@ def test_research_execution_state_unlocks_t1_and_tracks_partial_buyback_expiry_a
         ),
     )
 
-    unlocked = advance_research_execution_state(state, bar_time="2026-01-06 09:35", bar_index=2)
+    unlocked = advance_research_execution_state(
+        state, bar_time="2026-01-06 09:35", bar_index=2, trading_calendar=("2026-01-05", "2026-01-06", "2026-01-07")
+    )
     partial = execute_research_action(
         unlocked,
         signal=Signal.BUY_BACK_REVERSE_T,
@@ -169,6 +172,7 @@ def test_research_execution_state_unlocks_t1_and_tracks_partial_buyback_expiry_a
         config=config,
         trade_pct=1.0,
         bar_index=2,
+        trading_calendar=("2026-01-05", "2026-01-06", "2026-01-07"),
     )
     cancelled = execute_research_action(
         partial.state,
@@ -180,10 +184,40 @@ def test_research_execution_state_unlocks_t1_and_tracks_partial_buyback_expiry_a
         trade_pct=1.0,
         bar_index=3,
         hard_risk_exit=True,
+        trading_calendar=("2026-01-05", "2026-01-06", "2026-01-07"),
     )
 
     assert unlocked.base_locked_shares == 0
     assert partial.resolution.executable and partial.resolution.shares == 100
     assert partial.state.pending_buyback is not None and partial.state.pending_buyback.remaining_shares == 100
+    assert partial.state.base_shares == 600 and partial.state.t_shares == 0
+    assert partial.state.pending_buyback.remaining_allocated_proceeds == 1000.0
     assert cancelled.state.pending_buyback is None
     assert cancelled.pending_buyback_event == "BUYBACK_CANCELLED_BY_HARD_RISK"
+    assert "REVERSE_T_CONVERTED_TO_RISK_REDUCTION" in cancelled.events
+
+
+def test_buyback_trade_day_expiry_skips_weekend_and_selector_shadow_covers_new_actions() -> None:
+    state = ResearchExecutionState(
+        cash=1_000.0,
+        base_shares=0,
+        t_shares=0,
+        pending_buyback=PendingBuyback(100, 1_000.0, 9.0, 1, "2026-01-02", 10, 1),
+    )
+    friday_to_monday = advance_research_execution_state(
+        state, bar_time="2026-01-05 09:35", bar_index=2, trading_calendar=("2026-01-02", "2026-01-05", "2026-01-06")
+    )
+    expired = advance_research_execution_state(
+        state, bar_time="2026-01-06 09:35", bar_index=3, trading_calendar=("2026-01-02", "2026-01-05", "2026-01-06")
+    )
+    template = dict(entry_price=10.0, entry_time="2026-01-02", holding_bars=1, unrealized_return=0.03, max_unrealized_return=0.03, drawdown_from_peak=0.0, t_position_pct=0.2, base_position_pct=0.4, same_day_bought_qty=0, sellable_qty=100, pending_buyback=False, setup_invalidation_level="NONE", atr_trailing_level=None, current_price=10.0)
+    policy = SellLifecyclePolicy()
+    reduced = shadow_research_sell_action("SELL_T_TIMING", PositionLifecycleContext(**template, take_profit_reduce_ready=True), policy)
+    reversed_action = select_research_sell_action(PositionLifecycleContext(**template, reverse_t_sell_ready=True), policy)
+    cleared = select_research_sell_action(PositionLifecycleContext(**template, clear_base_required=True), policy)
+
+    assert friday_to_monday.pending_buyback is not None
+    assert expired.pending_buyback is None
+    assert reduced.legacy_sell_action == "SELL_T_TIMING" and reduced.research_sell_action is SellAction.TAKE_PROFIT_REDUCE_T
+    assert reversed_action.action is SellAction.REVERSE_T_SELL
+    assert cleared.action is SellAction.CLEAR_BASE

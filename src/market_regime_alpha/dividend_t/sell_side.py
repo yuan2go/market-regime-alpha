@@ -66,6 +66,9 @@ class PositionLifecycleContext:
     setup_invalidation_level: str
     atr_trailing_level: float | None
     current_price: float
+    take_profit_reduce_ready: bool = False
+    reverse_t_sell_ready: bool = False
+    clear_base_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,17 @@ class PendingBuyback:
     created_trade_date: str
     expiry_bars: int
     expiry_trade_days: int | None
+    remaining_allocated_proceeds: float = 0.0
+    realized_cycle_cost: float = 0.0
+    realized_cycle_pnl: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.remaining_shares <= 0 or self.allocated_proceeds < 0.0:
+            raise ValueError("PENDING_BUYBACK_ACCOUNTING_INVALID")
+        # Compatibility for pre-hardening research fixtures; every new reverse
+        # transition supplies the explicit field below.
+        if self.remaining_allocated_proceeds == 0.0 and self.allocated_proceeds > 0.0:
+            object.__setattr__(self, "remaining_allocated_proceeds", self.allocated_proceeds)
 
 
 @dataclass(frozen=True)
@@ -104,6 +118,9 @@ class ResearchExecutionState:
     t_locked_shares: int = 0
     trade_date: str | None = None
     pending_buyback: PendingBuyback | None = None
+    cycle_gross_pnl: float = 0.0
+    cycle_net_pnl: float = 0.0
+    cycle_buyback_shares: int = 0
 
 
 @dataclass(frozen=True)
@@ -111,6 +128,15 @@ class ResearchExecutionTransition:
     state: ResearchExecutionState
     resolution: ExecutionResolution
     pending_buyback_event: str | None = None
+    events: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResearchSellShadow:
+    """Parallel research decision; never changes the legacy production action."""
+
+    legacy_sell_action: str | None
+    research_sell_action: SellAction | None
 
 
 SELL_ACTION_SPECS: dict[SellAction, SellActionSpec] = {
@@ -243,12 +269,18 @@ def select_research_sell_action(context: PositionLifecycleContext, policy: SellL
     """Choose one research action from lifecycle context, without production routing."""
 
     invalidation = context.setup_invalidation_level.upper()
+    if context.clear_base_required:
+        return ResearchSellDecision(SellAction.CLEAR_BASE, "BASE_RISK_CLEAR")
     if invalidation == "HARD":
         return ResearchSellDecision(SellAction.EXIT_T_HARD, "SETUP_INVALIDATION_HARD")
     if context.atr_trailing_level is not None and context.current_price <= context.atr_trailing_level:
         return ResearchSellDecision(SellAction.STOP_T, "ATR_TRAILING_STOP")
     if invalidation == "SOFT":
         return ResearchSellDecision(SellAction.EXIT_T_SOFT, "SETUP_INVALIDATION_SOFT")
+    if context.reverse_t_sell_ready and context.base_position_pct > 0.0 and not context.pending_buyback:
+        return ResearchSellDecision(SellAction.REVERSE_T_SELL, "REVERSE_T_PRESSURE_CONFIRMED")
+    if context.take_profit_reduce_ready and context.max_unrealized_return >= policy.minimum_profit_for_take_profit:
+        return ResearchSellDecision(SellAction.TAKE_PROFIT_REDUCE_T, "TAKE_PROFIT_REDUCTION_CONFIRMED")
     if (
         context.max_unrealized_return >= policy.minimum_profit_for_take_profit
         and context.drawdown_from_peak <= -policy.mfe_drawdown_trigger
@@ -257,6 +289,14 @@ def select_research_sell_action(context: PositionLifecycleContext, policy: SellL
     if context.holding_bars >= policy.time_stop_bars:
         return ResearchSellDecision(SellAction.RISK_REDUCE_T, "TIME_STOP")
     return ResearchSellDecision(None, "NO_SELL_ACTION")
+
+
+def shadow_research_sell_action(
+    legacy_sell_action: str | None, context: PositionLifecycleContext, policy: SellLifecyclePolicy
+) -> ResearchSellShadow:
+    """Record a research action beside a legacy action without execution routing."""
+
+    return ResearchSellShadow(legacy_sell_action, select_research_sell_action(context, policy).action)
 
 
 def atr_trailing_level(peak_price: float, *, atr: float, policy: SellLifecyclePolicy) -> float:
@@ -272,6 +312,7 @@ def advance_research_execution_state(
     *,
     bar_time: str,
     bar_index: int,
+    trading_calendar: tuple[str, ...] | None = None,
 ) -> ResearchExecutionState:
     """Unlock T+1 shares on a new trading day and expire pending buybacks."""
 
@@ -288,7 +329,7 @@ def advance_research_execution_state(
         return result
     if bar_index - pending.created_bar_index > pending.expiry_bars:
         return replace(result, pending_buyback=None)
-    if pending.expiry_trade_days is not None and _trade_day_distance(pending.created_trade_date, trade_date) > pending.expiry_trade_days:
+    if pending.expiry_trade_days is not None and _trade_day_distance(pending.created_trade_date, trade_date, trading_calendar) > pending.expiry_trade_days:
         return replace(result, pending_buyback=None)
     return result
 
@@ -307,6 +348,7 @@ def execute_research_action(
     reverse_buyback_target_price: float | None = None,
     reverse_expiry_bars: int = 24,
     reverse_expiry_trade_days: int | None = None,
+    trading_calendar: tuple[str, ...] | None = None,
 ) -> ResearchExecutionTransition:
     """Resolve and apply a single research execution transition.
 
@@ -315,19 +357,22 @@ def execute_research_action(
     """
 
     bar_time = str(next_bar["timestamp"])
-    expiry_event = _pending_expiry_event(state.pending_buyback, bar_time=bar_time, bar_index=bar_index)
-    prepared = advance_research_execution_state(state, bar_time=bar_time, bar_index=bar_index)
+    expiry_event = _pending_expiry_event(state.pending_buyback, bar_time=bar_time, bar_index=bar_index, trading_calendar=trading_calendar)
+    prepared = advance_research_execution_state(state, bar_time=bar_time, bar_index=bar_index, trading_calendar=trading_calendar)
     if expiry_event is not None:
         return ResearchExecutionTransition(
             prepared,
             ExecutionResolution(False, expiry_event, bar_time, None, 0, 0.0, 0.0, 0.0, EXECUTION_CONSTRAINT_VERSION),
             expiry_event,
+            (expiry_event,),
         )
     if hard_risk_exit and prepared.pending_buyback is not None:
         prepared = replace(prepared, pending_buyback=None)
         pending_event = "BUYBACK_CANCELLED_BY_HARD_RISK"
+        events = ("BUYBACK_CANCELLED_BY_HARD_RISK", "REVERSE_T_CONVERTED_TO_RISK_REDUCTION")
     else:
         pending_event = None
+        events = ()
     pending = prepared.pending_buyback
     context = CounterfactualExecutionContext(
         equity_before=max(prepared.cash + (prepared.base_shares + prepared.t_shares) * float(next_bar["open"]), 0.0),
@@ -369,10 +414,11 @@ def execute_research_action(
                 created_trade_date=_trade_date(str(next_bar["timestamp"])),
                 expiry_bars=reverse_expiry_bars,
                 expiry_trade_days=reverse_expiry_trade_days,
+                remaining_allocated_proceeds=proceeds,
             ),
         )
         pending_event = "PENDING_BUYBACK_CREATED"
-    return ResearchExecutionTransition(state_after, resolution, pending_event)
+    return ResearchExecutionTransition(state_after, resolution, pending_event, events or ((pending_event,) if pending_event else ()))
 
 
 def _apply_resolution(
@@ -384,16 +430,33 @@ def _apply_resolution(
     assert resolution.reference_fill_price is not None
     if signal in {Signal.BUY_T, Signal.BUY_BACK_REVERSE_T, Signal.BUILD_BASE}:
         pending = state.pending_buyback
-        next_pending = (
-            replace(pending, remaining_shares=pending.remaining_shares - resolution.shares)
-            if signal is Signal.BUY_BACK_REVERSE_T and pending is not None and pending.remaining_shares > resolution.shares
-            else None
-        )
+        buy_cost = resolution.reference_fill_price * resolution.shares + resolution.fee_amount
+        if signal is Signal.BUY_BACK_REVERSE_T and pending is not None:
+            allocated = pending.remaining_allocated_proceeds * resolution.shares / pending.remaining_shares
+            next_pending = (
+                replace(
+                    pending,
+                    remaining_shares=pending.remaining_shares - resolution.shares,
+                    remaining_allocated_proceeds=pending.remaining_allocated_proceeds - allocated,
+                    realized_cycle_cost=pending.realized_cycle_cost + buy_cost,
+                    realized_cycle_pnl=pending.realized_cycle_pnl + allocated - buy_cost,
+                )
+                if pending.remaining_shares > resolution.shares
+                else None
+            )
+            return replace(
+                state,
+                cash=state.cash - buy_cost,
+                base_shares=state.base_shares + resolution.shares,
+                pending_buyback=next_pending,
+                cycle_gross_pnl=state.cycle_gross_pnl + allocated - resolution.reference_fill_price * resolution.shares,
+                cycle_net_pnl=state.cycle_net_pnl + allocated - buy_cost,
+                cycle_buyback_shares=state.cycle_buyback_shares + resolution.shares,
+            )
         return replace(
             state,
-            cash=state.cash - resolution.reference_fill_price * resolution.shares - resolution.fee_amount,
+            cash=state.cash - buy_cost,
             t_shares=state.t_shares + resolution.shares,
-            pending_buyback=next_pending,
         )
     proceeds = resolution.reference_fill_price * resolution.shares - resolution.fee_amount
     if signal is Signal.SELL_REVERSE_T:
@@ -433,20 +496,25 @@ def _trade_date(timestamp: str) -> str:
     return timestamp[:10]
 
 
-def _trade_day_distance(start: str, end: str) -> int:
-    from datetime import date
+def _trade_day_distance(start: str, end: str, trading_calendar: tuple[str, ...] | None) -> int:
+    if trading_calendar is None:
+        raise ValueError("TRADING_CALENDAR_REQUIRED_FOR_BUYBACK_EXPIRY")
+    sessions = tuple(sorted(set(trading_calendar)))
+    if start not in sessions or end not in sessions:
+        raise ValueError("TRADING_CALENDAR_SESSION_MISSING")
+    return max(0, sessions.index(end) - sessions.index(start))
 
-    return max(0, (date.fromisoformat(end) - date.fromisoformat(start)).days)
 
-
-def _pending_expiry_event(pending: PendingBuyback | None, *, bar_time: str, bar_index: int) -> str | None:
+def _pending_expiry_event(
+    pending: PendingBuyback | None, *, bar_time: str, bar_index: int, trading_calendar: tuple[str, ...] | None
+) -> str | None:
     if pending is None:
         return None
     if bar_index - pending.created_bar_index > pending.expiry_bars:
         return "BUYBACK_EXPIRED_BARS"
     if (
         pending.expiry_trade_days is not None
-        and _trade_day_distance(pending.created_trade_date, _trade_date(bar_time)) > pending.expiry_trade_days
+        and _trade_day_distance(pending.created_trade_date, _trade_date(bar_time), trading_calendar) > pending.expiry_trade_days
     ):
         return "BUYBACK_EXPIRED_TRADE_DAYS"
     return None

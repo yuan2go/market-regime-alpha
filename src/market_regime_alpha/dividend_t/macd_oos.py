@@ -88,6 +88,10 @@ class DatasetManifest:
     corporate_action_hash: str
     suspension_hash: str
     quality: DatasetQualityStats
+    volume_unit: str = "UNKNOWN"
+    amount_unit: str = "UNKNOWN"
+    price_unit: str = "UNKNOWN"
+    vwap_formula_version: str = "UNKNOWN"
 
 
 @dataclass(frozen=True)
@@ -194,6 +198,10 @@ def build_dataset_manifest(
     corporate_actions_path: Path,
     suspensions_path: Path,
     classification: DatasetClassification,
+    volume_unit: str = "UNKNOWN",
+    amount_unit: str = "UNKNOWN",
+    price_unit: str = "UNKNOWN",
+    vwap_formula_version: str = "UNKNOWN",
 ) -> DatasetManifest:
     """Hash every point-in-time input and derive reproducible bar-quality statistics."""
 
@@ -208,6 +216,10 @@ def build_dataset_manifest(
         corporate_actions_path=corporate_actions_path,
         suspensions_path=suspensions_path,
         classification=classification,
+        volume_unit=volume_unit,
+        amount_unit=amount_unit,
+        price_unit=price_unit,
+        vwap_formula_version=vwap_formula_version,
     ).manifest
 
 
@@ -223,6 +235,10 @@ def load_dataset_bundle(
     corporate_actions_path: Path,
     suspensions_path: Path,
     classification: DatasetClassification,
+    volume_unit: str = "UNKNOWN",
+    amount_unit: str = "UNKNOWN",
+    price_unit: str = "UNKNOWN",
+    vwap_formula_version: str = "UNKNOWN",
 ) -> DatasetBundle:
     """Load bars once and return both the content manifest and the shared in-memory frame."""
 
@@ -236,6 +252,8 @@ def load_dataset_bundle(
         raise TypeError("price_adjustment_mode must be a PriceAdjustmentMode")
     if not isinstance(pit_adjustment_complete, bool):
         raise TypeError("pit_adjustment_complete must be boolean")
+    if not all(isinstance(value, str) and value.strip() for value in (volume_unit, amount_unit, price_unit, vwap_formula_version)):
+        raise ValueError("DATASET_UNIT_METADATA_REQUIRED")
     sidecars = (trading_calendar_path, universe_path, corporate_actions_path, suspensions_path)
     for path in (*paths, *sidecars):
         if not path.is_file():
@@ -331,6 +349,10 @@ def load_dataset_bundle(
         corporate_action_hash=_sha256_file(corporate_actions_path),
         suspension_hash=_sha256_file(suspensions_path),
         quality=quality,
+        volume_unit=volume_unit,
+        amount_unit=amount_unit,
+        price_unit=price_unit,
+        vwap_formula_version=vwap_formula_version,
     )
     expected_bar_times = tuple(
         timestamp for day in calendar_dates for timestamp in expected_a_share_5m_closes(day)

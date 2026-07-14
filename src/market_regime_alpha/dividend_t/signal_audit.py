@@ -495,6 +495,7 @@ def _write_completed_t_cycle(
     window: list[Any] = []
     total_buyback_cost = 0.0
     total_buyback_shares = 0
+    trading_calendar = tuple(sorted({_bar_trade_date_text(row) for _, row in bars.iterrows()}))
     for offset, (_, row) in enumerate(bars.iloc[entry_index + 1 :].iterrows(), start=1):
         window.append(row)
         transition = execute_research_action(
@@ -506,6 +507,7 @@ def _write_completed_t_cycle(
             config=config,
             trade_pct=1.0,
             bar_index=entry_index + offset,
+            trading_calendar=trading_calendar,
         )
         state = transition.state
         resolution = transition.resolution

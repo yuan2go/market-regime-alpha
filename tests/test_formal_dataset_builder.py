@@ -78,11 +78,11 @@ def _complete_request(tmp_path: Path, *, bars: tuple[Path, ...] | None = None) -
     actions = tmp_path / "actions.json"
     actions.write_text(json.dumps({"events": []}), encoding="utf-8")
     suspensions = tmp_path / "suspensions.json"
-    suspensions.write_text(json.dumps({"suspension_times": []}), encoding="utf-8")
+    suspensions.write_text(json.dumps({"suspension_times": [], "records": []}), encoding="utf-8")
     eligibility = tmp_path / "eligibility.json"
     eligibility.write_text(json.dumps({"records": [{"symbol": symbol, "timestamp": timestamp, "is_suspended": False, "is_st": False, "prev_close": 10.0, "limit_up_price": 11.0, "limit_down_price": 9.0, "limit_regime": "10pct"} for symbol in symbols for timestamp in timestamps]}), encoding="utf-8")
     market = tmp_path / "market.json"
-    market.write_text(json.dumps({"records": [{"timestamp": timestamp, "index_symbol": "000300.SH", "index_close": 4000.0, "industry_id": "fixture-industry", "industry_close": 2000.0, "theme_state": "NEUTRAL", "market_regime": "RANGE"} for timestamp in timestamps]}), encoding="utf-8")
+    market.write_text(json.dumps({"records": [{"symbol": symbol, "timestamp": timestamp, "benchmark_symbol": "000300.SH", "index_close": 4000.0, "industry_id": "fixture-industry", "industry_as_of": timestamp, "industry_close": 2000.0, "theme_state": "NEUTRAL", "market_regime": "RANGE"} for symbol in symbols for timestamp in timestamps]}), encoding="utf-8")
     return FormalDatasetBuildRequest(
         bar_paths=bars,
         data_source="controlled-fixture-v1",

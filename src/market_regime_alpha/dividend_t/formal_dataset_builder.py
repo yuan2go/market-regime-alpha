@@ -43,6 +43,10 @@ class FormalDatasetBuildRequest:
     pit_adjustment_complete: bool
     trading_calendar_version: str
     sidecars: FormalDatasetSidecars
+    volume_unit: str = "SHARES"
+    amount_unit: str = "CNY"
+    price_unit: str = "CNY_PER_SHARE"
+    vwap_formula_version: str = "amount_cny_per_volume_share-v1"
 
 
 @dataclass(frozen=True)
@@ -90,7 +94,10 @@ def build_rehearsal_dataset(request: FormalDatasetBuildRequest) -> FormalDataset
     span = (pd.Timestamp(max(dates)) - pd.Timestamp(min(dates))).days
     if not 90 <= span <= 184:
         raise FormalDatasetBuildError("MVP_CALENDAR_SPAN_MUST_BE_3_TO_6_MONTHS")
+    _validate_units_and_vwap(data, request)
+    _validate_pit_adjustment_evidence(data, request.sidecars.corporate_actions_path)
     _validate_sidecar_coverage(data, symbols, dates, request.sidecars)
+    _validate_session_completeness(data, calendar)
 
     manifest = build_dataset_manifest(
         request.bar_paths,
@@ -103,6 +110,10 @@ def build_rehearsal_dataset(request: FormalDatasetBuildRequest) -> FormalDataset
         corporate_actions_path=request.sidecars.corporate_actions_path,
         suspensions_path=request.sidecars.suspensions_path,
         classification=DatasetClassification.REHEARSAL,
+        volume_unit=request.volume_unit,
+        amount_unit=request.amount_unit,
+        price_unit=request.price_unit,
+        vwap_formula_version=request.vwap_formula_version,
     )
     if manifest.quality.missing_expected_bar_count or manifest.quality.unexpected_timestamp_count or manifest.quality.duplicate_timestamp_count:
         raise FormalDatasetBuildError("BAR_CALENDAR_QUALITY_GATE_FAILED")
@@ -160,9 +171,37 @@ def _validate_bar_columns(data: Any) -> None:
         values = pd.to_numeric(data[column], errors="coerce")
         if values.isna().any() or not (values > 0).all():
             raise FormalDatasetBuildError(f"BAR_{column.upper()}_INVALID")
-    vwap_error = (pd.to_numeric(data["amount"]) / pd.to_numeric(data["volume"]) - pd.to_numeric(data["vwap"])).abs()
-    if (vwap_error > 1e-6).any():
+
+
+def _validate_units_and_vwap(data: Any, request: FormalDatasetBuildRequest) -> None:
+    if (request.volume_unit, request.amount_unit, request.price_unit, request.vwap_formula_version) != (
+        "SHARES", "CNY", "CNY_PER_SHARE", "amount_cny_per_volume_share-v1"
+    ):
+        raise FormalDatasetBuildError("SOURCE_UNIT_NORMALIZATION_REQUIRED")
+    import pandas as pd
+
+    error = (pd.to_numeric(data["amount"]) / pd.to_numeric(data["volume"]) - pd.to_numeric(data["vwap"])).abs()
+    if (error > 1e-6).any():
         raise FormalDatasetBuildError("VWAP_PROVENANCE_OR_VALUE_INVALID")
+
+
+def _validate_pit_adjustment_evidence(data: Any, path: Path) -> None:
+    import math
+
+    actions = _load_object(path, "PIT_ADJUSTMENT_EVIDENCE_REQUIRED").get("events", [])
+    if not isinstance(actions, list):
+        raise FormalDatasetBuildError("PIT_ADJUSTMENT_EVIDENCE_REQUIRED")
+    symbols = set(data["symbol"].astype(str))
+    for event in actions:
+        required = {"symbol", "effective_time", "adjustment_as_of", "corporate_action_id", "factor"}
+        if not isinstance(event, dict) or not required <= set(event) or str(event["symbol"]) not in symbols:
+            raise FormalDatasetBuildError("PIT_ADJUSTMENT_EVIDENCE_REQUIRED")
+        try:
+            factor = float(event["factor"])
+        except (TypeError, ValueError) as exc:
+            raise FormalDatasetBuildError("PIT_ADJUSTMENT_EVIDENCE_REQUIRED") from exc
+        if not math.isfinite(factor) or factor <= 0.0 or str(event["adjustment_as_of"]) < str(event["effective_time"]):
+            raise FormalDatasetBuildError("PIT_ADJUSTMENT_EVIDENCE_REQUIRED")
 
 
 def _load_object(path: Path, error: str) -> dict[str, Any]:
@@ -194,12 +233,28 @@ def _validate_sidecar_coverage(data: Any, symbols: tuple[str, ...], dates: tuple
     if any((date, symbol) not in universe_keys for date in dates for symbol in symbols):
         raise FormalDatasetBuildError("PIT_UNIVERSE_COVERAGE_REQUIRED")
     bar_keys = {(str(row.symbol), str(row.timestamp)) for row in data[["symbol", "timestamp"]].itertuples(index=False)}
-    eligibility_keys = {(str(row.get("symbol")), str(row.get("timestamp"))) for row in eligibility.get("records", []) if isinstance(row, dict)}
+    eligibility_records = [row for row in eligibility.get("records", []) if isinstance(row, dict)]
+    eligibility_keys = {(str(row.get("symbol")), str(row.get("timestamp"))) for row in eligibility_records}
     required_eligibility = {"is_suspended", "is_st", "prev_close", "limit_up_price", "limit_down_price", "limit_regime"}
-    if not bar_keys <= eligibility_keys or any(not required_eligibility <= set(row) for row in eligibility.get("records", []) if isinstance(row, dict)):
+    if not bar_keys <= eligibility_keys or any(not required_eligibility <= set(row) for row in eligibility_records):
         raise FormalDatasetBuildError("ELIGIBILITY_SIDECAR_COVERAGE_REQUIRED")
-    market_times = {str(row.get("timestamp")) for row in market.get("records", []) if isinstance(row, dict)}
-    required_market = {"timestamp", "index_symbol", "index_close", "industry_id", "industry_close", "theme_state", "market_regime"}
-    actual_times = {str(value) for value in data["timestamp"]}
-    if not actual_times <= market_times or any(not required_market <= set(row) for row in market.get("records", []) if isinstance(row, dict)):
+    suspensions = _load_object(sidecars.suspensions_path, "SUSPENSION_SIDECAR_REQUIRED")
+    suspension_keys = {(str(row.get("symbol")), str(row.get("timestamp"))) for row in suspensions.get("records", []) if isinstance(row, dict)}
+    suspended_eligibility = {(str(row["symbol"]), str(row["timestamp"])) for row in eligibility_records if row.get("is_suspended") is True}
+    if suspension_keys != suspended_eligibility:
+        raise FormalDatasetBuildError("SUSPENSION_ELIGIBILITY_MISMATCH")
+    market_records = [row for row in market.get("records", []) if isinstance(row, dict)]
+    market_keys = {(str(row.get("symbol")), str(row.get("timestamp"))) for row in market_records}
+    required_market = {"symbol", "timestamp", "industry_id", "industry_as_of", "benchmark_symbol", "index_close", "industry_close", "theme_state", "market_regime"}
+    if not bar_keys <= market_keys or any(not required_market <= set(row) for row in market_records):
         raise FormalDatasetBuildError("MARKET_SIDECAR_COVERAGE_REQUIRED")
+
+
+def _validate_session_completeness(data: Any, calendar: dict[str, Any]) -> None:
+    import pandas as pd
+
+    closes = {str(item["trade_date"]): str(item["session_close"]) for item in calendar["sessions"]}
+    timestamps = pd.to_datetime(data["timestamp"])
+    for date, group in data.assign(_time=timestamps).groupby(timestamps.dt.strftime("%Y-%m-%d")):
+        if group["_time"].max().strftime("%Y-%m-%d %H:%M:%S") != closes[date]:
+            raise FormalDatasetBuildError("SESSION_CLOSE_BAR_REQUIRED")
