@@ -120,6 +120,7 @@ class ResearchExecutionState:
     pending_buyback: PendingBuyback | None = None
     cycle_gross_pnl: float = 0.0
     cycle_net_pnl: float = 0.0
+    cycle_return: float = 0.0
     cycle_buyback_shares: int = 0
 
 
@@ -444,13 +445,16 @@ def _apply_resolution(
                 if pending.remaining_shares > resolution.shares
                 else None
             )
+            next_net = state.cycle_net_pnl + allocated - buy_cost
+            next_allocated = state.cycle_gross_pnl + allocated
             return replace(
                 state,
                 cash=state.cash - buy_cost,
                 base_shares=state.base_shares + resolution.shares,
                 pending_buyback=next_pending,
                 cycle_gross_pnl=state.cycle_gross_pnl + allocated - resolution.reference_fill_price * resolution.shares,
-                cycle_net_pnl=state.cycle_net_pnl + allocated - buy_cost,
+                cycle_net_pnl=next_net,
+                cycle_return=next_net / next_allocated if next_allocated > 0.0 else 0.0,
                 cycle_buyback_shares=state.cycle_buyback_shares + resolution.shares,
             )
         return replace(

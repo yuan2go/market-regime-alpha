@@ -494,6 +494,7 @@ def _write_completed_t_cycle(
     )
     window: list[Any] = []
     total_buyback_cost = 0.0
+    total_buyback_gross_cost = 0.0
     total_buyback_shares = 0
     trading_calendar = tuple(sorted({_bar_trade_date_text(row) for _, row in bars.iterrows()}))
     for offset, (_, row) in enumerate(bars.iloc[entry_index + 1 :].iterrows(), start=1):
@@ -513,7 +514,9 @@ def _write_completed_t_cycle(
         resolution = transition.resolution
         if resolution.executable:
             total_buyback_shares += resolution.shares
-            total_buyback_cost += (resolution.reference_fill_price or 0.0) * resolution.shares + resolution.fee_amount
+            gross_cost = (resolution.reference_fill_price or 0.0) * resolution.shares
+            total_buyback_gross_cost += gross_cost
+            total_buyback_cost += gross_cost + resolution.fee_amount
             _write_buyback(base, resolution, cumulative_shares=total_buyback_shares, cumulative_cost=total_buyback_cost)
         if transition.pending_buyback_event in {"BUYBACK_EXPIRED_BARS", "BUYBACK_EXPIRED_TRADE_DAYS"}:
             base["completed_t_cycle_reason"] = transition.pending_buyback_event
@@ -531,6 +534,9 @@ def _write_completed_t_cycle(
         net_pnl = proceeds - total_buyback_cost
         base["completed_t_cycle_net_pnl"] = net_pnl
         base["completed_t_cycle_return"] = net_pnl / max(total_buyback_cost, 1e-12)
+        base["cycle_gross_pnl"] = sell.reference_fill_price * sell.shares - total_buyback_gross_cost
+        base["cycle_net_pnl"] = net_pnl
+        base["cycle_return"] = base["completed_t_cycle_return"]
         base["completed_t_cycle_label"] = int(total_buyback_shares == sell.shares and net_pnl > 0.0)
         base["completed_t_cycle_reason"] = "COMPLETED" if base["completed_t_cycle_label"] else "PARTIAL_OR_UNPROFITABLE_BUYBACK"
         _write_buyback_path_metrics(base, window, target)
@@ -551,6 +557,9 @@ def _empty_completed_t_cycle(base: dict[str, object]) -> None:
         "buyback_expiry_trade_days",
         "completed_t_cycle_net_pnl",
         "completed_t_cycle_return",
+        "cycle_gross_pnl",
+        "cycle_net_pnl",
+        "cycle_return",
         "buyback_holding_bars",
         "buyback_fill_ratio",
         "buyback_mae",
