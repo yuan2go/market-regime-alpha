@@ -453,6 +453,7 @@ def _execution_checks(events_by_profile: dict[str, tuple[CounterfactualEvent, ..
         config=DividendTBacktestConfig(enable_t_sell=True),
         trade_pct=1.0,
         bar_index=2,
+        trading_calendar=("2026-01-05", "2026-01-06", "2026-01-07"),
     )
     sized = [event for events in events_by_profile.values() for event in events if event.event_type is CounterfactualEventType.POLICY_SIZED]
     return {
