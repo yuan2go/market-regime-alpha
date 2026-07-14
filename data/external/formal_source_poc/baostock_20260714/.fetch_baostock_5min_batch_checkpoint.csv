@@ -1,0 +1,6 @@
+updated_at,symbol,status,mode,rows,start,end,fetch_start,fetch_end,message,output
+2026-07-14T09:23:24,600519.SH,success,full,960,2026-06-15 09:35:00,2026-07-13 15:00:00,2026-06-14,2026-07-14,,data/external/formal_source_poc/baostock_20260714/600519.SH_5min.csv
+2026-07-14T09:23:25,601398.SH,success,full,960,2026-06-15 09:35:00,2026-07-13 15:00:00,2026-06-14,2026-07-14,,data/external/formal_source_poc/baostock_20260714/601398.SH_5min.csv
+2026-07-14T09:23:26,600036.SH,success,full,960,2026-06-15 09:35:00,2026-07-13 15:00:00,2026-06-14,2026-07-14,,data/external/formal_source_poc/baostock_20260714/600036.SH_5min.csv
+2026-07-14T09:23:27,000001.SZ,success,full,960,2026-06-15 09:35:00,2026-07-13 15:00:00,2026-06-14,2026-07-14,,data/external/formal_source_poc/baostock_20260714/000001.SZ_5min.csv
+2026-07-14T09:23:27,510300.SH,success,full,960,2026-06-15 09:35:00,2026-07-13 15:00:00,2026-06-14,2026-07-14,,data/external/formal_source_poc/baostock_20260714/510300.SH_5min.csv
