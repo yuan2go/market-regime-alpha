@@ -3,7 +3,8 @@
 > **Status:** CURRENT
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
 > **Purpose:** Short current-status authority for active implementation sequencing
-> **Detailed references:** `R5-Candidate-Discovery-Rehearsal-Charter.md`, `R5-Candidate-Dataset-Builder-Status.md`, `R5-Versioned-Trading-Eligibility-Policy.md`
+> **Current audit:** `docs/architecture/Original-Intent-to-R5-Eligibility-Readiness-Audit.md`
+> **Detailed references:** `R5-Candidate-Discovery-Rehearsal-Charter.md`, `R5-Versioned-Trading-Eligibility-Policy.md`, `R5-Provider-Rehearsal-Trading-Eligibility-Policy-v2.md`
 
 ---
 
@@ -11,29 +12,54 @@
 
 This file is the current short-form R5 implementation status.
 
-Where the older detailed status document:
+Older documents remain useful as historical implementation records, but their stale status lines do not override this file.
+
+Known historical residues include:
 
 ```text
 R5-Candidate-Dataset-Builder-Status.md
+    still contains an older line saying Eligibility Policy / Materializer was not implemented.
+
+R5-Candidate-Discovery-Rehearsal-Charter.md
+    still contains an older deliverable list that names Historical Calendar / PIT Universe as future work.
+
+Original-Intent-to-R5-Consistency-Audit.md
+    records the earlier Close Return-only gap that has since been corrected by Close Return / MFE / MAE.
 ```
 
-still contains:
-
-```text
-Versioned raw-field Eligibility Policy / Materializer    NOT YET IMPLEMENTED
-```
-
-that single line is superseded by the current implementation recorded here and in:
-
-```text
-R5-Versioned-Trading-Eligibility-Policy.md
-```
-
-The older document remains useful as a detailed historical implementation record.
+The current architecture direction remains unchanged.
 
 ---
 
-## 2. Current Implemented Chain
+## 2. Preserved Original Intent
+
+```text
+Market / ETF / Theme / Capital Context
+        ↓
+Candidate Discovery
+        ↓
+Entry
+        ↓
+HOLD / ADD / REDUCE / ROTATE / EXIT
+```
+
+The current next-session Target family is a research horizon.
+
+Therefore:
+
+```text
+Candidate Target Horizon
+≠
+Mandatory Holding Period
+≠
+Mandatory Exit Time
+```
+
+ETF / Theme / Market Context remains upstream and available for later controlled incremental comparison.
+
+---
+
+## 3. Current Implemented Research Chain
 
 ```text
 Historical Trading Calendar Artifact
@@ -65,65 +91,172 @@ Cross-Sectional Rehearsal Evaluation
 
 ---
 
-## 3. Newly Completed in the Current Increment
+## 4. Eligibility v1 — Current Role
 
-```text
-Versioned Trading Eligibility Policy                       IMPLEMENTED
-Policy Artifact Identity                                    IMPLEMENTED
-Versioned Eligibility Materializer                          IMPLEMENTED
-Raw Evidence Availability Convention in Artifact Identity  IMPLEMENTED
-Exact-Decision-Time Eligibility Materialization             IMPLEMENTED
-Explicit ELIGIBLE / INELIGIBLE / UNKNOWN semantics         IMPLEMENTED
-Valid empty Eligibility Snapshot preservation               IMPLEMENTED
-Legacy eligibility sidecar raw-observation adapter          IMPLEMENTED
-Legacy raw sidecar → Policy → Candidate integration test    IMPLEMENTED
-```
-
----
-
-## 4. R5 Eligibility Policy v1
-
-Current policy:
+Policy:
 
 ```text
 r5-rehearsal-trading-eligibility@v1
 ```
 
-Current hard exclusions:
+v1 remains valid for:
+
+```text
+Legacy compatibility
+minimum infrastructure tests
+ST / suspension hard exclusions
+exact-Decision-Time evidence semantics
+explicit UNKNOWN behavior
+```
+
+v1 is **not** the complete original first-rehearsal Candidate-pool policy.
+
+It does not represent:
+
+```text
+minimum listing age
+minimum liquidity threshold
+explicit Decision-Time buyability
+```
+
+---
+
+## 5. Provider-Rehearsal Eligibility v2 — Implemented Contract
+
+Policy factory:
+
+```text
+r5_provider_rehearsal_trading_eligibility_policy_v2(...)
+```
+
+Human-readable version:
+
+```text
+r5-provider-rehearsal-trading-eligibility@v2
+```
+
+v2 adds explicit policy support for:
+
+```text
+minimum listing age in calendar days
+minimum PIT liquidity value
+identified liquidity measure
+Decision-Time buyability evidence
+```
+
+The current default listing-age threshold is:
+
+```text
+60 calendar days
+```
+
+The liquidity threshold is not globally hard-coded.
+
+The caller must explicitly provide:
+
+```text
+minimum_liquidity_value
+liquidity_measure_id
+```
+
+This makes the threshold and measure result-affecting Policy configuration.
+
+---
+
+## 6. v2 Eligibility Semantics
+
+Hard exclusions may include:
 
 ```text
 SUSPENDED
 ST_EXCLUDED
+LISTING_AGE_BELOW_MINIMUM
+LIQUIDITY_BELOW_MINIMUM
+DECISION_NOT_BUYABLE
 ```
 
-Current incomplete-evidence behavior:
+Missing or incompatible required evidence becomes:
 
 ```text
-missing required evidence
-or
-raw observation unavailable by Decision Time
-        ↓
 UNKNOWN
 ```
 
-`UNKNOWN` does not enter the current Candidate Population.
-
-The v1 policy requires raw completeness for:
+Examples:
 
 ```text
-prev_close
-limit_up_price
-limit_down_price
-limit_regime
+LISTING_AGE_MISSING
+LIQUIDITY_VALUE_MISSING
+LIQUIDITY_MEASURE_MISMATCH
+DECISION_BUYABILITY_MISSING
+DECISION_BUYABILITY_UNKNOWN
 ```
 
-but does not interpret these fields as proof of execution feasibility.
+`UNKNOWN` does not enter the Candidate Population.
 
 ---
 
-## 5. Current Provenance Boundary
+## 7. Buyability Is Not Final Execution Feasibility
 
-A versioned eligibility artifact now identifies:
+v2 defines:
+
+```text
+DecisionBuyabilityStatus
+    BUYABLE
+    NOT_BUYABLE
+    UNKNOWN
+```
+
+`BUYABLE` means only that the identified provider/adapter evidence did not classify the instrument as blocked under the scoped Candidate-population buyability rule.
+
+It does not prove:
+
+```text
+guaranteed fill
+queue priority
+order-book depth
+fill probability
+final Execution Feasibility
+```
+
+Price-limit metadata alone does not automatically create `BUYABLE` or `NOT_BUYABLE`.
+
+---
+
+## 8. Provider-Rehearsal Readiness Boundary
+
+The original-intent readiness audit found:
+
+```text
+Direction-Level Contradiction: NONE FOUND
+```
+
+and:
+
+```text
+Eligibility v1 Infrastructure: VALID
+Original MVP Candidate Eligibility Coverage under v1: PARTIAL
+```
+
+The v2 contract now restores representational coverage for:
+
+```text
+non-ST
+non-suspended
+minimum listing age
+minimum PIT liquidity
+explicit Decision-Time buyability
+complete required PIT evidence
+```
+
+Actual provider-backed materialization is still pending.
+
+The code contract being able to represent v2 evidence does not prove that a provider supplies it correctly.
+
+---
+
+## 9. Current Provenance Boundary
+
+A versioned Eligibility Artifact identifies:
 
 ```text
 Source Dataset Identity
@@ -143,51 +276,76 @@ same symbol-level results
 same research artifact
 ```
 
-when Policy, Materializer, or raw evidence semantics differ.
+when Policy, Materializer or raw-evidence semantics differ.
 
 ---
 
-## 6. Legacy Compatibility Limitation
+## 10. Legacy Compatibility Limitation
 
-The existing Legacy eligibility sidecar lacks a separate availability timestamp.
+The existing Legacy eligibility sidecar lacks:
 
-The adapter therefore uses the explicit rehearsal-only convention:
+```text
+separate availability timestamp
+listing-age evidence
+identified PIT liquidity evidence
+explicit Decision-Time buyability evidence
+```
+
+Therefore:
+
+```text
+Legacy sidecar
++
+v2 Policy
++
+missing v2 evidence
+        ↓
+UNKNOWN
+```
+
+The system must not silently fall back to v1 eligibility.
+
+The Legacy adapter still uses the explicit rehearsal-only convention:
 
 ```text
 LEGACY_TIMESTAMP_AVAILABLE_AT_OBSERVATION_TIME
 ```
 
-This must not be silently inherited by provider-backed data.
+This must not be inherited by provider-backed data unless the provider contract justifies it.
 
-The Legacy universe sidecar may also already embed filters such as ST or liquidity restrictions inside its own membership method. Provider-backed research should separate:
+---
+
+## 11. Current Implemented Status
 
 ```text
-Universe Membership
-from
-Trading Eligibility
+Original-intent eligibility readiness audit                 COMPLETE
+Controlled multi-date Candidate vertical slice             IMPLEMENTED
+Four transparent baseline Features                         IMPLEMENTED
+Close Return / MFE / MAE Target bundle                      IMPLEMENTED
+Deterministic B0 Candidate ranker                           IMPLEMENTED
+Cross-sectional rehearsal evaluation                       IMPLEMENTED
+
+Historical Trading Calendar Artifact                       IMPLEMENTED
+Historical PIT Universe Membership Artifact                IMPLEMENTED
+Historical Trading Eligibility Artifact                    IMPLEMENTED
+Eligibility v1                                             IMPLEMENTED
+Provider-rehearsal Eligibility v2 contract                  IMPLEMENTED
+Policy / Materializer provenance                            IMPLEMENTED
+Historical Membership ∩ Eligibility Candidate assembly     IMPLEMENTED
+
+Normal full-repository test execution                       PENDING
+Provider-backed rehearsal market artifact                  NOT YET IMPLEMENTED
+Provider-backed v2 eligibility evidence adapter             NOT YET IMPLEMENTED
+Provider-backed multi-date Candidate panels                 NOT YET IMPLEMENTED
+B1 transparent composite baseline                          NOT YET IMPLEMENTED
+Immutable R5 run artifact                                   NOT YET IMPLEMENTED
+Chronological/OOS Candidate validation                     NOT YET IMPLEMENTED
+Formal Candidate evidence                                  NOT AVAILABLE
 ```
 
-more cleanly than the compatibility path can guarantee.
-
 ---
 
-## 7. Current Non-Goals
-
-The current eligibility policy does not claim to model:
-
-- limit-up queue fillability;
-- order-book depth;
-- real buy/sell execution probability;
-- final Execution Feasibility;
-- Portfolio risk approval;
-- Entry timing;
-- Position Lifecycle;
-- Exit timing;
-- positive Alpha.
-
----
-
-## 8. Current Verification Status
+## 12. Current Verification Status
 
 The code and tests are committed.
 
@@ -203,12 +361,12 @@ Normal repository execution or CI remains required before implementation authori
 
 ---
 
-## 9. Next Implementation Step
+## 13. Next Implementation Step
 
 The next R5 data step is:
 
 ```text
-Provider-backed or provider-export-backed REHEARSAL Market Artifact
+Provider-backed or Provider-export-backed REHEARSAL Market Artifact
 ```
 
 It must provide or explicitly justify:
@@ -219,15 +377,20 @@ schema identity
 retrieval / availability semantics
 bar finality
 price-adjustment basis
-historical raw eligibility evidence
-Decision Time snapshots
+historical Calendar evidence
+historical PIT Universe evidence
+ST / suspension evidence
+listing-age evidence
+identified PIT liquidity evidence
+Decision-Time buyability evidence
+Decision-Time price snapshots
 next-session OHLC observations
 ```
 
-Then the project can build the first provider-backed:
+Then the project can materialize:
 
 ```text
-Historical Candidate Population
+Provider-backed v2 Candidate Population
         ↓
 Feature Materialization
         ↓
@@ -242,6 +405,22 @@ Immutable R5 Run Artifact
 
 ---
 
-## 10. Current Principle
+## 14. Current Non-Goals
 
-> **Trading Eligibility is now an identified, versioned policy result over evidence actually available at the Candidate Decision Time. Missing evidence becomes UNKNOWN, policy and materializer semantics enter artifact identity, and execution feasibility remains a separate future owner.**
+The current system does not claim to implement:
+
+- final Execution Feasibility;
+- guaranteed limit-up queue fillability;
+- Portfolio approval;
+- Entry timing;
+- Position Lifecycle;
+- Exit timing;
+- complete event-risk exclusion;
+- positive Alpha;
+- formal provider PIT authority.
+
+---
+
+## 15. Current Principle
+
+> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system, not a next-close-only model or an infrastructure project. Candidate eligibility must reproduce the declared research population: v1 remains a valid minimal compatibility policy, while provider-backed R5 research must use explicit listing-age, liquidity and Decision-Time buyability evidence under the versioned v2 policy before claiming that the original first-rehearsal stock-pool scope has been implemented.**
