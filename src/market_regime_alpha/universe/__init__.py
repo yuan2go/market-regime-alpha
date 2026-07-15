@@ -15,7 +15,6 @@ from .contracts import (
 from .eligibility_artifacts import (
     HistoricalTradingEligibilityArtifact,
     HistoricalTradingEligibilityRecord,
-    build_candidate_population_from_historical_artifacts,
     build_historical_trading_eligibility_artifact,
 )
 
@@ -29,7 +28,6 @@ __all__ = [
     "TradingEligibilitySnapshot",
     "TradingEligibilityStatus",
     "UniverseMembershipRecord",
-    "build_candidate_population_from_historical_artifacts",
     "build_historical_pit_universe_artifact",
     "build_historical_trading_eligibility_artifact",
 ]
