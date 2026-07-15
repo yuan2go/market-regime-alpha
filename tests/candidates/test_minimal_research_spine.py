@@ -94,6 +94,12 @@ def test_minimal_data_universe_feature_candidate_research_spine() -> None:
         semantic_family="Relative Strength",
         source_information_families=("PRICE_ONLY",),
         representation_method="relative-return",
+        source_fields=("close",),
+        frequency="1d",
+        lookback="20 finalized trading bars",
+        availability_rule="available after the current daily bar is finalized",
+        missingness_policy="MISSING when required history is incomplete",
+        research_status="EXPLORATORY_BASELINE",
         parameters=(("window", "20"),),
     )
     registry = FeatureRegistry()
@@ -150,6 +156,8 @@ def test_minimal_data_universe_feature_candidate_research_spine() -> None:
     assert dataset.eligibility is DataEligibility.REHEARSAL
     assert population.symbols == ("000001.SZ", "000002.SZ")
     assert materialization.available_symbols == population.symbols
+    assert feature.source_fields == ("close",)
+    assert feature.research_status == "EXPLORATORY_BASELINE"
     assert prediction.rank == 1
     assert prediction.calibrated_probability is None
     assert prediction.experiment_id == experiment.experiment_id
