@@ -7,6 +7,11 @@ from .rehearsal import (
     RehearsalNextSessionBar,
     RehearsalNextSessionClose,
 )
+from .trading_calendar import (
+    TradingCalendarArtifact,
+    TradingSession,
+    build_trading_calendar_artifact,
+)
 
 __all__ = [
     "DataEligibility",
@@ -17,4 +22,7 @@ __all__ = [
     "RehearsalNextSessionBar",
     "RehearsalNextSessionClose",
     "SourceArtifactReference",
+    "TradingCalendarArtifact",
+    "TradingSession",
+    "build_trading_calendar_artifact",
 ]
