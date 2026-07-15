@@ -60,6 +60,15 @@ def test_feature_definition_rejects_blank_source_information_family() -> None:
         )
 
 
+def test_feature_observation_requires_canonical_availability_status() -> None:
+    with pytest.raises(TypeError, match="InputAvailabilityStatus"):
+        FeatureObservation(
+            symbol="000001.SZ",
+            status="MISSING",  # type: ignore[arg-type]
+            value=None,
+        )
+
+
 def test_missing_feature_is_not_a_neutral_numeric_value() -> None:
     with pytest.raises(ValueError, match="must not carry a usable value"):
         FeatureObservation(
