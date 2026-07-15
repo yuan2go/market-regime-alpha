@@ -6,6 +6,7 @@ Exit time for a trading strategy.
 
 from __future__ import annotations
 
+from datetime import date
 from hashlib import sha256
 import json
 
@@ -48,6 +49,7 @@ def materialize_r5_next_session_return_target(
     population: CandidatePopulation,
     source_dataset_id: DatasetId,
     decision_snapshots: tuple[RehearsalDecisionSnapshot, ...],
+    next_session_date: date,
     next_session_closes: tuple[RehearsalNextSessionClose, ...],
     materialized_at: AsOfTime,
     code_revision: str,
@@ -55,6 +57,10 @@ def materialize_r5_next_session_return_target(
 ) -> TargetMaterialization:
     """Materialize next-session close return for one Candidate Decision Time cross-section."""
 
+    if not isinstance(next_session_date, date):
+        raise TypeError("next_session_date must be a date")
+    if next_session_date <= population.decision_time.value.date():
+        raise ValueError("next_session_date must be after Candidate Decision Date")
     if materialized_at.value <= population.decision_time.value:
         raise ValueError("target materialization must occur after Candidate Decision Time")
 
@@ -68,8 +74,8 @@ def materialize_r5_next_session_return_target(
 
     close_by_symbol: dict[str, RehearsalNextSessionClose] = {}
     for observation in next_session_closes:
-        if observation.session_date <= population.decision_time.value.date():
-            raise ValueError("next-session close must be from a later session date")
+        if observation.session_date != next_session_date:
+            raise ValueError("next-session close does not match resolved next_session_date")
         if observation.available_at.value <= population.decision_time.value:
             raise ValueError("next-session close must become available after Decision Time")
         if observation.available_at.value > materialized_at.value:
@@ -117,6 +123,7 @@ def materialize_r5_next_session_return_target(
         target_id=target.target_id,
         source_dataset_id=source_dataset_id,
         population=population,
+        next_session_date=next_session_date,
         materialized_at=materialized_at,
         code_revision=code_revision,
         config_hash=config_hash,
@@ -140,6 +147,7 @@ def _target_artifact_id(
     target_id: TargetId,
     source_dataset_id: DatasetId,
     population: CandidatePopulation,
+    next_session_date: date,
     materialized_at: AsOfTime,
     code_revision: str,
     config_hash: str,
@@ -151,6 +159,7 @@ def _target_artifact_id(
         "source_dataset_id": str(source_dataset_id),
         "universe_id": str(population.universe_id),
         "decision_time": population.decision_time.isoformat(),
+        "next_session_date": next_session_date.isoformat(),
         "materialized_at": materialized_at.isoformat(),
         "code_revision": code_revision,
         "config_hash": config_hash,
