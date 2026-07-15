@@ -64,6 +64,10 @@ def adapt_legacy_eligibility_mapping(
             raise LegacyEligibilitySidecarAdapterError("ELIGIBILITY_RECORD_INVALID")
         if not isinstance(row["is_suspended"], bool) or not isinstance(row["is_st"], bool):
             raise LegacyEligibilitySidecarAdapterError("ELIGIBILITY_BOOLEAN_FIELD_INVALID")
+        if not isinstance(row["symbol"], str) or not row["symbol"].strip() or row["symbol"] != row["symbol"].strip():
+            raise LegacyEligibilitySidecarAdapterError("ELIGIBILITY_SYMBOL_INVALID")
+        if not isinstance(row["limit_regime"], str) or not row["limit_regime"].strip() or row["limit_regime"] != row["limit_regime"].strip():
+            raise LegacyEligibilitySidecarAdapterError("ELIGIBILITY_LIMIT_REGIME_INVALID")
         try:
             timestamp = datetime.fromisoformat(str(row["timestamp"]))
         except ValueError as exc:
@@ -77,13 +81,13 @@ def adapt_legacy_eligibility_mapping(
             observation = RawTradingEligibilityObservation(
                 as_of=AsOfTime(timestamp),
                 available_at=AvailabilityTime(timestamp),
-                symbol=str(row["symbol"]),
+                symbol=row["symbol"],
                 is_suspended=row["is_suspended"],
                 is_st=row["is_st"],
                 prev_close=float(row["prev_close"]),
                 limit_up_price=float(row["limit_up_price"]),
                 limit_down_price=float(row["limit_down_price"]),
-                limit_regime=str(row["limit_regime"]),
+                limit_regime=row["limit_regime"],
             )
         except (TypeError, ValueError) as exc:
             raise LegacyEligibilitySidecarAdapterError("ELIGIBILITY_RECORD_INVALID") from exc
