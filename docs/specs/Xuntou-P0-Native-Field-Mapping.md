@@ -1,10 +1,10 @@
 # Xuntou P0 Native Field Mapping
 
-Status: `P0 MAPPING CONTRACT COMPLETE; RUNTIME SEMANTICS PARTIALLY VERIFIED`  
-Contract version: `xuntou-p0-native-field-mapping-v1`  
-Provider ID: `xuntou-thinktrader-xtquant-p0-v1`  
-Decision Time: `14:55:00 Asia/Shanghai`  
-Maximum authority: `REHEARSAL`  
+Status: `P0 MAPPING CONTRACT COMPLETE; RUNTIME SEMANTICS PARTIALLY VERIFIED`
+Contract version: `xuntou-p0-native-field-mapping-v1`
+Provider ID: `xuntou-thinktrader-xtquant-p0-v1`
+Decision Time: `14:55:00 Asia/Shanghai`
+Maximum authority: `REHEARSAL`
 Official documentation reviewed: `2026-07-16`
 
 ## 1. Purpose and boundary

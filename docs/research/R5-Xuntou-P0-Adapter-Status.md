@@ -1,9 +1,9 @@
 # R5 Xuntou P0 Adapter Status
 
-> **Status:** CURRENT  
-> **Mapping contract:** `xuntou-p0-native-field-mapping-v1`  
-> **Native bundle schema:** `xuntou-p0-native-bundle-v1`  
-> **Implementation revision:** `c747ca3`  
+> **Status:** CURRENT
+> **Mapping contract:** `xuntou-p0-native-field-mapping-v1`
+> **Native bundle schema:** `xuntou-p0-native-bundle-v1`
+> **Implementation revision:** `c747ca3`
 > **Maximum authority:** `REHEARSAL`
 
 ## Purpose
