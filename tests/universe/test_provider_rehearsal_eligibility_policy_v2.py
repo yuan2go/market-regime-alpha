@@ -52,7 +52,6 @@ def _policy():
     return r5_provider_rehearsal_trading_eligibility_policy_v2(
         minimum_liquidity_value=MIN_LIQUIDITY,
         liquidity_measure_id=LIQUIDITY_MEASURE,
-        minimum_listing_age_calendar_days=60,
     )
 
 
@@ -61,6 +60,16 @@ def test_provider_rehearsal_v2_complete_evidence_is_eligible() -> None:
 
     assert status is TradingEligibilityStatus.ELIGIBLE
     assert reasons == ()
+
+
+def test_provider_rehearsal_v2_default_listing_age_requires_strictly_more_than_60_calendar_days() -> None:
+    at_60_status, at_60_reasons = _policy().evaluate(_raw(listing_age_calendar_days=60))
+    at_61_status, at_61_reasons = _policy().evaluate(_raw(listing_age_calendar_days=61))
+
+    assert at_60_status is TradingEligibilityStatus.INELIGIBLE
+    assert at_60_reasons == (TradingEligibilityReason.LISTING_AGE_BELOW_MINIMUM.value,)
+    assert at_61_status is TradingEligibilityStatus.ELIGIBLE
+    assert at_61_reasons == ()
 
 
 @pytest.mark.parametrize(
