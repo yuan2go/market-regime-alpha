@@ -1,7 +1,7 @@
 # R5 Candidate Discovery Rehearsal MVP — Implementation Status
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** ACTIVE — controlled multi-date vertical slice and minimum opportunity Target bundle implemented; normal-environment verification and provider-backed rehearsal remain pending
+> **Status:** ACTIVE — controlled multi-date vertical slice, opportunity Target bundle, and historical Calendar/Universe/Eligibility artifact spine implemented; provider-backed rehearsal remains pending
 > **Research Charter:** `docs/research/R5-Candidate-Discovery-Rehearsal-Charter.md`
 > **Current consistency audit:** `docs/architecture/Original-Intent-to-R5-Consistency-Audit.md`
 
@@ -11,7 +11,9 @@
 
 This document records the actual implementation authority of the current R5 increment.
 
-The project now has a controlled end-to-end research path:
+The project now has two connected research layers.
+
+### Controlled Candidate research vertical slice
 
 ```text
 Controlled Rehearsal Market Observations
@@ -32,7 +34,21 @@ Deterministic Candidate Ranking Baseline
 Cross-Sectional Rehearsal Evaluation
 ```
 
-This is the first complete **controlled rehearsal vertical slice** of the independent Candidate Discovery system.
+### Historical research-input artifact spine
+
+```text
+Identified Trading Calendar Artifact
+        ↓
+Resolved Next Trading Session
+
+Exact-Date PIT Universe Membership Artifact
+        +
+Exact-Decision-Time Trading Eligibility Artifact
+        ↓
+Candidate Population
+```
+
+This remains a research system under development.
 
 It is not yet:
 
@@ -79,20 +95,20 @@ The current B0 omission of those inputs is an attribution choice, not an archite
 
 ---
 
-## 3. Consistency Audit Correction Before Provider-Backed Data
+## 3. Consistency-Audit Correction Before Provider-Backed Data
 
-The latest original-intent audit found no direction-level contradiction.
+The current original-intent audit found no direction-level contradiction.
 
 It did find one material target-coverage gap:
 
 ```text
-The controlled R5 implementation had one concrete next-session close-return Target,
+The controlled R5 implementation initially had one concrete next-session close-return Target,
 while the preserved Candidate objective also includes upside opportunity and adverse excursion.
 ```
 
-The correction is now implemented before provider-backed rehearsal work.
+The correction was implemented before provider-backed rehearsal work.
 
-The minimum R5 opportunity Target set is:
+The minimum R5 opportunity Target set is now:
 
 ```text
 Next-Session Close Return
@@ -132,7 +148,7 @@ They do not:
 - establish historical PIT authority;
 - replace the Data Constitution.
 
-`RehearsalNextSessionBar` adds controlled future OHLC observation for separate Close Return, MFE and MAE Target materialization.
+`RehearsalNextSessionBar` provides controlled future OHLC observations for separate Close Return, MFE and MAE Target materialization.
 
 ---
 
@@ -227,45 +243,255 @@ It does not create one merged Target identity.
 
 ---
 
-## 7. Next-Session Resolution
+## 7. Identified Historical Trading Calendar
 
-The Target materializers require an explicit:
-
-```text
-next_session_date
-```
-
-and reject observations that do not match that resolved date.
-
-This prevents:
+Implemented:
 
 ```text
-Any Later Date
+market_regime_alpha.data.trading_calendar
 ```
 
-from silently satisfying:
+Core objects:
 
 ```text
-Next Session
+TradingSession
+TradingCalendarArtifact
 ```
 
-The resolved next-session date enters the Target Materialization identity.
+The calendar:
 
-The current materializer still relies on the caller or a future calendar adapter to resolve the correct historical next trading session.
+- contains explicit identified trading sessions;
+- has a content-derived Artifact Identity;
+- records source Dataset Identity, market, calendar version and timezone;
+- resolves the next session from the explicit session list;
+- never infers trading days from Monday-Friday weekdays;
+- never manufactures missing sessions;
+- fails when no later identified session exists.
 
-A formal implementation must use an identified historical trading calendar.
+The R5 Target pipeline can now use:
+
+```text
+materialize_r5_opportunity_targets_from_calendar(...)
+```
+
+so `next_session_date` no longer needs to be guessed manually by the Candidate caller.
+
+The resolved next session is still only as trustworthy as the identified calendar artifact supplied to the resolver.
 
 ---
 
-## 8. Candidate Research Dataset Slice
+## 8. Legacy Trading-Calendar Compatibility Boundary
+
+Implemented:
+
+```text
+market_regime_alpha.legacy.trading_calendar_adapter
+```
+
+The adapter preserves the existing Legacy rehearsal sidecar invariant used by `formal_dataset_builder.py`:
+
+```text
+set(trading_dates)
+=
+set(session.trade_date for sessions carrying session_close)
+```
+
+It:
+
+- rejects missing session-close coverage;
+- rejects duplicate dates;
+- converts naive Legacy close timestamps only under an explicit configured timezone;
+- exposes a canonical `TradingCalendarArtifact` without making V2 Core depend on Legacy modules.
+
+This is a compatibility boundary, not proof that the Legacy sidecar has formal provider authority.
+
+---
+
+## 9. Historical PIT Universe Membership Artifact
+
+Implemented:
+
+```text
+market_regime_alpha.universe.artifacts
+```
+
+Core objects:
+
+```text
+HistoricalUniverseMembershipRecord
+HistoricalPITUniverseArtifact
+```
+
+The artifact stores exact-date membership under an explicit:
+
+```text
+effective_time_convention
+```
+
+It requires:
+
+- explicit historical `as_of_date` records;
+- unique date-symbol keys;
+- deterministic Artifact Identity;
+- deterministic per-date Universe Identity;
+- exact-date snapshot resolution;
+- no silent carry-forward to a missing date.
+
+Historical membership may change across dates.
+
+The artifact answers:
+
+```text
+Does this instrument belong to the declared research population on this date?
+```
+
+It does **not** answer:
+
+```text
+Is it tradable?
+Is it buyable?
+Is it liquid enough?
+Can an order execute?
+```
+
+---
+
+## 10. Legacy Universe Sidecar Compatibility Boundary
+
+Implemented:
+
+```text
+market_regime_alpha.legacy.universe_sidecar_adapter
+```
+
+The existing Legacy field:
+
+```text
+eligible
+```
+
+is mapped only to:
+
+```text
+membership under the Legacy sidecar's own universe method
+```
+
+It is not promoted to canonical Trading Eligibility.
+
+The Legacy sidecar provides a date but no independent availability/effective timestamp.
+
+The adapter therefore records the explicit rehearsal compatibility assumption:
+
+```text
+LEGACY_AS_OF_DATE_EFFECTIVE_FROM_LOCAL_DAY_START
+```
+
+This assumption enters the Historical PIT Universe Artifact identity.
+
+It must not be treated as a universal rule for future providers.
+
+Provider-backed formal data must declare its actual effective-time and availability semantics.
+
+---
+
+## 11. Historical Trading Eligibility Artifact
+
+Implemented:
+
+```text
+market_regime_alpha.universe.eligibility_artifacts
+```
+
+Core objects:
+
+```text
+HistoricalTradingEligibilityRecord
+HistoricalTradingEligibilityArtifact
+```
+
+The artifact stores explicit, versioned policy results:
+
+```text
+ELIGIBLE
+INELIGIBLE
+UNKNOWN
+```
+
+plus explicit reasons.
+
+It does not infer policy from raw fields such as:
+
+- ST state;
+- suspension;
+- price-limit state;
+- listing age;
+- liquidity;
+- risk events.
+
+Those inputs must later feed an explicitly versioned Eligibility Policy / Materializer.
+
+The current artifact requires an exact snapshot at the Candidate Decision Time.
+
+It does not silently carry:
+
+```text
+14:50 eligibility
+```
+
+forward to:
+
+```text
+14:55 Candidate Decision Time
+```
+
+without an identified materialization process.
+
+---
+
+## 12. Historical Candidate Population Assembly
+
+Implemented:
+
+```text
+build_candidate_population_from_historical_artifacts(...)
+```
+
+The chain is:
+
+```text
+Exact-Date PIT Universe Membership
+        ∩
+Exact-Decision-Time Trading Eligibility
+        =
+Candidate Population
+```
+
+This preserves the constitutional distinction:
+
+```text
+Universe Membership
+≠
+Trading Eligibility
+≠
+Execution Feasibility
+```
+
+A member that is explicitly `INELIGIBLE` is excluded.
+
+An explicitly eligible instrument that is not a Universe member is also excluded.
+
+---
+
+## 13. Candidate Research Dataset and Panel
 
 Implemented:
 
 ```text
 build_candidate_research_dataset(...)
+market_regime_alpha.candidates.panel
 ```
 
-One slice represents:
+One Dataset slice represents:
 
 ```text
 One Decision Time
@@ -285,75 +511,22 @@ Candidate Population Symbols
 
 exactly.
 
-The builder does not drop:
-
-- missing-feature symbols;
-- unresolved-target symbols;
-- losing outcomes;
-- non-Top-K symbols.
-
 Separate Close Return, MFE and MAE Candidate datasets may share the same identified Feature side while retaining different Target identities and Target Materialization artifacts.
 
----
-
-## 9. Data Eligibility Propagation
-
-A Candidate research slice may depend on multiple source Datasets.
-
-The output Data Eligibility is the weakest qualification among all required inputs.
-
-For example:
-
-```text
-REHEARSAL Universe Data
-        +
-EXPLORATORY Market Data
-        ↓
-EXPLORATORY Candidate Research Dataset
-```
-
-Derived research artifacts cannot acquire stronger data authority merely because data was joined, transformed, bundled or ranked.
+A multi-date panel requires one consistent Target Identity and Feature schema while allowing PIT Universe Identity to change by date.
 
 ---
 
-## 10. Multi-Decision-Time Candidate Panel
-
-Implemented:
-
-```text
-market_regime_alpha.candidates.panel
-```
-
-The panel requires:
-
-- unique Decision Times;
-- unique slice Dataset identities;
-- one consistent Target Identity per panel;
-- one consistent ordered Feature Definition schema.
-
-It deliberately allows:
-
-```text
-Universe Identity at T1
-≠
-Universe Identity at T2
-```
-
-because a valid PIT panel must allow historical membership to change.
-
-A Close Return panel, MFE panel and MAE panel remain separate target-specific panels.
-
----
-
-## 11. First Deterministic Candidate Baseline
+## 14. First Deterministic Candidate Baseline and Evaluation
 
 Implemented:
 
 ```text
 rank_candidates_by_feature(...)
+market_regime_alpha.candidates.evaluation
 ```
 
-The first controlled end-to-end fixture uses:
+The first controlled fixture uses:
 
 ```text
 R5 5-Session Momentum
@@ -364,21 +537,10 @@ The baseline:
 - does not read future Target values when computing scores;
 - does not emit trade actions;
 - does not call the score a probability;
-- does not silently drop symbols with unavailable Feature values;
-- uses deterministic tie-breaking;
+- does not silently drop unavailable-feature symbols;
+- records explicit rejections;
+- requires predictions + rejections to account for the complete Candidate Population;
 - records Experiment Identity.
-
-Predictions plus explicit rejections must exactly account for the complete Candidate Population.
-
----
-
-## 12. Cross-Sectional Rehearsal Evaluation
-
-Implemented:
-
-```text
-market_regime_alpha.candidates.evaluation
-```
 
 Current descriptive metrics include:
 
@@ -391,11 +553,7 @@ Top-K Observed Target Mean
 Ranked Observed Target Mean
 ```
 
-The evaluator uses only Target observations explicitly marked `AVAILABLE`.
-
-It does not reinterpret `MISSING`, `INVALID` or `NOT_YET_OBSERVED` as numeric zero.
-
-Current aggregate metrics are descriptive rehearsal summaries only.
+They are rehearsal diagnostics only.
 
 They are not:
 
@@ -406,32 +564,34 @@ They are not:
 
 ---
 
-## 13. Controlled Test Assets
+## 15. Controlled Test Assets
 
-Current R5 tests cover, among other invariants:
+Current R5/R3 input tests cover, among other invariants:
 
 - complete Candidate Population preservation;
 - explicit Feature missingness;
-- explicit Target state semantics;
+- explicit Target states;
 - weakest-input Data Eligibility propagation;
-- future Feature rejection;
-- target chronology;
-- multi-date panel assembly;
 - target-blind ranking;
 - exact predictions + rejections population accounting;
-- two-date controlled end-to-end rehearsal wiring;
 - 14:55 Asia/Shanghai Decision Time enforcement;
-- explicit next-session date binding;
 - identity-distinct Close Return / MFE / MAE Target bundle;
-- controlled next-session OHLC validation.
+- controlled next-session OHLC validation;
+- explicit calendar session resolution without weekday inference;
+- calendar sidecar consistency;
+- calendar-resolved next-session Target materialization;
+- historical Universe membership change across dates;
+- no missing-date Universe carry-forward;
+- explicit Universe effective-time convention in identity;
+- exact-decision-time Trading Eligibility;
+- no stale eligibility carry-forward;
+- historical Membership ∩ Eligibility Candidate Population assembly.
 
-The controlled fixture may produce deliberately perfect toy metrics to test wiring.
-
-Such fixture metrics are not market evidence.
+Controlled fixture metrics are not market evidence.
 
 ---
 
-## 14. R1 Legacy Characterization Continues
+## 16. R1 Legacy Characterization Continues
 
 R1 remains `ACTIVE` in parallel.
 
@@ -445,7 +605,7 @@ This does not promote Legacy strategy or timing objects into the V2 Candidate sy
 
 ---
 
-## 15. Execution Status
+## 17. Execution Status
 
 The current tool environment has not provided a complete latest-HEAD repository execution environment.
 
@@ -463,61 +623,57 @@ The new modules are included in the repository mypy scope.
 
 ---
 
-## 16. Current R5 Status
+## 18. Current R5 Status
 
 ```text
-Original-intent-to-R5 consistency audit             COMPLETE
-R4 minimum Feature metadata correction              COMPLETE
-R5 Research Charter                                 UPDATED / ACTIVE
-Target Observation contract                         IMPLEMENTED
-Single-Decision-Time Candidate dataset slice        IMPLEMENTED
-Full-population preservation                        IMPLEMENTED
-Data Eligibility non-inflation                      IMPLEMENTED
-Controlled Rehearsal market observations            IMPLEMENTED
-Four transparent baseline Features                  IMPLEMENTED
-Baseline Feature materializer                       IMPLEMENTED
-Close Return Target materializer                    IMPLEMENTED
-Explicit resolved next-session date                 IMPLEMENTED
-Close Return / MFE / MAE Target bundle             IMPLEMENTED
-Multi-Decision-Time panel assembly                   IMPLEMENTED
-Deterministic one-feature Candidate ranker           IMPLEMENTED
-Explicit ranking rejection accounting               IMPLEMENTED
-Cross-sectional rehearsal evaluation                IMPLEMENTED
-Two-date controlled end-to-end fixture               IMPLEMENTED
+Original-intent-to-R5 consistency audit                 COMPLETE
+R5 Research Charter                                     UPDATED / ACTIVE
+Controlled multi-date Candidate vertical slice          IMPLEMENTED
+Four transparent baseline Features                      IMPLEMENTED
+Close Return / MFE / MAE Target bundle                 IMPLEMENTED
+Deterministic B0 Candidate ranker                        IMPLEMENTED
+Cross-sectional rehearsal evaluation                    IMPLEMENTED
 
-Normal full-repository test execution                PENDING
-Historical Trading Calendar resolver                NOT YET IMPLEMENTED
-Historical PIT Universe artifact loader             NOT YET IMPLEMENTED
-Provider-backed rehearsal market artifact           NOT YET IMPLEMENTED
-Provider-backed multi-date Candidate panels          NOT YET IMPLEMENTED
-B1 transparent composite baseline                   NOT YET IMPLEMENTED
-Immutable R5 run artifact                           NOT YET IMPLEMENTED
-Chronological/OOS Candidate validation              NOT YET IMPLEMENTED
-Formal Candidate evidence                           NOT AVAILABLE
+Historical Trading Calendar Artifact                    IMPLEMENTED
+Legacy Trading Calendar adapter                         IMPLEMENTED
+Calendar-resolved next-session Target path              IMPLEMENTED
+Historical PIT Universe Membership Artifact             IMPLEMENTED
+Explicit Universe effective-time convention             IMPLEMENTED
+Legacy Universe sidecar adapter                         IMPLEMENTED
+Historical Trading Eligibility Artifact                 IMPLEMENTED
+Historical Membership ∩ Eligibility Candidate assembly  IMPLEMENTED
+
+Normal full-repository test execution                    PENDING
+Versioned raw-field Eligibility Policy / Materializer    NOT YET IMPLEMENTED
+Provider-backed rehearsal market artifact               NOT YET IMPLEMENTED
+Provider-backed multi-date Candidate panels              NOT YET IMPLEMENTED
+B1 transparent composite baseline                       NOT YET IMPLEMENTED
+Immutable R5 run artifact                               NOT YET IMPLEMENTED
+Chronological/OOS Candidate validation                  NOT YET IMPLEMENTED
+Formal Candidate evidence                               NOT AVAILABLE
 ```
 
 ---
 
-## 17. Next Implementation Sequence
+## 19. Next Implementation Sequence
 
 The next sequence is:
 
 ```text
 1. Execute current R3/R4/R5 tests in a complete repository environment
         ↓
-2. Historical Trading Calendar Resolver
+2. Define one explicit rehearsal Trading Eligibility Policy / Materializer
+   over identified historical raw eligibility fields
         ↓
-3. Historical PIT Universe Artifact Loader
+3. Build one provider-backed / provider-export-backed REHEARSAL market artifact
         ↓
-4. Provider-Backed Rehearsal Market Artifact
+4. Materialize exact Candidate Populations and Close Return / MFE / MAE
         ↓
-5. Materialize Close Return / MFE / MAE for real rehearsal dates
+5. Build provider-backed target-specific Candidate panels
         ↓
-6. Build provider-backed target-specific Candidate panels
+6. Run B0 and first B1 controlled comparison
         ↓
-7. Run B0 and first B1 controlled comparison
-        ↓
-8. Write immutable R5 run artifact
+7. Write immutable R5 run artifact
 ```
 
 Market/ETF/Theme exploratory research and R1 Legacy characterization may proceed in parallel.
@@ -526,7 +682,7 @@ The project must not wait for every future data source before running a clearly 
 
 ---
 
-## 18. Non-Goals of the Current Increment
+## 20. Non-Goals of the Current Increment
 
 This increment does not:
 
@@ -535,6 +691,8 @@ This increment does not:
 - implement ETF Rotation;
 - claim ETF/Theme context is unimportant;
 - use `CoscoTimingEngine` as the cross-sectional ranker;
+- treat date-level Legacy membership semantics as universal provider PIT truth;
+- infer Trading Eligibility from incomplete raw fields without a versioned policy;
 - migrate all Legacy factors;
 - train a complex model;
 - report calibrated probability;
@@ -544,6 +702,6 @@ This increment does not:
 
 ---
 
-## 19. Implementation Principle
+## 21. Implementation Principle
 
-> **The current R5 system is successful only if it preserves the complete historical opportunity set and makes missingness, Target identity, opportunity/risk outcomes, data authority and temporal direction explicit. A smaller honest panel is more valuable than a larger panel produced by silently dropping difficult rows, collapsing distinct outcomes, or mixing future results into the Feature side.**
+> **The current R5 system is successful only if it preserves the complete historical opportunity set and makes missingness, Target identity, opportunity/risk outcomes, Calendar identity, Universe effective time, Trading Eligibility policy, data authority and temporal direction explicit. A smaller honest panel is more valuable than a larger panel produced by silently carrying stale states, collapsing distinct outcomes, or mixing future results into the Feature side.**
