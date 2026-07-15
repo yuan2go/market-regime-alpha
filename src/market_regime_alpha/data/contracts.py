@@ -76,6 +76,10 @@ class DatasetContract:
     def __post_init__(self) -> None:
         _require_non_empty("schema_version", self.schema_version)
         _require_non_empty("scope", self.scope)
+        if not isinstance(self.eligibility, DataEligibility):
+            raise TypeError("eligibility must be a DataEligibility")
+        if not isinstance(self.pit_correct_for_scope, bool):
+            raise TypeError("pit_correct_for_scope must be boolean")
         if not self.provider_references:
             raise ValueError("provider_references must not be empty")
         keys = [
