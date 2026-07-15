@@ -185,7 +185,8 @@ def materialize_historical_trading_eligibility(
     """Materialize exact-Decision-Time eligibility for every historical Universe member.
 
     Missing raw observations and observations unavailable by Decision Time become explicit UNKNOWN
-    records. Older observations are never carried forward implicitly.
+    records. Older observations are never carried forward implicitly. Explicit Decision Times are
+    preserved even when a valid historical Universe has zero members.
     """
 
     if not decision_times:
@@ -230,4 +231,5 @@ def materialize_historical_trading_eligibility(
         policy_version=policy.policy_version,
         policy_artifact_id=policy.policy_artifact_id,
         records=tuple(records),
+        snapshot_as_of_times=tuple(AsOfTime(decision_time.value) for decision_time in ordered_decision_times),
     )
