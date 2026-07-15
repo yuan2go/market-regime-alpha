@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "market-regime-alpha"
 version = "0.1.0"
-description = "A-share buy/sell point identification and backtesting research tool."
+description = "Research-first Alpha Research Operating System for China A-shares with candidate discovery, lifecycle strategy research, validation, and execution simulation."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -54,6 +54,10 @@ ignore = ["E402", "E501"]
 python_version = "3.12"
 mypy_path = "src"
 files = [
+    "src/market_regime_alpha/core/identity.py",
+    "src/market_regime_alpha/core/status.py",
+    "src/market_regime_alpha/core/time.py",
+    "src/market_regime_alpha/research/experiment_identity.py",
     "src/market_regime_alpha/dividend_t/cosco_timing.py",
     "src/market_regime_alpha/dividend_t/cosco_timing_breakout.py",
     "src/market_regime_alpha/dividend_t/cosco_timing_capital_flow.py",
