@@ -11,6 +11,7 @@ from hashlib import sha256
 import json
 import math
 from statistics import mean, median, pstdev
+from zoneinfo import ZoneInfo
 
 from market_regime_alpha.candidates.contracts import CandidatePopulation
 from market_regime_alpha.core.identity import (
@@ -33,6 +34,7 @@ MOMENTUM_5S_ID = FeatureDefinitionId("feature-r5-momentum-5s-v1")
 VOLATILITY_20S_ID = FeatureDefinitionId("feature-r5-volatility-20s-v1")
 LIQUIDITY_20S_ID = FeatureDefinitionId("feature-r5-log-median-amount-20s-v1")
 PRICE_VS_MA20_ID = FeatureDefinitionId("feature-r5-price-vs-ma20-v1")
+_R5_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def r5_baseline_feature_definitions() -> tuple[FeatureDefinition, ...]:
@@ -48,10 +50,10 @@ def r5_baseline_feature_definitions() -> tuple[FeatureDefinition, ...]:
             source_fields=("close", "decision_reference_price"),
             frequency="one value per Candidate Decision Time",
             lookback="5 finalized prior trading sessions plus Decision Time price snapshot",
-            availability_rule="all historical closes finalized and decision snapshot available by Decision Time",
+            availability_rule="all historical closes finalized and decision snapshot available by 14:55 Asia/Shanghai Decision Time",
             missingness_policy="MISSING when Decision Time price or five prior finalized sessions are unavailable",
             research_status="REHEARSAL_BASELINE",
-            parameters=(("lookback_sessions", "5"),),
+            parameters=(("lookback_sessions", "5"), ("decision_time", "14:55 Asia/Shanghai")),
         ),
         FeatureDefinition(
             feature_id=VOLATILITY_20S_ID,
@@ -62,10 +64,10 @@ def r5_baseline_feature_definitions() -> tuple[FeatureDefinition, ...]:
             source_fields=("close",),
             frequency="one value per Candidate Decision Time",
             lookback="21 finalized prior closes producing 20 session returns",
-            availability_rule="all required historical closes finalized and available by Decision Time",
+            availability_rule="all required historical closes finalized and available by 14:55 Asia/Shanghai Decision Time",
             missingness_policy="MISSING when fewer than 21 finalized prior closes are available",
             research_status="REHEARSAL_BASELINE",
-            parameters=(("return_count", "20"),),
+            parameters=(("return_count", "20"), ("decision_time", "14:55 Asia/Shanghai")),
         ),
         FeatureDefinition(
             feature_id=LIQUIDITY_20S_ID,
@@ -76,10 +78,10 @@ def r5_baseline_feature_definitions() -> tuple[FeatureDefinition, ...]:
             source_fields=("amount",),
             frequency="one value per Candidate Decision Time",
             lookback="20 finalized prior trading sessions",
-            availability_rule="historical amount observations finalized and available by Decision Time",
+            availability_rule="historical amount observations finalized and available by 14:55 Asia/Shanghai Decision Time",
             missingness_policy="MISSING when fewer than 20 finalized prior amount observations are available",
             research_status="REHEARSAL_BASELINE",
-            parameters=(("lookback_sessions", "20"),),
+            parameters=(("lookback_sessions", "20"), ("decision_time", "14:55 Asia/Shanghai")),
         ),
         FeatureDefinition(
             feature_id=PRICE_VS_MA20_ID,
@@ -90,10 +92,10 @@ def r5_baseline_feature_definitions() -> tuple[FeatureDefinition, ...]:
             source_fields=("close", "decision_reference_price"),
             frequency="one value per Candidate Decision Time",
             lookback="20 finalized prior trading sessions plus Decision Time price snapshot",
-            availability_rule="historical closes finalized and decision snapshot available by Decision Time",
+            availability_rule="historical closes finalized and decision snapshot available by 14:55 Asia/Shanghai Decision Time",
             missingness_policy="MISSING when Decision Time price or twenty prior finalized closes are unavailable",
             research_status="REHEARSAL_BASELINE",
-            parameters=(("moving_average_sessions", "20"),),
+            parameters=(("moving_average_sessions", "20"), ("decision_time", "14:55 Asia/Shanghai")),
         ),
     )
 
@@ -109,6 +111,7 @@ def materialize_r5_baseline_features(
 ) -> tuple[FeatureMaterialization, ...]:
     """Materialize the first four transparent baseline features for one Candidate cross-section."""
 
+    _require_r5_decision_time(population)
     bars_by_symbol: dict[str, list[RehearsalDailyBar]] = defaultdict(list)
     seen_bar_keys: set[tuple[str, object]] = set()
     for bar in daily_bars:
@@ -116,7 +119,7 @@ def materialize_r5_baseline_features(
             continue
         if bar.available_at.value > population.decision_time.value:
             continue
-        if bar.session_date >= population.decision_time.value.date():
+        if bar.session_date >= population.decision_time.value.astimezone(_R5_TIMEZONE).date():
             continue
         key = (bar.symbol, bar.session_date)
         if key in seen_bar_keys:
@@ -197,6 +200,12 @@ def materialize_r5_baseline_features(
         )
         for definition in definitions
     )
+
+
+def _require_r5_decision_time(population: CandidatePopulation) -> None:
+    local = population.decision_time.value.astimezone(_R5_TIMEZONE)
+    if (local.hour, local.minute, local.second, local.microsecond) != (14, 55, 0, 0):
+        raise ValueError("R5 rehearsal baseline requires Decision Time 14:55:00 Asia/Shanghai")
 
 
 def _feature_observation(*, symbol: str, value: float | None) -> FeatureObservation:
