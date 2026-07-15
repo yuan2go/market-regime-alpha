@@ -1,8 +1,9 @@
 """Historical point-in-time Universe membership artifacts.
 
 Membership is intentionally separate from Trading Eligibility. A historical Universe artifact
-answers which symbols belong to the declared research population on an exact as-of date; it
-does not claim those symbols are tradable, buyable, liquid, or execution-feasible.
+answers which symbols belong to the declared research population under an explicit effective-
+time convention; it does not claim those symbols are tradable, buyable, liquid, or execution-
+feasible.
 """
 
 from __future__ import annotations
@@ -44,12 +45,14 @@ class HistoricalPITUniverseArtifact:
     source_dataset_id: DatasetId
     method_version: str
     timezone_name: str
+    effective_time_convention: str
     snapshots: tuple[PITUniverseSnapshot, ...]
 
     def __post_init__(self) -> None:
         for label, value in (
             ("method_version", self.method_version),
             ("timezone_name", self.timezone_name),
+            ("effective_time_convention", self.effective_time_convention),
         ):
             if not isinstance(value, str) or not value.strip() or value != value.strip():
                 raise ValueError(f"{label} must be a non-empty trimmed string")
@@ -98,10 +101,18 @@ def build_historical_pit_universe_artifact(
     source_dataset_id: DatasetId,
     method_version: str,
     timezone_name: str,
+    effective_time_convention: str,
     records: tuple[HistoricalUniverseMembershipRecord, ...],
 ) -> HistoricalPITUniverseArtifact:
     """Build deterministic exact-date PIT Universe snapshots from explicit membership records."""
 
+    for label, value in (
+        ("method_version", method_version),
+        ("timezone_name", timezone_name),
+        ("effective_time_convention", effective_time_convention),
+    ):
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise ValueError(f"{label} must be a non-empty trimmed string")
     if not records:
         raise ValueError("historical PIT Universe records must not be empty")
     keys = tuple((record.as_of_date, record.symbol) for record in records)
@@ -110,10 +121,11 @@ def build_historical_pit_universe_artifact(
     ordered_records = tuple(sorted(records, key=lambda record: (record.as_of_date, record.symbol)))
 
     payload = {
-        "schema_version": "historical-pit-universe-artifact-v1",
+        "schema_version": "historical-pit-universe-artifact-v2",
         "source_dataset_id": str(source_dataset_id),
         "method_version": method_version,
         "timezone_name": timezone_name,
+        "effective_time_convention": effective_time_convention,
         "records": [
             {
                 "as_of_date": record.as_of_date.isoformat(),
@@ -138,6 +150,7 @@ def build_historical_pit_universe_artifact(
             evidence_artifact_id=artifact_id,
             method_version=method_version,
             timezone_name=timezone_name,
+            effective_time_convention=effective_time_convention,
             as_of_date=as_of_date,
             records=tuple(date_records),
             zone=zone,
@@ -149,6 +162,7 @@ def build_historical_pit_universe_artifact(
         source_dataset_id=source_dataset_id,
         method_version=method_version,
         timezone_name=timezone_name,
+        effective_time_convention=effective_time_convention,
         snapshots=snapshots,
     )
 
@@ -159,15 +173,17 @@ def _build_snapshot(
     evidence_artifact_id: ArtifactId,
     method_version: str,
     timezone_name: str,
+    effective_time_convention: str,
     as_of_date: date,
     records: tuple[HistoricalUniverseMembershipRecord, ...],
     zone: ZoneInfo,
 ) -> PITUniverseSnapshot:
     snapshot_payload = {
-        "schema_version": "pit-universe-snapshot-v1",
+        "schema_version": "pit-universe-snapshot-v2",
         "source_dataset_id": str(source_dataset_id),
         "method_version": method_version,
         "timezone_name": timezone_name,
+        "effective_time_convention": effective_time_convention,
         "as_of_date": as_of_date.isoformat(),
         "records": [
             {"symbol": record.symbol, "is_member": record.is_member}
