@@ -66,6 +66,8 @@ class FeatureObservation:
     def __post_init__(self) -> None:
         if not isinstance(self.symbol, str) or not self.symbol.strip() or self.symbol != self.symbol.strip():
             raise ValueError("symbol must be a non-empty trimmed string")
+        if not isinstance(self.status, InputAvailabilityStatus):
+            raise TypeError("status must be an InputAvailabilityStatus")
         if self.status is InputAvailabilityStatus.AVAILABLE and self.value is None:
             raise ValueError("AVAILABLE feature observation requires a value")
         if self.status is not InputAvailabilityStatus.AVAILABLE and self.value is not None:
