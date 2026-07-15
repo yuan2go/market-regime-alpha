@@ -215,29 +215,33 @@ Those remain absent until they can be reconstructed truthfully.
 
 ---
 
-## 4. Test Coverage Added
+## 4. Test and Characterization Coverage
 
-The initial isolated validation covers:
+### 4.1 New isolated V2 tests
 
-### Identity
+The new V2 code was first executed in an isolated local package copy.
+
+Coverage included:
+
+#### Identity
 
 - immutable typed IDs;
 - invalid empty/whitespace/control-character IDs;
 - different identity types remain different.
 
-### Semantic time
+#### Semantic time
 
 - naive datetimes rejected;
 - timezone-aware values preserved;
 - semantic time types remain distinct;
 - UTC conversion.
 
-### Availability status
+#### Availability status
 
 - only `AVAILABLE` is usable by default;
 - `NO_ACTION` cannot silently re-enter the input-status enum.
 
-### Experiment Identity
+#### Experiment Identity
 
 - deterministic canonical serialization and hashing;
 - metadata reference order normalization;
@@ -245,19 +249,57 @@ The initial isolated validation covers:
 - duplicate feature identities rejected;
 - duplicate semantic-reference keys rejected.
 
-### Legacy adapter
+#### Legacy adapter protocol boundary
 
 - preserves Legacy identity anchors;
 - does not invent Target or Universe scope;
 - rejects objects that do not satisfy the minimum compatibility shape.
 
-The code was first executed in an isolated local package copy with:
+The isolated test result before adding the real-Legacy integration case was:
 
 ```text
 16 passed
 ```
 
 `ruff` and `mypy` were not installed in that isolated execution environment, so no claim is made that those checks passed there. The new modules are included in the repository mypy file scope and should be checked in the normal project development environment or CI.
+
+### 4.2 Existing Legacy characterization reused
+
+R1 review found substantial existing coverage in:
+
+```text
+tests/test_signal_intent.py
+tests/test_macd_experiments.py
+```
+
+The project will reuse these tests instead of duplicating their intent.
+
+Existing coverage includes:
+
+- setup-to-intent mapping and completeness;
+- strict/compatibility handling of unknown setup codes;
+- confirmation timing and consistency;
+- risk-priority and MACD policy behavior;
+- Legacy MACD Experiment Identity required fields;
+- identity hash changes for result-affecting mutations;
+- stable canonical serialization;
+- four-arm experiment identity separation;
+- cache identity and tamper detection;
+- counterfactual score/policy/interaction classification.
+
+### 4.3 Real Legacy adapter test added
+
+A repository test now constructs a real Legacy `MACDExperimentIdentity`, computes its existing canonical Legacy hash, adapts it to V2, and verifies that:
+
+- code revision is preserved;
+- Legacy full config hash is preserved;
+- Legacy dataset-version reference is preserved;
+- data-split and pipeline references are preserved;
+- canonical Target and Universe identities remain absent rather than being invented.
+
+This new real-Legacy integration test was committed after the isolated 16-test run.
+
+The current execution environment could not clone the latest GitHub repository because DNS/network access to `github.com` was unavailable. Therefore, this document does **not** claim that the new real-Legacy integration test was executed in this session against the latest GitHub HEAD. It should run in the normal project environment or CI together with the existing Legacy test suite.
 
 ---
 
@@ -281,23 +323,26 @@ The initial kernel is implemented, but R2 is not fully complete.
 Current state:
 
 ```text
-Core identity primitives                    DONE
-Semantic time primitives                    DONE
-Input availability semantics                DONE
-Generic Experiment Identity                 DONE
-First explicit Legacy compatibility adapter DONE
-Legacy strategy compatibility boundaries    PENDING
-Candidate-facing semantic contracts         DEFERRED to their owning stages/specs
+Core identity primitives                         DONE
+Semantic time primitives                         DONE
+Input availability semantics                     DONE
+Generic Experiment Identity                      DONE
+First explicit Legacy compatibility adapter      DONE
+Adapter test against real Legacy identity         ADDED / PENDING NORMAL-ENV EXECUTION
+Existing signal-intent characterization reused    IDENTIFIED
+Existing MACD identity characterization reused    IDENTIFIED
+Legacy strategy compatibility boundaries          PENDING
+Candidate-facing semantic contracts               DEFERRED TO OWNING STAGES/SPECS
 ```
 
 The next R2-compatible work should be driven by actual consumers rather than abstract completeness.
 
 Priority:
 
-1. characterize `signal_intent.py` invariants;
-2. verify the Legacy MACD adapter against the real `MACDExperimentIdentity` path;
-3. create the minimal Data/Dataset contracts required by R3;
-4. create PIT Universe and Candidate Target contracts only when their owning stages begin;
+1. run the complete project tests, ruff and mypy in the normal repository environment;
+2. add only missing Legacy strategy compatibility boundaries required by a concrete migration consumer;
+3. begin the minimal Data/Dataset contracts required by R3;
+4. create PIT Universe and Candidate Target contracts when their owning stages begin;
 5. avoid adding speculative framework abstractions that do not unblock Candidate research.
 
 ---
