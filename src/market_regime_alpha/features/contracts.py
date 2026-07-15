@@ -46,6 +46,8 @@ class FeatureDefinition:
             _require_non_empty(label, value)
         if not self.source_information_families:
             raise ValueError("source_information_families must not be empty")
+        for family in self.source_information_families:
+            _require_non_empty("source_information_family", family)
         if len(self.source_information_families) != len(set(self.source_information_families)):
             raise ValueError("source_information_families must be unique")
         parameter_keys = [key for key, _ in self.parameters]
