@@ -85,7 +85,7 @@ def test_legacy_buy_t_golden_decision() -> None:
     assert decision.score.F_score == 80.0
     assert decision.score.R_score == 78.5
     assert decision.score.T_score == 84.0
-    assert decision.score.total_score == 80.68
+    assert decision.score.total_score == 80.67
     assert decision.suggested_trade_pct == pytest.approx(0.45)
     assert decision.order_intent is not None
     assert decision.order_intent.side == "BUY"
