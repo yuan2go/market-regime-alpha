@@ -22,6 +22,11 @@ from market_regime_alpha.universe.contracts import (
 )
 
 
+def _validate_optional_non_empty(label: str, value: str | None) -> None:
+    if value is not None and (not isinstance(value, str) or not value.strip() or value != value.strip()):
+        raise ValueError(f"{label} must be a non-empty trimmed string when present")
+
+
 @dataclass(frozen=True, slots=True)
 class HistoricalTradingEligibilityRecord:
     """One explicit eligibility-policy result at one exact historical as-of time."""
@@ -52,10 +57,14 @@ class HistoricalTradingEligibilityArtifact:
     policy_version: str
     snapshots: tuple[TradingEligibilitySnapshot, ...]
     policy_artifact_id: ArtifactId | None = None
+    materializer_version: str | None = None
+    raw_evidence_convention: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.policy_version, str) or not self.policy_version.strip() or self.policy_version != self.policy_version.strip():
             raise ValueError("policy_version must be a non-empty trimmed string")
+        _validate_optional_non_empty("materializer_version", self.materializer_version)
+        _validate_optional_non_empty("raw_evidence_convention", self.raw_evidence_convention)
         if not self.snapshots:
             raise ValueError("historical Trading Eligibility artifact must contain at least one snapshot")
         times = tuple(snapshot.as_of.value for snapshot in self.snapshots)
@@ -93,6 +102,8 @@ def build_historical_trading_eligibility_artifact(
     policy_version: str,
     records: tuple[HistoricalTradingEligibilityRecord, ...],
     policy_artifact_id: ArtifactId | None = None,
+    materializer_version: str | None = None,
+    raw_evidence_convention: str | None = None,
     snapshot_as_of_times: tuple[AsOfTime, ...] = (),
 ) -> HistoricalTradingEligibilityArtifact:
     """Build deterministic exact-time eligibility snapshots from explicit policy results.
@@ -104,6 +115,8 @@ def build_historical_trading_eligibility_artifact(
 
     if not isinstance(policy_version, str) or not policy_version.strip() or policy_version != policy_version.strip():
         raise ValueError("policy_version must be a non-empty trimmed string")
+    _validate_optional_non_empty("materializer_version", materializer_version)
+    _validate_optional_non_empty("raw_evidence_convention", raw_evidence_convention)
     if any(not isinstance(as_of, AsOfTime) for as_of in snapshot_as_of_times):
         raise TypeError("snapshot_as_of_times must contain AsOfTime values")
     explicit_times = tuple(as_of.value for as_of in snapshot_as_of_times)
@@ -119,10 +132,12 @@ def build_historical_trading_eligibility_artifact(
     all_snapshot_times = tuple(sorted(set(explicit_times) | {record.as_of.value for record in ordered_records}))
 
     payload = {
-        "schema_version": "historical-trading-eligibility-artifact-v3",
+        "schema_version": "historical-trading-eligibility-artifact-v4",
         "source_dataset_id": str(source_dataset_id),
         "policy_version": policy_version,
         "policy_artifact_id": str(policy_artifact_id) if policy_artifact_id is not None else None,
+        "materializer_version": materializer_version,
+        "raw_evidence_convention": raw_evidence_convention,
         "snapshot_as_of_times": [value.isoformat() for value in all_snapshot_times],
         "records": [
             {
@@ -166,4 +181,6 @@ def build_historical_trading_eligibility_artifact(
         policy_version=policy_version,
         snapshots=snapshots,
         policy_artifact_id=policy_artifact_id,
+        materializer_version=materializer_version,
+        raw_evidence_convention=raw_evidence_convention,
     )
