@@ -24,6 +24,10 @@ from market_regime_alpha.universe.eligibility_artifacts import (
 )
 
 
+TRADING_ELIGIBILITY_MATERIALIZER_VERSION = "historical-trading-eligibility-materializer-v1"
+EXPLICIT_RAW_ELIGIBILITY_AVAILABILITY_CONVENTION = "EXPLICIT_RAW_OBSERVATION_AVAILABLE_AT"
+
+
 class TradingEligibilityReason(str, Enum):
     """Canonical reason codes emitted by the minimum versioned eligibility policy."""
 
@@ -73,6 +77,8 @@ class RawTradingEligibilityObservation:
             ("limit_up_price", self.limit_up_price),
             ("limit_down_price", self.limit_down_price),
         ):
+            if isinstance(value, bool):
+                raise TypeError(f"{label} must not be boolean")
             if value is not None and (not math.isfinite(float(value)) or float(value) <= 0.0):
                 raise ValueError(f"{label} must be positive and finite when present")
         if self.limit_up_price is not None and self.limit_down_price is not None:
@@ -181,6 +187,7 @@ def materialize_historical_trading_eligibility(
     policy: TradingEligibilityPolicy,
     decision_times: tuple[DecisionTime, ...],
     observations: tuple[RawTradingEligibilityObservation, ...],
+    raw_evidence_convention: str = EXPLICIT_RAW_ELIGIBILITY_AVAILABILITY_CONVENTION,
 ) -> HistoricalTradingEligibilityArtifact:
     """Materialize exact-Decision-Time eligibility for every historical Universe member.
 
@@ -189,6 +196,8 @@ def materialize_historical_trading_eligibility(
     preserved even when a valid historical Universe has zero members.
     """
 
+    if not isinstance(raw_evidence_convention, str) or not raw_evidence_convention.strip() or raw_evidence_convention != raw_evidence_convention.strip():
+        raise ValueError("raw_evidence_convention must be a non-empty trimmed string")
     if not decision_times:
         raise ValueError("decision_times must not be empty")
     if len({decision_time.value for decision_time in decision_times}) != len(decision_times):
@@ -230,6 +239,8 @@ def materialize_historical_trading_eligibility(
         source_dataset_id=source_dataset_id,
         policy_version=policy.policy_version,
         policy_artifact_id=policy.policy_artifact_id,
+        materializer_version=TRADING_ELIGIBILITY_MATERIALIZER_VERSION,
+        raw_evidence_convention=raw_evidence_convention,
         records=tuple(records),
         snapshot_as_of_times=tuple(AsOfTime(decision_time.value) for decision_time in ordered_decision_times),
     )
