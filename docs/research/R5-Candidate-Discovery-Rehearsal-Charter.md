@@ -4,7 +4,7 @@
 > **Status:** ACTIVE — initial rehearsal research program
 > **Authority:** Research Charter for the first independent cross-sectional Candidate Discovery vertical slice
 > **Constitutional basis:** `00-Project-Vision.md`, `03-Research-Framework.md`, `04-Data-Constitution.md`, `05-Factor-Constitution.md`, `07-Validation-Constitution.md`, `08-Roadmap.md`, `09-Glossary.md`
-> **Consistency audit:** `docs/architecture/Original-Intent-to-R3-R4-Consistency-Audit.md`
+> **Consistency audit:** `docs/architecture/Original-Intent-to-R5-Consistency-Audit.md`
 
 ---
 
@@ -41,15 +41,14 @@ The first program should be:
 - independent from Legacy single-symbol timing authority;
 - usable with EXPLORATORY or REHEARSAL data without overstating evidence.
 
-A next-session target is selected for this rehearsal because it is concrete and measurable.
+A next-session target family is selected for this rehearsal because it is concrete and measurable.
 
 This does **not** redefine Candidate Discovery as an overnight-only system.
 
 Future Candidate research may use:
 
 - multi-session return targets;
-- maximum favorable excursion targets;
-- maximum adverse excursion targets;
+- intraday opportunity-window targets;
 - breakout-continuation targets;
 - expected holding-horizon targets;
 - regime-conditioned opportunity targets.
@@ -107,11 +106,11 @@ A valid empty Candidate Population remains a valid research outcome.
 
 ---
 
-## 5. Primary Target Contract
+## 5. Target Contracts
 
-### 5.1 Primary target
+### 5.1 B0 primary target
 
-The initial primary target is:
+The initial B0 primary evaluation target remains:
 
 ```text
 Decision-Reference-to-Next-Session-Close Return
@@ -133,7 +132,7 @@ The exact Target Contract must identify:
 - missing/invalid target behavior;
 - version.
 
-For the first controlled rehearsal, the Decision Reference Price may be the finalized close of the declared decision bar when the dataset contract supports that convention.
+For the first controlled rehearsal, the Decision Reference Price may be the finalized price of the declared decision snapshot when the dataset contract supports that convention.
 
 This target is a **research outcome**.
 
@@ -141,18 +140,59 @@ It is not an execution return and does not imply that a real position must be ex
 
 ---
 
-### 5.2 Secondary diagnostics
+### 5.2 Minimum opportunity-profile Target bundle before provider-backed rehearsal
 
-The first program may later materialize separate Target Contracts for:
+The preserved original project objective includes both forward upside opportunity and adverse excursion.
 
-- next-session maximum favorable excursion;
-- next-session maximum adverse excursion;
+Therefore, before provider-backed R5 rehearsal becomes the next major data milestone, the minimum Target set is:
+
+```text
+1. Next-Session Close Return
+2. Next-Session Maximum Favorable Excursion (MFE)
+3. Next-Session Maximum Adverse Excursion (MAE)
+```
+
+They are separate Target Contracts and separate Target identities.
+
+The initial v1 definitions are:
+
+```text
+Close Return
+= next_session_close / decision_reference_price - 1
+
+MFE
+= max(0, next_session_high / decision_reference_price - 1)
+
+MAE
+= min(0, next_session_low / decision_reference_price - 1)
+```
+
+Interpretation rules:
+
+- MFE is an observed opportunity outcome and does not assume execution at the session high;
+- MAE is an observed adverse-excursion outcome and does not automatically create a stop-loss rule;
+- Close Return remains the first B0 ranking-evaluation target;
+- MFE and MAE remain separately evaluable opportunity/risk outcomes;
+- none of the three creates a mandatory holding period or Exit time.
+
+The three targets may be grouped in one reproducibility bundle, but the bundle must not collapse them into one ambiguous `target` field or one shared Target Identity.
+
+---
+
+### 5.3 Future scoped targets
+
+Later Research Charters may add separate Target Contracts for:
+
 - next-session relative/excess return;
-- next-session positive-return event.
+- next-session positive-return events;
+- next-30-minute or next-60-minute opportunity windows;
+- multi-session return/MFE/MAE;
+- expected holding horizon;
+- regime-conditioned opportunity.
 
-These must remain separate target identities.
+Earlier morning-window ideas remain valid scoped research questions when suitable intraday PIT data is available.
 
-The first Candidate Dataset Builder must not place several differently defined outcomes into one ambiguous `target` column.
+They must not restore a universal next-morning Exit rule.
 
 ---
 
@@ -253,6 +293,8 @@ The builder must:
 8. produce stable output identity;
 9. remain independent from Strategy Action semantics.
 
+A Candidate Dataset remains single-target for explicit evaluation identity. Separate Close Return, MFE and MAE datasets may share one identified Feature side while retaining separate Target identities and Target Materialization artifacts.
+
 ---
 
 ## 9. Baseline Ladder
@@ -264,12 +306,14 @@ The first model sequence is:
 Examples:
 
 - stable symbol ordering control;
-- one-feature relative-strength rank.
+- one-feature relative-strength/momentum rank.
 
 Purpose:
 
 - verify the ranking/evaluation pipeline;
 - establish a minimum comparator.
+
+The first B0 ranking evaluation uses Next-Session Close Return as the primary Target while MFE and MAE remain separate diagnostics/outcomes.
 
 ### B1 — Simple transparent composite rank
 
@@ -297,7 +341,7 @@ Complex tree models, reinforcement learning and LLM-generated trade actions are 
 
 The first R5 evaluation is rehearsal-level.
 
-It should support, as appropriate to the primary target:
+It should support, as appropriate to the Target:
 
 - population coverage;
 - feature coverage;
@@ -307,7 +351,8 @@ It should support, as appropriate to the primary target:
 - ranking monotonicity;
 - ranking turnover;
 - concentration diagnostics;
-- missingness diagnostics.
+- missingness diagnostics;
+- separate Close Return / MFE / MAE outcome reporting.
 
 No single metric proves Alpha.
 
@@ -353,7 +398,7 @@ It does not answer:
 
 That belongs to Entry.
 
-The primary fixed-horizon target also does not answer:
+The Target horizon also does not answer:
 
 > When must an existing position be sold?
 
@@ -368,6 +413,8 @@ Mandatory Holding Period
 ≠
 Mandatory Exit Time
 ```
+
+MFE does not create a take-profit instruction and MAE does not create a stop-loss instruction.
 
 ---
 
@@ -393,22 +440,29 @@ unless cross-sectional comparability is independently established in a future re
 
 ---
 
-## 14. Initial Deliverables
+## 14. Current and Next Deliverables
 
-The first R5 implementation increment should deliver:
+The current R5 implementation has delivered:
 
 1. this Research Charter;
-2. Target Observation / Target Materialization contract;
+2. Target Observation / Target Materialization contracts;
 3. Candidate Dataset Builder;
-4. tests proving full-population preservation and explicit missingness;
-5. a minimal fixture-driven Candidate panel;
-6. stable identities linking Dataset, Universe, Features and Target.
+4. full-population and explicit-missingness tests;
+5. a controlled multi-date Candidate panel;
+6. stable identities linking Dataset, Universe, Features, Target, Model and Experiment;
+7. transparent baseline Feature Materializers;
+8. deterministic B0 ranking;
+9. descriptive cross-sectional rehearsal evaluation;
+10. the minimum Close Return / MFE / MAE Target Materialization bundle capability.
 
-The next increment may then add:
+The next major implementation increment should add:
 
-- concrete baseline Feature Materializers;
-- naive ranking baseline;
-- rehearsal evaluation artifact.
+- historical trading-calendar resolution;
+- historical PIT Universe artifact loading;
+- provider-backed rehearsal market artifacts;
+- provider-backed multi-date Candidate panels;
+- immutable R5 run artifacts;
+- B0/B1 controlled comparison.
 
 ---
 
@@ -424,6 +478,7 @@ The first R5 program must stop or be revised if:
 - one feature identity maps to inconsistent formulas;
 - a score is reported as probability without calibration authority;
 - the implementation begins emitting trade actions;
+- provider-backed rehearsal is built around only one close-return Target while the required opportunity-profile Target bundle is absent;
 - infrastructure work expands without enabling a runnable Candidate experiment.
 
 ---
@@ -450,4 +505,4 @@ Live capital authority
 
 ## 17. Charter Commitment
 
-> **R5 exists to produce the first independent, reproducible, cross-sectional Candidate Discovery research system as early as possible. It must remain simple enough to attribute, strict enough to prevent semantic and temporal leakage, and narrow enough that later Market, ETF, Theme, Chan, Tuishen, MACD and capital-flow research can be added through controlled incremental evidence rather than hidden complexity.**
+> **R5 exists to produce the first independent, reproducible, cross-sectional Candidate Discovery research system as early as possible. It must remain simple enough to attribute, strict enough to prevent semantic and temporal leakage, broad enough to preserve return opportunity and adverse-excursion outcomes, and narrow enough that later Market, ETF, Theme, Chan, Tuishen, MACD and capital-flow research can be added through controlled incremental evidence rather than hidden complexity.**
