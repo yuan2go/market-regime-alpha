@@ -25,7 +25,7 @@ What can be adapted?
 What must remain frozen?
 ```
 
-R1 may run in controlled parallel with R2, R3 and R4.
+R1 may run in controlled parallel with R2, R3, R4 and R5.
 
 ---
 
@@ -136,7 +136,7 @@ Do not attempt to characterize every branch before the first Candidate research 
 
 Current status: `PARTIAL`, with first integrated Golden Behavior tests added.
 
-New characterization asset:
+Characterization asset:
 
 ```text
 tests/legacy/test_dividend_t_strategy_characterization.py
@@ -210,12 +210,74 @@ The purpose is to preserve the Legacy baseline, not to keep its coupling permane
 
 ### 4.3 `CoscoTimingEngine`
 
-Current status: `PARTIAL`
+Current status: `PARTIAL`, with the first integrated data-freshness gate characterization added.
 
-Required next characterization work:
+New characterization asset:
 
-- integrated output snapshots for representative fixtures;
-- component availability/missing-data behavior;
+```text
+tests/legacy/test_cosco_timing_characterization.py
+```
+
+The first integrated fixture uses:
+
+```text
+build_sample_cosco_bars()
+```
+
+and locks the current stale-data behavior after the engine has already executed its integrated analysis path.
+
+With:
+
+```text
+require_fresh = true
+and
+Data Age > Freshness Limit
+```
+
+current behavior is characterized as:
+
+```text
+data_fresh = false
+freshness_status = stale
+signal_blocked = true
+final action = WAIT_STALE_DATA
+confidence = 0
+DecisionTrace.freshness_filtered_action = WAIT_STALE_DATA
+DecisionTrace.final_signal = HOLD
+```
+
+The same stale fixture with:
+
+```text
+require_fresh = false
+```
+
+is characterized as:
+
+```text
+data_fresh = false
+signal_blocked = false
+action != WAIT_STALE_DATA
+```
+
+This characterization is important because the current integrated engine contains a real Data Quality Gate inside a Legacy timing owner.
+
+Future migration must preserve the observed behavior before deciding which target owner should hold:
+
+```text
+Data Freshness / Quality State
+        ↓
+Strategy Blocking Policy
+        ↓
+Final Strategy Proposal Semantics
+```
+
+The test does **not** promote `CoscoTimingEngine` into the V2 Candidate, Feature, Data or Strategy kernel.
+
+Remaining priority characterization includes:
+
+- component availability and missing-data behavior;
+- integrated output snapshots for representative market-state fixtures;
 - trace of major component outputs before selective extraction;
 - explicit confirmation that per-symbol scores are not being treated as cross-sectional Candidate ranks.
 
@@ -282,7 +344,7 @@ Existing tests cover, among other behavior:
 
 The new R2 `ExperimentIdentity` and Legacy MACD adapter must treat this existing implementation as the behavioral reference, not silently replace it.
 
-Additional compatibility tests now include:
+Additional compatibility tests include:
 
 ```text
 tests/legacy/test_macd_experiment_adapter.py
@@ -307,22 +369,59 @@ Remaining priority characterization includes:
 
 ### 4.6 `trend_snapshot.py`
 
-Current status: `PARTIAL`
+Current status: `PARTIAL`, with the first dual-authority application characterization added.
 
-Priority characterization:
+Characterization asset:
 
-- current `signal` output;
-- current `timing_action` output;
-- probability-like fields and their current non-calibrated semantics;
-- application payload snapshots for representative inputs.
+```text
+tests/legacy/test_trend_snapshot_characterization.py
+```
 
-The migration goal is one authoritative Strategy Proposal per migrated Decision Scope, with alternative engines explicitly labeled shadow/diagnostic/baseline.
+The first fixture locks the current application-layer fact that:
+
+```text
+Legacy Strategy signal
+and
+Cosco timing_action
+```
+
+may coexist and differ for the same output row.
+
+Representative characterized behavior includes:
+
+```text
+signal = HOLD
+timing_action = BUY_T_TIMING
+```
+
+and an error-path case where:
+
+```text
+signal remains HOLD
+timing_action = ERROR
+```
+
+The test does not endorse dual authority.
+
+Its purpose is to preserve the pre-migration payload behavior before R7/R11 moves the migrated Decision Scope toward:
+
+```text
+One Authoritative Strategy Proposal
++
+explicit shadow / diagnostic / baseline alternatives
+```
+
+Remaining characterization includes:
+
+- probability-like application fields and their current non-calibrated semantics;
+- additional representative payload snapshots where required by application migration;
+- consumer compatibility before removing parallel action-like fields.
 
 ---
 
 ## 5. Freeze Rules During R1
 
-The following are active immediately:
+The following remain active:
 
 1. No new platform-wide responsibility in `CoscoTimingEngine`.
 2. No new platform-wide lifecycle, Portfolio or Execution owner inside the integrated Legacy `backtest.py`.
@@ -335,7 +434,7 @@ The following are active immediately:
 
 ## 6. R1 and V2 Overlap Contract
 
-R1 may continue while R2/R3/R4 build new shared contracts, provided:
+R1 may continue while R2/R3/R4/R5 build new shared contracts and Candidate research, provided:
 
 ```text
 V2 Core / Data / Universe / Features / Candidates
@@ -376,16 +475,18 @@ Future extraction targets are named by owner.
 No new platform-wide feature is being added to CoscoTimingEngine or backtest.py.
 ```
 
-Current progress now includes:
+Current progress includes:
 
 - major asset classification;
 - strong existing `signal_intent` characterization;
 - strong existing MACD experiment identity characterization;
-- first real Legacy MACD compatibility adapter tests;
-- first Dataset eligibility compatibility adapter tests;
-- first integrated `DividendTStrategy` Golden Behavior tests.
+- real Legacy MACD compatibility adapter tests;
+- Dataset eligibility compatibility adapter tests;
+- integrated `DividendTStrategy` Golden Behavior tests;
+- first `trend_snapshot.py` dual-output characterization;
+- first integrated `CoscoTimingEngine` stale-data gate characterization.
 
-This still does not imply that integrated lifecycle, `CoscoTimingEngine`, `trend_snapshot.py` or the backtest God Object are fully characterized.
+This still does not imply that the integrated lifecycle, `CoscoTimingEngine`, `trend_snapshot.py` or the backtest God Object are fully characterized.
 
 ---
 
@@ -393,10 +494,10 @@ This still does not imply that integrated lifecycle, `CoscoTimingEngine`, `trend
 
 The next practical batch should prioritize:
 
-1. execute the new Golden/adapter tests in the normal complete repository environment;
+1. execute the new Golden/adapter/Legacy characterization tests in the normal complete repository environment;
 2. characterize selected `backtest.py` lifecycle transitions before R8 extraction;
-3. characterize `trend_snapshot.py` dual-authority payloads;
-4. add a small set of `CoscoTimingEngine` integrated snapshots around component availability and missing-data behavior;
-5. add only missing sealed-test/readiness invariants not already protected by existing OOS tests.
+3. add a small set of `CoscoTimingEngine` component-availability and missing-data snapshots;
+4. add only missing sealed-test/readiness invariants not already protected by existing OOS tests;
+5. preserve application compatibility when the `trend_snapshot.py` dual-authority fields are eventually migrated.
 
-This batch reduces migration risk while allowing the R3–R5 Candidate research path to continue in parallel.
+This batch reduces migration risk while allowing the R5 Candidate research path to continue in parallel.
