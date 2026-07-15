@@ -24,15 +24,33 @@ def _require_non_empty(label: str, value: str) -> None:
         raise ValueError(f"{label} must be a non-empty trimmed string")
 
 
+def _require_unique_strings(label: str, values: tuple[str, ...]) -> None:
+    for value in values:
+        _require_non_empty(label, value)
+    if len(values) != len(set(values)):
+        raise ValueError(f"{label} values must be unique")
+
+
 @dataclass(frozen=True, slots=True)
 class FeatureDefinition:
-    """Versioned semantic and computational identity of a feature."""
+    """Versioned semantic, computational, availability, and lineage identity of a feature.
+
+    ``research_status`` is a qualified feature-research label for registry navigation. It
+    is not Data Eligibility, Evidence Level, Authority State, or proof of predictive Alpha.
+    """
 
     feature_id: FeatureDefinitionId
     name: str
     semantic_family: str
     source_information_families: tuple[str, ...]
     representation_method: str
+    source_fields: tuple[str, ...]
+    frequency: str
+    lookback: str
+    availability_rule: str
+    missingness_policy: str
+    research_status: str
+    input_feature_ids: tuple[FeatureDefinitionId, ...] = ()
     value_type: str = "float"
     parameters: tuple[tuple[str, str], ...] = ()
 
@@ -41,16 +59,27 @@ class FeatureDefinition:
             ("name", self.name),
             ("semantic_family", self.semantic_family),
             ("representation_method", self.representation_method),
+            ("frequency", self.frequency),
+            ("lookback", self.lookback),
+            ("availability_rule", self.availability_rule),
+            ("missingness_policy", self.missingness_policy),
+            ("research_status", self.research_status),
             ("value_type", self.value_type),
         ):
             _require_non_empty(label, value)
         if not self.source_information_families:
             raise ValueError("source_information_families must not be empty")
-        for family in self.source_information_families:
-            _require_non_empty("source_information_family", family)
-        if len(self.source_information_families) != len(set(self.source_information_families)):
-            raise ValueError("source_information_families must be unique")
-        parameter_keys = [key for key, _ in self.parameters]
+        _require_unique_strings("source_information_family", self.source_information_families)
+        _require_unique_strings("source_field", self.source_fields)
+        if len(self.input_feature_ids) != len(set(self.input_feature_ids)):
+            raise ValueError("input_feature_ids must be unique")
+        if not self.source_fields and not self.input_feature_ids:
+            raise ValueError("feature definition requires source_fields or input_feature_ids")
+        parameter_keys: list[str] = []
+        for key, value in self.parameters:
+            _require_non_empty("feature parameter key", key)
+            _require_non_empty(f"feature parameter {key!r}", value)
+            parameter_keys.append(key)
         if len(parameter_keys) != len(set(parameter_keys)):
             raise ValueError("feature parameters must have unique keys")
 
@@ -108,8 +137,9 @@ class FeatureMaterialization:
 class FeatureRegistry:
     """Minimal in-memory authority for registered Feature Definitions.
 
-    Persistence is intentionally unspecified. The first implementation exists to freeze
-    identity and conflict semantics required by Candidate research.
+    Persistence is intentionally unspecified. The first implementation freezes the
+    definition, lineage, availability, missingness, and identity-conflict semantics
+    required by Candidate research. Registration does not grant predictive authority.
     """
 
     def __init__(self) -> None:
