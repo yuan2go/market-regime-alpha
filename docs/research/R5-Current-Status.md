@@ -2,32 +2,30 @@
 
 > **Status:** CURRENT
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Purpose:** Short current-status authority for active implementation sequencing
+> **Purpose:** Current short-form authority for active implementation sequencing
 > **Current audit:** `docs/architecture/Original-Intent-to-R5-Eligibility-Readiness-Audit.md`
-> **Detailed references:** `R5-Candidate-Discovery-Rehearsal-Charter.md`, `R5-Versioned-Trading-Eligibility-Policy.md`, `R5-Provider-Rehearsal-Trading-Eligibility-Policy-v2.md`, `R5-Provider-Rehearsal-Market-Artifact.md`
+> **Detailed references:** `R5-Candidate-Discovery-Rehearsal-Charter.md`, `R5-Provider-Rehearsal-Trading-Eligibility-Policy-v2.md`, `R5-Provider-Rehearsal-Market-Artifact.md`, `R5-Generic-Provider-Export-Adapter.md`
 
 ---
 
 ## 1. Status Precedence
 
-This file is the current short-form R5 implementation status.
+This file is the current R5 implementation-status authority.
 
-Older documents remain useful as historical implementation records, but their stale status lines do not override this file.
+Older documents remain historical records. Their stale status lines do not override this file.
 
 Known historical residues include:
 
 ```text
 R5-Candidate-Dataset-Builder-Status.md
-    contains an older line saying Eligibility Policy / Materializer was not implemented.
+    predates the implemented Eligibility Policy / Materializer.
 
 R5-Candidate-Discovery-Rehearsal-Charter.md
-    contains an older deliverable list that names Historical Calendar / PIT Universe as future work.
+    contains an older deliverable list that predates implemented Calendar / PIT Universe work.
 
 Original-Intent-to-R5-Consistency-Audit.md
-    records the earlier Close Return-only gap that has since been corrected by Close Return / MFE / MAE.
+    records the earlier Close Return-only gap that was later corrected by Close Return / MFE / MAE.
 ```
-
-The current architecture direction remains unchanged.
 
 ---
 
@@ -44,8 +42,6 @@ HOLD / ADD / REDUCE / ROTATE / EXIT
 ```
 
 The current next-session Target family is a research horizon.
-
-Therefore:
 
 ```text
 Candidate Target Horizon
@@ -89,13 +85,21 @@ Deterministic B0 Ranking
 Cross-Sectional Rehearsal Evaluation
 ```
 
-A downstream Provider Rehearsal Market Artifact contract now exists to compose the identified evidence required by this chain.
+The provider-input path now has two implemented provider-neutral contracts:
+
+```text
+Generic normalized Provider Export Bundle
+        ↓
+Generic Provider Export Adapter
+        ↓
+Provider Rehearsal Market Artifact
+        ↓
+R5 research chain
+```
 
 ---
 
-## 4. Eligibility v1 — Current Role
-
-Policy:
+## 4. Eligibility v1 — Compatibility Role
 
 ```text
 r5-rehearsal-trading-eligibility@v1
@@ -115,30 +119,30 @@ v1 is **not** the complete original first-rehearsal Candidate-pool policy.
 
 ---
 
-## 5. Provider-Rehearsal Eligibility v2 — Implemented Contract
-
-Policy:
+## 5. Provider-Rehearsal Eligibility v2 — Implemented
 
 ```text
 r5-provider-rehearsal-trading-eligibility@v2
 ```
 
-v2 adds explicit support for:
+v2 supports:
 
 ```text
-minimum listing age in calendar days
-minimum PIT liquidity value
-identified liquidity measure
-Decision-Time buyability evidence
+non-ST
+non-suspended
+listing age > 60 calendar days
+minimum PIT liquidity under an identified measure
+explicit Decision-Time buyability evidence
+complete required PIT evidence
 ```
 
-The current default minimum listing age is:
+The default minimum listing age is:
 
 ```text
 61 calendar days
 ```
 
-This implements the preserved original requirement strictly as:
+which implements the original strict condition:
 
 ```text
 listing_age_calendar_days > 60
@@ -170,71 +174,9 @@ not `ELIGIBLE`.
 
 ---
 
-## 6. Provider Rehearsal Market Artifact — Implemented Contract
+## 6. Candidate Buyability Is Not Execution Feasibility
 
-Implemented:
-
-```text
-market_regime_alpha.research.ProviderRehearsalMarketArtifact
-```
-
-The artifact can identify and compose:
-
-```text
-Provider References
-Source Artifact References
-retrieval convention
-market availability convention
-raw eligibility evidence convention
-bar finality convention
-price-adjustment basis
-Historical Trading Calendar Artifact
-Historical PIT Universe Artifact
-historical daily bars
-Decision-Time snapshots
-next-session OHLC
-raw v2 Eligibility evidence
-```
-
-The artifact always exposes:
-
-```text
-DataEligibility.REHEARSAL
-```
-
-The contract does not mean that any concrete provider has already been integrated or validated.
-
----
-
-## 7. Provider Artifact Completion Boundary
-
-Current state:
-
-```text
-Provider Artifact Contract                 IMPLEMENTED
-Generic Provider Export Adapter            NOT YET IMPLEMENTED
-Xuntou Adapter                             NOT YET IMPLEMENTED
-QMT / XtQuant Adapter                      NOT YET IMPLEMENTED
-Other concrete Provider Adapter            NOT YET IMPLEMENTED
-Real Provider Data Run                     NOT AVAILABLE
-Provider PIT Authority Verification        NOT AVAILABLE
-```
-
-Therefore:
-
-```text
-Artifact Contract Implemented
-≠
-Provider Integrated
-≠
-Provider Data Validated
-```
-
----
-
-## 8. Candidate Eligibility and Execution Remain Separate
-
-v2 defines explicit:
+v2 defines:
 
 ```text
 DecisionBuyabilityStatus
@@ -257,7 +199,107 @@ Price-limit metadata alone does not automatically create `BUYABLE` or `NOT_BUYAB
 
 ---
 
-## 9. Current Provenance Boundary
+## 7. Provider Rehearsal Market Artifact — Implemented Contract
+
+Implemented:
+
+```text
+market_regime_alpha.research.ProviderRehearsalMarketArtifact
+```
+
+It can identify and compose:
+
+```text
+Provider References
+Source Artifact References
+retrieval convention
+market availability convention
+raw eligibility evidence convention
+bar finality convention
+price-adjustment basis
+Historical Trading Calendar Artifact
+Historical PIT Universe Artifact
+historical daily bars
+Decision-Time snapshots
+next-session OHLC
+raw v2 Eligibility evidence
+```
+
+It always exposes:
+
+```text
+DataEligibility.REHEARSAL
+```
+
+The contract does not mean that a concrete provider has been integrated or validated.
+
+---
+
+## 8. Generic Provider Export Adapter — Implemented
+
+Implemented:
+
+```text
+market_regime_alpha.research.provider_export_adapter
+```
+
+Current normalized schema:
+
+```text
+generic-provider-export-bundle-v1
+```
+
+The adapter accepts only explicitly normalized semantics and rejects missing or malformed required evidence.
+
+It does not:
+
+```text
+auto-detect arbitrary CSV columns
+guess vendor field meanings
+invent timezone
+invent availability time
+invent bar finality
+invent price-adjustment basis
+infer listing age from a present-day snapshot
+infer liquidity measure identity from a numeric column
+infer buyability from limit_up_price alone
+```
+
+Concrete Xuntou/QMT/broker adapters may later map native provider fields into the generic normalized bundle.
+
+---
+
+## 9. Provider Integration Completion Boundary
+
+Current state:
+
+```text
+Provider Rehearsal Market Artifact contract       IMPLEMENTED
+Generic Provider Export Bundle schema             IMPLEMENTED
+Strict Generic Provider Export Adapter            IMPLEMENTED
+Provider-rehearsal Eligibility v2                  IMPLEMENTED
+
+Xuntou native-field adapter                        NOT YET IMPLEMENTED
+QMT / XtQuant native-field adapter                 NOT YET IMPLEMENTED
+Broker archive native-field adapter                NOT YET IMPLEMENTED
+Other concrete provider adapter                    NOT YET IMPLEMENTED
+Real Provider / Export Data Run                    NOT AVAILABLE
+Provider PIT Authority Verification                NOT AVAILABLE
+```
+
+Therefore:
+
+```text
+Generic Export Adapter Implemented
+≠
+Concrete Provider Integrated
+≠
+Real Provider Data Validated
+```
+
+---
+
+## 10. Current Provenance Boundary
 
 The current research path can identify:
 
@@ -279,11 +321,11 @@ price-adjustment basis
 Feature / Target / Experiment identities
 ```
 
-Changing a result-affecting semantic convention changes the relevant Artifact identity.
+Changing result-affecting semantic conventions changes the relevant Artifact identity.
 
 ---
 
-## 10. Legacy Compatibility Limitation
+## 11. Legacy Compatibility Limitation
 
 The existing Legacy eligibility sidecar lacks:
 
@@ -310,7 +352,7 @@ The system must not silently fall back to v1 eligibility.
 
 ---
 
-## 11. Current Implemented Status
+## 12. Current Implemented Status
 
 ```text
 Original-intent eligibility readiness audit                 COMPLETE
@@ -324,14 +366,14 @@ Historical Trading Calendar Artifact                       IMPLEMENTED
 Historical PIT Universe Membership Artifact                IMPLEMENTED
 Historical Trading Eligibility Artifact                    IMPLEMENTED
 Eligibility v1                                             IMPLEMENTED
-Provider-rehearsal Eligibility v2 contract                  IMPLEMENTED
+Provider-rehearsal Eligibility v2                          IMPLEMENTED
 Strict listing age > 60 calendar days boundary             IMPLEMENTED
 Policy / Materializer provenance                            IMPLEMENTED
 Historical Membership ∩ Eligibility Candidate assembly     IMPLEMENTED
 Provider Rehearsal Market Artifact contract                 IMPLEMENTED
+Generic Provider Export Adapter                            IMPLEMENTED
 
 Normal full-repository test execution                       PENDING
-Generic Provider Export Adapter                            NOT YET IMPLEMENTED
 Concrete Provider Adapter                                  NOT YET IMPLEMENTED
 Real Provider / Export Data Run                            NOT AVAILABLE
 Provider-backed multi-date Candidate panels                 NOT YET IMPLEMENTED
@@ -343,7 +385,7 @@ Formal Candidate evidence                                  NOT AVAILABLE
 
 ---
 
-## 12. Current Verification Status
+## 13. Current Verification Status
 
 The code and tests are committed.
 
@@ -359,21 +401,42 @@ Normal repository execution or CI remains required before implementation authori
 
 ---
 
-## 13. Next Implementation Step
+## 14. Next Implementation Step
 
-The next practical step is:
+The next step requires one actual native data contract or export format:
 
 ```text
-Generic Provider Export Adapter
+Xuntou export/API
+QMT/XtQuant export/API
+broker historical archive
+or another identified provider
 ```
 
-or, when a concrete data export/API contract is available:
+Then implement:
 
 ```text
 Concrete Provider Adapter
+        ↓
+Generic Provider Export Bundle
+        ↓
+Provider Rehearsal Market Artifact
+        ↓
+Provider-Rehearsal Eligibility v2
+        ↓
+Provider-backed Candidate Population
+        ↓
+Feature Materialization
+        ↓
+Close Return / MFE / MAE
+        ↓
+Target-Specific Candidate Panels
+        ↓
+B0 vs B1 Comparison
+        ↓
+Immutable R5 Run Artifact
 ```
 
-The adapter must map real provider/export fields into the Provider Rehearsal Market Artifact without inventing:
+The concrete adapter must map real provider fields without inventing:
 
 ```text
 availability time
@@ -390,25 +453,9 @@ The first real run remains:
 REHEARSAL
 ```
 
-and should produce:
-
-```text
-Provider-backed v2 Candidate Population
-        ↓
-Feature Materialization
-        ↓
-Close Return / MFE / MAE
-        ↓
-Target-Specific Candidate Panels
-        ↓
-B0 vs B1 Comparison
-        ↓
-Immutable R5 Run Artifact
-```
-
 ---
 
-## 14. Current Non-Goals
+## 15. Current Non-Goals
 
 The current system does not claim to implement:
 
@@ -425,6 +472,6 @@ The current system does not claim to implement:
 
 ---
 
-## 15. Current Principle
+## 16. Current Principle
 
-> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system, not a next-close-only model or an infrastructure project. The provider-rehearsal artifact contract now defines what a real data source must supply, while the v2 eligibility policy preserves the original strict `listing age > 60 calendar days` boundary as a default minimum of 61 calendar days. No provider is considered integrated or validated until an explicit adapter and identified source artifacts populate these contracts without invented PIT semantics.**
+> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system, not a next-close-only model or an infrastructure project. The current provider-neutral contracts define what explicit data semantics are required, but the next meaningful step now needs one real native provider/export contract. No concrete provider is considered integrated or validated until its native fields are mapped through an identified adapter without invented PIT semantics.**
