@@ -3,8 +3,11 @@
 > **Status:** CURRENT
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
 > **Purpose:** Current short-form authority for active implementation sequencing
-> **Current audit:** `docs/architecture/Original-Intent-to-R5-Eligibility-Readiness-Audit.md`
-> **Detailed references:** `R5-Candidate-Discovery-Rehearsal-Charter.md`, `R5-Provider-Rehearsal-Trading-Eligibility-Policy-v2.md`, `R5-Provider-Rehearsal-Market-Artifact.md`, `R5-Generic-Provider-Export-Adapter.md`
+> **Current audit:** `docs/architecture/Original-Intent-to-Current-Docs-and-Codex-Readiness-Audit.md`
+> **Primary provider decision:** `docs/research/R5-Xuntou-Provider-and-Strategy-Priority.md`
+> **Data-source roles:** `docs/research/R5-Data-Source-Role-Matrix.md`
+> **Candidate research program:** `docs/research/R5-Candidate-Model-Research-Program.md`
+> **Entry / Lifecycle / Exit research program:** `docs/research/Entry-Position-Lifecycle-Exit-Research-Program.md`
 
 ---
 
@@ -25,6 +28,10 @@ R5-Candidate-Discovery-Rehearsal-Charter.md
 
 Original-Intent-to-R5-Consistency-Audit.md
     records the earlier Close Return-only gap that was later corrected by Close Return / MFE / MAE.
+
+R5-Candidate-Model-Research-Program.md
+    still contains an earlier B1 status line stating that B1 is the next model implementation.
+    The research design remains active, but the current implementation status is defined here.
 ```
 
 ---
@@ -38,6 +45,7 @@ Candidate Discovery
         ↓
 Entry
         ↓
+Position Lifecycle
 HOLD / ADD / REDUCE / ROTATE / EXIT
 ```
 
@@ -51,11 +59,65 @@ Mandatory Holding Period
 Mandatory Exit Time
 ```
 
-ETF / Theme / Market Context remains upstream and available for later controlled incremental comparison.
+ETF / Theme / Market Context remains upstream and available for controlled incremental comparison.
+
+The practical buy/sell-point objective is now explicitly expressed as two separate path-dependent research problems:
+
+```text
+Entry:
+    reduce adverse events that occur before favorable movement
+    after a new position is initiated
+
+Exit:
+    reduce strong favorable continuation after premature exit
+    without creating excessive late exits
+```
+
+Entry and Exit remain independent.
 
 ---
 
-## 3. Current Implemented Research Chain
+## 3. Current Provider Decision
+
+The active primary provider is:
+
+```text
+Xuntou / ThinkTrader / XtQuant
+```
+
+The active R5 sequence is no longer a provider-selection exercise.
+
+Public sources such as:
+
+```text
+Eastmoney
+Tencent public market interfaces
+other explicitly identified public sources
+```
+
+remain auxiliary under the Data Source Role Matrix.
+
+The current rule is:
+
+```text
+Research Question
+        ↓
+Required Evidence
+        ↓
+Minimum Xuntou Adapter Increment
+```
+
+not:
+
+```text
+Complete the entire provider API
+        ↓
+Eventually begin strategy research
+```
+
+---
+
+## 4. Current Implemented Research Chain
 
 ```text
 Historical Trading Calendar Artifact
@@ -80,12 +142,12 @@ Close Return / MFE / MAE Target Materialization
         ↓
 Target-Specific Candidate Dataset / Panel
         ↓
-Deterministic B0 Ranking
+B0 / B1 Candidate Ranking
         ↓
 Cross-Sectional Rehearsal Evaluation
 ```
 
-The provider-input path now has two implemented provider-neutral contracts:
+The provider-input architecture also includes:
 
 ```text
 Generic normalized Provider Export Bundle
@@ -97,9 +159,15 @@ Provider Rehearsal Market Artifact
 R5 research chain
 ```
 
+The generic provider path is an architecture boundary.
+
+The active concrete provider for the next real adapter is Xuntou.
+
 ---
 
-## 4. Eligibility v1 — Compatibility Role
+## 5. Eligibility Status
+
+### v1 — Compatibility role
 
 ```text
 r5-rehearsal-trading-eligibility@v1
@@ -115,11 +183,9 @@ exact-Decision-Time evidence semantics
 explicit UNKNOWN behavior
 ```
 
-v1 is **not** the complete original first-rehearsal Candidate-pool policy.
+v1 is not the complete original first-rehearsal Candidate-pool policy.
 
----
-
-## 5. Provider-Rehearsal Eligibility v2 — Implemented
+### v2 — Provider-rehearsal policy
 
 ```text
 r5-provider-rehearsal-trading-eligibility@v2
@@ -142,29 +208,13 @@ The default minimum listing age is:
 61 calendar days
 ```
 
-which implements the original strict condition:
+which implements:
 
 ```text
 listing_age_calendar_days > 60
 ```
 
-Therefore:
-
-```text
-60 calendar days → INELIGIBLE
-61 calendar days → passes the listing-age gate
-```
-
-The liquidity threshold is not globally hard-coded.
-
-The caller must explicitly provide:
-
-```text
-minimum_liquidity_value
-liquidity_measure_id
-```
-
-Missing or incompatible required v2 evidence becomes:
+Missing or incompatible required evidence becomes:
 
 ```text
 UNKNOWN
@@ -172,224 +222,200 @@ UNKNOWN
 
 not `ELIGIBLE`.
 
----
-
-## 6. Candidate Buyability Is Not Execution Feasibility
-
-v2 defines:
-
-```text
-DecisionBuyabilityStatus
-    BUYABLE
-    NOT_BUYABLE
-    UNKNOWN
-```
-
-`BUYABLE` does not prove:
-
-```text
-guaranteed fill
-queue priority
-order-book depth
-fill probability
-final Execution Feasibility
-```
-
-Price-limit metadata alone does not automatically create `BUYABLE` or `NOT_BUYABLE`.
+Candidate buyability remains distinct from final Execution Feasibility.
 
 ---
 
-## 7. Provider Rehearsal Market Artifact — Implemented Contract
+## 6. Provider Rehearsal Contracts
 
 Implemented:
 
 ```text
-market_regime_alpha.research.ProviderRehearsalMarketArtifact
+ProviderRehearsalMarketArtifact
+Generic Provider Export Bundle schema
+Strict Generic Provider Export Adapter
+Provider-rehearsal Eligibility v2
 ```
 
-It can identify and compose:
+These contracts can identify:
 
 ```text
-Provider References
-Source Artifact References
-retrieval convention
-market availability convention
-raw eligibility evidence convention
-bar finality convention
-price-adjustment basis
-Historical Trading Calendar Artifact
-Historical PIT Universe Artifact
-historical daily bars
-Decision-Time snapshots
-next-session OHLC
-raw v2 Eligibility evidence
-```
-
-It always exposes:
-
-```text
-DataEligibility.REHEARSAL
-```
-
-The contract does not mean that a concrete provider has been integrated or validated.
-
----
-
-## 8. Generic Provider Export Adapter — Implemented
-
-Implemented:
-
-```text
-market_regime_alpha.research.provider_export_adapter
-```
-
-Current normalized schema:
-
-```text
-generic-provider-export-bundle-v1
-```
-
-The adapter accepts only explicitly normalized semantics and rejects missing or malformed required evidence.
-
-It does not:
-
-```text
-auto-detect arbitrary CSV columns
-guess vendor field meanings
-invent timezone
-invent availability time
-invent bar finality
-invent price-adjustment basis
-infer listing age from a present-day snapshot
-infer liquidity measure identity from a numeric column
-infer buyability from limit_up_price alone
-```
-
-Concrete Xuntou/QMT/broker adapters may later map native provider fields into the generic normalized bundle.
-
----
-
-## 9. Provider Integration Completion Boundary
-
-Current state:
-
-```text
-Provider Rehearsal Market Artifact contract       IMPLEMENTED
-Generic Provider Export Bundle schema             IMPLEMENTED
-Strict Generic Provider Export Adapter            IMPLEMENTED
-Provider-rehearsal Eligibility v2                  IMPLEMENTED
-
-Xuntou native-field adapter                        NOT YET IMPLEMENTED
-QMT / XtQuant native-field adapter                 NOT YET IMPLEMENTED
-Broker archive native-field adapter                NOT YET IMPLEMENTED
-Other concrete provider adapter                    NOT YET IMPLEMENTED
-Real Provider / Export Data Run                    NOT AVAILABLE
-Provider PIT Authority Verification                NOT AVAILABLE
-```
-
-Therefore:
-
-```text
-Generic Export Adapter Implemented
-≠
-Concrete Provider Integrated
-≠
-Real Provider Data Validated
-```
-
----
-
-## 10. Current Provenance Boundary
-
-The current research path can identify:
-
-```text
-Provider / product contract
-Source Artifact identity
+provider / product contract
+source artifact identity
 retrieval time
 source content hash
 source locator
-Dataset identity
+availability convention
+bar-finality convention
+price-adjustment basis
 Calendar identity
 Universe identity
 Policy identity
 Materializer version
-raw-evidence convention
-market availability convention
-bar-finality convention
-price-adjustment basis
 Feature / Target / Experiment identities
 ```
 
-Changing result-affecting semantic conventions changes the relevant Artifact identity.
+They do not mean that a real Xuntou native adapter or a real Xuntou research run already exists.
 
 ---
 
-## 11. Legacy Compatibility Limitation
+## 7. Candidate Model Status
 
-The existing Legacy eligibility sidecar lacks:
-
-```text
-separate availability timestamp
-listing-age evidence
-identified PIT liquidity evidence
-explicit Decision-Time buyability evidence
-```
-
-Therefore:
+### B0 — Single-feature deterministic rank
 
 ```text
-Legacy sidecar
-+
-v2 Policy
-+
-missing v2 evidence
-        ↓
-UNKNOWN
+IMPLEMENTED
 ```
 
-The system must not silently fall back to v1 eligibility.
+B0 remains the permanent minimum comparator.
+
+### B1 — Transparent cross-sectional composite rank
+
+Current status:
+
+```text
+CORE IMPLEMENTED
+TESTS COMMITTED
+LATEST FULL VERIFICATION NOT CONFIRMED
+```
+
+B1 currently supports the intended transparent design:
+
+```text
+explicit component Features
+explicit higher/lower direction
+explicit research role
+cross-sectional rank-percentile normalization
+explicit normalized weights
+strict complete-case rejection
+full Candidate Population accounting
+identified composite specification
+```
+
+Known verification work remains:
+
+```text
+repair an AVAILABLE Target test fixture so future observed_at evidence is present
+introduce a common structural ranking evaluation interface for B0 and B1
+remove the B0-specific evaluation type workaround
+ensure intended B1 public exports
+include B1 in mypy scope where required
+run focused and full validation
+```
+
+Do not change B1 scoring semantics while closing this verification work unless a separate reviewed research decision requires it.
+
+### B2 / B3 and later
+
+Research ladder remains:
+
+```text
+B2 — regularized statistical baseline
+B3 — nonlinear / Learning-to-Rank
+B4 — target-specific / multi-task
+B5 — Market / ETF / Theme context increments
+B6 — transaction-flow / order-flow increments
+```
+
+These are research directions, not current implemented model authority.
 
 ---
 
-## 12. Current Implemented Status
+## 8. Entry / Position Lifecycle / Exit Status
+
+The lower-level research direction is now documented in:
 
 ```text
-Original-intent eligibility readiness audit                 COMPLETE
-Controlled multi-date Candidate vertical slice             IMPLEMENTED
-Four transparent baseline Features                         IMPLEMENTED
-Close Return / MFE / MAE Target bundle                      IMPLEMENTED
-Deterministic B0 Candidate ranker                           IMPLEMENTED
-Cross-sectional rehearsal evaluation                       IMPLEMENTED
+docs/research/Entry-Position-Lifecycle-Exit-Research-Program.md
+```
 
-Historical Trading Calendar Artifact                       IMPLEMENTED
-Historical PIT Universe Membership Artifact                IMPLEMENTED
-Historical Trading Eligibility Artifact                    IMPLEMENTED
-Eligibility v1                                             IMPLEMENTED
-Provider-rehearsal Eligibility v2                          IMPLEMENTED
-Strict listing age > 60 calendar days boundary             IMPLEMENTED
-Policy / Materializer provenance                            IMPLEMENTED
-Historical Membership ∩ Eligibility Candidate assembly     IMPLEMENTED
-Provider Rehearsal Market Artifact contract                 IMPLEMENTED
-Generic Provider Export Adapter                            IMPLEMENTED
+Current status:
 
-Normal full-repository test execution                       PENDING
-Concrete Provider Adapter                                  NOT YET IMPLEMENTED
-Real Provider / Export Data Run                            NOT AVAILABLE
-Provider-backed multi-date Candidate panels                 NOT YET IMPLEMENTED
-B1 transparent composite baseline                          NOT YET IMPLEMENTED
-Immutable R5 run artifact                                   NOT YET IMPLEMENTED
-Chronological/OOS Candidate validation                     NOT YET IMPLEMENTED
-Formal Candidate evidence                                  NOT AVAILABLE
+```text
+Entry / Lifecycle / Exit research decomposition          DOCUMENTED
+Entry competing-event research target family            SPECIFIED IN RESEARCH DOC
+Entry path Target code contract                          NOT YET IMPLEMENTED
+Canonical Position State code contract                   NOT YET IMPLEMENTED
+Exit continuation target family                          SPECIFIED IN RESEARCH DOC
+Exit continuation Target code contract                   NOT YET IMPLEMENTED
+Entry model validation                                   NOT AVAILABLE
+Exit model validation                                    NOT AVAILABLE
+```
+
+Initial Entry research labels:
+
+```text
+UP_FIRST
+DOWN_FIRST
+TIMEOUT
+```
+
+Initial Exit continuation labels:
+
+```text
+CONTINUE_UP_FIRST
+DRAWDOWN_FIRST
+TIMEOUT
+```
+
+Diagnostics include:
+
+```text
+Post-Exit Regret
+Avoided Drawdown
+Late Exit
+Profit Giveback
+```
+
+These are not current production claims.
+
+---
+
+## 9. Current Implementation Status
+
+```text
+Original-intent current-doc readiness audit                   COMPLETE
+Controlled multi-date Candidate vertical slice                IMPLEMENTED
+Four transparent baseline Features                            IMPLEMENTED
+Close Return / MFE / MAE Target bundle                         IMPLEMENTED
+Deterministic B0 Candidate ranker                              IMPLEMENTED
+B1 transparent composite ranking core                         IMPLEMENTED
+B1 latest full verification                                   PENDING
+Cross-sectional rehearsal evaluation                          IMPLEMENTED
+
+Historical Trading Calendar Artifact                          IMPLEMENTED
+Historical PIT Universe Membership Artifact                   IMPLEMENTED
+Historical Trading Eligibility Artifact                       IMPLEMENTED
+Eligibility v1                                                IMPLEMENTED
+Provider-rehearsal Eligibility v2                              IMPLEMENTED
+Strict listing age > 60 boundary                              IMPLEMENTED
+Policy / Materializer provenance                               IMPLEMENTED
+Historical Membership ∩ Eligibility Candidate assembly        IMPLEMENTED
+Provider Rehearsal Market Artifact contract                    IMPLEMENTED
+Generic Provider Export Adapter                               IMPLEMENTED
+
+Xuntou selected as primary provider                           DECIDED
+Eastmoney / Tencent auxiliary role                            DECIDED
+Xuntou native-field adapter                                   NOT YET IMPLEMENTED
+Real Xuntou provider / export data run                         NOT AVAILABLE
+Provider-backed multi-date Candidate panels                    NOT YET IMPLEMENTED
+Immutable R5 run artifact                                      NOT YET IMPLEMENTED
+Chronological/OOS Candidate validation                         NOT YET IMPLEMENTED
+
+Entry path Target code contract                                NOT YET IMPLEMENTED
+Canonical Position State code contract                         NOT YET IMPLEMENTED
+Exit continuation Target code contract                         NOT YET IMPLEMENTED
+
+Formal Candidate / Entry / Exit Alpha evidence                 NOT AVAILABLE
 ```
 
 ---
 
-## 13. Current Verification Status
+## 10. Current Verification Status
 
-The code and tests are committed.
+The code and tests are committed, but the current environment has not established a complete latest-HEAD verification result.
 
-The current tool environment still does not provide a complete latest-HEAD repository execution path, so this status does **not** claim:
+This status does not claim:
 
 ```text
 latest HEAD pytest passed
@@ -401,77 +427,92 @@ Normal repository execution or CI remains required before implementation authori
 
 ---
 
-## 14. Next Implementation Step
+## 11. Immediate Implementation Sequence
 
-The next step requires one actual native data contract or export format:
+The current ordered sequence is:
 
 ```text
-Xuntou export/API
-QMT/XtQuant export/API
-broker historical archive
-or another identified provider
+WP-0
+Close B1 verification and common ranking evaluation interface
+        ↓
+WP-1
+Freeze minimum Xuntou P0 native field mapping and PIT caveats
+        ↓
+WP-2
+Implement minimum Xuntou P0 native adapter
+        ↓
+WP-3
+Run provider-backed Xuntou REHEARSAL B0 / B1 experiments
+        ↓
+WP-4
+Implement Entry Path Target contracts
+UP_FIRST / DOWN_FIRST / TIMEOUT
+        ↓
+WP-5
+Run first Candidate-only vs Candidate + Entry timing experiment
+        ↓
+WP-6
+Implement canonical Position State contract
+        ↓
+WP-7
+Implement Exit continuation Target contracts and simple control arms
 ```
 
-Then implement:
+Data integration remains experiment-driven.
+
+Do not broaden the Xuntou adapter beyond the evidence required by an approved experiment.
+
+---
+
+## 12. Current Codex Handoff Boundary
+
+Repository-level coding-agent guidance is now defined in:
 
 ```text
-Concrete Provider Adapter
-        ↓
-Generic Provider Export Bundle
-        ↓
-Provider Rehearsal Market Artifact
-        ↓
-Provider-Rehearsal Eligibility v2
-        ↓
-Provider-backed Candidate Population
-        ↓
-Feature Materialization
-        ↓
-Close Return / MFE / MAE
-        ↓
-Target-Specific Candidate Panels
-        ↓
-B0 vs B1 Comparison
-        ↓
-Immutable R5 Run Artifact
+AGENTS.md
 ```
 
-The concrete adapter must map real provider fields without inventing:
+Current readiness:
 
 ```text
-availability time
-bar finality
-price-adjustment basis
-listing age
-PIT liquidity measure
-Decision-Time buyability
+Bounded Codex work packages              READY
+Unrestricted "finish the whole project" autonomy   NOT READY
 ```
 
-The first real run remains:
+Codex may implement approved work packages with explicit scope, tests and stop conditions.
+
+Codex must not independently:
 
 ```text
-REHEARSAL
+change the Constitution
+reinterpret project goals
+invent provider PIT semantics
+promote Alpha
+collapse Candidate / Entry / Lifecycle / Exit into one score
+open or retune sealed final-test evidence
+expand Legacy God Objects as the new platform kernel
 ```
 
 ---
 
-## 15. Current Non-Goals
+## 13. Current Non-Goals
 
 The current system does not claim to implement:
 
-- a real Xuntou/QMT/provider integration;
+- a real Xuntou native integration;
 - final Execution Feasibility;
-- guaranteed limit-up queue fillability;
+- guaranteed price-limit queue fillability;
 - Portfolio approval;
-- Entry timing;
-- Position Lifecycle;
-- Exit timing;
+- a validated Entry timing model;
+- a validated Position Lifecycle model;
+- a validated Exit timing model;
 - complete event-risk exclusion;
 - positive Alpha;
-- formal provider PIT authority.
+- formal provider PIT authority for every field;
+- production trading authority.
 
 ---
 
-## 16. Current Principle
+## 14. Current Principle
 
-> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system, not a next-close-only model or an infrastructure project. The current provider-neutral contracts define what explicit data semantics are required, but the next meaningful step now needs one real native provider/export contract. No concrete provider is considered integrated or validated until its native fields are mapped through an identified adapter without invented PIT semantics.**
+> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. B1 now exists as a transparent ranking core whose verification must be closed before authority increases. The next research expansion is path-dependent Entry and Exit modeling, but only after provider-backed Candidate evidence is reproducible. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**
