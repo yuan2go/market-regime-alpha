@@ -25,7 +25,7 @@ What can be adapted?
 What must remain frozen?
 ```
 
-R1 may run in controlled parallel with R2.
+R1 may run in controlled parallel with R2, R3 and R4.
 
 ---
 
@@ -134,18 +134,77 @@ Do not attempt to characterize every branch before the first Candidate research 
 
 ### 4.2 `DividendTStrategy`
 
-Current status: `PARTIAL`
+Current status: `PARTIAL`, with first integrated Golden Behavior tests added.
 
-Required next characterization work:
+New characterization asset:
 
-- representative `StrategyDecision` golden traces;
-- sizing/output behavior for representative Legacy position states;
-- preservation of current MACD policy interaction where used;
-- explicit mapping of bundled Legacy output responsibilities before extraction.
+```text
+tests/legacy/test_dividend_t_strategy_characterization.py
+```
 
-Some setup/intent and MACD policy invariants are already covered by existing tests; they should be reused instead of duplicated.
+The first Golden Behavior set covers three integrated output paths through:
 
-The purpose is to preserve the Legacy baseline, not to promote it as the V2 Strategy API.
+```text
+Fundamental / Retreat / Technical / Position Inputs
+        ↓
+Score Construction
+        ↓
+Legacy Candidate Selection
+        ↓
+MACD Policy Boundary
+        ↓
+Sizing
+        ↓
+StrategyDecision
+        ↓
+OrderIntent + DecisionTrace
+```
+
+Covered cases:
+
+#### Hard `CLEAR`
+
+Locks:
+
+- `F < 50` hard-risk path;
+- final `Signal.CLEAR`;
+- base-position sell intent;
+- maximum 20% clear slice under the current Legacy rule;
+- `PrimarySetupCode.CLEAR`;
+- `RISK_REDUCTION` intent;
+- `RiskEnforcement.HARD`.
+
+#### `BUY_T`
+
+Locks:
+
+- current F/R/T score behavior for a representative strong pullback fixture;
+- current Python rounding result for `total_score`;
+- current target-position delta sizing;
+- `PULLBACK_LOW_BUY` setup;
+- `MEAN_REVERSION_T` intent;
+- BUY/T `OrderIntent` construction;
+- original and adjusted suggested trade percentage in `DecisionTrace`.
+
+#### `SELL_T`
+
+Locks:
+
+- high sell-pressure / weak risk-reward branch;
+- current 15% active-position sell sizing rule;
+- `PRESSURE_SELL_T` setup;
+- SELL/T `OrderIntent` construction;
+- final Legacy decision trace.
+
+These tests characterize the current integrated output boundary. They do **not** promote the bundled `StrategyDecision` object into the V2 Strategy API.
+
+Remaining characterization work includes:
+
+- representative `STOP_T` and `REDUCE` paths where extraction requires them;
+- MACD-enabled policy-change paths at the full `DividendTStrategy.evaluate()` boundary;
+- explicit decomposition mapping from current bundled output into future Strategy Proposal / Portfolio / Execution owners.
+
+The purpose is to preserve the Legacy baseline, not to keep its coupling permanently.
 
 ---
 
@@ -223,12 +282,26 @@ Existing tests cover, among other behavior:
 
 The new R2 `ExperimentIdentity` and Legacy MACD adapter must treat this existing implementation as the behavioral reference, not silently replace it.
 
+Additional compatibility tests now include:
+
+```text
+tests/legacy/test_macd_experiment_adapter.py
+tests/legacy/test_dataset_contract_adapter.py
+```
+
+The dataset adapter explicitly prevents:
+
+```text
+Legacy FORMAL_FINAL_CANDIDATE
+    → silent canonical FORMAL_RESEARCH promotion
+```
+
 Remaining priority characterization includes:
 
 - dataset/split manifest invariants not already covered elsewhere;
 - immutable run artifact non-overwrite behavior;
 - sealed-test access/readiness behavior;
-- direct real-object verification of the new Legacy adapter in the normal project environment.
+- normal-environment execution of the new compatibility tests against the complete repository.
 
 ---
 
@@ -260,13 +333,13 @@ The following are active immediately:
 
 ---
 
-## 6. R1 and R2 Overlap Contract
+## 6. R1 and V2 Overlap Contract
 
-R2 may build new shared contracts while R1 continues, provided:
+R1 may continue while R2/R3/R4 build new shared contracts, provided:
 
 ```text
-R2 Core
-    does not import Legacy policy as platform truth.
+V2 Core / Data / Universe / Features / Candidates
+    do not import Legacy policy as platform truth.
 
 Legacy
     may be adapted through explicit compatibility boundaries.
@@ -303,7 +376,16 @@ Future extraction targets are named by owner.
 No new platform-wide feature is being added to CoscoTimingEngine or backtest.py.
 ```
 
-The current inventory satisfies the first classification step and identifies the highest-risk characterization backlog. Existing `signal_intent` and MACD experiment tests provide stronger coverage than the initial inventory alone suggested, but this does not imply that integrated strategy, lifecycle, application and backtest behavior are fully characterized.
+Current progress now includes:
+
+- major asset classification;
+- strong existing `signal_intent` characterization;
+- strong existing MACD experiment identity characterization;
+- first real Legacy MACD compatibility adapter tests;
+- first Dataset eligibility compatibility adapter tests;
+- first integrated `DividendTStrategy` Golden Behavior tests.
+
+This still does not imply that integrated lifecycle, `CoscoTimingEngine`, `trend_snapshot.py` or the backtest God Object are fully characterized.
 
 ---
 
@@ -311,10 +393,10 @@ The current inventory satisfies the first classification step and identifies the
 
 The next practical batch should prioritize:
 
-1. verify the new Legacy MACD Experiment Identity adapter against the real `MACDExperimentIdentity` path in the normal project environment;
-2. add a small set of `DividendTStrategy` golden decision traces not already protected by `tests/test_signal_intent.py`;
-3. characterize selected `backtest.py` lifecycle transitions before R8 extraction;
-4. characterize `trend_snapshot.py` dual-authority payloads;
-5. add missing sealed-test/readiness invariants only where existing OOS tests do not already protect them.
+1. execute the new Golden/adapter tests in the normal complete repository environment;
+2. characterize selected `backtest.py` lifecycle transitions before R8 extraction;
+3. characterize `trend_snapshot.py` dual-authority payloads;
+4. add a small set of `CoscoTimingEngine` integrated snapshots around component availability and missing-data behavior;
+5. add only missing sealed-test/readiness invariants not already protected by existing OOS tests.
 
-This batch directly reduces migration risk for R2, R7 and R8 without delaying the R3–R5 Candidate path.
+This batch reduces migration risk while allowing the R3–R5 Candidate research path to continue in parallel.
