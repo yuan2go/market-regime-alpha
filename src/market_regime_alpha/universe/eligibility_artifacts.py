@@ -51,6 +51,7 @@ class HistoricalTradingEligibilityArtifact:
     source_dataset_id: DatasetId
     policy_version: str
     snapshots: tuple[TradingEligibilitySnapshot, ...]
+    policy_artifact_id: ArtifactId | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.policy_version, str) or not self.policy_version.strip() or self.policy_version != self.policy_version.strip():
@@ -91,6 +92,7 @@ def build_historical_trading_eligibility_artifact(
     source_dataset_id: DatasetId,
     policy_version: str,
     records: tuple[HistoricalTradingEligibilityRecord, ...],
+    policy_artifact_id: ArtifactId | None = None,
 ) -> HistoricalTradingEligibilityArtifact:
     """Build deterministic exact-time eligibility snapshots from explicit policy results."""
 
@@ -104,9 +106,10 @@ def build_historical_trading_eligibility_artifact(
     ordered_records = tuple(sorted(records, key=lambda record: (record.as_of.value, record.symbol)))
 
     payload = {
-        "schema_version": "historical-trading-eligibility-artifact-v1",
+        "schema_version": "historical-trading-eligibility-artifact-v2",
         "source_dataset_id": str(source_dataset_id),
         "policy_version": policy_version,
+        "policy_artifact_id": str(policy_artifact_id) if policy_artifact_id is not None else None,
         "records": [
             {
                 "as_of": record.as_of.isoformat(),
@@ -146,4 +149,5 @@ def build_historical_trading_eligibility_artifact(
         source_dataset_id=source_dataset_id,
         policy_version=policy_version,
         snapshots=snapshots,
+        policy_artifact_id=policy_artifact_id,
     )
