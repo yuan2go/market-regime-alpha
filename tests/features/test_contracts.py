@@ -20,16 +20,26 @@ from market_regime_alpha.features.contracts import (
 )
 
 
-def test_feature_registry_is_idempotent_but_rejects_identity_conflict() -> None:
-    feature_id = FeatureDefinitionId("feature-relative-strength-20d-v1")
-    definition = FeatureDefinition(
-        feature_id=feature_id,
+def _relative_strength_definition(*, window: str = "20") -> FeatureDefinition:
+    return FeatureDefinition(
+        feature_id=FeatureDefinitionId("feature-relative-strength-20d-v1"),
         name="20D Relative Strength",
         semantic_family="Relative Strength",
         source_information_families=("PRICE_ONLY",),
         representation_method="relative-return",
-        parameters=(("window", "20"),),
+        source_fields=("close",),
+        frequency="1d",
+        lookback=f"{window} finalized trading bars",
+        availability_rule="available after the current daily bar is finalized",
+        missingness_policy="MISSING when required history is incomplete",
+        research_status="EXPLORATORY_BASELINE",
+        parameters=(("window", window),),
     )
+
+
+def test_feature_registry_is_idempotent_but_rejects_identity_conflict() -> None:
+    feature_id = FeatureDefinitionId("feature-relative-strength-20d-v1")
+    definition = _relative_strength_definition()
     registry = FeatureRegistry()
 
     assert registry.register(definition) is definition
@@ -44,6 +54,12 @@ def test_feature_registry_is_idempotent_but_rejects_identity_conflict() -> None:
                 semantic_family="Relative Strength",
                 source_information_families=("PRICE_ONLY",),
                 representation_method="relative-return",
+                source_fields=("close",),
+                frequency="1d",
+                lookback="10 finalized trading bars",
+                availability_rule="available after the current daily bar is finalized",
+                missingness_policy="MISSING when required history is incomplete",
+                research_status="EXPLORATORY_BASELINE",
                 parameters=(("window", "10"),),
             )
         )
@@ -57,7 +73,41 @@ def test_feature_definition_rejects_blank_source_information_family() -> None:
             semantic_family="Trend",
             source_information_families=("PRICE_ONLY", ""),
             representation_method="fixture",
+            source_fields=("close",),
+            frequency="1d",
+            lookback="1 finalized trading bar",
+            availability_rule="available after finalization",
+            missingness_policy="MISSING",
+            research_status="EXPLORATORY",
         )
+
+
+def test_feature_definition_requires_explicit_lineage_source() -> None:
+    with pytest.raises(ValueError, match="source_fields or input_feature_ids"):
+        FeatureDefinition(
+            feature_id=FeatureDefinitionId("feature-no-lineage-v1"),
+            name="No Lineage",
+            semantic_family="Trend",
+            source_information_families=("PRICE_ONLY",),
+            representation_method="fixture",
+            source_fields=(),
+            frequency="1d",
+            lookback="1 finalized trading bar",
+            availability_rule="available after finalization",
+            missingness_policy="MISSING",
+            research_status="EXPLORATORY",
+        )
+
+
+def test_feature_definition_records_minimum_r4_metadata() -> None:
+    definition = _relative_strength_definition()
+
+    assert definition.source_fields == ("close",)
+    assert definition.frequency == "1d"
+    assert definition.lookback == "20 finalized trading bars"
+    assert "finalized" in definition.availability_rule
+    assert definition.missingness_policy.startswith("MISSING")
+    assert definition.research_status == "EXPLORATORY_BASELINE"
 
 
 def test_feature_observation_requires_canonical_availability_status() -> None:
