@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from market_regime_alpha.candidates import build_candidate_population_from_historical_artifacts
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.core.time import AsOfTime, AvailabilityTime, DecisionTime
 from market_regime_alpha.universe.artifacts import (
@@ -172,6 +173,34 @@ def test_observation_available_after_decision_time_becomes_unknown() -> None:
     assert records["000001.SZ"].reasons == (
         TradingEligibilityReason.RAW_OBSERVATION_NOT_AVAILABLE_BY_DECISION_TIME.value,
     )
+
+
+def test_materializer_preserves_valid_empty_snapshot_and_candidate_population() -> None:
+    empty_universe = build_historical_pit_universe_artifact(
+        source_dataset_id=UNIVERSE_DATASET_ID,
+        method_version="fixture-empty-universe-v1",
+        timezone_name="Asia/Shanghai",
+        effective_time_convention="AS_OF_DATE_EFFECTIVE_FROM_LOCAL_DAY_START",
+        records=(
+            HistoricalUniverseMembershipRecord(date(2026, 7, 15), "000001.SZ", False),
+        ),
+    )
+    eligibility = materialize_historical_trading_eligibility(
+        source_dataset_id=ELIGIBILITY_DATASET_ID,
+        universe_artifact=empty_universe,
+        policy=r5_rehearsal_trading_eligibility_policy_v1(),
+        decision_times=(DecisionTime(DECISION_AT),),
+        observations=(),
+    )
+    snapshot = eligibility.snapshot_for_decision_time(DecisionTime(DECISION_AT))
+    population = build_candidate_population_from_historical_artifacts(
+        universe_artifact=empty_universe,
+        eligibility_artifact=eligibility,
+        decision_time=DecisionTime(DECISION_AT),
+    )
+
+    assert snapshot.records == ()
+    assert population.symbols == ()
 
 
 def test_materializer_rejects_duplicate_exact_time_raw_observation() -> None:
