@@ -61,6 +61,7 @@ files = [
     "src/market_regime_alpha/universe/contracts.py",
     "src/market_regime_alpha/features/contracts.py",
     "src/market_regime_alpha/candidates/contracts.py",
+    "src/market_regime_alpha/candidates/dataset.py",
     "src/market_regime_alpha/research/experiment_identity.py",
     "src/market_regime_alpha/legacy/dataset_contract_adapter.py",
     "src/market_regime_alpha/legacy/macd_experiment_adapter.py",
