@@ -5,6 +5,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from market_regime_alpha.candidates.historical_population import (
+    build_candidate_population_from_historical_artifacts,
+)
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.core.time import AsOfTime, DecisionTime
 from market_regime_alpha.universe.artifacts import (
@@ -14,7 +17,6 @@ from market_regime_alpha.universe.artifacts import (
 from market_regime_alpha.universe.contracts import TradingEligibilityStatus
 from market_regime_alpha.universe.eligibility_artifacts import (
     HistoricalTradingEligibilityRecord,
-    build_candidate_population_from_historical_artifacts,
     build_historical_trading_eligibility_artifact,
 )
 
