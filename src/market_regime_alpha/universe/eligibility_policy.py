@@ -28,8 +28,21 @@ TRADING_ELIGIBILITY_MATERIALIZER_VERSION = "historical-trading-eligibility-mater
 EXPLICIT_RAW_ELIGIBILITY_AVAILABILITY_CONVENTION = "EXPLICIT_RAW_OBSERVATION_AVAILABLE_AT"
 
 
+class DecisionBuyabilityStatus(str, Enum):
+    """Explicit Candidate-population buyability evidence at the Decision Time.
+
+    BUYABLE is not a guarantee of fill probability or final Execution Feasibility. It only means
+    the identified evidence source did not classify the instrument as blocked by the scoped
+    Decision-Time buyability rule.
+    """
+
+    BUYABLE = "BUYABLE"
+    NOT_BUYABLE = "NOT_BUYABLE"
+    UNKNOWN = "UNKNOWN"
+
+
 class TradingEligibilityReason(str, Enum):
-    """Canonical reason codes emitted by the minimum versioned eligibility policy."""
+    """Canonical reason codes emitted by versioned Trading Eligibility policies."""
 
     RAW_OBSERVATION_MISSING = "RAW_OBSERVATION_MISSING"
     RAW_OBSERVATION_NOT_AVAILABLE_BY_DECISION_TIME = "RAW_OBSERVATION_NOT_AVAILABLE_BY_DECISION_TIME"
@@ -41,6 +54,15 @@ class TradingEligibilityReason(str, Enum):
     LIMIT_UP_PRICE_MISSING = "LIMIT_UP_PRICE_MISSING"
     LIMIT_DOWN_PRICE_MISSING = "LIMIT_DOWN_PRICE_MISSING"
     LIMIT_REGIME_MISSING = "LIMIT_REGIME_MISSING"
+    LISTING_AGE_MISSING = "LISTING_AGE_MISSING"
+    LISTING_AGE_BELOW_MINIMUM = "LISTING_AGE_BELOW_MINIMUM"
+    LIQUIDITY_VALUE_MISSING = "LIQUIDITY_VALUE_MISSING"
+    LIQUIDITY_MEASURE_MISSING = "LIQUIDITY_MEASURE_MISSING"
+    LIQUIDITY_MEASURE_MISMATCH = "LIQUIDITY_MEASURE_MISMATCH"
+    LIQUIDITY_BELOW_MINIMUM = "LIQUIDITY_BELOW_MINIMUM"
+    DECISION_BUYABILITY_MISSING = "DECISION_BUYABILITY_MISSING"
+    DECISION_BUYABILITY_UNKNOWN = "DECISION_BUYABILITY_UNKNOWN"
+    DECISION_NOT_BUYABLE = "DECISION_NOT_BUYABLE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +72,9 @@ class RawTradingEligibilityObservation:
     ``as_of`` is the state timestamp represented by the raw record. ``available_at`` is when the
     research system may first use that record. The materializer intentionally requires an exact
     observation at the Candidate Decision Time and does not carry older raw states forward.
+
+    The provider-rehearsal v2 fields are optional so Legacy/v1 observations remain readable. A v2
+    policy treats missing required v2 evidence as UNKNOWN rather than silently downgrading to v1.
     """
 
     as_of: AsOfTime
@@ -61,6 +86,10 @@ class RawTradingEligibilityObservation:
     limit_up_price: float | None
     limit_down_price: float | None
     limit_regime: str | None
+    listing_age_calendar_days: int | None = None
+    liquidity_value: float | None = None
+    liquidity_measure_id: str | None = None
+    decision_buyability: DecisionBuyabilityStatus | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.as_of, AsOfTime):
@@ -76,6 +105,7 @@ class RawTradingEligibilityObservation:
             ("prev_close", self.prev_close),
             ("limit_up_price", self.limit_up_price),
             ("limit_down_price", self.limit_down_price),
+            ("liquidity_value", self.liquidity_value),
         ):
             if isinstance(value, bool):
                 raise TypeError(f"{label} must not be boolean")
@@ -87,15 +117,27 @@ class RawTradingEligibilityObservation:
         if self.limit_regime is not None:
             if not isinstance(self.limit_regime, str) or not self.limit_regime.strip() or self.limit_regime != self.limit_regime.strip():
                 raise ValueError("limit_regime must be a non-empty trimmed string when present")
+        if self.listing_age_calendar_days is not None:
+            if isinstance(self.listing_age_calendar_days, bool) or not isinstance(self.listing_age_calendar_days, int):
+                raise TypeError("listing_age_calendar_days must be an integer or None")
+            if self.listing_age_calendar_days < 0:
+                raise ValueError("listing_age_calendar_days must be non-negative")
+        if self.liquidity_measure_id is not None:
+            if not isinstance(self.liquidity_measure_id, str) or not self.liquidity_measure_id.strip() or self.liquidity_measure_id != self.liquidity_measure_id.strip():
+                raise ValueError("liquidity_measure_id must be a non-empty trimmed string when present")
+        if (self.liquidity_value is None) != (self.liquidity_measure_id is None):
+            raise ValueError("liquidity_value and liquidity_measure_id must be present together")
+        if self.decision_buyability is not None and not isinstance(self.decision_buyability, DecisionBuyabilityStatus):
+            raise TypeError("decision_buyability must be a DecisionBuyabilityStatus or None")
 
 
 @dataclass(frozen=True, slots=True)
 class TradingEligibilityPolicy:
     """Immutable versioned Candidate-population eligibility policy.
 
-    The v1 policy uses suspension and optional ST exclusion as eligibility rules. Previous-close and
-    price-limit metadata may be required for raw-evidence completeness, but their presence alone is
-    never interpreted as proof of order execution feasibility.
+    The v1 configuration uses suspension and optional ST exclusion as hard eligibility rules.
+    Provider-rehearsal v2 additionally supports explicit listing-age, PIT-liquidity and
+    Decision-Time buyability requirements. BUYABLE remains distinct from final execution/fillability.
     """
 
     policy_name: str
@@ -103,6 +145,10 @@ class TradingEligibilityPolicy:
     exclude_st: bool = True
     require_prev_close: bool = True
     require_limit_metadata: bool = True
+    minimum_listing_age_calendar_days: int | None = None
+    minimum_liquidity_value: float | None = None
+    liquidity_measure_id: str | None = None
+    require_decision_buyability: bool = False
 
     def __post_init__(self) -> None:
         for label, value in (("policy_name", self.policy_name), ("version", self.version)):
@@ -112,24 +158,65 @@ class TradingEligibilityPolicy:
             ("exclude_st", self.exclude_st),
             ("require_prev_close", self.require_prev_close),
             ("require_limit_metadata", self.require_limit_metadata),
+            ("require_decision_buyability", self.require_decision_buyability),
         ):
             if not isinstance(value, bool):
                 raise TypeError(f"{label} must be boolean")
+        if self.minimum_listing_age_calendar_days is not None:
+            if isinstance(self.minimum_listing_age_calendar_days, bool) or not isinstance(self.minimum_listing_age_calendar_days, int):
+                raise TypeError("minimum_listing_age_calendar_days must be an integer or None")
+            if self.minimum_listing_age_calendar_days < 0:
+                raise ValueError("minimum_listing_age_calendar_days must be non-negative")
+        if isinstance(self.minimum_liquidity_value, bool):
+            raise TypeError("minimum_liquidity_value must not be boolean")
+        if self.minimum_liquidity_value is not None:
+            if not math.isfinite(float(self.minimum_liquidity_value)) or float(self.minimum_liquidity_value) <= 0.0:
+                raise ValueError("minimum_liquidity_value must be positive and finite when present")
+        if self.liquidity_measure_id is not None:
+            if not isinstance(self.liquidity_measure_id, str) or not self.liquidity_measure_id.strip() or self.liquidity_measure_id != self.liquidity_measure_id.strip():
+                raise ValueError("liquidity_measure_id must be a non-empty trimmed string when present")
+        if (self.minimum_liquidity_value is None) != (self.liquidity_measure_id is None):
+            raise ValueError("minimum_liquidity_value and liquidity_measure_id must be configured together")
 
     @property
     def policy_version(self) -> str:
         return f"{self.policy_name}@{self.version}"
 
     @property
+    def uses_provider_rehearsal_v2_evidence(self) -> bool:
+        return any(
+            (
+                self.minimum_listing_age_calendar_days is not None,
+                self.minimum_liquidity_value is not None,
+                self.liquidity_measure_id is not None,
+                self.require_decision_buyability,
+            )
+        )
+
+    @property
     def policy_artifact_id(self) -> ArtifactId:
-        payload = {
-            "schema_version": "trading-eligibility-policy-v1",
-            "policy_name": self.policy_name,
-            "version": self.version,
-            "exclude_st": self.exclude_st,
-            "require_prev_close": self.require_prev_close,
-            "require_limit_metadata": self.require_limit_metadata,
-        }
+        if not self.uses_provider_rehearsal_v2_evidence:
+            payload = {
+                "schema_version": "trading-eligibility-policy-v1",
+                "policy_name": self.policy_name,
+                "version": self.version,
+                "exclude_st": self.exclude_st,
+                "require_prev_close": self.require_prev_close,
+                "require_limit_metadata": self.require_limit_metadata,
+            }
+        else:
+            payload = {
+                "schema_version": "trading-eligibility-policy-v2",
+                "policy_name": self.policy_name,
+                "version": self.version,
+                "exclude_st": self.exclude_st,
+                "require_prev_close": self.require_prev_close,
+                "require_limit_metadata": self.require_limit_metadata,
+                "minimum_listing_age_calendar_days": self.minimum_listing_age_calendar_days,
+                "minimum_liquidity_value": self.minimum_liquidity_value,
+                "liquidity_measure_id": self.liquidity_measure_id,
+                "require_decision_buyability": self.require_decision_buyability,
+            }
         canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         digest = sha256(canonical.encode("utf-8")).hexdigest()
         return ArtifactId(f"trading-eligibility-policy-{digest[:24]}")
@@ -145,6 +232,14 @@ class TradingEligibilityPolicy:
             hard_reasons.append(TradingEligibilityReason.SUSPENDED.value)
         if self.exclude_st and observation.is_st is True:
             hard_reasons.append(TradingEligibilityReason.ST_EXCLUDED.value)
+        if self.minimum_listing_age_calendar_days is not None and observation.listing_age_calendar_days is not None:
+            if observation.listing_age_calendar_days < self.minimum_listing_age_calendar_days:
+                hard_reasons.append(TradingEligibilityReason.LISTING_AGE_BELOW_MINIMUM.value)
+        if self.minimum_liquidity_value is not None and observation.liquidity_value is not None and observation.liquidity_measure_id == self.liquidity_measure_id:
+            if float(observation.liquidity_value) < float(self.minimum_liquidity_value):
+                hard_reasons.append(TradingEligibilityReason.LIQUIDITY_BELOW_MINIMUM.value)
+        if self.require_decision_buyability and observation.decision_buyability is DecisionBuyabilityStatus.NOT_BUYABLE:
+            hard_reasons.append(TradingEligibilityReason.DECISION_NOT_BUYABLE.value)
         if hard_reasons:
             return TradingEligibilityStatus.INELIGIBLE, tuple(hard_reasons)
 
@@ -162,6 +257,20 @@ class TradingEligibilityPolicy:
                 unknown_reasons.append(TradingEligibilityReason.LIMIT_DOWN_PRICE_MISSING.value)
             if observation.limit_regime is None:
                 unknown_reasons.append(TradingEligibilityReason.LIMIT_REGIME_MISSING.value)
+        if self.minimum_listing_age_calendar_days is not None and observation.listing_age_calendar_days is None:
+            unknown_reasons.append(TradingEligibilityReason.LISTING_AGE_MISSING.value)
+        if self.minimum_liquidity_value is not None:
+            if observation.liquidity_value is None:
+                unknown_reasons.append(TradingEligibilityReason.LIQUIDITY_VALUE_MISSING.value)
+            if observation.liquidity_measure_id is None:
+                unknown_reasons.append(TradingEligibilityReason.LIQUIDITY_MEASURE_MISSING.value)
+            elif observation.liquidity_measure_id != self.liquidity_measure_id:
+                unknown_reasons.append(TradingEligibilityReason.LIQUIDITY_MEASURE_MISMATCH.value)
+        if self.require_decision_buyability:
+            if observation.decision_buyability is None:
+                unknown_reasons.append(TradingEligibilityReason.DECISION_BUYABILITY_MISSING.value)
+            elif observation.decision_buyability is DecisionBuyabilityStatus.UNKNOWN:
+                unknown_reasons.append(TradingEligibilityReason.DECISION_BUYABILITY_UNKNOWN.value)
         if unknown_reasons:
             return TradingEligibilityStatus.UNKNOWN, tuple(unknown_reasons)
 
@@ -169,7 +278,7 @@ class TradingEligibilityPolicy:
 
 
 def r5_rehearsal_trading_eligibility_policy_v1() -> TradingEligibilityPolicy:
-    """Return the minimum explicit R5 rehearsal eligibility policy."""
+    """Return the minimum Legacy-compatible R5 rehearsal eligibility policy."""
 
     return TradingEligibilityPolicy(
         policy_name="r5-rehearsal-trading-eligibility",
@@ -177,6 +286,31 @@ def r5_rehearsal_trading_eligibility_policy_v1() -> TradingEligibilityPolicy:
         exclude_st=True,
         require_prev_close=True,
         require_limit_metadata=True,
+    )
+
+
+def r5_provider_rehearsal_trading_eligibility_policy_v2(
+    *,
+    minimum_liquidity_value: float,
+    liquidity_measure_id: str,
+    minimum_listing_age_calendar_days: int = 60,
+) -> TradingEligibilityPolicy:
+    """Return the provider-rehearsal policy covering the original minimum Candidate-pool scope.
+
+    The liquidity threshold is deliberately required from the caller rather than hidden as a global
+    default. Decision-Time buyability must come from an identified provider/adapter evidence contract.
+    """
+
+    return TradingEligibilityPolicy(
+        policy_name="r5-provider-rehearsal-trading-eligibility",
+        version="v2",
+        exclude_st=True,
+        require_prev_close=True,
+        require_limit_metadata=True,
+        minimum_listing_age_calendar_days=minimum_listing_age_calendar_days,
+        minimum_liquidity_value=minimum_liquidity_value,
+        liquidity_measure_id=liquidity_measure_id,
+        require_decision_buyability=True,
     )
 
 
