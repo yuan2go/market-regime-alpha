@@ -44,6 +44,11 @@ class ArtifactId(StableId):
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderId(StableId):
+    """Identity of a data provider or internal data-producing system."""
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetId(StableId):
     """Identity of a controlled dataset."""
 
