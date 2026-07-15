@@ -79,3 +79,34 @@ class RehearsalNextSessionClose:
         if not isinstance(self.session_date, date):
             raise TypeError("session_date must be a date")
         _require_positive_finite("close", self.close)
+
+
+@dataclass(frozen=True, slots=True)
+class RehearsalNextSessionBar:
+    """Observed next-session OHLC used only on the future Target side of R5 rehearsal."""
+
+    symbol: str
+    session_date: date
+    open: float
+    high: float
+    low: float
+    close: float
+    available_at: AvailabilityTime
+
+    def __post_init__(self) -> None:
+        _require_symbol(self.symbol)
+        if not isinstance(self.session_date, date):
+            raise TypeError("session_date must be a date")
+        for label, value in (
+            ("open", self.open),
+            ("high", self.high),
+            ("low", self.low),
+            ("close", self.close),
+        ):
+            _require_positive_finite(label, value)
+        if self.low > self.high:
+            raise ValueError("next-session OHLC requires low <= high")
+        if not self.low <= self.open <= self.high:
+            raise ValueError("next-session OHLC requires low <= open <= high")
+        if not self.low <= self.close <= self.high:
+            raise ValueError("next-session OHLC requires low <= close <= high")
