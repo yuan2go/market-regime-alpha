@@ -49,6 +49,17 @@ def test_feature_registry_is_idempotent_but_rejects_identity_conflict() -> None:
         )
 
 
+def test_feature_definition_rejects_blank_source_information_family() -> None:
+    with pytest.raises(ValueError, match="source_information_family"):
+        FeatureDefinition(
+            feature_id=FeatureDefinitionId("feature-invalid-v1"),
+            name="Invalid Feature",
+            semantic_family="Trend",
+            source_information_families=("PRICE_ONLY", ""),
+            representation_method="fixture",
+        )
+
+
 def test_missing_feature_is_not_a_neutral_numeric_value() -> None:
     with pytest.raises(ValueError, match="must not carry a usable value"):
         FeatureObservation(
