@@ -118,6 +118,7 @@ def _build_slice(
         population=population,
         source_dataset_id=source_dataset_id,
         decision_snapshots=snapshots,
+        next_session_date=next_date,
         next_session_closes=(
             RehearsalNextSessionClose("000001.SZ", next_date, future_a, next_close_available),
             RehearsalNextSessionClose("000002.SZ", next_date, future_b, next_close_available),
