@@ -61,7 +61,12 @@ class TargetContract:
 
 @dataclass(frozen=True, slots=True)
 class CandidatePopulation:
-    """Complete eligible opportunity set for one Candidate decision time."""
+    """Complete eligible opportunity set for one Candidate decision time.
+
+    An empty population is valid and means the declared membership/eligibility process
+    produced no eligible instruments. It must not be converted into a system error or a
+    fabricated fallback population.
+    """
 
     universe_id: UniverseId
     decision_time: DecisionTime
@@ -69,8 +74,6 @@ class CandidatePopulation:
     source_dataset_ids: tuple[DatasetId, ...]
 
     def __post_init__(self) -> None:
-        if not self.symbols:
-            raise ValueError("candidate population must not be empty")
         if len(self.symbols) != len(set(self.symbols)):
             raise ValueError("candidate population symbols must be unique")
         if tuple(sorted(self.symbols)) != self.symbols:
