@@ -6,6 +6,7 @@ import pytest
 
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.legacy.universe_sidecar_adapter import (
+    LEGACY_UNIVERSE_EFFECTIVE_TIME_CONVENTION,
     LegacyUniverseSidecarAdapterError,
     adapt_legacy_universe_mapping,
 )
@@ -25,6 +26,7 @@ def test_legacy_universe_sidecar_maps_eligible_to_membership_only() -> None:
         method_version="legacy-universe-sidecar-v1",
     )
 
+    assert artifact.effective_time_convention == LEGACY_UNIVERSE_EFFECTIVE_TIME_CONVENTION
     assert artifact.snapshot_dates == (date(2026, 7, 15), date(2026, 7, 16))
     assert artifact.snapshot_on(date(2026, 7, 15)).member_symbols == ("000001.SZ",)
     assert artifact.snapshot_on(date(2026, 7, 16)).member_symbols == ("000002.SZ",)
