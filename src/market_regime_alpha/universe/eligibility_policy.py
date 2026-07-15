@@ -293,12 +293,14 @@ def r5_provider_rehearsal_trading_eligibility_policy_v2(
     *,
     minimum_liquidity_value: float,
     liquidity_measure_id: str,
-    minimum_listing_age_calendar_days: int = 60,
+    minimum_listing_age_calendar_days: int = 61,
 ) -> TradingEligibilityPolicy:
     """Return the provider-rehearsal policy covering the original minimum Candidate-pool scope.
 
-    The liquidity threshold is deliberately required from the caller rather than hidden as a global
-    default. Decision-Time buyability must come from an identified provider/adapter evidence contract.
+    The default of 61 calendar days implements the preserved original requirement "listed for more
+    than 60 days". The liquidity threshold is deliberately required from the caller rather than
+    hidden as a global default. Decision-Time buyability must come from an identified provider/
+    adapter evidence contract.
     """
 
     return TradingEligibilityPolicy(
