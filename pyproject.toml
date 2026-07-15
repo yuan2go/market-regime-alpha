@@ -77,6 +77,7 @@ files = [
     "src/market_regime_alpha/candidates/baselines.py",
     "src/market_regime_alpha/candidates/evaluation.py",
     "src/market_regime_alpha/research/experiment_identity.py",
+    "src/market_regime_alpha/research/provider_rehearsal_market_artifact.py",
     "src/market_regime_alpha/legacy/dataset_contract_adapter.py",
     "src/market_regime_alpha/legacy/eligibility_sidecar_adapter.py",
     "src/market_regime_alpha/legacy/macd_experiment_adapter.py",
