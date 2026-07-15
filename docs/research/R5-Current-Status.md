@@ -275,8 +275,8 @@ Current status:
 
 ```text
 CORE IMPLEMENTED
-TESTS COMMITTED
-LATEST FULL VERIFICATION NOT CONFIRMED
+WP-0 FOCUSED VERIFICATION PASSED
+LATEST FULL VERIFICATION PENDING
 ```
 
 B1 currently supports the intended transparent design:
@@ -292,18 +292,18 @@ full Candidate Population accounting
 identified composite specification
 ```
 
-Known verification work remains:
+WP-0 closed the intended B1 integration items:
 
 ```text
-repair an AVAILABLE Target test fixture so future observed_at evidence is present
-introduce a common structural ranking evaluation interface for B0 and B1
-remove the B0-specific evaluation type workaround
-ensure intended B1 public exports
-include B1 in mypy scope where required
-run focused and full validation
+AVAILABLE Target test fixture supplies future observed_at evidence
+B0 and B1 share a structural Candidate ranking evaluation interface
+B1 evaluation no longer requires a B0-specific type workaround
+intended B1 public APIs are exported
+B1 is included in the scoped mypy configuration
+B1 target-blindness is covered by regression testing
 ```
 
-Do not change B1 scoring semantics while closing this verification work unless a separate reviewed research decision requires it.
+B1 scoring semantics were not changed while closing this verification work. Latest full-repository verification remains pending for the reasons recorded in Section 10.
 
 ### B2 / B3 and later
 
@@ -380,6 +380,7 @@ Four transparent baseline Features                            IMPLEMENTED
 Close Return / MFE / MAE Target bundle                         IMPLEMENTED
 Deterministic B0 Candidate ranker                              IMPLEMENTED
 B1 transparent composite ranking core                         IMPLEMENTED
+B1 WP-0 focused verification                                  PASSED
 B1 latest full verification                                   PENDING
 Cross-sectional rehearsal evaluation                          IMPLEMENTED
 
@@ -413,7 +414,45 @@ Formal Candidate / Entry / Exit Alpha evidence                 NOT AVAILABLE
 
 ## 10. Current Verification Status
 
-The code and tests are committed, but the current environment has not established a complete latest-HEAD verification result.
+WP-0 verification was executed on 2026-07-15 against code revision:
+
+```text
+5d4add36bf27a77277f65eac1f6f819bba6838ba
+```
+
+Focused and affected-area results:
+
+```text
+python3 -m pytest tests/candidates/test_composite_baseline.py
+PASS — 6 passed
+
+python3 -m pytest tests/candidates/test_baseline_ranking_evaluation_guards.py
+PASS — 2 passed
+
+python3 -m pytest tests/candidates
+PASS — 34 passed
+
+python3 -m ruff check src/market_regime_alpha/candidates tests/candidates
+PASS — All checks passed
+
+python3 -m mypy src/market_regime_alpha/candidates/baselines.py src/market_regime_alpha/candidates/composite_baseline.py src/market_regime_alpha/candidates/evaluation.py tests/candidates/test_composite_baseline.py
+PASS — no issues found in 4 source files
+```
+
+The full-repository commands were also executed, but did not all pass:
+
+```text
+python3 -m pytest
+FAIL — collection stopped with 2 import-file-mismatch errors for duplicate test_contracts module names in tests/features and tests/universe versus tests/data
+
+python3 -m ruff check .
+FAIL — 1 pre-existing F401 unused timedelta import in tests/research/test_provider_rehearsal_market_artifact.py
+
+python3 -m mypy
+FAIL — 7 pre-existing errors in 5 files outside the WP-0 changes; 43 source files checked
+```
+
+The full-check failures are in files not modified by WP-0. They were not repaired because they are outside the bounded B1 verification work package. Therefore the latest full verification remains `PENDING`.
 
 This status does not claim:
 
