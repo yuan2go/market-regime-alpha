@@ -81,11 +81,16 @@ def evaluate_candidate_ranking_slice(
         raise ValueError("ranking Decision Time does not match Candidate research dataset")
     if ranking.candidate_population_size != len(dataset.population_symbols):
         raise ValueError("ranking Candidate Population size does not match dataset")
+    accounted_symbols = tuple(
+        sorted(
+            [prediction.symbol for prediction in ranking.predictions]
+            + [rejection.symbol for rejection in ranking.rejections]
+        )
+    )
+    if accounted_symbols != dataset.population_symbols:
+        raise ValueError("ranking predictions plus rejections must exactly preserve Candidate Population symbols")
 
-    target_by_symbol = {
-        row.symbol: row.target
-        for row in dataset.rows
-    }
+    target_by_symbol = {row.symbol: row.target for row in dataset.rows}
     available_target_symbols = {
         symbol
         for symbol, target in target_by_symbol.items()
