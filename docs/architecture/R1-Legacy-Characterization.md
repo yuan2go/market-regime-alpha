@@ -66,7 +66,7 @@ Important result-affecting behavior for the intended migration scope is protecte
 - manifest/hash invariants;
 - application output snapshots.
 
-No current major Legacy asset is promoted to `CHARACTERIZED` merely because its code has been read.
+No current major Legacy asset is promoted to `CHARACTERIZED` merely because its code has been read. Existing tests may provide substantial characterization coverage, but promotion from `PARTIAL` should be made against an explicit migration scope rather than by test-count alone.
 
 ---
 
@@ -139,9 +139,11 @@ Current status: `PARTIAL`
 Required next characterization work:
 
 - representative `StrategyDecision` golden traces;
-- `SignalIntent` and setup mapping invariants;
 - sizing/output behavior for representative Legacy position states;
-- preservation of current MACD policy interaction where used.
+- preservation of current MACD policy interaction where used;
+- explicit mapping of bundled Legacy output responsibilities before extraction.
+
+Some setup/intent and MACD policy invariants are already covered by existing tests; they should be reused instead of duplicated.
 
 The purpose is to preserve the Legacy baseline, not to promote it as the V2 Strategy API.
 
@@ -164,33 +166,69 @@ No new platform-wide Candidate, Feature Registry or Portfolio responsibility may
 
 ### 4.4 `signal_intent.py`
 
-Current status: `PARTIAL`
+Current inventory status: conservatively `PARTIAL`
 
-Priority characterization:
+Substantial existing characterization coverage is already present in:
 
-- strict setup-to-intent mapping;
-- invalid setup rejection;
+```text
+tests/test_signal_intent.py
+```
+
+Existing tests cover, among other behavior:
+
+- setup-to-intent mapping;
+- complete PrimarySetupCode mapping coverage;
+- unknown setup behavior in strict and compatibility modes;
+- live Candidate rejection for missing intent;
+- no-candidate semantics;
 - confirmation timing rules;
-- risk-enforcement invariants;
-- DecisionTrace preservation.
+- invalid `NONE + real confirmation` combinations;
+- candidate construction and current-bar confirmation recomputation;
+- risk setup priority;
+- setup-code consistency;
+- MACD policy downgrade and sizing interactions.
 
-This is a high-value semantic migration seed for future compatibility adapters.
+This test suite is a high-value characterization asset and should be preserved during migration.
+
+Remaining migration work is not to rewrite these tests from scratch. It is to:
+
+1. define the exact compatibility scope being extracted;
+2. verify which existing tests form the required characterization gate for that scope;
+3. add only missing DecisionTrace or adapter-specific cases;
+4. preserve Legacy behavior while separating Candidate Prediction from Strategy Action in new contracts.
 
 ---
 
 ### 4.5 MACD OOS and Experiment Infrastructure
 
-Current status: `PARTIAL`
+Current inventory status: conservatively `PARTIAL`
 
-Priority characterization:
+Substantial existing characterization coverage is already present in:
 
-- experiment identity hashing invariants;
-- four-arm controlled-context invariants;
-- dataset/split manifest invariants;
+```text
+tests/test_macd_experiments.py
+```
+
+Existing tests cover, among other behavior:
+
+- required experiment identity fields;
+- hash changes when result-affecting fields change;
+- stable set/enum/float/None canonical serialization;
+- distinct four-arm experiment identities;
+- baseline MACD role remaining disabled;
+- cache paths anchored to full experiment identity rather than display profile;
+- cache metadata/config-hash integrity;
+- rejection of old or tampered cache identity;
+- counterfactual score/policy/interaction classification.
+
+The new R2 `ExperimentIdentity` and Legacy MACD adapter must treat this existing implementation as the behavioral reference, not silently replace it.
+
+Remaining priority characterization includes:
+
+- dataset/split manifest invariants not already covered elsewhere;
 - immutable run artifact non-overwrite behavior;
-- sealed-test access/readiness behavior.
-
-R2 will generalize only the shared identity principles. The Legacy MACD implementation remains the behavioral reference until a compatibility path is proven.
+- sealed-test access/readiness behavior;
+- direct real-object verification of the new Legacy adapter in the normal project environment.
 
 ---
 
@@ -265,7 +303,7 @@ Future extraction targets are named by owner.
 No new platform-wide feature is being added to CoscoTimingEngine or backtest.py.
 ```
 
-The current inventory satisfies the first classification step and identifies the highest-risk characterization backlog. It does not claim that all critical behavior is already characterized.
+The current inventory satisfies the first classification step and identifies the highest-risk characterization backlog. Existing `signal_intent` and MACD experiment tests provide stronger coverage than the initial inventory alone suggested, but this does not imply that integrated strategy, lifecycle, application and backtest behavior are fully characterized.
 
 ---
 
@@ -273,10 +311,10 @@ The current inventory satisfies the first classification step and identifies the
 
 The next practical batch should prioritize:
 
-1. `signal_intent.py` invariant tests;
-2. generic Experiment Identity compatibility with `MACDExperimentIdentity` semantics;
-3. a small set of `DividendTStrategy` golden decision traces;
-4. selected `backtest.py` lifecycle transition characterization;
-5. `trend_snapshot.py` dual-authority payload characterization.
+1. verify the new Legacy MACD Experiment Identity adapter against the real `MACDExperimentIdentity` path in the normal project environment;
+2. add a small set of `DividendTStrategy` golden decision traces not already protected by `tests/test_signal_intent.py`;
+3. characterize selected `backtest.py` lifecycle transitions before R8 extraction;
+4. characterize `trend_snapshot.py` dual-authority payloads;
+5. add missing sealed-test/readiness invariants only where existing OOS tests do not already protect them.
 
 This batch directly reduces migration risk for R2, R7 and R8 without delaying the R3–R5 Candidate path.
