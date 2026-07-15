@@ -7,6 +7,7 @@ from .identity import (
     FeatureDefinitionId,
     FeatureMaterializationId,
     ModelId,
+    ProviderId,
     StableId,
     StrategyId,
     TargetId,
@@ -19,6 +20,7 @@ from .time import (
     DecisionTime,
     ExecutionEligibleTime,
     FinalizationTime,
+    RetrievedAt,
     SemanticTime,
 )
 
@@ -35,6 +37,8 @@ __all__ = [
     "FinalizationTime",
     "InputAvailabilityStatus",
     "ModelId",
+    "ProviderId",
+    "RetrievedAt",
     "SemanticTime",
     "StableId",
     "StrategyId",
