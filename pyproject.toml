@@ -58,6 +58,7 @@ files = [
     "src/market_regime_alpha/core/status.py",
     "src/market_regime_alpha/core/time.py",
     "src/market_regime_alpha/research/experiment_identity.py",
+    "src/market_regime_alpha/legacy/macd_experiment_adapter.py",
     "src/market_regime_alpha/dividend_t/cosco_timing.py",
     "src/market_regime_alpha/dividend_t/cosco_timing_breakout.py",
     "src/market_regime_alpha/dividend_t/cosco_timing_capital_flow.py",
