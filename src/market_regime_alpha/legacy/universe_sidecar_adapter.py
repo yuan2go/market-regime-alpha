@@ -2,6 +2,10 @@
 
 The Legacy sidecar field ``eligible`` is interpreted only as membership under that sidecar's
 own universe method. It is not promoted to canonical Trading Eligibility.
+
+The Legacy sidecar provides date-level ``as_of_date`` records but no separate availability or
+effective timestamp. This adapter therefore records an explicit rehearsal compatibility
+assumption rather than silently treating the convention as universal provider truth.
 """
 
 from __future__ import annotations
@@ -17,6 +21,9 @@ from market_regime_alpha.universe.artifacts import (
     HistoricalUniverseMembershipRecord,
     build_historical_pit_universe_artifact,
 )
+
+
+LEGACY_UNIVERSE_EFFECTIVE_TIME_CONVENTION = "LEGACY_AS_OF_DATE_EFFECTIVE_FROM_LOCAL_DAY_START"
 
 
 class LegacyUniverseSidecarAdapterError(ValueError):
@@ -80,5 +87,6 @@ def adapt_legacy_universe_mapping(
         source_dataset_id=source_dataset_id,
         method_version=method_version,
         timezone_name=timezone_name,
+        effective_time_convention=LEGACY_UNIVERSE_EFFECTIVE_TIME_CONVENTION,
         records=tuple(records),
     )
