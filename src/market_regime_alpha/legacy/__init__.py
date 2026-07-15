@@ -10,12 +10,20 @@ from .trading_calendar_adapter import (
     adapt_legacy_trading_calendar_mapping,
     load_legacy_trading_calendar_sidecar,
 )
+from .universe_sidecar_adapter import (
+    LegacyUniverseSidecarAdapterError,
+    adapt_legacy_universe_mapping,
+    load_legacy_universe_sidecar,
+)
 
 __all__ = [
     "LegacyMACDExperimentIdentityLike",
     "LegacyTradingCalendarAdapterError",
+    "LegacyUniverseSidecarAdapterError",
     "adapt_legacy_dataset_manifest",
     "adapt_legacy_macd_experiment_identity",
     "adapt_legacy_trading_calendar_mapping",
+    "adapt_legacy_universe_mapping",
     "load_legacy_trading_calendar_sidecar",
+    "load_legacy_universe_sidecar",
 ]
