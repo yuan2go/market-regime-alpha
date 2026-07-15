@@ -55,6 +55,29 @@ class TargetObservationStatus(str, Enum):
     INVALID = "INVALID"
 
 
+def _validate_target_state(
+    *,
+    status: TargetObservationStatus,
+    value: float | None,
+    observed_at: AvailabilityTime | None,
+) -> None:
+    if not isinstance(status, TargetObservationStatus):
+        raise TypeError("status must be a TargetObservationStatus")
+    _require_finite("target value", value)
+    if status is TargetObservationStatus.AVAILABLE:
+        if value is None or observed_at is None:
+            raise ValueError("AVAILABLE target requires value and observed_at")
+        return
+    if value is not None:
+        raise ValueError("non-available target must not carry a usable value")
+    if status is TargetObservationStatus.NOT_YET_OBSERVED:
+        if observed_at is not None:
+            raise ValueError("NOT_YET_OBSERVED target must not carry observed_at")
+        return
+    if observed_at is None:
+        raise ValueError("MISSING or INVALID target requires observed_at")
+
+
 @dataclass(frozen=True, slots=True)
 class TargetObservation:
     """Realized or unresolved target state for one Candidate symbol."""
@@ -66,16 +89,7 @@ class TargetObservation:
 
     def __post_init__(self) -> None:
         _require_non_empty("symbol", self.symbol)
-        if not isinstance(self.status, TargetObservationStatus):
-            raise TypeError("status must be a TargetObservationStatus")
-        _require_finite("target value", self.value)
-        if self.status is TargetObservationStatus.AVAILABLE:
-            if self.value is None or self.observed_at is None:
-                raise ValueError("AVAILABLE target requires value and observed_at")
-        elif self.value is not None:
-            raise ValueError("non-available target must not carry a usable value")
-        if self.status is TargetObservationStatus.NOT_YET_OBSERVED and self.observed_at is not None:
-            raise ValueError("NOT_YET_OBSERVED target must not carry observed_at")
+        _validate_target_state(status=self.status, value=self.value, observed_at=self.observed_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +149,9 @@ class CandidateTargetValue:
     value: float | None
     observed_at: AvailabilityTime | None = None
 
+    def __post_init__(self) -> None:
+        _validate_target_state(status=self.status, value=self.value, observed_at=self.observed_at)
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateDatasetRow:
@@ -160,6 +177,7 @@ class CandidateResearchDataset:
     data_eligibility: DataEligibility
     universe_id: UniverseId
     decision_time: DecisionTime
+    population_symbols: tuple[str, ...]
     target_id: TargetId
     target_materialization_artifact_id: ArtifactId
     feature_definition_ids: tuple[FeatureDefinitionId, ...]
@@ -174,15 +192,17 @@ class CandidateResearchDataset:
             raise ValueError("Candidate research dataset requires source dataset identities")
         if len(self.source_dataset_ids) != len(set(self.source_dataset_ids)):
             raise ValueError("source_dataset_ids must be unique")
+        if len(self.population_symbols) != len(set(self.population_symbols)):
+            raise ValueError("population_symbols must be unique")
+        if tuple(sorted(self.population_symbols)) != self.population_symbols:
+            raise ValueError("population_symbols must be sorted")
         if len(self.feature_definition_ids) != len(set(self.feature_definition_ids)):
             raise ValueError("feature_definition_ids must be unique")
         if len(self.feature_materialization_ids) != len(set(self.feature_materialization_ids)):
             raise ValueError("feature_materialization_ids must be unique")
-        symbols = [row.symbol for row in self.rows]
-        if len(symbols) != len(set(symbols)):
-            raise ValueError("Candidate research dataset rows must have unique symbols")
-        if tuple(sorted(symbols)) != tuple(symbols):
-            raise ValueError("Candidate research dataset rows must be symbol-sorted")
+        symbols = tuple(row.symbol for row in self.rows)
+        if symbols != self.population_symbols:
+            raise ValueError("Candidate research dataset rows must exactly preserve population_symbols")
         for row in self.rows:
             if tuple(cell.feature_id for cell in row.feature_values) != self.feature_definition_ids:
                 raise ValueError("Candidate row feature order must match feature_definition_ids")
@@ -327,6 +347,7 @@ def build_candidate_research_dataset(
         data_eligibility=data_eligibility,
         universe_id=population.universe_id,
         decision_time=population.decision_time,
+        population_symbols=population.symbols,
         target_id=target_contract.target_id,
         target_materialization_artifact_id=target_materialization.artifact_id,
         feature_definition_ids=feature_definition_ids,
