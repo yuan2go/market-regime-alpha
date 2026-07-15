@@ -1,0 +1,612 @@
+{
+  "schema_version": "legacy-asset-inventory-v1",
+  "generated_for_stage": "R1",
+  "status": "ACTIVE",
+  "migration_actions": [
+    "PRESERVE",
+    "ADAPT",
+    "EXTRACT",
+    "FREEZE",
+    "RECLASSIFY",
+    "REPLACE",
+    "RETIRE_LATER"
+  ],
+  "characterization_statuses": [
+    "NOT_STARTED",
+    "PARTIAL",
+    "CHARACTERIZED"
+  ],
+  "assets": [
+    {
+      "asset_id": "legacy.data.a_share_bars",
+      "path": "src/market_regime_alpha/data_sources/a_share_bars.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Provider access",
+        "Bar normalization",
+        "Fallback source integration"
+      ],
+      "target_owners": [
+        "data"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "ADAPT"
+      ],
+      "primary_risks": [
+        "Provider access mistaken for formal PIT authority",
+        "Silent source substitution if fallback semantics are not explicit"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Source audit in Data Constitution and formal data capability audit"
+      ],
+      "earliest_target_stage": "R3",
+      "notes": "Keep adapters; wrap with provider/dataset contracts rather than rewriting all access code."
+    },
+    {
+      "asset_id": "legacy.universe.largecap_snapshot",
+      "path": "src/market_regime_alpha/dividend_t/universe.py",
+      "symbol": "build_largecap_universe",
+      "current_responsibilities": [
+        "Current-snapshot large-cap universe construction",
+        "Liquidity/listing-age filtering"
+      ],
+      "target_owners": [
+        "universe"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "RECLASSIFY",
+        "REPLACE"
+      ],
+      "primary_risks": [
+        "Current snapshot used as historical PIT universe",
+        "Survivorship bias"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Code explicitly emits current-snapshot PIT warning"
+      ],
+      "earliest_target_stage": "R3",
+      "notes": "Preserve for exploratory research; formal historical authority must move to PIT Universe contracts."
+    },
+    {
+      "asset_id": "legacy.data.formal_dataset_builder",
+      "path": "src/market_regime_alpha/dividend_t/formal_dataset_builder.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Fail-closed rehearsal dataset build",
+        "Manifest/quality artifact construction",
+        "Required PIT sidecar checks"
+      ],
+      "target_owners": [
+        "data",
+        "research"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "EXTRACT",
+        "ADAPT"
+      ],
+      "primary_risks": [
+        "MACD/5-minute/MVP constraints mistaken for universal data constitution",
+        "Rehearsal success mistaken for Alpha evidence"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Previously audited fail-closed behavior and immutable rehearsal outputs"
+      ],
+      "earliest_target_stage": "R3/R6",
+      "notes": "Generalize governance mechanics; preserve REHEARSAL_ONLY semantics."
+    },
+    {
+      "asset_id": "legacy.research.macd_oos",
+      "path": "src/market_regime_alpha/dividend_t/macd_oos.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Split manifests",
+        "Dataset classification",
+        "Final-test readiness",
+        "Sealed-test access control",
+        "Immutable run artifacts"
+      ],
+      "target_owners": [
+        "research",
+        "data"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "EXTRACT",
+        "ADAPT"
+      ],
+      "primary_risks": [
+        "MACD-local terminology becoming a second global ontology",
+        "Legacy rehearsal_range confused with Data Eligibility REHEARSAL"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Constitution audit of FinalTestReadiness, split governance and immutable artifacts"
+      ],
+      "earliest_target_stage": "R2/R6",
+      "notes": "Preserve APIs until compatibility adapter exists; normalize vocabulary in new contracts only."
+    },
+    {
+      "asset_id": "legacy.research.macd_experiments",
+      "path": "src/market_regime_alpha/dividend_t/macd_experiments.py",
+      "symbol": "MACDExperimentIdentity",
+      "current_responsibilities": [
+        "Experiment identity",
+        "Four-arm ablation",
+        "Counterfactual attribution"
+      ],
+      "target_owners": [
+        "research"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "EXTRACT",
+        "ADAPT"
+      ],
+      "primary_risks": [
+        "Strong research pattern remains MACD-specific",
+        "Duplicate experiment identity system created for Candidate research"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Previously audited identity fields and four-arm context validation"
+      ],
+      "earliest_target_stage": "R2/R6",
+      "notes": "Generalize identity pattern without deleting or rewriting the MACD implementation."
+    },
+    {
+      "asset_id": "legacy.strategy.signal_intent",
+      "path": "src/market_regime_alpha/dividend_t/signal_intent.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Setup taxonomy",
+        "Strategy intent",
+        "Entry/exit confirmations",
+        "Risk enforcement",
+        "Decision trace"
+      ],
+      "target_owners": [
+        "strategies",
+        "research",
+        "legacy"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "ADAPT",
+        "EXTRACT"
+      ],
+      "primary_risks": [
+        "Candidate bundled with action-oriented Legacy Signal",
+        "Legacy setup taxonomy mistaken for universal Candidate taxonomy"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Strict validation rules and setup-intent mapping audited"
+      ],
+      "earliest_target_stage": "R2/R7",
+      "notes": "Preserve traceability principles; split Candidate Prediction from Strategy Action."
+    },
+    {
+      "asset_id": "legacy.strategy.signal_enum",
+      "path": "src/market_regime_alpha/dividend_t/models.py",
+      "symbol": "Signal",
+      "current_responsibilities": [
+        "Dividend-T strategy-specific action vocabulary"
+      ],
+      "target_owners": [
+        "legacy",
+        "strategies"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "Legacy BUY_T/SELL_T/CLEAR vocabulary becoming platform action ontology"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Enum values and downstream use audited"
+      ],
+      "earliest_target_stage": "R7",
+      "notes": "Keep Legacy enum; map through strategy-specific context to canonical actions."
+    },
+    {
+      "asset_id": "legacy.strategy.dividend_t_strategy",
+      "path": "src/market_regime_alpha/dividend_t/strategy.py",
+      "symbol": "DividendTStrategy",
+      "current_responsibilities": [
+        "Scoring",
+        "Candidate selection",
+        "Policy gating",
+        "Sizing proposal",
+        "Signal generation",
+        "OrderIntent construction"
+      ],
+      "target_owners": [
+        "features",
+        "candidates",
+        "strategies",
+        "portfolio",
+        "execution",
+        "legacy"
+      ],
+      "migration_actions": [
+        "FREEZE",
+        "PRESERVE",
+        "EXTRACT"
+      ],
+      "primary_risks": [
+        "Prediction/policy/sizing/execution coupling",
+        "Legacy integrated baseline mistaken for target Strategy API"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Source audit of evaluate flow and StrategyDecision output"
+      ],
+      "earliest_target_stage": "R1/R7/R8",
+      "notes": "Freeze platform expansion; create golden decision traces before destructive extraction."
+    },
+    {
+      "asset_id": "legacy.integration.cosco_timing_engine",
+      "path": "src/market_regime_alpha/dividend_t/cosco_timing.py",
+      "symbol": "CoscoTimingEngine",
+      "current_responsibilities": [
+        "Integrated feature extraction",
+        "Context",
+        "Capital-flow logic",
+        "Volume-price",
+        "Chan",
+        "Attention",
+        "Memory",
+        "Sell pressure",
+        "Certainty",
+        "Timing policy"
+      ],
+      "target_owners": [
+        "features",
+        "market",
+        "candidates",
+        "strategies",
+        "legacy"
+      ],
+      "migration_actions": [
+        "FREEZE",
+        "PRESERVE",
+        "EXTRACT"
+      ],
+      "primary_risks": [
+        "God Object growth",
+        "Per-symbol score used as cross-sectional rank",
+        "Repeated OHLCV information counted as independent evidence"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Source audit of evaluate integration flow and dependent components"
+      ],
+      "earliest_target_stage": "R1/R4/R8",
+      "notes": "Research knowledge repository and baseline only; no new platform-wide responsibilities."
+    },
+    {
+      "asset_id": "legacy.market.environment",
+      "path": "src/market_regime_alpha/dividend_t/market_environment.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Market trend/breadth/amount/limit structure",
+        "Industry diffusion",
+        "Model self-state",
+        "New-buy gate",
+        "Position cap guidance"
+      ],
+      "target_owners": [
+        "market",
+        "strategies",
+        "portfolio",
+        "research"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "EXTRACT",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "Observed context mixed with model self-state",
+        "Strategy gate and portfolio cap hidden in market object"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Source audit of MarketEnvironmentPoint fields and composite state logic"
+      ],
+      "earliest_target_stage": "R9",
+      "notes": "Do not wholesale-rename as canonical Market Regime; decompose by owner."
+    },
+    {
+      "asset_id": "legacy.feature.attention_proxy",
+      "path": "src/market_regime_alpha/dividend_t/attention.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "OHLCV/amount-derived attention proxy"
+      ],
+      "target_owners": [
+        "features"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "Proxy interpreted as direct investor attention",
+        "Overlap with other OHLCV composites"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Input lineage audited"
+      ],
+      "earliest_target_stage": "R4",
+      "notes": "Register as OHLCV-derived proxy; require ablation before authority."
+    },
+    {
+      "asset_id": "legacy.feature.sell_pressure_proxy",
+      "path": "src/market_regime_alpha/dividend_t/sell_pressure.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "OHLCV-derived resistance/profit-trapped/stalling proxy"
+      ],
+      "target_owners": [
+        "features",
+        "strategies"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "Proxy interpreted as observed future sell supply"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Input and subscore logic audited"
+      ],
+      "earliest_target_stage": "R4/R8",
+      "notes": "Preserve subfeature lineage and use intent-specific validation."
+    },
+    {
+      "asset_id": "legacy.feature.capital_flow",
+      "path": "src/market_regime_alpha/dividend_t/cosco_timing_capital_flow.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Observed-flow field handling",
+        "OHLCV fallback proxy",
+        "Source-type annotation"
+      ],
+      "target_owners": [
+        "features",
+        "data"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "EXTRACT",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "One factor identity silently switches source-information class"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "REAL_MONEY_FLOW versus OHLCV_PROXY behavior audited"
+      ],
+      "earliest_target_stage": "R4/R9",
+      "notes": "Split formal identities by source class; compare real flow versus proxy incrementally."
+    },
+    {
+      "asset_id": "legacy.feature.tuishen_volume_price",
+      "path": "src/market_regime_alpha/dividend_t/tuishen_volume_price.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Tuishen-inspired OHLCV volume-price decomposition"
+      ],
+      "target_owners": [
+        "features",
+        "research"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "EXTRACT"
+      ],
+      "primary_risks": [
+        "Shared OHLCV lineage repeatedly counted",
+        "Theory name mistaken for independent evidence"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Subscores and explicit non-Level2 semantics audited"
+      ],
+      "earliest_target_stage": "R4/R9",
+      "notes": "Register subfeatures, redundancy-test, ablate component and composite contribution."
+    },
+    {
+      "asset_id": "legacy.research.buy_point_quality",
+      "path": "src/market_regime_alpha/dividend_t/buy_point_quality.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Buy-point subtype taxonomy",
+        "Empirical 5-day priors",
+        "Calibration-like adjustment"
+      ],
+      "target_owners": [
+        "research",
+        "candidates",
+        "legacy"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "EXTRACT",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "Sample-derived priors hard-coded as timeless constants",
+        "Later evaluation contaminated by in-sample priors"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "BUY_POINT_5D_PRIORS provenance and usage audited"
+      ],
+      "earliest_target_stage": "R4/R6",
+      "notes": "Keep taxonomy; externalize priors as versioned learned artifacts with estimation-sample identity."
+    },
+    {
+      "asset_id": "legacy.research.point_hit_rate",
+      "path": "src/market_regime_alpha/dividend_t/point_hit_rate.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Legacy buy/sell timing forward-return diagnostics"
+      ],
+      "target_owners": [
+        "research",
+        "legacy"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "Heterogeneous exit intents collapsed into one hit-rate interpretation"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Module marks itself LEGACY_DIAGNOSTIC_ONLY"
+      ],
+      "earliest_target_stage": "R6/R8",
+      "notes": "Do not use as universal sell-side promotion metric."
+    },
+    {
+      "asset_id": "legacy.simulation.integrated_backtest",
+      "path": "src/market_regime_alpha/dividend_t/backtest.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Strategy simulation",
+        "Lifecycle states",
+        "Portfolio/accounting state",
+        "Execution assumptions",
+        "Research configuration",
+        "Reporting"
+      ],
+      "target_owners": [
+        "strategies",
+        "portfolio",
+        "execution",
+        "research",
+        "legacy"
+      ],
+      "migration_actions": [
+        "FREEZE",
+        "PRESERVE",
+        "EXTRACT"
+      ],
+      "primary_risks": [
+        "God Object",
+        "Hidden state ownership",
+        "Large parameter surface",
+        "Multiple-testing and attribution risk"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Source/config/state audit; no complete transition characterization suite yet"
+      ],
+      "earliest_target_stage": "R1/R8/R10",
+      "notes": "Highest-priority characterization target before destructive extraction."
+    },
+    {
+      "asset_id": "legacy.application.trend_snapshot",
+      "path": "src/market_regime_alpha/dividend_t/trend_snapshot.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Research snapshot",
+        "Legacy strategy evaluation",
+        "Cosco timing evaluation",
+        "Probability-like display fields"
+      ],
+      "target_owners": [
+        "application",
+        "interfaces",
+        "strategies",
+        "research"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "ADAPT"
+      ],
+      "primary_risks": [
+        "signal and timing_action exposed as co-equal authorities",
+        "Probability-like output without calibration authority"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Dual decision path and output semantics audited"
+      ],
+      "earliest_target_stage": "R7/R11",
+      "notes": "Keep operational utility; migrated scope must expose one authoritative Strategy Proposal and label alternatives."
+    },
+    {
+      "asset_id": "legacy.baseline.etf_ma_crossover",
+      "path": "backtesting/run_ma_crossover.py",
+      "symbol": null,
+      "current_responsibilities": [
+        "Minimal end-to-end ETF moving-average backtest baseline"
+      ],
+      "target_owners": [
+        "research",
+        "strategies"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "RECLASSIFY"
+      ],
+      "primary_risks": [
+        "Synthetic/minimal example mistaken for target ETF Rotation system"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "README documents synthetic sample limitations"
+      ],
+      "earliest_target_stage": "R9",
+      "notes": "Preserve as simple pipeline baseline only."
+    },
+    {
+      "asset_id": "legacy.interfaces.operational_surfaces",
+      "path": "src/market_regime_alpha/web/*; scripts/*scheduler*; notification paths",
+      "symbol": null,
+      "current_responsibilities": [
+        "Dashboards",
+        "Web APIs",
+        "Schedulers",
+        "Notifications",
+        "Live-like observation"
+      ],
+      "target_owners": [
+        "application",
+        "interfaces"
+      ],
+      "migration_actions": [
+        "PRESERVE",
+        "ADAPT",
+        "RETIRE_LATER"
+      ],
+      "primary_risks": [
+        "UI fields become domain authority",
+        "Operational compatibility broken by premature refactor"
+      ],
+      "characterization_status": "PARTIAL",
+      "existing_characterization_evidence": [
+        "Operational entry points documented in README"
+      ],
+      "earliest_target_stage": "R11",
+      "notes": "Maintain correctness; consume canonical outputs only after contracts stabilize."
+    }
+  ]
+}
