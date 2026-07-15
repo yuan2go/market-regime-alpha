@@ -157,11 +157,18 @@ Generic Provider Export Adapter
 Provider Rehearsal Market Artifact
         ↓
 R5 research chain
+
+Xuntou normalized native P0 export
+        ↓
+Xuntou P0 Native Adapter
+        ↓
+the same Provider Rehearsal Market Artifact
 ```
 
 The generic provider path is an architecture boundary.
 
-The active concrete provider for the next real adapter is Xuntou.
+The active concrete provider adapter is Xuntou. It currently consumes an identified normalized
+native export; runtime XtQuant extraction and a real provider-backed run remain unavailable.
 
 ---
 
@@ -235,6 +242,8 @@ ProviderRehearsalMarketArtifact
 Generic Provider Export Bundle schema
 Strict Generic Provider Export Adapter
 Provider-rehearsal Eligibility v2
+Xuntou P0 Native Field Mapping contract
+Xuntou normalized native export schema and adapter
 ```
 
 These contracts can identify:
@@ -255,7 +264,14 @@ Materializer version
 Feature / Target / Experiment identities
 ```
 
-They do not mean that a real Xuntou native adapter or a real Xuntou research run already exists.
+The Xuntou mapping and adapter are bounded to `REHEARSAL`. Their existence does not mean that
+XtQuant runtime extraction was executed, historical PIT semantics were verified, or a real Xuntou
+research run exists. Current mapping and implementation limitations are recorded in:
+
+```text
+docs/specs/Xuntou-P0-Native-Field-Mapping.md
+docs/research/R5-Xuntou-P0-Adapter-Status.md
+```
 
 ---
 
@@ -397,7 +413,9 @@ Generic Provider Export Adapter                               IMPLEMENTED
 
 Xuntou selected as primary provider                           DECIDED
 Eastmoney / Tencent auxiliary role                            DECIDED
-Xuntou native-field adapter                                   NOT YET IMPLEMENTED
+Xuntou P0 native field mapping specification                  COMPLETE; RUNTIME SEMANTICS PARTIAL
+Xuntou normalized native/export adapter                       IMPLEMENTED
+XtQuant runtime extraction                                    NOT IMPLEMENTED / NOT EXECUTED
 Real Xuntou provider / export data run                         NOT AVAILABLE
 Provider-backed multi-date Candidate panels                    NOT YET IMPLEMENTED
 Immutable R5 run artifact                                      NOT YET IMPLEMENTED
@@ -464,6 +482,9 @@ latest HEAD mypy passed
 
 Normal repository execution or CI remains required before implementation authority is increased.
 
+WP-1/WP-2 intentionally ran no tests or static quality commands under the task instruction. No
+`pytest`, `ruff`, or `mypy` result is claimed for the Xuntou P0 specification/adapter changes.
+
 ---
 
 ## 11. Immediate Implementation Sequence
@@ -472,16 +493,16 @@ The current ordered sequence is:
 
 ```text
 WP-0
-Close B1 verification and common ranking evaluation interface
+Close B1 verification and common ranking evaluation interface — COMPLETE
         ↓
 WP-1
-Freeze minimum Xuntou P0 native field mapping and PIT caveats
+Freeze minimum Xuntou P0 native field mapping and PIT caveats — COMPLETE
         ↓
 WP-2
-Implement minimum Xuntou P0 native adapter
+Implement minimum Xuntou P0 native adapter — COMPLETE FOR NORMALIZED EXPORT MODE
         ↓
 WP-3
-Run provider-backed Xuntou REHEARSAL B0 / B1 experiments
+Run provider-backed Xuntou REHEARSAL B0 / B1 experiments — NEXT
         ↓
 WP-4
 Implement Entry Path Target contracts
@@ -538,7 +559,7 @@ expand Legacy God Objects as the new platform kernel
 
 The current system does not claim to implement:
 
-- a real Xuntou native integration;
+- XtQuant runtime extraction or a real Xuntou provider-backed data run;
 - final Execution Feasibility;
 - guaranteed price-limit queue fillability;
 - Portfolio approval;
@@ -554,4 +575,4 @@ The current system does not claim to implement:
 
 ## 14. Current Principle
 
-> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. B1 now exists as a transparent ranking core whose verification must be closed before authority increases. The next research expansion is path-dependent Entry and Exit modeling, but only after provider-backed Candidate evidence is reproducible. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**
+> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. B1 integration closure is implemented while latest full-repository verification remains pending. The next evidence step is a real Xuntou provider-backed REHEARSAL Candidate run; path-dependent Entry and Exit research follows only after Candidate evidence is reproducible. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**
