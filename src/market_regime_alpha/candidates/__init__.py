@@ -25,10 +25,20 @@ from .evaluation import (
     evaluate_candidate_ranking_slice,
 )
 from .panel import CandidateResearchPanel, assemble_candidate_research_panel
+from .rehearsal_opportunity_targets import (
+    R5_NEXT_SESSION_MAE_TARGET_ID,
+    R5_NEXT_SESSION_MFE_TARGET_ID,
+    materialize_r5_next_session_opportunity_targets,
+    r5_next_session_opportunity_target_contracts,
+)
 from .rehearsal_targets import (
     R5_NEXT_SESSION_RETURN_TARGET_ID,
     materialize_r5_next_session_return_target,
     r5_next_session_return_target_contract,
+)
+from .target_bundle import (
+    TargetMaterializationBundle,
+    bundle_target_materializations,
 )
 
 __all__ = [
@@ -44,17 +54,23 @@ __all__ = [
     "CandidateResearchPanel",
     "CandidateSliceEvaluation",
     "CandidateTargetValue",
+    "R5_NEXT_SESSION_MAE_TARGET_ID",
+    "R5_NEXT_SESSION_MFE_TARGET_ID",
     "R5_NEXT_SESSION_RETURN_TARGET_ID",
     "TargetContract",
     "TargetMaterialization",
+    "TargetMaterializationBundle",
     "TargetObservation",
     "TargetObservationStatus",
     "assemble_candidate_research_panel",
     "build_candidate_population",
     "build_candidate_research_dataset",
+    "bundle_target_materializations",
     "evaluate_candidate_ranking_panel",
     "evaluate_candidate_ranking_slice",
+    "materialize_r5_next_session_opportunity_targets",
     "materialize_r5_next_session_return_target",
+    "r5_next_session_opportunity_target_contracts",
     "r5_next_session_return_target_contract",
     "rank_candidates_by_feature",
 ]
