@@ -4,6 +4,10 @@ from dataclasses import dataclass
 
 import pytest
 
+from market_regime_alpha.dividend_t.backtest import DividendTBacktestConfig
+from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig
+from market_regime_alpha.dividend_t.macd_experiments import build_experiment_identity, experiment_config_hash
+from market_regime_alpha.dividend_t.signal_intent import MACDPolicyConfig
 from market_regime_alpha.legacy.macd_experiment_adapter import adapt_legacy_macd_experiment_identity
 
 
@@ -34,3 +38,29 @@ def test_legacy_macd_adapter_preserves_identity_anchors_without_inventing_scope(
 def test_legacy_macd_adapter_rejects_missing_required_shape() -> None:
     with pytest.raises(TypeError):
         adapt_legacy_macd_experiment_identity(object(), legacy_config_hash="hash")  # type: ignore[arg-type]
+
+
+def test_real_legacy_macd_identity_maps_to_v2_without_inventing_target_or_universe() -> None:
+    legacy = build_experiment_identity(
+        git_commit="03548f0123456789",
+        dataset_version="dataset-v1",
+        pipeline_id="dividend-t-5m",
+        macd_config=MACDConfig(bar_interval=BarInterval.MINUTE_5),
+        policy_config=MACDPolicyConfig(),
+        execution_config=DividendTBacktestConfig(signal_cache_dir=None),
+        sizing_owner="dividend_t_backtest_execution",
+    )
+    legacy_hash = experiment_config_hash(legacy)
+
+    adapted = adapt_legacy_macd_experiment_identity(
+        legacy,
+        legacy_config_hash=legacy_hash,
+    )
+
+    assert adapted.code_revision == legacy.git_commit
+    assert adapted.config_hash == legacy_hash
+    assert str(adapted.dataset_id) == f"legacy-macd-dataset-version:{legacy.dataset_version}"
+    assert adapted.target_id is None
+    assert adapted.universe_id is None
+    assert dict(adapted.semantic_refs)["legacy_data_split_hash"] == legacy.data_split_hash
+    assert dict(adapted.semantic_refs)["legacy_pipeline_id"] == legacy.pipeline_id
