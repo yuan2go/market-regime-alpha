@@ -56,3 +56,8 @@ class AsOfTime(SemanticTime):
 @dataclass(frozen=True, slots=True)
 class ExecutionEligibleTime(SemanticTime):
     """Earliest time at which an approved action may become execution-eligible."""
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedAt(SemanticTime):
+    """Time at which the project retrieved or recorded a source artifact."""
