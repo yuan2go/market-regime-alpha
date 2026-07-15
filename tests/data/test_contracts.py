@@ -29,6 +29,36 @@ def test_formal_research_dataset_requires_pit_correct_scope() -> None:
         )
 
 
+def test_dataset_contract_rejects_string_eligibility_that_could_bypass_formal_gate() -> None:
+    provider = ProviderReference(ProviderId("provider-fixture"), "bars", "v1")
+
+    with pytest.raises(TypeError, match="DataEligibility"):
+        DatasetContract(
+            dataset_id=DatasetId("dataset-formal-v1"),
+            schema_version="dataset-contract-v1",
+            eligibility="FORMAL_RESEARCH",  # type: ignore[arg-type]
+            manifest_artifact_id=ArtifactId("manifest-1"),
+            provider_references=(provider,),
+            pit_correct_for_scope=False,
+            scope="candidate-formal-research",
+        )
+
+
+def test_dataset_contract_requires_boolean_pit_scope_flag() -> None:
+    provider = ProviderReference(ProviderId("provider-fixture"), "bars", "v1")
+
+    with pytest.raises(TypeError, match="pit_correct_for_scope must be boolean"):
+        DatasetContract(
+            dataset_id=DatasetId("dataset-rehearsal-v1"),
+            schema_version="dataset-contract-v1",
+            eligibility=DataEligibility.REHEARSAL,
+            manifest_artifact_id=ArtifactId("manifest-1"),
+            provider_references=(provider,),
+            pit_correct_for_scope=1,  # type: ignore[arg-type]
+            scope="candidate-rehearsal",
+        )
+
+
 def test_dataset_contract_keeps_provider_and_dataset_identity_separate() -> None:
     first = ProviderReference(ProviderId("provider-a"), "bars", "v1")
     second = ProviderReference(ProviderId("provider-a"), "corporate-actions", "v1")
