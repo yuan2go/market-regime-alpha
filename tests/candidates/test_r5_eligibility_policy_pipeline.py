@@ -6,8 +6,12 @@ from zoneinfo import ZoneInfo
 from market_regime_alpha.candidates import build_candidate_population_from_historical_artifacts
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.core.time import DecisionTime
-from market_regime_alpha.legacy import adapt_legacy_eligibility_mapping
+from market_regime_alpha.legacy import (
+    LEGACY_ELIGIBILITY_AVAILABILITY_CONVENTION,
+    adapt_legacy_eligibility_mapping,
+)
 from market_regime_alpha.universe import (
+    TRADING_ELIGIBILITY_MATERIALIZER_VERSION,
     HistoricalUniverseMembershipRecord,
     build_historical_pit_universe_artifact,
     materialize_historical_trading_eligibility,
@@ -85,6 +89,7 @@ def test_legacy_raw_eligibility_materializes_versioned_policy_and_candidate_popu
         policy=policy,
         decision_times=(DecisionTime(DECISION_AT),),
         observations=raw_observations,
+        raw_evidence_convention=LEGACY_ELIGIBILITY_AVAILABILITY_CONVENTION,
     )
     population = build_candidate_population_from_historical_artifacts(
         universe_artifact=universe,
@@ -94,6 +99,8 @@ def test_legacy_raw_eligibility_materializes_versioned_policy_and_candidate_popu
 
     assert eligibility.policy_artifact_id == policy.policy_artifact_id
     assert eligibility.policy_version == policy.policy_version
+    assert eligibility.materializer_version == TRADING_ELIGIBILITY_MATERIALIZER_VERSION
+    assert eligibility.raw_evidence_convention == LEGACY_ELIGIBILITY_AVAILABILITY_CONVENTION
     assert population.symbols == ("000001.SZ",)
     assert population.source_dataset_ids == (
         DatasetId("dataset-universe-v1"),
