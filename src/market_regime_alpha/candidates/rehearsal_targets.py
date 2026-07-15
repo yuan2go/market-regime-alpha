@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 from hashlib import sha256
 import json
+from zoneinfo import ZoneInfo
 
 from market_regime_alpha.candidates.contracts import CandidatePopulation, TargetContract
 from market_regime_alpha.candidates.dataset import (
@@ -27,6 +28,7 @@ from market_regime_alpha.data.rehearsal import (
 R5_NEXT_SESSION_RETURN_TARGET_ID = TargetId(
     "target-r5-decision-reference-to-next-session-close-return-v1"
 )
+_R5_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def r5_next_session_return_target_contract() -> TargetContract:
@@ -57,9 +59,11 @@ def materialize_r5_next_session_return_target(
 ) -> TargetMaterialization:
     """Materialize next-session close return for one Candidate Decision Time cross-section."""
 
+    _require_r5_decision_time(population)
+    decision_date = population.decision_time.value.astimezone(_R5_TIMEZONE).date()
     if not isinstance(next_session_date, date):
         raise TypeError("next_session_date must be a date")
-    if next_session_date <= population.decision_time.value.date():
+    if next_session_date <= decision_date:
         raise ValueError("next_session_date must be after Candidate Decision Date")
     if materialized_at.value <= population.decision_time.value:
         raise ValueError("target materialization must occur after Candidate Decision Time")
@@ -140,6 +144,12 @@ def materialize_r5_next_session_return_target(
         config_hash=config_hash,
         observations=tuple(observations),
     )
+
+
+def _require_r5_decision_time(population: CandidatePopulation) -> None:
+    local = population.decision_time.value.astimezone(_R5_TIMEZONE)
+    if (local.hour, local.minute, local.second, local.microsecond) != (14, 55, 0, 0):
+        raise ValueError("R5 rehearsal target requires Decision Time 14:55:00 Asia/Shanghai")
 
 
 def _target_artifact_id(
