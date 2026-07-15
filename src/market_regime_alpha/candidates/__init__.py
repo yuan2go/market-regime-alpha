@@ -24,6 +24,7 @@ from .evaluation import (
     evaluate_candidate_ranking_panel,
     evaluate_candidate_ranking_slice,
 )
+from .historical_population import build_candidate_population_from_historical_artifacts
 from .panel import CandidateResearchPanel, assemble_candidate_research_panel
 from .rehearsal_calendar_targets import materialize_r5_opportunity_targets_from_calendar
 from .rehearsal_opportunity_targets import (
@@ -62,6 +63,7 @@ __all__ = [
     "TargetObservationStatus",
     "assemble_candidate_research_panel",
     "build_candidate_population",
+    "build_candidate_population_from_historical_artifacts",
     "build_candidate_research_dataset",
     "bundle_target_materializations",
     "evaluate_candidate_ranking_panel",
