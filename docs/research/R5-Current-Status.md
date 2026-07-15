@@ -132,10 +132,23 @@ identified liquidity measure
 Decision-Time buyability evidence
 ```
 
-The current default listing-age threshold is:
+The current default minimum listing age is:
 
 ```text
-60 calendar days
+61 calendar days
+```
+
+This implements the preserved original requirement strictly as:
+
+```text
+listing_age_calendar_days > 60
+```
+
+Therefore:
+
+```text
+60 calendar days → INELIGIBLE
+61 calendar days → passes the listing-age gate
 ```
 
 The liquidity threshold is not globally hard-coded.
@@ -312,6 +325,7 @@ Historical PIT Universe Membership Artifact                IMPLEMENTED
 Historical Trading Eligibility Artifact                    IMPLEMENTED
 Eligibility v1                                             IMPLEMENTED
 Provider-rehearsal Eligibility v2 contract                  IMPLEMENTED
+Strict listing age > 60 calendar days boundary             IMPLEMENTED
 Policy / Materializer provenance                            IMPLEMENTED
 Historical Membership ∩ Eligibility Candidate assembly     IMPLEMENTED
 Provider Rehearsal Market Artifact contract                 IMPLEMENTED
@@ -413,4 +427,4 @@ The current system does not claim to implement:
 
 ## 15. Current Principle
 
-> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system, not a next-close-only model or an infrastructure project. The provider-rehearsal artifact contract now defines what a real data source must supply, but no provider is considered integrated or validated until an explicit adapter and identified source artifacts populate that contract without invented PIT semantics.**
+> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system, not a next-close-only model or an infrastructure project. The provider-rehearsal artifact contract now defines what a real data source must supply, while the v2 eligibility policy preserves the original strict `listing age > 60 calendar days` boundary as a default minimum of 61 calendar days. No provider is considered integrated or validated until an explicit adapter and identified source artifacts populate these contracts without invented PIT semantics.**
