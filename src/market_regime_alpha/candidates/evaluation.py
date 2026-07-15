@@ -9,12 +9,48 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from statistics import mean
+from typing import Protocol
 
-from market_regime_alpha.candidates.baselines import CandidateRankingRun
+from market_regime_alpha.candidates.baselines import CandidateRankingRejection
+from market_regime_alpha.candidates.contracts import CandidatePrediction
 from market_regime_alpha.candidates.dataset import CandidateResearchDataset, TargetObservationStatus
 from market_regime_alpha.candidates.panel import CandidateResearchPanel
-from market_regime_alpha.core.identity import DatasetId, ExperimentId, ModelId, TargetId
+from market_regime_alpha.core.identity import DatasetId, ExperimentId, ModelId, TargetId, UniverseId
 from market_regime_alpha.core.time import DecisionTime
+
+
+class CandidateRankingLike(Protocol):
+    """Minimal structural contract consumed by Candidate ranking evaluation."""
+
+    @property
+    def dataset_id(self) -> DatasetId: ...
+
+    @property
+    def experiment_id(self) -> ExperimentId: ...
+
+    @property
+    def model_id(self) -> ModelId: ...
+
+    @property
+    def universe_id(self) -> UniverseId: ...
+
+    @property
+    def target_id(self) -> TargetId: ...
+
+    @property
+    def decision_time(self) -> DecisionTime: ...
+
+    @property
+    def candidate_population_size(self) -> int: ...
+
+    @property
+    def ranked_population_size(self) -> int: ...
+
+    @property
+    def predictions(self) -> tuple[CandidatePrediction, ...]: ...
+
+    @property
+    def rejections(self) -> tuple[CandidateRankingRejection, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +99,7 @@ class CandidatePanelEvaluation:
 
 def evaluate_candidate_ranking_slice(
     dataset: CandidateResearchDataset,
-    ranking: CandidateRankingRun,
+    ranking: CandidateRankingLike,
     *,
     top_k: int = 5,
 ) -> CandidateSliceEvaluation:
@@ -141,7 +177,7 @@ def evaluate_candidate_ranking_slice(
 
 def evaluate_candidate_ranking_panel(
     panel: CandidateResearchPanel,
-    rankings: tuple[CandidateRankingRun, ...],
+    rankings: tuple[CandidateRankingLike, ...],
     *,
     top_k: int = 5,
 ) -> CandidatePanelEvaluation:

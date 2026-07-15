@@ -1,6 +1,14 @@
 """Canonical Candidate Discovery contracts and R5 rehearsal research APIs."""
 
 from .baselines import CandidateRankingRejection, CandidateRankingRun, rank_candidates_by_feature
+from .composite_baseline import (
+    CompositeCandidateRankingRun,
+    CompositeFeatureComponent,
+    CompositeFeatureDirection,
+    CompositeFeatureRole,
+    TransparentCompositeSpec,
+    rank_candidates_by_transparent_composite,
+)
 from .contracts import (
     CandidateExpiryTime,
     CandidatePopulation,
@@ -20,6 +28,7 @@ from .dataset import (
 )
 from .evaluation import (
     CandidatePanelEvaluation,
+    CandidateRankingLike,
     CandidateSliceEvaluation,
     evaluate_candidate_ranking_panel,
     evaluate_candidate_ranking_slice,
@@ -47,12 +56,17 @@ __all__ = [
     "CandidatePanelEvaluation",
     "CandidatePopulation",
     "CandidatePrediction",
+    "CandidateRankingLike",
     "CandidateRankingRejection",
     "CandidateRankingRun",
     "CandidateResearchDataset",
     "CandidateResearchPanel",
     "CandidateSliceEvaluation",
     "CandidateTargetValue",
+    "CompositeCandidateRankingRun",
+    "CompositeFeatureComponent",
+    "CompositeFeatureDirection",
+    "CompositeFeatureRole",
     "R5_NEXT_SESSION_MAE_TARGET_ID",
     "R5_NEXT_SESSION_MFE_TARGET_ID",
     "R5_NEXT_SESSION_RETURN_TARGET_ID",
@@ -61,6 +75,7 @@ __all__ = [
     "TargetMaterializationBundle",
     "TargetObservation",
     "TargetObservationStatus",
+    "TransparentCompositeSpec",
     "assemble_candidate_research_panel",
     "build_candidate_population",
     "build_candidate_population_from_historical_artifacts",
@@ -74,4 +89,5 @@ __all__ = [
     "r5_next_session_opportunity_target_contracts",
     "r5_next_session_return_target_contract",
     "rank_candidates_by_feature",
+    "rank_candidates_by_transparent_composite",
 ]

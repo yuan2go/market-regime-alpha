@@ -5,7 +5,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from market_regime_alpha.candidates.composite_baseline import (
+from market_regime_alpha.candidates import (
+    CompositeCandidateRankingRun,
     CompositeFeatureComponent,
     CompositeFeatureDirection,
     CompositeFeatureRole,
@@ -19,7 +20,11 @@ from market_regime_alpha.candidates.dataset import (
     CandidateTargetValue,
     TargetObservationStatus,
 )
-from market_regime_alpha.candidates.evaluation import evaluate_candidate_ranking_slice
+from market_regime_alpha.candidates.evaluation import (
+    evaluate_candidate_ranking_panel,
+    evaluate_candidate_ranking_slice,
+)
+from market_regime_alpha.candidates.panel import assemble_candidate_research_panel
 from market_regime_alpha.core.identity import (
     ArtifactId,
     DatasetId,
@@ -30,12 +35,13 @@ from market_regime_alpha.core.identity import (
     UniverseId,
 )
 from market_regime_alpha.core.status import InputAvailabilityStatus
-from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.core.time import AvailabilityTime, DecisionTime
 from market_regime_alpha.data.contracts import DataEligibility
 
 
 TZ = ZoneInfo("Asia/Shanghai")
 DECISION_TIME = DecisionTime(datetime(2026, 7, 15, 14, 55, tzinfo=TZ))
+OBSERVED_AT = AvailabilityTime(datetime(2026, 7, 16, 15, 0, tzinfo=TZ))
 MOMENTUM = FeatureDefinitionId("feature-momentum")
 LIQUIDITY = FeatureDefinitionId("feature-liquidity")
 VOLATILITY = FeatureDefinitionId("feature-volatility")
@@ -74,7 +80,7 @@ def _dataset(
                         else TargetObservationStatus.NOT_YET_OBSERVED
                     ),
                     value=target_value,
-                    observed_at=None,
+                    observed_at=OBSERVED_AT if target_value is not None else None,
                 ),
             )
         )
@@ -255,8 +261,70 @@ def test_b1_ranking_is_compatible_with_existing_cross_sectional_evaluation() -> 
         config_hash="config-v1",
     )
 
-    evaluation = evaluate_candidate_ranking_slice(dataset, ranking, top_k=2)  # type: ignore[arg-type]
+    evaluation = evaluate_candidate_ranking_slice(dataset, ranking, top_k=2)
+    panel_evaluation = evaluate_candidate_ranking_panel(
+        assemble_candidate_research_panel((dataset,)),
+        (ranking,),
+        top_k=2,
+    )
 
+    assert isinstance(ranking, CompositeCandidateRankingRun)
     assert evaluation.ranking_coverage == pytest.approx(1.0)
     assert evaluation.spearman_rank_ic == pytest.approx(1.0)
     assert evaluation.top_k_mean_target == pytest.approx(0.025)
+    assert panel_evaluation.slice_evaluations == (evaluation,)
+
+
+def test_b1_ranking_does_not_read_future_target_values() -> None:
+    first = _dataset(
+        dataset_id="candidate-b1-target-a",
+        feature_ids=(MOMENTUM, LIQUIDITY),
+        values={
+            "000001.SZ": (0.03, 30.0),
+            "000002.SZ": (0.02, None),
+            "000003.SZ": (0.01, 10.0),
+        },
+        target_values={
+            "000001.SZ": 0.50,
+            "000002.SZ": -0.20,
+            "000003.SZ": 0.10,
+        },
+    )
+    second = _dataset(
+        dataset_id="candidate-b1-target-b",
+        feature_ids=(MOMENTUM, LIQUIDITY),
+        values={
+            "000001.SZ": (0.03, 30.0),
+            "000002.SZ": (0.02, None),
+            "000003.SZ": (0.01, 10.0),
+        },
+        target_values={
+            "000001.SZ": -0.50,
+            "000002.SZ": 0.80,
+            "000003.SZ": -0.10,
+        },
+    )
+    spec = TransparentCompositeSpec((_component(MOMENTUM), _component(LIQUIDITY)))
+
+    first_run = rank_candidates_by_transparent_composite(
+        first,
+        spec=spec,
+        model_id=ModelId("b1-target-blindness"),
+        code_revision="abc123",
+        config_hash="config-v1",
+    )
+    second_run = rank_candidates_by_transparent_composite(
+        second,
+        spec=spec,
+        model_id=ModelId("b1-target-blindness"),
+        code_revision="abc123",
+        config_hash="config-v1",
+    )
+
+    assert tuple((item.symbol, item.model_score, item.rank) for item in first_run.predictions) == tuple(
+        (item.symbol, item.model_score, item.rank) for item in second_run.predictions
+    )
+    assert tuple((item.symbol, item.reason_code) for item in first_run.rejections) == tuple(
+        (item.symbol, item.reason_code) for item in second_run.rejections
+    )
+    assert first_run.experiment_id != second_run.experiment_id

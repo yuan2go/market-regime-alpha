@@ -75,6 +75,7 @@ files = [
     "src/market_regime_alpha/candidates/rehearsal_calendar_targets.py",
     "src/market_regime_alpha/candidates/target_bundle.py",
     "src/market_regime_alpha/candidates/baselines.py",
+    "src/market_regime_alpha/candidates/composite_baseline.py",
     "src/market_regime_alpha/candidates/evaluation.py",
     "src/market_regime_alpha/research/experiment_identity.py",
     "src/market_regime_alpha/research/provider_rehearsal_market_artifact.py",
