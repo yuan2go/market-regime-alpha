@@ -95,13 +95,26 @@ minimum_liquidity_value
 liquidity_measure_id
 ```
 
-The current default listing-age threshold is:
+The current default minimum listing age is:
 
 ```text
-minimum_listing_age_calendar_days = 60
+61 calendar days
 ```
 
-This resolves the ambiguous original phrase `listed for more than 60 days` into an explicit v2 semantic:
+This implements the preserved original requirement strictly as:
+
+```text
+listing_age_calendar_days > 60
+```
+
+Therefore:
+
+```text
+60 calendar days → INELIGIBLE
+61 calendar days → eligible with respect to listing age
+```
+
+This resolves the ambiguous shorthand `60d` into an explicit v2 semantic:
 
 ```text
 calendar days
@@ -113,7 +126,7 @@ A later research program may define a different Policy using trading-session age
 
 ## 4. v2 Evidence Contract
 
-The canonical raw observation now supports optional provider-rehearsal evidence:
+The canonical raw observation supports optional provider-rehearsal evidence:
 
 ```text
 listing_age_calendar_days
@@ -136,6 +149,20 @@ Policy configuration:
 minimum_listing_age_calendar_days
 ```
 
+The provider-rehearsal v2 factory defaults this value to:
+
+```text
+61
+```
+
+so the original phrase:
+
+```text
+listed for more than 60 days
+```
+
+is represented exactly under the v2 calendar-day convention.
+
 ### Below threshold
 
 ```text
@@ -143,6 +170,18 @@ listing_age_calendar_days < minimum
         ↓
 INELIGIBLE
 LISTING_AGE_BELOW_MINIMUM
+```
+
+With the default v2 configuration:
+
+```text
+listing_age_calendar_days = 60
+        ↓
+INELIGIBLE
+
+listing_age_calendar_days = 61
+        ↓
+passes the listing-age gate
 ```
 
 ### Missing evidence
@@ -383,7 +422,7 @@ non-ST
         ∩
 non-suspended
         ∩
-minimum listing age
+listing age > 60 calendar days
         ∩
 minimum PIT liquidity
         ∩
@@ -451,6 +490,8 @@ Current v2 tests cover:
 
 ```text
 complete v2 evidence → ELIGIBLE
+60 calendar days → INELIGIBLE
+61 calendar days → passes the listing-age gate
 listing age below minimum → INELIGIBLE
 liquidity below threshold → INELIGIBLE
 explicit NOT_BUYABLE → INELIGIBLE
@@ -488,7 +529,7 @@ The Candidate Population produces Alpha.
 
 ## 16. Next Implementation Step
 
-The next step is now:
+The next step is:
 
 ```text
 Provider-backed or Provider-export-backed REHEARSAL Market Artifact
@@ -510,10 +551,10 @@ Decision-Time snapshots
 next-session OHLC
 ```
 
-Only then should the project build the first provider-backed v2 Candidate Population and target-specific Candidate panels.
+The Provider Rehearsal Market Artifact contract is now implemented, while a Generic Provider Export Adapter, a concrete provider adapter, and a real provider data run remain pending.
 
 ---
 
 ## 17. Principle
 
-> **Candidate eligibility must reproduce the declared research population, not merely filter whatever fields happen to exist. The v2 policy restores the original MVP requirements for listing age, liquidity and Decision-Time buyability while preserving the distinction between Candidate eligibility and final execution feasibility.**
+> **Candidate eligibility must reproduce the declared research population, not merely filter whatever fields happen to exist. The v2 policy implements the original strict `listing age > 60 calendar days` boundary as a default minimum of 61 calendar days, while preserving the distinction between Candidate eligibility and final execution feasibility.**
