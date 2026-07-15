@@ -74,6 +74,8 @@ class TradingEligibilityRecord:
 
     def __post_init__(self) -> None:
         _validate_symbol(self.symbol)
+        if not isinstance(self.status, TradingEligibilityStatus):
+            raise TypeError("status must be a TradingEligibilityStatus")
 
 
 @dataclass(frozen=True, slots=True)
