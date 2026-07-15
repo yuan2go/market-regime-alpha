@@ -66,6 +66,8 @@ files = [
     "src/market_regime_alpha/candidates/dataset.py",
     "src/market_regime_alpha/candidates/panel.py",
     "src/market_regime_alpha/candidates/rehearsal_targets.py",
+    "src/market_regime_alpha/candidates/rehearsal_opportunity_targets.py",
+    "src/market_regime_alpha/candidates/target_bundle.py",
     "src/market_regime_alpha/candidates/baselines.py",
     "src/market_regime_alpha/candidates/evaluation.py",
     "src/market_regime_alpha/research/experiment_identity.py",
