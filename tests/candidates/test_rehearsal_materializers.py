@@ -32,6 +32,7 @@ from market_regime_alpha.features.rehearsal_baselines import (
 TZ = ZoneInfo("Asia/Shanghai")
 DECISION_AT = datetime(2026, 7, 15, 14, 55, tzinfo=TZ)
 MATERIALIZED_AT = datetime(2026, 7, 16, 15, 30, tzinfo=TZ)
+NEXT_SESSION_DATE = date(2026, 7, 16)
 SOURCE_DATASET_ID = DatasetId("dataset-r5-rehearsal-bars-v1")
 UNIVERSE_ID = UniverseId("universe-r5-rehearsal-20260715")
 
@@ -146,13 +147,13 @@ def test_rehearsal_target_materializer_separates_available_missing_and_invalid()
     future_closes = (
         RehearsalNextSessionClose(
             "000001.SZ",
-            date(2026, 7, 16),
+            NEXT_SESSION_DATE,
             129.0,
             AvailabilityTime(datetime(2026, 7, 16, 15, 5, tzinfo=TZ)),
         ),
         RehearsalNextSessionClose(
             "000003.SZ",
-            date(2026, 7, 16),
+            NEXT_SESSION_DATE,
             110.0,
             AvailabilityTime(datetime(2026, 7, 16, 15, 5, tzinfo=TZ)),
         ),
@@ -163,6 +164,7 @@ def test_rehearsal_target_materializer_separates_available_missing_and_invalid()
         population=population,
         source_dataset_id=SOURCE_DATASET_ID,
         decision_snapshots=snapshots,
+        next_session_date=NEXT_SESSION_DATE,
         next_session_closes=future_closes,
         materialized_at=AsOfTime(MATERIALIZED_AT),
         code_revision="abc123",
@@ -177,6 +179,34 @@ def test_rehearsal_target_materializer_separates_available_missing_and_invalid()
     assert observations["000002.SZ"].value is None
     assert observations["000003.SZ"].status is TargetObservationStatus.INVALID
     assert observations["000003.SZ"].value is None
+
+
+def test_rehearsal_target_materializer_rejects_wrong_resolved_session() -> None:
+    population = _population()
+    snapshot = RehearsalDecisionSnapshot(
+        "000001.SZ",
+        population.decision_time,
+        126.0,
+        AvailabilityTime(DECISION_AT),
+    )
+    wrong_date_close = RehearsalNextSessionClose(
+        "000001.SZ",
+        date(2026, 7, 17),
+        129.0,
+        AvailabilityTime(datetime(2026, 7, 17, 15, 5, tzinfo=TZ)),
+    )
+
+    with pytest.raises(ValueError, match="resolved next_session_date"):
+        materialize_r5_next_session_return_target(
+            population=population,
+            source_dataset_id=SOURCE_DATASET_ID,
+            decision_snapshots=(snapshot,),
+            next_session_date=NEXT_SESSION_DATE,
+            next_session_closes=(wrong_date_close,),
+            materialized_at=AsOfTime(datetime(2026, 7, 17, 15, 30, tzinfo=TZ)),
+            code_revision="abc123",
+            config_hash="r5-next-session-target-v1",
+        )
 
 
 def test_rehearsal_feature_materializer_ignores_future_history_instead_of_leaking_it() -> None:
