@@ -13,10 +13,8 @@ from datetime import datetime
 from hashlib import sha256
 import json
 
-from market_regime_alpha.candidates.contracts import CandidatePopulation, build_candidate_population
 from market_regime_alpha.core.identity import ArtifactId, DatasetId
 from market_regime_alpha.core.time import AsOfTime, DecisionTime
-from market_regime_alpha.universe.artifacts import HistoricalPITUniverseArtifact
 from market_regime_alpha.universe.contracts import (
     TradingEligibilityRecord,
     TradingEligibilitySnapshot,
@@ -149,16 +147,3 @@ def build_historical_trading_eligibility_artifact(
         policy_version=policy_version,
         snapshots=snapshots,
     )
-
-
-def build_candidate_population_from_historical_artifacts(
-    *,
-    universe_artifact: HistoricalPITUniverseArtifact,
-    eligibility_artifact: HistoricalTradingEligibilityArtifact,
-    decision_time: DecisionTime,
-) -> CandidatePopulation:
-    """Intersect exact-date membership with exact-time eligibility for one Decision Time."""
-
-    universe = universe_artifact.snapshot_for_decision_time(decision_time)
-    eligibility = eligibility_artifact.snapshot_for_decision_time(decision_time)
-    return build_candidate_population(universe, eligibility, decision_time=decision_time)
