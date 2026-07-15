@@ -18,6 +18,8 @@ from .eligibility_artifacts import (
     build_historical_trading_eligibility_artifact,
 )
 from .eligibility_policy import (
+    EXPLICIT_RAW_ELIGIBILITY_AVAILABILITY_CONVENTION,
+    TRADING_ELIGIBILITY_MATERIALIZER_VERSION,
     RawTradingEligibilityObservation,
     TradingEligibilityPolicy,
     TradingEligibilityReason,
@@ -26,12 +28,14 @@ from .eligibility_policy import (
 )
 
 __all__ = [
+    "EXPLICIT_RAW_ELIGIBILITY_AVAILABILITY_CONVENTION",
     "HistoricalPITUniverseArtifact",
     "HistoricalTradingEligibilityArtifact",
     "HistoricalTradingEligibilityRecord",
     "HistoricalUniverseMembershipRecord",
     "PITUniverseSnapshot",
     "RawTradingEligibilityObservation",
+    "TRADING_ELIGIBILITY_MATERIALIZER_VERSION",
     "TradingEligibilityPolicy",
     "TradingEligibilityReason",
     "TradingEligibilityRecord",
