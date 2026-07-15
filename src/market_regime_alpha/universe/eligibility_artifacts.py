@@ -93,23 +93,37 @@ def build_historical_trading_eligibility_artifact(
     policy_version: str,
     records: tuple[HistoricalTradingEligibilityRecord, ...],
     policy_artifact_id: ArtifactId | None = None,
+    snapshot_as_of_times: tuple[AsOfTime, ...] = (),
 ) -> HistoricalTradingEligibilityArtifact:
-    """Build deterministic exact-time eligibility snapshots from explicit policy results."""
+    """Build deterministic exact-time eligibility snapshots from explicit policy results.
+
+    ``snapshot_as_of_times`` preserves identified empty snapshots when a valid historical Universe
+    contains no members at a Decision Time. A valid empty opportunity set must not disappear merely
+    because there are zero symbol-level eligibility records.
+    """
 
     if not isinstance(policy_version, str) or not policy_version.strip() or policy_version != policy_version.strip():
         raise ValueError("policy_version must be a non-empty trimmed string")
-    if not records:
-        raise ValueError("historical Trading Eligibility records must not be empty")
+    if any(not isinstance(as_of, AsOfTime) for as_of in snapshot_as_of_times):
+        raise TypeError("snapshot_as_of_times must contain AsOfTime values")
+    explicit_times = tuple(as_of.value for as_of in snapshot_as_of_times)
+    if len(explicit_times) != len(set(explicit_times)):
+        raise ValueError("snapshot_as_of_times must be unique")
+    if not records and not explicit_times:
+        raise ValueError("historical Trading Eligibility artifact requires records or explicit snapshot times")
+
     keys = tuple((record.as_of.value, record.symbol) for record in records)
     if len(keys) != len(set(keys)):
         raise ValueError("historical Trading Eligibility records must have unique time-symbol keys")
     ordered_records = tuple(sorted(records, key=lambda record: (record.as_of.value, record.symbol)))
+    all_snapshot_times = tuple(sorted(set(explicit_times) | {record.as_of.value for record in ordered_records}))
 
     payload = {
-        "schema_version": "historical-trading-eligibility-artifact-v2",
+        "schema_version": "historical-trading-eligibility-artifact-v3",
         "source_dataset_id": str(source_dataset_id),
         "policy_version": policy_version,
         "policy_artifact_id": str(policy_artifact_id) if policy_artifact_id is not None else None,
+        "snapshot_as_of_times": [value.isoformat() for value in all_snapshot_times],
         "records": [
             {
                 "as_of": record.as_of.isoformat(),
@@ -125,6 +139,8 @@ def build_historical_trading_eligibility_artifact(
     artifact_id = ArtifactId(f"trading-eligibility-artifact-{digest[:24]}")
 
     by_time: dict[datetime, list[HistoricalTradingEligibilityRecord]] = defaultdict(list)
+    for as_of_value in all_snapshot_times:
+        by_time[as_of_value]
     for record in ordered_records:
         by_time[record.as_of.value].append(record)
 
