@@ -201,11 +201,11 @@ adds explicit metadata that the native API does not carry:
 
 ```text
 schema_version
-source_artifact { retrieved_at, content_hash, locator }
+source_artifact { retrieved_at, optional content_hash, locator }
 conventions { all versioned convention values }
-calendar { source_dataset_id, market, trade_dates }
+calendar { market, trade_dates }
 securities [ stock_code, instrument_type, OpenDate ]
-universe { source_dataset_id, historical_pit_status, records[] }
+universe { historical_pit_status, records[] }
 daily_bars [ stock_code, time, open, high, low, close, volume, amount,
              preClose, suspendFlag, available_at, finalized ]
 minute_bars [ same native K-line fields plus available_at and finalized ]
@@ -220,9 +220,11 @@ limitations [ explicit strings ]
 types. `historical_pit_status` may document the producer's claim, but P0 still forces the canonical
 PIT flag false until an independent scope audit exists.
 
-File-mode ingestion computes SHA-256 over the exact bytes and requires it to equal the declared
-`content_hash`. In-memory mode requires a declared 64-character lowercase SHA-256 because no byte
-representation is available to recompute.
+File-mode ingestion computes SHA-256 over the exact bytes; `content_hash` may be omitted from the
+file to avoid a self-referential hash. If present, it is treated as a detached expected value and
+must equal the computed hash. In-memory mode requires a declared 64-character lowercase SHA-256
+because no byte representation is available to recompute. Calendar and Universe source Dataset
+identities are derived from that source hash rather than accepted as unverified caller labels.
 
 ## 7. Explicit limitations and auxiliary-source role
 
