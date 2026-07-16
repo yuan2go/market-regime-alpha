@@ -123,4 +123,14 @@ def test_candidate_run_evaluates_sixty_dates_for_all_three_targets() -> None:
         for target in result.target_runs
         for evaluation in (*target.b0_evaluations, *target.b1_evaluations)
     )
+    assert all(
+        tuple(item.name for item in target.b1_evaluations)
+        == ("B1-A", "B1-B", "B1-C", "B1-D", "B1-E")
+        for target in result.target_runs
+    )
+    assert all(
+        str(item.evaluation.model_id).startswith("tencent-exploratory-")
+        for target in result.target_runs
+        for item in (*target.b0_evaluations, *target.b1_evaluations)
+    )
     assert result.data_eligibility is DataEligibility.EXPLORATORY

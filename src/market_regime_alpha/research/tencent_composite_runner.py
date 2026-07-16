@@ -6,32 +6,17 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 
-from market_regime_alpha.candidates.baselines import rank_candidates_by_feature
-from market_regime_alpha.candidates.composite_baseline import (
-    CompositeFeatureComponent,
-    CompositeFeatureDirection,
-    CompositeFeatureRole,
-    TransparentCompositeSpec,
-    rank_candidates_by_transparent_composite,
-)
+from market_regime_alpha.candidates.composite_baseline import TransparentCompositeSpec
 from market_regime_alpha.candidates.dataset import CandidateResearchDataset
-from market_regime_alpha.candidates.evaluation import (
-    CandidatePanelEvaluation,
-    evaluate_candidate_ranking_panel,
-)
-from market_regime_alpha.candidates.panel import (
-    CandidateResearchPanel,
-    assemble_candidate_research_panel,
-)
-from market_regime_alpha.core.identity import FeatureDefinitionId, ModelId, TargetId
+from market_regime_alpha.core.identity import TargetId
 from market_regime_alpha.core.time import RetrievedAt
 from market_regime_alpha.data.contracts import DataEligibility, DatasetContract
-from market_regime_alpha.features.rehearsal_baselines import (
-    LIQUIDITY_20S_ID,
-    MOMENTUM_5S_ID,
-    PRICE_VS_MA20_ID,
-    VOLATILITY_20S_ID,
-    r5_baseline_feature_definitions,
+from market_regime_alpha.research.r5_baseline_runner import (
+    NamedCandidatePanelEvaluation as _NamedCandidatePanelEvaluation,
+    R5TargetBaselineRun,
+    candidate_evaluation_record,
+    r5_b1_fixed_specs,
+    run_r5_target_baselines,
 )
 from market_regime_alpha.research.tencent_composite_contracts import PreparedCompositeData
 from market_regime_alpha.research.tencent_composite_materialization import (
@@ -39,23 +24,8 @@ from market_regime_alpha.research.tencent_composite_materialization import (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class NamedCandidatePanelEvaluation:
-    """One declared model name paired with its full chronological evaluation."""
-
-    name: str
-    feature_ids: tuple[FeatureDefinitionId, ...]
-    evaluation: CandidatePanelEvaluation
-
-
-@dataclass(frozen=True, slots=True)
-class TencentCompositeTargetRun:
-    """One Target panel and all fixed B0/B1 comparisons."""
-
-    target_id: TargetId
-    panel: CandidateResearchPanel
-    b0_evaluations: tuple[NamedCandidatePanelEvaluation, ...]
-    b1_evaluations: tuple[NamedCandidatePanelEvaluation, ...]
+NamedCandidatePanelEvaluation = _NamedCandidatePanelEvaluation
+TencentCompositeTargetRun = R5TargetBaselineRun
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,8 +81,14 @@ class TencentCompositeCandidateRun:
             "targets": [
                 {
                     "target_id": str(target.target_id),
-                    "b0": [_evaluation_record(item) for item in target.b0_evaluations],
-                    "b1": [_evaluation_record(item) for item in target.b1_evaluations],
+                    "b0": [
+                        candidate_evaluation_record(item)
+                        for item in target.b0_evaluations
+                    ],
+                    "b1": [
+                        candidate_evaluation_record(item)
+                        for item in target.b1_evaluations
+                    ],
                 }
                 for target in self.target_runs
             ],
@@ -122,35 +98,7 @@ class TencentCompositeCandidateRun:
 def r5_b1_exploratory_specs() -> dict[str, TransparentCompositeSpec]:
     """Return the frozen, equal-weight B1-A through B1-E ablation ladder."""
 
-    momentum = _component(
-        MOMENTUM_5S_ID,
-        CompositeFeatureDirection.HIGHER_IS_BETTER,
-        CompositeFeatureRole.OPPORTUNITY,
-    )
-    liquidity = _component(
-        LIQUIDITY_20S_ID,
-        CompositeFeatureDirection.HIGHER_IS_BETTER,
-        CompositeFeatureRole.QUALITY,
-    )
-    volatility = _component(
-        VOLATILITY_20S_ID,
-        CompositeFeatureDirection.LOWER_IS_BETTER,
-        CompositeFeatureRole.RISK_PENALTY,
-    )
-    price_vs_ma = _component(
-        PRICE_VS_MA20_ID,
-        CompositeFeatureDirection.HIGHER_IS_BETTER,
-        CompositeFeatureRole.QUALITY,
-    )
-    return {
-        "B1-A": TransparentCompositeSpec((momentum,)),
-        "B1-B": TransparentCompositeSpec((momentum, liquidity)),
-        "B1-C": TransparentCompositeSpec((momentum, volatility)),
-        "B1-D": TransparentCompositeSpec((momentum, liquidity, volatility)),
-        "B1-E": TransparentCompositeSpec(
-            (momentum, liquidity, volatility, price_vs_ma)
-        ),
-    }
+    return r5_b1_fixed_specs()
 
 
 def run_tencent_composite_candidate_experiment(
@@ -185,10 +133,12 @@ def run_tencent_composite_candidate_experiment(
             datasets_by_target[dataset.target_id].append(dataset)
 
     target_runs = tuple(
-        _run_target_models(
+        run_r5_target_baselines(
             datasets=tuple(datasets_by_target[target_id]),
             code_revision=code_revision,
             config_hash=config_hash,
+            model_identity_prefix="tencent-exploratory",
+            panel_limitations=("TENCENT_COMPOSITE_EXPLORATORY",),
         )
         for target_id in sorted(datasets_by_target, key=str)
     )
@@ -209,92 +159,3 @@ def run_tencent_composite_candidate_experiment(
         target_runs=target_runs,
         limitations=limitations,
     )
-
-
-def _run_target_models(
-    *,
-    datasets: tuple[CandidateResearchDataset, ...],
-    code_revision: str,
-    config_hash: str,
-) -> TencentCompositeTargetRun:
-    panel = assemble_candidate_research_panel(
-        datasets,
-        limitations=("TENCENT_COMPOSITE_EXPLORATORY",),
-    )
-    b0: list[NamedCandidatePanelEvaluation] = []
-    for definition in r5_baseline_feature_definitions():
-        model_id = ModelId(f"tencent-exploratory-b0-{definition.feature_id.value}")
-        b0_rankings = tuple(
-            rank_candidates_by_feature(
-                dataset,
-                feature_id=definition.feature_id,
-                model_id=model_id,
-                code_revision=code_revision,
-                config_hash=config_hash,
-            )
-            for dataset in datasets
-        )
-        b0.append(
-            NamedCandidatePanelEvaluation(
-                name=f"B0-{definition.feature_id.value}",
-                feature_ids=(definition.feature_id,),
-                evaluation=evaluate_candidate_ranking_panel(panel, b0_rankings, top_k=5),
-            )
-        )
-
-    b1: list[NamedCandidatePanelEvaluation] = []
-    for name, spec in r5_b1_exploratory_specs().items():
-        model_id = ModelId(f"tencent-exploratory-{name.lower()}-v1")
-        b1_rankings = tuple(
-            rank_candidates_by_transparent_composite(
-                dataset,
-                spec=spec,
-                model_id=model_id,
-                code_revision=code_revision,
-                config_hash=config_hash,
-            )
-            for dataset in datasets
-        )
-        b1.append(
-            NamedCandidatePanelEvaluation(
-                name=name,
-                feature_ids=tuple(component.feature_id for component in spec.components),
-                evaluation=evaluate_candidate_ranking_panel(panel, b1_rankings, top_k=5),
-            )
-        )
-    return TencentCompositeTargetRun(
-        target_id=panel.target_id,
-        panel=panel,
-        b0_evaluations=tuple(b0),
-        b1_evaluations=tuple(b1),
-    )
-
-
-def _component(
-    feature_id: FeatureDefinitionId,
-    direction: CompositeFeatureDirection,
-    role: CompositeFeatureRole,
-) -> CompositeFeatureComponent:
-    return CompositeFeatureComponent(
-        feature_id=feature_id,
-        direction=direction,
-        weight=1.0,
-        role=role,
-    )
-
-
-def _evaluation_record(item: NamedCandidatePanelEvaluation) -> dict[str, object]:
-    evaluation = item.evaluation
-    return {
-        "name": item.name,
-        "model_id": str(evaluation.model_id),
-        "feature_ids": [str(value) for value in item.feature_ids],
-        "slice_count": evaluation.slice_count,
-        "candidate_population_size": evaluation.candidate_population_size,
-        "ranked_population_size": evaluation.ranked_population_size,
-        "evaluated_prediction_count": evaluation.evaluated_prediction_count,
-        "ranking_coverage": evaluation.ranking_coverage,
-        "evaluated_prediction_coverage": evaluation.evaluated_prediction_coverage,
-        "mean_slice_rank_ic": evaluation.mean_slice_rank_ic,
-        "mean_slice_top_k_target": evaluation.mean_slice_top_k_target,
-    }
