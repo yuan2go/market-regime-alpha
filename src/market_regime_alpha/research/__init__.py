@@ -1,5 +1,7 @@
 """Research identity, evidence, and rehearsal input-bundle contracts."""
 
+from typing import TYPE_CHECKING, Any
+
 from .experiment_identity import ExperimentIdentity
 from .provider_export_adapter import (
     GENERIC_PROVIDER_EXPORT_BUNDLE_SCHEMA_VERSION,
@@ -36,11 +38,6 @@ from .tencent_composite_quality import (
     TencentCompositeQualityGateError,
     prepare_composite_data,
 )
-from .tencent_composite_runner import (
-    TencentCompositeCandidateRun,
-    r5_b1_exploratory_specs,
-    run_tencent_composite_candidate_experiment,
-)
 from .xuntou_provider_adapter import (
     XUNTOU_AVAILABILITY_CONVENTION,
     XUNTOU_BAR_FINALITY_CONVENTION,
@@ -61,6 +58,9 @@ from .xuntou_provider_adapter import (
     adapt_xuntou_p0_native_mapping,
     load_xuntou_p0_native_bundle,
 )
+
+if TYPE_CHECKING:
+    from .tencent_composite_runner import TencentCompositeCandidateRun
 
 __all__ = [
     "ExperimentIdentity",
@@ -109,3 +109,27 @@ __all__ = [
     "write_tencent_composite_quality_failure",
     "write_tencent_composite_run",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve Candidate-runner exports lazily to avoid a candidates/research cycle."""
+
+    if name in {
+        "TencentCompositeCandidateRun",
+        "r5_b1_exploratory_specs",
+        "run_tencent_composite_candidate_experiment",
+    }:
+        from .tencent_composite_runner import (
+            TencentCompositeCandidateRun,
+            r5_b1_exploratory_specs,
+            run_tencent_composite_candidate_experiment,
+        )
+
+        return {
+            "TencentCompositeCandidateRun": TencentCompositeCandidateRun,
+            "r5_b1_exploratory_specs": r5_b1_exploratory_specs,
+            "run_tencent_composite_candidate_experiment": (
+                run_tencent_composite_candidate_experiment
+            ),
+        }[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
