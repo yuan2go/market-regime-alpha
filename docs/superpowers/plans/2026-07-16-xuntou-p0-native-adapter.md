@@ -50,7 +50,7 @@
 **Files:**
 - Modify: `docs/specs/Xuntou-P0-Native-Field-Mapping.md`
 
-**Produces:** `xuntou-p0-native-field-mapping-v2` covering all fifteen P0 evidence groups.
+**Produces:** `xuntou-p0-native-field-mapping-v3` covering all fifteen P0 evidence groups.
 
 - [x] Verify provider/product/API distinctions, mapping classifications, and all result-affecting convention identities.
 - [x] Verify raw price adjustment, 14:55 reference-price selection, liquidity, Universe, buyability, and next-session semantics.

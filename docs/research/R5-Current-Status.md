@@ -448,8 +448,8 @@ Generic Provider Export Adapter                               IMPLEMENTED
 Xuntou selected as primary provider                           DECIDED
 Eastmoney / Tencent auxiliary role                            DECIDED
 Xuntou P0 official-documentation evidence review              COMPLETE
-Xuntou P0 native field mapping specification v2               COMPLETE; RUNTIME SEMANTICS PARTIAL
-Xuntou normalized native/export adapter v2                    IMPLEMENTED
+Xuntou P0 native field mapping specification v3               COMPLETE; RUNTIME SEMANTICS PARTIAL
+Xuntou normalized native/export adapter v3                    IMPLEMENTED
 Xuntou historical Decision-Time buyability                    UNKNOWN EXCEPT CONFIRMED SUSPENSION
 XtQuant runtime extraction                                    NOT IMPLEMENTED / NOT EXECUTED
 Real Xuntou provider / export data run                         NOT AVAILABLE

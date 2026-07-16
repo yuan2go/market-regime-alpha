@@ -1,9 +1,9 @@
 # R5 Xuntou P0 Adapter Status
 
 > **Status:** CURRENT
-> **Mapping contract:** `xuntou-p0-native-field-mapping-v2`
-> **Native bundle schema:** `xuntou-p0-native-bundle-v2`
-> **Implementation revision:** `8c9a947a6c61252c3e338a09b317c4ac70c6efa3`
+> **Mapping contract:** `xuntou-p0-native-field-mapping-v3`
+> **Native bundle schema:** `xuntou-p0-native-bundle-v3`
+> **Implementation revision:** `b81458c9880bf7463b86adba144ee6e3d7b890e7`
 > **Maximum authority:** `REHEARSAL`
 
 ## Purpose
@@ -34,15 +34,16 @@ Formal-research authority                         NOT AVAILABLE
 ## Implemented native evidence
 
 - Explicit SH/SZ/BJ `code.market` symbol validation and A-share-stock filtering.
-- Trading dates from the normalized result of the official calendar API.
+- Trading dates from an explicit SH or SZ normalized calendar result. BJ symbol evidence is
+  accepted for A-share identity, but BJ calendar support remains unverified in P0.
 - Native daily and 1-minute K-line fields: `time`, OHLC, `volume`, `amount`, `preClose`, and
   `suspendFlag`.
 - Historical ST interval payloads from `get_his_st_data` when the exporter confirms lookup
   completeness.
 - Historical `stoppricedata` rows with `涨停价` and `跌停价` when the entitled dataset is present.
 - `OpenDate` listing evidence with documented sentinel dates treated as missing.
-- Exact source retrieval provenance: provider/product contract, retrieved time, locator, SHA-256,
-  and content-derived Artifact/Dataset identities.
+- Project-captured source retrieval provenance around the native export: provider/product
+  contract, retrieved time, locator, SHA-256, and content-derived Artifact/Dataset identities.
 
 Unsupported instrument types are filtered before Universe, bars, snapshots, targets, or
 eligibility evidence are materialized. The adapter does not infer instrument type from a numeric
@@ -59,8 +60,9 @@ code prefix.
 - A daily bar is accepted as final only when it is explicitly marked final and its asserted
   `available_at` is not earlier than the versioned 15:00 Asia/Shanghai session close. This is a
   project lower-bound convention, not a provider finality SLA.
-- The 14:55 reference price is the latest completed raw 1-minute close explicitly available no
-  later than 14:55, not an asserted exchange exact snapshot.
+- The 14:55 reference price is the latest completed unadjusted 1-minute close with an observation
+  label inside the closed 14:54-through-14:55 freshness window and explicitly available no later
+  than 14:55. It is not an asserted exchange exact snapshot.
 - Eligibility liquidity is the median native `amount` of exactly 20 prior finalized sessions
   available by the Decision Time. The measure identity retains Xuntou native units because the
   reviewed official pages do not establish a formal currency/scale contract. This evidence is
@@ -68,7 +70,8 @@ code prefix.
 - Candidate-population buyability is `NOT_BUYABLE` only for confirmed suspension. Historical
   minute prices and limit levels do not prove a sealed limit, ask liquidity or queue state, so all
   other P0 cases remain `UNKNOWN`; P0 never emits `BUYABLE`.
-- Next-session OHLC uses only `TradingCalendarArtifact.resolve_next_session_date()`.
+- Next-session OHLC uses only `TradingCalendarArtifact.resolve_next_session_date()`; a missing
+  next calendar session or finalized next-session bar is an explicit semantic error.
 
 ## Unverified and unavailable evidence
 
@@ -79,6 +82,9 @@ code prefix.
   historical limit-price evidence.
 - Historical availability, provider revision policy, bar correction history, and exact minute-bar
   label semantics have not been audited in a real Xuntou runtime.
+- Official numeric `time` epoch unit/timezone semantics and a BJ calendar contract are not
+  established. The adapter rejects numeric epoch guessing, requires explicit date strings or
+  timezone-aware ISO-8601 intraday values, and accepts calendar market only as SH or SZ.
 - The complete historical price-limit regime identity is not supplied by P0. Limit prices can be
   direct while `limit_regime` remains missing and Eligibility remains `UNKNOWN`.
 - Missing ST access does not become `is_st=False`; missing suspension does not become
@@ -130,6 +136,8 @@ XUNTOU_1M_BAR_LABEL_SEMANTICS_UNVERIFIED
 XUNTOU_EXPORT_AVAILABILITY_ASSERTION_UNVERIFIED
 XUNTOU_LIMIT_REGIME_IDENTITY_UNVERIFIED
 XUNTOU_DECISION_BUYABILITY_UNVERIFIED
+XUNTOU_NATIVE_TIME_EPOCH_SEMANTICS_UNVERIFIED
+XUNTOU_BJ_CALENDAR_SUPPORT_UNVERIFIED
 XUNTOU_RUNTIME_EXTRACTION_NOT_EXECUTED
 ```
 

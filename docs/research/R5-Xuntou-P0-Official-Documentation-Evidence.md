@@ -85,7 +85,7 @@ Not established:
 - the calendar publication time, revision policy, or finalization time;
 - whether SH, SZ and BJ calendars are guaranteed identical for every historical date.
 
-Therefore `TradingSession.trade_date` can be direct native evidence. A `session_close` such as 15:00 Asia/Shanghai must be a separately versioned A-share convention, not described as a Xuntou-returned field.
+Therefore `TradingSession.trade_date` can be direct native evidence. A `session_close` such as 15:00 Asia/Shanghai must be a separately versioned A-share convention, not described as a Xuntou-returned field. The minimum adapter accepts only an explicit `SH` or `SZ` calendar export; `.BJ` remains valid security-identity evidence, but a BJ calendar contract is not established by the reviewed P0 pages.
 
 Official evidence: [XtData trading calendar and trading dates](https://dict.thinktrader.net/nativeApi/xtdata.html), [Stock data dictionary calendar example](https://dict.thinktrader.net/dictionary/stock.html).
 
@@ -162,7 +162,7 @@ Official evidence: [Stock historical ST section](https://dict.thinktrader.net/di
 
 The official K-line field list includes `suspendFlag`, documented as `0` normal, `1` suspended and `-1` resumed that day. The stock dictionary's built-in-Python field table gives the simpler `1` suspended / `0` not suspended description. Current instrument detail also exposes `InstrumentStatus` and `IsTrading`; the stock dictionary describes `InstrumentStatus <= 0` as normal/resumed and `>= 1` as suspended days.
 
-For historical daily eligibility, the daily K-line `suspendFlag` is the relevant dated evidence. Current `InstrumentStatus` / `IsTrading` must not be projected backward. Because `get_market_data_ex` supports `fill_data`, suspension evidence should be exported without forward-filled values; otherwise a filled bar could be mistaken for a native observation.
+For historical daily eligibility, the daily K-line `suspendFlag` is the relevant dated evidence. Current `InstrumentStatus` / `IsTrading` must not be projected backward. Because the official tables are inconsistent about whether `-1` belongs to the enumeration, an export using that value must retain its runtime/client build identity. Because `get_market_data_ex` supports `fill_data`, suspension evidence should be exported without forward-filled values; otherwise a filled bar could be mistaken for a native observation.
 
 Unverified:
 
@@ -224,7 +224,7 @@ It does **not** establish the semantic needed to call a row an exact 14:55 excha
 - a tick selected before/at 14:55 would be a last-observation convention, not an exchange snapshot unless separately evidenced;
 - historical corrections and bar finalization are not specified.
 
-Accordingly, P0 must name and version its own reference-price convention. If using a `14:55` minute row's `close`, it should be described as a provider-export minute-bar reference under an unverified label convention, not an exact 14:55:00 snapshot. If the export cannot state the label convention explicitly, the decision observation should remain ambiguous/unsupported.
+Accordingly, P0 must name and version its own reference-price convention. The v3 mapping bounds staleness by accepting only completed observation labels inside `[14:54:00, 14:55:00]` Asia/Shanghai that the exporter declares available by the Decision Time. This freshness window does not resolve the native bar-open/bar-close ambiguity and does not turn the row into an exact 14:55:00 exchange snapshot. An older same-day row or an export that cannot preserve an aware timestamp remains ambiguous/unsupported.
 
 Official evidence: [XtData periods and range semantics](https://dict.thinktrader.net/nativeApi/xtdata.html), [Stock market-data fields](https://dict.thinktrader.net/dictionary/stock.html).
 
@@ -313,7 +313,7 @@ The following are **not established** across the inspected pages:
 - timezone for every numeric timestamp;
 - exact 1-minute bar timestamp-label convention.
 
-Consequently, a native timestamp may populate observation time, while retrieval time must come from the export process. Availability and finalization fields must be explicit conventions or remain unknown; they must never be copied from retrieval time or invented from observation time.
+Consequently, a native timestamp may populate observation time only after the exporter makes its date/time interpretation explicit, while retrieval time must come from the export process. The v3 normalized boundary accepts date-only `YYYYMMDD` / `YYYY-MM-DD` strings and timezone-aware ISO-8601 intraday values; it rejects numeric epoch guessing because the inspected pages do not establish a timezone-aware epoch contract. Availability and finalization fields must be explicit conventions or remain unknown; they must never be copied from retrieval time or invented from observation time.
 
 For a completed daily bar, a project convention may conservatively require `available_at` not earlier than the versioned 15:00 Asia/Shanghai session close. That lower bound is derived from the project's A-share session-close convention; it is not a provider-native publication timestamp and does not prove Xuntou correction/finality semantics. A daily row whose asserted `available_at` precedes that boundary cannot be treated as finalized evidence.
 
@@ -338,6 +338,7 @@ The official evidence supports the following narrow extraction plan, subject to 
 The following must remain `UNKNOWN` / `UNVERIFIED` until a stronger first-party contract or real-runtime evidence is captured:
 
 - exact XtData `get_stock_list_in_sector` historical `real_timetag` signature and completeness in the target installed version;
+- a provider-documented BJ trading-calendar contract equivalent to the confirmed SH/SZ P0 path;
 - historical all-A-share universe membership including delisted names, with PIT/revision guarantees;
 - 1-minute bar open-time versus close-time labels;
 - interval endpoint convention and change effective time for historical ST ranges;
@@ -347,6 +348,7 @@ The following must remain `UNKNOWN` / `UNVERIFIED` until a stronger first-party 
 - provider publication/finality/correction SLA for daily, minute, tick, calendar, ST, suspension and limit-price data;
 - immutable vintage/version identifiers for historical data;
 - exact installed XtQuant/MiniQMT versions and permissions in the future provider environment.
+- numeric `time` epoch unit/timezone semantics across the exact installed runtime version.
 
 These gaps do not prevent a truthful `REHEARSAL` export adapter. They do prevent promotion to verified historical PIT or `FORMAL_RESEARCH` authority.
 
