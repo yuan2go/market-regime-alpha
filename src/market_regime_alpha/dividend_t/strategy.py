@@ -232,7 +232,20 @@ def select_simplified_candidate(
             "价格接近压力或出现放量滞涨，卖出主动仓位。",
             "盈亏比下降，卖压上升。",
         )
-        return candidate_for(Signal.SELL_T, _primary_sell_setup(technical), technical, decision_bar_time, reasons=sell_reasons)
+        sell_setup = _primary_sell_setup(technical)
+        risk_enforcement = (
+            RiskEnforcement.SOFT
+            if sell_setup is PrimarySetupCode.TOP_DIVERGENCE_RISK
+            else RiskEnforcement.NONE
+        )
+        return candidate_for(
+            Signal.SELL_T,
+            sell_setup,
+            technical,
+            decision_bar_time,
+            reasons=sell_reasons,
+            risk_enforcement=risk_enforcement,
+        )
 
     if position.symbol_position_pct < min(base_position_limit(score.F_score), 0.20) and score.F_score >= 70:
         build_reasons = ("F >= 70 且当前底仓不足，可分批建立观察底仓。",)

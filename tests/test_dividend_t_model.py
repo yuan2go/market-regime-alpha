@@ -131,6 +131,37 @@ class DividendTStrategyTests(unittest.TestCase):
         self.assertIsNotNone(decision.order_intent)
         self.assertIs(decision.decision_trace.primary_setup_code, PrimarySetupCode.PRESSURE_SELL_T)
 
+    def test_top_divergence_sell_carries_soft_risk_enforcement(self) -> None:
+        decision = self.strategy.evaluate(
+            symbol="601919.SH",
+            fundamental=self.good_fundamental,
+            retreat=RetreatInputs(3.0, 3.2, 1.2, 4.3),
+            technical=TechnicalInputs(
+                55,
+                45,
+                70,
+                50,
+                trend_state=TrendState.EXHAUSTION,
+                near_resistance=True,
+                volume_stalling=True,
+                sector_healthy=True,
+                chan_divergence_type="top",
+            ),
+            position=PositionState(
+                symbol_position_pct=0.20,
+                t_position_pct=0.04,
+                available_sell_pct=0.12,
+            ),
+        )
+
+        self.assertEqual(decision.signal, Signal.SELL_T)
+        self.assertIs(
+            decision.decision_trace.primary_setup_code,
+            PrimarySetupCode.TOP_DIVERGENCE_RISK,
+        )
+        self.assertIs(decision.decision_trace.candidate_signal_intent, SignalIntent.RISK_REDUCTION)
+        self.assertIs(decision.decision_trace.risk_enforcement, RiskEnforcement.SOFT)
+
     def test_stop_t_when_trend_breaks(self) -> None:
         decision = self.strategy.evaluate(
             symbol="601919.SH",
