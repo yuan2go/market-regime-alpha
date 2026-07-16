@@ -53,9 +53,9 @@ from market_regime_alpha.universe.eligibility_policy import (
 )
 
 
-XUNTOU_P0_NATIVE_BUNDLE_SCHEMA_VERSION = "xuntou-p0-native-bundle-v1"
-XUNTOU_P0_MAPPING_CONTRACT_VERSION = "xuntou-p0-native-field-mapping-v1"
-XUNTOU_P0_PROVIDER_ID = ProviderId("xuntou-thinktrader-xtquant-p0-v1")
+XUNTOU_P0_NATIVE_BUNDLE_SCHEMA_VERSION = "xuntou-p0-native-bundle-v2"
+XUNTOU_P0_MAPPING_CONTRACT_VERSION = "xuntou-p0-native-field-mapping-v2"
+XUNTOU_P0_PROVIDER_ID = ProviderId("xuntou-thinktrader-xtquant-p0-v2")
 XUNTOU_P0_PRODUCT = "ThinkTrader/XtQuant normalized native export"
 
 XUNTOU_SYMBOL_NORMALIZATION_VERSION = "XUNTOU_SYMBOL_NORMALIZATION_V1"
@@ -64,13 +64,16 @@ XUNTOU_CALENDAR_CLOSE_CONVENTION = (
 )
 XUNTOU_DECISION_SNAPSHOT_CONVENTION = "XUNTOU_1455_REFERENCE_PRICE_CONVENTION_V1"
 XUNTOU_AVAILABILITY_CONVENTION = "XUNTOU_EXPLICIT_EXPORT_AVAILABILITY_V1"
-XUNTOU_BAR_FINALITY_CONVENTION = "XUNTOU_EXPLICIT_EXPORT_FINALITY_V1"
+XUNTOU_BAR_FINALITY_CONVENTION = "XUNTOU_EXPLICIT_EXPORT_FINALITY_V2"
 XUNTOU_PRICE_ADJUSTMENT_BASIS = "XUNTOU_DIVIDEND_TYPE_NONE_RAW_V1"
-XUNTOU_LIQUIDITY_MEASURE_ID = "MEDIAN_AMOUNT_PREVIOUS_20_FINAL_SESSIONS_CNY_V1"
+XUNTOU_LIQUIDITY_MEASURE_ID = (
+    "MEDIAN_AMOUNT_PREVIOUS_20_FINAL_SESSIONS_XUNTOU_NATIVE_UNITS_V1"
+)
 XUNTOU_UNIVERSE_EFFECTIVE_TIME_CONVENTION = (
     "XUNTOU_EXPLICIT_DATE_MEMBERSHIP_UNVERIFIED_PIT_V1"
 )
-XUNTOU_BUYABILITY_CONVENTION = "XUNTOU_DECISION_BUYABILITY_EVIDENCE_V1"
+XUNTOU_BUYABILITY_CONVENTION = "XUNTOU_DECISION_BUYABILITY_EVIDENCE_V2"
+XUNTOU_ST_INTERVAL_CONVENTION = "XUNTOU_ST_INTERVAL_INCLUSIVE_DATE_V1"
 XUNTOU_RETRIEVAL_CONVENTION = "XUNTOU_NORMALIZED_NATIVE_EXPORT_SHA256_V1"
 XUNTOU_RAW_ELIGIBILITY_CONVENTION = "XUNTOU_RAW_ELIGIBILITY_MATERIALIZATION_V1"
 
@@ -97,6 +100,7 @@ _REQUIRED_CONVENTIONS = {
     "liquidity": XUNTOU_LIQUIDITY_MEASURE_ID,
     "universe_effective_time": XUNTOU_UNIVERSE_EFFECTIVE_TIME_CONVENTION,
     "buyability": XUNTOU_BUYABILITY_CONVENTION,
+    "st_interval": XUNTOU_ST_INTERVAL_CONVENTION,
 }
 
 _BASE_LIMITATIONS = (
@@ -105,6 +109,7 @@ _BASE_LIMITATIONS = (
     "XUNTOU_1M_BAR_LABEL_SEMANTICS_UNVERIFIED",
     "XUNTOU_EXPORT_AVAILABILITY_ASSERTION_UNVERIFIED",
     "XUNTOU_LIMIT_REGIME_IDENTITY_UNVERIFIED",
+    "XUNTOU_DECISION_BUYABILITY_UNVERIFIED",
     "XUNTOU_RUNTIME_EXTRACTION_NOT_EXECUTED",
 )
 
@@ -133,6 +138,10 @@ class XuntouProviderAdapterErrorCode(str, Enum):
     CONTENT_HASH_MISMATCH = "XUNTOU_CONTENT_HASH_MISMATCH"
     INVALID_NATIVE_VALUE = "XUNTOU_INVALID_NATIVE_VALUE"
     NEXT_SESSION_EVIDENCE_MISSING = "XUNTOU_NEXT_SESSION_EVIDENCE_MISSING"
+    BAR_FINALITY_UNVERIFIED = "XUNTOU_BAR_FINALITY_UNVERIFIED"
+    EVIDENCE_NOT_AVAILABLE_BY_DECISION_TIME = (
+        "XUNTOU_EVIDENCE_NOT_AVAILABLE_BY_DECISION_TIME"
+    )
 
 
 class XuntouProviderAdapterError(ValueError):
@@ -159,7 +168,6 @@ class _NativeBar:
     suspend_flag: int | None
     available_at: datetime
     finalized: bool
-    buyability_evidence_complete: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +295,7 @@ def adapt_xuntou_p0_native_mapping(
         section="minute_bars",
         intraday=True,
     )
+    _validate_daily_bar_finality(daily_native, trading_calendar=calendar)
     decision_times = _parse_decision_times(
         _required_sequence(payload, "decision_times", "bundle")
     )
@@ -380,7 +389,7 @@ def adapt_xuntou_p0_native_mapping(
         market_availability_convention=XUNTOU_AVAILABILITY_CONVENTION,
         raw_eligibility_evidence_convention=(
             f"{XUNTOU_RAW_ELIGIBILITY_CONVENTION};{XUNTOU_BUYABILITY_CONVENTION};"
-            f"{XUNTOU_LIQUIDITY_MEASURE_ID}"
+            f"{XUNTOU_LIQUIDITY_MEASURE_ID};{XUNTOU_ST_INTERVAL_CONVENTION}"
         ),
         bar_finality_convention=XUNTOU_BAR_FINALITY_CONVENTION,
         price_adjustment_basis=XUNTOU_PRICE_ADJUSTMENT_BASIS,
@@ -482,10 +491,10 @@ def _parse_securities(items: Sequence[object]) -> dict[str, _SecurityEvidence]:
     securities: dict[str, _SecurityEvidence] = {}
     for index, item in enumerate(items):
         row = _as_mapping(item, f"securities[{index}]")
-        symbol = _parse_symbol(row.get("stock_code"), f"securities[{index}].stock_code")
         instrument_type = _required_string(row, "instrument_type", f"securities[{index}]")
         if instrument_type != "A_SHARE_STOCK":
             continue
+        symbol = _parse_symbol(row.get("stock_code"), f"securities[{index}].stock_code")
         if symbol in securities:
             _raise(
                 XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE,
@@ -533,7 +542,7 @@ def _parse_bars(
         finalized = row.get("finalized")
         if finalized is not True:
             _raise(
-                XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE,
+                XuntouProviderAdapterErrorCode.BAR_FINALITY_UNVERIFIED,
                 f"{section}[{index}] must be explicitly finalized",
             )
         open_price = _positive_float(row.get("open"), f"{section}[{index}].open")
@@ -573,14 +582,32 @@ def _parse_bars(
                     row.get("available_at"), f"{section}[{index}].available_at"
                 ),
                 finalized=True,
-                buyability_evidence_complete=_optional_bool(
-                    row.get("buyability_evidence_complete"),
-                    f"{section}[{index}].buyability_evidence_complete",
-                    default=False,
-                ),
             )
         )
     return tuple(sorted(bars, key=lambda bar: (bar.observed_at, bar.symbol)))
+
+
+def _validate_daily_bar_finality(
+    daily_bars: tuple[_NativeBar, ...], *, trading_calendar: TradingCalendarArtifact
+) -> None:
+    session_close_by_date = {
+        session.trade_date: session.session_close for session in trading_calendar.sessions
+    }
+    for bar in daily_bars:
+        session_close = session_close_by_date.get(bar.session_date)
+        if session_close is None:
+            _raise(
+                XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE,
+                f"daily bar date {bar.session_date.isoformat()} is absent from the calendar",
+            )
+        if bar.available_at < session_close:
+            _raise(
+                XuntouProviderAdapterErrorCode.BAR_FINALITY_UNVERIFIED,
+                (
+                    f"daily bar for {bar.symbol} on {bar.session_date.isoformat()} "
+                    "cannot be finalized before the versioned session close"
+                ),
+            )
 
 
 def _parse_decision_times(items: Sequence[object]) -> tuple[datetime, ...]:
@@ -785,16 +812,11 @@ def _build_raw_eligibility(
         limit_regime = limit.limit_regime if limit is not None else None
         buyability = _materialize_buyability(
             is_suspended=is_suspended,
-            reference_price=minute.close,
-            limit_up_price=limit_up,
-            limit_down_price=limit_down,
-            limit_regime=limit_regime,
-            evidence_complete=minute.buyability_evidence_complete,
         )
         available_at = max(evidence_times)
         if available_at > decision_time:
             _raise(
-                XuntouProviderAdapterErrorCode.TIMEZONE_REQUIRED,
+                XuntouProviderAdapterErrorCode.EVIDENCE_NOT_AVAILABLE_BY_DECISION_TIME,
                 f"eligibility evidence for {symbol} is not available by Decision Time",
             )
         observations.append(
@@ -846,24 +868,12 @@ def _liquidity_at_decision(
 def _materialize_buyability(
     *,
     is_suspended: bool | None,
-    reference_price: float,
-    limit_up_price: float | None,
-    limit_down_price: float | None,
-    limit_regime: str | None,
-    evidence_complete: bool,
 ) -> DecisionBuyabilityStatus:
     if is_suspended is True:
         return DecisionBuyabilityStatus.NOT_BUYABLE
-    if limit_up_price is not None and reference_price >= limit_up_price:
-        return DecisionBuyabilityStatus.NOT_BUYABLE
-    if (
-        evidence_complete
-        and is_suspended is False
-        and limit_up_price is not None
-        and limit_down_price is not None
-        and limit_regime is not None
-    ):
-        return DecisionBuyabilityStatus.BUYABLE
+    # Historical minute prices and limit levels do not establish a sealed limit, available ask
+    # liquidity, queue depth, or fillability. P0 therefore cannot promote a non-suspended row to
+    # BUYABLE or infer NOT_BUYABLE merely because the reference price equals the limit-up price.
     return DecisionBuyabilityStatus.UNKNOWN
 
 
@@ -885,7 +895,7 @@ def _build_next_session_bars(
             continue
         if native.available_at <= snapshot.decision_time.value:
             _raise(
-                XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE,
+                XuntouProviderAdapterErrorCode.EVIDENCE_NOT_AVAILABLE_BY_DECISION_TIME,
                 f"next-session bar for {snapshot.symbol} is available before its Decision Time",
             )
         output[(next_date, snapshot.symbol)] = RehearsalNextSessionBar(
@@ -950,7 +960,7 @@ def _parse_open_date(value: object) -> date | None:
     if value is None:
         return None
     text = str(value)
-    if text in _OPEN_DATE_SENTINELS or text in {"0", "99999999"}:
+    if text in _OPEN_DATE_SENTINELS:
         return None
     try:
         return datetime.strptime(text, "%Y%m%d").date()
@@ -1078,17 +1088,6 @@ def _finite_float(value: object, label: str) -> float:
             f"{label} must be finite",
         )
     return parsed
-
-
-def _optional_bool(value: object, label: str, *, default: bool) -> bool:
-    if value is None:
-        return default
-    if not isinstance(value, bool):
-        _raise(
-            XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE,
-            f"{label} must be boolean",
-        )
-    return value
 
 
 def _required_mapping(

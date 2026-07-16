@@ -1,8 +1,8 @@
 # Xuntou P0 Native Field Mapping
 
 Status: `P0 MAPPING CONTRACT COMPLETE; RUNTIME SEMANTICS PARTIALLY VERIFIED`
-Contract version: `xuntou-p0-native-field-mapping-v1`
-Provider ID: `xuntou-thinktrader-xtquant-p0-v1`
+Contract version: `xuntou-p0-native-field-mapping-v2`
+Provider ID: `xuntou-thinktrader-xtquant-p0-v2`
 Decision Time: `14:55:00 Asia/Shanghai`
 Maximum authority: `REHEARSAL`
 Official documentation reviewed: `2026-07-16`
@@ -37,9 +37,9 @@ availability assertions, and limitations.
 - **Runtime:** the official quick start requires an appropriate XtQuant build and normally a
   running MiniQMT client. XtQuant is not treated as a normal cross-platform mandatory project
   dependency.
-- **Contract identity:** `ProviderReference(provider_id="xuntou-thinktrader-xtquant-p0-v1",
+- **Contract identity:** `ProviderReference(provider_id="xuntou-thinktrader-xtquant-p0-v2",
   product="ThinkTrader/XtQuant normalized native export", contract_version=
-  "xuntou-p0-native-field-mapping-v1")`.
+  "xuntou-p0-native-field-mapping-v2")`.
 
 Primary official sources:
 
@@ -48,6 +48,9 @@ Primary official sources:
 - [A-share instrument, ST, bar, and historical limit-price dictionary](https://dict.thinktrader.net/dictionary/stock.html)
 - [Sector data and current/expired constituent examples](https://dict.thinktrader.net/dictionary/industry.html)
 - [Official XtQuant distribution history](https://dict.thinktrader.net/nativeApi/download_xtquant.html)
+
+The claim-by-claim first-party evidence review is recorded in
+[`docs/research/R5-Xuntou-P0-Official-Documentation-Evidence.md`](../research/R5-Xuntou-P0-Official-Documentation-Evidence.md).
 
 ## 3. Mandatory mapping classifications
 
@@ -75,11 +78,12 @@ The following version strings must be present in the export or adapter identity:
 | Calendar close | `A_SHARE_STANDARD_SESSION_CLOSE_1500_ASIA_SHANGHAI_V1` | Derive session close at 15:00 Asia/Shanghai from a provider trading date; it is a project convention, not a provider timestamp. |
 | Decision snapshot | `XUNTOU_1455_REFERENCE_PRICE_CONVENTION_V1` | Use the latest completed unadjusted 1-minute `close` explicitly declared available no later than 14:55. The native bar-label convention is not assumed. |
 | Availability | `XUNTOU_EXPLICIT_EXPORT_AVAILABILITY_V1` | Every bar/state record carries an exporter-supplied timezone-aware `available_at`; no timestamp is synthesized from retrieval time. |
-| Bar finality | `XUNTOU_EXPLICIT_EXPORT_FINALITY_V1` | The exporter must mark final bars. Daily and next-session bars must be final; the selected minute bar must be complete. |
+| Bar finality | `XUNTOU_EXPLICIT_EXPORT_FINALITY_V2` | The exporter must mark final bars. A daily/next-session bar is rejected when `available_at` is earlier than the versioned session close; the selected minute bar must be explicitly complete. This lower bound is a project convention, not a provider SLA. |
 | Price adjustment | `XUNTOU_DIVIDEND_TYPE_NONE_RAW_V1` | P0 uses `dividend_type='none'` raw tradable prices for bars, Decision-Time reference price, and Candidate targets. |
-| Liquidity | `MEDIAN_AMOUNT_PREVIOUS_20_FINAL_SESSIONS_CNY_V1` | Median `amount` over the 20 finalized sessions strictly before the Decision Date and available by Decision Time. |
+| Liquidity | `MEDIAN_AMOUNT_PREVIOUS_20_FINAL_SESSIONS_XUNTOU_NATIVE_UNITS_V1` | Median native `amount` over the 20 finalized sessions strictly before the Decision Date and available by Decision Time. The reviewed official pages do not establish a formal currency/scale contract, so P0 does not rename the value to CNY. |
 | Universe effective time | `XUNTOU_EXPLICIT_DATE_MEMBERSHIP_UNVERIFIED_PIT_V1` | Preserve supplied date-specific records, but do not claim that current sector data reconstructs historical membership. |
-| Buyability | `XUNTOU_DECISION_BUYABILITY_EVIDENCE_V1` | `BUYABLE` requires explicit complete evidence; known suspension or limit-up block is `NOT_BUYABLE`; incomplete evidence is `UNKNOWN`. |
+| Buyability | `XUNTOU_DECISION_BUYABILITY_EVIDENCE_V2` | A confirmed suspension is `NOT_BUYABLE`. Historical minute prices and limit levels do not prove a sealed limit, ask liquidity, queue state, or `BUYABLE`; all other P0 cases remain `UNKNOWN`. |
+| ST interval | `XUNTOU_ST_INTERVAL_INCLUSIVE_DATE_V1` | Materialize ST/*ST/PT interval endpoints as inclusive dates for P0. The provider does not establish endpoint/effective-time semantics, so this is a versioned project convention and remains PIT-unverified. |
 
 For the 14:55 convention, `time` is the native observation timestamp, while `available_at` is a
 separate export assertion. P0 does not claim that a row labeled `14:55` is necessarily an exact
@@ -100,7 +104,7 @@ completed row whose availability is no later than the canonical Decision Time.
 | Canonical Evidence | Canonical Consumer | Xuntou Native API / Source | Xuntou Native Field | Native Data Type | Native Timestamp / Date Field | Canonical Field | Transformation | Availability Semantics | Finality Semantics | Historical PIT Status | Direct / Derived / Unavailable | Fallback Policy | Confidence | Limitations |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Provider symbol | Universe, bars, eligibility | `get_instrument_detail`; all market APIs | `stock_code`, `ExchangeID`, `InstrumentID` | string | none | `symbol` | Preserve official `code.market` form | Known at export retrieval; symbol existed by dated evidence | Static identifier record | Current instrument detail is not a historical security master | `DIRECT_NATIVE` | Reject malformed symbols | HIGH | Official examples confirm `.SH`, `.SZ`, `.BJ`; no case conversion beyond uppercase validation |
-| A-share instrument type | Candidate Universe filter | Sector source plus instrument detail | `ProductType` and sector identity | int/string | retrieval state | accepted instrument | Require normalized `A_SHARE_STOCK`; allow SH/SZ/BJ; reject ETF/index/bond/option/future | Explicit exporter classification | N/A | Classification provenance may be current-only | `UNVERIFIED` | Reject unsupported or missing type; never infer solely from code prefix | MEDIUM | Official `ProductType` enumeration is clearer for non-stock products than domestic-stock discrimination |
+| A-share instrument type | Candidate Universe filter | `xtdata.get_instrument_type(stock_code)` plus explicit market scope | returned `stock`, `index`, `fund`, `etf` flags | dict[str, bool] | retrieval state | accepted instrument | Export normalized `A_SHARE_STOCK` only when the native `stock` classification and SH/SZ/BJ market scope agree; filter ETF/index/fund and unsupported instruments | Explicit exporter classification | N/A | Classification provenance may be current-only | `DIRECT_NATIVE` for native type; historical PIT `UNVERIFIED` | Reject missing/ambiguous stock classification; never infer solely from code prefix | HIGH for API meaning | The reviewed official pages do not provide one complete stable enumeration for every security category/client version |
 | STAR / ChiNext / BSE | Universe filter | Native symbol plus explicit stock classification | `.SH`, `.SZ`, `.BJ` | string | none | canonical symbol | No board-based exclusion | Same as symbol | N/A | Same as identity evidence | `DIRECT_NATIVE` | Keep if classified A-share stock | HIGH | ETF and index codes can overlap numeric prefixes, hence explicit type is mandatory |
 
 ### 5.3 Historical Candidate Universe membership
@@ -148,7 +152,7 @@ membership coverage before any authority upgrade.
 
 | Canonical Evidence | Canonical Consumer | Xuntou Native API / Source | Xuntou Native Field | Native Data Type | Native Timestamp / Date Field | Canonical Field | Transformation | Availability Semantics | Finality Semantics | Historical PIT Status | Direct / Derived / Unavailable | Fallback Policy | Confidence | Limitations |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Daily prices and activity | Feature evidence and next-session target input | `get_market_data_ex`, period `1d`, `dividend_type='none'`, `fill_data=False` | `time`, `open`, `high`, `low`, `close`, `volume`, `amount`, `preClose`, `suspendFlag` | int/float | `time` | `RehearsalDailyBar`; provider-native DTO retains full OHLCV | Raw finite prices; canonical daily bar uses `close` and `amount` | Daily feature bar must be available before its consuming Decision Time | Export must mark bar final after session close | Dated market data; vendor correction history not established | `DIRECT_NATIVE` | Reject non-final/missing required values | HIGH | Amount is documented as turnover amount; P0 identity explicitly labels CNY for A-share rows; no adjusted/raw mixing |
+| Daily prices and activity | Feature evidence and next-session target input | `get_market_data_ex`, period `1d`, `dividend_type='none'`, `fill_data=False` | `time`, `open`, `high`, `low`, `close`, `volume`, `amount`, `preClose`, `suspendFlag` | int/float | `time` | `RehearsalDailyBar`; provider-native DTO retains full OHLCV | Raw finite prices; canonical daily bar uses `close` and `amount` | Daily feature bar must be available before its consuming Decision Time | Export must mark the bar final, and `available_at` must not precede the versioned session close | Dated market data; vendor correction history not established | `DIRECT_NATIVE` | Reject non-final, pre-close-available, or missing required values | HIGH for field meaning | `amount` is documented as turnover amount, but formal currency/scale and provider finality SLA remain unverified; no adjusted/raw mixing |
 
 All P0 price-side data uses `dividend_type='none'`. Adjusted prices may be introduced later as a
 separate Feature-side artifact with a separate identity, never by altering this target-side raw
@@ -164,7 +168,7 @@ artifact.
 
 | Canonical Evidence | Canonical Consumer | Xuntou Native API / Source | Xuntou Native Field | Native Data Type | Native Timestamp / Date Field | Canonical Field | Transformation | Availability Semantics | Finality Semantics | Historical PIT Status | Direct / Derived / Unavailable | Fallback Policy | Confidence | Limitations |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Candidate-population buyability | Eligibility | selected minute row + suspension + historical limits + explicit exporter completeness | multiple fields | mixed | exact Decision Time evidence | `DecisionBuyabilityStatus` | Known suspension or reference at/above limit-up -> `NOT_BUYABLE`; all required evidence plus explicit `buyability_evidence_complete=True` -> `BUYABLE`; otherwise `UNKNOWN` | All inputs available by Decision Time | Selected row complete | Inherits all sources | `REQUIRES_STATE_MATERIALIZATION` | `UNKNOWN` | MEDIUM | BUYABLE is not fillability or execution feasibility; absence of suspension alone is insufficient |
+| Candidate-population buyability | Eligibility | selected minute row + historical `suspendFlag`; historical limits retained only as separate metadata | multiple fields | mixed | exact Decision Time evidence | `DecisionBuyabilityStatus` | Confirmed suspension -> `NOT_BUYABLE`; every non-suspended/missing-status case -> `UNKNOWN` | Selected evidence must be available by Decision Time | Selected row complete | Inherits all sources | `REQUIRES_STATE_MATERIALIZATION` + `UNVERIFIED` | `UNKNOWN`; P0 does not emit `BUYABLE` | HIGH for conservative rule | A reference price at the upper limit is not universal non-buyability; dated sealed-limit/ask/queue evidence is not established in P0 |
 
 ### 5.11 Liquidity evidence
 
@@ -196,13 +200,13 @@ artifact.
 ## 6. Normalized native export contract
 
 The P0 adapter accepts a JSON-compatible mapping with schema
-`xuntou-p0-native-bundle-v1`. It preserves official native field names where they are mapped and
+`xuntou-p0-native-bundle-v2`. It preserves official native field names where they are mapped and
 adds explicit metadata that the native API does not carry:
 
 ```text
 schema_version
 source_artifact { retrieved_at, optional content_hash, locator }
-conventions { all versioned convention values }
+conventions { all versioned convention values, including st_interval }
 calendar { market, trade_dates }
 securities [ stock_code, instrument_type, OpenDate ]
 universe { historical_pit_status, records[] }
@@ -211,7 +215,7 @@ daily_bars [ stock_code, time, open, high, low, close, volume, amount,
 minute_bars [ same native K-line fields plus available_at and finalized ]
 st_history [ stock_code, lookup_complete, available_at, periods{ST,*ST,PT} ]
 limit_prices [ stock_code, time, 涨停价, 跌停价, available_at, limit_regime ]
-decision_times [ timezone-aware ISO-8601 values, buyability_evidence_complete ]
+decision_times [ timezone-aware ISO-8601 values fixed at 14:55 Asia/Shanghai ]
 limitations [ explicit strings ]
 ```
 
@@ -237,6 +241,8 @@ identities are derived from that source hash rather than accepted as unverified 
   real acquisition audit.
 - `XUNTOU_LIMIT_REGIME_IDENTITY_UNVERIFIED`: limit prices can be direct, but the complete rule
   regime identity is not supplied by the reviewed P0 API.
+- `XUNTOU_DECISION_BUYABILITY_UNVERIFIED`: historical minute price, suspension and limit values do
+  not establish sealed-limit, ask-liquidity, queue, or affirmative `BUYABLE` evidence.
 - Historical ST and limit-price datasets may require Xuntou Research/VIP permissions and explicit
   downloads. Missing access produces `None`/`UNKNOWN`, never `False` or a formula-derived limit.
 - Potential auxiliary sources such as Eastmoney or Tencent may later fill explicitly identified
