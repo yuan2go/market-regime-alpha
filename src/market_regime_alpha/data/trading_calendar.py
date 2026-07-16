@@ -72,11 +72,34 @@ class TradingCalendarArtifact:
     def resolve_next_session_date(self, decision_time: DecisionTime) -> date:
         """Return the first explicit trading session strictly after the local decision date."""
 
+        return self.resolve_following_session_dates(decision_time, 1)[0]
+
+    def resolve_following_session_dates(
+        self,
+        decision_time: DecisionTime,
+        count: int,
+    ) -> tuple[date, ...]:
+        """Return the next exact count of identified exchange trading sessions."""
+
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError("count must be an integer")
+        if count <= 0:
+            raise ValueError("count must be positive")
         local_date = decision_time.value.astimezone(ZoneInfo(self.timezone_name)).date()
-        for session in self.sessions:
-            if session.trade_date > local_date:
-                return session.trade_date
-        raise LookupError("no later trading session exists in the identified calendar artifact")
+        following = tuple(
+            session.trade_date
+            for session in self.sessions
+            if session.trade_date > local_date
+        )
+        if len(following) < count:
+            if count == 1:
+                raise LookupError(
+                    "no later trading session exists in the identified calendar artifact"
+                )
+            raise LookupError(
+                "insufficient later trading sessions in identified calendar artifact"
+            )
+        return following[:count]
 
     def contains(self, trade_date: date) -> bool:
         return trade_date in self.trading_dates

@@ -59,6 +59,7 @@ files = [
     "src/market_regime_alpha/core/time.py",
     "src/market_regime_alpha/data/contracts.py",
     "src/market_regime_alpha/data/rehearsal.py",
+    "src/market_regime_alpha/data/path_evidence.py",
     "src/market_regime_alpha/data/trading_calendar.py",
     "src/market_regime_alpha/universe/contracts.py",
     "src/market_regime_alpha/universe/artifacts.py",

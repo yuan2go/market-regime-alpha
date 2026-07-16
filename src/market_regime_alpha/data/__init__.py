@@ -1,6 +1,10 @@
 """Canonical data contracts plus explicitly scoped rehearsal observations."""
 
 from .contracts import DataEligibility, DatasetContract, ProviderReference, SourceArtifactReference
+from .path_evidence import (
+    RehearsalFutureDailyBar,
+    RehearsalFutureSuspensionEvidence,
+)
 from .rehearsal import (
     RehearsalDailyBar,
     RehearsalDecisionSnapshot,
@@ -19,6 +23,8 @@ __all__ = [
     "ProviderReference",
     "RehearsalDailyBar",
     "RehearsalDecisionSnapshot",
+    "RehearsalFutureDailyBar",
+    "RehearsalFutureSuspensionEvidence",
     "RehearsalNextSessionBar",
     "RehearsalNextSessionClose",
     "SourceArtifactReference",
