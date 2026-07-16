@@ -166,6 +166,9 @@ def test_absent_xuntou_selects_tencent_for_exploratory_request(tmp_path) -> None
     limitations = json.loads((output / "limitations.json").read_text())
     assert manifest["data_eligibility"] == "EXPLORATORY"
     assert manifest["selected_source"] == "TENCENT_COMPOSITE"
+    assert manifest["evaluation_protocol_ids"] == [
+        "R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_V1"
+    ]
     assert "TENCENT_COMPOSITE_TEST_LIMITATION" in limitations["items"]
     assert xuntou.execute_count == 0
     assert tencent.execute_count == 1
@@ -213,7 +216,11 @@ def test_xuntou_empty_population_is_success_not_fallback(tmp_path) -> None:
     )
 
     evaluation = json.loads((output / "b0_b1_evaluation.json").read_text())
+    manifest = json.loads((output / "manifest.json").read_text())
     assert evaluation["reason"] == "NO_CANDIDATES_AFTER_ELIGIBILITY"
+    assert manifest["evaluation_protocol_ids"] == [
+        "R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_V1"
+    ]
     assert tencent.execute_count == 0
 
 

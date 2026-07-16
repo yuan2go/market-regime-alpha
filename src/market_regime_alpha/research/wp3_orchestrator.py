@@ -8,6 +8,9 @@ import math
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
+from market_regime_alpha.candidates.directional_accuracy import (
+    R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC_ID,
+)
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.core.time import AsOfTime
 from market_regime_alpha.candidates.rehearsal_opportunity_targets import (
@@ -362,6 +365,9 @@ def execute_wp3_candidate_run(
         "provider_selection_decision_id": selection.decision_id,
         "dataset_id": str(result.dataset_id),
         "provider_references": result.provider_references,
+        "evaluation_protocol_ids": [
+            R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC_ID
+        ],
         "decision_time_convention": WP3_DECISION_TIME_CONVENTION,
         "limitations": list(limitations),
     }
