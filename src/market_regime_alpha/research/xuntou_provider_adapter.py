@@ -111,6 +111,7 @@ _BASE_LIMITATIONS = (
     "XUNTOU_LIMIT_REGIME_IDENTITY_UNVERIFIED",
     "XUNTOU_DECISION_BUYABILITY_UNVERIFIED",
     "XUNTOU_NATIVE_TIME_EPOCH_SEMANTICS_UNVERIFIED",
+    "XUNTOU_BJ_CALENDAR_SUPPORT_UNVERIFIED",
     "XUNTOU_RUNTIME_EXTRACTION_NOT_EXECUTED",
 )
 
@@ -420,6 +421,11 @@ def _build_calendar(
     section: Mapping[str, object], *, content_hash: str
 ) -> TradingCalendarArtifact:
     market = _required_string(section, "market", "calendar")
+    if market not in {"SH", "SZ"}:
+        _raise(
+            XuntouProviderAdapterErrorCode.FIELD_UNSUPPORTED,
+            "calendar.market must be SH or SZ under the officially documented P0 scope",
+        )
     raw_dates = _required_sequence(section, "trade_dates", "calendar")
     trade_dates = tuple(
         sorted({_parse_native_date(item, "calendar.trade_dates") for item in raw_dates})
