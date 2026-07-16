@@ -80,6 +80,7 @@ files = [
     "src/market_regime_alpha/candidates/evaluation.py",
     "src/market_regime_alpha/research/experiment_identity.py",
     "src/market_regime_alpha/strategies/entry/contracts.py",
+    "src/market_regime_alpha/strategies/entry/materialization.py",
     "src/market_regime_alpha/research/provider_rehearsal_market_artifact.py",
     "src/market_regime_alpha/research/provider_export_adapter.py",
     "src/market_regime_alpha/research/tencent_composite_contracts.py",

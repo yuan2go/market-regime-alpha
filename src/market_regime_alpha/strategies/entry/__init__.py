@@ -14,6 +14,7 @@ from .contracts import (
     EntryPathTriggerType,
     build_entry_path_target_contract,
 )
+from .materialization import materialize_entry_path_target
 
 __all__ = [
     "DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1",
@@ -28,4 +29,5 @@ __all__ = [
     "EntryPathTargetMaterialization",
     "EntryPathTriggerType",
     "build_entry_path_target_contract",
+    "materialize_entry_path_target",
 ]

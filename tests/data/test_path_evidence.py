@@ -56,6 +56,21 @@ def test_future_daily_bar_rejects_availability_before_finality() -> None:
         )
 
 
+def test_future_path_evidence_rejects_naive_datetimes() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        RehearsalFutureDailyBar(
+            symbol="000001.SZ",
+            session_date=date(2026, 7, 20),
+            open=10.0,
+            high=10.4,
+            low=9.8,
+            close=10.2,
+            price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+            available_at=AvailabilityTime(datetime(2026, 7, 20, 15, 5)),
+            finalized_at=_finalized(),
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (
