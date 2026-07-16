@@ -172,6 +172,10 @@ The generic provider path is an architecture boundary.
 The active concrete provider adapter is Xuntou. It currently consumes an identified normalized
 native export; runtime XtQuant extraction and a real provider-backed run remain unavailable.
 
+An auxiliary Tencent-current + local-history + BaoStock-gap-fill path is now implemented and has
+completed one identified live `EXPLORATORY` run. This does not replace the Xuntou primary-provider
+decision and cannot produce `REHEARSAL` or `FORMAL_RESEARCH` authority.
+
 ---
 
 ## 5. Eligibility Status
@@ -323,6 +327,29 @@ B1 target-blindness is covered by regression testing
 
 B1 scoring semantics were not changed while closing this verification work. Latest full-repository verification remains pending for the reasons recorded in Section 10.
 
+### Tencent composite auxiliary experiment
+
+Current status:
+
+```text
+Composite auxiliary acquisition / merge / quality gate          IMPLEMENTED
+Non-overwriting seven-file run artifact                          IMPLEMENTED
+60-date B0 / B1-A through B1-E exploratory evaluation            COMPLETED
+Live run ID                                                      tencent-composite-20260716T164159+0800-4a63e9565c
+Accepted symbols                                                 20 / 20
+Selected common sessions                                         82
+Available common complete sessions                               248
+Decision Dates                                                   60; 2026-04-17 through 2026-07-15
+Target families                                                  Close Return / MFE / MAE
+Models per Target                                                4 B0 controls + 5 fixed B1 ablations
+Data eligibility                                                 EXPLORATORY
+Canonical provider authority                                     Xuntou primary; unchanged
+```
+
+The B1 ladder is fixed and untuned. The run records descriptive metrics and performs no winner
+selection. It is not formal Alpha evidence. Historical availability, PIT membership, buyability,
+bar-finality, and adjustment revision history remain unverified as recorded in the run limitations.
+
 ### B2 / B3 and later
 
 Research ladder remains:
@@ -401,6 +428,11 @@ B1 transparent composite ranking core                         IMPLEMENTED
 B1 WP-0 focused verification                                  PASSED
 B1 latest full verification                                   PENDING
 Cross-sectional rehearsal evaluation                          IMPLEMENTED
+Tencent composite exploratory auxiliary path                  IMPLEMENTED
+Tencent composite 20-symbol live acquisition                  COMPLETED — 20 / 20 accepted
+Tencent composite 60-date B0 / B1 run                         COMPLETED — identified run recorded above
+Tencent composite non-overwriting run artifacts               IMPLEMENTED
+Dividend-T refresh from accepted composite frames             COMPLETED — 20 / 20 rows successful
 
 Historical Trading Calendar Artifact                          IMPLEMENTED
 Historical PIT Universe Membership Artifact                   IMPLEMENTED
@@ -425,6 +457,9 @@ Provider-backed multi-date Candidate panels                    NOT YET IMPLEMENT
 Immutable R5 run artifact                                      NOT YET IMPLEMENTED
 Chronological/OOS Candidate validation                         NOT YET IMPLEMENTED
 
+Tencent auxiliary multi-date Candidate panels                  IMPLEMENTED — EXPLORATORY ONLY
+Tencent auxiliary chronological descriptive evaluation         IMPLEMENTED — NOT FORMAL OOS EVIDENCE
+
 Entry path Target code contract                                NOT YET IMPLEMENTED
 Canonical Position State code contract                         NOT YET IMPLEMENTED
 Exit continuation Target code contract                         NOT YET IMPLEMENTED
@@ -435,6 +470,69 @@ Formal Candidate / Entry / Exit Alpha evidence                 NOT AVAILABLE
 ---
 
 ## 10. Current Verification Status
+
+Tencent composite verification was executed on 2026-07-16. The latest successful live run used
+code revision:
+
+```text
+d99bb899b7397bba0fd3f8095b04449721923f60
+```
+
+Live-source evidence:
+
+```text
+Tencent one-symbol smoke test
+PASS — 601919.SH, 267 raw one-minute rows, source date 2026-07-16
+
+First full run
+tencent-composite-20260716T163401+0800-4a63e9565c
+PASS — Candidate path 20 / 20 accepted, 82 selected sessions, 60 Decision Dates
+Dividend-T — 18 successful / 2 contract-error rows
+
+Deterministic repair
+Filtered Tencent after-hours rows after 15:00 from the composite boundary.
+Added missing SOFT risk-enforcement metadata to top-divergence SELL_T candidates.
+
+Latest full run
+tencent-composite-20260716T164159+0800-4a63e9565c
+PASS — 20 / 20 accepted, 82 selected sessions, 60 Decision Dates
+PASS — 3 Target families, each with 4 B0 and 5 fixed B1 evaluations
+PASS — 61 source partitions / Source Artifacts, 0 failed attempts, 0 retained conflicts
+PASS — Dividend-T snapshot 20 successful / 0 failed rows
+```
+
+Focused and affected-area results:
+
+```text
+python3 -m pytest -o addopts='' <nine Tencent composite test files> -q
+PASS — 29 passed
+
+python3 -m pytest -o addopts='' tests/research tests/candidates tests/test_a_share_bars.py tests/test_tencent_minute_cache.py tests/test_dividend_trend_snapshot.py tests/legacy/test_trend_snapshot_characterization.py tests/test_dividend_t_model.py -q
+PASS — 125 passed, 4 subtests passed
+
+python3 -m ruff check <all changed Tencent composite, Feature, CLI, and test files>
+PASS — All checks passed
+
+python3 -m mypy scripts/run_tencent_composite_exploratory.py <eight Tencent composite source files>
+PASS — no issues found in 9 source files
+```
+
+Full-repository results:
+
+```text
+python3 -m pytest -q
+FAIL — 2 pre-existing import-file-mismatch collection errors for duplicate test_contracts.py names
+       under tests/data versus tests/features and tests/universe
+
+python3 -m ruff check .
+FAIL — 1 pre-existing F401 unused timedelta import in
+       tests/research/test_provider_rehearsal_market_artifact.py
+
+python3 -m mypy
+FAIL — 6 pre-existing errors in 4 files outside the Tencent composite changes; 51 files checked
+```
+
+No full-repository pass is claimed.
 
 WP-0 verification was executed on 2026-07-15 against code revision:
 
@@ -521,6 +619,9 @@ Implement canonical Position State contract
 WP-7
 Implement Exit continuation Target contracts and simple control arms
 ```
+
+The completed Tencent auxiliary experiment is a parallel `EXPLORATORY` evidence path. It does not
+close or bypass WP-3, which still requires real Xuntou provider-backed `REHEARSAL` data.
 
 Data integration remains experiment-driven.
 
