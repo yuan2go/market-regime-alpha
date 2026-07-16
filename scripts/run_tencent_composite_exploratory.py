@@ -14,6 +14,12 @@ import sys
 from typing import Any, Sequence
 from zoneinfo import ZoneInfo
 
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import RetrievedAt
 from market_regime_alpha.data.contracts import DataEligibility, SourceArtifactReference
@@ -55,7 +61,6 @@ from market_regime_alpha.research.tencent_composite_runner import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "processed" / "tencent_composite_exploratory"
 
