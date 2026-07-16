@@ -22,6 +22,8 @@ Pure authority-aware provider router                        IMPLEMENTED
 Xuntou normalized-export preflight                          IMPLEMENTED
 ProviderRehearsalMarketArtifact -> Candidate panels         IMPLEMENTED
 Shared fixed B0 / B1-A...E evaluation seam                  IMPLEMENTED
+Target-aware Candidate directional diagnostic               IMPLEMENTED / VERIFIED
+Directional protocol identity                               R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_V1
 Tencent temporary exploratory backend                       IMPLEMENTED
 Atomic non-overwriting success/failure artifacts            IMPLEMENTED
 Source-aware command-line entry point                        IMPLEMENTED
@@ -30,6 +32,9 @@ XtQuant runtime extraction                                  NOT IMPLEMENTED / NO
 Real Xuntou bundle execution                                NOT AVAILABLE
 New source-aware Tencent CLI run                            NOT EXECUTED
 B2 or automatic model selection                            NOT IMPLEMENTED
+Entry timing accuracy                                      NOT AVAILABLE
+Exit timing accuracy                                       NOT AVAILABLE
+Trading execution                                          OUT OF SCOPE
 ```
 
 The previously recorded Tencent composite live run remains valid `EXPLORATORY` evidence, but it was
@@ -95,6 +100,25 @@ That is a valid successful diagnostic result. It writes population/eligibility c
 explicit `NOT_PRODUCED` B0/B1 record. It does not weaken eligibility, convert `UNKNOWN` to eligible,
 or switch to Tencent.
 
+## Candidate directional diagnostic
+
+Every produced B0/B1 evaluation for the Next-Session Close Return Target now carries the fixed
+protocol:
+
+```text
+R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_V1
+```
+
+It records positive (`return > 0`), negative (`return < 0`) and neutral (`return == 0`) counts for
+the Target-observed Candidate Population, ranked population and fixed Top 5. The panel result keeps
+micro and macro rates plus chronological per-date records. If a Top-5 Target is unavailable, its
+rank remains selected but its outcome is omitted from the denominator; rank 6 is not backfilled.
+
+MFE and MAE evaluations carry `NOT_APPLICABLE` with
+`TARGET_SEMANTICS_NOT_POSITIVE_CLOSE_RETURN`. Their continuous opportunity/risk metrics remain
+unchanged. The diagnostic is descriptive Candidate evidence and must not be named Entry accuracy,
+Exit accuracy, probability, or trading win rate.
+
 ## Tencent temporary training path
 
 The source-aware Tencent backend reuses the existing identified Tencent/local/BaoStock acquisition,
@@ -138,7 +162,8 @@ SHA256SUMS.json
 
 Existing final or staging paths are never overwritten. The manifest identifies code/config,
 selection policy and decision, actual Data Eligibility, provider/Dataset identities, Feature/Target
-identities and limitations. `SHA256SUMS.json` covers every other exact output byte.
+identities, limitations, and the declared directional evaluation protocol identity.
+`SHA256SUMS.json` covers every other exact output byte.
 
 ## Runtime command
 
@@ -173,6 +198,11 @@ threshold. Every real experiment must record and justify its selected value.
 - Xuntou historical full-population PIT completeness, availability SLAs, revision history, minute
   label semantics and generic historical `BUYABLE` evidence remain unverified.
 - The new runner infrastructure does not close WP-3 by itself and makes no Alpha claim.
+- The directional diagnostic has passed focused and affected verification, but no real Xuntou run
+  or new source-aware Tencent live acquisition was executed for this increment.
+- Candidate positive-return direction is not Entry timing accuracy. Entry remains WP-4 work.
+- Exit timing accuracy remains unavailable until canonical Position State and continuation Targets
+  exist.
 - B2, Entry, Lifecycle, Exit, Portfolio, execution and live-order responsibilities remain outside
   this work package.
 

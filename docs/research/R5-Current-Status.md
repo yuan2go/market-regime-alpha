@@ -148,6 +148,8 @@ Target-Specific Candidate Dataset / Panel
 B0 / B1 Candidate Ranking
         ↓
 Cross-Sectional Rehearsal Evaluation
+        +
+Target-Aware Candidate Directional Diagnostic
 ```
 
 The provider-input architecture also includes:
@@ -340,6 +342,27 @@ B1 target-blindness is covered by regression testing
 
 B1 scoring semantics were not changed while closing this verification work. Latest full-repository verification remains pending for the reasons recorded in Section 10.
 
+### WP-3 Candidate directional diagnostic
+
+Current status:
+
+```text
+Diagnostic core                                             IMPLEMENTED
+Fixed protocol identity                                     R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_V1
+Applicable Target                                           Next-Session Close Return only
+MFE / MAE applicability                                     NOT_APPLICABLE — EXPLICIT
+Fixed selection depth                                       TOP 5
+Affected verification                                       PASSED
+Formal OOS / Alpha authority                                 NOT AVAILABLE
+```
+
+The diagnostic classifies an already observed Close Return as positive, negative, or exactly
+neutral after the Candidate ranking is fixed. It reports Top-5 positive/negative rates, Candidate
+and ranked baselines, micro/macro aggregates, observed denominators, and per-Decision-Time
+stability. An unavailable Target reduces the observed denominator and is never replaced by a lower
+ranked symbol. The diagnostic does not change B0/B1 scoring and is not an Entry, Exit, probability,
+Portfolio, or execution contract.
+
 ### Tencent composite auxiliary experiment
 
 Current status:
@@ -441,6 +464,8 @@ B1 transparent composite ranking core                         IMPLEMENTED
 B1 WP-0 focused verification                                  PASSED
 B1 latest full verification                                   PENDING
 Cross-sectional rehearsal evaluation                          IMPLEMENTED
+WP-3 Candidate positive-return directional diagnostic         IMPLEMENTED / VERIFIED
+WP-3 directional metric identity                              R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_V1
 Tencent composite exploratory auxiliary path                  IMPLEMENTED
 Tencent composite 20-symbol live acquisition                  COMPLETED — 20 / 20 accepted
 Tencent composite 60-date B0 / B1 run                         COMPLETED — identified run recorded above
@@ -477,8 +502,11 @@ Tencent auxiliary multi-date Candidate panels                  IMPLEMENTED — E
 Tencent auxiliary chronological descriptive evaluation         IMPLEMENTED — NOT FORMAL OOS EVIDENCE
 
 Entry path Target code contract                                NOT YET IMPLEMENTED
+Entry timing accuracy                                           NOT AVAILABLE
 Canonical Position State code contract                         NOT YET IMPLEMENTED
 Exit continuation Target code contract                         NOT YET IMPLEMENTED
+Exit timing accuracy                                            NOT AVAILABLE
+Trading execution                                               OUT OF SCOPE FOR CURRENT VERSION
 
 Formal Candidate / Entry / Exit Alpha evidence                 NOT AVAILABLE
 ```
@@ -653,6 +681,41 @@ FAIL — 6 existing errors in 4 files; 51 source files checked
 No full-repository pass is claimed. No real Xuntou export or new source-aware Tencent live run was
 executed by these tests.
 
+WP-3 Candidate directional diagnostic verification was executed on 2026-07-16 against code
+revision:
+
+```text
+b368397f01ded670ef2a8de7a03a2b99e3e08580
+```
+
+Results:
+
+```text
+Focused / affected pytest set
+PASS — 34 tests
+
+Scoped Ruff over changed Candidate/WP-3 source and tests
+PASS — All checks passed
+
+Scoped mypy over three affected source files
+PASS — no issues found
+
+python3 -m pytest -o addopts='' -q
+FAIL DURING COLLECTION — the same 2 existing import-file-mismatch errors for duplicate
+                         test_contracts.py module names
+
+python3 -m ruff check .
+FAIL — the same existing F401 unused timedelta import in
+       tests/research/test_provider_rehearsal_market_artifact.py
+
+python3 -m mypy
+FAIL — the same 6 existing errors in 4 files; 51 source files checked
+```
+
+The diagnostic verification did not execute a real Xuntou run or a new Tencent live acquisition.
+The scoped checks establish the implementation contract only; they do not establish formal OOS,
+Candidate Alpha, Entry accuracy, or Exit accuracy.
+
 ---
 
 ## 11. Immediate Implementation Sequence
@@ -671,6 +734,7 @@ Implement minimum Xuntou P0 native adapter — COMPLETE FOR NORMALIZED EXPORT MO
         ↓
 WP-3
 Source-aware runner infrastructure — IMPLEMENTED
+Candidate positive-return directional diagnostic — IMPLEMENTED / VERIFIED
 Real Xuntou REHEARSAL B0 / B1 evidence run — NEXT / PENDING INPUT
         ↓
 WP-4
