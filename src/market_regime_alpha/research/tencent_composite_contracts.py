@@ -328,12 +328,15 @@ class CompositeAcquisitionResult:
     partitions: tuple[CompositeSourcePartition, ...]
     quote_partition: CompositeSourcePartition
     attempts: tuple[CompositeSourceAttempt, ...]
+    bars: tuple[CompositeBar, ...]
     quotes: Mapping[str, Any]
     retrieved_at: RetrievedAt
 
     def __post_init__(self) -> None:
         if not self.partitions:
             raise ValueError("partitions must not be empty")
+        bar_keys = tuple((bar.source, bar.symbol, bar.timestamp) for bar in self.bars)
+        _require_unique("acquired source bar keys", bar_keys)
         object.__setattr__(self, "quotes", MappingProxyType(dict(self.quotes)))
 
 

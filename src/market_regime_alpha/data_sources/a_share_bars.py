@@ -893,6 +893,17 @@ def _read_local_5min_cache(symbol: str, *, cache_dir: Path, source_freq: str = "
     return data
 
 
+def read_local_5min_cache(
+    symbol: str,
+    *,
+    cache_dir: str | Path = DEFAULT_LOCAL_5MIN_CACHE_DIR,
+    source_freq: str = "5min",
+) -> Any:
+    """Read one identified local cache partition without any network merge."""
+
+    return _read_local_5min_cache(symbol, cache_dir=Path(cache_dir), source_freq=source_freq)
+
+
 def _filter_bar_time_range(frame: Any, *, start_date: str | None, end_date: str | None) -> Any:
     import pandas as pd
 

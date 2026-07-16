@@ -31,6 +31,7 @@ from market_regime_alpha.data_sources.a_share_bars import (
     normalize_tencent_minute_payload,
     parse_tencent_quote_text,
     provider_options,
+    read_local_5min_cache,
     to_baostock_code,
     to_eastmoney_secid,
     to_plain_code,
@@ -347,6 +348,28 @@ class AShareBarsTests(unittest.TestCase):
         self.assertEqual(merged.attrs["data_source"], LOCAL_CACHE_TENCENT_SOURCE)
         self.assertEqual(list(merged["timestamp"]), ["2026-06-01 09:35:00", "2026-06-07 14:55:00", "2026-06-08 09:30:00", "2026-06-08 09:35:00"])
         self.assertEqual(float(merged.iloc[-2]["close"]), 14.95)
+
+    def test_read_local_5min_cache_preserves_normalized_rows_without_tencent_merge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "601919.SH_5min.csv"
+            pd.DataFrame(
+                {
+                    "symbol": ["601919.SH"],
+                    "timestamp": ["2026-07-15 09:35:00"],
+                    "open": [14.5],
+                    "high": [14.6],
+                    "low": [14.4],
+                    "close": [14.55],
+                    "volume": [1_000_000.0],
+                    "amount": [14_550_000.0],
+                    "source_freq": ["5min"],
+                }
+            ).to_csv(path, index=False)
+
+            frame = read_local_5min_cache("601919.SH", cache_dir=directory)
+
+        self.assertEqual(list(frame["timestamp"]), ["2026-07-15 09:35:00"])
+        self.assertEqual(frame.attrs["data_source"], "local_csv_5min")
 
     def test_fallback_uses_second_provider_after_first_failure(self) -> None:
         result = fetch_a_share_5min_with_fallback(
