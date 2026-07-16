@@ -84,6 +84,39 @@ python3 -m ruff check .
 python3 -m mypy
 ```
 
+## WP-3 数据来源路由与 Candidate 研究
+
+当前 Candidate 研究以讯投 / ThinkTrader / XtQuant 为 canonical 主数据源。讯投运行环境尚未
+接入时，可以临时使用现有腾讯 + 本地历史 + BaoStock 补缺路径生成 `EXPLORATORY` 训练研究
+数据；该路径不会获得 `REHEARSAL` 或 `FORMAL_RESEARCH` 权威。
+
+自动模式：
+
+```bash
+python3 scripts/run_wp3_candidate_research.py \
+  --source auto \
+  --minimum-eligibility exploratory
+```
+
+显式运行一份 normalized Xuntou P0 export：
+
+```bash
+python3 scripts/run_wp3_candidate_research.py \
+  --source xuntou \
+  --minimum-eligibility rehearsal \
+  --xuntou-bundle /path/to/xuntou-p0-native-bundle-v3.json \
+  --minimum-liquidity-value 50000000
+```
+
+这里的流动性数值只是命令示例，不是全局默认研究阈值。真实实验必须显式选择并记录阈值。
+`AUTO` 只会在讯投确实不可用时选择腾讯；如果提供的讯投 bundle 无效，则 fail-closed，不会
+静默降级。讯投产生空 Candidate Population 也是有效研究结果，不会触发换源。
+
+运行结果写入 `data/processed/r5_candidate_runs/` 下不可覆盖的内容哈希目录。该入口不会写
+Legacy Dividend-T / GitHub Pages 快照，不会自动下单，也不会因为有 adapter 或腾讯数据就
+宣称真实讯投运行、Alpha 或正式 PIT 研究已经完成。当前详细状态见
+[`R5-WP3-Provider-Routing-Status.md`](docs/research/R5-WP3-Provider-Routing-Status.md)。
+
 ## 第一个可运行回测
 
 本项目现在有一个最小 ETF 均线交叉回测原型。它使用 `docs/Data-Spec.md` 中定义的 OHLCV 字段，读取 `data/raw/sample_etf_ohlcv.csv`，当短期均线高于长期均线时持有 ETF，否则空仓。

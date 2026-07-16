@@ -13,6 +13,8 @@ each native field remains in
 `docs/specs/Xuntou-P0-Native-Field-Mapping.md`.
 The supporting first-party review is
 `docs/research/R5-Xuntou-P0-Official-Documentation-Evidence.md`.
+The current source-aware execution status is
+`docs/research/R5-WP3-Provider-Routing-Status.md`.
 
 The implementation translates an identified normalized Xuntou export into the existing provider
 rehearsal artifact. It does not call XtQuant, place orders, build a Candidate model, or establish a
@@ -161,8 +163,10 @@ The implementation was reviewed by reading the diff and checking these architect
 
 ## Current authority and next data-acquisition step
 
-The current authority is an architecture-coherent native-export boundary, not a provider-backed
-experiment. The next work package is WP-3: acquire one real, content-hashed Xuntou P0 export in an
-authorized runtime and run a bounded REHEARSAL Candidate artifact chain. WP-3 must preserve all
-limitations and cannot claim Alpha or formal-research authority merely because the source is
-Xuntou.
+The current authority is an architecture-coherent native-export boundary plus an implemented WP-3
+Candidate-runner boundary, not a completed provider-backed experiment. The next step is to acquire
+one real, content-hashed Xuntou P0 export in an authorized runtime and execute the bounded REHEARSAL
+artifact chain. The run must preserve all limitations and cannot claim Alpha or formal-research
+authority merely because the source is Xuntou. Under the current P0 buyability convention it may
+truthfully produce an empty Candidate Population; non-empty evaluation requires separately verified
+Decision-Time `BUYABLE` evidence rather than a relaxed runner policy.

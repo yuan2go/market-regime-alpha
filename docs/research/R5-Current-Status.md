@@ -10,6 +10,7 @@
 > **Entry / Lifecycle / Exit research program:** `docs/research/Entry-Position-Lifecycle-Exit-Research-Program.md`
 > **Xuntou P0 official evidence:** `docs/research/R5-Xuntou-P0-Official-Documentation-Evidence.md`
 > **Xuntou P0 mapping / adapter status:** `docs/specs/Xuntou-P0-Native-Field-Mapping.md` / `docs/research/R5-Xuntou-P0-Adapter-Status.md`
+> **WP-3 routing / run status:** `docs/research/R5-WP3-Provider-Routing-Status.md`
 
 ---
 
@@ -165,12 +166,24 @@ Xuntou normalized native P0 export
 Xuntou P0 Native Adapter
         ↓
 the same Provider Rehearsal Market Artifact
+        ↓
+Authority-aware source routing
+        ↓
+Provider-backed Candidate panels / fixed B0-B1 evaluation
+        ↓
+Atomic content-hashed WP-3 run artifact
 ```
 
 The generic provider path is an architecture boundary.
 
 The active concrete provider adapter is Xuntou. It currently consumes an identified normalized
 native export; runtime XtQuant extraction and a real provider-backed run remain unavailable.
+
+WP-3 source-aware execution infrastructure is implemented. A valid normalized Xuntou bundle can
+traverse provider-rehearsal Eligibility v2, exact Candidate Population assembly, the three existing
+Target families and the fixed B0/B1 ladder. A truthful empty Candidate Population remains an
+identified successful diagnostic and does not trigger auxiliary fallback. No real Xuntou bundle was
+available in this environment, so WP-3 remains pending as a provider-evidence result.
 
 An auxiliary Tencent-current + local-history + BaoStock-gap-fill path is now implemented and has
 completed one identified live `EXPLORATORY` run. This does not replace the Xuntou primary-provider
@@ -453,8 +466,11 @@ Xuntou normalized native/export adapter v3                    IMPLEMENTED
 Xuntou historical Decision-Time buyability                    UNKNOWN EXCEPT CONFIRMED SUSPENSION
 XtQuant runtime extraction                                    NOT IMPLEMENTED / NOT EXECUTED
 Real Xuntou provider / export data run                         NOT AVAILABLE
-Provider-backed multi-date Candidate panels                    NOT YET IMPLEMENTED
-Immutable R5 run artifact                                      NOT YET IMPLEMENTED
+Authority-aware Xuntou/Tencent provider router                 IMPLEMENTED
+Provider-backed multi-date Candidate panel runner              IMPLEMENTED — REAL XUNTOU RUN PENDING
+Shared fixed B0/B1 provider evaluation seam                    IMPLEMENTED
+Immutable hashed WP-3 run artifact                             IMPLEMENTED
+Source-aware WP-3 CLI                                          IMPLEMENTED — LIVE RUN NOT EXECUTED
 Chronological/OOS Candidate validation                         NOT YET IMPLEMENTED
 
 Tencent auxiliary multi-date Candidate panels                  IMPLEMENTED — EXPLORATORY ONLY
@@ -604,7 +620,8 @@ WP-2
 Implement minimum Xuntou P0 native adapter — COMPLETE FOR NORMALIZED EXPORT MODE
         ↓
 WP-3
-Run provider-backed Xuntou REHEARSAL B0 / B1 experiments — NEXT
+Source-aware runner infrastructure — IMPLEMENTED
+Real Xuntou REHEARSAL B0 / B1 evidence run — NEXT / PENDING INPUT
         ↓
 WP-4
 Implement Entry Path Target contracts
@@ -620,8 +637,10 @@ WP-7
 Implement Exit continuation Target contracts and simple control arms
 ```
 
-The completed Tencent auxiliary experiment is a parallel `EXPLORATORY` evidence path. It does not
-close or bypass WP-3, which still requires real Xuntou provider-backed `REHEARSAL` data.
+The completed Tencent auxiliary experiment is a parallel `EXPLORATORY` evidence path. The new
+source-aware CLI may use that path only when routing authority permits it. Neither the earlier
+Tencent run nor the new routing infrastructure closes WP-3, which still requires real Xuntou
+provider-backed `REHEARSAL` evidence.
 
 Data integration remains experiment-driven.
 
@@ -680,4 +699,4 @@ The current system does not claim to implement:
 
 ## 14. Current Principle
 
-> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. B1 integration closure is implemented while latest full-repository verification remains pending. The next evidence step is a real Xuntou provider-backed REHEARSAL Candidate run; path-dependent Entry and Exit research follows only after Candidate evidence is reproducible. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**
+> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. WP-3 routing, Candidate-runner and immutable-artifact infrastructure are implemented while the real Xuntou provider-backed run remains unavailable. The next evidence step is an authorized, content-hashed Xuntou REHEARSAL input and a truthful run under existing PIT/buyability limits; path-dependent Entry and Exit research follows only after Candidate evidence is reproducible. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**

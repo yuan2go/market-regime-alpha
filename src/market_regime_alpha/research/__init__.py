@@ -14,6 +14,16 @@ from .provider_rehearsal_market_artifact import (
     ProviderRehearsalMarketArtifact,
     build_provider_rehearsal_market_artifact,
 )
+from .provider_routing import (
+    CandidateDataSource,
+    CandidateRunSourceMode,
+    ProviderAvailabilityStatus,
+    ProviderCapabilityReport,
+    ProviderRoutingError,
+    ProviderRoutingErrorCode,
+    ProviderSelectionDecision,
+    select_candidate_data_source,
+)
 from .tencent_composite_acquisition import (
     TencentCompositeAcquirer,
     frames_for_accepted_symbols,
@@ -60,7 +70,12 @@ from .xuntou_provider_adapter import (
 )
 
 if TYPE_CHECKING:
+    from .provider_candidate_runner import (
+        ProviderCandidateRun,
+        ProviderCandidateRunOutcome,
+    )
     from .tencent_composite_runner import TencentCompositeCandidateRun
+    from .wp3_orchestrator import WP3RunRequest
 
 __all__ = [
     "ExperimentIdentity",
@@ -75,7 +90,16 @@ __all__ = [
     "CompositeDispositionCode",
     "CompositeQualityReport",
     "CompositeSourceKind",
+    "CandidateDataSource",
+    "CandidateRunSourceMode",
     "PreparedCompositeData",
+    "ProviderAvailabilityStatus",
+    "ProviderCandidateRun",
+    "ProviderCandidateRunOutcome",
+    "ProviderCapabilityReport",
+    "ProviderRoutingError",
+    "ProviderRoutingErrorCode",
+    "ProviderSelectionDecision",
     "TencentCompositeAcquirer",
     "TencentCompositeCandidateRun",
     "TencentCompositeQualityGateError",
@@ -95,6 +119,7 @@ __all__ = [
     "XuntouP0EvidenceClassification",
     "XuntouProviderAdapterError",
     "XuntouProviderAdapterErrorCode",
+    "WP3RunRequest",
     "adapt_generic_provider_export_mapping",
     "adapt_xuntou_p0_native_mapping",
     "build_provider_rehearsal_market_artifact",
@@ -106,6 +131,9 @@ __all__ = [
     "prepare_composite_data",
     "r5_b1_exploratory_specs",
     "run_tencent_composite_candidate_experiment",
+    "run_provider_candidate_experiment",
+    "select_candidate_data_source",
+    "execute_wp3_candidate_run",
     "write_tencent_composite_quality_failure",
     "write_tencent_composite_run",
 ]
@@ -114,6 +142,22 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Resolve Candidate-runner exports lazily to avoid a candidates/research cycle."""
 
+    if name in {
+        "ProviderCandidateRun",
+        "ProviderCandidateRunOutcome",
+        "run_provider_candidate_experiment",
+    }:
+        from .provider_candidate_runner import (
+            ProviderCandidateRun,
+            ProviderCandidateRunOutcome,
+            run_provider_candidate_experiment,
+        )
+
+        return {
+            "ProviderCandidateRun": ProviderCandidateRun,
+            "ProviderCandidateRunOutcome": ProviderCandidateRunOutcome,
+            "run_provider_candidate_experiment": run_provider_candidate_experiment,
+        }[name]
     if name in {
         "TencentCompositeCandidateRun",
         "r5_b1_exploratory_specs",
@@ -131,5 +175,12 @@ def __getattr__(name: str) -> Any:
             "run_tencent_composite_candidate_experiment": (
                 run_tencent_composite_candidate_experiment
             ),
+        }[name]
+    if name in {"WP3RunRequest", "execute_wp3_candidate_run"}:
+        from .wp3_orchestrator import WP3RunRequest, execute_wp3_candidate_run
+
+        return {
+            "WP3RunRequest": WP3RunRequest,
+            "execute_wp3_candidate_run": execute_wp3_candidate_run,
         }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
