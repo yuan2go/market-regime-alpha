@@ -32,6 +32,7 @@ from market_regime_alpha.universe.artifacts import (
 from market_regime_alpha.universe.eligibility_policy import (
     DecisionBuyabilityStatus,
     RawTradingEligibilityObservation,
+    TradingEligibilityPolicy,
     r5_provider_rehearsal_trading_eligibility_policy_v2,
     r5_rehearsal_trading_eligibility_policy_v1,
 )
@@ -215,6 +216,34 @@ def test_provider_candidate_runner_rejects_weaker_v1_policy() -> None:
                 buyability=DecisionBuyabilityStatus.BUYABLE
             ),
             eligibility_policy=r5_rehearsal_trading_eligibility_policy_v1(),
+            materialized_at=AsOfTime(
+                _at(DECISION_DATES[-1] + timedelta(days=1), 16)
+            ),
+            code_revision="abc123",
+            config_hash="sha256:config",
+            decision_count=2,
+        )
+
+
+def test_provider_candidate_runner_rejects_same_named_but_weakened_v2_policy() -> None:
+    weakened = TradingEligibilityPolicy(
+        policy_name="r5-provider-rehearsal-trading-eligibility",
+        version="v2",
+        exclude_st=False,
+        require_prev_close=True,
+        require_limit_metadata=True,
+        minimum_listing_age_calendar_days=61,
+        minimum_liquidity_value=1.0,
+        liquidity_measure_id=LIQUIDITY_MEASURE_ID,
+        require_decision_buyability=True,
+    )
+
+    with pytest.raises(ValueError, match="cannot weaken required evidence"):
+        run_provider_candidate_experiment(
+            market_artifact=_market_artifact(
+                buyability=DecisionBuyabilityStatus.BUYABLE
+            ),
+            eligibility_policy=weakened,
             materialized_at=AsOfTime(
                 _at(DECISION_DATES[-1] + timedelta(days=1), 16)
             ),

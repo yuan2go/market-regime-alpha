@@ -10,7 +10,13 @@ from typing import Any, Mapping, Protocol
 
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.core.time import AsOfTime
+from market_regime_alpha.candidates.rehearsal_opportunity_targets import (
+    r5_next_session_opportunity_target_contracts,
+)
 from market_regime_alpha.data import DataEligibility
+from market_regime_alpha.features.rehearsal_baselines import (
+    r5_baseline_feature_definitions,
+)
 from market_regime_alpha.research.provider_candidate_runner import (
     ProviderCandidateRun,
     ProviderCandidateRunOutcome,
@@ -427,11 +433,12 @@ def _xuntou_backend_result(
                 for target in run.target_runs
             ],
         }
-    feature_ids = (
-        [str(item) for item in run.target_runs[0].panel.feature_definition_ids]
-        if run.target_runs
-        else []
-    )
+    feature_ids = [
+        str(item.feature_id) for item in r5_baseline_feature_definitions()
+    ]
+    target_ids = [
+        str(item.target_id) for item in r5_next_session_opportunity_target_contracts()
+    ]
     return WP3BackendResult(
         source=CandidateDataSource.XUNTOU,
         data_eligibility=run.data_eligibility,
@@ -452,7 +459,7 @@ def _xuntou_backend_result(
         manifest_details={
             "market_artifact_id": str(run.market_artifact_id),
             "feature_definition_ids": feature_ids,
-            "target_ids": [str(item.target_id) for item in run.target_runs],
+            "target_ids": target_ids,
             "eligibility_policy": getattr(policy, "policy_version"),
         },
     )

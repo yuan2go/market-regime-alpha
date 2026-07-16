@@ -118,10 +118,7 @@ def run_provider_candidate_experiment(
 ) -> ProviderCandidateRun:
     """Materialize provider evidence and evaluate the fixed B0/B1 ladder by Target."""
 
-    if eligibility_policy.policy_version != PROVIDER_REHEARSAL_POLICY_V2:
-        raise ValueError("provider Candidate runs require provider-rehearsal eligibility policy v2")
-    if not eligibility_policy.require_decision_buyability:
-        raise ValueError("provider-rehearsal eligibility policy v2 must require buyability")
+    _validate_provider_rehearsal_policy(eligibility_policy)
     if isinstance(decision_count, bool) or not isinstance(decision_count, int):
         raise TypeError("decision_count must be an integer")
     if decision_count <= 0:
@@ -285,6 +282,23 @@ def _universe_source_dataset_contract(
             )
         ),
     )
+
+
+def _validate_provider_rehearsal_policy(policy: TradingEligibilityPolicy) -> None:
+    if policy.policy_version != PROVIDER_REHEARSAL_POLICY_V2:
+        raise ValueError("provider Candidate runs require provider-rehearsal eligibility policy v2")
+    required_flags = (
+        policy.exclude_st,
+        policy.require_prev_close,
+        policy.require_limit_metadata,
+        policy.require_decision_buyability,
+    )
+    if not all(required_flags):
+        raise ValueError("provider-rehearsal eligibility policy v2 cannot weaken required evidence")
+    if policy.minimum_listing_age_calendar_days != 61:
+        raise ValueError("provider-rehearsal eligibility policy v2 requires listing age 61 days")
+    if policy.minimum_liquidity_value is None or policy.liquidity_measure_id is None:
+        raise ValueError("provider-rehearsal eligibility policy v2 requires explicit liquidity")
 
 
 def _unique(values: tuple[str, ...]) -> tuple[str, ...]:

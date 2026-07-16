@@ -128,3 +128,30 @@ def test_config_hash_changes_with_result_affecting_source_mode(tmp_path) -> None
 
     assert auto_hash.startswith("sha256:")
     assert auto_hash != tencent_hash
+
+
+def test_config_hash_retains_missing_xuntou_bundle_locator(tmp_path) -> None:
+    module = _cli_module()
+    parser = module.build_parser()
+    first = parser.parse_args(
+        [
+            "--source",
+            "xuntou",
+            "--xuntou-bundle",
+            str(tmp_path / "missing-a.json"),
+            "--minimum-liquidity-value",
+            "1",
+        ]
+    )
+    second = parser.parse_args(
+        [
+            "--source",
+            "xuntou",
+            "--xuntou-bundle",
+            str(tmp_path / "missing-b.json"),
+            "--minimum-liquidity-value",
+            "1",
+        ]
+    )
+
+    assert module.config_hash(first) != module.config_hash(second)

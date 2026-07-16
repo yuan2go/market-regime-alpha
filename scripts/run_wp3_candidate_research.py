@@ -254,8 +254,14 @@ class TencentCompositeWP3Backend:
                 "source_attempts": acquisition.attempts,
                 "source_conflicts": merged.conflicts,
             },
-            candidate_panel_summary=candidate.panel_summary(),
-            b0_b1_evaluation=candidate.evaluation_summary(),
+            candidate_panel_summary={
+                "outcome": "EVALUATED",
+                **candidate.panel_summary(),
+            },
+            b0_b1_evaluation={
+                "status": "PRODUCED",
+                **candidate.evaluation_summary(),
+            },
             limitations=candidate.limitations,
             manifest_details={
                 "retrieved_at": acquisition.retrieved_at.isoformat(),
@@ -299,6 +305,9 @@ def config_hash(args: argparse.Namespace) -> str:
         "schema_version": "wp3-provider-candidate-config-v1",
         "source": args.source,
         "minimum_eligibility": args.minimum_eligibility,
+        "xuntou_bundle_locator": (
+            str(args.xuntou_bundle) if args.xuntou_bundle is not None else None
+        ),
         "xuntou_bundle_hash": optional_file_hash(args.xuntou_bundle),
         "minimum_liquidity_value": args.minimum_liquidity_value,
         "watchlist_hash": optional_file_hash(args.watchlist),

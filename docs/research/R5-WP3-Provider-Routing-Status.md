@@ -1,8 +1,11 @@
 # R5 WP-3 Provider Routing and Candidate Run Status
 
-> **Status:** CURRENT  
-> **Infrastructure:** IMPLEMENTED  
-> **Real Xuntou provider-backed run:** NOT AVAILABLE  
+> **Status:** CURRENT
+>
+> **Infrastructure:** IMPLEMENTED
+>
+> **Real Xuntou provider-backed run:** NOT AVAILABLE
+>
 > **WP-3 overall:** PENDING REAL XUNTOU EVIDENCE
 
 ## Purpose
@@ -180,4 +183,3 @@ run should audit source coverage and will likely produce an empty Candidate resu
 buyability semantics. A non-empty Xuntou B0/B1 run requires separately verified historical
 Decision-Time evidence sufficient for the scoped `BUYABLE` classification; that evidence must be
 reviewed as a mapping increment rather than invented in the runner.
-

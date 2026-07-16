@@ -1,7 +1,9 @@
 # Xuntou / XtQuant Provider Documentation Reference
 
-Status: local reference index  
-Retrieved: 2026-07-16  
+Status: local reference index
+
+Retrieved: 2026-07-16
+
 Normative mapping: [Xuntou P0 Native Field Mapping](../../../specs/Xuntou-P0-Native-Field-Mapping.md)
 
 ## Purpose
@@ -117,4 +119,3 @@ first-party Xuntou definitions and does not establish historical PIT, availabili
 - [Official-documentation evidence note](../../../research/R5-Xuntou-P0-Official-Documentation-Evidence.md)
 - [Xuntou P0 adapter status](../../../research/R5-Xuntou-P0-Adapter-Status.md)
 - [WP-3 provider-routing design](../../../superpowers/specs/2026-07-16-wp3-provider-routing-and-candidate-runs-design.md)
-
