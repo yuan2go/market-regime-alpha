@@ -24,6 +24,7 @@ data/processed/**/*.parquet
 data/processed/dividend_t_signal_cache/
 data/processed/dividend_t_signal_cache_top1000_*/
 data/processed/tencent_composite_exploratory/
+data/processed/r5_candidate_runs/
 reports/**/*.csv
 reports/**/*.html
 reports/**/*.json
