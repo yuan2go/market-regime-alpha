@@ -603,6 +603,56 @@ Normal repository execution or CI remains required before implementation authori
 WP-1/WP-2 intentionally ran no tests or static quality commands under the task instruction. No
 `pytest`, `ruff`, or `mypy` result is claimed for the Xuntou P0 specification/adapter changes.
 
+WP-3 source-routing infrastructure verification was executed on 2026-07-16 against code revision:
+
+```text
+712ec8568806284a154232ccc71ddf9dedc305c3
+```
+
+Focused and affected-area results:
+
+```text
+WP-3 focused pytest set
+PASS — 36 tests
+
+Combined research/candidates/universe/data/features command
+FAIL DURING COLLECTION — 2 existing import-file-mismatch errors for duplicate
+                         test_contracts.py module names
+
+Partitioned affected-area commands
+PASS — research + candidates: 115 tests
+PASS — universe: 38 tests
+PASS — data: 8 tests
+PASS — features: 7 tests
+PASS — 168 tests total across the four non-conflicting commands
+
+Scoped Ruff over all WP-3 source and test files
+PASS — All checks passed
+
+Scoped mypy over eight affected source files
+PASS — no issues found
+
+WP-3 CLI --help smoke
+PASS
+```
+
+The full-repository commands were executed after the final WP-3 verification fixes:
+
+```text
+python3 -m pytest
+FAIL — 2 existing import-file-mismatch collection errors for duplicate test_contracts.py names
+
+python3 -m ruff check .
+FAIL — 1 existing F401 unused timedelta import in
+       tests/research/test_provider_rehearsal_market_artifact.py
+
+python3 -m mypy
+FAIL — 6 existing errors in 4 files; 51 source files checked
+```
+
+No full-repository pass is claimed. No real Xuntou export or new source-aware Tencent live run was
+executed by these tests.
+
 ---
 
 ## 11. Immediate Implementation Sequence
