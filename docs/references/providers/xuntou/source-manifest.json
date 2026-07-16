@@ -1,0 +1,55 @@
+{
+  "retrieved_on": "2026-07-16",
+  "schema_version": "xuntou-provider-document-source-manifest-v1",
+  "sources": [
+    {
+      "content_sha256": "f6a4b2a23dd2e5765c388e6012d5156ce78846008ab9a751a64f9047abe0adf2",
+      "evidence_tier": "SUPPLEMENTARY_MINIQMT",
+      "retrieval_status": "RETRIEVED",
+      "title": "xtdata行情模块 - miniQMT.com",
+      "url": "https://www.miniqmt.com/pages/docs/xtdata.html"
+    },
+    {
+      "content_sha256": "8d747b8b7a5bfc4a4dbd992d81c5828536d39b522190191e05c0ad0e85676d1e",
+      "evidence_tier": "FIRST_PARTY_XUNTOU",
+      "retrieval_status": "RETRIEVED",
+      "title": "快速开始 | 迅投知识库",
+      "url": "https://dict.thinktrader.net/nativeApi/start_now.html"
+    },
+    {
+      "content_sha256": "49bcd8126f5ecb5f01ab5996f9aac572af64db21d6486a3ee278da9658ef2249",
+      "evidence_tier": "FIRST_PARTY_XUNTOU",
+      "retrieval_status": "RETRIEVED",
+      "title": "XtQuant.XtData 行情模块 | 迅投知识库",
+      "url": "https://dict.thinktrader.net/nativeApi/xtdata.html"
+    },
+    {
+      "content_sha256": "35eed368640f07b07b581e4d975f113d49cc6e3b192136b16f739abb17ce64b8",
+      "evidence_tier": "FIRST_PARTY_XUNTOU",
+      "retrieval_status": "RETRIEVED",
+      "title": "股票数据 | 迅投知识库",
+      "url": "https://dict.thinktrader.net/dictionary/stock.html"
+    },
+    {
+      "content_sha256": "aff2aff4f6422ad1523ac25f4905abbe9923e8dac2b6a2bb0c7f74f225c48b20",
+      "evidence_tier": "FIRST_PARTY_XUNTOU",
+      "retrieval_status": "RETRIEVED",
+      "title": "行业概念数据 | 迅投知识库",
+      "url": "https://dict.thinktrader.net/dictionary/industry.html"
+    },
+    {
+      "content_sha256": "5f56f7b06cbe014205654bef34fb959910f228970331fca9c245e12400384390",
+      "evidence_tier": "FIRST_PARTY_XUNTOU",
+      "retrieval_status": "RETRIEVED",
+      "title": "xtquant版本下载 | 迅投知识库",
+      "url": "https://dict.thinktrader.net/nativeApi/download_xtquant.html"
+    },
+    {
+      "content_sha256": "81a96997211abb8d62dcc3073614b8abe2b0e650ca3c8729ca408256091659e7",
+      "evidence_tier": "FIRST_PARTY_XUNTOU",
+      "retrieval_status": "RETRIEVED",
+      "title": "行情函数 | 迅投知识库",
+      "url": "https://dict.thinktrader.net/innerApi/data_function.html"
+    }
+  ]
+}

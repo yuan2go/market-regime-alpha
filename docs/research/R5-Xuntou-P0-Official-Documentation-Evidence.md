@@ -33,6 +33,12 @@ An API returning a historical timestamp is not treated as proof that the value w
 
 No secondary blog, forum post or remembered API name is used as authority here.
 
+The supplied provider pages are also recorded in the local
+[Xuntou / XtQuant provider-document reference](../references/providers/xuntou/README.md), with URL,
+retrieval date and exact response-byte SHA-256 values in its machine-readable source manifest.
+ThinkTrader pages remain first-party evidence. The MiniQMT page is retained only as a supplementary
+cross-check and cannot override a conflicting first-party definition.
+
 ## 3. Provider and product relationship
 
 The official quick-start page establishes the following limited relationship:
