@@ -1,9 +1,9 @@
 # R5 Xuntou P0 Adapter Status
 
 > **Status:** CURRENT
-> **Mapping contract:** `xuntou-p0-native-field-mapping-v1`
-> **Native bundle schema:** `xuntou-p0-native-bundle-v1`
-> **Implementation revision:** `c747ca3`
+> **Mapping contract:** `xuntou-p0-native-field-mapping-v2`
+> **Native bundle schema:** `xuntou-p0-native-bundle-v2`
+> **Implementation revision:** `8c9a947a6c61252c3e338a09b317c4ac70c6efa3`
 > **Maximum authority:** `REHEARSAL`
 
 ## Purpose
@@ -11,6 +11,8 @@
 This document records what the Xuntou P0 adapter implements now. The normative interpretation of
 each native field remains in
 `docs/specs/Xuntou-P0-Native-Field-Mapping.md`.
+The supporting first-party review is
+`docs/research/R5-Xuntou-P0-Official-Documentation-Evidence.md`.
 
 The implementation translates an identified normalized Xuntou export into the existing provider
 rehearsal artifact. It does not call XtQuant, place orders, build a Candidate model, or establish a
@@ -54,13 +56,18 @@ code prefix.
 - Historical ST state is materialized from ST/*ST/PT intervals only when lookup completeness and
   availability permit it.
 - Suspension maps from native `suspendFlag`; missing/unsupported values remain `None`.
+- A daily bar is accepted as final only when it is explicitly marked final and its asserted
+  `available_at` is not earlier than the versioned 15:00 Asia/Shanghai session close. This is a
+  project lower-bound convention, not a provider finality SLA.
 - The 14:55 reference price is the latest completed raw 1-minute close explicitly available no
   later than 14:55, not an asserted exchange exact snapshot.
-- Eligibility liquidity is the median amount of exactly 20 prior finalized sessions available by
-  the Decision Time. This evidence is materialized separately from predictive Features.
-- Candidate-population buyability is `UNKNOWN` unless complete evidence is declared. Known
-  suspension or a reference price at/above the direct historical limit-up price is
-  `NOT_BUYABLE`. `BUYABLE` is not fillability.
+- Eligibility liquidity is the median native `amount` of exactly 20 prior finalized sessions
+  available by the Decision Time. The measure identity retains Xuntou native units because the
+  reviewed official pages do not establish a formal currency/scale contract. This evidence is
+  materialized separately from predictive Features.
+- Candidate-population buyability is `NOT_BUYABLE` only for confirmed suspension. Historical
+  minute prices and limit levels do not prove a sealed limit, ask liquidity or queue state, so all
+  other P0 cases remain `UNKNOWN`; P0 never emits `BUYABLE`.
 - Next-session OHLC uses only `TradingCalendarArtifact.resolve_next_session_date()`.
 
 ## Unverified and unavailable evidence
@@ -122,6 +129,7 @@ XUNTOU_HISTORICAL_PIT_UNVERIFIED
 XUNTOU_1M_BAR_LABEL_SEMANTICS_UNVERIFIED
 XUNTOU_EXPORT_AVAILABILITY_ASSERTION_UNVERIFIED
 XUNTOU_LIMIT_REGIME_IDENTITY_UNVERIFIED
+XUNTOU_DECISION_BUYABILITY_UNVERIFIED
 XUNTOU_RUNTIME_EXTRACTION_NOT_EXECUTED
 ```
 

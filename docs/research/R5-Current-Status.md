@@ -8,6 +8,8 @@
 > **Data-source roles:** `docs/research/R5-Data-Source-Role-Matrix.md`
 > **Candidate research program:** `docs/research/R5-Candidate-Model-Research-Program.md`
 > **Entry / Lifecycle / Exit research program:** `docs/research/Entry-Position-Lifecycle-Exit-Research-Program.md`
+> **Xuntou P0 official evidence:** `docs/research/R5-Xuntou-P0-Official-Documentation-Evidence.md`
+> **Xuntou P0 mapping / adapter status:** `docs/specs/Xuntou-P0-Native-Field-Mapping.md` / `docs/research/R5-Xuntou-P0-Adapter-Status.md`
 
 ---
 
@@ -413,8 +415,10 @@ Generic Provider Export Adapter                               IMPLEMENTED
 
 Xuntou selected as primary provider                           DECIDED
 Eastmoney / Tencent auxiliary role                            DECIDED
-Xuntou P0 native field mapping specification                  COMPLETE; RUNTIME SEMANTICS PARTIAL
-Xuntou normalized native/export adapter                       IMPLEMENTED
+Xuntou P0 official-documentation evidence review              COMPLETE
+Xuntou P0 native field mapping specification v2               COMPLETE; RUNTIME SEMANTICS PARTIAL
+Xuntou normalized native/export adapter v2                    IMPLEMENTED
+Xuntou historical Decision-Time buyability                    UNKNOWN EXCEPT CONFIRMED SUSPENSION
 XtQuant runtime extraction                                    NOT IMPLEMENTED / NOT EXECUTED
 Real Xuntou provider / export data run                         NOT AVAILABLE
 Provider-backed multi-date Candidate panels                    NOT YET IMPLEMENTED

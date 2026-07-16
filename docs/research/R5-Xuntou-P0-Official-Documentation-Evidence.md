@@ -1,7 +1,7 @@
 # R5 Xuntou P0 Official Documentation Evidence
 
-Status: official-documentation evidence note for WP-1 / WP-2  
-Research date: 2026-07-16  
+Status: official-documentation evidence note for WP-1 / WP-2
+Research date: 2026-07-16
 Source policy: Xuntou / ThinkTrader first-party documentation only
 
 ## 1. Purpose and evidence rules
