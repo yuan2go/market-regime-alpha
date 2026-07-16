@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 from hashlib import sha256
 import json
@@ -53,16 +53,16 @@ from market_regime_alpha.universe.eligibility_policy import (
 )
 
 
-XUNTOU_P0_NATIVE_BUNDLE_SCHEMA_VERSION = "xuntou-p0-native-bundle-v2"
-XUNTOU_P0_MAPPING_CONTRACT_VERSION = "xuntou-p0-native-field-mapping-v2"
-XUNTOU_P0_PROVIDER_ID = ProviderId("xuntou-thinktrader-xtquant-p0-v2")
+XUNTOU_P0_NATIVE_BUNDLE_SCHEMA_VERSION = "xuntou-p0-native-bundle-v3"
+XUNTOU_P0_MAPPING_CONTRACT_VERSION = "xuntou-p0-native-field-mapping-v3"
+XUNTOU_P0_PROVIDER_ID = ProviderId("xuntou-thinktrader-xtquant-p0-v3")
 XUNTOU_P0_PRODUCT = "ThinkTrader/XtQuant normalized native export"
 
 XUNTOU_SYMBOL_NORMALIZATION_VERSION = "XUNTOU_SYMBOL_NORMALIZATION_V1"
 XUNTOU_CALENDAR_CLOSE_CONVENTION = (
     "A_SHARE_STANDARD_SESSION_CLOSE_1500_ASIA_SHANGHAI_V1"
 )
-XUNTOU_DECISION_SNAPSHOT_CONVENTION = "XUNTOU_1455_REFERENCE_PRICE_CONVENTION_V1"
+XUNTOU_DECISION_SNAPSHOT_CONVENTION = "XUNTOU_1455_REFERENCE_PRICE_CONVENTION_V2"
 XUNTOU_AVAILABILITY_CONVENTION = "XUNTOU_EXPLICIT_EXPORT_AVAILABILITY_V1"
 XUNTOU_BAR_FINALITY_CONVENTION = "XUNTOU_EXPLICIT_EXPORT_FINALITY_V2"
 XUNTOU_PRICE_ADJUSTMENT_BASIS = "XUNTOU_DIVIDEND_TYPE_NONE_RAW_V1"
@@ -110,6 +110,7 @@ _BASE_LIMITATIONS = (
     "XUNTOU_EXPORT_AVAILABILITY_ASSERTION_UNVERIFIED",
     "XUNTOU_LIMIT_REGIME_IDENTITY_UNVERIFIED",
     "XUNTOU_DECISION_BUYABILITY_UNVERIFIED",
+    "XUNTOU_NATIVE_TIME_EPOCH_SEMANTICS_UNVERIFIED",
     "XUNTOU_RUNTIME_EXTRACTION_NOT_EXECUTED",
 )
 
@@ -328,6 +329,7 @@ def adapt_xuntou_p0_native_mapping(
     decision_snapshots: list[RehearsalDecisionSnapshot] = []
     for decision_time in decision_times:
         members = positive_members_by_date.get(decision_time.astimezone(_ZONE).date(), frozenset())
+        snapshot_count_before = len(decision_snapshots)
         for symbol in sorted(members):
             selected = _select_decision_bar(
                 minute_native,
@@ -344,6 +346,14 @@ def adapt_xuntou_p0_native_mapping(
                     reference_price=selected.close,
                     available_at=AvailabilityTime(selected.available_at),
                 )
+            )
+        if members and len(decision_snapshots) == snapshot_count_before:
+            _raise(
+                XuntouProviderAdapterErrorCode.DECISION_SNAPSHOT_AMBIGUOUS,
+                (
+                    "no completed one-minute close inside the versioned 14:55 window was "
+                    f"available for {decision_time.isoformat()}"
+                ),
             )
     if not decision_snapshots:
         _raise(
@@ -386,7 +396,9 @@ def adapt_xuntou_p0_native_mapping(
         provider_references=(provider_reference,),
         source_artifacts=(source_artifact,),
         retrieval_convention=XUNTOU_RETRIEVAL_CONVENTION,
-        market_availability_convention=XUNTOU_AVAILABILITY_CONVENTION,
+        market_availability_convention=(
+            f"{XUNTOU_AVAILABILITY_CONVENTION};{XUNTOU_DECISION_SNAPSHOT_CONVENTION}"
+        ),
         raw_eligibility_evidence_convention=(
             f"{XUNTOU_RAW_ELIGIBILITY_CONVENTION};{XUNTOU_BUYABILITY_CONVENTION};"
             f"{XUNTOU_LIQUIDITY_MEASURE_ID};{XUNTOU_ST_INTERVAL_CONVENTION}"
@@ -746,11 +758,13 @@ def _select_decision_bar(
     minute_bars: tuple[_NativeBar, ...], *, symbol: str, decision_time: datetime
 ) -> _NativeBar | None:
     local_date = decision_time.astimezone(_ZONE).date()
+    earliest_observation = decision_time - timedelta(minutes=1)
     eligible = tuple(
         bar
         for bar in minute_bars
         if bar.symbol == symbol
         and bar.session_date == local_date
+        and bar.observed_at >= earliest_observation
         and bar.observed_at <= decision_time
         and bar.available_at <= decision_time
         and bar.finalized
@@ -888,11 +902,20 @@ def _build_next_session_bars(
     for snapshot in decision_snapshots:
         try:
             next_date = trading_calendar.resolve_next_session_date(snapshot.decision_time)
-        except LookupError:
-            continue
+        except LookupError as exc:
+            raise XuntouProviderAdapterError(
+                XuntouProviderAdapterErrorCode.NEXT_SESSION_EVIDENCE_MISSING,
+                f"calendar has no next session after {snapshot.decision_time.isoformat()}",
+            ) from exc
         native = daily_by_key.get((next_date, snapshot.symbol))
         if native is None or not native.finalized:
-            continue
+            _raise(
+                XuntouProviderAdapterErrorCode.NEXT_SESSION_EVIDENCE_MISSING,
+                (
+                    f"finalized next-session bar is missing for {snapshot.symbol} "
+                    f"on {next_date.isoformat()}"
+                ),
+            )
         if native.available_at <= snapshot.decision_time.value:
             _raise(
                 XuntouProviderAdapterErrorCode.EVIDENCE_NOT_AVAILABLE_BY_DECISION_TIME,
@@ -969,16 +992,6 @@ def _parse_open_date(value: object) -> date | None:
 
 
 def _parse_native_date(value: object, label: str) -> date:
-    if isinstance(value, bool):
-        _raise(XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE, f"{label} is invalid")
-    if isinstance(value, int):
-        try:
-            return datetime.fromtimestamp(value / 1000.0, tz=timezone.utc).astimezone(_ZONE).date()
-        except (OverflowError, OSError, ValueError) as exc:
-            raise XuntouProviderAdapterError(
-                XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE,
-                f"{label} is not a valid millisecond timestamp",
-            ) from exc
     if isinstance(value, str):
         text = value.strip()
         for pattern in ("%Y%m%d", "%Y-%m-%d"):
@@ -988,7 +1001,10 @@ def _parse_native_date(value: object, label: str) -> date:
                 continue
     _raise(
         XuntouProviderAdapterErrorCode.INVALID_NATIVE_VALUE,
-        f"{label} must be YYYYMMDD, YYYY-MM-DD, or native millisecond time",
+        (
+            f"{label} must be YYYYMMDD or YYYY-MM-DD; the normalized export must not "
+            "delegate ambiguous native numeric-epoch interpretation to the adapter"
+        ),
     )
 
 
