@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 from market_regime_alpha.candidates.baselines import rank_candidates_by_feature
 from market_regime_alpha.candidates.composite_baseline import (
@@ -13,13 +14,23 @@ from market_regime_alpha.candidates.composite_baseline import (
     rank_candidates_by_transparent_composite,
 )
 from market_regime_alpha.candidates.dataset import CandidateResearchDataset
+from market_regime_alpha.candidates.directional_accuracy import (
+    R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC,
+    CandidateDirectionalPanelEvaluation,
+    DirectionalOutcomeCounts,
+    evaluate_candidate_directional_accuracy_panel,
+)
 from market_regime_alpha.candidates.evaluation import (
     CandidatePanelEvaluation,
+    CandidateRankingLike,
     evaluate_candidate_ranking_panel,
 )
 from market_regime_alpha.candidates.panel import (
     CandidateResearchPanel,
     assemble_candidate_research_panel,
+)
+from market_regime_alpha.candidates.rehearsal_targets import (
+    R5_NEXT_SESSION_RETURN_TARGET_ID,
 )
 from market_regime_alpha.core.identity import FeatureDefinitionId, ModelId, TargetId
 from market_regime_alpha.features.rehearsal_baselines import (
@@ -38,6 +49,44 @@ class NamedCandidatePanelEvaluation:
     name: str
     feature_ids: tuple[FeatureDefinitionId, ...]
     evaluation: CandidatePanelEvaluation
+    directional_accuracy: NamedDirectionalAccuracy
+
+
+class DirectionalAccuracyApplicability(str, Enum):
+    """Whether the fixed sign diagnostic is meaningful for one Target family."""
+
+    APPLICABLE = "APPLICABLE"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class NamedDirectionalAccuracy:
+    """Explicit applicable or non-applicable directional evaluation state."""
+
+    status: DirectionalAccuracyApplicability
+    spec_id: str | None
+    evaluation: CandidateDirectionalPanelEvaluation | None
+    reason: str | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, DirectionalAccuracyApplicability):
+            raise TypeError("status must be a DirectionalAccuracyApplicability")
+        if self.status is DirectionalAccuracyApplicability.APPLICABLE:
+            if self.spec_id is None or self.evaluation is None:
+                raise ValueError("applicable directional accuracy requires spec and evaluation")
+            if self.reason is not None:
+                raise ValueError("applicable directional accuracy must not carry a reason")
+            if self.spec_id != self.evaluation.spec_id:
+                raise ValueError("directional accuracy spec identity must match evaluation")
+            return
+        if self.spec_id is not None or self.evaluation is not None:
+            raise ValueError("non-applicable directional accuracy cannot carry evaluation")
+        if (
+            not isinstance(self.reason, str)
+            or not self.reason.strip()
+            or self.reason != self.reason.strip()
+        ):
+            raise ValueError("non-applicable directional accuracy requires a reason")
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +180,7 @@ def run_r5_target_baselines(
                 name=f"B0-{definition.feature_id.value}",
                 feature_ids=(definition.feature_id,),
                 evaluation=evaluate_candidate_ranking_panel(panel, b0_rankings, top_k=5),
+                directional_accuracy=_directional_accuracy(panel, b0_rankings),
             )
         )
 
@@ -152,6 +202,7 @@ def run_r5_target_baselines(
                 name=name,
                 feature_ids=tuple(component.feature_id for component in spec.components),
                 evaluation=evaluate_candidate_ranking_panel(panel, b1_rankings, top_k=5),
+                directional_accuracy=_directional_accuracy(panel, b1_rankings),
             )
         )
     return R5TargetBaselineRun(
@@ -180,6 +231,121 @@ def candidate_evaluation_record(
         "evaluated_prediction_coverage": evaluation.evaluated_prediction_coverage,
         "mean_slice_rank_ic": evaluation.mean_slice_rank_ic,
         "mean_slice_top_k_target": evaluation.mean_slice_top_k_target,
+        "directional_accuracy": _directional_accuracy_record(
+            item.directional_accuracy
+        ),
+    }
+
+
+def _directional_accuracy(
+    panel: CandidateResearchPanel,
+    rankings: tuple[CandidateRankingLike, ...],
+) -> NamedDirectionalAccuracy:
+    if panel.target_id != R5_NEXT_SESSION_RETURN_TARGET_ID:
+        return NamedDirectionalAccuracy(
+            status=DirectionalAccuracyApplicability.NOT_APPLICABLE,
+            spec_id=None,
+            evaluation=None,
+            reason="TARGET_SEMANTICS_NOT_POSITIVE_CLOSE_RETURN",
+        )
+    evaluation = evaluate_candidate_directional_accuracy_panel(
+        panel,
+        rankings,
+        spec=R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC,
+    )
+    return NamedDirectionalAccuracy(
+        status=DirectionalAccuracyApplicability.APPLICABLE,
+        spec_id=R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC.spec_id,
+        evaluation=evaluation,
+        reason=None,
+    )
+
+
+def _directional_accuracy_record(
+    value: NamedDirectionalAccuracy,
+) -> dict[str, object]:
+    return {
+        "status": value.status.value,
+        "spec_id": value.spec_id,
+        "reason": value.reason,
+        "metrics": (
+            _directional_panel_record(value.evaluation)
+            if value.evaluation is not None
+            else None
+        ),
+    }
+
+
+def _directional_panel_record(
+    evaluation: CandidateDirectionalPanelEvaluation,
+) -> dict[str, object]:
+    return {
+        "spec_id": evaluation.spec_id,
+        "panel_dataset_id": str(evaluation.panel_dataset_id),
+        "model_id": str(evaluation.model_id),
+        "target_id": str(evaluation.target_id),
+        "slice_count": evaluation.slice_count,
+        "candidate_population_size": evaluation.candidate_population_size,
+        "ranked_population_size": evaluation.ranked_population_size,
+        "micro_candidate_population": _outcome_counts_record(
+            evaluation.micro_candidate_population
+        ),
+        "micro_ranked_population": _outcome_counts_record(
+            evaluation.micro_ranked_population
+        ),
+        "micro_top_k": _outcome_counts_record(evaluation.micro_top_k),
+        "macro_candidate_positive_rate": evaluation.macro_candidate_positive_rate,
+        "macro_ranked_positive_rate": evaluation.macro_ranked_positive_rate,
+        "macro_top_k_positive_rate": evaluation.macro_top_k_positive_rate,
+        "macro_top_k_negative_rate": evaluation.macro_top_k_negative_rate,
+        "macro_top_k_positive_rate_lift": (
+            evaluation.macro_top_k_positive_rate_lift
+        ),
+        "macro_top_k_negative_rate_reduction": (
+            evaluation.macro_top_k_negative_rate_reduction
+        ),
+        "comparable_slice_count": evaluation.comparable_slice_count,
+        "improved_slice_count": evaluation.improved_slice_count,
+        "improved_slice_fraction": evaluation.improved_slice_fraction,
+        "slices": [
+            {
+                "dataset_id": str(item.dataset_id),
+                "experiment_id": str(item.experiment_id),
+                "decision_time": item.decision_time.isoformat(),
+                "candidate_population_size": item.candidate_population_size,
+                "ranked_population_size": item.ranked_population_size,
+                "target_available_population_size": (
+                    item.target_available_population_size
+                ),
+                "target_coverage": item.target_coverage,
+                "top_k_requested": item.top_k_requested,
+                "top_k_observed_coverage": item.top_k_observed_coverage,
+                "candidate_population": _outcome_counts_record(
+                    item.candidate_population
+                ),
+                "ranked_population": _outcome_counts_record(
+                    item.ranked_population
+                ),
+                "top_k": _outcome_counts_record(item.top_k),
+                "top_k_positive_rate_lift": item.top_k_positive_rate_lift,
+                "top_k_negative_rate_reduction": (
+                    item.top_k_negative_rate_reduction
+                ),
+            }
+            for item in evaluation.slice_evaluations
+        ],
+    }
+
+
+def _outcome_counts_record(value: DirectionalOutcomeCounts) -> dict[str, object]:
+    return {
+        "observed_count": value.observed_count,
+        "positive_count": value.positive_count,
+        "negative_count": value.negative_count,
+        "neutral_count": value.neutral_count,
+        "positive_rate": value.positive_rate,
+        "negative_rate": value.negative_rate,
+        "neutral_rate": value.neutral_rate,
     }
 
 
