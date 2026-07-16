@@ -11,6 +11,7 @@ from hashlib import sha256
 import json
 import math
 from statistics import mean, median, pstdev
+from typing import Sequence
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.candidates.contracts import CandidatePopulation
@@ -100,6 +101,41 @@ def r5_baseline_feature_definitions() -> tuple[FeatureDefinition, ...]:
     )
 
 
+def calculate_r5_baseline_feature_values(
+    *,
+    prior_closes: Sequence[float],
+    prior_amounts: Sequence[float],
+    reference_price: float | None,
+) -> dict[FeatureDefinitionId, float | None]:
+    """Calculate the frozen R5 baseline formulas without provider semantics."""
+
+    momentum = (
+        reference_price / prior_closes[-5] - 1.0
+        if reference_price is not None and len(prior_closes) >= 5
+        else None
+    )
+    volatility: float | None = None
+    if len(prior_closes) >= 21:
+        recent = prior_closes[-21:]
+        returns = [
+            recent[index] / recent[index - 1] - 1.0
+            for index in range(1, len(recent))
+        ]
+        volatility = pstdev(returns)
+    liquidity = math.log1p(median(prior_amounts[-20:])) if len(prior_amounts) >= 20 else None
+    price_vs_ma20 = (
+        reference_price / mean(prior_closes[-20:]) - 1.0
+        if reference_price is not None and len(prior_closes) >= 20
+        else None
+    )
+    return {
+        MOMENTUM_5S_ID: momentum,
+        VOLATILITY_20S_ID: volatility,
+        LIQUIDITY_20S_ID: liquidity,
+        PRICE_VS_MA20_ID: price_vs_ma20,
+    }
+
+
 def materialize_r5_baseline_features(
     *,
     population: CandidatePopulation,
@@ -144,41 +180,21 @@ def materialize_r5_baseline_features(
 
     for symbol in population.symbols:
         bars = bars_by_symbol.get(symbol, [])
-        snapshot = snapshot_by_symbol.get(symbol)
+        decision_snapshot = snapshot_by_symbol.get(symbol)
         closes = [float(bar.close) for bar in bars]
         amounts = [float(bar.amount) for bar in bars]
 
-        observations_by_feature[MOMENTUM_5S_ID].append(
-            _feature_observation(
-                symbol=symbol,
-                value=(snapshot.reference_price / closes[-5] - 1.0)
-                if snapshot is not None and len(closes) >= 5
-                else None,
+        values = calculate_r5_baseline_feature_values(
+            prior_closes=closes,
+            prior_amounts=amounts,
+            reference_price=(
+                decision_snapshot.reference_price if decision_snapshot is not None else None
+            ),
+        )
+        for feature_id, value in values.items():
+            observations_by_feature[feature_id].append(
+                _feature_observation(symbol=symbol, value=value)
             )
-        )
-
-        volatility: float | None = None
-        if len(closes) >= 21:
-            recent = closes[-21:]
-            returns = [recent[index] / recent[index - 1] - 1.0 for index in range(1, len(recent))]
-            volatility = pstdev(returns)
-        observations_by_feature[VOLATILITY_20S_ID].append(
-            _feature_observation(symbol=symbol, value=volatility)
-        )
-
-        liquidity = math.log1p(median(amounts[-20:])) if len(amounts) >= 20 else None
-        observations_by_feature[LIQUIDITY_20S_ID].append(
-            _feature_observation(symbol=symbol, value=liquidity)
-        )
-
-        price_vs_ma20 = (
-            snapshot.reference_price / mean(closes[-20:]) - 1.0
-            if snapshot is not None and len(closes) >= 20
-            else None
-        )
-        observations_by_feature[PRICE_VS_MA20_ID].append(
-            _feature_observation(symbol=symbol, value=price_vs_ma20)
-        )
 
     return tuple(
         FeatureMaterialization(

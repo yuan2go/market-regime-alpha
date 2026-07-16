@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import math
+from statistics import mean, median
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,6 +26,7 @@ from market_regime_alpha.features.rehearsal_baselines import (
     MOMENTUM_5S_ID,
     PRICE_VS_MA20_ID,
     VOLATILITY_20S_ID,
+    calculate_r5_baseline_feature_values,
     materialize_r5_baseline_features,
     r5_baseline_feature_definitions,
 )
@@ -63,6 +66,22 @@ def _population() -> CandidatePopulation:
         symbols=("000001.SZ", "000002.SZ", "000003.SZ"),
         source_dataset_ids=(SOURCE_DATASET_ID,),
     )
+
+
+def test_pure_r5_baseline_calculator_matches_existing_formulas() -> None:
+    closes = tuple(float(value) for value in range(80, 101))
+    amounts = tuple(1_000_000.0 + index for index in range(21))
+
+    values = calculate_r5_baseline_feature_values(
+        prior_closes=closes,
+        prior_amounts=amounts,
+        reference_price=102.0,
+    )
+
+    assert values[MOMENTUM_5S_ID] == pytest.approx(102.0 / closes[-5] - 1.0)
+    assert values[LIQUIDITY_20S_ID] == pytest.approx(math.log1p(median(amounts[-20:])))
+    assert values[PRICE_VS_MA20_ID] == pytest.approx(102.0 / mean(closes[-20:]) - 1.0)
+    assert values[VOLATILITY_20S_ID] is not None
 
 
 def test_rehearsal_feature_materializers_preserve_symbol_missingness() -> None:
