@@ -26,6 +26,16 @@ from .dataset import (
     TargetObservationStatus,
     build_candidate_research_dataset,
 )
+from .directional_accuracy import (
+    R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC,
+    R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC_ID,
+    CandidateDirectionalAccuracySpec,
+    CandidateDirectionalPanelEvaluation,
+    CandidateDirectionalSliceEvaluation,
+    DirectionalOutcomeCounts,
+    evaluate_candidate_directional_accuracy_panel,
+    evaluate_candidate_directional_accuracy_slice,
+)
 from .evaluation import (
     CandidatePanelEvaluation,
     CandidateRankingLike,
@@ -51,6 +61,9 @@ from .target_bundle import TargetMaterializationBundle, bundle_target_materializ
 
 __all__ = [
     "CandidateDatasetRow",
+    "CandidateDirectionalAccuracySpec",
+    "CandidateDirectionalPanelEvaluation",
+    "CandidateDirectionalSliceEvaluation",
     "CandidateExpiryTime",
     "CandidateFeatureValue",
     "CandidatePanelEvaluation",
@@ -67,8 +80,11 @@ __all__ = [
     "CompositeFeatureComponent",
     "CompositeFeatureDirection",
     "CompositeFeatureRole",
+    "DirectionalOutcomeCounts",
     "R5_NEXT_SESSION_MAE_TARGET_ID",
     "R5_NEXT_SESSION_MFE_TARGET_ID",
+    "R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC",
+    "R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_SPEC_ID",
     "R5_NEXT_SESSION_RETURN_TARGET_ID",
     "TargetContract",
     "TargetMaterialization",
@@ -83,6 +99,8 @@ __all__ = [
     "bundle_target_materializations",
     "evaluate_candidate_ranking_panel",
     "evaluate_candidate_ranking_slice",
+    "evaluate_candidate_directional_accuracy_panel",
+    "evaluate_candidate_directional_accuracy_slice",
     "materialize_r5_next_session_opportunity_targets",
     "materialize_r5_next_session_return_target",
     "materialize_r5_opportunity_targets_from_calendar",
