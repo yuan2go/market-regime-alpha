@@ -111,15 +111,15 @@ class ProviderRehearsalMarketArtifact:
             tuple((item.as_of.value, item.symbol) for item in self.raw_eligibility_observations),
         )
         zone = ZoneInfo(self.trading_calendar.timezone_name)
-        for bar in self.daily_bars:
-            if not self.trading_calendar.contains(bar.session_date):
+        for daily_bar in self.daily_bars:
+            if not self.trading_calendar.contains(daily_bar.session_date):
                 raise ValueError("daily bar session date is absent from identified Trading Calendar")
         for snapshot in self.decision_snapshots:
             local_date = snapshot.decision_time.value.astimezone(zone).date()
             if not self.trading_calendar.contains(local_date):
                 raise ValueError("Decision-Time snapshot date is absent from identified Trading Calendar")
-        for bar in self.next_session_bars:
-            if not self.trading_calendar.contains(bar.session_date):
+        for next_session_bar in self.next_session_bars:
+            if not self.trading_calendar.contains(next_session_bar.session_date):
                 raise ValueError("next-session bar date is absent from identified Trading Calendar")
         for observation in self.raw_eligibility_observations:
             local_date = observation.as_of.value.astimezone(zone).date()

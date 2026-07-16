@@ -91,9 +91,9 @@ def materialize_r5_next_session_return_target(
     observations: list[TargetObservation] = []
     known_at = AvailabilityTime(materialized_at.value)
     for symbol in population.symbols:
-        snapshot = snapshot_by_symbol.get(symbol)
+        resolved_snapshot = snapshot_by_symbol.get(symbol)
         future_close = close_by_symbol.get(symbol)
-        if snapshot is None:
+        if resolved_snapshot is None:
             observations.append(
                 TargetObservation(
                     symbol=symbol,
@@ -117,7 +117,7 @@ def materialize_r5_next_session_return_target(
             TargetObservation(
                 symbol=symbol,
                 status=TargetObservationStatus.AVAILABLE,
-                value=float(future_close.close / snapshot.reference_price - 1.0),
+                value=float(future_close.close / resolved_snapshot.reference_price - 1.0),
                 observed_at=future_close.available_at,
             )
         )

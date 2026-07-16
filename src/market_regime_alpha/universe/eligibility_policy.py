@@ -98,18 +98,24 @@ class RawTradingEligibilityObservation:
             raise TypeError("available_at must be an AvailabilityTime")
         if not isinstance(self.symbol, str) or not self.symbol.strip() or self.symbol != self.symbol.strip():
             raise ValueError("symbol must be a non-empty trimmed string")
-        for label, value in (("is_suspended", self.is_suspended), ("is_st", self.is_st)):
-            if value is not None and not isinstance(value, bool):
+        for label, boolean_evidence in (
+            ("is_suspended", self.is_suspended),
+            ("is_st", self.is_st),
+        ):
+            if boolean_evidence is not None and not isinstance(boolean_evidence, bool):
                 raise TypeError(f"{label} must be boolean or None")
-        for label, value in (
+        for label, numeric_evidence in (
             ("prev_close", self.prev_close),
             ("limit_up_price", self.limit_up_price),
             ("limit_down_price", self.limit_down_price),
             ("liquidity_value", self.liquidity_value),
         ):
-            if isinstance(value, bool):
+            if isinstance(numeric_evidence, bool):
                 raise TypeError(f"{label} must not be boolean")
-            if value is not None and (not math.isfinite(float(value)) or float(value) <= 0.0):
+            if numeric_evidence is not None and (
+                not math.isfinite(float(numeric_evidence))
+                or float(numeric_evidence) <= 0.0
+            ):
                 raise ValueError(f"{label} must be positive and finite when present")
         if self.limit_up_price is not None and self.limit_down_price is not None:
             if float(self.limit_down_price) >= float(self.limit_up_price):
@@ -151,16 +157,23 @@ class TradingEligibilityPolicy:
     require_decision_buyability: bool = False
 
     def __post_init__(self) -> None:
-        for label, value in (("policy_name", self.policy_name), ("version", self.version)):
-            if not isinstance(value, str) or not value.strip() or value != value.strip():
+        for label, text_value in (
+            ("policy_name", self.policy_name),
+            ("version", self.version),
+        ):
+            if (
+                not isinstance(text_value, str)
+                or not text_value.strip()
+                or text_value != text_value.strip()
+            ):
                 raise ValueError(f"{label} must be a non-empty trimmed string")
-        for label, value in (
+        for label, boolean_value in (
             ("exclude_st", self.exclude_st),
             ("require_prev_close", self.require_prev_close),
             ("require_limit_metadata", self.require_limit_metadata),
             ("require_decision_buyability", self.require_decision_buyability),
         ):
-            if not isinstance(value, bool):
+            if not isinstance(boolean_value, bool):
                 raise TypeError(f"{label} must be boolean")
         if self.minimum_listing_age_calendar_days is not None:
             if isinstance(self.minimum_listing_age_calendar_days, bool) or not isinstance(self.minimum_listing_age_calendar_days, int):
@@ -354,6 +367,8 @@ def materialize_historical_trading_eligibility(
         as_of = AsOfTime(decision_time.value)
         for symbol in universe_snapshot.member_symbols:
             observation = observation_by_key.get((decision_time.value, symbol))
+            status: TradingEligibilityStatus
+            reasons: tuple[str, ...]
             if observation is None:
                 status = TradingEligibilityStatus.UNKNOWN
                 reasons = (TradingEligibilityReason.RAW_OBSERVATION_MISSING.value,)

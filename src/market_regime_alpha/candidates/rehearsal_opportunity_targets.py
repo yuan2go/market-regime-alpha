@@ -118,9 +118,9 @@ def materialize_r5_next_session_opportunity_targets(
     known_at = AvailabilityTime(materialized_at.value)
 
     for symbol in population.symbols:
-        snapshot = snapshot_by_symbol.get(symbol)
+        resolved_snapshot = snapshot_by_symbol.get(symbol)
         future_bar = bar_by_symbol.get(symbol)
-        if snapshot is None:
+        if resolved_snapshot is None:
             for observations in observations_by_target.values():
                 observations.append(
                     TargetObservation(
@@ -143,7 +143,7 @@ def materialize_r5_next_session_opportunity_targets(
                 )
             continue
 
-        reference_price = float(snapshot.reference_price)
+        reference_price = float(resolved_snapshot.reference_price)
         values = {
             R5_NEXT_SESSION_RETURN_TARGET_ID: float(future_bar.close / reference_price - 1.0),
             R5_NEXT_SESSION_MFE_TARGET_ID: float(max(0.0, future_bar.high / reference_price - 1.0)),
