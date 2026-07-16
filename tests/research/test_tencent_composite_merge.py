@@ -84,6 +84,17 @@ def test_tencent_rows_outside_current_session_are_ignored() -> None:
     assert result.conflicts == ()
 
 
+def test_local_and_baostock_cannot_substitute_for_missing_current_tencent_rows() -> None:
+    result = merge_composite_bars(
+        tencent=(),
+        local=(_bar("2026-07-16 09:35", 10.1, CompositeSourceKind.LOCAL),),
+        baostock=(_bar("2026-07-16 09:40", 10.2, CompositeSourceKind.BAOSTOCK),),
+        current_session=date(2026, 7, 16),
+    )
+
+    assert result.bars == ()
+
+
 def test_identical_lower_priority_row_does_not_create_conflict() -> None:
     result = merge_composite_bars(
         tencent=(),

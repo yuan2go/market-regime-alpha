@@ -115,8 +115,14 @@ def merge_composite_bars(
             )
         selected[key] = winning
 
+    eligible_selected = tuple(
+        bar
+        for bar in selected.values()
+        if bar.timestamp.date() != current_session
+        or bar.source is CompositeSourceKind.TENCENT
+    )
     return CompositeMergeResult(
-        bars=tuple(sorted(selected.values(), key=lambda bar: (bar.timestamp, bar.symbol))),
+        bars=tuple(sorted(eligible_selected, key=lambda bar: (bar.timestamp, bar.symbol))),
         conflicts=tuple(
             sorted(
                 conflicts,
