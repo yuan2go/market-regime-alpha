@@ -87,6 +87,37 @@ def write_tencent_composite_run(
     return final
 
 
+def write_tencent_composite_quality_failure(
+    *,
+    root: str | Path,
+    run_id: str,
+    manifest: Mapping[str, Any],
+    quality: CompositeQualityReport,
+) -> Path:
+    """Persist a non-overwriting failed quality decision for diagnosis."""
+
+    if manifest.get("data_eligibility") != "EXPLORATORY":
+        raise ValueError("Tencent composite failure manifest must remain EXPLORATORY")
+    root_path = Path(root)
+    final = root_path / run_id
+    stage = root_path / f".{run_id}.staging"
+    if final.exists() or stage.exists():
+        raise FileExistsError(f"failed run artifact already exists: {final}")
+    stage.mkdir(parents=True)
+    try:
+        _write_json(stage / "manifest.json", manifest)
+        _write_json(stage / "quality.json", quality)
+        (stage / "FAILURE.txt").write_text(
+            "Tencent composite quality gate failed; no Candidate or dividend-T run was executed.\n",
+            encoding="utf-8",
+        )
+        stage.rename(final)
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return final
+
+
 def render_candidate_report(
     *,
     manifest: Mapping[str, Any],

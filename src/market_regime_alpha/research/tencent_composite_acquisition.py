@@ -17,6 +17,7 @@ from market_regime_alpha.research.tencent_composite_contracts import (
     CompositeSourceAttempt,
     CompositeSourceKind,
     CompositeSourcePartition,
+    CompositeMergeResult,
 )
 from market_regime_alpha.research.tencent_composite_merge import (
     merge_composite_bars,
@@ -239,6 +240,40 @@ def merge_acquisition(
         baostock=by_source[CompositeSourceKind.BAOSTOCK],
         current_session=session,
     )
+
+
+def frames_for_accepted_symbols(
+    merged: CompositeMergeResult,
+    accepted_symbols: tuple[str, ...],
+) -> dict[str, Any]:
+    """Build read-only dividend-T frames from already-selected composite rows."""
+
+    import pandas as pd
+
+    frames: dict[str, Any] = {}
+    for symbol in accepted_symbols:
+        symbol_bars = tuple(bar for bar in merged.bars if bar.symbol == symbol)
+        if not symbol_bars:
+            raise ValueError(f"accepted symbol has no merged bars: {symbol}")
+        frame = pd.DataFrame(
+            [
+                {
+                    "symbol": bar.symbol,
+                    "timestamp": bar.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                    "amount": bar.amount,
+                    "source_freq": "5min",
+                }
+                for bar in symbol_bars
+            ]
+        )
+        frame.attrs["data_source"] = "tencent_current+local_history+baostock_gap_fill"
+        frames[symbol] = frame
+    return frames
 
 
 def _partition(
