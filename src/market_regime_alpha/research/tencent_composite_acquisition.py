@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from functools import partial
 from hashlib import sha256
 import json
@@ -165,7 +165,13 @@ class TencentCompositeAcquirer:
             try:
                 frame = fetch()
                 raw_row_count = len(frame)
-                normalized = normalize_composite_frame(frame, source=source)
+                normalized = tuple(
+                    bar
+                    for bar in normalize_composite_frame(frame, source=source)
+                    if _is_regular_session_bar(bar)
+                )
+                if not normalized:
+                    raise ValueError("source returned no regular-session composite rows")
             except Exception as exc:  # noqa: BLE001 - retained as source-attempt evidence.
                 attempts.append(
                     CompositeSourceAttempt(
@@ -353,6 +359,14 @@ def _bars_hash(bars: tuple[CompositeBar, ...]) -> str:
         for bar in sorted(bars, key=lambda item: (item.timestamp, item.symbol))
     ]
     return _canonical_hash(records)
+
+
+def _is_regular_session_bar(bar: CompositeBar) -> bool:
+    local_time = bar.timestamp.timetz().replace(tzinfo=None)
+    return (
+        time(9, 30) <= local_time <= time(11, 30)
+        or time(13, 0) <= local_time <= time(15, 0)
+    )
 
 
 def _canonical_hash(value: Any) -> str:

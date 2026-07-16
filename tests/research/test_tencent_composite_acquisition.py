@@ -149,3 +149,29 @@ def test_partition_hash_uses_canonical_normalized_row_order() -> None:
         if item.source is CompositeSourceKind.LOCAL
     )
     assert forward_hash == reverse_hash
+
+
+def test_acquirer_excludes_tencent_after_hours_rows_from_composite_bars() -> None:
+    symbol = "000001.SZ"
+    regular = _frame(symbol, 10.3, "2026-07-16 15:00:00")
+    after_hours = _frame(symbol, 10.4, "2026-07-16 15:05:00")
+    acquirer = TencentCompositeAcquirer(
+        tencent=FakeProvider(pd.concat([regular, after_hours], ignore_index=True)),
+        baostock=FakeProvider(_frame(symbol, 10.0, "2026-07-14 14:50:00")),
+        local_reader=lambda _symbol: _frame(symbol, 10.1, "2026-07-15 14:50:00"),
+        quote_fetcher=_quote_fetcher,
+    )
+
+    result = acquirer.acquire(
+        symbols=(symbol,),
+        start_date="2026-01-01",
+        end_date="2026-07-16",
+        retrieved_at=RETRIEVED_AT,
+    )
+
+    tencent_times = [
+        bar.timestamp.strftime("%H:%M")
+        for bar in result.bars
+        if bar.source is CompositeSourceKind.TENCENT
+    ]
+    assert tencent_times == ["15:00"]
