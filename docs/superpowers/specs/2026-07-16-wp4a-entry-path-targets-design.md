@@ -22,6 +22,17 @@ improved.
 
 ## 2. Scope
 
+### V1 authority boundary
+
+WP-4A V1 is specifically the `NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1` path. Its
+Decision Reference Price is the 14:55 Asia/Shanghai Snapshot, but its first path observation is the
+next explicit exchange session's open. Daily V1 does not observe or claim coverage of the path from
+14:55 through the Decision Date close.
+
+Future OHLC and suspension observations are Data-domain rehearsal evidence. Entry owns only the
+Target, Outcome, Observation, and Materialization semantics. This ownership boundary is part of the
+approved scope, not an implementation convenience.
+
 ### In scope
 
 - Entry Target, Outcome, Observation, and Materialization contracts;

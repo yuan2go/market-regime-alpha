@@ -11,6 +11,7 @@
 > **Xuntou P0 official evidence:** `docs/research/R5-Xuntou-P0-Official-Documentation-Evidence.md`
 > **Xuntou P0 mapping / adapter status:** `docs/specs/Xuntou-P0-Native-Field-Mapping.md` / `docs/research/R5-Xuntou-P0-Adapter-Status.md`
 > **WP-3 routing / run status:** `docs/research/R5-WP3-Provider-Routing-Status.md`
+> **WP-4A Entry Target contract:** `docs/specs/Entry-Path-Target-V1.md`
 
 ---
 
@@ -313,7 +314,7 @@ Current status:
 ```text
 CORE IMPLEMENTED
 WP-0 FOCUSED VERIFICATION PASSED
-LATEST FULL VERIFICATION PENDING
+LATEST FULL-REPOSITORY VERIFICATION PASSED — 2026-07-16
 ```
 
 B1 currently supports the intended transparent design:
@@ -340,7 +341,9 @@ B1 is included in the scoped mypy configuration
 B1 target-blindness is covered by regression testing
 ```
 
-B1 scoring semantics were not changed while closing this verification work. Latest full-repository verification remains pending for the reasons recorded in Section 10.
+B1 scoring semantics were not changed while closing this verification work. The repository quality
+repairs completed before WP-4A removed the previously recorded collection, Ruff, and mypy blockers;
+the latest full-repository verification is recorded in Section 10.
 
 ### WP-3 Candidate directional diagnostic
 
@@ -415,11 +418,15 @@ Current status:
 ```text
 Entry / Lifecycle / Exit research decomposition          DOCUMENTED
 Entry competing-event research target family            SPECIFIED IN RESEARCH DOC
-Entry path Target code contract                          NOT YET IMPLEMENTED
+WP-4A Entry path Target code contract                    IMPLEMENTED
+WP-4A future daily path evidence contract                IMPLEMENTED IN DATA DOMAIN
+WP-4A Calendar multi-session resolver                    IMPLEMENTED
+WP-4A pure daily-OHLC materializer                       IMPLEMENTED / VERIFIED
+Entry Gate / Entry Proposal / Entry model                NOT IMPLEMENTED
 Canonical Position State code contract                   NOT YET IMPLEMENTED
 Exit continuation target family                          SPECIFIED IN RESEARCH DOC
 Exit continuation Target code contract                   NOT YET IMPLEMENTED
-Entry model validation                                   NOT AVAILABLE
+Entry timing accuracy                                    NOT VALIDATED
 Exit model validation                                    NOT AVAILABLE
 ```
 
@@ -450,6 +457,18 @@ Profit Giveback
 
 These are not current production claims.
 
+WP-4A uses the versioned start convention:
+
+```text
+NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1
+```
+
+The reference is the 14:55 Asia/Shanghai Decision Snapshot. Daily V1 explicitly does not claim to
+observe the Decision Date's final five-minute path. Future OHLC and suspension observations remain
+Data evidence; Entry owns only Target semantics, observations, identity, and pure materialization.
+Same-session high/low dual touch is terminal `AMBIGUOUS`, and missing bars are never inferred as
+suspension.
+
 ---
 
 ## 9. Current Implementation Status
@@ -462,7 +481,7 @@ Close Return / MFE / MAE Target bundle                         IMPLEMENTED
 Deterministic B0 Candidate ranker                              IMPLEMENTED
 B1 transparent composite ranking core                         IMPLEMENTED
 B1 WP-0 focused verification                                  PASSED
-B1 latest full verification                                   PENDING
+B1 latest full-repository verification                        PASSED — 2026-07-16
 Cross-sectional rehearsal evaluation                          IMPLEMENTED
 WP-3 Candidate positive-return directional diagnostic         IMPLEMENTED / VERIFIED
 WP-3 directional metric identity                              R5_NEXT_SESSION_POSITIVE_RETURN_TOP5_V1
@@ -501,8 +520,11 @@ Chronological/OOS Candidate validation                         NOT YET IMPLEMENT
 Tencent auxiliary multi-date Candidate panels                  IMPLEMENTED — EXPLORATORY ONLY
 Tencent auxiliary chronological descriptive evaluation         IMPLEMENTED — NOT FORMAL OOS EVIDENCE
 
-Entry path Target code contract                                NOT YET IMPLEMENTED
-Entry timing accuracy                                           NOT AVAILABLE
+WP-4A Entry path Target code contract                           IMPLEMENTED
+WP-4A future path evidence / Calendar resolver                  IMPLEMENTED
+WP-4A pure materializer / deterministic identity                IMPLEMENTED / VERIFIED
+Entry Gate / Entry Proposal / Entry model                       NOT IMPLEMENTED
+Entry timing accuracy                                           NOT VALIDATED
 Canonical Position State code contract                         NOT YET IMPLEMENTED
 Exit continuation Target code contract                         NOT YET IMPLEMENTED
 Exit timing accuracy                                            NOT AVAILABLE
@@ -514,6 +536,55 @@ Formal Candidate / Entry / Exit Alpha evidence                 NOT AVAILABLE
 ---
 
 ## 10. Current Verification Status
+
+WP-4A verification was executed on 2026-07-16. Its independent prerequisite quality repairs are:
+
+```text
+a45e51e  pytest collection-package repair + Ruff F401 repair
+1326b31  six current mypy error repairs
+```
+
+WP-4A implementation commits before the documentation closeout are:
+
+```text
+5f7a015  future path evidence + Calendar horizon resolver
+901bc8a  Entry path Target contracts + Target identity
+d6d72a3  pure materializer + Artifact identity
+```
+
+Focused verification:
+
+```text
+.venv/bin/python -m pytest -q tests/strategies/entry tests/data/test_path_evidence.py tests/data/test_trading_calendar.py
+PASS — 66 tests
+
+python3 -m ruff check <WP-4A source and tests>
+PASS — All checks passed
+
+python3 -m mypy
+PASS — no issues found in 54 source files
+```
+
+Latest full-repository verification:
+
+```text
+.venv/bin/python -m pytest -q
+PASS — 686 tests collected and passed; 6 existing pandas fragmentation warnings
+
+python3 -m ruff check .
+PASS — All checks passed
+
+python3 -m mypy
+PASS — no issues found in 54 source files
+```
+
+The repository virtual environment was used for pytest because it contains the declared runtime
+dependencies (`pyarrow` and `duckdb`) that are absent from the system interpreter. The earlier
+system-interpreter attempt therefore does not supersede the successful repository-environment run.
+
+These checks establish implementation consistency only. They do not establish a real Xuntou run,
+Entry timing accuracy, formal OOS evidence, or Alpha. The older failure blocks later in this
+section are dated historical verification records and do not override this latest result.
 
 Tencent composite verification was executed on 2026-07-16. The latest successful live run used
 code revision:
@@ -576,7 +647,7 @@ python3 -m mypy
 FAIL — 6 pre-existing errors in 4 files outside the Tencent composite changes; 51 files checked
 ```
 
-No full-repository pass is claimed.
+No full-repository pass was claimed for that historical Tencent checkpoint.
 
 WP-0 verification was executed on 2026-07-15 against code revision:
 
@@ -616,7 +687,9 @@ python3 -m mypy
 FAIL — 7 pre-existing errors in 5 files outside the WP-0 changes; 43 source files checked
 ```
 
-The full-check failures are in files not modified by WP-0. They were not repaired because they are outside the bounded B1 verification work package. Therefore the latest full verification remains `PENDING`.
+At that historical WP-0 checkpoint, the full-check failures were in files not modified by WP-0 and
+were outside its bounded work package. Full verification therefore remained `PENDING` at that
+time; the newer WP-4A prerequisite repairs and latest result above supersede that status.
 
 This status does not claim:
 
@@ -678,8 +751,8 @@ python3 -m mypy
 FAIL — 6 existing errors in 4 files; 51 source files checked
 ```
 
-No full-repository pass is claimed. No real Xuntou export or new source-aware Tencent live run was
-executed by these tests.
+No full-repository pass was claimed for that historical WP-3 checkpoint. No real Xuntou export or
+new source-aware Tencent live run was executed by those tests.
 
 WP-3 Candidate directional diagnostic verification was executed on 2026-07-16 against code
 revision:
@@ -737,9 +810,9 @@ Source-aware runner infrastructure — IMPLEMENTED
 Candidate positive-return directional diagnostic — IMPLEMENTED / VERIFIED
 Real Xuntou REHEARSAL B0 / B1 evidence run — NEXT / PENDING INPUT
         ↓
-WP-4
-Implement Entry Path Target contracts
-UP_FIRST / DOWN_FIRST / TIMEOUT
+WP-4A
+Entry Path Target contracts / evidence / materializer — COMPLETE
+UP_FIRST / DOWN_FIRST / TIMEOUT / explicit AMBIGUOUS
         ↓
 WP-5
 Run first Candidate-only vs Candidate + Entry timing experiment
@@ -813,4 +886,4 @@ The current system does not claim to implement:
 
 ## 14. Current Principle
 
-> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. WP-3 routing, Candidate-runner and immutable-artifact infrastructure are implemented while the real Xuntou provider-backed run remains unavailable. The next evidence step is an authorized, content-hashed Xuntou REHEARSAL input and a truthful run under existing PIT/buyability limits; path-dependent Entry and Exit research follows only after Candidate evidence is reproducible. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**
+> **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. WP-3 routing, Candidate-runner and immutable-artifact infrastructure are implemented while the real Xuntou provider-backed run remains unavailable. WP-4A now provides evidence-preserving Entry path Target contracts, not an Entry model or accuracy result. The next provider evidence step is an authorized, content-hashed Xuntou REHEARSAL input and a truthful run under existing PIT/buyability limits; any Entry experiment must separately establish its charter and chronological comparison. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**
