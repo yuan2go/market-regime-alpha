@@ -4,7 +4,8 @@ from .contracts import DataEligibility, DatasetContract, ProviderReference, Sour
 from .path_evidence import (
     RehearsalEntryReferenceEvidence,
     RehearsalFutureDailyBar,
-    RehearsalFuturePathEvidenceCompleteness,
+    RehearsalFuturePathCoverageAssertion,
+    RehearsalFuturePathReadinessPolicy,
     RehearsalFuturePathSessionReadiness,
     RehearsalFutureSuspensionEvidence,
 )
@@ -28,7 +29,8 @@ __all__ = [
     "RehearsalDailyBar",
     "RehearsalDecisionSnapshot",
     "RehearsalFutureDailyBar",
-    "RehearsalFuturePathEvidenceCompleteness",
+    "RehearsalFuturePathCoverageAssertion",
+    "RehearsalFuturePathReadinessPolicy",
     "RehearsalFuturePathSessionReadiness",
     "RehearsalFutureSuspensionEvidence",
     "RehearsalNextSessionBar",

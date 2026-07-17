@@ -12,6 +12,8 @@ from market_regime_alpha.data.path_evidence import (
     RehearsalEntryReferenceEvidence,
     RehearsalFutureDailyBar,
     RehearsalFuturePathEvidenceCompleteness,
+    RehearsalFuturePathCoverageAssertion,
+    RehearsalFuturePathReadinessPolicy,
     RehearsalFuturePathSessionReadiness,
     RehearsalFutureSuspensionEvidence,
 )
@@ -87,6 +89,26 @@ def test_future_path_completeness_is_identified_and_requires_ordered_scope() -> 
             coverage_through_session_date=date(2026, 7, 21),
             session_readiness=evidence.session_readiness,
         )
+
+
+def test_readiness_policy_and_coverage_assertion_are_separate_identities() -> None:
+    policy = RehearsalFuturePathReadinessPolicy(
+        source_dataset_id=FUTURE_DATASET_ID,
+        policy_convention="FUTURE_PATH_READINESS_POLICY_V1",
+        effective_at=AvailabilityTime(datetime(2026, 7, 15, 14, 55, tzinfo=TZ)),
+        session_readiness=(
+            RehearsalFuturePathSessionReadiness(date(2026, 7, 20), _available(15, 30)),
+        ),
+    )
+    coverage = RehearsalFuturePathCoverageAssertion(
+        source_dataset_id=FUTURE_DATASET_ID,
+        available_at=_available(15, 30),
+        coverage_convention="FUTURE_PATH_COVERAGE_V1",
+        covered_symbols=("000001.SZ",),
+        coverage_through_session_date=date(2026, 7, 20),
+    )
+    assert str(policy.policy_id).startswith("future-path-readiness-policy-")
+    assert str(coverage.evidence_id).startswith("future-path-coverage-")
 
 
 def test_future_daily_bar_preserves_finality_availability_and_price_basis() -> None:

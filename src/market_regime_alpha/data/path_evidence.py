@@ -117,64 +117,51 @@ class RehearsalFuturePathSessionReadiness:
 
 
 @dataclass(frozen=True, slots=True)
-class RehearsalFuturePathEvidenceCompleteness:
-    """Versioned source assertion for future-path coverage and readiness evidence."""
+class RehearsalFuturePathReadinessPolicy:
+    source_dataset_id: DatasetId
+    policy_convention: str
+    effective_at: AvailabilityTime
+    session_readiness: tuple[RehearsalFuturePathSessionReadiness, ...]
 
+    def __post_init__(self) -> None:
+        _require_dataset_id("source_dataset_id", self.source_dataset_id)
+        _require_text("policy_convention", self.policy_convention)
+        if not isinstance(self.effective_at, AvailabilityTime):
+            raise TypeError("effective_at must be an AvailabilityTime")
+        if not self.session_readiness:
+            raise ValueError("session_readiness must not be empty")
+        dates = tuple(item.session_date for item in self.session_readiness)
+        if tuple(sorted(dates)) != dates or len(dates) != len(set(dates)):
+            raise ValueError("readiness session dates must be chronological and unique")
+
+    @property
+    def policy_id(self) -> ArtifactId:
+        return _evidence_id("future-path-readiness-policy", {"schema_version":"future-path-readiness-policy-v1","source_dataset_id":str(self.source_dataset_id),"policy_convention":self.policy_convention,"effective_at":self.effective_at.isoformat(),"session_readiness":[{"session_date":x.session_date.isoformat(),"evidence_ready_at":x.evidence_ready_at.isoformat()} for x in self.session_readiness]})
+
+
+@dataclass(frozen=True, slots=True)
+class RehearsalFuturePathCoverageAssertion:
     source_dataset_id: DatasetId
     available_at: AvailabilityTime
-    completeness_convention: str
+    coverage_convention: str
     covered_symbols: tuple[str, ...]
     coverage_through_session_date: date
-    session_readiness: tuple[RehearsalFuturePathSessionReadiness, ...]
 
     def __post_init__(self) -> None:
         _require_dataset_id("source_dataset_id", self.source_dataset_id)
         if not isinstance(self.available_at, AvailabilityTime):
             raise TypeError("available_at must be an AvailabilityTime")
-        _require_text("completeness_convention", self.completeness_convention)
+        _require_text("coverage_convention", self.coverage_convention)
         for symbol in self.covered_symbols:
             _require_symbol(symbol)
-        if tuple(sorted(self.covered_symbols)) != self.covered_symbols:
-            raise ValueError("covered_symbols must be sorted")
-        if len(self.covered_symbols) != len(set(self.covered_symbols)):
-            raise ValueError("covered_symbols must be unique")
+        if tuple(sorted(self.covered_symbols)) != self.covered_symbols or len(self.covered_symbols) != len(set(self.covered_symbols)):
+            raise ValueError("covered_symbols must be sorted and unique")
         if not isinstance(self.coverage_through_session_date, date):
             raise TypeError("coverage_through_session_date must be a date")
-        if not self.session_readiness:
-            raise ValueError("session_readiness must not be empty")
-        if any(
-            not isinstance(item, RehearsalFuturePathSessionReadiness)
-            for item in self.session_readiness
-        ):
-            raise TypeError(
-                "session_readiness must contain RehearsalFuturePathSessionReadiness"
-            )
-        readiness_dates = tuple(item.session_date for item in self.session_readiness)
-        if tuple(sorted(readiness_dates)) != readiness_dates:
-            raise ValueError("readiness session dates must be chronological")
-        if len(readiness_dates) != len(set(readiness_dates)):
-            raise ValueError("readiness session dates must be unique")
 
     @property
     def evidence_id(self) -> ArtifactId:
-        return _evidence_id(
-            "future-path-completeness",
-            {
-                "schema_version": "future-path-completeness-v1",
-                "source_dataset_id": str(self.source_dataset_id),
-                "available_at": self.available_at.isoformat(),
-                "completeness_convention": self.completeness_convention,
-                "covered_symbols": list(self.covered_symbols),
-                "coverage_through_session_date": self.coverage_through_session_date.isoformat(),
-                "session_readiness": [
-                    {
-                        "session_date": item.session_date.isoformat(),
-                        "evidence_ready_at": item.evidence_ready_at.isoformat(),
-                    }
-                    for item in self.session_readiness
-                ],
-            },
-        )
+        return _evidence_id("future-path-coverage", {"schema_version":"future-path-coverage-v1","source_dataset_id":str(self.source_dataset_id),"available_at":self.available_at.isoformat(),"coverage_convention":self.coverage_convention,"covered_symbols":list(self.covered_symbols),"coverage_through_session_date":self.coverage_through_session_date.isoformat()})
 
 
 def _require_evidence_times(
