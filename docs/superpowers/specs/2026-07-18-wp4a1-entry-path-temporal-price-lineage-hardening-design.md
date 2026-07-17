@@ -157,13 +157,15 @@ OUTCOME_RESOLVED
 DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED
 HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH
 FUTURE_DAILY_BAR_MISSING
+ENTRY_REFERENCE_MISSING
 HORIZON_NOT_COMPLETE
 EVIDENCE_NOT_YET_AVAILABLE
 EVIDENCE_COVERAGE_NOT_COMPLETE
 ```
 
-The existing `DECISION_SNAPSHOT_MISSING` member is not emitted in WP-4A.1 because reference
-evidence completeness is structural. The observation contract validates every
+`ENTRY_REFERENCE_MISSING` is reserved for a future explicit provider unavailable-evidence
+contract and is valid only with `INVALID`. It is not emitted in WP-4A.1: omitted reference tuple
+items are structural input errors, not a per-symbol unavailable fact. The observation contract validates every
 status/outcome/trigger/reason combination: terminal barrier outcomes use
 `OUTCOME_RESOLVED`; dual touch uses its ambiguity reason; timeout uses horizon exhaustion;
 `MISSING` uses future-bar missing; and each `NOT_YET_OBSERVED` state uses its exact temporal or
