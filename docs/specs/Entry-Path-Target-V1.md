@@ -277,8 +277,10 @@ For an unresolved session, materialization evaluates in order: session close, se
 coverage watermark, and finally absence of both a daily bar and confirmed suspension. This produces
 `HORIZON_NOT_COMPLETE`, `EVIDENCE_NOT_YET_AVAILABLE`,
 `EVIDENCE_COVERAGE_NOT_COMPLETE`, or confirmed `FUTURE_DAILY_BAR_MISSING` respectively. It never
-declares `MISSING` from session close alone. The completeness evidence must be available by the
-materialization as-of time and its Dataset must match every future bar/suspension source.
+declares `MISSING` from session close alone. A completeness assertion that is not yet available is
+never used to read its watermark or coverage scope and yields
+`EVIDENCE_COVERAGE_NOT_COMPLETE`; once available, its Dataset must match every future
+bar/suspension source.
 
 `EntryBarrierSpec` now requires `-1.0 < lower_return < 0`. `reason_code` is the versioned
 `EntryPathReasonCode` enum; only valid status/outcome/trigger/reason combinations construct. The

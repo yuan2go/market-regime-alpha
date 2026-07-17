@@ -45,8 +45,6 @@ def materialize_entry_path_target(*, contract: EntryPathTargetContract, populati
     completeness = future_path_evidence_completeness
     if completeness.source_dataset_id not in source_ids:
         raise ValueError("completeness source Dataset is not declared")
-    if completeness.available_at.value > materialized_at.value:
-        raise ValueError("completeness evidence is available after materialized_at")
     if completeness.covered_symbols != population.symbols:
         raise ValueError("completeness covered_symbols must exactly equal Candidate Population")
     readiness = _validate_readiness(completeness, horizon_dates, sessions)
@@ -186,7 +184,10 @@ def _evaluate_symbol(symbol: str, contract: EntryPathTargetContract, reference: 
             return _pending(symbol, reference_price, upper, lower, evaluated, EntryPathReasonCode.HORIZON_NOT_COMPLETE), tuple(used_bars), tuple(used_suspensions)
         if materialized_at.value < readiness[session_date].value:
             return _pending(symbol, reference_price, upper, lower, evaluated, EntryPathReasonCode.EVIDENCE_NOT_YET_AVAILABLE), tuple(used_bars), tuple(used_suspensions)
-        if completeness.coverage_through_session_date < session_date:
+        if (
+            completeness.available_at.value > materialized_at.value
+            or completeness.coverage_through_session_date < session_date
+        ):
             return _pending(symbol, reference_price, upper, lower, evaluated, EntryPathReasonCode.EVIDENCE_COVERAGE_NOT_COMPLETE), tuple(used_bars), tuple(used_suspensions)
         key = (symbol, session_date)
         bar = bars.get(key)

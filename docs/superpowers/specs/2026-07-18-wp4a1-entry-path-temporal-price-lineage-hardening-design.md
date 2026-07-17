@@ -136,9 +136,11 @@ The fixed evaluation order for an unresolved session is:
    -> MISSING / FUTURE_DAILY_BAR_MISSING
 ```
 
-The completeness assertion itself must be available no later than `materialized_at`; an assertion
-that arrives later cannot be used. For a confirmed `MISSING`, `observed_at` is precisely the
-completeness assertion's `available_at`, never the runtime `materialized_at`.
+The materializer validates a completeness assertion's availability before using either its
+watermark or coverage scope: an assertion that arrives after `materialized_at` is treated as
+unavailable and produces `EVIDENCE_COVERAGE_NOT_COMPLETE`; its content is never used. For a
+confirmed `MISSING`, `observed_at` is precisely the completeness assertion's `available_at`, never
+the runtime `materialized_at`.
 
 ## 6. Target Boundaries and Stable Reasons
 

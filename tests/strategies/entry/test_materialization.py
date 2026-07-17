@@ -146,6 +146,18 @@ def test_watermark_not_covered_is_not_yet_observed() -> None:
     assert observation.reason_code is EntryPathReasonCode.EVIDENCE_COVERAGE_NOT_COMPLETE
 
 
+def test_unavailable_completeness_assertion_is_not_used_as_coverage() -> None:
+    completeness = _completeness(
+        available_at=AvailabilityTime(_at(HORIZON_DATES[0], 15, 40))
+    )
+    observation = _materialize(
+        completeness=completeness,
+        materialized_at=AsOfTime(_at(HORIZON_DATES[0], 15, 35)),
+    ).observations[0]
+    assert observation.status is EntryPathObservationStatus.NOT_YET_OBSERVED
+    assert observation.reason_code is EntryPathReasonCode.EVIDENCE_COVERAGE_NOT_COMPLETE
+
+
 def test_covered_missing_bar_is_observed_at_completeness_availability() -> None:
     completeness = _completeness(available_at=AvailabilityTime(_at(HORIZON_DATES[-1], 15, 31)))
     observation = _materialize(completeness=completeness).observations[0]
