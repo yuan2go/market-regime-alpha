@@ -222,8 +222,9 @@ The first missing date is retained separately and is not evaluated.
 
 For bar-derived `AVAILABLE` or `AMBIGUOUS`, `observed_at` is exactly that bar's `available_at`, not
 its `finalized_at`, retrieval time, or materialization time. For `TIMEOUT`, it is the availability
-of the last required bar or suspension evidence. `MISSING` and `INVALID` are recorded at
-materialization availability; `NOT_YET_OBSERVED` has no `observed_at`.
+of the last required bar or suspension evidence. `MISSING` is recorded at the explicit
+completeness assertion's `available_at`; `INVALID` remains reserved for a future explicit
+unavailable-reference evidence contract; `NOT_YET_OBSERVED` has no `observed_at`.
 
 ## 9. Identity
 
@@ -257,6 +258,34 @@ complete ordered observations and audit evidence
 
 Input tuple order is normalized and cannot alter identity. A result-affecting semantic, source,
 Calendar, Population, code, configuration, or observation change must alter identity.
+
+### WP-4A.1 evidence hardening
+
+WP-4A.1 replaces naked Decision Snapshots at this Entry boundary with Data-domain
+`RehearsalEntryReferenceEvidence`. Every reference has an explicit adjustment basis, Dataset
+identity, availability time, versioned convention, and deterministic evidence ID. The materializer
+requires exactly one reference per Candidate Population symbol and fails the complete call for any
+duplicate, omission, Population-external symbol, wrong Decision Time, or basis/source mismatch.
+
+Future bars and suspension evidence now also retain an explicit Dataset identity and deterministic
+evidence ID. A provider-neutral `RehearsalFuturePathEvidenceCompleteness` assertion supplies an
+exact covered Population, source Dataset, availability time, coverage-through watermark, versioned
+convention, and one readiness deadline for every Target-horizon session. Readiness does not use a
+global default and each deadline is at or after the Calendar close.
+
+For an unresolved session, materialization evaluates in order: session close, session readiness,
+coverage watermark, and finally absence of both a daily bar and confirmed suspension. This produces
+`HORIZON_NOT_COMPLETE`, `EVIDENCE_NOT_YET_AVAILABLE`,
+`EVIDENCE_COVERAGE_NOT_COMPLETE`, or confirmed `FUTURE_DAILY_BAR_MISSING` respectively. It never
+declares `MISSING` from session close alone. The completeness evidence must be available by the
+materialization as-of time and its Dataset must match every future bar/suspension source.
+
+`EntryBarrierSpec` now requires `-1.0 < lower_return < 0`. `reason_code` is the versioned
+`EntryPathReasonCode` enum; only valid status/outcome/trigger/reason combinations construct. The
+materialization preserves reference, consumed bar, consumed suspension, and completeness evidence
+IDs, and its Artifact ID is sensitive to them. Completeness/readiness changes the availability of a
+materialized label, not the label truth function; it therefore belongs to Artifact identity rather
+than Target identity.
 
 ## 10. Authority and Limitations
 

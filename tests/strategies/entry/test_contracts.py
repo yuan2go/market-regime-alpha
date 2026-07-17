@@ -16,6 +16,7 @@ from market_regime_alpha.strategies.entry import (
     EntryPathObservation,
     EntryPathObservationStatus,
     EntryPathOutcome,
+    EntryPathReasonCode,
     EntryPathTriggerType,
     build_entry_path_target_contract,
 )
@@ -50,7 +51,7 @@ def _observation(**changes: object) -> EntryPathObservation:
         "trigger_type": EntryPathTriggerType.OPEN_GAP_UP,
         "evaluated_session_dates": (SESSION,),
         "first_missing_session_date": None,
-        "reason_code": "OUTCOME_RESOLVED",
+        "reason_code": EntryPathReasonCode.OUTCOME_RESOLVED,
         "observed_at": OBSERVED_AT,
     }
     values.update(changes)
@@ -101,6 +102,8 @@ def test_target_identity_changes_with_each_semantic_field(
     (
         {"upper_return": 0.0},
         {"lower_return": 0.0},
+        {"lower_return": -1.0},
+        {"lower_return": -1.01},
         {"horizon_sessions": True},
         {"horizon_sessions": 0},
         {"price_adjustment_basis": ""},
@@ -118,7 +121,7 @@ def test_observation_accepts_exact_available_ambiguous_missing_invalid_pending_s
             status=EntryPathObservationStatus.AMBIGUOUS,
             outcome=None,
             trigger_type=EntryPathTriggerType.INTRADAY_DUAL_TOUCH_UNORDERED,
-            reason_code="DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED",
+            reason_code=EntryPathReasonCode.DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED,
         ).status
         is EntryPathObservationStatus.AMBIGUOUS
     )
@@ -131,7 +134,7 @@ def test_observation_accepts_exact_available_ambiguous_missing_invalid_pending_s
             trigger_type=None,
             evaluated_session_dates=(),
             first_missing_session_date=SESSION,
-            reason_code="FUTURE_DAILY_BAR_MISSING",
+            reason_code=EntryPathReasonCode.FUTURE_DAILY_BAR_MISSING,
         ).status
         is EntryPathObservationStatus.MISSING
     )
@@ -146,7 +149,7 @@ def test_observation_accepts_exact_available_ambiguous_missing_invalid_pending_s
             event_session_index=None,
             trigger_type=None,
             evaluated_session_dates=(),
-            reason_code="DECISION_SNAPSHOT_MISSING",
+            reason_code=EntryPathReasonCode.ENTRY_REFERENCE_MISSING,
         ).status
         is EntryPathObservationStatus.INVALID
     )
@@ -158,7 +161,7 @@ def test_observation_accepts_exact_available_ambiguous_missing_invalid_pending_s
             event_session_index=None,
             trigger_type=None,
             evaluated_session_dates=(),
-            reason_code="HORIZON_NOT_COMPLETE",
+            reason_code=EntryPathReasonCode.HORIZON_NOT_COMPLETE,
             observed_at=None,
         ).status
         is EntryPathObservationStatus.NOT_YET_OBSERVED
@@ -198,6 +201,20 @@ def test_observation_rejects_cross_state_and_audit_mismatches(
 ) -> None:
     with pytest.raises((TypeError, ValueError)):
         _observation(**invalid)
+
+
+def test_observation_rejects_reason_not_permitted_by_status() -> None:
+    with pytest.raises(ValueError, match="reason_code"):
+        _observation(
+            status=EntryPathObservationStatus.MISSING,
+            outcome=None,
+            event_session_date=None,
+            event_session_index=None,
+            trigger_type=None,
+            evaluated_session_dates=(),
+            first_missing_session_date=SESSION,
+            reason_code=EntryPathReasonCode.OUTCOME_RESOLVED,
+        )
 
 
 def test_observation_is_immutable() -> None:

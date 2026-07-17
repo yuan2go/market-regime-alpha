@@ -6,14 +6,19 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from market_regime_alpha.core.time import AvailabilityTime, FinalizationTime
+from market_regime_alpha.core.identity import DatasetId
+from market_regime_alpha.core.time import AvailabilityTime, DecisionTime, FinalizationTime
 from market_regime_alpha.data.path_evidence import (
+    RehearsalEntryReferenceEvidence,
     RehearsalFutureDailyBar,
+    RehearsalFuturePathEvidenceCompleteness,
+    RehearsalFuturePathSessionReadiness,
     RehearsalFutureSuspensionEvidence,
 )
 
 
 TZ = ZoneInfo("Asia/Shanghai")
+FUTURE_DATASET_ID = DatasetId("dataset-future-path-v1")
 
 
 def _available(hour: int = 15, minute: int = 5) -> AvailabilityTime:
@@ -22,6 +27,66 @@ def _available(hour: int = 15, minute: int = 5) -> AvailabilityTime:
 
 def _finalized(hour: int = 15, minute: int = 1) -> FinalizationTime:
     return FinalizationTime(datetime(2026, 7, 20, hour, minute, tzinfo=TZ))
+
+
+def test_entry_reference_evidence_is_identified_and_available_by_decision_time() -> None:
+    decision_time = DecisionTime(datetime(2026, 7, 20, 14, 55, tzinfo=TZ))
+    evidence = RehearsalEntryReferenceEvidence(
+        symbol="000001.SZ",
+        decision_time=decision_time,
+        reference_price=10.0,
+        price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+        available_at=AvailabilityTime(decision_time.value),
+        source_dataset_id=DatasetId("dataset-reference-v1"),
+        evidence_convention="DECISION_REFERENCE_ASSERTION_V1",
+    )
+
+    assert str(evidence.evidence_id).startswith("entry-reference-evidence-")
+
+    with pytest.raises(ValueError, match="available by decision_time"):
+        RehearsalEntryReferenceEvidence(
+            symbol="000001.SZ",
+            decision_time=decision_time,
+            reference_price=10.0,
+            price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+            available_at=AvailabilityTime(datetime(2026, 7, 20, 14, 56, tzinfo=TZ)),
+            source_dataset_id=DatasetId("dataset-reference-v1"),
+            evidence_convention="DECISION_REFERENCE_ASSERTION_V1",
+        )
+
+
+def test_future_path_completeness_is_identified_and_requires_ordered_scope() -> None:
+    evidence = RehearsalFuturePathEvidenceCompleteness(
+        source_dataset_id=FUTURE_DATASET_ID,
+        available_at=_available(15, 30),
+        completeness_convention="FUTURE_PATH_COVERAGE_ASSERTION_V1",
+        covered_symbols=("000001.SZ", "000002.SZ"),
+        coverage_through_session_date=date(2026, 7, 21),
+        session_readiness=(
+            RehearsalFuturePathSessionReadiness(
+                session_date=date(2026, 7, 20),
+                evidence_ready_at=_available(15, 30),
+            ),
+            RehearsalFuturePathSessionReadiness(
+                session_date=date(2026, 7, 21),
+                evidence_ready_at=AvailabilityTime(
+                    datetime(2026, 7, 21, 15, 30, tzinfo=TZ)
+                ),
+            ),
+        ),
+    )
+
+    assert str(evidence.evidence_id).startswith("future-path-completeness-")
+
+    with pytest.raises(ValueError, match="covered_symbols must be sorted"):
+        RehearsalFuturePathEvidenceCompleteness(
+            source_dataset_id=FUTURE_DATASET_ID,
+            available_at=_available(15, 30),
+            completeness_convention="FUTURE_PATH_COVERAGE_ASSERTION_V1",
+            covered_symbols=("000002.SZ", "000001.SZ"),
+            coverage_through_session_date=date(2026, 7, 21),
+            session_readiness=evidence.session_readiness,
+        )
 
 
 def test_future_daily_bar_preserves_finality_availability_and_price_basis() -> None:
@@ -33,12 +98,14 @@ def test_future_daily_bar_preserves_finality_availability_and_price_basis() -> N
         low=9.8,
         close=10.2,
         price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+        source_dataset_id=FUTURE_DATASET_ID,
         available_at=_available(),
         finalized_at=_finalized(),
     )
 
     assert bar.available_at.value >= bar.finalized_at.value
     assert bar.price_adjustment_basis == "RAW_UNADJUSTED_TRADABLE_PRICE_V1"
+    assert str(bar.evidence_id).startswith("future-daily-bar-evidence-")
 
 
 def test_future_daily_bar_rejects_availability_before_finality() -> None:
@@ -51,6 +118,7 @@ def test_future_daily_bar_rejects_availability_before_finality() -> None:
             low=9.8,
             close=10.2,
             price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+            source_dataset_id=FUTURE_DATASET_ID,
             available_at=_available(15, 0),
             finalized_at=_finalized(15, 1),
         )
@@ -66,6 +134,7 @@ def test_future_path_evidence_rejects_naive_datetimes() -> None:
             low=9.8,
             close=10.2,
             price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+            source_dataset_id=FUTURE_DATASET_ID,
             available_at=AvailabilityTime(datetime(2026, 7, 20, 15, 5)),
             finalized_at=_finalized(),
         )
@@ -92,6 +161,7 @@ def test_future_daily_bar_rejects_invalid_price(
             symbol="000001.SZ",
             session_date=date(2026, 7, 20),
             price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+            source_dataset_id=FUTURE_DATASET_ID,
             available_at=_available(),
             finalized_at=_finalized(),
             **values,
@@ -121,6 +191,7 @@ def test_future_daily_bar_rejects_invalid_ohlc_ordering(
             low=low,
             close=close,
             price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+            source_dataset_id=FUTURE_DATASET_ID,
             available_at=_available(),
             finalized_at=_finalized(),
         )
@@ -131,16 +202,19 @@ def test_future_suspension_evidence_requires_boolean_and_time_ordering() -> None
         symbol="000001.SZ",
         session_date=date(2026, 7, 20),
         is_suspended=True,
+        source_dataset_id=FUTURE_DATASET_ID,
         available_at=_available(),
         finalized_at=_finalized(),
     )
     assert evidence.is_suspended is True
+    assert str(evidence.evidence_id).startswith("future-suspension-evidence-")
 
     with pytest.raises(TypeError, match="is_suspended must be boolean"):
         RehearsalFutureSuspensionEvidence(
             symbol="000001.SZ",
             session_date=date(2026, 7, 20),
             is_suspended=1,  # type: ignore[arg-type]
+            source_dataset_id=FUTURE_DATASET_ID,
             available_at=_available(),
             finalized_at=_finalized(),
         )

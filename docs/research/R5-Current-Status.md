@@ -523,6 +523,7 @@ Tencent auxiliary chronological descriptive evaluation         IMPLEMENTED — N
 WP-4A Entry path Target code contract                           IMPLEMENTED
 WP-4A future path evidence / Calendar resolver                  IMPLEMENTED
 WP-4A pure materializer / deterministic identity                IMPLEMENTED / VERIFIED
+WP-4A.1 Entry price lineage / temporal completeness hardening   IMPLEMENTED / VERIFIED
 Entry Gate / Entry Proposal / Entry model                       NOT IMPLEMENTED
 Entry timing accuracy                                           NOT VALIDATED
 Canonical Position State code contract                         NOT YET IMPLEMENTED

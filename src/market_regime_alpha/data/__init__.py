@@ -2,7 +2,10 @@
 
 from .contracts import DataEligibility, DatasetContract, ProviderReference, SourceArtifactReference
 from .path_evidence import (
+    RehearsalEntryReferenceEvidence,
     RehearsalFutureDailyBar,
+    RehearsalFuturePathEvidenceCompleteness,
+    RehearsalFuturePathSessionReadiness,
     RehearsalFutureSuspensionEvidence,
 )
 from .rehearsal import (
@@ -21,9 +24,12 @@ __all__ = [
     "DataEligibility",
     "DatasetContract",
     "ProviderReference",
+    "RehearsalEntryReferenceEvidence",
     "RehearsalDailyBar",
     "RehearsalDecisionSnapshot",
     "RehearsalFutureDailyBar",
+    "RehearsalFuturePathEvidenceCompleteness",
+    "RehearsalFuturePathSessionReadiness",
     "RehearsalFutureSuspensionEvidence",
     "RehearsalNextSessionBar",
     "RehearsalNextSessionClose",

@@ -79,6 +79,23 @@ class EntryPathTriggerType(str, Enum):
     HORIZON_EXHAUSTED = "HORIZON_EXHAUSTED"
 
 
+class EntryPathReasonCode(str, Enum):
+    """Versioned audit reason for a valid Entry path observation state."""
+
+    OUTCOME_RESOLVED = "OUTCOME_RESOLVED"
+    DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED = (
+        "DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED"
+    )
+    HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH = (
+        "HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH"
+    )
+    FUTURE_DAILY_BAR_MISSING = "FUTURE_DAILY_BAR_MISSING"
+    ENTRY_REFERENCE_MISSING = "ENTRY_REFERENCE_MISSING"
+    HORIZON_NOT_COMPLETE = "HORIZON_NOT_COMPLETE"
+    EVIDENCE_NOT_YET_AVAILABLE = "EVIDENCE_NOT_YET_AVAILABLE"
+    EVIDENCE_COVERAGE_NOT_COMPLETE = "EVIDENCE_COVERAGE_NOT_COMPLETE"
+
+
 @dataclass(frozen=True, slots=True)
 class EntryBarrierSpec:
     """Complete versioned semantics of one Entry competing-event Target."""
@@ -107,8 +124,8 @@ class EntryBarrierSpec:
                 raise ValueError(f"{label} must be finite and non-boolean")
         if self.upper_return <= 0.0:
             raise ValueError("upper_return must be positive")
-        if self.lower_return >= 0.0:
-            raise ValueError("lower_return must be negative")
+        if not -1.0 < self.lower_return < 0.0:
+            raise ValueError("lower_return must be greater than -1.0 and negative")
         if isinstance(self.horizon_sessions, bool) or not isinstance(
             self.horizon_sessions,
             int,
@@ -159,7 +176,7 @@ class EntryPathObservation:
     trigger_type: EntryPathTriggerType | None
     evaluated_session_dates: tuple[date, ...]
     first_missing_session_date: date | None
-    reason_code: str
+    reason_code: EntryPathReasonCode
     observed_at: AvailabilityTime | None
 
     def __post_init__(self) -> None:
@@ -214,7 +231,8 @@ class EntryPathObservation:
                 raise ValueError("event session index must match evaluated session count")
         if self.first_missing_session_date in self.evaluated_session_dates:
             raise ValueError("first missing session cannot be evaluated")
-        _require_text("reason_code", self.reason_code)
+        if not isinstance(self.reason_code, EntryPathReasonCode):
+            raise TypeError("reason_code must be an EntryPathReasonCode")
         if self.observed_at is not None and not isinstance(
             self.observed_at,
             AvailabilityTime,
@@ -244,6 +262,13 @@ class EntryPathObservation:
             }
             if self.trigger_type not in expected_triggers[self.outcome]:
                 raise ValueError("AVAILABLE outcome and trigger_type are inconsistent")
+            expected_reason = (
+                EntryPathReasonCode.HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH
+                if self.outcome is EntryPathOutcome.TIMEOUT
+                else EntryPathReasonCode.OUTCOME_RESOLVED
+            )
+            if self.reason_code is not expected_reason:
+                raise ValueError("AVAILABLE observation reason_code is inconsistent")
             return
         if self.outcome is not None:
             raise ValueError("non-AVAILABLE Entry path observation must not carry outcome")
@@ -256,6 +281,11 @@ class EntryPathObservation:
                 raise ValueError("AMBIGUOUS observation requires dual-touch trigger")
             if self.first_missing_session_date is not None:
                 raise ValueError("AMBIGUOUS observation cannot carry a missing session")
+            if (
+                self.reason_code
+                is not EntryPathReasonCode.DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED
+            ):
+                raise ValueError("AMBIGUOUS observation reason_code is inconsistent")
             return
         if self.status is EntryPathObservationStatus.MISSING:
             self._require_prices_and_observed()
@@ -263,6 +293,8 @@ class EntryPathObservation:
                 raise ValueError("MISSING observation cannot carry an event")
             if self.first_missing_session_date is None:
                 raise ValueError("MISSING observation requires first missing session")
+            if self.reason_code is not EntryPathReasonCode.FUTURE_DAILY_BAR_MISSING:
+                raise ValueError("MISSING observation reason_code is inconsistent")
             return
         if self.status is EntryPathObservationStatus.INVALID:
             if self.event_session_date is not None or self.trigger_type is not None:
@@ -273,6 +305,8 @@ class EntryPathObservation:
                 raise ValueError("INVALID observation cannot carry evaluated sessions")
             if self.observed_at is None:
                 raise ValueError("INVALID observation requires observed_at")
+            if self.reason_code is not EntryPathReasonCode.ENTRY_REFERENCE_MISSING:
+                raise ValueError("INVALID observation reason_code is inconsistent")
             return
         self._require_prices()
         if self.event_session_date is not None or self.trigger_type is not None:
@@ -281,6 +315,12 @@ class EntryPathObservation:
             raise ValueError("NOT_YET_OBSERVED cannot carry a missing session")
         if self.observed_at is not None:
             raise ValueError("NOT_YET_OBSERVED must not carry observed_at")
+        if self.reason_code not in {
+            EntryPathReasonCode.HORIZON_NOT_COMPLETE,
+            EntryPathReasonCode.EVIDENCE_NOT_YET_AVAILABLE,
+            EntryPathReasonCode.EVIDENCE_COVERAGE_NOT_COMPLETE,
+        }:
+            raise ValueError("NOT_YET_OBSERVED observation reason_code is inconsistent")
 
     def _require_prices(self) -> None:
         if any(
@@ -313,6 +353,10 @@ class EntryPathTargetMaterialization:
     materialized_at: AsOfTime
     code_revision: str
     config_hash: str
+    entry_reference_evidence_ids: tuple[ArtifactId, ...]
+    consumed_future_bar_evidence_ids: tuple[ArtifactId, ...]
+    consumed_future_suspension_evidence_ids: tuple[ArtifactId, ...]
+    completeness_evidence_id: ArtifactId
     observations: tuple[EntryPathObservation, ...]
 
     def __post_init__(self) -> None:
@@ -326,6 +370,20 @@ class EntryPathTargetMaterialization:
             raise ValueError("Entry path materialization must occur after Decision Time")
         _require_text("code_revision", self.code_revision)
         _require_text("config_hash", self.config_hash)
+        for label, values in (
+            ("entry_reference_evidence_ids", self.entry_reference_evidence_ids),
+            ("consumed_future_bar_evidence_ids", self.consumed_future_bar_evidence_ids),
+            (
+                "consumed_future_suspension_evidence_ids",
+                self.consumed_future_suspension_evidence_ids,
+            ),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"{label} must be unique")
+            if any(not isinstance(value, ArtifactId) for value in values):
+                raise TypeError(f"{label} must contain ArtifactId values")
+        if not isinstance(self.completeness_evidence_id, ArtifactId):
+            raise TypeError("completeness_evidence_id must be an ArtifactId")
         symbols = tuple(item.symbol for item in self.observations)
         if len(symbols) != len(set(symbols)):
             raise ValueError("Entry path observations must have unique symbols")
