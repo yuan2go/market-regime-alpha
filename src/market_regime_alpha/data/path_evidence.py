@@ -130,6 +130,13 @@ class RehearsalFuturePathReadinessPolicy:
             raise TypeError("effective_at must be an AvailabilityTime")
         if not self.session_readiness:
             raise ValueError("session_readiness must not be empty")
+        if any(
+            not isinstance(item, RehearsalFuturePathSessionReadiness)
+            for item in self.session_readiness
+        ):
+            raise TypeError(
+                "session_readiness must contain RehearsalFuturePathSessionReadiness"
+            )
         dates = tuple(item.session_date for item in self.session_readiness)
         if tuple(sorted(dates)) != dates or len(dates) != len(set(dates)):
             raise ValueError("readiness session dates must be chronological and unique")

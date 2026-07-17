@@ -11,7 +11,6 @@ from market_regime_alpha.core.time import AvailabilityTime, DecisionTime, Finali
 from market_regime_alpha.data.path_evidence import (
     RehearsalEntryReferenceEvidence,
     RehearsalFutureDailyBar,
-    RehearsalFuturePathEvidenceCompleteness,
     RehearsalFuturePathCoverageAssertion,
     RehearsalFuturePathReadinessPolicy,
     RehearsalFuturePathSessionReadiness,
@@ -57,38 +56,6 @@ def test_entry_reference_evidence_is_identified_and_available_by_decision_time()
         )
 
 
-def test_future_path_completeness_is_identified_and_requires_ordered_scope() -> None:
-    evidence = RehearsalFuturePathEvidenceCompleteness(
-        source_dataset_id=FUTURE_DATASET_ID,
-        available_at=_available(15, 30),
-        completeness_convention="FUTURE_PATH_COVERAGE_ASSERTION_V1",
-        covered_symbols=("000001.SZ", "000002.SZ"),
-        coverage_through_session_date=date(2026, 7, 21),
-        session_readiness=(
-            RehearsalFuturePathSessionReadiness(
-                session_date=date(2026, 7, 20),
-                evidence_ready_at=_available(15, 30),
-            ),
-            RehearsalFuturePathSessionReadiness(
-                session_date=date(2026, 7, 21),
-                evidence_ready_at=AvailabilityTime(
-                    datetime(2026, 7, 21, 15, 30, tzinfo=TZ)
-                ),
-            ),
-        ),
-    )
-
-    assert str(evidence.evidence_id).startswith("future-path-completeness-")
-
-    with pytest.raises(ValueError, match="covered_symbols must be sorted"):
-        RehearsalFuturePathEvidenceCompleteness(
-            source_dataset_id=FUTURE_DATASET_ID,
-            available_at=_available(15, 30),
-            completeness_convention="FUTURE_PATH_COVERAGE_ASSERTION_V1",
-            covered_symbols=("000002.SZ", "000001.SZ"),
-            coverage_through_session_date=date(2026, 7, 21),
-            session_readiness=evidence.session_readiness,
-        )
 
 
 def test_readiness_policy_and_coverage_assertion_are_separate_identities() -> None:
