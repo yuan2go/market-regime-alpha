@@ -10,5 +10,8 @@ explicit direction registry and genuine Spearman rank IC. Regime comparisons dis
 500-draw seeded bootstrap/permutation diagnostics, and use an exploratory 0.001 daily-effect
 hypothesis threshold. ETF/sector context is unavailable.
 
-Current result: `C1. REGIME_HETEROGENEITY_HYPOTHESIS`. It is descriptive uncertainty only, not
-C2 replication, Formal OOS Alpha, a winner selection, or a production Regime Gate.
+Historical result: `C1. REGIME_HETEROGENEITY_HYPOTHESIS`. MR-2A is now
+`SUPERSEDED_FOR_CURRENT_RESEARCH_AUTHORITY`: it repaired raw-bar leakage, but its absolute-return
+conditionality and non-model-specific comparator cannot establish Candidate excess Alpha. The
+historical output remains descriptive evidence only, not C2 replication, Formal OOS Alpha, a
+winner selection, or a production Regime Gate. MR-2B is still incomplete.

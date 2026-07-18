@@ -844,12 +844,14 @@ WP-3 and not a replacement for its Xuntou provider-backed requirement. It reuses
 the retained close comparator. Exact endpoint bars are required; missing endpoints are not
 forward-filled. Morning exits release the daily sleeve before the next 14:55 Decision Time.
 
-The current local v3 run is `mr1-4b6036dd44e5ca2ffab5` on Dataset
+The current local v4 run is `mr1-c06821bf7db2dc787244` on Dataset
 `prr-dataset-fa40337727427b2f1ff63548`. It persists a four-member daily comparator family:
 all-Candidate gross, matched-K rank-blind gross/net, and all-Candidate net diagnostic. Matched-K
 uses frozen SHA-256 seed 17, Top-5 capital, the model cost mechanics, fixed missing weight, and
-the same CLOSE cash-lock state. All-Candidate net is not a primary Candidate-Alpha comparator.
-The prior MR-1 runs are retained but **SUPERSEDED** for baseline-comparability interpretation.
+the same CLOSE cash-lock state. Each baseline is scoped to the corresponding model/date eligible
+ranking population; 28,350 matched-K slot rows retain the actual selected symbols and identities.
+All-Candidate net is not a primary Candidate-Alpha comparator. The prior MR-1 runs are retained
+but **SUPERSEDED** for baseline-comparability interpretation.
 
 The current run still classifies every BASE model/endpoint combination as
 `FAILED_EXPLORATORY` under its predeclared cost-sensitive rule.
@@ -869,19 +871,23 @@ reported as unavailable. See `docs/research/MR-2-Morning-Pop-Failure-Decompositi
 ### MR-2A — Leak-Free Regime Diagnostic
 
 MR-2A supersedes the old MR-2 `C` conclusion because the old Context used Decision Date
-full-session fields and mixed gross/net baseline semantics. The current leak-free, cutoff-14:50
-EXPLORATORY result is only `C1. REGIME_HETEROGENEITY_HYPOTHESIS`; it is not C2 replication or a
-production Regime Gate. ETF/sector Context remains unavailable. See
+full-session fields and mixed gross/net baseline semantics. Its historical leak-free,
+cutoff-14:50 result was `C1. REGIME_HETEROGENEITY_HYPOTHESIS`, but MR-2A is now
+`SUPERSEDED_FOR_CURRENT_RESEARCH_AUTHORITY`: absolute-return conditionality and the earlier
+non-population-aware comparator cannot establish Candidate excess Alpha. It is not C2 replication
+or a production Regime Gate. ETF/sector Context remains unavailable. See
 `docs/research/MR-2A-Leak-Free-Regime-Diagnostic.md`.
 
-### MR-2B-F1.1 — Baseline Comparability Hardening
+### MR-2B-F1.2 — Model-Population Comparator Parity
 
-MR-2B-F1.1 is complete. Artifact schemas now have one source of truth; verified readers retain
+MR-2B-F1.1 and F1.2 are complete. Artifact schemas have one source of truth; verified readers retain
 the original quality evidence and fail closed on checksum, exact-file-set, primary-key,
 cross-table date/symbol, weight, comparator-parity, and CLOSE sleeve-state violations. MR-1
 baseline calculations live in the research domain rather than the CLI. MR-2B observations are
 typed and descriptive; duplicate dates, unknown Context labels, and non-finite values fail
-closed. Premature primary-hypothesis promotion has been removed.
+closed. Premature primary-hypothesis promotion has been removed. F1.2 additionally binds every
+baseline to its model/date eligible population, persists the actual matched-K slots, reconstructs
+those selections in the reader, and excludes local Dataset paths from semantic run identity.
 
 MR-2B remains incomplete. Watchlist Context, exact cutoff-grid evidence, bootstrap,
 permutation, secondary comparisons, competing-event diagnostics, the MR-2B runner, and an

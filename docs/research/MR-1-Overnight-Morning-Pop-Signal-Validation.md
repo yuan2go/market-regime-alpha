@@ -35,13 +35,16 @@ historical order could have filled at that price.
 All four B0 controls and B1-A through B1-E are replayed independently at every exit endpoint
 under fixed LOW, BASE, and HIGH cost assumptions.  There is no automatic winner selection.
 
-The v3 comparator family separates raw selection lift from trade-count and minimum-commission
-effects:
+The v4 comparator family separates raw selection lift from trade-count, population, and
+minimum-commission effects. Each comparator is bound to the exact model/date population where
+`eligible_for_ranking` is true and rank is present:
 
-- `ALL_CANDIDATE_GROSS_V1` is the equal-weight gross cross-sectional comparator.
+- `ALL_CANDIDATE_GROSS_V1` is the equal-weight gross comparator within that model population.
 - `MATCHED_K_HASH_GROSS_V1` and `MATCHED_K_HASH_NET_V1` use the same Top-5 capital sleeves,
   missing-weight rule, exit endpoint, cost mechanics, and CLOSE cash-lock state as the model.
   Their rank-blind symbols are selected by a stable SHA-256 algorithm with frozen seed `17`.
+  The actual slots are retained in `matched_k_selections.parquet`; population and selection
+  identities can be reconstructed from immutable Candidate rankings without rerunning a model.
 - `ALL_CANDIDATE_NET_DIAGNOSTIC_V1` remains available only as a non-tradable diagnostic because
   its trade count and minimum-commission structure differ from Top-5.
 
@@ -59,19 +62,26 @@ This label is a predeclared research disposition, not production approval or Alp
 
 ## Current run
 
-The current MR-1 v3 cached-Dataset run used Dataset
+The current MR-1 v4 cached-Dataset run used Dataset
 `prr-dataset-fa40337727427b2f1ff63548` and generated
-`data/processed/mr1_morning_pop_runs/mr1-4b6036dd44e5ca2ffab5/` locally. Its
-`candidate_daily_baselines.parquet` contains 2,880 rows: 60 Decision Dates × four exit times ×
-three cost scenarios × four identified baselines. All 360 CLOSE baseline rows for the 30
-overlapping Decision Dates are explicitly cash-locked, matching the model sleeve state.
+`data/processed/mr1_morning_pop_runs/mr1-c06821bf7db2dc787244/` locally. Its
+`candidate_daily_baselines.parquet` contains 25,920 rows: 60 Decision Dates × nine fixed models ×
+four exit times × three cost scenarios × four identified baselines. The 28,350 persisted
+matched-K slot rows use seed `17`. All 3,240 model-specific CLOSE baseline rows for overlapping
+Decision Dates are explicitly cash-locked, matching the model sleeve state.
 
-The earlier `mr1-38b4458700aa653fe7a0` run is retained as historical evidence but is
-**SUPERSEDED** for baseline-comparability interpretation because it predates the matched-K
-family and MR-1 run schema v3.
+This Dataset happened to have 20 eligible symbols for every model/date. The v4 contract does not
+assume that equality: model/date populations are independently identified and the verified reader
+fails closed if a baseline or selected symbol crosses its population boundary. The average
+descriptive overlap between model Top-5 and matched-K Top-5 was about 21.60%; it is not a model
+quality metric.
+
+The earlier `mr1-4b6036dd44e5ca2ffab5` and `mr1-38b4458700aa653fe7a0` runs are retained as
+historical evidence but are **SUPERSEDED** for comparator interpretation because they predate
+model-specific population binding and auditable selection evidence.
 
 It evaluated 9 fixed models × 4 exit endpoints × 3 cost scenarios over 60 Decision Dates.
-All 36 BASE model/exit combinations received `FAILED_EXPLORATORY` under the v3 rule. This is
+All 36 BASE model/exit combinations received `FAILED_EXPLORATORY` under the v4 rule. This is
 not Formal OOS evidence and does not establish a negative conclusion beyond the current
 watchlist, cache, period, reference-mark convention, and fee assumptions.
 
