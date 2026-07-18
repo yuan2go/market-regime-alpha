@@ -10,6 +10,8 @@ from market_regime_alpha.core.time import AvailabilityTime
 from market_regime_alpha.strategies.entry import (
     DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1,
     DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1,
+    ENTRY_PATH_MATERIALIZATION_SCHEMA_VERSION,
+    ENTRY_PATH_OBSERVATION_SCHEMA_VERSION,
     ENTRY_PATH_TARGET_SCHEMA_VERSION,
     NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1,
     EntryBarrierSpec,
@@ -114,7 +116,7 @@ def test_barrier_spec_rejects_invalid_semantics(changes: dict[str, object]) -> N
         _spec(**changes)
 
 
-def test_observation_accepts_exact_available_ambiguous_missing_invalid_pending_states() -> None:
+def test_observation_accepts_exact_available_ambiguous_missing_and_pending_states() -> None:
     assert _observation().outcome is EntryPathOutcome.UP_FIRST
     assert (
         _observation(
@@ -140,21 +142,6 @@ def test_observation_accepts_exact_available_ambiguous_missing_invalid_pending_s
     )
     assert (
         _observation(
-            status=EntryPathObservationStatus.INVALID,
-            outcome=None,
-            reference_price=None,
-            upper_price=None,
-            lower_price=None,
-            event_session_date=None,
-            event_session_index=None,
-            trigger_type=None,
-            evaluated_session_dates=(),
-            reason_code=EntryPathReasonCode.ENTRY_REFERENCE_MISSING,
-        ).status
-        is EntryPathObservationStatus.INVALID
-    )
-    assert (
-        _observation(
             status=EntryPathObservationStatus.NOT_YET_OBSERVED,
             outcome=None,
             event_session_date=None,
@@ -166,6 +153,18 @@ def test_observation_accepts_exact_available_ambiguous_missing_invalid_pending_s
         ).status
         is EntryPathObservationStatus.NOT_YET_OBSERVED
     )
+
+
+def test_observation_uses_and_enforces_v2_schema() -> None:
+    assert _observation().schema_version == ENTRY_PATH_OBSERVATION_SCHEMA_VERSION
+
+    with pytest.raises(ValueError, match="entry-path-observation-v2"):
+        _observation(schema_version="entry-path-observation-v1")
+
+
+def test_v2_public_schema_has_no_unproducible_invalid_state() -> None:
+    assert "INVALID" not in EntryPathObservationStatus.__members__
+    assert ENTRY_PATH_MATERIALIZATION_SCHEMA_VERSION == "entry-path-materialization-v2"
 
 
 @pytest.mark.parametrize(

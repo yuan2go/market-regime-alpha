@@ -23,6 +23,8 @@ from market_regime_alpha.core.time import AsOfTime, AvailabilityTime, DecisionTi
 
 
 ENTRY_PATH_TARGET_SCHEMA_VERSION = "entry-path-target-v1"
+ENTRY_PATH_OBSERVATION_SCHEMA_VERSION = "entry-path-observation-v2"
+ENTRY_PATH_MATERIALIZATION_SCHEMA_VERSION = "entry-path-materialization-v2"
 NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1 = (
     "NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1"
 )
@@ -64,7 +66,6 @@ class EntryPathObservationStatus(str, Enum):
     AVAILABLE = "AVAILABLE"
     AMBIGUOUS = "AMBIGUOUS"
     MISSING = "MISSING"
-    INVALID = "INVALID"
     NOT_YET_OBSERVED = "NOT_YET_OBSERVED"
 
 
@@ -90,7 +91,6 @@ class EntryPathReasonCode(str, Enum):
         "HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH"
     )
     FUTURE_DAILY_BAR_MISSING = "FUTURE_DAILY_BAR_MISSING"
-    ENTRY_REFERENCE_MISSING = "ENTRY_REFERENCE_MISSING"
     HORIZON_NOT_COMPLETE = "HORIZON_NOT_COMPLETE"
     EVIDENCE_NOT_YET_AVAILABLE = "EVIDENCE_NOT_YET_AVAILABLE"
     EVIDENCE_COVERAGE_NOT_COMPLETE = "EVIDENCE_COVERAGE_NOT_COMPLETE"
@@ -178,6 +178,7 @@ class EntryPathObservation:
     first_missing_session_date: date | None
     reason_code: EntryPathReasonCode
     observed_at: AvailabilityTime | None
+    schema_version: str = ENTRY_PATH_OBSERVATION_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         _require_text("symbol", self.symbol)
@@ -231,6 +232,9 @@ class EntryPathObservation:
                 raise ValueError("event session index must match evaluated session count")
         if self.first_missing_session_date in self.evaluated_session_dates:
             raise ValueError("first missing session cannot be evaluated")
+        _require_text("schema_version", self.schema_version)
+        if self.schema_version != ENTRY_PATH_OBSERVATION_SCHEMA_VERSION:
+            raise ValueError("schema_version must be entry-path-observation-v2")
         if not isinstance(self.reason_code, EntryPathReasonCode):
             raise TypeError("reason_code must be an EntryPathReasonCode")
         if self.observed_at is not None and not isinstance(
@@ -296,18 +300,6 @@ class EntryPathObservation:
             if self.reason_code is not EntryPathReasonCode.FUTURE_DAILY_BAR_MISSING:
                 raise ValueError("MISSING observation reason_code is inconsistent")
             return
-        if self.status is EntryPathObservationStatus.INVALID:
-            if self.event_session_date is not None or self.trigger_type is not None:
-                raise ValueError("INVALID observation cannot carry an event")
-            if self.first_missing_session_date is not None:
-                raise ValueError("INVALID observation cannot carry a missing session")
-            if self.evaluated_session_dates:
-                raise ValueError("INVALID observation cannot carry evaluated sessions")
-            if self.observed_at is None:
-                raise ValueError("INVALID observation requires observed_at")
-            if self.reason_code is not EntryPathReasonCode.ENTRY_REFERENCE_MISSING:
-                raise ValueError("INVALID observation reason_code is inconsistent")
-            return
         self._require_prices()
         if self.event_session_date is not None or self.trigger_type is not None:
             raise ValueError("NOT_YET_OBSERVED observation cannot carry an event")
@@ -353,23 +345,55 @@ class EntryPathTargetMaterialization:
     materialized_at: AsOfTime
     code_revision: str
     config_hash: str
+    schema_version: str
+    observation_schema_version: str
+    readiness_policy_id: ArtifactId
+    consumed_coverage_assertion_id: ArtifactId | None
     entry_reference_evidence_ids: tuple[ArtifactId, ...]
     consumed_future_bar_evidence_ids: tuple[ArtifactId, ...]
     consumed_future_suspension_evidence_ids: tuple[ArtifactId, ...]
-    completeness_evidence_id: ArtifactId
     observations: tuple[EntryPathObservation, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.artifact_id, ArtifactId):
+            raise TypeError("artifact_id must be an ArtifactId")
+        if not isinstance(self.target_id, TargetId):
+            raise TypeError("target_id must be a TargetId")
+        if not isinstance(self.calendar_artifact_id, ArtifactId):
+            raise TypeError("calendar_artifact_id must be an ArtifactId")
+        if not isinstance(self.universe_id, UniverseId):
+            raise TypeError("universe_id must be a UniverseId")
+        if not isinstance(self.decision_time, DecisionTime):
+            raise TypeError("decision_time must be a DecisionTime")
+        if not isinstance(self.materialized_at, AsOfTime):
+            raise TypeError("materialized_at must be an AsOfTime")
         if not self.source_dataset_ids:
             raise ValueError("Entry path materialization requires source Dataset identities")
         if len(self.source_dataset_ids) != len(set(self.source_dataset_ids)):
             raise ValueError("source_dataset_ids must be unique")
         if tuple(sorted(self.source_dataset_ids, key=str)) != self.source_dataset_ids:
             raise ValueError("source_dataset_ids must be sorted")
+        if any(not isinstance(value, DatasetId) for value in self.source_dataset_ids):
+            raise TypeError("source_dataset_ids must contain DatasetId values")
         if self.materialized_at.value <= self.decision_time.value:
             raise ValueError("Entry path materialization must occur after Decision Time")
         _require_text("code_revision", self.code_revision)
         _require_text("config_hash", self.config_hash)
+        _require_text("schema_version", self.schema_version)
+        if self.schema_version != ENTRY_PATH_MATERIALIZATION_SCHEMA_VERSION:
+            raise ValueError("schema_version must be entry-path-materialization-v2")
+        _require_text("observation_schema_version", self.observation_schema_version)
+        if self.observation_schema_version != ENTRY_PATH_OBSERVATION_SCHEMA_VERSION:
+            raise ValueError(
+                "observation_schema_version must be entry-path-observation-v2"
+            )
+        if not isinstance(self.readiness_policy_id, ArtifactId):
+            raise TypeError("readiness_policy_id must be an ArtifactId")
+        if (
+            self.consumed_coverage_assertion_id is not None
+            and not isinstance(self.consumed_coverage_assertion_id, ArtifactId)
+        ):
+            raise TypeError("consumed_coverage_assertion_id must be an ArtifactId or None")
         for label, values in (
             ("entry_reference_evidence_ids", self.entry_reference_evidence_ids),
             ("consumed_future_bar_evidence_ids", self.consumed_future_bar_evidence_ids),
@@ -380,16 +404,24 @@ class EntryPathTargetMaterialization:
         ):
             if len(values) != len(set(values)):
                 raise ValueError(f"{label} must be unique")
+            if tuple(sorted(values, key=str)) != values:
+                raise ValueError(f"{label} must be sorted")
             if any(not isinstance(value, ArtifactId) for value in values):
                 raise TypeError(f"{label} must contain ArtifactId values")
-        if not isinstance(self.completeness_evidence_id, ArtifactId):
-            raise TypeError("completeness_evidence_id must be an ArtifactId")
         symbols = tuple(item.symbol for item in self.observations)
         if len(symbols) != len(set(symbols)):
             raise ValueError("Entry path observations must have unique symbols")
         if tuple(sorted(symbols)) != symbols:
             raise ValueError("Entry path observations must be sorted by symbol")
+        if len(self.entry_reference_evidence_ids) != len(self.observations):
+            raise ValueError(
+                "entry_reference_evidence_ids must match observation cardinality"
+            )
         for observation in self.observations:
+            if not isinstance(observation, EntryPathObservation):
+                raise TypeError("observations must contain EntryPathObservation values")
+            if observation.schema_version != self.observation_schema_version:
+                raise ValueError("observations must use the declared Observation schema")
             if (
                 observation.observed_at is not None
                 and observation.observed_at.value > self.materialized_at.value
