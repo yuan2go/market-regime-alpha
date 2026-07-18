@@ -519,6 +519,9 @@ Chronological/OOS Candidate validation                         NOT YET IMPLEMENT
 
 Tencent auxiliary multi-date Candidate panels                  IMPLEMENTED — EXPLORATORY ONLY
 Tencent auxiliary chronological descriptive evaluation         IMPLEMENTED — NOT FORMAL OOS EVIDENCE
+PRR-MVP-1 reproducible Candidate replay                        IMPLEMENTED / LOCALLY VERIFIED
+PRR-MVP-1 live auxiliary end-to-end run                        VERIFIED — MIXED source partitions
+PRR-MVP-1 cached end-to-end run                                VERIFIED
 
 WP-4A Entry path Target code contract                           IMPLEMENTED
 WP-4A future path evidence / Calendar resolver                  IMPLEMENTED
@@ -534,6 +537,31 @@ Trading execution                                               OUT OF SCOPE FOR
 
 Formal Candidate / Entry / Exit Alpha evidence                 NOT AVAILABLE
 ```
+
+### PRR-MVP-1 run record
+
+The bounded Tencent/local/BaoStock Candidate replay is a separate `EXPLORATORY` research-mark
+control. It reuses the fixed B0 controls and B1-A through B1-E ladder without model selection and
+does not create an Entry signal, Position state, Exit policy, Portfolio approval, or execution
+authority.
+
+```text
+Live auxiliary run (mixed local/cache plus live auxiliary requests)
+run_id:       prr-mvp-1-20260718T163000+0800-b682a4e71a
+dataset_id:   prr-dataset-623069776325c7e05ca176a8
+acquisition:  prr-raw-87aa3ce58e1fe3289a2fcbaf
+accepted:     20 symbols / 60 Decision Dates / 9 fixed models
+
+Cached end-to-end run
+run_id:       prr-mvp-1-20260718T163100+0800-7013f43a2f
+dataset_id:   prr-dataset-fa40337727427b2f1ff63548
+acquisition:  prr-raw-716c0fee1549b0c678d9fe2d
+```
+
+Both runs retain immutable raw evidence, normalized Dataset and Run artifacts with SHA-256
+manifests. The 14:55 reference is explicitly a research mark, not historical fill proof. Results
+are descriptive only: `EXPLORATORY`, current-watchlist backfill-biased, without verified
+historical PIT, buyability, finality, adjustment, Level-2, or order-book semantics.
 
 ---
 
@@ -807,6 +835,63 @@ Candidate Alpha, Entry accuracy, or Exit accuracy.
 ---
 
 ## 11. Immediate Implementation Sequence
+
+### MR-1 — Overnight Morning-Pop Signal Validation
+
+`MR-1` is implemented as a bounded auxiliary-data `EXPLORATORY` validation, separate from
+WP-3 and not a replacement for its Xuntou provider-backed requirement. It reuses immutable PRR
+5-minute data to evaluate the fixed B0/B1 ladder at exact next-session 09:35, 10:00, 10:30, and
+the retained close comparator. Exact endpoint bars are required; missing endpoints are not
+forward-filled. Morning exits release the daily sleeve before the next 14:55 Decision Time.
+
+The current local v4 run is `mr1-c06821bf7db2dc787244` on Dataset
+`prr-dataset-fa40337727427b2f1ff63548`. It persists a four-member daily comparator family:
+all-Candidate gross, matched-K rank-blind gross/net, and all-Candidate net diagnostic. Matched-K
+uses frozen SHA-256 seed 17, Top-5 capital, the model cost mechanics, fixed missing weight, and
+the same CLOSE cash-lock state. Each baseline is scoped to the corresponding model/date eligible
+ranking population; 28,350 matched-K slot rows retain the actual selected symbols and identities.
+All-Candidate net is not a primary Candidate-Alpha comparator. The prior MR-1 runs are retained
+but **SUPERSEDED** for baseline-comparability interpretation.
+
+The current run still classifies every BASE model/endpoint combination as
+`FAILED_EXPLORATORY` under its predeclared cost-sensitive rule.
+This is not formal OOS evidence, does not select a model, and does not justify Entry, Position,
+Exit, Portfolio, or execution implementation. See
+`docs/research/MR-1-Overnight-Morning-Pop-Signal-Validation.md`.
+
+### MR-2 — Morning-Pop Failure Decomposition
+
+`MR-2` is implemented as a post-hoc `EXPLORATORY` diagnosis of the corrected MR-1 evidence. It
+does not add a Candidate model or a Regime Gate. The current 20-symbol / 60-date auxiliary-data
+run found mixed model failure reasons and limited sign-split evidence across the available
+composite-data regime slices. Its evidence-led result is **C — signal appears only in specific
+regimes**, subject to broader PIT and walk-forward validation. ETF/sector context was explicitly
+reported as unavailable. See `docs/research/MR-2-Morning-Pop-Failure-Decomposition.md`.
+
+### MR-2A — Leak-Free Regime Diagnostic
+
+MR-2A supersedes the old MR-2 `C` conclusion because the old Context used Decision Date
+full-session fields and mixed gross/net baseline semantics. Its historical leak-free,
+cutoff-14:50 result was `C1. REGIME_HETEROGENEITY_HYPOTHESIS`, but MR-2A is now
+`SUPERSEDED_FOR_CURRENT_RESEARCH_AUTHORITY`: absolute-return conditionality and the earlier
+non-population-aware comparator cannot establish Candidate excess Alpha. It is not C2 replication
+or a production Regime Gate. ETF/sector Context remains unavailable. See
+`docs/research/MR-2A-Leak-Free-Regime-Diagnostic.md`.
+
+### MR-2B-F1.2 — Model-Population Comparator Parity
+
+MR-2B-F1.1 and F1.2 are complete. Artifact schemas have one source of truth; verified readers retain
+the original quality evidence and fail closed on checksum, exact-file-set, primary-key,
+cross-table date/symbol, weight, comparator-parity, and CLOSE sleeve-state violations. MR-1
+baseline calculations live in the research domain rather than the CLI. MR-2B observations are
+typed and descriptive; duplicate dates, unknown Context labels, and non-finite values fail
+closed. Premature primary-hypothesis promotion has been removed. F1.2 additionally binds every
+baseline to its model/date eligible population, persists the actual matched-K slots, reconstructs
+those selections in the reader, and excludes local Dataset paths from semantic run identity.
+
+MR-2B remains incomplete. Watchlist Context, exact cutoff-grid evidence, bootstrap,
+permutation, secondary comparisons, competing-event diagnostics, the MR-2B runner, and an
+actual MR-2B run are not implemented by F1.1.
 
 The current ordered sequence is:
 
