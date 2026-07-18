@@ -4,9 +4,9 @@
 > evidence-derived `xuntou-pit-validation-bundle-v4`; buyability/orderability is not fill proof, and
 > the 10:30 endpoint requires next-session intraday evidence rather than daily close.
 
-> **Status:** FROZEN FOUNDATION — EXTERNAL XUNTOU INPUT REQUIRED
+> **Status:** FROZEN SUCCESS PROTOCOL IMPLEMENTED — EXTERNAL XUNTOU V4 INPUT REQUIRED
 >
-> **Experiment:** `pit-b1e-unconditional-candidate-lift-replication-v1`
+> **Experiment:** `pit-b1e-unconditional-candidate-lift-replication-v2`
 >
 > **Authority ceiling:** `REHEARSAL_NOT_FORMAL_OOS`
 
@@ -53,8 +53,9 @@ and cannot be relabelled as validation data.
 
 ## Provider and PIT evidence
 
-Xuntou normalized native bundle v3 is the only accepted provider input. The preflight is bound to
-content bytes and does not fall back to Tencent. The existing Trading Calendar, Historical PIT
+Only evidence-derived `xuntou-pit-validation-bundle-v4` is accepted. V3 remains a REHEARSAL input
+and cannot pass v4 preflight. The preflight is bound to content bytes and does not fall back to
+Tencent. The existing Trading Calendar, Historical PIT
 Universe, Historical Trading Eligibility, provider-rehearsal artifact, provider router, and WP-3
 Candidate seams remain authoritative; this work does not create a second Universe system.
 
@@ -92,7 +93,7 @@ change this frozen replication.
 
 ## Authority
 
-Allowed future result states are `PIT_REPLICATION_SUPPORTED_EXPLORATORY`,
+Allowed future result states are `PIT_REPLICATION_SUPPORTED_REHEARSAL`,
 `PIT_REPLICATION_NOT_SUPPORTED`, `INSUFFICIENT_PIT_EVIDENCE`, and
 `BLOCKED_EXTERNAL_PROVIDER_INPUT`.
 

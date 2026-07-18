@@ -31,6 +31,7 @@ PIT blocked/invalid Artifact identity v2                IMPLEMENTED
 Real normalized Xuntou validation bundle                BLOCKED EXTERNAL INPUT
 Qualified Xuntou PIT evidence v4 contract                IMPLEMENTED / INPUT BLOCKED
 Expanded PIT replication result                         NOT PRODUCED
+Sealed PIT replication success path v2                  IMPLEMENTED / INPUT BLOCKED
 ```
 
 The frozen MR-2B Primary remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. The next research question is
@@ -47,6 +48,14 @@ The qualified input boundary is now `xuntou-pit-validation-bundle-v4`. V3 remain
 cannot pass V4 preflight. The local capability probe reports `EXTERNAL_XTQUANT_RUNTIME_REQUIRED`;
 historical membership, orderability, amount-unit, bar-finality, and 10:30 evaluation evidence have
 not been supplied. No Alpha result was generated.
+
+The v2 success application now separates the ranking Target from the exact next-session 10:30
+evaluation mark, seals explicit Validation sessions before model access, persists Feature evidence,
+reconstructs frozen B1-E scores/ranks, reconstructs all 256 same-population matched-K selections,
+and semantically verifies costs and daily lift. The success branch is covered only by
+`TEST_ONLY_NOT_RESEARCH_EVIDENCE`. The actual formal run remains verified blocker
+`pit-replication-v2-297a8f2cb961c97cdeff`; no partition was specified, sealed, or opened and no
+replication metrics were produced.
 
 Known historical residues include:
 
