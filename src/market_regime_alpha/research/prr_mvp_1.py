@@ -92,6 +92,7 @@ class PRRReplayResult:
     orders: tuple[dict[str, Any], ...]
     fills: tuple[dict[str, Any], ...]
     trades: tuple[dict[str, Any], ...]
+    selection_slot_outcomes: tuple[dict[str, Any], ...]
     daily_equity: tuple[dict[str, Any], ...]
     metrics: dict[str, Any]
     limitations: tuple[str, ...]
@@ -106,17 +107,23 @@ def acceptance_accounting(
 ) -> dict[str, Any]:
     """Reconcile declared Top-K slots with explicit simulated-mark outcomes."""
 
-    selection_slots = model_count * decision_date_count * top_k
+    slots = replay.selection_slot_outcomes
+    keys = {(item["model_id"], item["decision_date"], item["slot_index"]) for item in slots}
+    model_ids = {item["model_id"] for item in slots}
+    dates = {item["decision_date"] for item in slots}
+    if len(keys) != len(slots) or len(slots) != len(model_ids) * len(dates) * top_k:
+        raise ValueError("selection-slot outcomes must be unique and complete")
+    if len(model_ids) != model_count or len(dates) != decision_date_count:
+        raise ValueError("selection-slot actual model/date cardinality mismatch")
+    selection_slots = len(slots)
     completed = sum(1 for item in replay.trades if item["trade_status"] == "COMPLETED")
     entry_marks = sum(1 for item in replay.fills if item["side"] == "BUY")
     exit_marks = sum(1 for item in replay.fills if item["side"] == "SELL")
-    cash_events = [item for item in replay.orders if item["reason_code"] == "ACTIVE_POSITION_CASH_LOCKED"]
-    cash_slots = len(cash_events) * top_k
-    missing_entry = sum(1 for item in replay.orders if item["reason_code"] == "MISSING_ENTRY_REFERENCE")
-    missing_exit = sum(1 for item in replay.trades if item["trade_status"] == "MISSING_EXIT")
-    excluded = selection_slots - completed - cash_slots - missing_entry - missing_exit
-    if excluded < 0 or completed + cash_slots + missing_entry + missing_exit + excluded != selection_slots:
-        raise ValueError("selection-slot accounting identity does not reconcile")
+    counts = {status: sum(1 for item in slots if item["slot_status"] == status) for status in {item["slot_status"] for item in slots}}
+    cash_slots = counts.get("ACTIVE_POSITION_CASH_LOCKED", 0) + counts.get("NO_RANKED_CANDIDATE", 0)
+    missing_entry = counts.get("MISSING_ENTRY_REFERENCE", 0)
+    missing_exit = counts.get("MISSING_EXIT", 0)
+    excluded = counts.get("EXCLUDED_BY_EXPLICIT_POLICY", 0)
     return {
         "model_count": model_count,
         "decision_date_count": decision_date_count,
@@ -131,10 +138,7 @@ def acceptance_accounting(
         "cash_slot_count": cash_slots,
         "excluded_count": excluded,
         "slot_identity": "selection_slot_count = completed_trade_count + missing_entry_count + missing_exit_count + cash_slot_count + excluded_count",
-        "reason_code_counts": {
-            "ACTIVE_POSITION_CASH_LOCKED": cash_slots,
-            "NO_RANKED_CANDIDATE": excluded,
-        },
+        "reason_code_counts": {key: sum(1 for item in slots if item["reason_code"] == key) for key in sorted({item["reason_code"] for item in slots})},
         "fill_status_required": "SIMULATED_REFERENCE_FILL",
         "rank_six_backfill": False,
     }
@@ -219,6 +223,7 @@ def replay_fixed_candidate_portfolios(
     orders: list[dict[str, Any]] = []
     fills: list[dict[str, Any]] = []
     trades: list[dict[str, Any]] = []
+    slots: list[dict[str, Any]] = []
     equity: list[dict[str, Any]] = []
     for model_id in model_ids:
         model_rows = [row for row in close_rows if row["model_id"] == model_id]
@@ -240,6 +245,7 @@ def replay_fixed_candidate_portfolios(
             )
             next_date = execution.prepared.next_session_date(decision_date)
             if active_until is not None and decision_date <= active_until:
+                slots.extend(_slot_rows(model_id, decision_date, top_k, (), "ACTIVE_POSITION_CASH_LOCKED"))
                 orders.append(
                     _order_row(
                         run_id,
@@ -259,6 +265,7 @@ def replay_fixed_candidate_portfolios(
                 continue
             selected = tuple(row for row in ranked if int(row["rank"]) <= top_k)
             if not selected:
+                slots.extend(_slot_rows(model_id, decision_date, top_k, (), "NO_RANKED_CANDIDATE"))
                 orders.append(
                     _order_row(run_id, execution, model_id, decision_date, "__CASH__", None, None, "SKIPPED", "NO_RANKED_CANDIDATE")
                 )
@@ -300,12 +307,14 @@ def replay_fixed_candidate_portfolios(
                 )
                 fills.extend(trade_fills)
                 trades.append(trade)
+                slots.append({"schema_version":"prr-mvp-1-selection-slot-outcome-v1","model_id":model_id,"decision_date":decision_date.isoformat(),"slot_index":int(row["rank"]),"expected_rank":int(row["rank"]),"symbol":symbol,"actual_rank":int(row["rank"]),"slot_status":"COMPLETED","reason_code":"SIMULATED_REFERENCE_FILL","order_id":f"{model_id}:{decision_date}:{symbol}:order","entry_fill_id":f"{model_id}:{decision_date}:{symbol}:buy","exit_fill_id":f"{model_id}:{decision_date}:{symbol}:sell","trade_id":f"{model_id}:{decision_date}:{symbol}:trade"})
                 if trade["trade_status"] == "COMPLETED":
                     gross_returns.append(float(trade["gross_return"]))
                     net_returns.append(float(trade["net_return"]))
                     total_cost += float(trade["transaction_cost"])
                     total_slippage += float(trade["slippage_cost"])
                     completed += 1
+            slots.extend(_slot_rows(model_id, decision_date, top_k, selected, "NO_RANKED_CANDIDATE"))
             gross_return = mean(gross_returns) if gross_returns else 0.0
             net_return = mean(net_returns) if net_returns else 0.0
             gross_equity *= 1.0 + gross_return
@@ -332,6 +341,7 @@ def replay_fixed_candidate_portfolios(
         orders=tuple(orders),
         fills=tuple(fills),
         trades=tuple(trades),
+        selection_slot_outcomes=tuple(slots),
         daily_equity=tuple(equity),
         metrics=metrics,
         limitations=(
@@ -542,6 +552,11 @@ def _order_row(
         "order_status": status,
         "reason_code": reason,
     }
+
+
+def _slot_rows(model_id: str, decision_date: date, top_k: int, selected: tuple[dict[str, Any], ...], reason: str) -> list[dict[str, Any]]:
+    ranks = {int(item["rank"]) for item in selected}
+    return [{"schema_version":"prr-mvp-1-selection-slot-outcome-v1","model_id":model_id,"decision_date":decision_date.isoformat(),"slot_index":slot,"expected_rank":slot,"symbol":None,"actual_rank":None,"slot_status":reason,"reason_code":reason,"order_id":None,"entry_fill_id":None,"exit_fill_id":None,"trade_id":None} for slot in range(1, top_k + 1) if slot not in ranks]
 
 
 def _equity_row(

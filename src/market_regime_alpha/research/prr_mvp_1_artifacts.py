@@ -76,8 +76,9 @@ RUN_FILENAMES = frozenset(
         "daily_equity.parquet",
         "monthly_metrics.csv",
         "metrics.json",
-    "stability.json",
-    "acceptance_accounting.json",
+        "stability.json",
+        "acceptance_accounting.json",
+        "selection_slot_outcomes.parquet",
         "limitations.json",
         "report.md",
         "SHA256SUMS.json",
@@ -470,6 +471,7 @@ def write_prr_run(
         _write_parquet(stage / "fills.parquet", replay.fills)
         _write_parquet(stage / "trades.parquet", replay.trades)
         _write_parquet(stage / "daily_equity.parquet", replay.daily_equity)
+        _write_parquet(stage / "selection_slot_outcomes.parquet", replay.selection_slot_outcomes)
         _write_monthly_metrics(stage / "monthly_metrics.csv", replay.daily_equity)
         _write_json(stage / "metrics.json", replay.metrics)
         _write_json(stage / "stability.json", _stability(replay.daily_equity))
