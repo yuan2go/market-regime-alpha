@@ -29,6 +29,7 @@ MR-2B F2B v3 exact implementation identity              COMPLETE
 PIT replication protocol and provider-bound preflight  IMPLEMENTED
 PIT blocked/invalid Artifact identity v2                IMPLEMENTED
 Real normalized Xuntou validation bundle                BLOCKED EXTERNAL INPUT
+Qualified Xuntou PIT evidence v4 contract                IMPLEMENTED / INPUT BLOCKED
 Expanded PIT replication result                         NOT PRODUCED
 ```
 
@@ -41,6 +42,11 @@ F2B v3 run `mr2b-f2b-v3-bb34b06f7446aa0af9e7` supersedes v2 as the current
 identity contract while preserving the exact frozen statistical result. Its implementation hash map
 is code-owned and exact; verifier routing is deliberately outside statistical identity. The actual
 PIT v2 blocker is `pit-replication-v2-c681ed11199027ea819d`.
+
+The qualified input boundary is now `xuntou-pit-validation-bundle-v4`. V3 remains REHEARSAL and
+cannot pass V4 preflight. The local capability probe reports `EXTERNAL_XTQUANT_RUNTIME_REQUIRED`;
+historical membership, orderability, amount-unit, bar-finality, and 10:30 evaluation evidence have
+not been supplied. No Alpha result was generated.
 
 Known historical residues include:
 
