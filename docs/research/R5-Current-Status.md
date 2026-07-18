@@ -524,6 +524,7 @@ WP-4A Entry path Target code contract                           IMPLEMENTED
 WP-4A future path evidence / Calendar resolver                  IMPLEMENTED
 WP-4A pure materializer / deterministic identity                IMPLEMENTED / VERIFIED
 WP-4A.1 Entry price lineage / temporal completeness hardening   IMPLEMENTED / VERIFIED
+WP-4A.2 as-of readiness / coverage correction                   IMPLEMENTED / LOCALLY VERIFIED
 Entry Gate / Entry Proposal / Entry model                       NOT IMPLEMENTED
 Entry timing accuracy                                           NOT VALIDATED
 Canonical Position State code contract                         NOT YET IMPLEMENTED
@@ -586,6 +587,19 @@ system-interpreter attempt therefore does not supersede the successful repositor
 These checks establish implementation consistency only. They do not establish a real Xuntou run,
 Entry timing accuracy, formal OOS evidence, or Alpha. The older failure blocks later in this
 section are dated historical verification records and do not override this latest result.
+
+WP-4A.2 closure status:
+
+```text
+WP-4A.2 implemented and locally verified
+Entry model not implemented
+Entry accuracy not validated
+CI workflow implemented
+remote CI result not verified
+```
+
+The materialization correction separates readiness policy from as-of coverage assertion, retains
+only consumed coverage identity, and leaves `entry-path-target-v1` truth semantics unchanged.
 
 Tencent composite verification was executed on 2026-07-16. The latest successful live run used
 code revision:
@@ -815,14 +829,10 @@ WP-4A
 Entry Path Target contracts / evidence / materializer — COMPLETE
 UP_FIRST / DOWN_FIRST / TIMEOUT / explicit AMBIGUOUS
         ↓
-WP-5
-Run first Candidate-only vs Candidate + Entry timing experiment
+Obtain a real, content-hashed Xuntou normalized bundle and complete the existing
+WP-3 provider-backed run — NEXT
         ↓
-WP-6
-Implement canonical Position State contract
-        ↓
-WP-7
-Implement Exit continuation Target contracts and simple control arms
+WP-5 remains unentered: it requires its own research charter and chronological comparison.
 ```
 
 The completed Tencent auxiliary experiment is a parallel `EXPLORATORY` evidence path. The new
