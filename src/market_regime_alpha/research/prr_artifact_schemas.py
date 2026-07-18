@@ -242,6 +242,13 @@ MR2B_F2B_RUN_SCHEMA = ArtifactSchema(
     ),
 )
 
+MR2B_F2B_V2_RUN_SCHEMA = ArtifactSchema(
+    schema_version="mr-2b-f2b-run-v2",
+    required_files=MR2B_F2B_RUN_SCHEMA.required_files,
+    required_manifest_keys=MR2B_F2B_RUN_SCHEMA.required_manifest_keys
+    | frozenset({"artifact_verification_status", "statistics_executed"}),
+)
+
 
 def canonical_identity_hash(payload: object) -> str:
     canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
