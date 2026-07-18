@@ -148,6 +148,59 @@ MR1_MATCHED_K_SELECTION_SCHEMA_VERSION = "mr-1-matched-k-selection-evidence-v1"
 MR1_SELECTION_EVIDENCE_SCHEMA_VERSION = MR1_MATCHED_K_SELECTION_SCHEMA_VERSION
 MR1_RANKING_POPULATION_VALIDATION_RULE_ID = "mr1-eligible-contiguous-rank-validation-v1"
 
+MR2B_F2A_RUN_SCHEMA = ArtifactSchema(
+    schema_version="mr-2b-f2a-run-v2",
+    required_files=frozenset(
+        {
+            "manifest.json",
+            "seed_config.json",
+            "auxiliary_watchlist_context.parquet",
+            "auxiliary_watchlist_context_symbol_evidence.parquet",
+            "multi_seed_matched_k_selections.parquet",
+            "multi_seed_matched_k_returns.parquet",
+            "multi_seed_null_summary.parquet",
+            "daily_candidate_excess.parquet",
+            "primary_seed_reconciliation.json",
+            "primary_comparison_input.json",
+            "coverage.json",
+            "limitations.json",
+            "report.md",
+            "SHA256SUMS.json",
+        }
+    ),
+    required_manifest_keys=frozenset(
+        {
+            "schema_version",
+            "run_id",
+            "dataset_id",
+            "mr1_run_id",
+            "data_eligibility",
+            "required_artifacts",
+            "run_identity",
+            "seed_set_id",
+            "seed_count",
+            "primary_seed",
+            "top_k",
+            "model_count",
+            "decision_date_count",
+            "row_counts",
+        }
+    ),
+)
+
+MR2B_CONTEXT_PRIMARY_KEY = ("decision_date",)
+MR2B_CONTEXT_SYMBOL_EVIDENCE_PRIMARY_KEY = ("decision_date", "symbol")
+MR2B_MULTISEED_SELECTION_PRIMARY_KEY = ("decision_date", "model_id", "seed", "slot_index")
+MR2B_MULTISEED_RETURN_PRIMARY_KEY = (
+    "decision_date",
+    "model_id",
+    "exit_time",
+    "cost_scenario",
+    "seed",
+)
+MR2B_NULL_SUMMARY_PRIMARY_KEY = ("decision_date", "model_id", "exit_time", "cost_scenario")
+MR2B_DAILY_EXCESS_PRIMARY_KEY = MR2B_NULL_SUMMARY_PRIMARY_KEY
+
 
 def canonical_identity_hash(payload: object) -> str:
     canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
