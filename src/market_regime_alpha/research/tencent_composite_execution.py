@@ -84,6 +84,37 @@ def execute_tencent_composite_research(
         end_date=retrieved_at.value.date().isoformat(),
         retrieved_at=retrieved_at.value,
     )
+    return complete_tencent_composite_research(
+        acquisition=acquisition,
+        watchlist=watchlist,
+        watchlist_hash=watchlist_hash,
+        decision_count=decision_count,
+        warmup_sessions=warmup_sessions,
+        minimum_accepted_symbols=minimum_accepted_symbols,
+        code_revision=code_revision,
+        config_hash=config_hash,
+        acquisition_mode=acquisition_mode,
+    )
+
+
+def complete_tencent_composite_research(
+    *,
+    acquisition: CompositeAcquisitionResult,
+    watchlist: tuple[str, ...],
+    watchlist_hash: str,
+    decision_count: int,
+    warmup_sessions: int,
+    minimum_accepted_symbols: int,
+    code_revision: str,
+    config_hash: str,
+    acquisition_mode: str,
+) -> TencentCompositeResearchExecution:
+    """Complete the shared route from retained or freshly acquired composite input."""
+
+    if decision_count != 60:
+        raise ValueError("Tencent composite Candidate contract requires decision_count=60")
+    if len(watchlist) != 20 or len(watchlist) != len(set(watchlist)):
+        raise ValueError("Tencent composite route requires exactly 20 configured watchlist symbols")
     merged = merge_acquisition(acquisition)
     dataset_contract = build_tencent_composite_dataset_contract(
         watchlist_hash=watchlist_hash,
@@ -104,7 +135,7 @@ def execute_tencent_composite_research(
     candidate_experiment = run_tencent_composite_candidate_experiment(
         prepared=prepared,
         dataset_contract=dataset_contract,
-        retrieved_at=retrieved_at,
+        retrieved_at=acquisition.retrieved_at,
         code_revision=code_revision,
         config_hash=config_hash,
     )
