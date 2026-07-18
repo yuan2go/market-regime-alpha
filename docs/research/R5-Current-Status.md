@@ -519,6 +519,9 @@ Chronological/OOS Candidate validation                         NOT YET IMPLEMENT
 
 Tencent auxiliary multi-date Candidate panels                  IMPLEMENTED — EXPLORATORY ONLY
 Tencent auxiliary chronological descriptive evaluation         IMPLEMENTED — NOT FORMAL OOS EVIDENCE
+PRR-MVP-1 reproducible Candidate replay                        IMPLEMENTED / LOCALLY VERIFIED
+PRR-MVP-1 live auxiliary end-to-end run                        VERIFIED — MIXED source partitions
+PRR-MVP-1 cached end-to-end run                                VERIFIED
 
 WP-4A Entry path Target code contract                           IMPLEMENTED
 WP-4A future path evidence / Calendar resolver                  IMPLEMENTED
@@ -534,6 +537,31 @@ Trading execution                                               OUT OF SCOPE FOR
 
 Formal Candidate / Entry / Exit Alpha evidence                 NOT AVAILABLE
 ```
+
+### PRR-MVP-1 run record
+
+The bounded Tencent/local/BaoStock Candidate replay is a separate `EXPLORATORY` research-mark
+control. It reuses the fixed B0 controls and B1-A through B1-E ladder without model selection and
+does not create an Entry signal, Position state, Exit policy, Portfolio approval, or execution
+authority.
+
+```text
+Live auxiliary run (mixed local/cache plus live auxiliary requests)
+run_id:       prr-mvp-1-20260718T163000+0800-b682a4e71a
+dataset_id:   prr-dataset-623069776325c7e05ca176a8
+acquisition:  prr-raw-87aa3ce58e1fe3289a2fcbaf
+accepted:     20 symbols / 60 Decision Dates / 9 fixed models
+
+Cached end-to-end run
+run_id:       prr-mvp-1-20260718T163100+0800-7013f43a2f
+dataset_id:   prr-dataset-fa40337727427b2f1ff63548
+acquisition:  prr-raw-716c0fee1549b0c678d9fe2d
+```
+
+Both runs retain immutable raw evidence, normalized Dataset and Run artifacts with SHA-256
+manifests. The 14:55 reference is explicitly a research mark, not historical fill proof. Results
+are descriptive only: `EXPLORATORY`, current-watchlist backfill-biased, without verified
+historical PIT, buyability, finality, adjustment, Level-2, or order-book semantics.
 
 ---
 
