@@ -10,6 +10,8 @@ from market_regime_alpha.research.mr2b_context import (
     ContextDataStatus,
     ContextMissingReason,
     build_auxiliary_watchlist_context,
+    build_auxiliary_watchlist_context_evidence,
+    validate_context_reconstruction,
 )
 from market_regime_alpha.research.tencent_composite_contracts import (
     CompositeBar,
@@ -141,3 +143,40 @@ def test_future_dates_do_not_change_historical_context_identity() -> None:
     assert original == with_future
     assert original.dataset_id == "prr-dataset-test"
     assert original.expected_bar_count_per_symbol == 46
+
+
+def test_symbol_evidence_reconstructs_available_daily_context() -> None:
+    bundle = build_auxiliary_watchlist_context_evidence(
+        dataset_id="prr-dataset-test",
+        accepted_symbols=SYMBOLS,
+        session_dates=(PREVIOUS, DECISION),
+        bars=_complete_bars(),
+        decision_dates=(DECISION,),
+    )
+
+    assert len(bundle.symbol_evidence) == len(SYMBOLS)
+    assert all(row.evidence_status is ContextDataStatus.AVAILABLE for row in bundle.symbol_evidence)
+    validate_context_reconstruction(bundle.contexts[0], bundle.symbol_evidence)
+
+
+def test_symbol_evidence_preserves_per_symbol_missing_reason() -> None:
+    bars = tuple(
+        bar
+        for bar in _complete_bars()
+        if not (
+            bar.symbol == SYMBOLS[0]
+            and bar.timestamp.date() == DECISION
+            and bar.timestamp.time() == time(10, 5)
+        )
+    )
+    bundle = build_auxiliary_watchlist_context_evidence(
+        dataset_id="prr-dataset-test",
+        accepted_symbols=SYMBOLS,
+        session_dates=(PREVIOUS, DECISION),
+        bars=bars,
+        decision_dates=(DECISION,),
+    )
+
+    missing = next(row for row in bundle.symbol_evidence if row.symbol == SYMBOLS[0])
+    assert missing.missing_reason is ContextMissingReason.INCOMPLETE_CUTOFF_GRID
+    validate_context_reconstruction(bundle.contexts[0], bundle.symbol_evidence)

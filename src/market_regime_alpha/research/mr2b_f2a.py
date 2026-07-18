@@ -16,8 +16,9 @@ from market_regime_alpha.research.mr1_research_runner import mr1_cost_scenarios
 from market_regime_alpha.research.mr2b_context import (
     MR2B_CONTEXT_DEFINITION_ID,
     AuxiliaryWatchlistContext,
+    AuxiliaryWatchlistContextSymbolEvidence,
     ContextDataStatus,
-    build_auxiliary_watchlist_context,
+    build_auxiliary_watchlist_context_evidence,
 )
 from market_regime_alpha.research.mr2b_excess import (
     MR2B_PRIMARY_COST_SCENARIO,
@@ -41,9 +42,11 @@ from market_regime_alpha.research.prr_artifact_schemas import (
 )
 
 
-MR2B_F2A_SCHEMA_VERSION = "mr-2b-f2a-conditionality-inputs-v1"
+MR2B_F2A_SCHEMA_VERSION = "mr-2b-f2a-conditionality-inputs-v2"
 MR2B_DAILY_EXCESS_SCHEMA_VERSION = "mr-2b-daily-candidate-excess-v1"
 MR2B_PRIMARY_INPUT_SCHEMA_VERSION = "mr-2b-primary-comparison-input-v1"
+MR2B_PRIMARY_PROJECTION_RULE_ID = "mr2b-primary-projection-from-daily-excess-v1"
+MR2B_COVERAGE_SCHEMA_VERSION = "mr-2b-f2a-coverage-v2"
 F2A_PRIMARY_HYPOTHESIS_ID = "mr2b-primary-b1e-1030-base-watchlist-direction-v1"
 F2A_PRIMARY_METRIC_ID = "daily-net-lift-vs-multiseed-matched-k-median-v1"
 
@@ -51,11 +54,10 @@ F2A_PRIMARY_METRIC_ID = "daily-net-lift-vs-multiseed-matched-k-median-v1"
 @dataclass(frozen=True, slots=True)
 class F2AInputs:
     contexts: tuple[AuxiliaryWatchlistContext, ...]
+    context_symbol_evidence: tuple[AuxiliaryWatchlistContextSymbolEvidence, ...]
     populations: tuple[ModelCandidatePopulation, ...]
     multiseed: MultiSeedReferenceEvidence
     daily_excess_rows: tuple[dict[str, Any], ...]
-    primary_comparison_input: dict[str, Any]
-    coverage: dict[str, Any]
 
 
 def build_f2a_inputs(
@@ -72,7 +74,7 @@ def build_f2a_inputs(
         dataset_id=dataset.dataset_id,
         ranking_rows=dataset.ranking_rows,
     )
-    contexts = build_auxiliary_watchlist_context(
+    context_evidence = build_auxiliary_watchlist_context_evidence(
         dataset_id=dataset.dataset_id,
         accepted_symbols=dataset.prepared.accepted_symbols,
         session_dates=dataset.prepared.common_session_dates,
@@ -97,7 +99,7 @@ def build_f2a_inputs(
     daily = build_daily_candidate_excess(
         dataset_id=dataset.dataset_id,
         mr1_run_id=mr1.run_id,
-        contexts=contexts,
+        contexts=context_evidence.contexts,
         populations=populations,
         baseline_rows=mr1.candidate_daily_baselines,
         null_summary_rows=multiseed.null_summary_rows,
@@ -105,15 +107,12 @@ def build_f2a_inputs(
         seed_set_id=multiseed.seed_set_id,
         primary_seed=MR1_BASELINE_PRIMARY_SEED,
     )
-    primary = build_primary_comparison_input(daily)
-    coverage = _coverage(contexts, daily)
     return F2AInputs(
-        contexts=contexts,
+        contexts=context_evidence.contexts,
+        context_symbol_evidence=context_evidence.symbol_evidence,
         populations=populations,
         multiseed=multiseed,
         daily_excess_rows=daily,
-        primary_comparison_input=primary,
-        coverage=coverage,
     )
 
 
@@ -308,19 +307,28 @@ def _row_key(row: Mapping[str, Any], date_field: str) -> tuple[str, str, str, st
     )
 
 
-def _coverage(contexts: tuple[AuxiliaryWatchlistContext, ...], daily: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+def build_f2a_coverage(
+    contexts: Iterable[AuxiliaryWatchlistContext],
+    daily: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    context_rows = tuple(contexts)
+    daily_rows = tuple(daily)
     counts = {status.value: 0 for status in ContextDataStatus}
     reasons: dict[str, int] = {}
-    for context in contexts:
+    labels = {label.value: 0 for label in WatchlistDirection}
+    for context in context_rows:
         counts[context.data_status.value] += 1
         if context.missing_reason is not None:
             reasons[context.missing_reason.value] = reasons.get(context.missing_reason.value, 0) + 1
+        if context.watchlist_direction is not None:
+            labels[context.watchlist_direction.value] += 1
     return {
-        "schema_version": "mr-2b-f2a-coverage-v1",
-        "context_date_count": len(contexts),
+        "schema_version": MR2B_COVERAGE_SCHEMA_VERSION,
+        "context_date_count": len(context_rows),
         "context_status_counts": counts,
         "context_missing_reason_counts": reasons,
-        "daily_excess_row_count": len(daily),
+        "context_label_counts": labels,
+        "daily_excess_row_count": len(daily_rows),
         "data_eligibility": "EXPLORATORY",
     }
 

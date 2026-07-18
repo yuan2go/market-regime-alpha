@@ -149,12 +149,13 @@ MR1_SELECTION_EVIDENCE_SCHEMA_VERSION = MR1_MATCHED_K_SELECTION_SCHEMA_VERSION
 MR1_RANKING_POPULATION_VALIDATION_RULE_ID = "mr1-eligible-contiguous-rank-validation-v1"
 
 MR2B_F2A_RUN_SCHEMA = ArtifactSchema(
-    schema_version="mr-2b-f2a-run-v1",
+    schema_version="mr-2b-f2a-run-v2",
     required_files=frozenset(
         {
             "manifest.json",
             "seed_config.json",
             "auxiliary_watchlist_context.parquet",
+            "auxiliary_watchlist_context_symbol_evidence.parquet",
             "multi_seed_matched_k_selections.parquet",
             "multi_seed_matched_k_returns.parquet",
             "multi_seed_null_summary.parquet",
@@ -188,6 +189,7 @@ MR2B_F2A_RUN_SCHEMA = ArtifactSchema(
 )
 
 MR2B_CONTEXT_PRIMARY_KEY = ("decision_date",)
+MR2B_CONTEXT_SYMBOL_EVIDENCE_PRIMARY_KEY = ("decision_date", "symbol")
 MR2B_MULTISEED_SELECTION_PRIMARY_KEY = ("decision_date", "model_id", "seed", "slot_index")
 MR2B_MULTISEED_RETURN_PRIMARY_KEY = (
     "decision_date",
