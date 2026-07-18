@@ -16,7 +16,6 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from market_regime_alpha.research.mr2_failure_decomposition import (  # noqa: E402
     MR2_SCHEMA_VERSION,
@@ -24,7 +23,10 @@ from market_regime_alpha.research.mr2_failure_decomposition import (  # noqa: E4
     feature_target_diagnostics,
     target_coverage,
 )
-from run_mr1_overnight_morning_pop_validation import _load_dataset, _verify_dataset  # noqa: E402
+from market_regime_alpha.research.prr_artifact_reader import (  # noqa: E402
+    load_verified_mr1_run,
+    load_verified_prr_dataset,
+)
 
 
 DEFAULT_ROOT = PROJECT_ROOT / "data" / "processed" / "mr2_failure_decomposition_runs"
@@ -41,19 +43,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     dataset, mr1_run = args.dataset.resolve(), args.mr1_run.resolve()
-    _verify_dataset(dataset)
-    dataset_manifest = _read_json(dataset / "dataset_manifest.json")
-    mr1_manifest = _read_json(mr1_run / "manifest.json")
-    if dataset_manifest["dataset_id"] != mr1_manifest["dataset_id"]:
-        raise SystemExit("MR-1 artifact must reference the supplied immutable Dataset")
-    _verify_checksums(mr1_run)
-    prepared, _, rankings, _ = _load_dataset(dataset)
-    targets = pd.read_parquet(mr1_run / "morning_targets.parquet").to_dict(orient="records")
-    mr1_metrics = pd.read_parquet(mr1_run / "chronological_model_metrics.parquet").to_dict(orient="records")
+    verified_dataset = load_verified_prr_dataset(dataset)
+    verified_mr1 = load_verified_mr1_run(
+        mr1_run,
+        expected_dataset_id=verified_dataset.dataset_id,
+    )
+    dataset_manifest = dict(verified_dataset.manifest)
+    mr1_manifest = dict(verified_mr1.manifest)
+    prepared = verified_dataset.prepared
+    rankings = tuple(dict(row) for row in verified_dataset.ranking_rows)
+    targets = [dict(row) for row in verified_mr1.morning_targets]
+    mr1_metrics = [dict(row) for row in verified_mr1.metrics]
     ic, spreads = feature_target_diagnostics(ranking_rows=rankings, target_rows=targets)
     coverage = target_coverage(targets)
     failures = [dict(row) for row in decompose_model_failures(mr1_metrics=mr1_metrics, target_coverage=coverage)]
-    equity = pd.read_parquet(mr1_run / "daily_equity.parquet").to_dict(orient="records")
+    equity = [dict(row) for row in verified_mr1.daily_equity]
     _add_day_contributions(failures, equity)
     regime = _regime_slices(prepared, rankings, targets, equity)
     summary = _failure_summary(ic, failures, regime)
