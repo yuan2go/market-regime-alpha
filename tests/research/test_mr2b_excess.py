@@ -108,3 +108,31 @@ def test_observation_exposes_all_comparator_metrics() -> None:
     assert row.gross_excess_vs_matched_k == pytest.approx(0.006)
     assert row.net_excess_vs_matched_k == pytest.approx(0.006)
     assert row.cost_drag_difference == pytest.approx(0.0)
+
+
+def test_binary_primary_assessment_excludes_flat_rows_consistently() -> None:
+    up = _observation(
+        date(2026, 1, 5),
+        WatchlistDirection.UP,
+        model_gross=0.02,
+        model_net=0.018,
+        matched_gross=0.01,
+        matched_net=0.009,
+    )
+    down = _observation(
+        date(2026, 1, 6),
+        WatchlistDirection.DOWN,
+        model_gross=-0.01,
+        model_net=-0.012,
+        matched_gross=-0.005,
+        matched_net=-0.006,
+    )
+    quiet_flat = _observation(date(2026, 1, 7), WatchlistDirection.FLAT, model_net=0.0)
+    extreme_flat = _observation(date(2026, 1, 7), WatchlistDirection.FLAT, model_net=99.0)
+
+    quiet = primary_assessment((up, down, quiet_flat))
+    extreme = primary_assessment((up, down, extreme_flat))
+
+    assert quiet == extreme
+    assert quiet["FLAT_count"] == 1
+    assert quiet["excluded_context_count"] == 1

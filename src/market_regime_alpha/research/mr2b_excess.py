@@ -93,7 +93,11 @@ class DailyConditionalityObservation:
 
 
 def primary_assessment(rows: Iterable[DailyConditionalityObservation]) -> dict[str, object]:
-    """Summarize the frozen primary slice descriptively; F2 owns statistical promotion."""
+    """Summarize the historical binary UP/DOWN slice without statistical promotion.
+
+    FLAT observations are disclosed but excluded from every numeric aggregate so the
+    binary comparison has one consistent population.
+    """
 
     ordered = tuple(sorted(rows, key=lambda item: item.decision_date))
     if not ordered:
@@ -110,8 +114,14 @@ def primary_assessment(rows: Iterable[DailyConditionalityObservation]) -> dict[s
             or row.cost_scenario != MR2B_PRIMARY_COST_SCENARIO
         ):
             raise ValueError("observations must match the frozen MR-2B primary comparison")
+    eligible = tuple(
+        row
+        for row in ordered
+        if row.context_label in (WatchlistDirection.UP, WatchlistDirection.DOWN)
+    )
+    flat_count = sum(row.context_label is WatchlistDirection.FLAT for row in ordered)
     grouped = {
-        direction: tuple(row for row in ordered if row.context_label is direction)
+        direction: tuple(row for row in eligible if row.context_label is direction)
         for direction in (WatchlistDirection.UP, WatchlistDirection.DOWN)
     }
     if any(not values for values in grouped.values()):
@@ -121,7 +131,7 @@ def primary_assessment(rows: Iterable[DailyConditionalityObservation]) -> dict[s
     up_net = mean(row.net_excess_vs_matched_k for row in up)
     down_net = mean(row.net_excess_vs_matched_k for row in down)
     difference = up_net - down_net
-    all_excess = tuple(row.net_excess_vs_matched_k for row in ordered)
+    all_excess = tuple(row.net_excess_vs_matched_k for row in eligible)
     if all(abs(value) < 1e-12 for value in all_excess):
         assessment = "NO_EXCESS"
     elif abs(difference) >= MR2B_EFFECT_THRESHOLD:
@@ -131,14 +141,18 @@ def primary_assessment(rows: Iterable[DailyConditionalityObservation]) -> dict[s
     return {
         "assessment": assessment,
         "slice_counts": {"UP": len(up), "DOWN": len(down)},
+        "FLAT_count": flat_count,
+        "excluded_context_count": len(ordered) - len(eligible),
         "up_mean_net_excess_vs_matched_k": up_net,
         "down_mean_net_excess_vs_matched_k": down_net,
         "difference_of_mean_net_excess_vs_matched_k": difference,
         "mean_gross_excess_vs_all_candidate": mean(
-            row.gross_excess_vs_all_candidate for row in ordered
+            row.gross_excess_vs_all_candidate for row in eligible
         ),
-        "mean_gross_excess_vs_matched_k": mean(row.gross_excess_vs_matched_k for row in ordered),
-        "mean_cost_drag_difference": mean(row.cost_drag_difference for row in ordered),
+        "mean_gross_excess_vs_matched_k": mean(
+            row.gross_excess_vs_matched_k for row in eligible
+        ),
+        "mean_cost_drag_difference": mean(row.cost_drag_difference for row in eligible),
     }
 
 

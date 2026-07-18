@@ -14,6 +14,7 @@ from market_regime_alpha.research.mr2b_multiseed import (
     linear_quantile,
 )
 from market_regime_alpha.research.prr_mvp_1 import ExploratoryExecutionCostConfig
+from market_regime_alpha.research.prr_artifact_schemas import selected_symbols_hash
 
 
 DATASET_ID = "prr-dataset-test"
@@ -232,3 +233,19 @@ def test_close_cash_lock_applies_to_every_seed_without_fake_return_selection() -
     assert all(row["selected_symbol_count"] == 0 for row in locked)
     assert all(row["gross_return"] == row["net_return"] == 0.0 for row in locked)
     assert all(row["cash_locked_weight"] == 1.0 for row in locked)
+    assert {row["selected_symbols_hash"] for row in locked} == {selected_symbols_hash(())}
+
+    summaries = {
+        (row["decision_date"], row["exit_time"]): row
+        for row in evidence.null_summary_rows
+    }
+    executed = summaries[(DAY.isoformat(), "10:30")]
+    cash_locked = summaries[(second.isoformat(), "CLOSE")]
+    assert executed["selection_applicable"] is True
+    assert executed["selection_collision_rate"] == pytest.approx(
+        1.0 - executed["unique_selection_count"] / executed["seed_count"]
+    )
+    assert cash_locked["selection_applicable"] is False
+    assert cash_locked["unique_selection_count"] is None
+    assert cash_locked["unique_selection_ratio"] is None
+    assert cash_locked["selection_collision_rate"] is None

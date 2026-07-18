@@ -19,6 +19,7 @@ from market_regime_alpha.research.prr_artifact_schemas import (
     MR1_MATCHED_K_ALGORITHM_ID,
     ModelCandidatePopulation,
     canonical_identity_hash,
+    selected_symbols_hash,
 )
 from market_regime_alpha.research.prr_mvp_1 import ExploratoryExecutionCostConfig
 
@@ -227,7 +228,9 @@ def build_multiseed_matched_k_reference(
                                 "selection_status": status,
                                 "selection_id": selection_id,
                                 "selected_symbols_hash": (
-                                    selection.selected_symbols_hash if not cash_locked else canonical_identity_hash({"symbols": []})
+                                    selection.selected_symbols_hash
+                                    if not cash_locked
+                                    else selected_symbols_hash(())
                                 ),
                                 "population_hash": population.population_hash,
                                 "data_eligibility": "EXPLORATORY",
@@ -381,7 +384,12 @@ def _summaries(*, return_rows: list[dict[str, Any]], equity_index: Mapping[tuple
         model = equity_index.get(key)
         if model is None:
             raise ValueError("daily null group is missing model equity evidence")
-        unique_count = len({str(row["selected_symbols_hash"]) for row in rows})
+        selection_applicable = primary["selection_status"] == "EXECUTED"
+        unique_count = (
+            len({str(row["selected_symbols_hash"]) for row in rows})
+            if selection_applicable
+            else None
+        )
         output.append(
             {
                 "schema_version": MR2B_MULTISEED_SCHEMA_VERSION,
@@ -390,8 +398,14 @@ def _summaries(*, return_rows: list[dict[str, Any]], equity_index: Mapping[tuple
                 "exit_time": key[2],
                 "cost_scenario": key[3],
                 "seed_count": seed_count,
+                "selection_applicable": selection_applicable,
                 "unique_selection_count": unique_count,
-                "unique_selection_ratio": unique_count / seed_count,
+                "unique_selection_ratio": (
+                    unique_count / seed_count if unique_count is not None else None
+                ),
+                "selection_collision_rate": (
+                    1.0 - unique_count / seed_count if unique_count is not None else None
+                ),
                 "primary_seed": primary_seed,
                 "primary_seed_selection_id": primary["selection_id"],
                 "primary_seed_gross_return": primary["gross_return"],
@@ -401,7 +415,7 @@ def _summaries(*, return_rows: list[dict[str, Any]], equity_index: Mapping[tuple
                 **_distribution_fields("net", net),
                 "model_gross_percentile": empirical_percentile(gross, _finite(model.get("gross_return"), "model gross return")),
                 "model_net_percentile": empirical_percentile(net, _finite(model.get("net_return"), "model net return")),
-                "cash_locked": primary["selection_status"] == "CASH_LOCKED",
+                "cash_locked": not selection_applicable,
                 "data_status": "AVAILABLE",
                 "data_eligibility": "EXPLORATORY",
             }
@@ -449,11 +463,26 @@ def _reconcile_primary_seed(*, primary_seed: int, return_rows: list[dict[str, An
                         abs(float(row["cash_locked_weight"]) - float(net["cash_locked_weight"])),
                     )
                     maximum = max(maximum, *differences)
-                    if max(differences) > 1e-12 or row["selection_id"] != net["selection_id"]:
+                    expected_status = str(net["baseline_slot_status"])
+                    expected_count = int(net["selected_symbol_count"])
+                    expected_symbols_hash = str(net["selected_symbols_hash"])
+                    if (
+                        max(differences) > 1e-12
+                        or row["selection_id"] != net["selection_id"]
+                        or row["selection_status"] != expected_status
+                        or int(row["selected_symbol_count"]) != expected_count
+                        or row["selected_symbols_hash"] != expected_symbols_hash
+                    ):
                         mismatches += 1
     return {
-        "schema_version": "mr-2b-primary-seed-reconciliation-v1",
+        "schema_version": "mr-2b-primary-seed-reconciliation-v2",
         "primary_seed": primary_seed,
+        "checked_identity_fields": [
+            "selection_id",
+            "selected_symbols_hash",
+            "selection_status",
+            "selected_symbol_count",
+        ],
         "checked_rows": checked,
         "matched_rows": checked - mismatches,
         "mismatch_rows": mismatches,
