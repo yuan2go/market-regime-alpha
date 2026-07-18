@@ -31,12 +31,17 @@ def test_feature_ic_is_cross_sectional_per_decision_date_then_aggregated() -> No
 def test_failure_decomposition_keeps_independent_reasons() -> None:
     base = {
         "model_id": "B0", "exit_time": "10:30", "cost_scenario": "BASE", "gross_cumulative_return": 0.02,
-        "net_cumulative_return": -0.01, "top5_gross_minus_candidate_gross": -0.01,
-        "top5_net_minus_candidate_net": -0.02, "maximum_drawdown": -0.2,
+        "net_cumulative_return": -0.01, "gross_selection_lift_vs_matched_k": -0.01,
+        "net_selection_lift_vs_matched_k": -0.02, "maximum_drawdown": -0.2,
         "first_20_return": 0.01, "middle_20_return": -0.02, "last_20_return": 0.01,
     }
     rows = (base, {**base, "cost_scenario": "LOW", "net_cumulative_return": 0.01}, {**base, "cost_scenario": "HIGH", "net_cumulative_return": -0.03})
 
     result = decompose_model_failures(mr1_metrics=rows, target_coverage={"NEXT_SESSION_1030_RETURN": 1.0})
 
-    assert set(result[0]["failure_reasons"]) == {"NO_CROSS_SECTIONAL_ALPHA", "COST_FRAGILE", "REGIME_UNSTABLE", "DRAWDOWN_FAILED"}
+    assert set(result[0]["failure_reasons"]) == {
+        "NO_CROSS_SECTIONAL_ALPHA",
+        "COST_FRAGILE",
+        "TEMPORAL_SEGMENT_INSTABILITY",
+        "DRAWDOWN_FAILED",
+    }

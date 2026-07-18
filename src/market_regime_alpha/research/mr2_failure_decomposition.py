@@ -77,12 +77,12 @@ def decompose_model_failures(
         reasons: list[str] = []
         if float(base["gross_cumulative_return"]) <= 0.0:
             reasons.append("NO_GROSS_SIGNAL")
-        if float(base["top5_gross_minus_candidate_gross"]) <= 0.0:
+        if float(base["gross_selection_lift_vs_matched_k"]) <= 0.0:
             reasons.append("NO_CROSS_SECTIONAL_ALPHA")
         if float(base["gross_cumulative_return"]) > 0.0 and float(base["net_cumulative_return"]) <= 0.0:
             reasons.append("COST_FRAGILE")
         if any(value is not None and value <= 0.0 for value in segments) and any(value is not None and value > 0.0 for value in segments):
-            reasons.append("REGIME_UNSTABLE")
+            reasons.append("TEMPORAL_SEGMENT_INSTABILITY")
         if float(base["maximum_drawdown"]) < -0.15:
             reasons.append("DRAWDOWN_FAILED")
         if coverage < 0.95:
@@ -92,8 +92,10 @@ def decompose_model_failures(
         rows.append({
             "schema_version": MR2_SCHEMA_VERSION, "model_id": model_id, "exit_time": exit_time,
             "target_id": target_by_exit[exit_time], "gross_cumulative_return": base["gross_cumulative_return"],
-            "net_cumulative_return": base["net_cumulative_return"], "gross_candidate_excess": base["top5_gross_minus_candidate_gross"],
-            "net_candidate_excess": base["top5_net_minus_candidate_net"], "cost_drag": float(base["gross_cumulative_return"]) - float(base["net_cumulative_return"]),
+            "net_cumulative_return": base["net_cumulative_return"],
+            "gross_candidate_excess": base["gross_selection_lift_vs_matched_k"],
+            "net_candidate_excess": base["net_selection_lift_vs_matched_k"],
+            "cost_drag": float(base["gross_cumulative_return"]) - float(base["net_cumulative_return"]),
             "maximum_drawdown": base["maximum_drawdown"], "coverage": coverage,
             "first_20_return": base.get("first_20_return"), "middle_20_return": base.get("middle_20_return"), "last_20_return": base.get("last_20_return"),
             "best_day_contribution": None, "worst_day_contribution": None,
