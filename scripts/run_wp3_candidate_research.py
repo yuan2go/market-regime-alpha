@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import partial
 from hashlib import sha256
 import json
@@ -20,9 +20,8 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import RetrievedAt
-from market_regime_alpha.data import DataEligibility, SourceArtifactReference
+from market_regime_alpha.data import DataEligibility
 from market_regime_alpha.data_sources.a_share_bars import (
     BaoStockADataProvider,
     TencentMinuteProvider,
@@ -37,21 +36,12 @@ from market_regime_alpha.research.provider_routing import (
     ProviderAvailabilityStatus,
     ProviderCapabilityReport,
 )
-from market_regime_alpha.research.tencent_composite_acquisition import (
-    TencentCompositeAcquirer,
-    merge_acquisition,
-)
+from market_regime_alpha.research.tencent_composite_acquisition import TencentCompositeAcquirer
 from market_regime_alpha.research.tencent_composite_contracts import (
     TENCENT_COMPOSITE_DECISION_CONVENTION,
-    CompositeAcquisitionResult,
-    build_tencent_composite_dataset_contract,
 )
-from market_regime_alpha.research.tencent_composite_quality import (
-    TencentCompositeQualityGateError,
-    prepare_composite_data,
-)
-from market_regime_alpha.research.tencent_composite_runner import (
-    run_tencent_composite_candidate_experiment,
+from market_regime_alpha.research.tencent_composite_execution import (
+    execute_tencent_composite_research,
 )
 from market_regime_alpha.research.wp3_orchestrator import (
     WP3BackendExecutionError,
@@ -201,56 +191,43 @@ class TencentCompositeWP3Backend:
                 "Tencent composite route requires exactly 20 configured watchlist symbols",
             )
         watchlist = tuple(item.symbol for item in items)
-        acquisition = self.acquirer.acquire(
-            symbols=watchlist,
-            start_date=(
-                self.retrieved_at.value.date()
-                - timedelta(days=self.args.history_calendar_days)
-            ).isoformat(),
-            end_date=self.retrieved_at.value.date().isoformat(),
-            retrieved_at=self.retrieved_at.value,
-        )
-        merged = merge_acquisition(acquisition)
-        contract = _tencent_dataset_contract(
-            acquisition,
-            watchlist_hash=file_hash(self.args.watchlist),
-            code_revision=request.code_revision,
-            config_hash=request.config_hash,
-        )
         try:
-            prepared = prepare_composite_data(
-                merged,
-                requested_symbols=watchlist,
+            execution = execute_tencent_composite_research(
+                acquirer=self.acquirer,
+                watchlist=watchlist,
+                watchlist_hash=file_hash(self.args.watchlist),
+                retrieved_at=self.retrieved_at,
+                history_calendar_days=self.args.history_calendar_days,
                 decision_count=request.decision_count,
                 warmup_sessions=self.args.warmup_sessions,
                 minimum_accepted_symbols=self.args.minimum_accepted_symbols,
+                code_revision=request.code_revision,
+                config_hash=request.config_hash,
             )
-        except TencentCompositeQualityGateError as exc:
+        except Exception as exc:  # noqa: BLE001 - retained by the WP-3 failure artifact.
+            quality = getattr(exc, "quality", None)
+            acquisition = getattr(exc, "acquisition", None)
             raise WP3BackendExecutionError(
                 WP3ExecutionErrorCode.TENCENT_QUALITY_GATE_FAILED,
                 str(exc),
                 evidence={
-                    "quality": exc.quality,
-                    "source_attempts": acquisition.attempts,
-                    "source_conflicts": merged.conflicts,
+                    "quality": quality,
+                    "source_attempts": getattr(acquisition, "attempts", ()),
+                    "source_conflicts": (),
                 },
             ) from exc
-        candidate = run_tencent_composite_candidate_experiment(
-            prepared=prepared,
-            dataset_contract=contract,
-            retrieved_at=self.retrieved_at,
-            code_revision=request.code_revision,
-            config_hash=request.config_hash,
-        )
-        source_artifacts = _source_artifacts(acquisition)
+        contract = execution.dataset_contract
+        acquisition = execution.acquisition
+        merged = execution.merged
+        candidate = execution.candidate_experiment
         return WP3BackendResult(
             source=CandidateDataSource.TENCENT_COMPOSITE,
             data_eligibility=DataEligibility.EXPLORATORY,
             dataset_id=contract.dataset_id,
             provider_references=contract.provider_references,
-            source_artifacts=source_artifacts,
+            source_artifacts=execution.source_artifacts,
             quality={
-                "quality_gate": prepared.quality,
+                "quality_gate": execution.prepared.quality,
                 "source_attempts": acquisition.attempts,
                 "source_conflicts": merged.conflicts,
             },
@@ -361,50 +338,6 @@ def optional_file_hash(path: Path | None) -> str | None:
 def canonical_digest(payload: object) -> str:
     canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _tencent_dataset_contract(
-    acquisition: CompositeAcquisitionResult,
-    *,
-    watchlist_hash: str,
-    code_revision: str,
-    config_hash: str,
-):
-    hashes = tuple(
-        partition.content_hash
-        for partition in (*acquisition.partitions, acquisition.quote_partition)
-    )
-    return build_tencent_composite_dataset_contract(
-        watchlist_hash=watchlist_hash,
-        source_content_hashes=hashes,
-        code_revision=code_revision,
-        config_hash=config_hash,
-    )
-
-
-def _source_artifacts(
-    acquisition: CompositeAcquisitionResult,
-) -> tuple[SourceArtifactReference, ...]:
-    partitions = (*acquisition.partitions, acquisition.quote_partition)
-    return tuple(_source_artifact(partition) for partition in partitions)
-
-
-def _source_artifact(partition: Any) -> SourceArtifactReference:
-    payload = {
-        "provider_id": str(partition.provider_id),
-        "product": partition.product,
-        "retrieved_at": partition.retrieved_at.isoformat(),
-        "content_hash": partition.content_hash,
-        "locator": partition.locator,
-    }
-    digest = canonical_digest(payload)
-    return SourceArtifactReference(
-        artifact_id=ArtifactId(f"source-wp3-tencent-{digest[:24]}"),
-        provider_id=partition.provider_id,
-        retrieved_at=partition.retrieved_at,
-        content_hash=partition.content_hash,
-        locator=partition.locator,
-    )
 
 
 if __name__ == "__main__":
