@@ -861,12 +861,10 @@ Exit, Portfolio, or execution implementation. See
 
 ### MR-2 — Morning-Pop Failure Decomposition
 
-`MR-2` is implemented as a post-hoc `EXPLORATORY` diagnosis of the corrected MR-1 evidence. It
-does not add a Candidate model or a Regime Gate. The current 20-symbol / 60-date auxiliary-data
-run found mixed model failure reasons and limited sign-split evidence across the available
-composite-data regime slices. Its evidence-led result is **C — signal appears only in specific
-regimes**, subject to broader PIT and walk-forward validation. ETF/sector context was explicitly
-reported as unavailable. See `docs/research/MR-2-Morning-Pop-Failure-Decomposition.md`.
+`MR-2` is retained as a historical `EXPLORATORY` diagnosis. Its old **C — signal appears only in
+specific regimes** result is **SUPERSEDED**: it used Decision-Date full-session fields and did not
+establish Candidate excess relative to a population-matched comparator. It is not current research
+authority. See `docs/research/MR-2-Morning-Pop-Failure-Decomposition.md`.
 
 ### MR-2A — Leak-Free Regime Diagnostic
 
@@ -889,9 +887,24 @@ closed. Premature primary-hypothesis promotion has been removed. F1.2 additional
 baseline to its model/date eligible population, persists the actual matched-K slots, reconstructs
 those selections in the reader, and excludes local Dataset paths from semantic run identity.
 
-MR-2B remains incomplete. Watchlist Context, exact cutoff-grid evidence, bootstrap,
-permutation, secondary comparisons, competing-event diagnostics, the MR-2B runner, and an
-actual MR-2B run are not implemented by F1.1.
+### MR-2B-F2A — Exact Context and Multi-Seed Conditionality Inputs
+
+F2A is implemented as descriptive input construction only. Run
+`mr2b-f2a-47709a63823ff4c95402` uses Dataset
+`prr-dataset-fa40337727427b2f1ff63548` and MR-1 v4
+`mr1-c06821bf7db2dc787244`. It requires the exact 46-bar accepted-watchlist grid through 14:50,
+compares amount to the prior session at the same cutoff, preserves FLAT/unavailable states, and
+excludes post-14:50 bars. All 60 dates were available: 27 UP, 33 DOWN and 0 FLAT.
+
+The fixed seeds 0–255 produce same-day population-matched references without inflating the
+Decision-Date sample count. Seed 17 reconciled exactly across all 6,480 daily model/endpoint/cost
+rows. The frozen B1-E / 10:30 / BASE input remains `DESCRIPTIVE_INPUT_ONLY`; no bootstrap,
+permutation, hypothesis promotion or multiple-testing decision is implemented. See
+`docs/research/MR-2B-F2A-Conditionality-Inputs.md`.
+
+MR-2B remains incomplete. F2B time-series uncertainty, Context-label permutation, primary gate,
+secondary inventory, multiple-testing disclosure, competing-event diagnostics and final MR-2B
+assessment are not implemented.
 
 The current ordered sequence is:
 
