@@ -913,9 +913,23 @@ Collision diagnostics now cover executed selections only: 5,670 executed null gr
 255.9810 unique selections and approximately 0.00744% collision; 810 CLOSE cash-locked groups
 are explicitly non-applicable and do not contribute empty-selection collisions.
 
-MR-2B remains incomplete. F2B time-series uncertainty, Context-label permutation, primary gate,
-secondary inventory, multiple-testing disclosure, competing-event diagnostics and final MR-2B
-assessment are not implemented.
+### MR-2B-F2B — Directional Statistical Closure
+
+MR-2B is complete at exploratory authority. F2B run `mr2b-f2b-cfc48a658d50636610ac`
+consumed the verified Dataset, MR-1 v4, and F2A v2 chain under frozen Protocol
+`sha256:310d32daa26314f7d81896d3357bfbce0fd3b722ee8779111eb1c954ede87f80`.
+
+The directional B1-E / 10:30 / BASE `UP_GREATER_THAN_DOWN` effect was
+`-0.0000844753476525215`; the block-length-5 95% interval was
+`[-0.002375137060807994, 0.0023412463545652395]` and the exact one-sided circular-shift
+p-value was `0.5`. Chronological halves disagreed, only two of four fixed seed panels were
+positive, and none of 107 Secondary comparisons survived BH FDR.
+
+The frozen assessment is `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. The old MR-2A C1 conditionality
+claim is superseded. B1-E nevertheless retains a positive descriptive full-sample net lift over
+the multi-seed median, so the selected next route is to retain the transparent Candidate ranking,
+avoid a Market Regime Gate, and expand historical PIT validation and Feature ablation. The
+complete interpretation is recorded in `docs/research/MR-2B-Final-Assessment.md`.
 
 The current ordered sequence is:
 

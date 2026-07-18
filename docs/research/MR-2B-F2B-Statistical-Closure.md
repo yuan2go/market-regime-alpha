@@ -1,7 +1,9 @@
 # MR-2B F2B Directional Statistical Closure
 
-> **Status:** FROZEN PROTOCOL — IMPLEMENTATION IN PROGRESS  
-> **Authority ceiling:** EXPLORATORY  
+> **Status:** IMPLEMENTED / LOCALLY VERIFIED
+>
+> **Authority ceiling:** EXPLORATORY
+>
 > **Input:** semantically verified MR-2B F2A v2 evidence
 
 ## Research question
@@ -64,3 +66,20 @@ INSUFFICIENT_EVIDENCE
 
 Even a fully passing result does not establish Formal OOS Alpha, a model winner, a
 production Market Regime Gate, or trading authority.
+
+## Actual run
+
+Run `mr2b-f2b-cfc48a658d50636610ac` consumed Dataset
+`prr-dataset-fa40337727427b2f1ff63548`, MR-1 v4
+`mr1-c06821bf7db2dc787244`, and F2A v2
+`mr2b-f2a-99cd5a71a92fa5eb0366` under Protocol
+`sha256:310d32daa26314f7d81896d3357bfbce0fd3b722ee8779111eb1c954ede87f80`.
+
+The Primary result is `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. The observed directional effect was
+`-0.0000844753476525215`; its block-length-5 interval was
+`[-0.002375137060807994, 0.0023412463545652395]`, and the exact one-sided circular-shift
+p-value was `0.5`. This negative result was retained without changing the direction, model,
+endpoint, cost scenario, effect floor, block length, or random seeds.
+
+The semantic reader re-executed the complete Protocol and matched every stored statistical table.
+See `MR-2B-Final-Assessment.md` for interpretation and the selected next route.
