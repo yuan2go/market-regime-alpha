@@ -12,6 +12,7 @@
 > **Xuntou P0 mapping / adapter status:** `docs/specs/Xuntou-P0-Native-Field-Mapping.md` / `docs/research/R5-Xuntou-P0-Adapter-Status.md`
 > **WP-3 routing / run status:** `docs/research/R5-WP3-Provider-Routing-Status.md`
 > **WP-4A Entry Target contract:** `docs/specs/Entry-Path-Target-V1.md`
+> **Current PIT replication charter:** `docs/research/PIT-Candidate-Replication-Charter.md`
 
 ---
 
@@ -20,6 +21,20 @@
 This file is the current R5 implementation-status authority.
 
 Older documents remain historical records. Their stale status lines do not override this file.
+
+The current Candidate-validation sequence is now:
+
+```text
+MR-2B F2B v2 statistical hardening                     COMPLETE
+PIT replication protocol and provider-bound preflight  IMPLEMENTED
+Real normalized Xuntou validation bundle                BLOCKED EXTERNAL INPUT
+Expanded PIT replication result                         NOT PRODUCED
+```
+
+The frozen MR-2B Primary remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. The next research question is
+the unconditional B1-E lift over the model-population multi-seed matched-K median. The rejected
+auxiliary-watchlist UP/DOWN Gate is not being restored. Missing Xuntou input produces a checksummed
+blocker Artifact; Tencent/current-watchlist evidence cannot be silently substituted as PIT.
 
 Known historical residues include:
 
