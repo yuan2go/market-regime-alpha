@@ -9,6 +9,12 @@ import math
 from statistics import mean
 from typing import Iterable
 
+from market_regime_alpha.research.prr_artifact_schemas import (
+    CandidateBaselineId,
+    MatchedKSelection,
+    ModelCandidatePopulation,
+)
+
 
 MR2B_PRIMARY_MODEL_ID = "prr-mvp-1-b1-e-v1"
 MR2B_PRIMARY_EXIT_TIME = "10:30"
@@ -24,6 +30,11 @@ class WatchlistDirection(str, Enum):
 @dataclass(frozen=True, slots=True)
 class DailyConditionalityObservation:
     decision_date: date
+    dataset_id: str
+    mr1_run_id: str
+    model_population_hash: str
+    matched_k_selection_id: str
+    matched_k_seed: int
     context_label: WatchlistDirection
     model_id: str
     exit_time: str
@@ -48,12 +59,18 @@ class DailyConditionalityObservation:
         ):
             _finite_number(value, label)
         for label, text_value in (
+            ("dataset_id", self.dataset_id),
+            ("mr1_run_id", self.mr1_run_id),
+            ("model_population_hash", self.model_population_hash),
+            ("matched_k_selection_id", self.matched_k_selection_id),
             ("model_id", self.model_id),
             ("exit_time", self.exit_time),
             ("cost_scenario", self.cost_scenario),
         ):
             if not isinstance(text_value, str) or not text_value.strip():
                 raise ValueError(f"{label} must be non-empty")
+        if not isinstance(self.matched_k_seed, int) or isinstance(self.matched_k_seed, bool):
+            raise TypeError("matched_k_seed must be an int")
 
     @property
     def gross_excess_vs_all_candidate(self) -> float:
@@ -83,6 +100,8 @@ def primary_assessment(rows: Iterable[DailyConditionalityObservation]) -> dict[s
     dates = tuple(row.decision_date for row in ordered)
     if len(dates) != len(set(dates)):
         raise ValueError("Decision Dates must be unique")
+    if len({(row.dataset_id, row.mr1_run_id) for row in ordered}) != 1:
+        raise ValueError("observations must share one Dataset and MR-1 run")
     for row in ordered:
         if (
             row.model_id != MR2B_PRIMARY_MODEL_ID
@@ -120,6 +139,72 @@ def primary_assessment(rows: Iterable[DailyConditionalityObservation]) -> dict[s
         "mean_gross_excess_vs_matched_k": mean(row.gross_excess_vs_matched_k for row in ordered),
         "mean_cost_drag_difference": mean(row.cost_drag_difference for row in ordered),
     }
+
+
+def build_daily_conditionality_observation(
+    *,
+    dataset_id: str,
+    mr1_run_id: str,
+    context_label: WatchlistDirection,
+    model_equity_row: dict[str, object],
+    baseline_family_rows: Iterable[dict[str, object]],
+    population: ModelCandidatePopulation,
+    matched_k_selection: MatchedKSelection,
+) -> DailyConditionalityObservation:
+    """Build one typed observation from already verified MR-1 population evidence."""
+
+    rows = tuple(baseline_family_rows)
+    indexed = {CandidateBaselineId(str(row["baseline_id"])): row for row in rows}
+    if set(indexed) != set(CandidateBaselineId):
+        raise ValueError("conditionality observation requires one complete baseline family")
+    decision_day = date.fromisoformat(str(model_equity_row["session_date"]))
+    model_id = str(model_equity_row["model_id"])
+    exit_time = str(model_equity_row["exit_time"])
+    cost_scenario = str(model_equity_row["cost_scenario"])
+    if (
+        population.dataset_id != dataset_id
+        or population.decision_date != decision_day
+        or population.model_id != model_id
+        or matched_k_selection.population != population
+    ):
+        raise ValueError("conditionality observation population evidence is misaligned")
+    for row in rows:
+        if (
+            str(row["decision_date"]) != decision_day.isoformat()
+            or str(row["model_id"]) != model_id
+            or str(row["exit_time"]) != exit_time
+            or str(row["cost_scenario"]) != cost_scenario
+            or str(row["candidate_population_hash"]) != population.population_hash
+        ):
+            raise ValueError("conditionality baseline family is misaligned")
+    return DailyConditionalityObservation(
+        decision_date=decision_day,
+        dataset_id=dataset_id,
+        mr1_run_id=mr1_run_id,
+        model_population_hash=population.population_hash,
+        matched_k_selection_id=matched_k_selection.selection_id,
+        matched_k_seed=matched_k_selection.seed,
+        context_label=context_label,
+        model_id=model_id,
+        exit_time=exit_time,
+        cost_scenario=cost_scenario,
+        model_gross_return=_finite_number(
+            model_equity_row["gross_return"], "model gross return"
+        ),
+        model_net_return=_finite_number(model_equity_row["net_return"], "model net return"),
+        all_candidate_gross_return=_finite_number(
+            indexed[CandidateBaselineId.ALL_CANDIDATE_GROSS_V1]["gross_return"],
+            "all-Candidate gross return",
+        ),
+        matched_k_gross_return=_finite_number(
+            indexed[CandidateBaselineId.MATCHED_K_HASH_GROSS_V1]["gross_return"],
+            "matched-K gross return",
+        ),
+        matched_k_net_return=_finite_number(
+            indexed[CandidateBaselineId.MATCHED_K_HASH_NET_V1]["net_return"],
+            "matched-K net return",
+        ),
+    )
 
 
 def _finite_number(value: object, label: str) -> float:

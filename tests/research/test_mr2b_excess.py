@@ -24,6 +24,11 @@ def _observation(
 ) -> DailyConditionalityObservation:
     return DailyConditionalityObservation(
         decision_date=day,
+        dataset_id="prr-dataset-test",
+        mr1_run_id="mr1-test",
+        model_population_hash="sha256:population",
+        matched_k_selection_id="sha256:selection",
+        matched_k_seed=17,
         context_label=direction,
         model_id="prr-mvp-1-b1-e-v1",
         exit_time="10:30",
