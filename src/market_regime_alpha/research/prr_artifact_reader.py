@@ -223,14 +223,14 @@ def _validate_dataset_frames(
         for row in prepared_frame.itertuples(index=False)
     }
     expected_prepared_keys = {
-        (symbol, session_date)
-        for symbol in accepted
-        for session_date in quality.common_session_dates
+        (symbol, session_date) for symbol in accepted for session_date in prepared_dates
     }
     if prepared_keys != expected_prepared_keys:
         raise ValueError("prepared sessions must exactly cover accepted symbols and quality dates")
-    if prepared_dates != quality.common_session_dates:
-        raise ValueError("prepared session dates must equal retained quality evidence")
+    if len(prepared_dates) > len(quality.common_session_dates) or (
+        quality.common_session_dates[-len(prepared_dates) :] != prepared_dates
+    ):
+        raise ValueError("prepared session dates must be a contiguous tail of retained quality evidence")
     snapshot_dates = _ordered_decision_dates(snapshots_frame)
     ranking_dates = tuple(sorted({_parse_date(value) for value in rankings_frame["decision_date"]}))
     if ranking_dates != snapshot_dates:
@@ -487,7 +487,7 @@ def _prepared_data(
         raise ValueError("Dataset prepared sessions must not be empty")
     return PreparedCompositeData(
         accepted_symbols=quality.accepted_symbols,
-        common_session_dates=quality.common_session_dates,
+        common_session_dates=tuple(sorted({session.session_date for session in sessions})),
         sessions=sessions,
         quality=quality,
         limitations=limitations,
