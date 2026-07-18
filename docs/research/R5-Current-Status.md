@@ -836,6 +836,20 @@ Candidate Alpha, Entry accuracy, or Exit accuracy.
 
 ## 11. Immediate Implementation Sequence
 
+### MR-1 — Overnight Morning-Pop Signal Validation
+
+`MR-1` is implemented as a bounded auxiliary-data `EXPLORATORY` validation, separate from
+WP-3 and not a replacement for its Xuntou provider-backed requirement. It reuses immutable PRR
+5-minute data to evaluate the fixed B0/B1 ladder at exact next-session 09:35, 10:00, 10:30, and
+the retained close comparator. Exact endpoint bars are required; missing endpoints are not
+forward-filled. Morning exits release the daily sleeve before the next 14:55 Decision Time.
+
+The first local run, on the 20-symbol / 60-date cached Dataset, classified every BASE
+model/endpoint combination as `FAILED_EXPLORATORY` under its predeclared cost-sensitive rule.
+This is not formal OOS evidence, does not select a model, and does not justify Entry, Position,
+Exit, Portfolio, or execution implementation. See
+`docs/research/MR-1-Overnight-Morning-Pop-Signal-Validation.md`.
+
 The current ordered sequence is:
 
 ```text
