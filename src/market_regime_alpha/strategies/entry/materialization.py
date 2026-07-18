@@ -140,16 +140,10 @@ def materialize_entry_path_target(
         suspension_ids.extend(used_suspensions)
         coverage_was_consumed = coverage_was_consumed or symbol_used_coverage
 
-    reference_ids = tuple(
-        sorted((evidence.evidence_id for evidence in references.values()), key=str)
-    )
+    reference_ids = tuple(sorted((evidence.evidence_id for evidence in references.values()), key=str))
     ordered_bars = tuple(sorted(set(bar_ids), key=str))
     ordered_suspensions = tuple(sorted(set(suspension_ids), key=str))
-    consumed_coverage_id = (
-        coverage.evidence_id
-        if coverage is not None and coverage_was_consumed
-        else None
-    )
+    consumed_coverage_id = coverage.evidence_id if coverage is not None and coverage_was_consumed else None
     values = tuple(observations)
     artifact_id = _artifact_id(
         contract,
@@ -217,20 +211,14 @@ def _validate_request(
     local = population.decision_time.value.astimezone(_SHANGHAI)
     if (local.hour, local.minute, local.second, local.microsecond) != (14, 55, 0, 0):
         raise ValueError("Entry path V1 requires 14:55:00 Asia/Shanghai Decision Time")
-    if not all(
-        isinstance(value, str) and value.strip() == value and value
-        for value in (code_revision, config_hash)
-    ):
+    if not all(isinstance(value, str) and value.strip() == value and value for value in (code_revision, config_hash)):
         raise ValueError("code_revision and config_hash must be non-empty trimmed strings")
     spec = contract.spec
     if not (
         spec.schema_version == ENTRY_PATH_TARGET_SCHEMA_VERSION
-        and spec.target_start_convention
-        == NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1
-        and spec.reference_price_convention
-        == DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1
-        and spec.path_ordering_convention
-        == DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1
+        and spec.target_start_convention == NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1
+        and spec.reference_price_convention == DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1
+        and spec.path_ordering_convention == DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1
     ):
         raise ValueError("Entry path materializer supports only the approved V1 conventions")
 
@@ -338,8 +326,7 @@ def _index_bars(
             raise ValueError("future daily bar source Dataset conflicts with readiness policy")
         if (
             bar.price_adjustment_basis != contract.spec.price_adjustment_basis
-            or bar.price_adjustment_basis
-            != references[bar.symbol].price_adjustment_basis
+            or bar.price_adjustment_basis != references[bar.symbol].price_adjustment_basis
         ):
             raise ValueError("future daily bar price adjustment basis mismatch")
         _validate_future_time(
@@ -365,9 +352,7 @@ def _index_suspensions(
     indexed: dict[tuple[str, date], RehearsalFutureSuspensionEvidence] = {}
     for evidence in values:
         if not isinstance(evidence, RehearsalFutureSuspensionEvidence):
-            raise TypeError(
-                "future_suspensions must contain RehearsalFutureSuspensionEvidence"
-            )
+            raise TypeError("future_suspensions must contain RehearsalFutureSuspensionEvidence")
         _validate_future_scope(
             evidence.symbol,
             evidence.session_date,
@@ -378,13 +363,8 @@ def _index_suspensions(
         key = (evidence.symbol, evidence.session_date)
         if key in indexed:
             raise ValueError("duplicate future suspension evidence")
-        if (
-            evidence.source_dataset_id not in source_ids
-            or evidence.source_dataset_id != future_source_id
-        ):
-            raise ValueError(
-                "future suspension source Dataset conflicts with readiness policy"
-            )
+        if evidence.source_dataset_id not in source_ids or evidence.source_dataset_id != future_source_id:
+            raise ValueError("future suspension source Dataset conflicts with readiness policy")
         _validate_future_time(
             "future suspension evidence",
             sessions[evidence.session_date].session_close,
@@ -598,12 +578,15 @@ def _classify_bar(
     bar: RehearsalFutureDailyBar,
     upper: float,
     lower: float,
-) -> tuple[
-    EntryPathObservationStatus,
-    EntryPathOutcome | None,
-    EntryPathTriggerType,
-    EntryPathReasonCode,
-] | None:
+) -> (
+    tuple[
+        EntryPathObservationStatus,
+        EntryPathOutcome | None,
+        EntryPathTriggerType,
+        EntryPathReasonCode,
+    ]
+    | None
+):
     if bar.open >= upper:
         return (
             EntryPathObservationStatus.AVAILABLE,
@@ -670,11 +653,7 @@ def _artifact_id(
         "code_revision": revision,
         "config_hash": config,
         "readiness_policy_id": str(readiness_policy_id),
-        "consumed_coverage_assertion_id": (
-            str(consumed_coverage_assertion_id)
-            if consumed_coverage_assertion_id is not None
-            else None
-        ),
+        "consumed_coverage_assertion_id": (str(consumed_coverage_assertion_id) if consumed_coverage_assertion_id is not None else None),
         "entry_reference_evidence_ids": [str(value) for value in references],
         "consumed_future_bar_evidence_ids": [str(value) for value in bars],
         "consumed_future_suspension_evidence_ids": [str(value) for value in suspensions],
@@ -687,9 +666,7 @@ def _artifact_id(
         separators=(",", ":"),
         allow_nan=False,
     )
-    return ArtifactId(
-        f"entry-path-materialization-{sha256(canonical.encode('utf-8')).hexdigest()[:24]}"
-    )
+    return ArtifactId(f"entry-path-materialization-{sha256(canonical.encode('utf-8')).hexdigest()[:24]}")
 
 
 def _observation_payload(value: EntryPathObservation) -> dict[str, object]:
@@ -701,19 +678,11 @@ def _observation_payload(value: EntryPathObservation) -> dict[str, object]:
         "reference_price": value.reference_price,
         "upper_price": value.upper_price,
         "lower_price": value.lower_price,
-        "event_session_date": (
-            value.event_session_date.isoformat() if value.event_session_date else None
-        ),
+        "event_session_date": (value.event_session_date.isoformat() if value.event_session_date else None),
         "event_session_index": value.event_session_index,
         "trigger_type": value.trigger_type.value if value.trigger_type else None,
-        "evaluated_session_dates": [
-            item.isoformat() for item in value.evaluated_session_dates
-        ],
-        "first_missing_session_date": (
-            value.first_missing_session_date.isoformat()
-            if value.first_missing_session_date
-            else None
-        ),
+        "evaluated_session_dates": [item.isoformat() for item in value.evaluated_session_dates],
+        "first_missing_session_date": (value.first_missing_session_date.isoformat() if value.first_missing_session_date else None),
         "reason_code": value.reason_code.value,
         "observed_at": value.observed_at.isoformat() if value.observed_at else None,
     }
