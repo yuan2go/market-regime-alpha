@@ -12,9 +12,9 @@ from typing import Any
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
-from run_mr1_overnight_morning_pop_validation import _load_dataset, _verify_dataset
+sys.path[:0] = [str(ROOT / "src")]
 from market_regime_alpha.research.mr2_failure_decomposition import feature_target_diagnostics, target_coverage, decompose_model_failures
+from market_regime_alpha.research.prr_artifact_reader import load_verified_mr1_run, load_verified_prr_dataset
 from market_regime_alpha.research.mr2a_regime import (
     build_decision_time_context,
     controlled_heterogeneity_gate,
@@ -41,12 +41,16 @@ def main() -> int:
     x = a.parse_args()
     ds = x.dataset.resolve()
     m = x.mr1_run.resolve()
-    _verify_dataset(ds)
-    dm = json.loads((ds / "dataset_manifest.json").read_text())
-    mm = json.loads((m / "manifest.json").read_text())
-    prepared, bars, rankings, dates = _load_dataset(ds)
-    targets = pd.read_parquet(m / "morning_targets.parquet").to_dict("records")
-    metrics = pd.read_parquet(m / "chronological_model_metrics.parquet").to_dict("records")
+    verified_dataset = load_verified_prr_dataset(ds)
+    verified_mr1 = load_verified_mr1_run(m, expected_dataset_id=verified_dataset.dataset_id)
+    dm = dict(verified_dataset.manifest)
+    mm = dict(verified_mr1.manifest)
+    prepared = verified_dataset.prepared
+    bars = verified_dataset.bars
+    rankings = tuple(dict(row) for row in verified_dataset.ranking_rows)
+    dates = verified_dataset.decision_dates
+    targets = [dict(row) for row in verified_mr1.morning_targets]
+    metrics = [dict(row) for row in verified_mr1.metrics]
     context = build_decision_time_context(prepared=prepared, bars=bars, decision_dates=dates)
     ic, spreads = feature_target_diagnostics(ranking_rows=rankings, target_rows=targets)
     coverage = target_coverage(targets)
@@ -73,7 +77,7 @@ def main() -> int:
     stage = x.output_root / f".{rid}.staging"
     if final.exists() or stage.exists():
         raise FileExistsError(final)
-    eq = pd.read_parquet(m / "daily_equity.parquet")
+    eq = pd.DataFrame(verified_mr1.daily_equity)
     ctx = {r["decision_date"]: r for r in context if r["data_status"] == "AVAILABLE"}
     uncertainty = []
     slices = []

@@ -96,6 +96,8 @@ files = [
     "src/market_regime_alpha/research/mr1_morning_pop.py",
     "src/market_regime_alpha/research/mr2_failure_decomposition.py",
     "src/market_regime_alpha/research/mr2a_regime.py",
+    "src/market_regime_alpha/research/mr2b_excess.py",
+    "src/market_regime_alpha/research/prr_artifact_reader.py",
     "scripts/run_mr1_overnight_morning_pop_validation.py",
     "scripts/run_mr2_morning_pop_failure_decomposition.py",
     "scripts/run_mr2a_leak_free_regime.py",
