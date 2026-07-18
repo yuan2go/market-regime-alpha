@@ -14,9 +14,9 @@ The immutable inputs are:
 
 ## Exact 14:50 auxiliary-watchlist Context
 
-Context schema `mr-2b-auxiliary-watchlist-context-v1` uses the accepted auxiliary watchlist,
+Context schema `mr-2b-auxiliary-watchlist-context-v2` uses the accepted auxiliary watchlist,
 not any model population and not the A-share market. The definition
-`mr2b-accepted-watchlist-exact-1450-context-v1` requires every accepted symbol to have the
+`mr2b-accepted-watchlist-exact-1450-context-v2` requires every accepted symbol to have the
 canonical 46 end-labelled bars:
 
 ```text
@@ -29,6 +29,11 @@ is the current reference; 14:55 and 15:00 bars are excluded. Amount change compa
 the prior session through the same cutoff. No full-sample threshold or future Context label is
 created.
 
+F2A v2 also persists
+`mr-2b-auxiliary-watchlist-context-symbol-evidence-v1`. Its 1,200 rows retain each
+date/symbol cutoff-grid count, exact endpoints, prior close, return, range and same-cutoff amount.
+The verified reader reconstructs every daily Context metric and Context identity from these rows.
+
 ## Multi-seed comparator evidence
 
 Seeds `0..255` reuse `mr1-matched-k-sha256-rank-blind-v1`. Each logical selection is calculated
@@ -39,18 +44,32 @@ reference distribution and are not independent Decision Dates. The quantile conv
 Seed 17 remains the MR-1 trace seed. F2A checks its symbols, selection identities, returns,
 weights, missing-as-cash treatment and CLOSE cash lock against the verified MR-1 v4 Artifact.
 
-## Actual run
+## Superseded v1 run
 
-Run `mr2b-f2a-47709a63823ff4c95402` was materialized from commit `dc965f3`.
+Run `mr2b-f2a-47709a63823ff4c95402` is
+`SUPERSEDED_FOR_F2B_INPUT`. F2A v1 covered file bytes but did not fully reconstruct the Primary
+projection and every derived table from immutable Dataset/MR-1 evidence. Its published aggregate
+12.4577% collision figure also counted cash-locked groups as 256 duplicate empty selections; it
+must not be interpreted as SHA-256 selection collision quality.
+
+## Actual v2 run
+
+Run `mr2b-f2a-99cd5a71a92fa5eb0366` uses schema `mr-2b-f2a-run-v2` and was
+materialized from semantic source revision `43913d1`.
 
 - Context: 60 available dates, 0 unavailable; 27 UP, 33 DOWN, 0 FLAT.
+- Symbol-level Context evidence: 1,200 available rows.
 - Logical selection slots: 691,200.
 - Endpoint/cost/seed return rows: 1,658,880.
 - Daily null summaries: 6,480.
 - Daily Candidate excess rows: 6,480.
-- Average unique selections per null group: 224.1083 of 256.
-- Selection collision rate: 12.4577%; duplicates remain disclosed rather than removed.
+- Executed null groups: 5,670; cash-locked groups: 810.
+- Mean unique selections among executed groups: 255.9810 of 256.
+- Mean executed-only selection collision rate: approximately 0.00744%.
+- Cash-locked groups have `selection_applicable = false` and null collision fields.
 - Seed 17 reconciliation: 6,480 / 6,480 exact matches; maximum difference 0.
+- Primary projection, coverage, null summaries and daily excess were recomputed successfully by
+  the semantic reader; checksum-valid content tampering is rejected.
 
 The frozen descriptive input is B1-E / 10:30 / BASE / watchlist direction / daily net lift
 versus the multi-seed median. Its UP-minus-DOWN mean difference is approximately
@@ -66,6 +85,8 @@ versus the multi-seed median. Its UP-minus-DOWN mean difference is approximately
 - `NO_FORMAL_OOS`
 - `REFERENCE_MARK_NOT_FILL_PROOF`
 - `FEE_ASSUMPTIONS_REQUIRE_CURRENT_VERIFICATION`
+- `AUXILIARY_CONTEXT_NOT_MARKET_REGIME`
+- `STATISTICAL_GATE_NOT_IMPLEMENTED`
 
 MR-2B remains incomplete. F2B must separately predeclare and implement time-series uncertainty,
 Context-label permutation, primary-hypothesis gating, secondary inventory and multiple-testing

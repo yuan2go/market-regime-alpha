@@ -889,18 +889,29 @@ those selections in the reader, and excludes local Dataset paths from semantic r
 
 ### MR-2B-F2A — Exact Context and Multi-Seed Conditionality Inputs
 
-F2A is implemented as descriptive input construction only. Run
-`mr2b-f2a-47709a63823ff4c95402` uses Dataset
+F2A semantic closure is implemented as descriptive input construction only. Run
+`mr2b-f2a-99cd5a71a92fa5eb0366` uses Dataset
 `prr-dataset-fa40337727427b2f1ff63548` and MR-1 v4
 `mr1-c06821bf7db2dc787244`. It requires the exact 46-bar accepted-watchlist grid through 14:50,
 compares amount to the prior session at the same cutoff, preserves FLAT/unavailable states, and
 excludes post-14:50 bars. All 60 dates were available: 27 UP, 33 DOWN and 0 FLAT.
+
+The v2 Artifact persists 1,200 symbol-level Context rows and reconstructs every Context, logical
+selection, return, null summary, daily excess, coverage projection and Primary Input from the
+verified Dataset/MR-1 evidence. Its typed run identity and semantic reader reject content that was
+modified and then covered by a newly generated checksum. The older
+`mr2b-f2a-47709a63823ff4c95402` run is retained as historical evidence but is
+`SUPERSEDED_FOR_F2B_INPUT` because v1 did not perform this complete semantic reconstruction.
 
 The fixed seeds 0–255 produce same-day population-matched references without inflating the
 Decision-Date sample count. Seed 17 reconciled exactly across all 6,480 daily model/endpoint/cost
 rows. The frozen B1-E / 10:30 / BASE input remains `DESCRIPTIVE_INPUT_ONLY`; no bootstrap,
 permutation, hypothesis promotion or multiple-testing decision is implemented. See
 `docs/research/MR-2B-F2A-Conditionality-Inputs.md`.
+
+Collision diagnostics now cover executed selections only: 5,670 executed null groups average
+255.9810 unique selections and approximately 0.00744% collision; 810 CLOSE cash-locked groups
+are explicitly non-applicable and do not contribute empty-selection collisions.
 
 MR-2B remains incomplete. F2B time-series uncertainty, Context-label permutation, primary gate,
 secondary inventory, multiple-testing disclosure, competing-event diagnostics and final MR-2B
