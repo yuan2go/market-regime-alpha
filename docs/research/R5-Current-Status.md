@@ -844,8 +844,15 @@ WP-3 and not a replacement for its Xuntou provider-backed requirement. It reuses
 the retained close comparator. Exact endpoint bars are required; missing endpoints are not
 forward-filled. Morning exits release the daily sleeve before the next 14:55 Decision Time.
 
-The first local run, on the 20-symbol / 60-date cached Dataset, classified every BASE
-model/endpoint combination as `FAILED_EXPLORATORY` under its predeclared cost-sensitive rule.
+The current local v3 run is `mr1-4b6036dd44e5ca2ffab5` on Dataset
+`prr-dataset-fa40337727427b2f1ff63548`. It persists a four-member daily comparator family:
+all-Candidate gross, matched-K rank-blind gross/net, and all-Candidate net diagnostic. Matched-K
+uses frozen SHA-256 seed 17, Top-5 capital, the model cost mechanics, fixed missing weight, and
+the same CLOSE cash-lock state. All-Candidate net is not a primary Candidate-Alpha comparator.
+The prior MR-1 runs are retained but **SUPERSEDED** for baseline-comparability interpretation.
+
+The current run still classifies every BASE model/endpoint combination as
+`FAILED_EXPLORATORY` under its predeclared cost-sensitive rule.
 This is not formal OOS evidence, does not select a model, and does not justify Entry, Position,
 Exit, Portfolio, or execution implementation. See
 `docs/research/MR-1-Overnight-Morning-Pop-Signal-Validation.md`.
@@ -866,6 +873,19 @@ full-session fields and mixed gross/net baseline semantics. The current leak-fre
 EXPLORATORY result is only `C1. REGIME_HETEROGENEITY_HYPOTHESIS`; it is not C2 replication or a
 production Regime Gate. ETF/sector Context remains unavailable. See
 `docs/research/MR-2A-Leak-Free-Regime-Diagnostic.md`.
+
+### MR-2B-F1.1 — Baseline Comparability Hardening
+
+MR-2B-F1.1 is complete. Artifact schemas now have one source of truth; verified readers retain
+the original quality evidence and fail closed on checksum, exact-file-set, primary-key,
+cross-table date/symbol, weight, comparator-parity, and CLOSE sleeve-state violations. MR-1
+baseline calculations live in the research domain rather than the CLI. MR-2B observations are
+typed and descriptive; duplicate dates, unknown Context labels, and non-finite values fail
+closed. Premature primary-hypothesis promotion has been removed.
+
+MR-2B remains incomplete. Watchlist Context, exact cutoff-grid evidence, bootstrap,
+permutation, secondary comparisons, competing-event diagnostics, the MR-2B runner, and an
+actual MR-2B run are not implemented by F1.1.
 
 The current ordered sequence is:
 
