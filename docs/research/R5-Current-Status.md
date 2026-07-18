@@ -850,6 +850,15 @@ This is not formal OOS evidence, does not select a model, and does not justify E
 Exit, Portfolio, or execution implementation. See
 `docs/research/MR-1-Overnight-Morning-Pop-Signal-Validation.md`.
 
+### MR-2 — Morning-Pop Failure Decomposition
+
+`MR-2` is implemented as a post-hoc `EXPLORATORY` diagnosis of the corrected MR-1 evidence. It
+does not add a Candidate model or a Regime Gate. The current 20-symbol / 60-date auxiliary-data
+run found mixed model failure reasons and limited sign-split evidence across the available
+composite-data regime slices. Its evidence-led result is **C — signal appears only in specific
+regimes**, subject to broader PIT and walk-forward validation. ETF/sector context was explicitly
+reported as unavailable. See `docs/research/MR-2-Morning-Pop-Failure-Decomposition.md`.
+
 The current ordered sequence is:
 
 ```text

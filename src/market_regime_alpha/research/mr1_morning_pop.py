@@ -32,6 +32,16 @@ class MR1TargetId(str, Enum):
     NEXT_SESSION_CLOSE_RETURN = "NEXT_SESSION_CLOSE_RETURN"
     NEXT_SESSION_1030_MFE = "NEXT_SESSION_1030_MFE"
     NEXT_SESSION_1030_MAE = "NEXT_SESSION_1030_MAE"
+    NEXT_SESSION_OPEN_GAP_RETURN = "NEXT_SESSION_OPEN_GAP_RETURN"
+    MORNING_1030_MFE = "MORNING_1030_MFE"
+    MORNING_1030_MAE = "MORNING_1030_MAE"
+    MORNING_TIME_OF_MFE = "MORNING_TIME_OF_MFE"
+    MORNING_MFE_CAPTURE_AT_0935 = "MORNING_MFE_CAPTURE_AT_0935"
+    MORNING_MFE_CAPTURE_AT_1000 = "MORNING_MFE_CAPTURE_AT_1000"
+    MORNING_MFE_CAPTURE_AT_1030 = "MORNING_MFE_CAPTURE_AT_1030"
+    MORNING_UP_005_DOWN_005_V1 = "MORNING_UP_005_DOWN_005_V1"
+    MORNING_UP_010_DOWN_005_V1 = "MORNING_UP_010_DOWN_005_V1"
+    MORNING_UP_015_DOWN_0075_V1 = "MORNING_UP_015_DOWN_0075_V1"
 
 
 class MR1ExitTime(str, Enum):
@@ -51,6 +61,12 @@ _ENDPOINT_TIME = {
     MR1TargetId.NEXT_SESSION_0935_RETURN: time(9, 35),
     MR1TargetId.NEXT_SESSION_1000_RETURN: time(10, 0),
     MR1TargetId.NEXT_SESSION_1030_RETURN: time(10, 30),
+}
+_MORNING_GRID = tuple(time(9 + (35 + 5 * index) // 60, (35 + 5 * index) % 60) for index in range(12))
+_COMPETING_BARRIERS = {
+    MR1TargetId.MORNING_UP_005_DOWN_005_V1: (0.005, -0.005),
+    MR1TargetId.MORNING_UP_010_DOWN_005_V1: (0.010, -0.005),
+    MR1TargetId.MORNING_UP_015_DOWN_0075_V1: (0.015, -0.0075),
 }
 
 
@@ -123,6 +139,16 @@ def build_mr1_targets(
                     reference_price=reference.reference_price,
                     endpoint_bar=endpoint_bar,
                     morning_bars=morning_bars,
+                )
+            )
+            observations.extend(
+                _morning_path_observations(
+                    symbol=symbol,
+                    decision_date=decision_date,
+                    next_date=next_date,
+                    reference_price=reference.reference_price,
+                    morning_bars=morning_bars,
+                    exact=exact,
                 )
             )
             close_session = prepared.session_for(symbol, next_date)
@@ -211,6 +237,7 @@ def replay_mr1_fixed_portfolios(
             cost_total = 0.0
             completed = 0
             missing_exit = 0
+            missing_weight = 0.0
             for row in selected:
                 symbol = str(row["symbol"])
                 rank = int(row["rank"])
@@ -242,6 +269,7 @@ def replay_mr1_fixed_portfolios(
                         "reason_code": target["missing_reason"] if target is not None else "TARGET_OBSERVATION_MISSING",
                     })
                     missing_exit += 1
+                    missing_weight += 1.0 / top_k
                     continue
                 trade, trade_fills = _simulate_mark_trade(
                     model_id=model_id,
@@ -255,7 +283,7 @@ def replay_mr1_fixed_portfolios(
                     exit_price=float(target["exit_price"]),
                     exit_timestamp=datetime.fromisoformat(str(target["exit_timestamp"])),
                     cost_config=costs,
-                    weight=1.0 / len(selected),
+                    weight=1.0 / top_k,
                 )
                 fills.extend(trade_fills)
                 trades.append(trade)
@@ -263,8 +291,10 @@ def replay_mr1_fixed_portfolios(
                 net_returns.append(float(trade["net_return"]))
                 cost_total += float(trade["transaction_cost"])
                 completed += 1
-            gross_return = mean(gross_returns) if gross_returns else 0.0
-            net_return = mean(net_returns) if net_returns else 0.0
+            # Every declared Top-K slot starts at exactly 1 / top_k.  An unresolved slot remains
+            # cash (zero return); completed slots are never reweighted to absorb its allocation.
+            gross_return = sum(gross_returns) / top_k
+            net_return = sum(net_returns) / top_k
             gross_equity *= 1.0 + gross_return
             net_equity *= 1.0 + net_return
             if exit_time is MR1ExitTime.CLOSE:
@@ -272,7 +302,7 @@ def replay_mr1_fixed_portfolios(
             equity.append(
                 _equity(
                     model_id, decision_date, exit_time, cost_scenario, gross_equity, net_equity,
-                    gross_return, net_return, cost_total, 0.0 if completed else 1.0, completed, missing_exit,
+                    gross_return, net_return, cost_total, 1.0 - completed / top_k, completed, missing_exit, missing_weight,
                 )
             )
     return MR1ReplayResult(tuple(orders), tuple(fills), tuple(trades), tuple(equity), _metrics(equity, trades))
@@ -289,13 +319,81 @@ def _observation_for_endpoint(*, symbol: str, decision_date: date, next_date: da
 
 
 def _morning_excursion_observations(*, symbol: str, decision_date: date, next_date: date, reference_price: float, endpoint_bar: CompositeBar | None, morning_bars: tuple[CompositeBar, ...]) -> tuple[dict[str, Any], dict[str, Any]]:
-    if endpoint_bar is None:
-        missing = _unavailable_observation(symbol, decision_date, next_date, MR1TargetId.NEXT_SESSION_1030_MFE, "EXACT_ENDPOINT_BAR_MISSING", time(10, 30))
+    if endpoint_bar is None or not _has_complete_morning_grid(morning_bars):
+        reason = "EXACT_ENDPOINT_BAR_MISSING" if endpoint_bar is None else "INCOMPLETE_MORNING_PATH"
+        missing = _unavailable_observation(symbol, decision_date, next_date, MR1TargetId.NEXT_SESSION_1030_MFE, reason, time(10, 30))
         return (missing, {**missing, "target_id": MR1TargetId.NEXT_SESSION_1030_MAE.value})
     return (
         _available_observation(symbol=symbol, decision_date=decision_date, next_date=next_date, target_id=MR1TargetId.NEXT_SESSION_1030_MFE, reference_price=reference_price, value=max(row.high for row in morning_bars) / reference_price - 1.0, exit_price=endpoint_bar.close, exit_timestamp=endpoint_bar.timestamp, convention="next-session-0935-through-1030-extrema-v1"),
         _available_observation(symbol=symbol, decision_date=decision_date, next_date=next_date, target_id=MR1TargetId.NEXT_SESSION_1030_MAE, reference_price=reference_price, value=min(row.low for row in morning_bars) / reference_price - 1.0, exit_price=endpoint_bar.close, exit_timestamp=endpoint_bar.timestamp, convention="next-session-0935-through-1030-extrema-v1"),
     )
+
+
+def _morning_path_observations(*, symbol: str, decision_date: date, next_date: date, reference_price: float, morning_bars: tuple[CompositeBar, ...], exact: Mapping[tuple[str, date, time], CompositeBar]) -> tuple[dict[str, Any], ...]:
+    """Add strictly complete morning path diagnostics and competing events."""
+
+    first = exact.get((symbol, next_date, time(9, 35)))
+    complete = _has_complete_morning_grid(morning_bars)
+    output: list[dict[str, Any]] = []
+    if first is None:
+        output.append(_unavailable_observation(symbol, decision_date, next_date, MR1TargetId.NEXT_SESSION_OPEN_GAP_RETURN, "EXACT_OPENING_BAR_MISSING", time(9, 35)))
+    else:
+        output.append(_available_observation(symbol=symbol, decision_date=decision_date, next_date=next_date, target_id=MR1TargetId.NEXT_SESSION_OPEN_GAP_RETURN, reference_price=reference_price, value=first.open / reference_price - 1.0, exit_price=first.open, exit_timestamp=first.timestamp, convention="next-session-first-5m-bar-open-v1"))
+    if not complete:
+        for target_id in (
+            MR1TargetId.MORNING_1030_MFE, MR1TargetId.MORNING_1030_MAE, MR1TargetId.MORNING_TIME_OF_MFE,
+            MR1TargetId.MORNING_MFE_CAPTURE_AT_0935, MR1TargetId.MORNING_MFE_CAPTURE_AT_1000,
+            MR1TargetId.MORNING_MFE_CAPTURE_AT_1030, *_COMPETING_BARRIERS,
+        ):
+            output.append(_unavailable_observation(symbol, decision_date, next_date, target_id, "INCOMPLETE_MORNING_PATH", time(10, 30)))
+        return tuple(output)
+    mfe_bar = max(morning_bars, key=lambda bar: (bar.high, -bar.timestamp.timestamp()))
+    mfe = mfe_bar.high / reference_price - 1.0
+    mae = min(bar.low for bar in morning_bars) / reference_price - 1.0
+    endpoint_closes = {bar.timestamp.astimezone(_SHANGHAI).time().replace(tzinfo=None): bar.close for bar in morning_bars}
+    endpoint_1030 = exact[(symbol, next_date, time(10, 30))]
+    output.extend((
+        _available_observation(symbol=symbol, decision_date=decision_date, next_date=next_date, target_id=MR1TargetId.MORNING_1030_MFE, reference_price=reference_price, value=mfe, exit_price=endpoint_1030.close, exit_timestamp=endpoint_1030.timestamp, convention="complete-0935-through-1030-extrema-v1"),
+        _available_observation(symbol=symbol, decision_date=decision_date, next_date=next_date, target_id=MR1TargetId.MORNING_1030_MAE, reference_price=reference_price, value=mae, exit_price=endpoint_1030.close, exit_timestamp=endpoint_1030.timestamp, convention="complete-0935-through-1030-extrema-v1"),
+        _available_observation(symbol=symbol, decision_date=decision_date, next_date=next_date, target_id=MR1TargetId.MORNING_TIME_OF_MFE, reference_price=reference_price, value=float(mfe_bar.timestamp.astimezone(_SHANGHAI).hour * 60 + mfe_bar.timestamp.astimezone(_SHANGHAI).minute), exit_price=endpoint_1030.close, exit_timestamp=mfe_bar.timestamp, convention="earliest-morning-maximum-high-v1"),
+    ))
+    for endpoint, target_id in ((time(9, 35), MR1TargetId.MORNING_MFE_CAPTURE_AT_0935), (time(10, 0), MR1TargetId.MORNING_MFE_CAPTURE_AT_1000), (time(10, 30), MR1TargetId.MORNING_MFE_CAPTURE_AT_1030)):
+        if mfe <= 0.0:
+            output.append(_unavailable_observation(symbol, decision_date, next_date, target_id, "NON_POSITIVE_MORNING_MFE", endpoint))
+        else:
+            output.append(_available_observation(symbol=symbol, decision_date=decision_date, next_date=next_date, target_id=target_id, reference_price=reference_price, value=(endpoint_closes[endpoint] / reference_price - 1.0) / mfe, exit_price=endpoint_closes[endpoint], exit_timestamp=exact[(symbol, next_date, endpoint)].timestamp, convention="endpoint-return-divided-by-complete-morning-mfe-v1"))
+    output.extend(_competing_event_observations(symbol, decision_date, next_date, reference_price, morning_bars))
+    return tuple(output)
+
+
+def _competing_event_observations(symbol: str, decision_date: date, next_date: date, reference_price: float, morning_bars: tuple[CompositeBar, ...]) -> tuple[dict[str, Any], ...]:
+    result: list[dict[str, Any]] = []
+    for target_id, (upper, lower) in _COMPETING_BARRIERS.items():
+        outcome = "TIMEOUT"
+        for bar in morning_bars:
+            up = bar.high / reference_price - 1.0 >= upper
+            down = bar.low / reference_price - 1.0 <= lower
+            if up and down:
+                outcome = "AMBIGUOUS"
+                break
+            if up:
+                outcome = "UP_FIRST"
+                break
+            if down:
+                outcome = "DOWN_FIRST"
+                break
+        result.append({
+            "schema_version": MR1_MORNING_TARGET_SCHEMA_VERSION, "target_id": target_id.value, "symbol": symbol,
+            "decision_date": decision_date.isoformat(), "target_session_date": next_date.isoformat(), "status": "AVAILABLE",
+            "value": None, "reference_price": reference_price, "exit_price": None, "exit_timestamp": None,
+            "missing_reason": None, "outcome": outcome, "bar_convention": "complete-0935-through-1030-daily-barrier-v1",
+            "data_eligibility": "EXPLORATORY",
+        })
+    return tuple(result)
+
+
+def _has_complete_morning_grid(bars: tuple[CompositeBar, ...]) -> bool:
+    return {bar.timestamp.astimezone(_SHANGHAI).time().replace(tzinfo=None) for bar in bars} == set(_MORNING_GRID)
 
 
 def _available_observation(*, symbol: str, decision_date: date, next_date: date, target_id: MR1TargetId, reference_price: float, value: float, exit_price: float, exit_timestamp: datetime, convention: str) -> dict[str, Any]:
@@ -335,7 +433,7 @@ def _simulate_mark_trade(*, model_id: str, decision_date: date, symbol: str, ran
         "entry_price": entry_price, "exit_price": realized_exit, "gross_return": exit_price / reference_price - 1.0,
         "net_return": (exit_notional - transaction_cost - entry_notional) / entry_notional,
         "transaction_cost": transaction_cost, "slippage_cost": quantity * (entry_price - reference_price) + quantity * (exit_price - realized_exit),
-        "holding_sessions": 1, "trade_status": "COMPLETED", "reason_code": MR1_EXECUTION_ASSUMPTION,
+        "entry_notional": entry_notional, "slot_weight": weight, "holding_sessions": 1, "trade_status": "COMPLETED", "reason_code": MR1_EXECUTION_ASSUMPTION,
     }
     fills = (
         {**common, "side": "BUY", "mark_time": reference_timestamp.isoformat(), "reference_price": reference_price, "fill_price": entry_price, "quantity": quantity, "total_cost": buy_commission, "fill_status": "SIMULATED_REFERENCE_FILL", "reason_code": MR1_EXECUTION_ASSUMPTION},
@@ -348,8 +446,8 @@ def _cash_order(model_id: str, decision_date: date, exit_time: MR1ExitTime, cost
     return {"model_id": model_id, "decision_date": decision_date.isoformat(), "exit_time": exit_time.value, "cost_scenario": cost_scenario, "symbol": "__CASH__", "order_status": "SKIPPED", "reason_code": reason}
 
 
-def _equity(model_id: str, decision_date: date, exit_time: MR1ExitTime, cost_scenario: str, gross_equity: float, net_equity: float, gross_return: float, net_return: float, transaction_cost: float, cash_ratio: float, active_count: int, missing_exit: int) -> dict[str, Any]:
-    return {"model_id": model_id, "session_date": decision_date.isoformat(), "exit_time": exit_time.value, "cost_scenario": cost_scenario, "gross_return": gross_return, "net_return": net_return, "gross_equity": gross_equity, "net_equity": net_equity, "transaction_cost": transaction_cost, "cash_ratio": cash_ratio, "active_position_count": active_count, "missing_exit_count": missing_exit}
+def _equity(model_id: str, decision_date: date, exit_time: MR1ExitTime, cost_scenario: str, gross_equity: float, net_equity: float, gross_return: float, net_return: float, transaction_cost: float, cash_ratio: float, active_count: int, missing_exit: int, missing_weight: float = 0.0) -> dict[str, Any]:
+    return {"model_id": model_id, "session_date": decision_date.isoformat(), "exit_time": exit_time.value, "cost_scenario": cost_scenario, "gross_return": gross_return, "net_return": net_return, "gross_equity": gross_equity, "net_equity": net_equity, "transaction_cost": transaction_cost, "cash_ratio": cash_ratio, "active_position_count": active_count, "missing_exit_count": missing_exit, "missing_weight": missing_weight}
 
 
 def _metrics(equity: list[dict[str, Any]], trades: list[dict[str, Any]]) -> dict[str, Any]:
@@ -378,7 +476,8 @@ def _metrics(equity: list[dict[str, Any]], trades: list[dict[str, Any]]) -> dict
             "profit_factor": sum(wins) / abs(sum(losses)) if losses else None,
             "turnover": sum(float(row["active_position_count"]) for row in rows),
             "total_transaction_cost": sum(float(row["transaction_cost"]) for row in rows),
-            "cost_ratio": sum(float(row["transaction_cost"]) for row in rows) / (len(model_trades) * 100_000.0) if model_trades else 0.0,
-            "missing_exit_count": sum(int(row["missing_exit_count"]) for row in rows), "descriptive_only": True,
+            "cost_ratio": (sum(float(row["transaction_cost"]) for row in rows) / sum(float(row["entry_notional"]) for row in model_trades) if model_trades else 0.0),
+            "missing_exit_count": sum(int(row["missing_exit_count"]) for row in rows),
+            "missing_weight": sum(float(row["missing_weight"]) for row in rows), "descriptive_only": True,
         }
     return result

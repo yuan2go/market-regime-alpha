@@ -9,6 +9,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 from typing import Any, Sequence
 from zoneinfo import ZoneInfo
@@ -61,8 +62,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     all_equity: list[dict[str, Any]] = []
     metric_rows: list[dict[str, Any]] = []
     comparison: dict[str, Any] = {"schema_version": "mr-1-exit-time-comparison-v1", "descriptive_only": True, "results": []}
-    baseline = _candidate_baseline(targets)
-    for scenario, costs in _cost_scenarios().items():
+    cost_scenarios = _cost_scenarios()
+    baselines = {name: _candidate_baseline(targets, costs) for name, costs in cost_scenarios.items()}
+    for scenario, costs in cost_scenarios.items():
         for exit_time in MR1ExitTime:
             replay = replay_mr1_fixed_portfolios(
                 prepared=prepared,
@@ -84,13 +86,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "exit_time": exit_time.value,
                     "cost_scenario": scenario,
                     **metrics,
-                    "candidate_baseline_cumulative_return": baseline.get(exit_time.value),
+                    "candidate_baseline_gross_cumulative_return": baselines[scenario][exit_time.value]["gross"],
+                    "candidate_baseline_net_cumulative_return": baselines[scenario][exit_time.value]["net"],
+                    "candidate_baseline_kind": "NON_TRADABLE_CROSS_SECTIONAL_DIAGNOSTIC_WITH_SAME_COST_MECHANICS",
                 }
                 metric_rows.append(row)
                 comparison["results"].append(row)
-    _add_chronological_diagnostics(metric_rows, all_equity, baseline)
+    _add_chronological_diagnostics(metric_rows, all_equity)
     _apply_failure_labels(metric_rows, all_equity)
-    run_id = _run_id(dataset, args.top_k)
+    run_id = _run_id(dataset, args.top_k, rankings)
     final = _write_run(
         root=args.output_root,
         run_id=run_id,
@@ -150,25 +154,42 @@ def _cost_scenarios() -> dict[str, ExploratoryExecutionCostConfig]:
     }
 
 
-def _candidate_baseline(targets: tuple[dict[str, Any], ...]) -> dict[str, float | None]:
+def _candidate_baseline(targets: tuple[dict[str, Any], ...], costs: ExploratoryExecutionCostConfig) -> dict[str, dict[str, float | None]]:
     exit_targets = {"09:35": "NEXT_SESSION_0935_RETURN", "10:00": "NEXT_SESSION_1000_RETURN", "10:30": "NEXT_SESSION_1030_RETURN", "CLOSE": "NEXT_SESSION_CLOSE_RETURN"}
-    result: dict[str, float | None] = {}
+    result: dict[str, dict[str, float | None]] = {}
     for exit_time, target_id in exit_targets.items():
         by_date: dict[str, list[float]] = {}
         for row in targets:
             if row["target_id"] == target_id and row["status"] == "AVAILABLE":
                 by_date.setdefault(str(row["decision_date"]), []).append(float(row["value"]))
         if len(by_date) == 0:
-            result[exit_time] = None
+            result[exit_time] = {"gross": None, "net": None}
         else:
-            equity = 1.0
-            for values in by_date.values():
-                equity *= 1.0 + sum(values) / len(values)
-            result[exit_time] = equity - 1.0
+            gross_equity = net_equity = 1.0
+            for decision_date, values in by_date.items():
+                rows = [row for row in targets if row["target_id"] == target_id and row["decision_date"] == decision_date and row["status"] == "AVAILABLE"]
+                gross_equity *= 1.0 + sum(values) / len(values)
+                net_equity *= 1.0 + sum(_candidate_slot_net_return(row, 1.0 / len(rows), costs) for row in rows)
+            result[exit_time] = {"gross": gross_equity - 1.0, "net": net_equity - 1.0}
     return result
 
 
-def _add_chronological_diagnostics(metrics: list[dict[str, Any]], equity: list[dict[str, Any]], baseline: dict[str, float | None]) -> None:
+def _candidate_slot_net_return(row: dict[str, Any], weight: float, costs: ExploratoryExecutionCostConfig) -> float:
+    reference_price = float(row["reference_price"])
+    exit_price = float(row["exit_price"])
+    entry_price = reference_price * (1.0 + costs.entry_slippage_bps / 10_000.0)
+    realized_exit = exit_price * (1.0 - costs.exit_slippage_bps / 10_000.0)
+    entry_notional = costs.normalized_trade_notional * weight
+    quantity = entry_notional / entry_price
+    exit_notional = quantity * realized_exit
+    buy = max(entry_notional * costs.buy_commission_bps / 10_000.0, costs.minimum_commission)
+    sell = max(exit_notional * costs.sell_commission_bps / 10_000.0, costs.minimum_commission)
+    stamp = exit_notional * costs.sell_stamp_duty_bps / 10_000.0
+    transfer = (entry_notional + exit_notional) * costs.transfer_fee_bps / 10_000.0
+    return (exit_notional - buy - sell - stamp - transfer - entry_notional) / entry_notional
+
+
+def _add_chronological_diagnostics(metrics: list[dict[str, Any]], equity: list[dict[str, Any]]) -> None:
     rows_by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in equity:
         rows_by_key.setdefault((str(row["model_id"]), str(row["exit_time"]), str(row["cost_scenario"])), []).append(row)
@@ -179,10 +200,8 @@ def _add_chronological_diagnostics(metrics: list[dict[str, Any]], equity: list[d
         metric["first_20_return"], metric["middle_20_return"], metric["last_20_return"] = segment_returns
         metric["rolling_20_date_stability"] = [round(_compound(rows[index:index + 20]), 12) for index in range(max(0, len(rows) - 19))]
         metric["maximum_losing_streak"] = _maximum_losing_streak(rows)
-        metric["top5_excess_over_candidate_baseline"] = (
-            metric["net_cumulative_return"] - baseline[metric["exit_time"]]
-            if baseline[metric["exit_time"]] is not None else None
-        )
+        metric["top5_gross_minus_candidate_gross"] = metric["gross_cumulative_return"] - metric["candidate_baseline_gross_cumulative_return"]
+        metric["top5_net_minus_candidate_net"] = metric["net_cumulative_return"] - metric["candidate_baseline_net_cumulative_return"]
 
 
 def _apply_failure_labels(metrics: list[dict[str, Any]], equity: list[dict[str, Any]]) -> None:
@@ -196,7 +215,7 @@ def _apply_failure_labels(metrics: list[dict[str, Any]], equity: list[dict[str, 
         positive_sum = sum(max(float(item["net_return"]), 0.0) for item in daily)
         concentrated = positive_sum > 0.0 and max((max(float(item["net_return"]), 0.0) for item in daily), default=0.0) / positive_sum > 0.5
         promising = (
-            row["top5_excess_over_candidate_baseline"] is not None and row["top5_excess_over_candidate_baseline"] > 0.0
+            row["top5_net_minus_candidate_net"] > 0.0
             and all(value is not None and value > 0.0 for value in segments)
             and row["maximum_drawdown"] >= -0.15
             and all(item["net_cumulative_return"] > 0.0 for item in scenarios)
@@ -225,10 +244,15 @@ def _maximum_losing_streak(rows: list[dict[str, Any]]) -> int:
     return longest
 
 
-def _run_id(dataset: Path, top_k: int) -> str:
+def _run_id(dataset: Path, top_k: int, rankings: tuple[dict[str, Any], ...]) -> str:
+    module = PROJECT_ROOT / "src" / "market_regime_alpha" / "research" / "mr1_morning_pop.py"
+    model_ids = sorted({str(row["model_id"]) for row in rankings})
+    costs = _cost_scenarios()
     payload = (
-        f"{dataset.resolve()}:{_file_hash(dataset / 'dataset_manifest.json')}:{top_k}:"
-        f"{_file_hash(Path(__file__))}"
+        f"{_read_json(dataset / 'dataset_manifest.json')['dataset_id']}:"
+        f"{_file_hash(dataset / 'SHA256SUMS.json')}:{_revision()}:{_file_hash(module)}:{_file_hash(Path(__file__))}:"
+        f"mr-1-overnight-morning-pop-target-v1:{','.join(model_ids)}:{top_k}:"
+        f"{_canonical_hash({name: repr(value) for name, value in costs.items()})}"
     ).encode()
     return f"mr1-{sha256(payload).hexdigest()[:20]}"
 
@@ -293,6 +317,14 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _file_hash(path: Path) -> str:
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
+
+
+def _canonical_hash(value: Any) -> str:
+    return sha256(json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _revision() -> str:
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True).stdout.strip()
 
 
 if __name__ == "__main__":

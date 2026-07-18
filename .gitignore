@@ -29,6 +29,7 @@ data/raw/prr_mvp_1/
 data/processed/prr_mvp_1_datasets/
 data/processed/prr_mvp_1_runs/
 data/processed/mr1_morning_pop_runs/
+data/processed/mr2_failure_decomposition_runs/
 reports/**/*.csv
 reports/**/*.html
 reports/**/*.json
