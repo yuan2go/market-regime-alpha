@@ -25,6 +25,7 @@ MR2B_EFFECT_THRESHOLD = 0.001
 class WatchlistDirection(str, Enum):
     UP = "UP"
     DOWN = "DOWN"
+    FLAT = "FLAT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +112,7 @@ def primary_assessment(rows: Iterable[DailyConditionalityObservation]) -> dict[s
             raise ValueError("observations must match the frozen MR-2B primary comparison")
     grouped = {
         direction: tuple(row for row in ordered if row.context_label is direction)
-        for direction in WatchlistDirection
+        for direction in (WatchlistDirection.UP, WatchlistDirection.DOWN)
     }
     if any(not values for values in grouped.values()):
         return {"assessment": "INSUFFICIENT_EVIDENCE"}
