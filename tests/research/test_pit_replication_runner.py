@@ -53,3 +53,16 @@ def test_duplicate_population_and_non_contiguous_rank_fail_closed() -> None:
     )
     with pytest.raises(ValueError, match="continuous"):
         validate_replication_tables(universe, eligibility, population, rankings, ())
+
+
+def test_population_date_without_rankings_fails_closed() -> None:
+    universe = ({"decision_date": "2026-01-01", "symbol": "000001.SZ", "is_member": True, "membership_source": "HISTORICAL_PIT"},)
+    eligibility = ({"decision_date": "2026-01-01", "symbol": "000001.SZ", "status": "ELIGIBLE", "buyability": "BUYABLE"},)
+    population = ({"decision_date": "2026-01-01", "symbol": "000001.SZ", "dataset_id": "dataset-1"},)
+    with pytest.raises(ValueError, match="rankings must cover"):
+        validate_replication_tables(universe, eligibility, population, (), ())
+
+
+def test_empty_well_formed_input_cannot_bypass_minimum_evidence_gate() -> None:
+    with pytest.raises(ValueError, match="minimum Decision Dates"):
+        validate_replication_tables((), (), (), (), ())

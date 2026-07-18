@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -15,6 +16,7 @@ from market_regime_alpha.research.pit_replication_protocol import (
     PITCandidateReplicationProtocol,
     frozen_pit_replication_protocol,
 )
+from market_regime_alpha.research.mr1_candidate_baselines import select_matched_k_symbols
 
 
 Row = Mapping[str, Any]
@@ -104,10 +106,11 @@ def validate_replication_tables(
             raise ValueError("Candidate ranking rank must be a positive integer")
         ranks_by_date[decision_date].append(rank)
         ranked_symbols_by_date[decision_date].add(symbol)
-    for decision_date, ranks in ranks_by_date.items():
+    for decision_date in population_by_date:
+        ranks = ranks_by_date.get(decision_date, [])
         if sorted(ranks) != list(range(1, len(ranks) + 1)):
             raise ValueError(f"Candidate ranks are not continuous on {decision_date}")
-        if ranked_symbols_by_date[decision_date] != population_by_date[decision_date]:
+        if not ranks or ranked_symbols_by_date.get(decision_date, set()) != population_by_date[decision_date]:
             raise ValueError("Candidate rankings must cover the frozen eligible population")
 
     grouped_selections: dict[tuple[str, str, int], list[Row]] = defaultdict(list)
@@ -132,8 +135,50 @@ def validate_replication_tables(
         if len(symbols) != len(set(symbols)):
             raise ValueError("matched-K selection symbols must be unique")
 
+    expected_selection_groups = {
+        (decision_date, frozen.candidate_model_id, seed)
+        for decision_date in population_by_date
+        for seed in frozen.matched_k_seed_set
+    }
+    if set(grouped_selections) != expected_selection_groups:
+        raise ValueError("matched-K selections must cover every frozen date and seed")
+    for decision_date, model_id, seed in sorted(expected_selection_groups):
+        rows = grouped_selections[(decision_date, model_id, seed)]
+        population_group = tuple(sorted(population_by_date[decision_date]))
+        dataset_ids = {
+            str(row.get("dataset_id", ""))
+            for row in population
+            if str(row.get("decision_date")) == decision_date
+        }
+        if len(dataset_ids) != 1 or not next(iter(dataset_ids)).strip():
+            raise ValueError("Candidate population requires one immutable Dataset ID per date")
+        dataset_id = next(iter(dataset_ids))
+        expected_symbols = select_matched_k_symbols(
+            dataset_id=dataset_id,
+            decision_date=date.fromisoformat(decision_date),
+            symbols=population_group,
+            top_k=frozen.top_k,
+            baseline_seed=seed,
+        )
+        actual_symbols = tuple(
+            _text(row, "symbol")
+            for row in sorted(rows, key=lambda item: _integer(item, "slot_index"))
+        )
+        if actual_symbols != expected_symbols:
+            raise ValueError("matched-K selection does not match the frozen rank-blind algorithm")
+
+    decision_date_count = len(population_by_date)
+    if decision_date_count < frozen.minimum_decision_dates:
+        raise ValueError("PIT evidence has fewer than the Protocol minimum Decision Dates")
+    average_population_size = len(population) / decision_date_count
+    if average_population_size < frozen.minimum_average_population_size:
+        raise ValueError("PIT evidence has less than the Protocol minimum average population size")
+    symbol_coverage = len(rankings) / len(population)
+    if symbol_coverage < frozen.minimum_symbol_coverage:
+        raise ValueError("PIT evidence has less than the Protocol minimum symbol coverage")
+
     return PITReplicationTableValidation(
-        decision_date_count=len(population_by_date),
+        decision_date_count=decision_date_count,
         population_row_count=len(population),
         ranking_row_count=len(rankings),
         selection_row_count=len(selections),
