@@ -25,8 +25,9 @@ Older documents remain historical records. Their stale status lines do not overr
 The current Candidate-validation sequence is now:
 
 ```text
-MR-2B F2B v2 statistical hardening                     COMPLETE
+MR-2B F2B v3 exact implementation identity              COMPLETE
 PIT replication protocol and provider-bound preflight  IMPLEMENTED
+PIT blocked/invalid Artifact identity v2                IMPLEMENTED
 Real normalized Xuntou validation bundle                BLOCKED EXTERNAL INPUT
 Expanded PIT replication result                         NOT PRODUCED
 ```
@@ -35,6 +36,11 @@ The frozen MR-2B Primary remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. The next re
 the unconditional B1-E lift over the model-population multi-seed matched-K median. The rejected
 auxiliary-watchlist UP/DOWN Gate is not being restored. Missing Xuntou input produces a checksummed
 blocker Artifact; Tencent/current-watchlist evidence cannot be silently substituted as PIT.
+
+F2B v3 run `mr2b-f2b-v3-bb34b06f7446aa0af9e7` supersedes v2 as the current
+identity contract while preserving the exact frozen statistical result. Its implementation hash map
+is code-owned and exact; verifier routing is deliberately outside statistical identity. The actual
+PIT v2 blocker is `pit-replication-v2-c681ed11199027ea819d`.
 
 Known historical residues include:
 
@@ -959,6 +965,17 @@ The v2 actual result remains 27 UP / 33 DOWN, effect `-0.0000844753476525215`, 9
 interval `[-0.002375137060807993, 0.0023412463545652395]`, circular-shift p-value `0.5`, and
 `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. No research authority was promoted. See
 `docs/research/MR-2B-F2B-v2-Post-Merge-Hardening.md`.
+
+### MR-2B-F2B v3 — Research Artifact Identity
+
+F2B v3 run `mr2b-f2b-v3-bb34b06f7446aa0af9e7` uses an exact, code-owned implementation
+module set and excludes the extensible verifier registry from statistical identity. Historical v1
+and v2 Readers remain available and unchanged. The published v2/v3 semantic comparison is
+`EXACT_MATCH`; the current assessment remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`.
+
+PIT evidence status now has distinct v2 blocked, invalid, and reserved success Schemas. The actual
+missing-input run is `pit-replication-v2-c681ed11199027ea819d` and contains no research result.
+See `docs/research/Research-Artifact-Identity-V3.md`.
 
 The current ordered sequence is:
 
