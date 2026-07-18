@@ -24,6 +24,7 @@ from market_regime_alpha.dividend_t.storage import DEFAULT_WATCHLIST_PATH, load_
 from market_regime_alpha.dividend_t.trend_snapshot import DEFAULT_LOCAL_TIMING_CACHE_DIR
 from market_regime_alpha.research.prr_mvp_1 import (
     ExploratoryExecutionCostConfig,
+    acceptance_accounting,
     build_prr_candidate_data,
     replay_fixed_candidate_portfolios,
 )
@@ -167,6 +168,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             top_k=args.top_k,
             cost_config=costs,
         )
+        acceptance = acceptance_accounting(
+            replay=replay,
+            model_count=len(replay.metrics["models"]),
+            decision_date_count=len(candidate_data.decision_dates),
+            top_k=args.top_k,
+        )
         path = write_prr_run(
             root=args.output_root,
             run_id=run_id,
@@ -176,6 +183,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             execution=execution,
             candidate_data=candidate_data,
             replay=replay,
+            acceptance=acceptance,
             cost_config=costs,
             config_snapshot=config,
         )

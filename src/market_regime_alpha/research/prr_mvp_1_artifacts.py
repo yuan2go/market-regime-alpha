@@ -76,7 +76,8 @@ RUN_FILENAMES = frozenset(
         "daily_equity.parquet",
         "monthly_metrics.csv",
         "metrics.json",
-        "stability.json",
+    "stability.json",
+    "acceptance_accounting.json",
         "limitations.json",
         "report.md",
         "SHA256SUMS.json",
@@ -431,6 +432,7 @@ def write_prr_run(
     execution: TencentCompositeResearchExecution,
     candidate_data: PRRCandidateData,
     replay: PRRReplayResult,
+    acceptance: Mapping[str, Any],
     cost_config: ExploratoryExecutionCostConfig,
     config_snapshot: Mapping[str, Any],
 ) -> Path:
@@ -471,6 +473,7 @@ def write_prr_run(
         _write_monthly_metrics(stage / "monthly_metrics.csv", replay.daily_equity)
         _write_json(stage / "metrics.json", replay.metrics)
         _write_json(stage / "stability.json", _stability(replay.daily_equity))
+        _write_json(stage / "acceptance_accounting.json", acceptance)
         limitations = tuple(dict.fromkeys((*execution.limitations, *replay.limitations)))
         _write_json(stage / "limitations.json", limitations)
         _write_report(

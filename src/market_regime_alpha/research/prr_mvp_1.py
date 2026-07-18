@@ -97,6 +97,49 @@ class PRRReplayResult:
     limitations: tuple[str, ...]
 
 
+def acceptance_accounting(
+    *,
+    replay: PRRReplayResult,
+    model_count: int,
+    decision_date_count: int,
+    top_k: int,
+) -> dict[str, Any]:
+    """Reconcile declared Top-K slots with explicit simulated-mark outcomes."""
+
+    selection_slots = model_count * decision_date_count * top_k
+    completed = sum(1 for item in replay.trades if item["trade_status"] == "COMPLETED")
+    entry_marks = sum(1 for item in replay.fills if item["side"] == "BUY")
+    exit_marks = sum(1 for item in replay.fills if item["side"] == "SELL")
+    cash_events = [item for item in replay.orders if item["reason_code"] == "ACTIVE_POSITION_CASH_LOCKED"]
+    cash_slots = len(cash_events) * top_k
+    missing_entry = sum(1 for item in replay.orders if item["reason_code"] == "MISSING_ENTRY_REFERENCE")
+    missing_exit = sum(1 for item in replay.trades if item["trade_status"] == "MISSING_EXIT")
+    excluded = selection_slots - completed - cash_slots - missing_entry - missing_exit
+    if excluded < 0 or completed + cash_slots + missing_entry + missing_exit + excluded != selection_slots:
+        raise ValueError("selection-slot accounting identity does not reconcile")
+    return {
+        "model_count": model_count,
+        "decision_date_count": decision_date_count,
+        "top_k": top_k,
+        "selection_slot_count": selection_slots,
+        "order_count": len(replay.orders),
+        "entry_mark_count": entry_marks,
+        "exit_mark_count": exit_marks,
+        "completed_trade_count": completed,
+        "missing_entry_count": missing_entry,
+        "missing_exit_count": missing_exit,
+        "cash_slot_count": cash_slots,
+        "excluded_count": excluded,
+        "slot_identity": "selection_slot_count = completed_trade_count + missing_entry_count + missing_exit_count + cash_slot_count + excluded_count",
+        "reason_code_counts": {
+            "ACTIVE_POSITION_CASH_LOCKED": cash_slots,
+            "NO_RANKED_CANDIDATE": excluded,
+        },
+        "fill_status_required": "SIMULATED_REFERENCE_FILL",
+        "rank_six_backfill": False,
+    }
+
+
 def build_prr_candidate_data(
     *,
     execution: TencentCompositeResearchExecution,

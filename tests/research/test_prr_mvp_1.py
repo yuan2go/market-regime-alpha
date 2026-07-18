@@ -10,6 +10,7 @@ import pytest
 from market_regime_alpha.research.prr_mvp_1 import (
     ExploratoryExecutionCostConfig,
     PRRCandidateData,
+    acceptance_accounting,
     replay_fixed_candidate_portfolios,
 )
 from market_regime_alpha.research.prr_mvp_1_artifacts import (
@@ -106,6 +107,20 @@ def test_replay_is_chronological_cash_constrained_and_net_of_costs() -> None:
         trade["exit_date"] > trade["entry_date"]
         for trade in result.trades
     )
+    accounting = acceptance_accounting(
+        replay=result,
+        model_count=1,
+        decision_date_count=60,
+        top_k=5,
+    )
+    assert accounting["selection_slot_count"] == 300
+    assert (
+        accounting["completed_trade_count"]
+        + accounting["cash_slot_count"]
+        + accounting["excluded_count"]
+        == 300
+    )
+    assert all(item["fill_status"] == "SIMULATED_REFERENCE_FILL" for item in result.fills)
 
 
 def test_failure_artifact_is_non_overwriting_and_hashed(tmp_path: Path) -> None:
