@@ -23,6 +23,7 @@ from market_regime_alpha.research.prr_mvp_1 import (
     PRR_MVP_1_EXECUTION_ASSUMPTION,
     PRR_MVP_1_SCHEMA_VERSION,
 )
+from market_regime_alpha.research.prr_artifact_schemas import PRR_DATASET_SCHEMA
 from market_regime_alpha.research.tencent_composite_execution import (
     TencentCompositeResearchExecution,
 )
@@ -43,18 +44,6 @@ RAW_FILENAMES = frozenset(
         "source_partitions.json",
         "normalized_provider_response.json",
         "raw_manifest.json",
-        "limitations.json",
-        "SHA256SUMS.json",
-    }
-)
-DATASET_FILENAMES = frozenset(
-    {
-        "bars.parquet",
-        "prepared_sessions.parquet",
-        "decision_snapshots.parquet",
-        "candidate_rankings.parquet",
-        "dataset_manifest.json",
-        "data_quality.json",
         "limitations.json",
         "SHA256SUMS.json",
     }
@@ -259,7 +248,7 @@ def dataset_id(
     return _identity(
         "prr-dataset",
         {
-            "schema_version": "prr-mvp-1-dataset-v1",
+            "schema_version": PRR_DATASET_SCHEMA.schema_version,
             "acquisition_id": acquisition_id,
             "source_dataset_id": str(execution.dataset_contract.dataset_id),
             "ranking_content_hash": _canonical_hash(candidate_data.ranking_rows),
@@ -415,7 +404,7 @@ def write_prr_dataset(
         }
         _write_json(stage / "dataset_manifest.json", manifest)
         _write_checksums(stage)
-        _validate_exact_set(stage, DATASET_FILENAMES)
+        _validate_exact_set(stage, PRR_DATASET_SCHEMA.required_files)
         stage.rename(final)
     except Exception:
         shutil.rmtree(stage, ignore_errors=True)
