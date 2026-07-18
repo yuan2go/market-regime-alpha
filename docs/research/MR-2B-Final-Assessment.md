@@ -156,3 +156,9 @@ and schema-routed v1/v2 semantic verification.
 For this complete 60-date input, v2 reproduces the v1 effect, interval, p-value, temporal and
 seed-panel diagnostics. The Primary conclusion and selected Route C are unchanged. See
 `docs/research/MR-2B-F2B-v2-Post-Merge-Hardening.md`.
+
+F2B v3 run `mr2b-f2b-v3-bb34b06f7446aa0af9e7` supersedes v2 for current Artifact-identity
+authority. Its exact-module identity and registry decoupling do not change the frozen statistics:
+`v2_vs_v3_semantic_diff.json` is `EXACT_MATCH`, and the Primary remains
+`PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. Historical v1/v2 Artifacts remain immutable and verifiable by
+their versioned Readers.
