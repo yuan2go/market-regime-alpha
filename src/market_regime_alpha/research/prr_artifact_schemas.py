@@ -201,6 +201,47 @@ MR2B_MULTISEED_RETURN_PRIMARY_KEY = (
 MR2B_NULL_SUMMARY_PRIMARY_KEY = ("decision_date", "model_id", "exit_time", "cost_scenario")
 MR2B_DAILY_EXCESS_PRIMARY_KEY = MR2B_NULL_SUMMARY_PRIMARY_KEY
 
+MR2B_F2B_RUN_SCHEMA = ArtifactSchema(
+    schema_version="mr-2b-f2b-run-v1",
+    required_files=frozenset(
+        {
+            "manifest.json",
+            "protocol.json",
+            "primary_observations.parquet",
+            "primary_bootstrap_distribution.parquet",
+            "primary_circular_shift_distribution.parquet",
+            "primary_random_permutation_distribution.parquet",
+            "primary_temporal_stability.parquet",
+            "primary_seed_panel_robustness.parquet",
+            "primary_concentration.json",
+            "primary_assessment.json",
+            "secondary_comparison_inventory.parquet",
+            "multiple_testing_disclosure.json",
+            "competing_event_diagnostics.parquet",
+            "competing_event_status.json",
+            "limitations.json",
+            "report.md",
+            "SHA256SUMS.json",
+        }
+    ),
+    required_manifest_keys=frozenset(
+        {
+            "schema_version",
+            "run_id",
+            "dataset_id",
+            "mr1_run_id",
+            "f2a_run_id",
+            "data_eligibility",
+            "authority",
+            "required_artifacts",
+            "run_identity",
+            "protocol_id",
+            "row_counts",
+            "primary_assessment",
+        }
+    ),
+)
+
 
 def canonical_identity_hash(payload: object) -> str:
     canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
