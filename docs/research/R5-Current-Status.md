@@ -931,6 +931,20 @@ the multi-seed median, so the selected next route is to retain the transparent C
 avoid a Market Regime Gate, and expand historical PIT validation and Feature ablation. The
 complete interpretation is recorded in `docs/research/MR-2B-Final-Assessment.md`.
 
+### MR-2B-F2B v2 — Post-Merge Hardening
+
+F2B v2 run `mr2b-f2b-v2-3bc505b9e92138ffa2f8` preserves the frozen direction and negative
+Primary conclusion while fixing generic contract behavior. Low UP/DOWN coverage now produces a
+valid immutable `INSUFFICIENT_EVIDENCE` Artifact without running bootstrap or permutation.
+Competing-event missing counts are separately bound to Top-5, model-population, matched-K, and
+global Target scopes. Protocol v2 owns all execution thresholds, and a versioned verifier registry
+keeps historical F2B v1 evidence readable without applying v2 semantics retroactively.
+
+The v2 actual result remains 27 UP / 33 DOWN, effect `-0.0000844753476525215`, 95% bootstrap
+interval `[-0.002375137060807993, 0.0023412463545652395]`, circular-shift p-value `0.5`, and
+`PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. No research authority was promoted. See
+`docs/research/MR-2B-F2B-v2-Post-Merge-Hardening.md`.
+
 The current ordered sequence is:
 
 ```text

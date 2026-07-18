@@ -145,3 +145,14 @@ NO PRODUCTION REGIME GATE
 NO MODEL WINNER
 FORMAL OOS ALPHA NOT ESTABLISHED
 ```
+
+## Post-merge v2 hardening
+
+F2B v2 run `mr2b-f2b-v2-3bc505b9e92138ffa2f8` supersedes v1 for current generic contract
+handling while retaining v1 as immutable historical evidence. It adds a coverage-first
+`INSUFFICIENT_EVIDENCE` path, protocol-owned thresholds, scope-consistent competing-event counts,
+and schema-routed v1/v2 semantic verification.
+
+For this complete 60-date input, v2 reproduces the v1 effect, interval, p-value, temporal and
+seed-panel diagnostics. The Primary conclusion and selected Route C are unchanged. See
+`docs/research/MR-2B-F2B-v2-Post-Merge-Hardening.md`.
