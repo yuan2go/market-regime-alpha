@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.research.prr_mvp_1 import ExploratoryExecutionCostConfig
+from market_regime_alpha.research.mr1_candidate_baselines import reference_trade_economics
 from market_regime_alpha.research.tencent_composite_contracts import CompositeBar, PreparedCompositeData
 
 
@@ -417,27 +418,23 @@ def _unavailable_observation(symbol: str, decision_date: date, next_date: date, 
 
 
 def _simulate_mark_trade(*, model_id: str, decision_date: date, symbol: str, rank: int, exit_time: MR1ExitTime, cost_scenario: str, reference_price: float, reference_timestamp: datetime, exit_price: float, exit_timestamp: datetime, cost_config: ExploratoryExecutionCostConfig, weight: float) -> tuple[dict[str, Any], tuple[dict[str, Any], dict[str, Any]]]:
-    entry_price = reference_price * (1.0 + cost_config.entry_slippage_bps / 10_000.0)
-    realized_exit = exit_price * (1.0 - cost_config.exit_slippage_bps / 10_000.0)
-    entry_notional = cost_config.normalized_trade_notional * weight
-    quantity = entry_notional / entry_price
-    buy_commission = max(entry_notional * cost_config.buy_commission_bps / 10_000.0, cost_config.minimum_commission)
-    exit_notional = quantity * realized_exit
-    sell_commission = max(exit_notional * cost_config.sell_commission_bps / 10_000.0, cost_config.minimum_commission)
-    stamp_duty = exit_notional * cost_config.sell_stamp_duty_bps / 10_000.0
-    transfer_fee = (entry_notional + exit_notional) * cost_config.transfer_fee_bps / 10_000.0
-    transaction_cost = buy_commission + sell_commission + stamp_duty + transfer_fee
+    economics = reference_trade_economics(
+        reference_price=reference_price,
+        exit_price=exit_price,
+        weight=weight,
+        cost_config=cost_config,
+    )
     common = {"model_id": model_id, "decision_date": decision_date.isoformat(), "symbol": symbol, "rank": rank, "exit_time": exit_time.value, "cost_scenario": cost_scenario}
     trade = {
         **common, "entry_date": decision_date.isoformat(), "exit_date": exit_timestamp.astimezone(_SHANGHAI).date().isoformat(),
-        "entry_price": entry_price, "exit_price": realized_exit, "gross_return": exit_price / reference_price - 1.0,
-        "net_return": (exit_notional - transaction_cost - entry_notional) / entry_notional,
-        "transaction_cost": transaction_cost, "slippage_cost": quantity * (entry_price - reference_price) + quantity * (exit_price - realized_exit),
-        "entry_notional": entry_notional, "slot_weight": weight, "holding_sessions": 1, "trade_status": "COMPLETED", "reason_code": MR1_EXECUTION_ASSUMPTION,
+        "entry_price": economics.entry_price, "exit_price": economics.realized_exit_price, "gross_return": economics.gross_return,
+        "net_return": economics.net_return,
+        "transaction_cost": economics.transaction_cost, "slippage_cost": economics.slippage_cost,
+        "entry_notional": economics.entry_notional, "slot_weight": weight, "holding_sessions": 1, "trade_status": "COMPLETED", "reason_code": MR1_EXECUTION_ASSUMPTION,
     }
     fills = (
-        {**common, "side": "BUY", "mark_time": reference_timestamp.isoformat(), "reference_price": reference_price, "fill_price": entry_price, "quantity": quantity, "total_cost": buy_commission, "fill_status": "SIMULATED_REFERENCE_FILL", "reason_code": MR1_EXECUTION_ASSUMPTION},
-        {**common, "side": "SELL", "mark_time": exit_timestamp.isoformat(), "reference_price": exit_price, "fill_price": realized_exit, "quantity": quantity, "total_cost": transaction_cost - buy_commission, "fill_status": "SIMULATED_REFERENCE_FILL", "reason_code": MR1_EXECUTION_ASSUMPTION},
+        {**common, "side": "BUY", "mark_time": reference_timestamp.isoformat(), "reference_price": reference_price, "fill_price": economics.entry_price, "quantity": economics.quantity, "total_cost": economics.buy_commission, "fill_status": "SIMULATED_REFERENCE_FILL", "reason_code": MR1_EXECUTION_ASSUMPTION},
+        {**common, "side": "SELL", "mark_time": exit_timestamp.isoformat(), "reference_price": exit_price, "fill_price": economics.realized_exit_price, "quantity": economics.quantity, "total_cost": economics.transaction_cost - economics.buy_commission, "fill_status": "SIMULATED_REFERENCE_FILL", "reason_code": MR1_EXECUTION_ASSUMPTION},
     )
     return trade, fills
 
