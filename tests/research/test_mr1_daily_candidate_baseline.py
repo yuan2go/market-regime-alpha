@@ -9,6 +9,7 @@ import pytest
 from market_regime_alpha.research.mr1_candidate_baselines import (
     CandidateBaselineId,
     build_candidate_daily_baselines,
+    build_model_candidate_populations,
     compound_candidate_baselines,
     daily_selection_lifts,
     select_matched_k_symbols,
@@ -71,16 +72,37 @@ def _rows_by_id(rows: tuple[dict[str, object], ...]) -> dict[CandidateBaselineId
     }
 
 
-def test_missing_target_keeps_original_weight_as_cash() -> None:
-    rows = build_candidate_daily_baselines(
+def _populations(
+    days: tuple[date, ...],
+    symbols: tuple[str, ...] = SYMBOLS,
+) -> tuple[object, ...]:
+    return build_model_candidate_populations(
         dataset_id="prr-dataset-test",
+        ranking_rows=tuple(
+            {
+                "decision_date": day.isoformat(),
+                "target_id": "target-r5-decision-reference-to-next-session-close-return-v1",
+                "model_id": "fixed-b0",
+                "symbol": symbol,
+                "eligible_for_ranking": True,
+                "rank": rank,
+            }
+            for day in days
+            for rank, symbol in enumerate(symbols, start=1)
+        ),
+    )
+
+
+def test_missing_target_keeps_original_weight_as_cash() -> None:
+    result = build_candidate_daily_baselines(
+        populations=_populations((date(2026, 1, 5),)),
         target_rows=_targets((date(2026, 1, 5),), missing_symbol=SYMBOLS[-1]),
         decision_dates=(date(2026, 1, 5),),
         cost_configs={"BASE": ExploratoryExecutionCostConfig(minimum_commission=0.0)},
         top_k=5,
         baseline_seed=17,
     )
-    by_id = _rows_by_id(rows)
+    by_id = _rows_by_id(result.baseline_rows)
 
     all_candidate = by_id[CandidateBaselineId.ALL_CANDIDATE_GROSS_V1]
     assert all_candidate["observed_weight"] == pytest.approx(0.95)
@@ -90,15 +112,15 @@ def test_missing_target_keeps_original_weight_as_cash() -> None:
 
 def test_minimum_commission_bias_is_separated_from_ranking_lift() -> None:
     day = date(2026, 1, 5)
-    rows = build_candidate_daily_baselines(
-        dataset_id="prr-dataset-test",
+    result = build_candidate_daily_baselines(
+        populations=_populations((day,)),
         target_rows=_targets((day,)),
         decision_dates=(day,),
         cost_configs={"BASE": ExploratoryExecutionCostConfig(minimum_commission=50.0)},
         top_k=5,
         baseline_seed=17,
     )
-    by_id = _rows_by_id(rows)
+    by_id = _rows_by_id(result.baseline_rows)
     matched_gross = by_id[CandidateBaselineId.MATCHED_K_HASH_GROSS_V1]
     matched_net = by_id[CandidateBaselineId.MATCHED_K_HASH_NET_V1]
     all_net = by_id[CandidateBaselineId.ALL_CANDIDATE_NET_DIAGNOSTIC_V1]
@@ -108,7 +130,7 @@ def test_minimum_commission_bias_is_separated_from_ranking_lift() -> None:
     lifts = daily_selection_lifts(
         model_gross_return=float(matched_gross["gross_return"]),
         model_net_return=float(matched_net["net_return"]),
-        baseline_rows=rows,
+        baseline_rows=result.baseline_rows,
     )
     assert lifts["gross_selection_lift_vs_matched_k"] == pytest.approx(0.0)
     assert lifts["net_selection_lift_vs_matched_k"] == pytest.approx(0.0)
@@ -138,8 +160,8 @@ def test_matched_k_and_identical_model_selection_have_zero_gross_net_and_cost_di
     day = date(2026, 1, 5)
     target_rows = tuple(row for row in _targets((day,)) if row["symbol"] == SYMBOLS[0])
     costs = ExploratoryExecutionCostConfig(minimum_commission=50.0)
-    baseline_rows = build_candidate_daily_baselines(
-        dataset_id="prr-dataset-test",
+    baseline_result = build_candidate_daily_baselines(
+        populations=_populations((day,), (SYMBOLS[0],)),
         target_rows=target_rows,
         decision_dates=(day,),
         cost_configs={"BASE": costs},
@@ -170,7 +192,7 @@ def test_matched_k_and_identical_model_selection_have_zero_gross_net_and_cost_di
         model_net_return=float(replay.daily_equity[0]["net_return"]),
         baseline_rows=(
             row
-            for row in baseline_rows
+            for row in baseline_result.baseline_rows
             if row["exit_time"] == "10:30" and row["cost_scenario"] == "BASE"
         ),
     )
@@ -182,8 +204,8 @@ def test_matched_k_and_identical_model_selection_have_zero_gross_net_and_cost_di
 
 def test_close_baselines_preserve_alternating_cash_lock() -> None:
     days = tuple(date(2026, 1, 5) + timedelta(days=index) for index in range(4))
-    rows = build_candidate_daily_baselines(
-        dataset_id="prr-dataset-test",
+    result = build_candidate_daily_baselines(
+        populations=_populations(days),
         target_rows=_targets(days),
         decision_dates=days,
         cost_configs={"BASE": ExploratoryExecutionCostConfig()},
@@ -192,7 +214,7 @@ def test_close_baselines_preserve_alternating_cash_lock() -> None:
     )
     matched = [
         row
-        for row in rows
+        for row in result.baseline_rows
         if row["baseline_id"] == CandidateBaselineId.MATCHED_K_HASH_NET_V1.value
         and row["exit_time"] == "CLOSE"
     ]
@@ -241,6 +263,7 @@ def test_compounding_uses_only_daily_baseline_rows() -> None:
         (
             {
                 "baseline_id": CandidateBaselineId.MATCHED_K_HASH_NET_V1.value,
+                "model_id": "fixed-b0",
                 "cost_scenario": "BASE",
                 "exit_time": "10:30",
                 "gross_return": 0.10,
@@ -248,6 +271,7 @@ def test_compounding_uses_only_daily_baseline_rows() -> None:
             },
             {
                 "baseline_id": CandidateBaselineId.MATCHED_K_HASH_NET_V1.value,
+                "model_id": "fixed-b0",
                 "cost_scenario": "BASE",
                 "exit_time": "10:30",
                 "gross_return": -0.10,
@@ -256,7 +280,7 @@ def test_compounding_uses_only_daily_baseline_rows() -> None:
         )
     )
 
-    key = (CandidateBaselineId.MATCHED_K_HASH_NET_V1.value, "BASE", "10:30")
+    key = ("fixed-b0", CandidateBaselineId.MATCHED_K_HASH_NET_V1.value, "BASE", "10:30")
     assert values[key] == pytest.approx({"gross": -0.01, "net": -0.0064})
 
 

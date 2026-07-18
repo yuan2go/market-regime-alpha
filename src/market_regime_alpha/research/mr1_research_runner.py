@@ -16,6 +16,7 @@ import pandas as pd
 from market_regime_alpha.research.mr1_candidate_baselines import (
     CandidateBaselineId,
     build_candidate_daily_baselines,
+    build_model_candidate_populations,
     compound_candidate_baselines,
     selection_lifts,
 )
@@ -32,8 +33,14 @@ from market_regime_alpha.research.prr_artifact_schemas import (
     MR1_CANDIDATE_BASELINE_SCHEMA_VERSION,
     MR1_CASH_LOCK_POLICY_ID,
     MR1_MATCHED_K_ALGORITHM_ID,
+    MR1_MATCHED_K_SELECTION_SCHEMA_VERSION,
     MR1_MISSING_WEIGHT_POLICY_ID,
+    MR1_MODEL_POPULATION_DEFINITION_ID,
+    MR1_MODEL_POPULATION_SCHEMA_VERSION,
+    MR1_POPULATION_HASH_POLICY_ID,
+    MR1_RANKING_POPULATION_VALIDATION_RULE_ID,
     MR1_RUN_SCHEMA,
+    ModelCandidatePopulation,
 )
 from market_regime_alpha.research.prr_mvp_1 import ExploratoryExecutionCostConfig
 
@@ -48,7 +55,7 @@ def run_mr1_research(
     output_root: Path = DEFAULT_MR1_OUTPUT_ROOT,
     top_k: int = 5,
 ) -> Path:
-    """Verify one Dataset, calculate MR-1, and atomically publish a v3 run."""
+    """Verify one Dataset, calculate MR-1, and atomically publish a v4 run."""
 
     verified = load_verified_prr_dataset(dataset_path)
     rankings = tuple(dict(row) for row in verified.ranking_rows)
@@ -58,15 +65,19 @@ def run_mr1_research(
         decision_dates=verified.decision_dates,
     )
     cost_configs = mr1_cost_scenarios()
-    baseline_rows = build_candidate_daily_baselines(
+    populations = build_model_candidate_populations(
         dataset_id=verified.dataset_id,
+        ranking_rows=rankings,
+    )
+    baseline_result = build_candidate_daily_baselines(
+        populations=populations,
         target_rows=targets,
         decision_dates=verified.decision_dates,
         cost_configs=cost_configs,
         top_k=top_k,
         baseline_seed=MR1_BASELINE_PRIMARY_SEED,
     )
-    compounded_baselines = compound_candidate_baselines(baseline_rows)
+    compounded_baselines = compound_candidate_baselines(baseline_result.baseline_rows)
     orders: list[dict[str, Any]] = []
     fills: list[dict[str, Any]] = []
     trades: list[dict[str, Any]] = []
@@ -93,12 +104,13 @@ def run_mr1_research(
             fills.extend(replay.fills)
             trades.extend(replay.trades)
             equity.extend(replay.daily_equity)
-            baseline_values = _baseline_values(
-                compounded_baselines,
-                scenario=scenario,
-                exit_time=exit_time.value,
-            )
             for model_id, metrics in replay.metrics["models"].items():
+                baseline_values = _baseline_values(
+                    compounded_baselines,
+                    model_id=model_id,
+                    scenario=scenario,
+                    exit_time=exit_time.value,
+                )
                 increments = selection_lifts(
                     model_gross_return=float(metrics["gross_cumulative_return"]),
                     model_net_return=float(metrics["net_cumulative_return"]),
@@ -120,13 +132,14 @@ def run_mr1_research(
                 comparison["results"].append(row)
     _add_chronological_diagnostics(metric_rows, equity)
     _apply_failure_labels(metric_rows, equity)
-    run_identity = _run_identity(
+    run_identity = build_mr1_run_identity(
         dataset_path=verified.root,
         top_k=top_k,
         rankings=rankings,
+        populations=populations,
         cost_configs=cost_configs,
     )
-    run_id = f"mr1-{_canonical_hash(run_identity)[:20]}"
+    run_id = mr1_run_id(run_identity)
     return _write_run(
         root=output_root,
         run_id=run_id,
@@ -141,7 +154,8 @@ def run_mr1_research(
         comparison=comparison,
         top_k=top_k,
         run_identity=run_identity,
-        baseline_rows=baseline_rows,
+        baseline_rows=baseline_result.baseline_rows,
+        selection_rows=baseline_result.selection_rows,
     )
 
 
@@ -170,15 +184,29 @@ def mr1_cost_scenarios() -> dict[str, ExploratoryExecutionCostConfig]:
 
 
 def _baseline_values(
-    compounded: Mapping[tuple[str, str, str], Mapping[str, float]],
+    compounded: Mapping[tuple[str, str, str, str], Mapping[str, float]],
     *,
+    model_id: str,
     scenario: str,
     exit_time: str,
 ) -> dict[str, float]:
-    all_gross = compounded[(CandidateBaselineId.ALL_CANDIDATE_GROSS_V1.value, scenario, exit_time)]
-    matched_gross = compounded[(CandidateBaselineId.MATCHED_K_HASH_GROSS_V1.value, scenario, exit_time)]
-    matched_net = compounded[(CandidateBaselineId.MATCHED_K_HASH_NET_V1.value, scenario, exit_time)]
-    all_net = compounded[(CandidateBaselineId.ALL_CANDIDATE_NET_DIAGNOSTIC_V1.value, scenario, exit_time)]
+    all_gross = compounded[
+        (model_id, CandidateBaselineId.ALL_CANDIDATE_GROSS_V1.value, scenario, exit_time)
+    ]
+    matched_gross = compounded[
+        (model_id, CandidateBaselineId.MATCHED_K_HASH_GROSS_V1.value, scenario, exit_time)
+    ]
+    matched_net = compounded[
+        (model_id, CandidateBaselineId.MATCHED_K_HASH_NET_V1.value, scenario, exit_time)
+    ]
+    all_net = compounded[
+        (
+            model_id,
+            CandidateBaselineId.ALL_CANDIDATE_NET_DIAGNOSTIC_V1.value,
+            scenario,
+            exit_time,
+        )
+    ]
     return {
         "all_candidate_gross_cumulative_return": float(all_gross["gross"]),
         "matched_k_gross_cumulative_return": float(matched_gross["gross"]),
@@ -266,28 +294,48 @@ def _apply_failure_labels(
             scenario["assessment_notice"] = "DESCRIPTIVE ONLY — NO MODEL SELECTION"
 
 
-def _run_identity(
+def build_mr1_run_identity(
     *,
     dataset_path: Path,
     top_k: int,
     rankings: tuple[dict[str, Any], ...],
+    populations: tuple[ModelCandidatePopulation, ...],
     cost_configs: Mapping[str, ExploratoryExecutionCostConfig],
 ) -> dict[str, Any]:
     model_ids = sorted({str(row["model_id"]) for row in rankings})
     module_root = PROJECT_ROOT / "src" / "market_regime_alpha" / "research"
     return {
         "dataset_id": _read_json(dataset_path / "dataset_manifest.json")["dataset_id"],
+        "dataset_manifest_hash": _file_hash(dataset_path / "dataset_manifest.json"),
         "dataset_checksums_hash": _file_hash(dataset_path / "SHA256SUMS.json"),
         "git_commit_sha": _revision(),
         "mr1_morning_pop_module_hash": _file_hash(module_root / "mr1_morning_pop.py"),
         "mr1_candidate_baselines_module_hash": _file_hash(module_root / "mr1_candidate_baselines.py"),
         "mr1_research_runner_module_hash": _file_hash(Path(__file__)),
         "artifact_schema_module_hash": _file_hash(module_root / "prr_artifact_schemas.py"),
+        "artifact_reader_module_hash": _file_hash(module_root / "prr_artifact_reader.py"),
         "target_schema_ids": [
             MR1_MORNING_TARGET_SCHEMA_VERSION,
             *(item.value for item in MR1TargetId),
         ],
         "candidate_daily_baseline_schema_version": MR1_CANDIDATE_BASELINE_SCHEMA_VERSION,
+        "model_population_schema_version": MR1_MODEL_POPULATION_SCHEMA_VERSION,
+        "population_definition_id": MR1_MODEL_POPULATION_DEFINITION_ID,
+        "population_hash_policy_id": MR1_POPULATION_HASH_POLICY_ID,
+        "matched_k_selection_schema_version": MR1_MATCHED_K_SELECTION_SCHEMA_VERSION,
+        "selection_evidence_schema_version": MR1_MATCHED_K_SELECTION_SCHEMA_VERSION,
+        "ranking_population_validation_rule_id": MR1_RANKING_POPULATION_VALIDATION_RULE_ID,
+        "population_inventory_hash": _canonical_hash(
+            [
+                {
+                    "decision_date": item.decision_date.isoformat(),
+                    "model_id": item.model_id,
+                    "target_id": item.target_id,
+                    "population_hash": item.population_hash,
+                }
+                for item in populations
+            ]
+        ),
         "matched_k_algorithm_id": MR1_MATCHED_K_ALGORITHM_ID,
         "baseline_seed": MR1_BASELINE_PRIMARY_SEED,
         "cash_lock_policy_id": MR1_CASH_LOCK_POLICY_ID,
@@ -298,6 +346,10 @@ def _run_identity(
             name: _canonical_hash(asdict(value)) for name, value in cost_configs.items()
         },
     }
+
+
+def mr1_run_id(run_identity: Mapping[str, Any]) -> str:
+    return f"mr1-{_canonical_hash(run_identity)[:20]}"
 
 
 def _write_run(
@@ -316,6 +368,7 @@ def _write_run(
     top_k: int,
     run_identity: dict[str, Any],
     baseline_rows: tuple[dict[str, Any], ...],
+    selection_rows: tuple[dict[str, Any], ...],
 ) -> Path:
     final = root / run_id
     stage = root / f".{run_id}.staging"
@@ -329,14 +382,17 @@ def _write_run(
                 "schema_version": MR1_RUN_SCHEMA.schema_version,
                 "run_id": run_id,
                 "dataset_id": dataset_manifest["dataset_id"],
-                "dataset_path": str(dataset),
                 "dataset_manifest_hash": _file_hash(dataset / "dataset_manifest.json"),
+                "dataset_checksums_hash": _file_hash(dataset / "SHA256SUMS.json"),
+                "dataset_locator_role": "EXTERNAL_IMMUTABLE_INPUT",
                 "data_eligibility": "EXPLORATORY",
                 "top_k": top_k,
+                "model_count": len({str(row["model_id"]) for row in baseline_rows}),
                 "exit_times": [item.value for item in MR1ExitTime],
                 "cost_scenarios": ["LOW", "BASE", "HIGH"],
                 "required_artifacts": sorted(MR1_RUN_SCHEMA.required_files),
                 "candidate_daily_baseline_schema_version": MR1_CANDIDATE_BASELINE_SCHEMA_VERSION,
+                "matched_k_selection_schema_version": MR1_MATCHED_K_SELECTION_SCHEMA_VERSION,
                 "run_identity": run_identity,
             },
         )
@@ -360,6 +416,7 @@ def _write_run(
         _write_parquet(stage / "trades.parquet", trades)
         _write_parquet(stage / "daily_equity.parquet", equity)
         _write_parquet(stage / "candidate_daily_baselines.parquet", baseline_rows)
+        _write_parquet(stage / "matched_k_selections.parquet", selection_rows)
         _write_parquet(stage / "chronological_model_metrics.parquet", metrics)
         pd.DataFrame(metrics).to_csv(stage / "model_target_matrix.csv", index=False)
         _write_json(stage / "exit_time_comparison.json", comparison)

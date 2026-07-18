@@ -42,7 +42,16 @@ def main() -> int:
     ds = x.dataset.resolve()
     m = x.mr1_run.resolve()
     verified_dataset = load_verified_prr_dataset(ds)
-    verified_mr1 = load_verified_mr1_run(m, expected_dataset_id=verified_dataset.dataset_id)
+    print(
+        "MR-2A is SUPERSEDED_FOR_CURRENT_RESEARCH_AUTHORITY: raw-bar leakage was repaired, "
+        "but absolute-return conditionality does not establish Candidate excess Alpha.",
+        file=sys.stderr,
+    )
+    verified_mr1 = load_verified_mr1_run(
+        m,
+        dataset=verified_dataset,
+        expected_dataset_id=verified_dataset.dataset_id,
+    )
     dm = dict(verified_dataset.manifest)
     mm = dict(verified_mr1.manifest)
     prepared = verified_dataset.prepared

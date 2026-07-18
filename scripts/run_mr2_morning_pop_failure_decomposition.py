@@ -46,6 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     verified_dataset = load_verified_prr_dataset(dataset)
     verified_mr1 = load_verified_mr1_run(
         mr1_run,
+        dataset=verified_dataset,
         expected_dataset_id=verified_dataset.dataset_id,
     )
     dataset_manifest = dict(verified_dataset.manifest)
@@ -61,7 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_day_contributions(failures, equity)
     regime = _regime_slices(prepared, rankings, targets, equity)
     summary = _failure_summary(ic, failures, regime)
-    run_id = _run_id(dataset_manifest, mr1_manifest)
+    run_id = _run_id(dataset_manifest, mr1_manifest, verified_dataset.root)
     final = _write_run(args.output_root, run_id, dataset_manifest, mr1_manifest, ic, spreads, targets, failures, regime, coverage, summary)
     print(f"MR-2 completed: {final}")
     return 0
@@ -199,8 +200,8 @@ def _failure_summary(ic: tuple[dict[str, Any], ...], failures: list[dict[str, An
     return {"schema_version": MR2_SCHEMA_VERSION, "assessments": assessments, "mean_absolute_morning_spearman_ic": mean_abs_ic, "gross_positive_model_exit_exists": gross_positive, "net_positive_model_exit_exists": net_positive, "regime_slice_sign_split": regime_split, "data_eligibility": "EXPLORATORY", "next_work": "FEATURE_AND_TARGET_DESIGN_REVIEW" if assessments == ["A. EXISTING_FEATURES_HAVE_NO_MORNING_SIGNAL"] else "NO_MODEL_SELECTION"}
 
 
-def _run_id(dataset: dict[str, Any], mr1: dict[str, Any]) -> str:
-    payload = json.dumps({"dataset_id": dataset["dataset_id"], "dataset_checksums": _hash_path(Path(mr1["dataset_path"]) / "SHA256SUMS.json"), "mr1_run": mr1["run_id"], "mr1_manifest": _canonical(mr1), "runner_hash": _hash_path(Path(__file__))}, sort_keys=True, separators=(",", ":"))
+def _run_id(dataset: dict[str, Any], mr1: dict[str, Any], dataset_root: Path) -> str:
+    payload = json.dumps({"dataset_id": dataset["dataset_id"], "dataset_checksums": _hash_path(dataset_root / "SHA256SUMS.json"), "mr1_run": mr1["run_id"], "mr1_manifest": _canonical(mr1), "runner_hash": _hash_path(Path(__file__))}, sort_keys=True, separators=(",", ":"))
     return f"mr2-{sha256(payload.encode()).hexdigest()[:20]}"
 
 

@@ -14,11 +14,17 @@ from typing import Any, TypeVar, cast
 
 import pandas as pd
 
+from market_regime_alpha.research.mr1_candidate_baselines import (
+    build_model_candidate_populations,
+    select_matched_k_population,
+)
+
 from market_regime_alpha.research.prr_artifact_schemas import (
     ArtifactSchema,
     BAR_PRIMARY_KEY,
     CANDIDATE_RANKING_PRIMARY_KEY,
     CandidateBaselineId,
+    canonical_identity_hash,
     DECISION_SNAPSHOT_PRIMARY_KEY,
     MR1_BASELINE_PRIMARY_SEED,
     MR1_CANDIDATE_BASELINE_PRIMARY_KEY,
@@ -28,8 +34,11 @@ from market_regime_alpha.research.prr_artifact_schemas import (
     MR1_DAILY_EQUITY_PRIMARY_KEY,
     MR1_EXIT_TIMES,
     MR1_MISSING_WEIGHT_POLICY_ID,
+    MR1_MATCHED_K_SELECTION_PRIMARY_KEY,
+    MR1_MATCHED_K_SELECTION_SCHEMA_VERSION,
     MR1_RUN_SCHEMA,
     MR1_SOURCE_RANKING_PRIMARY_KEY,
+    ModelCandidatePopulation,
     PREPARED_SESSION_PRIMARY_KEY,
     PRR_DATASET_SCHEMA,
 )
@@ -46,6 +55,12 @@ from market_regime_alpha.research.tencent_composite_contracts import (
 
 
 _CLOSE_RETURN_TARGET_ID = "target-r5-decision-reference-to-next-session-close-return-v1"
+_MR1_EXIT_TARGETS = {
+    "09:35": "NEXT_SESSION_0935_RETURN",
+    "10:00": "NEXT_SESSION_1000_RETURN",
+    "10:30": "NEXT_SESSION_1030_RETURN",
+    "CLOSE": "NEXT_SESSION_CLOSE_RETURN",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +80,7 @@ class VerifiedPRRDataset:
 
 @dataclass(frozen=True, slots=True)
 class VerifiedMR1Run:
-    """Fully checked, in-memory view of one immutable MR-1 v3 run."""
+    """Fully checked, in-memory view of one immutable MR-1 v4 run."""
 
     root: Path
     run_id: str
@@ -75,6 +90,7 @@ class VerifiedMR1Run:
     daily_equity: tuple[Mapping[str, Any], ...]
     metrics: tuple[Mapping[str, Any], ...]
     candidate_daily_baselines: tuple[Mapping[str, Any], ...]
+    matched_k_selections: tuple[Mapping[str, Any], ...]
     checksums_hash: str
 
 
@@ -124,9 +140,10 @@ def load_verified_prr_dataset(path: Path) -> VerifiedPRRDataset:
 def load_verified_mr1_run(
     path: Path,
     *,
+    dataset: VerifiedPRRDataset | None = None,
     expected_dataset_id: str | None = None,
 ) -> VerifiedMR1Run:
-    """Load one MR-1 v3 run after table cardinality and parity validation."""
+    """Load one MR-1 v4 run after table cardinality and parity validation."""
 
     root = path.resolve()
     _verify_artifact(root, MR1_RUN_SCHEMA.required_files)
@@ -139,10 +156,22 @@ def load_verified_mr1_run(
         raise ValueError("MR-1 run_id must match its immutable directory name")
     if expected_dataset_id is not None and dataset_id != expected_dataset_id:
         raise ValueError("MR-1 Dataset ID does not match the verified Dataset")
+    if dataset is None:
+        raise ValueError("MR-1 v4 verification requires the verified PRR Dataset")
+    if dataset.dataset_id != dataset_id:
+        raise ValueError("MR-1 Dataset ID does not match the verified Dataset")
     if frozenset(_required_string_sequence(manifest, "required_artifacts", "MR-1 manifest")) != MR1_RUN_SCHEMA.required_files:
         raise ValueError("MR-1 manifest required_artifacts must match the schema contract")
     if manifest.get("candidate_daily_baseline_schema_version") != MR1_CANDIDATE_BASELINE_SCHEMA_VERSION:
         raise ValueError("MR-1 Candidate baseline schema does not match the schema contract")
+    if manifest.get("matched_k_selection_schema_version") != MR1_MATCHED_K_SELECTION_SCHEMA_VERSION:
+        raise ValueError("MR-1 matched-K selection schema does not match the schema contract")
+    if manifest.get("dataset_locator_role") != "EXTERNAL_IMMUTABLE_INPUT":
+        raise ValueError("MR-1 Dataset locator role is invalid")
+    if manifest.get("dataset_manifest_hash") != _content_hash(dataset.root / "dataset_manifest.json"):
+        raise ValueError("MR-1 Dataset manifest hash does not match the verified Dataset")
+    if manifest.get("dataset_checksums_hash") != dataset.checksums_hash:
+        raise ValueError("MR-1 Dataset checksums hash does not match the verified Dataset")
     if tuple(manifest.get("exit_times", ())) != MR1_EXIT_TIMES:
         raise ValueError("MR-1 exit times do not match the schema contract")
     if tuple(manifest.get("cost_scenarios", ())) != MR1_COST_SCENARIOS:
@@ -152,11 +181,16 @@ def load_verified_mr1_run(
     equity_frame = _read_parquet(root / "daily_equity.parquet")
     metrics_frame = _read_parquet(root / "chronological_model_metrics.parquet")
     baselines_frame = _read_parquet(root / "candidate_daily_baselines.parquet")
+    selections_frame = _read_parquet(root / "matched_k_selections.parquet")
+    orders_frame = _read_parquet(root / "orders.parquet")
     _validate_mr1_frames(
         manifest=manifest,
         targets_frame=targets_frame,
         equity_frame=equity_frame,
         baselines_frame=baselines_frame,
+        selections_frame=selections_frame,
+        orders_frame=orders_frame,
+        dataset=dataset,
     )
     baseline_rows = _frozen_records(baselines_frame)
     return VerifiedMR1Run(
@@ -168,6 +202,7 @@ def load_verified_mr1_run(
         daily_equity=_frozen_records(equity_frame),
         metrics=_frozen_records(metrics_frame),
         candidate_daily_baselines=baseline_rows,
+        matched_k_selections=_frozen_records(selections_frame),
         checksums_hash=_content_hash(root / "SHA256SUMS.json"),
     )
 
@@ -203,6 +238,10 @@ def _validate_dataset_frames(
     _require_unique_frame_keys(rankings_frame, CANDIDATE_RANKING_PRIMARY_KEY, "Candidate rankings")
     close_rankings = rankings_frame[rankings_frame["target_id"] == _CLOSE_RETURN_TARGET_ID]
     _require_unique_frame_keys(close_rankings, MR1_SOURCE_RANKING_PRIMARY_KEY, "MR-1 source rankings")
+    build_model_candidate_populations(
+        dataset_id=_required_text(manifest, "dataset_id", "Dataset manifest"),
+        ranking_rows=close_rankings.to_dict(orient="records"),
+    )
 
     quality = _quality_report(quality_payload)
     accepted = set(quality.accepted_symbols)
@@ -272,6 +311,9 @@ def _validate_mr1_frames(
     targets_frame: pd.DataFrame,
     equity_frame: pd.DataFrame,
     baselines_frame: pd.DataFrame,
+    selections_frame: pd.DataFrame,
+    orders_frame: pd.DataFrame,
+    dataset: VerifiedPRRDataset,
 ) -> None:
     _require_unique_frame_keys(equity_frame, MR1_DAILY_EQUITY_PRIMARY_KEY, "MR-1 daily equity")
     _require_unique_frame_keys(
@@ -279,12 +321,30 @@ def _validate_mr1_frames(
         MR1_CANDIDATE_BASELINE_PRIMARY_KEY,
         "MR-1 Candidate daily baselines",
     )
-    if baselines_frame.empty or equity_frame.empty or targets_frame.empty:
+    _require_unique_frame_keys(
+        selections_frame,
+        MR1_MATCHED_K_SELECTION_PRIMARY_KEY,
+        "MR-1 matched-K selections",
+    )
+    if baselines_frame.empty or equity_frame.empty or targets_frame.empty or selections_frame.empty:
         raise ValueError("MR-1 semantic tables must not be empty")
+    populations = build_model_candidate_populations(
+        dataset_id=dataset.dataset_id,
+        ranking_rows=dataset.ranking_rows,
+    )
+    population_index = {
+        (item.decision_date.isoformat(), item.model_id): item for item in populations
+    }
     if set(str(value) for value in baselines_frame["schema_version"]) != {MR1_CANDIDATE_BASELINE_SCHEMA_VERSION}:
         raise ValueError("MR-1 Candidate baseline row schema is invalid")
     if set(str(value) for value in baselines_frame["data_eligibility"]) != {"EXPLORATORY"}:
         raise ValueError("MR-1 Candidate baselines must remain EXPLORATORY")
+    if set(str(value) for value in selections_frame["schema_version"]) != {
+        MR1_MATCHED_K_SELECTION_SCHEMA_VERSION
+    }:
+        raise ValueError("MR-1 matched-K selection row schema is invalid")
+    if set(str(value) for value in selections_frame["data_eligibility"]) != {"EXPLORATORY"}:
+        raise ValueError("MR-1 matched-K selections must remain EXPLORATORY")
     baseline_ids = set(str(value) for value in baselines_frame["baseline_id"])
     if baseline_ids != {item.value for item in CandidateBaselineId}:
         raise ValueError("MR-1 Candidate baseline family is incomplete")
@@ -305,6 +365,16 @@ def _validate_mr1_frames(
     if any(not str(value).strip() for value in baselines_frame["baseline_selection_id"]):
         raise ValueError("MR-1 Candidate baseline selection must be identified")
     for row in baselines_frame.itertuples(index=False):
+        population = population_index.get((str(row.decision_date), str(row.model_id)))
+        if population is None:
+            raise ValueError("MR-1 baseline model/date has no verified ranking population")
+        if (
+            str(row.target_id) != population.target_id
+            or str(row.population_definition_id) != population.definition_id
+            or int(row.candidate_population_size) != population.population_size
+            or str(row.candidate_population_hash) != population.population_hash
+        ):
+            raise ValueError("MR-1 baseline population identity does not match rankings")
         observed = _finite_number(row.observed_weight, "observed_weight")
         missing = _finite_number(row.missing_weight, "missing_weight")
         locked = _finite_number(row.cash_locked_weight, "cash_locked_weight")
@@ -331,6 +401,13 @@ def _validate_mr1_frames(
         ):
             raise ValueError("MR-1 cash-locked baseline must execute no selection")
     _validate_baseline_family_parity(baselines_frame)
+    _validate_selection_evidence(
+        baselines=baselines_frame,
+        selections=selections_frame,
+        targets=targets_frame,
+        populations=population_index,
+        top_k=int(manifest["top_k"]),
+    )
 
     baseline_dates = tuple(sorted({_parse_date(value) for value in baselines_frame["decision_date"]}))
     equity_dates = tuple(sorted({_parse_date(value) for value in equity_frame["session_date"]}))
@@ -345,10 +422,20 @@ def _validate_mr1_frames(
         raise ValueError("MR-1 daily equity exit times must align with baselines")
     if set(str(value) for value in equity_frame["cost_scenario"]) != set(MR1_COST_SCENARIOS):
         raise ValueError("MR-1 daily equity cost scenarios must align with baselines")
-    expected_baselines = len(baseline_dates) * len(MR1_EXIT_TIMES) * len(MR1_COST_SCENARIOS) * len(CandidateBaselineId)
+    model_ids = set(str(value) for value in equity_frame["model_id"])
+    if set(item.model_id for item in populations) != model_ids:
+        raise ValueError("MR-1 baseline models must match verified ranking populations")
+    if manifest.get("model_count") != len(model_ids):
+        raise ValueError("MR-1 manifest model count is invalid")
+    expected_baselines = (
+        len(baseline_dates)
+        * len(model_ids)
+        * len(MR1_EXIT_TIMES)
+        * len(MR1_COST_SCENARIOS)
+        * len(CandidateBaselineId)
+    )
     if len(baselines_frame) != expected_baselines:
         raise ValueError("MR-1 Candidate baseline cardinality is incomplete")
-    model_ids = set(str(value) for value in equity_frame["model_id"])
     expected_equity = len(baseline_dates) * len(MR1_EXIT_TIMES) * len(MR1_COST_SCENARIOS) * len(model_ids)
     if len(equity_frame) != expected_equity:
         raise ValueError("MR-1 daily equity cardinality is incomplete")
@@ -359,10 +446,11 @@ def _validate_mr1_frames(
         if cash_ratio < 0.0 or cash_ratio > 1.0:
             raise ValueError("MR-1 daily equity cash ratio must be within zero and one")
     _validate_close_cash_lock_parity(baselines_frame, equity_frame)
+    _validate_model_order_population_alignment(orders_frame, population_index, int(manifest["top_k"]))
 
 
 def _validate_baseline_family_parity(frame: pd.DataFrame) -> None:
-    group_fields = ["decision_date", "exit_time", "cost_scenario", "baseline_seed"]
+    group_fields = ["decision_date", "model_id", "exit_time", "cost_scenario", "baseline_seed"]
     for _, group in frame.groupby(group_fields, sort=False, dropna=False):
         indexed = {CandidateBaselineId(str(row.baseline_id)): row for row in group.itertuples(index=False)}
         if set(indexed) != set(CandidateBaselineId):
@@ -387,6 +475,9 @@ def _validate_baseline_family_parity(frame: pd.DataFrame) -> None:
                 "cash_locked_weight",
                 "baseline_slot_status",
                 "baseline_selection_id",
+                "selection_id",
+                "selected_symbols_hash",
+                "candidate_population_hash",
             )
             if any(getattr(left, field) != getattr(right, field) for field in parity_fields):
                 raise ValueError(f"{label} gross and net baselines must share selection semantics")
@@ -394,8 +485,8 @@ def _validate_baseline_family_parity(frame: pd.DataFrame) -> None:
 
 def _validate_close_cash_lock_parity(baselines: pd.DataFrame, equity: pd.DataFrame) -> None:
     close_baselines = baselines[baselines["exit_time"] == "CLOSE"]
-    for (decision_date, scenario), group in close_baselines.groupby(
-        ["decision_date", "cost_scenario"], sort=False, dropna=False
+    for (decision_date, model_id, scenario), group in close_baselines.groupby(
+        ["decision_date", "model_id", "cost_scenario"], sort=False, dropna=False
     ):
         statuses = set(str(value) for value in group["baseline_slot_status"])
         if len(statuses) != 1:
@@ -404,6 +495,7 @@ def _validate_close_cash_lock_parity(baselines: pd.DataFrame, equity: pd.DataFra
             continue
         model_rows = equity[
             (equity["session_date"].astype(str) == str(decision_date))
+            & (equity["model_id"] == model_id)
             & (equity["exit_time"] == "CLOSE")
             & (equity["cost_scenario"] == scenario)
         ]
@@ -416,6 +508,111 @@ def _validate_close_cash_lock_parity(baselines: pd.DataFrame, equity: pd.DataFra
                 or not math.isclose(float(row.cash_ratio), 1.0, abs_tol=1e-12)
             ):
                 raise ValueError("CLOSE model and matched baselines must share cash-lock semantics")
+
+
+def _validate_selection_evidence(
+    *,
+    baselines: pd.DataFrame,
+    selections: pd.DataFrame,
+    targets: pd.DataFrame,
+    populations: Mapping[tuple[str, str], ModelCandidatePopulation],
+    top_k: int,
+) -> None:
+    selection_groups = {
+        key: group.sort_values("slot_index")
+        for key, group in selections.groupby(
+            ["decision_date", "model_id", "exit_time", "cost_scenario", "baseline_seed"],
+            sort=False,
+            dropna=False,
+        )
+    }
+    target_index = {
+        (str(row.decision_date), str(row.target_id), str(row.symbol)): row
+        for row in targets.itertuples(index=False)
+    }
+    baseline_groups = baselines.groupby(
+        ["decision_date", "model_id", "exit_time", "cost_scenario", "baseline_seed"],
+        sort=False,
+        dropna=False,
+    )
+    for key, group in baseline_groups:
+        decision_date, model_id, exit_time, cost_scenario, seed = key
+        population = populations[(str(decision_date), str(model_id))]
+        indexed = {
+            CandidateBaselineId(str(row.baseline_id)): row
+            for row in group.itertuples(index=False)
+        }
+        matched_gross = indexed[CandidateBaselineId.MATCHED_K_HASH_GROSS_V1]
+        matched_net = indexed[CandidateBaselineId.MATCHED_K_HASH_NET_V1]
+        if matched_gross.baseline_slot_status == "CASH_LOCKED":
+            if key in selection_groups:
+                raise ValueError("CLOSE cash-locked baseline must not persist selected symbols")
+            continue
+        expected = select_matched_k_population(population, top_k=top_k, seed=int(seed))
+        evidence = selection_groups.pop(key, None)
+        if evidence is None or len(evidence) != len(expected.symbols):
+            raise ValueError("matched-K selection evidence count does not match baseline")
+        if tuple(int(value) for value in evidence["slot_index"]) != tuple(
+            range(1, len(expected.symbols) + 1)
+        ):
+            raise ValueError("matched-K selection slots must be contiguous")
+        if tuple(str(value) for value in evidence["symbol"]) != expected.symbols:
+            raise ValueError("matched-K selected symbols do not match reconstructed selection")
+        endpoint_target_id = _MR1_EXIT_TARGETS[str(exit_time)]
+        statuses: list[str] = []
+        for row in evidence.itertuples(index=False):
+            target = target_index.get((str(decision_date), endpoint_target_id, str(row.symbol)))
+            if target is None:
+                raise ValueError("matched-K selection symbol has no endpoint Target evidence")
+            if (
+                str(row.target_id) != population.target_id
+                or str(row.population_definition_id) != population.definition_id
+                or int(row.population_size) != population.population_size
+                or str(row.population_hash) != population.population_hash
+                or str(row.selection_algorithm_id) != expected.algorithm_id
+                or str(row.selection_id) != expected.selection_id
+                or str(row.selected_symbols_hash) != expected.selected_symbols_hash
+                or str(row.symbol_hash) != canonical_identity_hash({"symbol": str(row.symbol)})
+                or not bool(row.eligible_for_ranking)
+                or str(row.data_eligibility) != "EXPLORATORY"
+            ):
+                raise ValueError("matched-K selection evidence identity is invalid")
+            target_status = str(target.status)
+            if str(row.target_observation_status) != target_status:
+                raise ValueError("matched-K selection Target status does not match Target evidence")
+            statuses.append(target_status)
+        observed_weight = statuses.count("AVAILABLE") / top_k
+        missing_weight = 1.0 - observed_weight
+        for baseline_row in (matched_gross, matched_net):
+            if (
+                int(baseline_row.selected_symbol_count) != len(expected.symbols)
+                or str(baseline_row.selection_id) != expected.selection_id
+                or str(baseline_row.selected_symbols_hash) != expected.selected_symbols_hash
+                or not math.isclose(
+                    float(baseline_row.observed_weight), observed_weight, abs_tol=1e-12
+                )
+                or not math.isclose(
+                    float(baseline_row.missing_weight), missing_weight, abs_tol=1e-12
+                )
+            ):
+                raise ValueError("matched-K baseline does not match selection evidence")
+    if selection_groups:
+        raise ValueError("matched-K selection evidence has no corresponding baseline")
+
+
+def _validate_model_order_population_alignment(
+    orders: pd.DataFrame,
+    populations: Mapping[tuple[str, str], ModelCandidatePopulation],
+    top_k: int,
+) -> None:
+    submitted = orders[orders["order_status"] == "SUBMITTED"]
+    for row in submitted.itertuples(index=False):
+        population = populations.get((str(row.decision_date), str(row.model_id)))
+        if population is None or str(row.symbol) not in population.symbols:
+            raise ValueError("model submitted order symbol is outside its ranking population")
+        rank = int(row.rank)
+        if rank < 1 or rank > min(top_k, population.population_size):
+            raise ValueError("model submitted order rank is outside its Top-K population")
 
 
 def _quality_report(payload: Mapping[str, Any]) -> CompositeQualityReport:

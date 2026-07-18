@@ -8,10 +8,12 @@ from datetime import date
 from hashlib import sha256
 import json
 import math
+from numbers import Integral
 from typing import Any
 
 from market_regime_alpha.research.prr_artifact_schemas import (
     CandidateBaselineId,
+    MR1_MATCHED_K_SELECTION_SCHEMA_VERSION,
     MR1_BASELINE_PRIMARY_SEED,
     MR1_CANDIDATE_BASELINE_PRIMARY_KEY,
     MR1_CANDIDATE_BASELINE_SCHEMA_VERSION,
@@ -19,6 +21,12 @@ from market_regime_alpha.research.prr_artifact_schemas import (
     MR1_EXIT_TIMES,
     MR1_MATCHED_K_ALGORITHM_ID,
     MR1_MISSING_WEIGHT_POLICY_ID,
+    MatchedKSelection,
+    ModelCandidatePopulation,
+    matched_k_selection_id,
+    model_population_hash,
+    selected_symbols_hash,
+    canonical_identity_hash,
 )
 from market_regime_alpha.research.prr_mvp_1 import ExploratoryExecutionCostConfig
 
@@ -40,12 +48,122 @@ class ReferenceTradeEconomics:
     transfer_fee: float
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateBaselineBuildResult:
+    baseline_rows: tuple[dict[str, Any], ...]
+    selection_rows: tuple[dict[str, Any], ...]
+    populations: tuple[ModelCandidatePopulation, ...]
+
+
 _EXIT_TARGETS = {
     "09:35": "NEXT_SESSION_0935_RETURN",
     "10:00": "NEXT_SESSION_1000_RETURN",
     "10:30": "NEXT_SESSION_1030_RETURN",
     "CLOSE": "NEXT_SESSION_CLOSE_RETURN",
 }
+
+MR1_RANKING_SOURCE_TARGET_ID = (
+    "target-r5-decision-reference-to-next-session-close-return-v1"
+)
+
+
+def build_model_candidate_populations(
+    *,
+    dataset_id: str,
+    ranking_rows: Iterable[Mapping[str, Any]],
+    target_id: str = MR1_RANKING_SOURCE_TARGET_ID,
+) -> tuple[ModelCandidatePopulation, ...]:
+    """Build one fail-closed eligible ranking population per Decision Date and model."""
+
+    if not isinstance(dataset_id, str) or not dataset_id.strip():
+        raise ValueError("dataset_id must be non-empty")
+    rows = tuple(dict(row) for row in ranking_rows if str(row.get("target_id")) == target_id)
+    if not rows:
+        raise ValueError("ranking rows must contain the MR-1 source Target")
+    grouped: dict[tuple[date, str], list[dict[str, Any]]] = {}
+    seen_keys: set[tuple[date, str, str]] = set()
+    for row in rows:
+        decision_day = date.fromisoformat(str(row.get("decision_date")))
+        model_id = str(row.get("model_id") or "")
+        symbol = str(row.get("symbol") or "")
+        if not model_id or not symbol:
+            raise ValueError("ranking model_id and symbol must be non-empty")
+        key = (decision_day, model_id, symbol)
+        if key in seen_keys:
+            raise ValueError("model ranking population symbols must be unique")
+        seen_keys.add(key)
+        grouped.setdefault((decision_day, model_id), []).append(row)
+
+    populations: list[ModelCandidatePopulation] = []
+    for (decision_day, model_id), group in sorted(grouped.items()):
+        ranked_symbols: list[tuple[int, str]] = []
+        for row in group:
+            eligible = row.get("eligible_for_ranking")
+            if not isinstance(eligible, bool):
+                raise TypeError("eligible_for_ranking must be bool")
+            rank = row.get("rank")
+            missing_rank = rank is None or (
+                isinstance(rank, float) and math.isnan(rank)
+            )
+            if eligible and missing_rank:
+                raise ValueError("eligible symbol must have a rank")
+            if not eligible and not missing_rank:
+                raise ValueError("ineligible symbol must not have a rank")
+            if eligible:
+                if isinstance(rank, bool) or not isinstance(rank, Integral) or int(rank) <= 0:
+                    raise ValueError("eligible rank must be a positive integer")
+                ranked_symbols.append((int(rank), str(row["symbol"])))
+        ranks = tuple(rank for rank, _ in ranked_symbols)
+        if tuple(sorted(ranks)) != tuple(range(1, len(ranks) + 1)):
+            raise ValueError("eligible ranks must be exactly 1..N")
+        symbols = tuple(sorted(symbol for _, symbol in ranked_symbols))
+        population_hash = model_population_hash(
+            dataset_id=dataset_id,
+            decision_date=decision_day,
+            target_id=target_id,
+            symbols=symbols,
+        )
+        populations.append(
+            ModelCandidatePopulation(
+                dataset_id=dataset_id,
+                decision_date=decision_day,
+                model_id=model_id,
+                target_id=target_id,
+                symbols=symbols,
+                population_size=len(symbols),
+                population_hash=population_hash,
+            )
+        )
+    return tuple(populations)
+
+
+def select_matched_k_population(
+    population: ModelCandidatePopulation,
+    *,
+    top_k: int,
+    seed: int = MR1_BASELINE_PRIMARY_SEED,
+) -> MatchedKSelection:
+    symbols = select_matched_k_symbols(
+        dataset_id=population.dataset_id,
+        decision_date=population.decision_date,
+        symbols=population.symbols,
+        top_k=top_k,
+        baseline_seed=seed,
+    )
+    symbol_hash = selected_symbols_hash(symbols)
+    return MatchedKSelection(
+        population=population,
+        symbols=symbols,
+        top_k=top_k,
+        seed=seed,
+        selection_id=matched_k_selection_id(
+            population_hash=population.population_hash,
+            symbols=symbols,
+            top_k=top_k,
+            seed=seed,
+        ),
+        selected_symbols_hash=symbol_hash,
+    )
 
 
 def reference_trade_economics(
@@ -132,14 +250,14 @@ def select_matched_k_symbols(
 
 def build_candidate_daily_baselines(
     *,
-    dataset_id: str,
+    populations: Iterable[ModelCandidatePopulation],
     target_rows: Iterable[Mapping[str, Any]],
     decision_dates: Iterable[date],
     cost_configs: Mapping[str, ExploratoryExecutionCostConfig],
     top_k: int,
     baseline_seed: int = MR1_BASELINE_PRIMARY_SEED,
-) -> tuple[dict[str, Any], ...]:
-    """Build all four comparator families with fixed daily weights and CLOSE sleeve parity."""
+) -> CandidateBaselineBuildResult:
+    """Build model-population comparators and auditable matched-K slot evidence."""
 
     dates = tuple(decision_dates)
     if not dates or dates != tuple(sorted(dates)) or len(dates) != len(set(dates)):
@@ -150,144 +268,215 @@ def build_candidate_daily_baselines(
         raise ValueError("cost_configs must not be empty")
     targets = tuple(dict(row) for row in target_rows)
     _validate_target_rows(targets)
+    population_rows = tuple(populations)
+    if not population_rows:
+        raise ValueError("model Candidate Populations must not be empty")
+    population_keys = tuple(
+        (population.decision_date, population.model_id) for population in population_rows
+    )
+    if len(population_keys) != len(set(population_keys)):
+        raise ValueError("each model and Decision Date must have one Candidate Population")
+    dataset_ids = {population.dataset_id for population in population_rows}
+    if len(dataset_ids) != 1:
+        raise ValueError("model Candidate Populations must use one Dataset")
+    expected_dates = set(dates)
+    model_ids = tuple(sorted({population.model_id for population in population_rows}))
+    for model_id in model_ids:
+        model_dates = {
+            population.decision_date
+            for population in population_rows
+            if population.model_id == model_id
+        }
+        if model_dates != expected_dates:
+            raise ValueError("each model Candidate Population must cover every Decision Date")
     target_index = {
         (str(row["decision_date"]), str(row["target_id"]), str(row["symbol"])): row
         for row in targets
     }
     rows: list[dict[str, Any]] = []
-    for exit_time in MR1_EXIT_TIMES:
-        target_id = _EXIT_TARGETS[exit_time]
-        for scenario in sorted(cost_configs):
-            costs = cost_configs[scenario]
-            active_until: date | None = None
-            for decision_day in dates:
-                day_rows = tuple(
-                    row
-                    for key, row in target_index.items()
-                    if key[0] == decision_day.isoformat() and key[1] == target_id
-                )
-                if not day_rows:
-                    raise ValueError(f"Candidate baseline target coverage missing: {decision_day} {target_id}")
-                symbols = tuple(sorted(str(row["symbol"]) for row in day_rows))
-                if exit_time == "CLOSE" and active_until is not None and decision_day <= active_until:
+    selection_rows: list[dict[str, Any]] = []
+    population_index = {
+        (population.model_id, population.decision_date): population
+        for population in population_rows
+    }
+    for model_id in model_ids:
+        for exit_time in MR1_EXIT_TIMES:
+            endpoint_target_id = _EXIT_TARGETS[exit_time]
+            for scenario in sorted(cost_configs):
+                costs = cost_configs[scenario]
+                active_until: date | None = None
+                for decision_day in dates:
+                    population = population_index[(model_id, decision_day)]
+                    if population.population_size == 0:
+                        raise ValueError("model Candidate Population must not be empty")
+                    day_rows = tuple(
+                        target_index[(decision_day.isoformat(), endpoint_target_id, symbol)]
+                        for symbol in population.symbols
+                        if (decision_day.isoformat(), endpoint_target_id, symbol) in target_index
+                    )
+                    if len(day_rows) != population.population_size:
+                        raise ValueError(
+                            f"Candidate baseline target coverage missing: {decision_day} "
+                            f"{endpoint_target_id} {model_id}"
+                        )
+                    matched = select_matched_k_population(
+                        population,
+                        top_k=top_k,
+                        seed=baseline_seed,
+                    )
+                    if exit_time == "CLOSE" and active_until is not None and decision_day <= active_until:
+                        rows.extend(
+                            _cash_locked_rows(
+                                population=population,
+                                selection=matched,
+                                exit_time=exit_time,
+                                scenario=scenario,
+                                top_k=top_k,
+                                costs=costs,
+                            )
+                        )
+                        continue
+                    all_gross, all_net, all_observed, all_missing = _portfolio_returns(
+                        rows=day_rows,
+                        selected_symbols=population.symbols,
+                        declared_slots=population.population_size,
+                        costs=costs,
+                    )
+                    matched_gross, matched_net, matched_observed, matched_missing = _portfolio_returns(
+                        rows=day_rows,
+                        selected_symbols=matched.symbols,
+                        declared_slots=top_k,
+                        costs=costs,
+                    )
+                    all_selection_id = canonical_identity_hash(
+                        {
+                            "scope": "MODEL_POPULATION_ALL_CANDIDATE_V1",
+                            "population_hash": population.population_hash,
+                        }
+                    )
+                    common = {
+                        "schema_version": MR1_CANDIDATE_BASELINE_SCHEMA_VERSION,
+                        "decision_date": decision_day.isoformat(),
+                        "model_id": model_id,
+                        "target_id": population.target_id,
+                        "exit_time": exit_time,
+                        "cost_scenario": scenario,
+                        "baseline_seed": baseline_seed,
+                        "top_k": top_k,
+                        "population_definition_id": population.definition_id,
+                        "candidate_population_size": population.population_size,
+                        "candidate_symbol_count": population.population_size,
+                        "candidate_population_hash": population.population_hash,
+                        "cash_locked_weight": 0.0,
+                        "baseline_slot_status": "EXECUTED",
+                        "cost_policy_id": _cost_policy_id(costs),
+                        "cash_lock_policy_id": MR1_CASH_LOCK_POLICY_ID,
+                        "missing_weight_policy_id": MR1_MISSING_WEIGHT_POLICY_ID,
+                        "data_eligibility": "EXPLORATORY",
+                    }
                     rows.extend(
-                        _cash_locked_rows(
-                            decision_day=decision_day,
-                            exit_time=exit_time,
-                            scenario=scenario,
-                            candidate_count=len(symbols),
-                            top_k=top_k,
-                            baseline_seed=baseline_seed,
-                            costs=costs,
-                            dataset_id=dataset_id,
+                        (
+                            _baseline_row(
+                                common,
+                                CandidateBaselineId.ALL_CANDIDATE_GROSS_V1,
+                                population.population_size,
+                                all_gross,
+                                all_gross,
+                                all_observed,
+                                all_missing,
+                                "model-population-all-candidate-equal-weight-v1",
+                                all_selection_id,
+                                selected_symbols_hash(population.symbols),
+                            ),
+                            _baseline_row(
+                                common,
+                                CandidateBaselineId.MATCHED_K_HASH_GROSS_V1,
+                                len(matched.symbols),
+                                matched_gross,
+                                matched_gross,
+                                matched_observed,
+                                matched_missing,
+                                MR1_MATCHED_K_ALGORITHM_ID,
+                                matched.selection_id,
+                                matched.selected_symbols_hash,
+                            ),
+                            _baseline_row(
+                                common,
+                                CandidateBaselineId.MATCHED_K_HASH_NET_V1,
+                                len(matched.symbols),
+                                matched_gross,
+                                matched_net,
+                                matched_observed,
+                                matched_missing,
+                                MR1_MATCHED_K_ALGORITHM_ID,
+                                matched.selection_id,
+                                matched.selected_symbols_hash,
+                            ),
+                            _baseline_row(
+                                common,
+                                CandidateBaselineId.ALL_CANDIDATE_NET_DIAGNOSTIC_V1,
+                                population.population_size,
+                                all_gross,
+                                all_net,
+                                all_observed,
+                                all_missing,
+                                "model-population-all-candidate-cost-diagnostic-v1",
+                                all_selection_id,
+                                selected_symbols_hash(population.symbols),
+                            ),
                         )
                     )
-                    continue
-                matched_symbols = select_matched_k_symbols(
-                    dataset_id=dataset_id,
-                    decision_date=decision_day,
-                    symbols=symbols,
-                    top_k=top_k,
-                    baseline_seed=baseline_seed,
-                )
-                all_gross, all_net, all_observed, all_missing = _portfolio_returns(
-                    rows=day_rows,
-                    selected_symbols=symbols,
-                    declared_slots=len(symbols),
-                    costs=costs,
-                )
-                matched_gross, matched_net, matched_observed, matched_missing = _portfolio_returns(
-                    rows=day_rows,
-                    selected_symbols=matched_symbols,
-                    declared_slots=top_k,
-                    costs=costs,
-                )
-                common = {
-                    "schema_version": MR1_CANDIDATE_BASELINE_SCHEMA_VERSION,
-                    "decision_date": decision_day.isoformat(),
-                    "exit_time": exit_time,
-                    "cost_scenario": scenario,
-                    "baseline_seed": baseline_seed,
-                    "baseline_selection_id": _baseline_selection_id(
-                        dataset_id=dataset_id,
-                        decision_day=decision_day,
-                        baseline_seed=baseline_seed,
-                        top_k=top_k,
-                    ),
-                    "top_k": top_k,
-                    "candidate_symbol_count": len(symbols),
-                    "cash_locked_weight": 0.0,
-                    "baseline_slot_status": "EXECUTED",
-                    "cost_policy_id": _cost_policy_id(costs),
-                    "cash_lock_policy_id": MR1_CASH_LOCK_POLICY_ID,
-                    "missing_weight_policy_id": MR1_MISSING_WEIGHT_POLICY_ID,
-                    "data_eligibility": "EXPLORATORY",
-                }
-                rows.extend(
-                    (
-                        _baseline_row(
-                            common,
-                            CandidateBaselineId.ALL_CANDIDATE_GROSS_V1,
-                            len(symbols),
-                            all_gross,
-                            all_gross,
-                            all_observed,
-                            all_missing,
-                            "all-candidate-equal-weight-v1",
-                        ),
-                        _baseline_row(
-                            common,
-                            CandidateBaselineId.MATCHED_K_HASH_GROSS_V1,
-                            len(matched_symbols),
-                            matched_gross,
-                            matched_gross,
-                            matched_observed,
-                            matched_missing,
-                            MR1_MATCHED_K_ALGORITHM_ID,
-                        ),
-                        _baseline_row(
-                            common,
-                            CandidateBaselineId.MATCHED_K_HASH_NET_V1,
-                            len(matched_symbols),
-                            matched_gross,
-                            matched_net,
-                            matched_observed,
-                            matched_missing,
-                            MR1_MATCHED_K_ALGORITHM_ID,
-                        ),
-                        _baseline_row(
-                            common,
-                            CandidateBaselineId.ALL_CANDIDATE_NET_DIAGNOSTIC_V1,
-                            len(symbols),
-                            all_gross,
-                            all_net,
-                            all_observed,
-                            all_missing,
-                            "all-candidate-equal-weight-cost-diagnostic-v1",
-                        ),
+                    selection_rows.extend(
+                        _selection_evidence_rows(
+                            selection=matched,
+                            endpoint_target_id=endpoint_target_id,
+                            exit_time=exit_time,
+                            scenario=scenario,
+                            target_index=target_index,
+                        )
                     )
-                )
-                if exit_time == "CLOSE":
-                    target_session_dates = {
-                        date.fromisoformat(str(row["target_session_date"]))
-                        for row in day_rows
-                        if row.get("target_session_date") is not None
-                    }
-                    if len(target_session_dates) != 1:
-                        raise ValueError("CLOSE baseline requires one common target session date")
-                    active_until = next(iter(target_session_dates))
+                    if exit_time == "CLOSE":
+                        target_session_dates = {
+                            date.fromisoformat(str(row["target_session_date"]))
+                            for row in day_rows
+                            if row.get("target_session_date") is not None
+                        }
+                        if len(target_session_dates) != 1:
+                            raise ValueError("CLOSE baseline requires one common target session date")
+                        active_until = next(iter(target_session_dates))
     _require_unique_keys(rows, MR1_CANDIDATE_BASELINE_PRIMARY_KEY, "Candidate daily baseline")
-    return tuple(rows)
+    _require_unique_keys(
+        selection_rows,
+        (
+            "decision_date",
+            "model_id",
+            "exit_time",
+            "cost_scenario",
+            "baseline_seed",
+            "slot_index",
+        ),
+        "matched-K selection evidence",
+    )
+    return CandidateBaselineBuildResult(
+        baseline_rows=tuple(rows),
+        selection_rows=tuple(selection_rows),
+        populations=population_rows,
+    )
 
 
 def compound_candidate_baselines(
     rows: Iterable[Mapping[str, Any]],
-) -> dict[tuple[str, str, str], dict[str, float]]:
+) -> dict[tuple[str, str, str, str], dict[str, float]]:
     """Compound daily rows by baseline, cost scenario, and exit time."""
 
-    result: dict[tuple[str, str, str], dict[str, float]] = {}
+    result: dict[tuple[str, str, str, str], dict[str, float]] = {}
     for row in rows:
-        key = (str(row["baseline_id"]), str(row["cost_scenario"]), str(row["exit_time"]))
+        key = (
+            str(row["model_id"]),
+            str(row["baseline_id"]),
+            str(row["cost_scenario"]),
+            str(row["exit_time"]),
+        )
         values = result.setdefault(key, {"gross": 1.0, "net": 1.0})
         values["gross"] *= 1.0 + _finite_number(row["gross_return"], "gross_return")
         values["net"] *= 1.0 + _finite_number(row["net_return"], "net_return")
@@ -389,6 +578,8 @@ def _baseline_row(
     observed_weight: float,
     missing_weight: float,
     algorithm_id: str,
+    selection_id: str,
+    symbol_set_hash: str,
 ) -> dict[str, Any]:
     return {
         **common,
@@ -399,34 +590,48 @@ def _baseline_row(
         "observed_weight": observed_weight,
         "missing_weight": missing_weight,
         "selection_algorithm_id": algorithm_id,
+        "baseline_selection_id": selection_id,
+        "selection_id": selection_id,
+        "selected_symbols_hash": symbol_set_hash,
     }
 
 
 def _cash_locked_rows(
     *,
-    decision_day: date,
+    population: ModelCandidatePopulation,
+    selection: MatchedKSelection,
     exit_time: str,
     scenario: str,
-    candidate_count: int,
     top_k: int,
-    baseline_seed: int,
     costs: ExploratoryExecutionCostConfig,
-    dataset_id: str,
 ) -> tuple[dict[str, Any], ...]:
+    empty_hash = selected_symbols_hash(())
+    lock_selection_id = canonical_identity_hash(
+        {
+            "status": "CASH_LOCKED",
+            "population_hash": population.population_hash,
+            "exit_time": exit_time,
+            "cost_scenario": scenario,
+            "seed": selection.seed,
+            "top_k": top_k,
+        }
+    )
     common = {
         "schema_version": MR1_CANDIDATE_BASELINE_SCHEMA_VERSION,
-        "decision_date": decision_day.isoformat(),
+        "decision_date": population.decision_date.isoformat(),
+        "model_id": population.model_id,
+        "target_id": population.target_id,
         "exit_time": exit_time,
         "cost_scenario": scenario,
-        "baseline_seed": baseline_seed,
-        "baseline_selection_id": _baseline_selection_id(
-            dataset_id=dataset_id,
-            decision_day=decision_day,
-            baseline_seed=baseline_seed,
-            top_k=top_k,
-        ),
+        "baseline_seed": selection.seed,
+        "baseline_selection_id": lock_selection_id,
+        "selection_id": lock_selection_id,
+        "selected_symbols_hash": empty_hash,
         "top_k": top_k,
-        "candidate_symbol_count": candidate_count,
+        "population_definition_id": population.definition_id,
+        "candidate_population_size": population.population_size,
+        "candidate_symbol_count": population.population_size,
+        "candidate_population_hash": population.population_hash,
         "selected_symbol_count": 0,
         "gross_return": 0.0,
         "net_return": 0.0,
@@ -456,6 +661,49 @@ def _cash_locked_rows(
     )
 
 
+def _selection_evidence_rows(
+    *,
+    selection: MatchedKSelection,
+    endpoint_target_id: str,
+    exit_time: str,
+    scenario: str,
+    target_index: Mapping[tuple[str, str, str], Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    population = selection.population
+    output: list[dict[str, Any]] = []
+    for slot_index, symbol in enumerate(selection.symbols, start=1):
+        target = target_index[
+            (population.decision_date.isoformat(), endpoint_target_id, symbol)
+        ]
+        output.append(
+            {
+                "schema_version": MR1_MATCHED_K_SELECTION_SCHEMA_VERSION,
+                "decision_date": population.decision_date.isoformat(),
+                "model_id": population.model_id,
+                "target_id": population.target_id,
+                "exit_time": exit_time,
+                "cost_scenario": scenario,
+                "baseline_id": "MATCHED_K_HASH_GROSS_NET_V1",
+                "baseline_seed": selection.seed,
+                "population_definition_id": population.definition_id,
+                "population_size": population.population_size,
+                "population_hash": population.population_hash,
+                "slot_index": slot_index,
+                "symbol": symbol,
+                "symbol_hash": canonical_identity_hash({"symbol": symbol}),
+                "selection_algorithm_id": selection.algorithm_id,
+                "selection_id": selection.selection_id,
+                "selected_symbols_hash": selection.selected_symbols_hash,
+                "selection_status": "EXECUTED",
+                "eligible_for_ranking": True,
+                "target_observation_status": str(target["status"]),
+                "slot_weight": 1.0 / selection.top_k,
+                "data_eligibility": "EXPLORATORY",
+            }
+        )
+    return tuple(output)
+
+
 def _validate_target_rows(rows: tuple[dict[str, Any], ...]) -> None:
     if not rows:
         raise ValueError("target_rows must not be empty")
@@ -483,25 +731,6 @@ def _require_weight_reconciliation(observed: float, missing: float, locked: floa
 def _cost_policy_id(costs: ExploratoryExecutionCostConfig) -> str:
     payload = json.dumps(asdict(costs), sort_keys=True, separators=(",", ":"))
     return f"{costs.schema_version}:sha256:{sha256(payload.encode()).hexdigest()}"
-
-
-def _baseline_selection_id(
-    *,
-    dataset_id: str,
-    decision_day: date,
-    baseline_seed: int,
-    top_k: int,
-) -> str:
-    payload = "\0".join(
-        (
-            MR1_MATCHED_K_ALGORITHM_ID,
-            dataset_id,
-            decision_day.isoformat(),
-            str(baseline_seed),
-            str(top_k),
-        )
-    )
-    return f"mr1-baseline-selection:sha256:{sha256(payload.encode()).hexdigest()}"
 
 
 def _finite_number(value: object, label: str) -> float:
