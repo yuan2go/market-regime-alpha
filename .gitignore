@@ -32,6 +32,7 @@ data/processed/mr1_morning_pop_runs/
 data/processed/mr2_failure_decomposition_runs/
 data/processed/mr2a_leak_free_regime_runs/
 data/processed/mr2b_f2a_conditionality_inputs/
+data/processed/mr2b_f2b_statistical_closure/
 reports/**/*.csv
 reports/**/*.html
 reports/**/*.json

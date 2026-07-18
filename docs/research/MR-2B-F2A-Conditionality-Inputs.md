@@ -88,6 +88,7 @@ versus the multi-seed median. Its UP-minus-DOWN mean difference is approximately
 - `AUXILIARY_CONTEXT_NOT_MARKET_REGIME`
 - `STATISTICAL_GATE_NOT_IMPLEMENTED`
 
-MR-2B remains incomplete. F2B must separately predeclare and implement time-series uncertainty,
-Context-label permutation, primary-hypothesis gating, secondary inventory and multiple-testing
-disclosure.
+F2A v2 remains immutable descriptive input evidence. Statistical inference is owned by F2B run
+`mr2b-f2b-cfc48a658d50636610ac`; F2B did not modify or reinterpret these F2A tables. The frozen
+directional Primary was not supported. See `MR-2B-F2B-Statistical-Closure.md` and
+`MR-2B-Final-Assessment.md`.
