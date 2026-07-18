@@ -249,6 +249,84 @@ MR2B_F2B_V2_RUN_SCHEMA = ArtifactSchema(
     | frozenset({"artifact_verification_status", "statistics_executed"}),
 )
 
+MR2B_F2B_V3_RUN_SCHEMA = ArtifactSchema(
+    schema_version="mr-2b-f2b-run-v3",
+    required_files=MR2B_F2B_V2_RUN_SCHEMA.required_files
+    | frozenset({"v2_vs_v3_semantic_diff.json"}),
+    required_manifest_keys=MR2B_F2B_V2_RUN_SCHEMA.required_manifest_keys,
+)
+
+PIT_REPLICATION_BLOCKED_V2_SCHEMA = ArtifactSchema(
+    schema_version="pit-candidate-replication-blocked-v2",
+    required_files=frozenset(
+        {
+            "manifest.json",
+            "protocol.json",
+            "preflight.json",
+            "blocker.json",
+            "limitations.json",
+            "report.md",
+            "SHA256SUMS.json",
+        }
+    ),
+    required_manifest_keys=frozenset(
+        {
+            "schema_version",
+            "run_id",
+            "status",
+            "data_eligibility",
+            "authority",
+            "required_artifacts",
+            "run_identity",
+            "protocol_id",
+            "provider",
+        }
+    ),
+)
+
+PIT_REPLICATION_INVALID_V2_SCHEMA = ArtifactSchema(
+    schema_version="pit-candidate-replication-invalid-v2",
+    required_files=frozenset(
+        {
+            "manifest.json",
+            "protocol.json",
+            "preflight.json",
+            "source_identity.json",
+            "validation_errors.json",
+            "limitations.json",
+            "report.md",
+            "SHA256SUMS.json",
+        }
+    ),
+    required_manifest_keys=PIT_REPLICATION_BLOCKED_V2_SCHEMA.required_manifest_keys,
+)
+
+PIT_REPLICATION_SUCCESS_V2_SCHEMA = ArtifactSchema(
+    schema_version="pit-candidate-replication-success-v2",
+    required_files=frozenset(
+        {
+            "manifest.json",
+            "protocol.json",
+            "provider_selection.json",
+            "source_artifacts.json",
+            "data_quality.json",
+            "universe_snapshots.parquet",
+            "eligibility_snapshots.parquet",
+            "candidate_populations.parquet",
+            "candidate_rankings.parquet",
+            "matched_k_selections.parquet",
+            "matched_k_returns.parquet",
+            "daily_replication_metrics.parquet",
+            "chronological_replication_summary.json",
+            "limitations.json",
+            "report.md",
+            "SHA256SUMS.json",
+        }
+    ),
+    required_manifest_keys=PIT_REPLICATION_BLOCKED_V2_SCHEMA.required_manifest_keys
+    | frozenset({"row_counts"}),
+)
+
 PIT_REPLICATION_BLOCKED_RUN_SCHEMA = ArtifactSchema(
     schema_version="pit-candidate-replication-run-v1",
     required_files=frozenset(
