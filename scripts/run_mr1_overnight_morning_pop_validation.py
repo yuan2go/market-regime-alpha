@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime
+from datetime import date
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -28,13 +28,13 @@ from market_regime_alpha.research.mr1_morning_pop import (  # noqa: E402
     build_mr1_targets,
     replay_mr1_fixed_portfolios,
 )
-from market_regime_alpha.research.prr_mvp_1 import ExploratoryExecutionCostConfig  # noqa: E402
-from market_regime_alpha.research.tencent_composite_contracts import (  # noqa: E402
-    CompositeBar,
-    CompositeSourceKind,
-    PreparedCompositeData,
-    PreparedCompositeSession,
+from market_regime_alpha.research.prr_artifact_reader import (  # noqa: E402
+    MR1_RUN_FILENAMES,
+    MR1_RUN_SCHEMA_VERSION,
+    VerifiedPRRDataset,
+    load_verified_prr_dataset,
 )
+from market_regime_alpha.research.prr_mvp_1 import ExploratoryExecutionCostConfig  # noqa: E402
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -52,11 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     dataset = args.dataset.resolve()
-    manifest = _read_json(dataset / "dataset_manifest.json")
-    if manifest.get("data_eligibility") != "EXPLORATORY":
-        raise SystemExit("MR-1 only accepts an EXPLORATORY Dataset")
-    _verify_dataset(dataset)
-    prepared, bars, rankings, decision_dates = _load_dataset(dataset)
+    verified_dataset = load_verified_prr_dataset(dataset)
+    manifest = dict(verified_dataset.manifest)
+    prepared, bars, rankings, decision_dates = _dataset_inputs(verified_dataset)
     targets = build_mr1_targets(prepared=prepared, bars=bars, decision_dates=decision_dates)
     all_orders: list[dict[str, Any]] = []
     all_fills: list[dict[str, Any]] = []
@@ -65,7 +63,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     metric_rows: list[dict[str, Any]] = []
     comparison: dict[str, Any] = {"schema_version": "mr-1-exit-time-comparison-v1", "descriptive_only": True, "results": []}
     cost_scenarios = _cost_scenarios()
-    baselines = {name: _candidate_baseline(targets, costs) for name, costs in cost_scenarios.items()}
+    baseline_rows = _candidate_daily_baselines(targets, cost_scenarios)
+    baselines = _compound_daily_baselines(baseline_rows)
     for scenario, costs in cost_scenarios.items():
         for exit_time in MR1ExitTime:
             replay = replay_mr1_fixed_portfolios(
@@ -112,42 +111,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         comparison=comparison,
         top_k=args.top_k,
         run_identity=run_identity,
+        baseline_rows=baseline_rows,
     )
     print(f"MR-1 completed: {final}")
     return 0
 
 
-def _load_dataset(dataset: Path) -> tuple[PreparedCompositeData, tuple[CompositeBar, ...], tuple[dict[str, Any], ...], tuple[date, ...]]:
-    prepared_frame = pd.read_parquet(dataset / "prepared_sessions.parquet")
-    bars_frame = pd.read_parquet(dataset / "bars.parquet")
-    rankings_frame = pd.read_parquet(dataset / "candidate_rankings.parquet")
-    sessions = tuple(
-        PreparedCompositeSession(
-            symbol=str(row.symbol), session_date=date.fromisoformat(str(row.session_date)),
-            open=float(row.open), high=float(row.high), low=float(row.low), close=float(row.close), amount=float(row.amount),
-            reference_price=float(row.reference_price), reference_timestamp=datetime.fromisoformat(str(row.reference_timestamp)),
-            source_kinds=(CompositeSourceKind(str(row.source_kinds)),),
-        )
-        for row in prepared_frame.itertuples(index=False)
+def _dataset_inputs(
+    verified: VerifiedPRRDataset,
+) -> tuple[Any, tuple[Any, ...], tuple[dict[str, Any], ...], tuple[date, ...]]:
+    """Adapt a frozen reader result to MR-1's existing calculation interface."""
+
+    return (
+        verified.prepared,
+        verified.bars,
+        tuple(dict(row) for row in verified.ranking_rows),
+        verified.decision_dates,
     )
-    symbols = tuple(sorted({session.symbol for session in sessions}))
-    dates = tuple(sorted({session.session_date for session in sessions}))
-    prepared = PreparedCompositeData(
-        accepted_symbols=symbols, common_session_dates=dates, sessions=sessions,
-        quality=type("MR1Quality", (), {"accepted_symbols": symbols})(), limitations=("AUXILIARY_DATA_ONLY",),
-    )
-    bars = tuple(
-        CompositeBar(
-            symbol=str(row.symbol), timestamp=datetime.fromisoformat(str(row.timestamp)),
-            open=float(row.open), high=float(row.high), low=float(row.low), close=float(row.close), volume=float(row.volume), amount=float(row.amount),
-            source=CompositeSourceKind(str(row.source)),
-        )
-        for row in bars_frame.itertuples(index=False)
-    )
-    ranking_rows = tuple(rankings_frame.to_dict(orient="records"))
-    # Candidate materialization has 60 dates and one following session for every date.
-    decision_dates = tuple(sorted(date.fromisoformat(str(item)) for item in rankings_frame["decision_date"].unique()))
-    return prepared, bars, ranking_rows, decision_dates
+
+
+# Historical MR-2 script compatibility only. New consumers use prr_artifact_reader.
+def _load_dataset(
+    dataset: Path,
+) -> tuple[Any, tuple[Any, ...], tuple[dict[str, Any], ...], tuple[date, ...]]:
+    return _dataset_inputs(load_verified_prr_dataset(dataset))
 
 
 def _cost_scenarios() -> dict[str, ExploratoryExecutionCostConfig]:
@@ -158,23 +145,58 @@ def _cost_scenarios() -> dict[str, ExploratoryExecutionCostConfig]:
     }
 
 
-def _candidate_baseline(targets: tuple[dict[str, Any], ...], costs: ExploratoryExecutionCostConfig) -> dict[str, dict[str, float | None]]:
-    exit_targets = {"09:35": "NEXT_SESSION_0935_RETURN", "10:00": "NEXT_SESSION_1000_RETURN", "10:30": "NEXT_SESSION_1030_RETURN", "CLOSE": "NEXT_SESSION_CLOSE_RETURN"}
-    result: dict[str, dict[str, float | None]] = {}
+def _candidate_daily_baselines(targets: tuple[dict[str, Any], ...], costs_by_scenario: dict[str, ExploratoryExecutionCostConfig]) -> list[dict[str, Any]]:
+    exit_targets = {
+        "09:35": "NEXT_SESSION_0935_RETURN",
+        "10:00": "NEXT_SESSION_1000_RETURN",
+        "10:30": "NEXT_SESSION_1030_RETURN",
+        "CLOSE": "NEXT_SESSION_CLOSE_RETURN",
+    }
+    rows: list[dict[str, Any]] = []
     for exit_time, target_id in exit_targets.items():
-        by_date: dict[str, list[float]] = {}
-        for row in targets:
-            if row["target_id"] == target_id and row["status"] == "AVAILABLE":
-                by_date.setdefault(str(row["decision_date"]), []).append(float(row["value"]))
-        if len(by_date) == 0:
-            result[exit_time] = {"gross": None, "net": None}
-        else:
-            gross_equity = net_equity = 1.0
-            for decision_date, values in by_date.items():
-                rows = [row for row in targets if row["target_id"] == target_id and row["decision_date"] == decision_date and row["status"] == "AVAILABLE"]
-                gross_equity *= 1.0 + sum(values) / len(values)
-                net_equity *= 1.0 + sum(_candidate_slot_net_return(row, 1.0 / len(rows), costs) for row in rows)
-            result[exit_time] = {"gross": gross_equity - 1.0, "net": net_equity - 1.0}
+        dates = sorted({str(row["decision_date"]) for row in targets if row["target_id"] == target_id})
+        for scenario, costs in costs_by_scenario.items():
+            for decision_date in dates:
+                all_rows = [row for row in targets if row["target_id"] == target_id and row["decision_date"] == decision_date]
+                observed = [row for row in all_rows if row["status"] == "AVAILABLE"]
+                weight = 1.0 / len(all_rows) if all_rows else 0.0
+                observed_weight = len(observed) * weight
+                missing_weight = (len(all_rows) - len(observed)) * weight
+                if all_rows and abs((observed_weight + missing_weight) - 1.0) > 1e-12:
+                    raise ValueError("Candidate daily baseline weights must reconcile to one")
+                rows.append(
+                    {
+                        "schema_version": "mr-1-candidate-daily-baseline-v1",
+                        "decision_date": decision_date,
+                        "exit_time": exit_time,
+                        "cost_scenario": scenario,
+                        "candidate_gross_return": sum(float(row["value"]) * weight for row in observed),
+                        "candidate_net_return": sum(
+                            weight * _candidate_slot_net_return(row, weight, costs)
+                            for row in observed
+                        ),
+                        "candidate_symbol_count": len(all_rows),
+                        "candidate_observed_weight": observed_weight,
+                        "candidate_missing_weight": missing_weight,
+                        "baseline_kind": "NON_TRADABLE_CROSS_SECTIONAL_DIAGNOSTIC_WITH_SAME_COST_MECHANICS",
+                        "data_eligibility": "EXPLORATORY",
+                    }
+                )
+    return rows
+
+
+def _compound_daily_baselines(rows: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, float]]]:
+    result: dict[str, dict[str, dict[str, float]]] = {}
+    for row in rows:
+        scenario = str(row["cost_scenario"])
+        exit_time = str(row["exit_time"])
+        result.setdefault(scenario, {}).setdefault(exit_time, {"gross": 1.0, "net": 1.0})
+        result[scenario][exit_time]["gross"] *= 1.0 + float(row["candidate_gross_return"])
+        result[scenario][exit_time]["net"] *= 1.0 + float(row["candidate_net_return"])
+    for scenario_values in result.values():
+        for values in scenario_values.values():
+            values["gross"] -= 1.0
+            values["net"] -= 1.0
     return result
 
 
@@ -259,32 +281,67 @@ def _run_identity(dataset: Path, top_k: int, rankings: tuple[dict[str, Any], ...
         "mr1_morning_pop_module_hash": _file_hash(module),
         "runner_hash": _file_hash(Path(__file__)),
         "target_schema_ids": [MR1_MORNING_TARGET_SCHEMA_VERSION, *(item.value for item in MR1TargetId)],
+        "candidate_daily_baseline_schema_version": "mr-1-candidate-daily-baseline-v1",
         "model_ids": model_ids,
         "top_k": top_k,
         "cost_scenario_config_hashes": {name: _canonical_hash(repr(value)) for name, value in costs.items()},
     }
 
 
-def _write_run(*, root: Path, run_id: str, dataset: Path, dataset_manifest: dict[str, Any], targets: tuple[dict[str, Any], ...], orders: list[dict[str, Any]], fills: list[dict[str, Any]], trades: list[dict[str, Any]], equity: list[dict[str, Any]], metrics: list[dict[str, Any]], comparison: dict[str, Any], top_k: int, run_identity: dict[str, Any]) -> Path:
+def _write_run(
+    *,
+    root: Path,
+    run_id: str,
+    dataset: Path,
+    dataset_manifest: dict[str, Any],
+    targets: tuple[dict[str, Any], ...],
+    orders: list[dict[str, Any]],
+    fills: list[dict[str, Any]],
+    trades: list[dict[str, Any]],
+    equity: list[dict[str, Any]],
+    metrics: list[dict[str, Any]],
+    comparison: dict[str, Any],
+    top_k: int,
+    run_identity: dict[str, Any],
+    baseline_rows: list[dict[str, Any]],
+) -> Path:
     final = root / run_id
     stage = root / f".{run_id}.staging"
     if final.exists() or stage.exists():
         raise FileExistsError(f"MR-1 run is immutable: {final}")
     stage.mkdir(parents=True)
     try:
-        _write_json(stage / "manifest.json", {"schema_version": "mr-1-run-v1", "run_id": run_id, "dataset_id": dataset_manifest["dataset_id"], "dataset_path": str(dataset), "dataset_manifest_hash": _file_hash(dataset / "dataset_manifest.json"), "data_eligibility": "EXPLORATORY", "top_k": top_k, "exit_times": [item.value for item in MR1ExitTime], "cost_scenarios": ["LOW", "BASE", "HIGH"], "run_identity": run_identity})
+        _write_json(
+            stage / "manifest.json",
+            {
+                "schema_version": MR1_RUN_SCHEMA_VERSION,
+                "run_id": run_id,
+                "dataset_id": dataset_manifest["dataset_id"],
+                "dataset_path": str(dataset),
+                "dataset_manifest_hash": _file_hash(dataset / "dataset_manifest.json"),
+                "data_eligibility": "EXPLORATORY",
+                "top_k": top_k,
+                "exit_times": [item.value for item in MR1ExitTime],
+                "cost_scenarios": ["LOW", "BASE", "HIGH"],
+                "required_artifacts": sorted(MR1_RUN_FILENAMES),
+                "candidate_daily_baseline_schema_version": "mr-1-candidate-daily-baseline-v1",
+                "run_identity": run_identity,
+            },
+        )
         _write_json(stage / "limitations.json", ["CURRENT_WATCHLIST_BACKFILL_BIAS", "HISTORICAL_PIT_NOT_VERIFIED", "HISTORICAL_BUYABILITY_NOT_VERIFIED", "REFERENCE_MARK_NOT_FILL_PROOF", "NO_LEVEL2_OR_ORDER_BOOK", "FEE_ASSUMPTIONS_REQUIRE_CURRENT_VERIFICATION", "AUXILIARY_DATA_ONLY", "FORMAL_OOS_NOT_ESTABLISHED"])
         _write_parquet(stage / "morning_targets.parquet", targets)
         _write_parquet(stage / "orders.parquet", orders)
         _write_parquet(stage / "fills.parquet", fills)
         _write_parquet(stage / "trades.parquet", trades)
         _write_parquet(stage / "daily_equity.parquet", equity)
+        _write_parquet(stage / "candidate_daily_baseline.parquet", baseline_rows)
         _write_parquet(stage / "chronological_model_metrics.parquet", metrics)
         pd.DataFrame(metrics).to_csv(stage / "model_target_matrix.csv", index=False)
         _write_json(stage / "exit_time_comparison.json", comparison)
         _write_json(stage / "metrics.json", metrics)
         _write_report(stage / "report.md", run_id, dataset_manifest["dataset_id"], metrics)
         _write_checksums(stage)
+        _validate_file_set(stage, MR1_RUN_FILENAMES)
         stage.rename(final)
     except Exception:
         shutil.rmtree(stage, ignore_errors=True)
@@ -294,17 +351,20 @@ def _write_run(*, root: Path, run_id: str, dataset: Path, dataset_manifest: dict
 
 def _write_report(path: Path, run_id: str, dataset_id: str, metrics: list[dict[str, Any]]) -> None:
     base = [row for row in metrics if row["cost_scenario"] == "BASE"]
-    lines = ["# MR-1 Overnight Morning-Pop Signal Validation", "", f"- Run ID: `{run_id}`", f"- Dataset ID: `{dataset_id}`", "- Authority: `EXPLORATORY`", "- 14:55 reference is a research mark, not fill proof.", "- DESCRIPTIVE ONLY — NO MODEL SELECTION.", "", "## Base-cost assessment", "", "| Model | Exit | Net cumulative | Max drawdown | Assessment |", "| --- | --- | ---: | ---: | --- |"]
+    lines = ["# MR-1 Overnight Morning-Pop Signal Validation", "", f"- Run ID: `{run_id}`", f"- Dataset ID: `{dataset_id}`", "- Authority: `EXPLORATORY`", "- 14:55 reference is a research mark, not fill proof.", "- `candidate_daily_baseline.parquet` is a non-tradable cross-sectional diagnostic with the same cost mechanics and fixed missing-slot cash weight.", "- DESCRIPTIVE ONLY — NO MODEL SELECTION.", "", "## Base-cost assessment", "", "| Model | Exit | Net cumulative | Max drawdown | Assessment |", "| --- | --- | ---: | ---: | --- |"]
     for row in sorted(base, key=lambda item: (item["exit_time"], item["model_id"])):
         lines.append(f"| {row['model_id']} | {row['exit_time']} | {row['net_cumulative_return']:.4%} | {row['maximum_drawdown']:.4%} | {row.get('exploratory_assessment', 'INCONCLUSIVE')} |")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _verify_dataset(dataset: Path) -> None:
-    expected = _read_json(dataset / "SHA256SUMS.json")
-    for name, expected_hash in expected.items():
-        if _file_hash(dataset / name) != expected_hash:
-            raise ValueError(f"immutable Dataset checksum mismatch: {name}")
+    load_verified_prr_dataset(dataset)
+
+
+def _validate_file_set(path: Path, expected: frozenset[str]) -> None:
+    actual = frozenset(item.name for item in path.iterdir() if item.is_file())
+    if actual != expected:
+        raise ValueError("MR-1 artifact file set does not match its declared schema")
 
 
 def _write_checksums(path: Path) -> None:
