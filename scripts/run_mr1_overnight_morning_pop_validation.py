@@ -23,6 +23,8 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from market_regime_alpha.research.mr1_morning_pop import (  # noqa: E402
     MR1ExitTime,
+    MR1TargetId,
+    MR1_MORNING_TARGET_SCHEMA_VERSION,
     build_mr1_targets,
     replay_mr1_fixed_portfolios,
 )
@@ -94,7 +96,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 comparison["results"].append(row)
     _add_chronological_diagnostics(metric_rows, all_equity)
     _apply_failure_labels(metric_rows, all_equity)
-    run_id = _run_id(dataset, args.top_k, rankings)
+    run_identity = _run_identity(dataset, args.top_k, rankings)
+    run_id = f"mr1-{_canonical_hash(run_identity)[:20]}"
     final = _write_run(
         root=args.output_root,
         run_id=run_id,
@@ -108,6 +111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         metrics=metric_rows,
         comparison=comparison,
         top_k=args.top_k,
+        run_identity=run_identity,
     )
     print(f"MR-1 completed: {final}")
     return 0
@@ -244,27 +248,31 @@ def _maximum_losing_streak(rows: list[dict[str, Any]]) -> int:
     return longest
 
 
-def _run_id(dataset: Path, top_k: int, rankings: tuple[dict[str, Any], ...]) -> str:
+def _run_identity(dataset: Path, top_k: int, rankings: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     module = PROJECT_ROOT / "src" / "market_regime_alpha" / "research" / "mr1_morning_pop.py"
     model_ids = sorted({str(row["model_id"]) for row in rankings})
     costs = _cost_scenarios()
-    payload = (
-        f"{_read_json(dataset / 'dataset_manifest.json')['dataset_id']}:"
-        f"{_file_hash(dataset / 'SHA256SUMS.json')}:{_revision()}:{_file_hash(module)}:{_file_hash(Path(__file__))}:"
-        f"mr-1-overnight-morning-pop-target-v1:{','.join(model_ids)}:{top_k}:"
-        f"{_canonical_hash({name: repr(value) for name, value in costs.items()})}"
-    ).encode()
-    return f"mr1-{sha256(payload).hexdigest()[:20]}"
+    return {
+        "dataset_id": _read_json(dataset / "dataset_manifest.json")["dataset_id"],
+        "dataset_checksums_hash": _file_hash(dataset / "SHA256SUMS.json"),
+        "git_commit_sha": _revision(),
+        "mr1_morning_pop_module_hash": _file_hash(module),
+        "runner_hash": _file_hash(Path(__file__)),
+        "target_schema_ids": [MR1_MORNING_TARGET_SCHEMA_VERSION, *(item.value for item in MR1TargetId)],
+        "model_ids": model_ids,
+        "top_k": top_k,
+        "cost_scenario_config_hashes": {name: _canonical_hash(repr(value)) for name, value in costs.items()},
+    }
 
 
-def _write_run(*, root: Path, run_id: str, dataset: Path, dataset_manifest: dict[str, Any], targets: tuple[dict[str, Any], ...], orders: list[dict[str, Any]], fills: list[dict[str, Any]], trades: list[dict[str, Any]], equity: list[dict[str, Any]], metrics: list[dict[str, Any]], comparison: dict[str, Any], top_k: int) -> Path:
+def _write_run(*, root: Path, run_id: str, dataset: Path, dataset_manifest: dict[str, Any], targets: tuple[dict[str, Any], ...], orders: list[dict[str, Any]], fills: list[dict[str, Any]], trades: list[dict[str, Any]], equity: list[dict[str, Any]], metrics: list[dict[str, Any]], comparison: dict[str, Any], top_k: int, run_identity: dict[str, Any]) -> Path:
     final = root / run_id
     stage = root / f".{run_id}.staging"
     if final.exists() or stage.exists():
         raise FileExistsError(f"MR-1 run is immutable: {final}")
     stage.mkdir(parents=True)
     try:
-        _write_json(stage / "manifest.json", {"schema_version": "mr-1-run-v1", "run_id": run_id, "dataset_id": dataset_manifest["dataset_id"], "dataset_path": str(dataset), "dataset_manifest_hash": _file_hash(dataset / "dataset_manifest.json"), "data_eligibility": "EXPLORATORY", "top_k": top_k, "exit_times": [item.value for item in MR1ExitTime], "cost_scenarios": ["LOW", "BASE", "HIGH"]})
+        _write_json(stage / "manifest.json", {"schema_version": "mr-1-run-v1", "run_id": run_id, "dataset_id": dataset_manifest["dataset_id"], "dataset_path": str(dataset), "dataset_manifest_hash": _file_hash(dataset / "dataset_manifest.json"), "data_eligibility": "EXPLORATORY", "top_k": top_k, "exit_times": [item.value for item in MR1ExitTime], "cost_scenarios": ["LOW", "BASE", "HIGH"], "run_identity": run_identity})
         _write_json(stage / "limitations.json", ["CURRENT_WATCHLIST_BACKFILL_BIAS", "HISTORICAL_PIT_NOT_VERIFIED", "HISTORICAL_BUYABILITY_NOT_VERIFIED", "REFERENCE_MARK_NOT_FILL_PROOF", "NO_LEVEL2_OR_ORDER_BOOK", "FEE_ASSUMPTIONS_REQUIRE_CURRENT_VERIFICATION", "AUXILIARY_DATA_ONLY", "FORMAL_OOS_NOT_ESTABLISHED"])
         _write_parquet(stage / "morning_targets.parquet", targets)
         _write_parquet(stage / "orders.parquet", orders)
