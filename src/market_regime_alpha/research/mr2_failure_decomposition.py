@@ -10,6 +10,7 @@ from collections import defaultdict
 import math
 from statistics import mean, pstdev
 from typing import Any, Iterable, Mapping
+from market_regime_alpha.research.mr2a_regime import directional_score
 
 
 MR2_SCHEMA_VERSION = "mr-2-morning-pop-failure-decomposition-v1"
@@ -44,7 +45,7 @@ def feature_target_diagnostics(
         population = tuple(unique.values())
         for target_id in target_ids:
             pairs = [
-                (float(row["feature_values"][feature_id]), float(target["value"]), str(row["symbol"]), mfe_targets.get((decision_date, str(row["symbol"]))))
+                (directional_score(feature_id, float(row["feature_values"][feature_id])), float(target["value"]), str(row["symbol"]), mfe_targets.get((decision_date, str(row["symbol"]))))
                 for row in population
                 if (target := targets.get((decision_date, str(row["symbol"]), target_id))) is not None
                 and target["status"] == "AVAILABLE"
@@ -149,7 +150,7 @@ def _aggregate_spreads(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in rows:
         groups[(row["feature_id"], row["target_id"])].append(row)
     for (feature_id, target_id), group in sorted(groups.items()):
-        result.append({"schema_version": MR2_SCHEMA_VERSION, "scope": "AGGREGATE", "decision_date": None, "feature_id": feature_id, "target_id": target_id, "top5_mean": _mean_optional(group, "top5_mean"), "bottom5_mean": _mean_optional(group, "bottom5_mean"), "top_minus_bottom_spread": _mean_optional(group, "top_minus_bottom_spread"), "top_quartile_minus_bottom_quartile": _mean_optional(group, "top_quartile_minus_bottom_quartile"), "positive_return_hit_rate": _mean_optional(group, "positive_return_hit_rate"), "mfe_threshold_hit_rate": None, "coverage": _mean_optional(group, "coverage"), "data_eligibility": "EXPLORATORY"})
+        result.append({"schema_version": MR2_SCHEMA_VERSION, "scope": "AGGREGATE", "decision_date": None, "feature_id": feature_id, "target_id": target_id, "best_5_mean": _mean_optional(group, "top5_mean"), "worst_5_mean": _mean_optional(group, "bottom5_mean"), "best_minus_worst": _mean_optional(group, "top_minus_bottom_spread"), "best_quartile_minus_worst_quartile": _mean_optional(group, "top_quartile_minus_bottom_quartile"), "positive_return_hit_rate": _mean_optional(group, "positive_return_hit_rate"), "mfe_threshold_hit_rate": _mean_optional(group, "mfe_threshold_hit_rate"), "mfe_hit_numerator": sum(round(float(row["mfe_threshold_hit_rate"])*5) for row in group if row.get("mfe_threshold_hit_rate") is not None), "mfe_hit_denominator": sum(5 for row in group if row.get("mfe_threshold_hit_rate") is not None), "coverage": _mean_optional(group, "coverage"), "data_eligibility": "EXPLORATORY"})
     return result
 
 

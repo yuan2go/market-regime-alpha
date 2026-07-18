@@ -859,6 +859,14 @@ composite-data regime slices. Its evidence-led result is **C — signal appears 
 regimes**, subject to broader PIT and walk-forward validation. ETF/sector context was explicitly
 reported as unavailable. See `docs/research/MR-2-Morning-Pop-Failure-Decomposition.md`.
 
+### MR-2A — Leak-Free Regime Diagnostic
+
+MR-2A supersedes the old MR-2 `C` conclusion because the old Context used Decision Date
+full-session fields and mixed gross/net baseline semantics. The current leak-free, cutoff-14:50
+EXPLORATORY result is only `C1. REGIME_HETEROGENEITY_HYPOTHESIS`; it is not C2 replication or a
+production Regime Gate. ETF/sector Context remains unavailable. See
+`docs/research/MR-2A-Leak-Free-Regime-Diagnostic.md`.
+
 The current ordered sequence is:
 
 ```text

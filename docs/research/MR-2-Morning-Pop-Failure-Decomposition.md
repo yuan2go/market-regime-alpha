@@ -22,7 +22,7 @@ time of MFE, MFE-capture ratios at 09:35/10:00/10:30, and three competing-event 
 Competing events use only the next-session 09:35–10:30 path. Same-bar dual barrier touches are
 `AMBIGUOUS`; missing any required path bar is `UNAVAILABLE / INCOMPLETE_MORNING_PATH`.
 
-## Current run
+## Historical MR-2 run — superseded
 
 The corrected MR-1 input was
 `data/processed/mr1_morning_pop_runs/mr1-f3938fc682d853c8e974/`, derived from immutable Dataset
@@ -34,12 +34,13 @@ mixture of `NO_GROSS_SIGNAL`, `NO_CROSS_SECTIONAL_ALPHA`, `COST_FRAGILE`, `DRAWD
 limited `REGIME_UNSTABLE` evidence. The explicitly available composite-data slices show sign
 splits in Top-5 excess, while ETF/sector context remains `UNAVAILABLE` rather than inferred.
 
-The evidence-led conclusion is:
+The former evidence-led conclusion was:
 
 ```text
 C. SIGNAL_EXISTS_ONLY_IN_SPECIFIC_REGIMES
 ```
 
-This remains a small auxiliary-data finding, not confirmation that a production regime gate
-should be built. Any next regime work requires broader history, historical PIT validation, and
-walk-forward confirmation before it can change Candidate research direction.
+This conclusion is superseded by MR-2A. The old implementation used Decision Date full-session
+high/low/close/amount for context, mixed model net return with a Candidate gross baseline, used a
+Pearson rank-position diagnostic under a Rank IC name, and promoted any sign split too readily.
+The historical artifact remains negative research evidence only.

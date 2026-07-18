@@ -12,7 +12,7 @@ def test_feature_ic_is_cross_sectional_per_decision_date_then_aggregated() -> No
             "decision_date": "2026-01-05",
             "target_id": "target-r5-decision-reference-to-next-session-close-return-v1",
             "symbol": symbol,
-            "feature_values": {"f1": value},
+            "feature_values": {"feature-r5-momentum-5s-v1": value},
         }
         for symbol, value in (("A", 1.0), ("B", 2.0), ("C", 3.0), ("D", 4.0), ("E", 5.0), ("F", 6.0), ("G", 7.0), ("H", 8.0))
     )
@@ -25,7 +25,7 @@ def test_feature_ic_is_cross_sectional_per_decision_date_then_aggregated() -> No
 
     aggregate = next(row for row in ic if row["scope"] == "AGGREGATE")
     assert aggregate["spearman_rank_ic"] == 1.0
-    assert next(row for row in spreads if row["scope"] == "AGGREGATE")["top_minus_bottom_spread"] > 0.0
+    assert next(row for row in spreads if row["scope"] == "AGGREGATE")["best_minus_worst"] > 0.0
 
 
 def test_failure_decomposition_keeps_independent_reasons() -> None:
