@@ -1,5 +1,9 @@
 # PIT Candidate Replication Charter
 
+> **Qualified provider input update:** Xuntou v3 remains REHEARSAL. Replication success requires
+> evidence-derived `xuntou-pit-validation-bundle-v4`; buyability/orderability is not fill proof, and
+> the 10:30 endpoint requires next-session intraday evidence rather than daily close.
+
 > **Status:** FROZEN FOUNDATION — EXTERNAL XUNTOU INPUT REQUIRED
 >
 > **Experiment:** `pit-b1e-unconditional-candidate-lift-replication-v1`
