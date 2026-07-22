@@ -22,7 +22,7 @@
 - [x] Audit Constitution, current research programs, code, tests, scripts, and data layout.
 - [x] Write `docs/research/Daily-Quant-Selection-Current-State-Audit.md`.
 - [x] Write `docs/specs/Daily-Quant-Decision-Artifact-Specification-V1.md`.
-- [ ] Run Markdown/diff checks and commit as `docs: audit daily quant selection research gaps`.
+- [x] Run Markdown/diff checks and commit as `docs: audit daily quant selection research gaps`.
 
 ## Task 2: Add failing contract tests
 
@@ -49,16 +49,16 @@ Expected before implementation: collection fails because `market_regime_alpha.da
 **Files:**
 
 - Create `src/market_regime_alpha/daily_research/__init__.py`.
-- Create `src/market_regime_alpha/daily_research/contracts.py`.
+- Create bounded domain modules behind `src/market_regime_alpha/daily_research/contracts.py`.
 
 **Steps:**
 
-- [ ] Add Authority, instrument, Entry-state, data-quality, source-evidence, score-component, snapshot,
+- [x] Add Authority, instrument, Entry-state, data-quality, source-evidence, score-component, snapshot,
   recommendation, and assessment types.
-- [ ] Add canonical semantic payload and SHA-256 identity helpers.
-- [ ] Validate timezone, Decision Date, availability, finite values, structured reasons, price states,
+- [x] Add canonical semantic payload and SHA-256 identity helpers.
+- [x] Validate timezone, Decision Date, availability, finite values, structured reasons, price states,
   sorting, and exact reference semantics.
-- [ ] Run contract tests and mypy for the new module.
+- [x] Run contract tests and mypy for the new modules.
 
 ## Task 4: Implement Publisher
 
@@ -68,11 +68,11 @@ Expected before implementation: collection fails because `market_regime_alpha.da
 
 **Steps:**
 
-- [ ] Validate the aggregate and contiguous per-instrument ranks.
-- [ ] Write the exact six-file set to an owned staging path.
-- [ ] Hash all files, bind exact manifest fields and implementation hashes, then atomically rename.
-- [ ] Render a deterministic report solely from structured records.
-- [ ] Run Publisher tests.
+- [x] Validate the aggregate and score-reconstructed per-instrument ranks.
+- [x] Write the exact six-file set to an owned staging path.
+- [x] Hash all files, bind exact manifest fields and implementation hashes, then atomically rename.
+- [x] Render a deterministic report solely from structured records.
+- [x] Run Publisher tests.
 
 ## Task 5: Implement semantic Reader
 
@@ -82,11 +82,11 @@ Expected before implementation: collection fails because `market_regime_alpha.da
 
 **Steps:**
 
-- [ ] Verify exact file set, checksums, manifest fields, Schema, Authority, and implementation hashes.
-- [ ] Parse exact field sets into immutable objects and recompute every identity.
-- [ ] Recheck temporal, rank, reference, aggregate, and report semantics.
-- [ ] Return a typed verified Artifact with a read-only manifest.
-- [ ] Run all daily-research tests.
+- [x] Verify exact file set, checksums, manifest fields, Schema, Authority, and implementation hashes.
+- [x] Parse exact field sets into immutable objects and recompute every identity.
+- [x] Recheck temporal, rank, reference, aggregate, and report semantics.
+- [x] Return a typed verified Artifact with a read-only manifest.
+- [x] Run all daily-research tests.
 
 ## Task 6: Integrate type and status authority
 
@@ -97,9 +97,9 @@ Expected before implementation: collection fails because `market_regime_alpha.da
 
 **Steps:**
 
-- [ ] Add all daily-research production modules to normal mypy coverage.
-- [ ] Record the Daily Quant Selection and Manual Trading program as the current engineering mainline.
-- [ ] Retain Xuntou PIT status as blocked and state that auxiliary engineering does not gain formal Authority.
+- [x] Add all daily-research production modules to normal mypy coverage.
+- [x] Record the Daily Quant Selection and Manual Trading program as the current engineering mainline.
+- [x] Retain Xuntou PIT status as blocked and state that auxiliary engineering does not gain formal Authority.
 
 ## Task 7: Verify and review
 
@@ -113,6 +113,6 @@ Expected before implementation: collection fails because `market_regime_alpha.da
 git diff --check
 ```
 
-- [ ] Run a standards/spec self-review against the fixed branch base.
-- [ ] Commit WP-DQS-1 as one intentional feature commit (or split tests only if necessary for a clear red-test history).
-- [ ] Report exact commands, results, remaining data blockers, and Git status.
+- [x] Run independent standards and specification reviews against the fixed branch base.
+- [x] Commit WP-DQS-1 as an intentional feature commit, followed by a bounded review-hardening commit.
+- [x] Report exact commands, results, remaining data blockers, and Git status.

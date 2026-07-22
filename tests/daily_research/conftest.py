@@ -39,10 +39,38 @@ def make_snapshot(
     created_at: datetime | None = None,
     source_observed_at: datetime | None = None,
     source_available_at: datetime | None = None,
+    source_artifacts: tuple[DecisionSourceArtifact, ...] | None = None,
     authority: DailyDataAuthority = DailyDataAuthority.AUXILIARY,
 ) -> DailyResearchSnapshot:
     observed_at = source_observed_at or DECISION - timedelta(minutes=1)
     available_at = source_available_at or max(DECISION, observed_at)
+    identities = (
+        "auxiliary-market-data-example-v1",
+        "candidate-model-example-v1",
+        "daily-config-example-v1",
+        "daily-stock-universe-example-v1",
+        "entry-config-example-v1",
+        "entry-path-short-v1",
+        "entry-policy-example-v1",
+        "etf-snapshot-unavailable-v1",
+        "feature-individual-strength-example-v1",
+        "feature-registry-example-v1",
+        "feature-risk-penalty-example-v1",
+        "manual-holdings-empty-v1",
+        "market-context-unavailable-v1",
+        "theme-snapshot-unavailable-v1",
+    )
+    sources = source_artifacts or tuple(
+        DecisionSourceArtifact(
+            artifact_id=ArtifactId(identity),
+            provider_id=ProviderId("AUXILIARY_EXAMPLE"),
+            content_hash="sha256:" + f"{index:x}" * 64,
+            observed_at=AsOfTime(observed_at),
+            available_at=AvailabilityTime(available_at),
+            data_authority=authority,
+        )
+        for index, identity in enumerate(identities, start=1)
+    )
     return DailyResearchSnapshot(
         decision_date=date(2026, 7, 23),
         decision_time=DecisionTime(DECISION),
@@ -50,22 +78,17 @@ def make_snapshot(
         universe_identity=UniverseId("daily-stock-universe-example-v1"),
         market_data_identity=DatasetId("auxiliary-market-data-example-v1"),
         feature_registry_identity=ArtifactId("feature-registry-example-v1"),
+        registered_component_identities=(
+            ArtifactId("feature-individual-strength-example-v1"),
+            ArtifactId("feature-risk-penalty-example-v1"),
+        ),
         model_identity=ModelId("candidate-model-example-v1"),
         configuration_identity=ArtifactId("daily-config-example-v1"),
         market_context_identity=ArtifactId("market-context-unavailable-v1"),
         etf_snapshot_identity=ArtifactId("etf-snapshot-unavailable-v1"),
         theme_snapshot_identity=ArtifactId("theme-snapshot-unavailable-v1"),
         holdings_identity=ArtifactId("manual-holdings-empty-v1"),
-        source_artifacts=(
-            DecisionSourceArtifact(
-                artifact_id=ArtifactId("source-example-v1"),
-                provider_id=ProviderId("AUXILIARY_EXAMPLE"),
-                content_hash="sha256:" + "1" * 64,
-                observed_at=AsOfTime(observed_at),
-                available_at=AvailabilityTime(available_at),
-                data_authority=authority,
-            ),
-        ),
+        source_artifacts=sources,
         data_authority=authority,
         created_at=AsOfTime(created_at or DECISION + timedelta(minutes=1)),
     )
@@ -85,8 +108,8 @@ def make_recommendation(
         candidate_rank=rank,
         candidate_score=score,
         score_components=(
-            ScoreComponent("individual_strength", 0.8),
-            ScoreComponent("risk_penalty", -0.05),
+            ScoreComponent(ArtifactId("feature-individual-strength-example-v1"), score + 0.05),
+            ScoreComponent(ArtifactId("feature-risk-penalty-example-v1"), -0.05),
         ),
         industry="bank-v1",
         themes=("large-cap-bank-v1",),

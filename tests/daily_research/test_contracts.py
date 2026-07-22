@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 
 import pytest
@@ -9,6 +9,7 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.daily_research.contracts import (
     CandidateRecommendation,
     DailyDataAuthority,
+    DecisionDataQuality,
     EntryAssessment,
     EntryState,
     ScoreComponent,
@@ -41,6 +42,24 @@ def test_snapshot_rejects_wrong_local_decision_date() -> None:
         type(snapshot).from_canonical_dict(payload)
 
 
+def test_snapshot_rejects_naive_decision_timestamp() -> None:
+    snapshot = make_snapshot()
+    payload = snapshot.to_canonical_dict()
+    payload["decision_time"] = "2026-07-23T14:55:00"
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        type(snapshot).from_canonical_dict(payload)
+
+
+def test_snapshot_rejects_wrong_timezone_contract() -> None:
+    snapshot = make_snapshot()
+    payload = snapshot.to_canonical_dict()
+    payload["timezone"] = "UTC"
+
+    with pytest.raises(ValueError, match="Asia/Shanghai"):
+        type(snapshot).from_canonical_dict(payload)
+
+
 def test_daily_contracts_are_immutable() -> None:
     snapshot = make_snapshot()
     recommendation = make_recommendation(snapshot)
@@ -66,8 +85,8 @@ def test_candidate_recommendation_rejects_duplicate_component_names() -> None:
     payload = {
         **valid.semantic_payload(),
         "score_components": (
-            ScoreComponent("same", 0.1),
-            ScoreComponent("same", 0.2),
+            ScoreComponent(ArtifactId("feature-same-v1"), 0.1),
+            ScoreComponent(ArtifactId("feature-same-v1"), 0.2),
         ),
     }
 
@@ -104,7 +123,7 @@ def test_authority_enum_has_no_formal_research_value() -> None:
 
 
 def test_score_is_not_renamed_probability() -> None:
-    component = ScoreComponent("rank_score", 0.8)
+    component = ScoreComponent(ArtifactId("rank-score-v1"), 0.8)
     assert component.value == 0.8
     assert not hasattr(component, "probability")
 
@@ -117,3 +136,70 @@ def test_identity_fields_cannot_be_caller_overridden() -> None:
             **recommendation.semantic_payload(),
             recommendation_id=ArtifactId("caller-selected"),  # type: ignore[call-arg]
         )
+
+
+def test_snapshot_requires_temporal_lineage_for_every_upstream_identity() -> None:
+    snapshot = make_snapshot()
+
+    with pytest.raises(ValueError, match="upstream identities must have source Artifact lineage"):
+        replace(snapshot, market_context_identity=ArtifactId("unlinked-market-context-v1"))
+
+
+def test_candidate_requires_explicit_missing_mapping_quality_and_reasons() -> None:
+    snapshot = make_snapshot()
+    base = make_recommendation(snapshot)
+
+    with pytest.raises(ValueError, match="missing industry mapping"):
+        CandidateRecommendation(
+            **{
+                **base.semantic_payload(),
+                "industry": None,
+                "data_quality": DecisionDataQuality.COMPLETE,
+                "risk_reasons": (),
+            }
+        )
+
+
+def test_candidate_score_equals_identified_component_contributions() -> None:
+    snapshot = make_snapshot()
+    base = make_recommendation(snapshot)
+
+    with pytest.raises(ValueError, match="component contributions"):
+        CandidateRecommendation(**{**base.semantic_payload(), "candidate_score": 0.9})
+
+
+def test_entry_integer_numerics_round_trip_canonically() -> None:
+    snapshot = make_snapshot()
+    recommendation = make_recommendation(snapshot)
+    base = make_entry(snapshot, recommendation)
+    assessment = EntryAssessment(
+        **{
+            **base.semantic_payload(),
+            "reference_price": 10,
+            "maximum_acceptable_price": 11,
+            "invalidation_price": 9,
+            "expected_mfe": 1,
+            "expected_mae": -1,
+            "risk_reward_estimate": 2,
+            "uncertainty": 1,
+        }
+    )
+
+    assert EntryAssessment.from_canonical_dict(assessment.to_canonical_dict()) == assessment
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"reference_price": 10.3}, "maximum acceptable"),
+        ({"maximum_acceptable_price": 10.0}, "preferred zone"),
+        ({"invalidation_price": 10.0}, "invalidation price"),
+    ],
+)
+def test_enter_price_relationships_fail_closed(changes: dict[str, float], message: str) -> None:
+    snapshot = make_snapshot()
+    recommendation = make_recommendation(snapshot)
+    base = make_entry(snapshot, recommendation)
+
+    with pytest.raises(ValueError, match=message):
+        EntryAssessment(**{**base.semantic_payload(), **changes})

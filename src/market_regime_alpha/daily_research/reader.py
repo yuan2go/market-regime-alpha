@@ -17,14 +17,14 @@ from market_regime_alpha.daily_research.artifacts import (
     implementation_module_hashes,
     read_json_array,
     read_json_object,
-    render_daily_quant_decision_report,
-    validate_daily_decision_aggregate,
 )
 from market_regime_alpha.daily_research.contracts import (
     CandidateRecommendation,
     DailyResearchSnapshot,
     EntryAssessment,
 )
+from market_regime_alpha.daily_research.policy import validate_daily_decision_aggregate
+from market_regime_alpha.daily_research.report import render_daily_quant_decision_report
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +71,8 @@ def load_verified_daily_quant_decision_artifact(path: str | Path) -> VerifiedDai
         recommendations=recommendations,
         entry_assessments=entries,
     )
+    if recommendations != ordered_recommendations or entries != ordered_entries:
+        raise ValueError("daily decision records are not stored in canonical order")
     expected_manifest = build_daily_quant_decision_manifest(
         snapshot=snapshot,
         recommendations=ordered_recommendations,
@@ -124,9 +126,12 @@ def _entries(root: Path) -> tuple[EntryAssessment, ...]:
 def _verify_files(root: Path) -> None:
     if not root.is_dir():
         raise ValueError("daily decision Artifact is missing")
-    actual = {item.name for item in root.iterdir() if item.is_file()}
+    entries = tuple(root.iterdir())
+    actual = {item.name for item in entries}
     if actual != set(DAILY_QUANT_DECISION_FILES):
         raise ValueError("daily decision exact file set mismatch")
+    if any(not item.is_file() for item in entries):
+        raise ValueError("daily decision exact file set contains a non-file entry")
     checksums = read_json_object(root / "SHA256SUMS.json")
     expected_files = set(DAILY_QUANT_DECISION_FILES) - {"SHA256SUMS.json"}
     if set(checksums) != expected_files:

@@ -48,7 +48,8 @@ SHA256SUMS.json
 ```
 
 The directory name equals a content-derived `artifact_id` that binds the `snapshot_id`, snapshot
-content hash, every Recommendation and Entry Assessment identity, Authority, and the exact
+content hash, complete serialized snapshot record (including creation provenance), every
+Recommendation and Entry Assessment identity, Authority, and the exact
 implementation identity. `snapshot_id` remains the identity of the information state rather than
 being overloaded as the package identity. Publication uses an owned staging directory and one
 rename. Existing final or staging paths fail closed; files are never overwritten.
@@ -66,9 +67,10 @@ AUXILIARY
 TEST_ONLY_NOT_RESEARCH_EVIDENCE
 ```
 
-The resulting authority is always `NOT_FORMAL_OOS`. `EXPLORATORY` and `AUXILIARY` are daily research
-inputs, not a workaround for the blocked qualified Xuntou route. Test-only evidence receives an
-identity prefix and authority that cannot be confused with a research snapshot.
+`EXPLORATORY` and `AUXILIARY` inputs produce `NOT_FORMAL_OOS` evidence. They are not a workaround for
+the blocked qualified Xuntou route. Test-only evidence retains
+`TEST_ONLY_NOT_RESEARCH_EVIDENCE` as both its data and evidence classification and receives a
+separate identity prefix; it never becomes research evidence.
 
 ## 4. Common identity rules
 
@@ -77,8 +79,9 @@ identity prefix and authority that cannot be confused with a research snapshot.
 - Domain IDs derive from the canonical semantic payload, never from `created_at`, output path, or
   caller-supplied random values.
 - `created_at` is operational provenance and must be timezone-aware and no earlier than Decision Time.
-- Semantic identity excludes `created_at`; rerunning identical evidence produces the same ID and the
-  non-overwrite rule prevents a second publication at that identity.
+- Snapshot semantic identity excludes `created_at`; rerunning identical evidence produces the same
+  `snapshot_id`. The package `artifact_id` separately binds the complete serialized snapshot record,
+  so different creation provenance cannot reuse the same package identity.
 - Every source evidence item has an exact content hash, `observed_at`, and `available_at`.
 - `observed_at <= decision_time` and `available_at <= decision_time` are mandatory. Retrieval time is
   not a substitute for availability.
@@ -96,6 +99,7 @@ timezone
 universe_identity
 market_data_identity
 feature_registry_identity
+registered_component_identities
 model_identity
 configuration_identity
 market_context_identity
@@ -127,6 +131,14 @@ data_authority
 ```
 
 - Duplicate source artifact IDs are invalid.
+- `registered_component_identities` is a non-empty, sorted, unique projection of the Feature
+  Registry for components permitted in this Snapshot; each projected identity also has its own
+  source Artifact lineage.
+- Every Universe, market-data, Feature Registry, registered component, Candidate model,
+  configuration, Market Context, ETF, Theme, holdings, Candidate Target, Entry model, and Entry
+  configuration identity must equal one `source_artifacts[].artifact_id`. This closes temporal
+  lineage for derived and explicitly unavailable upstream states; an unrelated timely source cannot
+  authorize an unlinked identity.
 - `content_hash` hashes the snapshot payload excluding `snapshot_id`, `content_hash`, and
   `created_at`; `snapshot_id` derives from that hash.
 
@@ -160,9 +172,13 @@ content_hash
 Rules:
 
 - V1 instrument types are `A_SHARE_STOCK` and `ETF`; they are never ranked together by this Artifact.
-- Rank is positive. Within an instrument type, ranks are unique and contiguous from one.
+- Rank is positive. Within an instrument type, ranks are unique, contiguous from one, and must equal
+  descending `candidate_score` order with symbol as the deterministic tie breaker.
 - Candidate score and component values are finite model/rank scores, never probabilities.
-- `score_components` is a sorted, non-empty tuple of named finite components. Names are unique.
+- `score_components` is a sorted, non-empty tuple of identified finite contributions. Component
+  identities are unique and each references a registered Feature, factor, model output, or
+  explicitly versioned constant through the Snapshot's frozen `registered_component_identities`
+  projection. Their contributions must sum to `candidate_score`.
 - `selection_reasons` and `invalidation_conditions` are non-empty structured reason-code tuples.
 - `themes` and `related_etfs` are sorted and unique; missing mapping is explicit in `data_quality` or
   risk reasons, never silently interpreted as no theme.
@@ -216,7 +232,10 @@ Rules:
   `null`; no neutral or zero default is introduced.
 - `ENTER` requires no blocking reasons, a positive reference price, a preferred price zone, maximum
   acceptable price, invalidation price, and at least one Entry reason.
+- For `ENTER`, reference price is inside the preferred zone and no higher than maximum acceptable
+  price; maximum acceptable price covers the full preferred zone; invalidation is below reference.
 - `REJECT` requires at least one blocking reason.
+- A Recommendation with `data_quality=INSUFFICIENT` can only receive `REJECT`.
 - Entry fields cannot change Candidate rank, score, components, reasons, target, or model identity.
 - `entry_assessment_id` and `content_hash` derive from every semantic field except those two identity
   fields.
@@ -250,7 +269,7 @@ The Publisher:
 2. requires every recommendation and Entry Assessment to reference the root snapshot;
 3. sorts records deterministically;
 4. enforces one Entry Assessment per recommendation in V1;
-5. derives the exact `snapshot_id` rather than accepting a caller-selected run ID;
+5. derives the exact package `artifact_id` rather than accepting a caller-selected run ID;
 6. writes the exact staged file set, hashes it, and atomically renames it;
 7. refuses existing final or staging paths;
 8. emits a deterministic Markdown report that contains Authority, identities, Candidate evidence,
@@ -279,7 +298,13 @@ identity fields, record ordering, extra files, or missing files must fail verifi
 The code-owned module set is exact:
 
 ```text
+_contract_support.py
 contracts.py
+snapshot.py
+recommendation.py
+entry.py
+policy.py
+report.py
 artifacts.py
 reader.py
 ```
@@ -299,8 +324,11 @@ V1 tests must prove:
   identity verification;
 - arbitrary contiguous but wrong ranks fail Reader reconstruction rules;
 - Entry references cannot cross snapshots or refer to missing recommendations;
+- Candidate Target, score-component, Entry model, and Entry configuration identities cannot bypass
+  the Snapshot's source/registry lineage;
 - no missing Candidate is replaced by a lower-ranked fallback;
-- test fixtures retain `TEST_ONLY_NOT_RESEARCH_EVIDENCE` and `NOT_FORMAL_OOS`;
+- test fixtures retain `TEST_ONLY_NOT_RESEARCH_EVIDENCE` and never receive `NOT_FORMAL_OOS` research
+  evidence classification;
 - the report is reconstructible from verified structured evidence.
 
 ## 13. Explicit non-goals

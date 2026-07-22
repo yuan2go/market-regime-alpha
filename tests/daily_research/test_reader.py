@@ -88,6 +88,34 @@ def test_reader_rejects_extra_file_even_with_valid_payloads(published_artifact) 
         load_verified_daily_quant_decision_artifact(published_artifact)
 
 
+def test_reader_rejects_extra_directory(published_artifact) -> None:
+    (published_artifact / "unowned").mkdir()
+
+    with pytest.raises(ValueError, match="exact file set"):
+        load_verified_daily_quant_decision_artifact(published_artifact)
+
+
+def test_reader_rejects_noncanonical_record_order(tmp_path) -> None:
+    from market_regime_alpha.daily_research.artifacts import publish_daily_quant_decision_artifact
+
+    from .conftest import make_entry, make_recommendation, make_snapshot
+
+    snapshot = make_snapshot()
+    first = make_recommendation(snapshot, symbol="600001.SH", rank=1, score=0.75)
+    second = make_recommendation(snapshot, symbol="600002.SH", rank=2, score=0.5)
+    artifact = publish_daily_quant_decision_artifact(
+        root=tmp_path,
+        snapshot=snapshot,
+        recommendations=(first, second),
+        entry_assessments=(make_entry(snapshot, first), make_entry(snapshot, second)),
+    )
+    payload = json.loads((artifact / "candidate_recommendations.json").read_text())
+    _rewrite_json(artifact, "candidate_recommendations.json", list(reversed(payload)))
+
+    with pytest.raises(ValueError, match="canonical order"):
+        load_verified_daily_quant_decision_artifact(artifact)
+
+
 def test_reader_rejects_contiguous_but_semantically_altered_ranking(published_artifact) -> None:
     payload = json.loads((published_artifact / "candidate_recommendations.json").read_text())
     payload[0]["candidate_rank"] = 1
