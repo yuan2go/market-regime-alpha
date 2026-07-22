@@ -13,6 +13,11 @@ largest and top-three absolute contribution shares, four deterministic seed pane
 robustness. These diagnostics are predeclared and cannot be used to select a favorable time slice,
 seed panel, or cost assumption.
 
+The immutable summary also reports monthly and quarterly descriptive slices, population-size
+slices, Feature completeness, Top-5 overlap turnover, and liquidity slices when qualified liquidity
+evidence is persisted. An unavailable liquidity or path diagnostic is reported explicitly and does
+not change the Primary assessment.
+
 Allowed formal states are:
 
 ```text
@@ -25,4 +30,3 @@ PARTITION_SPEC_REQUIRED
 ```
 
 None establishes Formal OOS Alpha, a model winner, production readiness, or trading authority.
-

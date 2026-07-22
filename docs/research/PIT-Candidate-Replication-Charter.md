@@ -67,17 +67,19 @@ The Candidate Population is:
 ```text
 Historical PIT Universe membership
 INTERSECT
-exact-Decision-Time ELIGIBLE and explicitly BUYABLE instruments
+Eligibility status == ELIGIBLE
+INTERSECT
+exact-Decision-Time ResearchOrderabilityStatus == RESEARCH_ORDERABLE
 ```
 
-Missing listing date, ST, suspension, liquidity, availability/finality, or buyability evidence is
-fail-closed. `UNKNOWN` is never treated as `ELIGIBLE` or `BUYABLE`.
+Missing listing date, ST, suspension, liquidity, availability/finality, or orderability evidence is
+fail-closed. `UNKNOWN` is never treated as `ELIGIBLE` or `RESEARCH_ORDERABLE`.
 
 ## Quality and minimum evidence
 
 The protocol requires at least 250 Decision Dates, average population size 100, and symbol coverage
 0.95. Quality evidence must retain provider retrieval and availability times, bar finality, calendar
-and Universe identities, membership source, listing/ST/suspension/liquidity/buyability evidence,
+and Universe identities, membership source, listing/ST/suspension/liquidity/orderability evidence,
 Target availability, and Decision-Time cutoff.
 
 ## Current execution state
@@ -98,7 +100,7 @@ change this frozen replication.
 
 Allowed future result states are `PIT_REPLICATION_SUPPORTED_REHEARSAL`,
 `PIT_REPLICATION_NOT_SUPPORTED`, `INSUFFICIENT_PIT_EVIDENCE`, and
-`BLOCKED_EXTERNAL_PROVIDER_INPUT`.
+`INVALID_PIT_EVIDENCE`, `BLOCKED_EXTERNAL_PROVIDER_INPUT`, and `PARTITION_SPEC_REQUIRED`.
 
 ```text
 FORMAL OOS ALPHA NOT ESTABLISHED
