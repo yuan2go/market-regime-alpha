@@ -1,9 +1,9 @@
 # Daily Quant Decision Artifact Specification V1
 
-> **Schema:** `daily-quant-decision-artifact-v1`  
-> **Work package:** `WP-DQS-1`  
-> **Status:** approved implementation specification  
-> **Authority ceiling:** `AUXILIARY_NOT_FORMAL_OOS`  
+> **Schema:** `daily-quant-decision-artifact-v1`
+> **Work package:** `WP-DQS-1`
+> **Status:** approved implementation specification
+> **Authority ceiling:** `AUXILIARY_NOT_FORMAL_OOS`
 > **Decision owner:** human; no order or broker authority
 
 ## 1. Purpose and boundary

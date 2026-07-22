@@ -1,9 +1,9 @@
 # Daily Quant Selection Current-State Audit
 
-> **Audit date:** 2026-07-23  
-> **Audited revision:** `96e41a12d86b3b5f7472c2d4e44011736b087b6b`  
-> **Work package:** `WP-DQS-0`  
-> **Scope:** code, tests, scripts, tracked research artifacts, data layout, and current authority documents  
+> **Audit date:** 2026-07-23
+> **Audited revision:** `96e41a12d86b3b5f7472c2d4e44011736b087b6b`
+> **Work package:** `WP-DQS-0`
+> **Scope:** code, tests, scripts, tracked research artifacts, data layout, and current authority documents
 > **Authority:** engineering audit; no Alpha, model-promotion, or trading authority
 
 ## 1. Executive finding
