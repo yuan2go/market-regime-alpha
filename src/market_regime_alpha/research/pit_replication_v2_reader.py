@@ -13,16 +13,21 @@ from market_regime_alpha.research.pit_replication_preflight import PITReplicatio
 from market_regime_alpha.research.pit_replication_v2_artifacts import (
     PIT_REPLICATION_V2_IMPLEMENTATION_MODULES,
     PIT_REPLICATION_V2_LIMITATIONS,
+    PIT_REPLICATION_V2_MANIFEST_FIELDS,
     PITReplicationRunIdentityV2,
 )
 from market_regime_alpha.research.pit_replication_v2_protocol import (
     PITCandidateReplicationProtocolV2,
     frozen_pit_replication_v2_protocol,
 )
+from market_regime_alpha.research.pit_replication_v2_preflight import (
+    parse_pit_replication_v2_preflight,
+)
 from market_regime_alpha.research.prr_artifact_schemas import (
     ArtifactSchema,
     PIT_REPLICATION_BLOCKED_V2_SCHEMA,
     PIT_REPLICATION_INVALID_V2_SCHEMA,
+    canonical_identity_hash,
 )
 
 
@@ -43,14 +48,21 @@ def load_verified_pit_replication_v2(path: Path) -> VerifiedPITReplicationRunV2:
     manifest = _read_object(root / "manifest.json")
     schema = _schema(str(manifest.get("schema_version", "")))
     _verify_files(root, schema)
-    if schema.required_manifest_keys - manifest.keys():
-        raise ValueError("PIT replication v2 manifest fields are missing")
+    if set(manifest) != PIT_REPLICATION_V2_MANIFEST_FIELDS:
+        raise ValueError("PIT replication v2 manifest fields mismatch")
     if manifest.get("required_artifacts") != sorted(schema.required_files):
         raise ValueError("PIT replication v2 required file set mismatch")
     identity = PITReplicationRunIdentityV2.from_canonical_dict(_mapping(manifest.get("run_identity")))
     run_id = str(manifest.get("run_id", ""))
     if identity.run_id() != run_id or root.name != run_id:
         raise ValueError("PIT replication v2 Run ID mismatch")
+    expected_manifest_authority = {
+        "data_eligibility": "UNQUALIFIED",
+        "authority": "NO_RESEARCH_RESULT",
+        "provider": "XUNTOU",
+    }
+    if any(manifest.get(key) != value for key, value in expected_manifest_authority.items()):
+        raise ValueError("PIT replication v2 manifest authority mismatch")
     module_root = Path(__file__).resolve().parent
     expected_hashes = {
         name: _content_hash(module_root / name) for name in PIT_REPLICATION_V2_IMPLEMENTATION_MODULES
@@ -68,6 +80,11 @@ def load_verified_pit_replication_v2(path: Path) -> VerifiedPITReplicationRunV2:
     if protocol_id != protocol.protocol_id or identity.protocol_id != protocol.protocol_id:
         raise ValueError("PIT replication v2 Protocol identity mismatch")
     preflight = _read_object(root / "preflight.json")
+    parsed_preflight = parse_pit_replication_v2_preflight(preflight)
+    if parsed_preflight.to_public_dict() != preflight:
+        raise ValueError("PIT replication v2 preflight is not canonical")
+    if canonical_identity_hash(preflight) != identity.provider_preflight_hash:
+        raise ValueError("PIT replication v2 preflight identity mismatch")
     if preflight.get("schema_version") != identity.provider_preflight_schema:
         raise ValueError("PIT replication v2 preflight identity mismatch")
     if preflight.get("status") != identity.provider_input_status:

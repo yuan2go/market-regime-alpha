@@ -24,7 +24,10 @@ from market_regime_alpha.research.mr2b_f2b_v3_artifacts import (
 )
 from market_regime_alpha.research.mr2b_f2b_v3_protocol import F2BProtocolV3, frozen_f2b_v3_protocol
 from market_regime_alpha.research.prr_artifact_reader import VerifiedMR1Run, VerifiedPRRDataset
-from market_regime_alpha.research.prr_artifact_schemas import MR2B_F2B_V3_RUN_SCHEMA
+from market_regime_alpha.research.prr_artifact_schemas import (
+    MR2B_F2B_V3_RUN_SCHEMA,
+    canonical_identity_hash,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,8 +102,16 @@ def load_verified_f2b_v3_run(
         if not _canonical_equal(actual_json[label], expected_json[label]):
             raise ValueError(f"F2B v3 {label} is not reconstructible")
     semantic_diff = _json(root / "v2_vs_v3_semantic_diff.json")
+    v2_projection = semantic_diff.get("v2")
+    if not isinstance(v2_projection, Mapping):
+        raise ValueError("F2B v3 v2 reference projection is missing")
+    if (
+        canonical_identity_hash(dict(v2_projection))
+        != identity.f2b_v2_semantic_projection_hash
+    ):
+        raise ValueError("F2B v3 v2 reference projection mismatch")
     expected_diff = build_v2_v3_semantic_diff(
-        v2_projection=semantic_diff.get("v2") if isinstance(semantic_diff.get("v2"), Mapping) else None,
+        v2_projection=v2_projection,
         v3_projection=f2b_v3_semantic_projection(expected),
     )
     if not _canonical_equal(semantic_diff, expected_diff):
