@@ -25,10 +25,13 @@ from market_regime_alpha.research.pit_replication_success_v2 import (
 from market_regime_alpha.research.pit_replication_success_v2_artifacts import (
     PIT_SUCCESS_V2_IMPLEMENTATION_MODULES,
     PIT_SUCCESS_V2_LIMITATIONS,
+    PIT_SUCCESS_V2_MANIFEST_FIELDS,
     PITReplicationSuccessIdentityV2,
     _chronological,
     _data_quality,
     _row_counts,
+    build_input_evidence_hashes,
+    success_reader_implementation_identity,
 )
 from market_regime_alpha.research.pit_replication_success_v2_features import (
     feature_set_payload,
@@ -41,6 +44,12 @@ from market_regime_alpha.research.mr1_research_runner import mr1_cost_scenarios
 from market_regime_alpha.research.prr_artifact_schemas import (
     PIT_REPLICATION_SUCCESS_V2_SCHEMA,
     canonical_identity_hash,
+)
+from market_regime_alpha.research.xuntou_pit_v4_qualification import (
+    PITEvidenceQualification,
+)
+from market_regime_alpha.research.xuntou_pit_v4_contract import (
+    QUALIFIED_PIT_MARKET_ARTIFACT_SCHEMA_VERSION,
 )
 
 
@@ -66,6 +75,8 @@ def load_verified_pit_replication_success_v2(
         raise ValueError("PIT success v2 schema mismatch")
     if manifest.get("required_artifacts") != sorted(PIT_REPLICATION_SUCCESS_V2_SCHEMA.required_files):
         raise ValueError("PIT success v2 required file set mismatch")
+    if set(manifest) != PIT_SUCCESS_V2_MANIFEST_FIELDS:
+        raise ValueError("PIT success v2 manifest fields mismatch")
     identity = PITReplicationSuccessIdentityV2.from_canonical_dict(_mapping(manifest.get("run_identity")))
     run_id = str(manifest.get("run_id", ""))
     if identity.run_id() != run_id or root.name != run_id:
@@ -87,12 +98,20 @@ def load_verified_pit_replication_success_v2(
     specification = _specification(_object(root / "partition_specification.json"))
     seal = _seal(_object(root / "partition_seal.json"))
     receipt = _receipt(_object(root / "partition_open_receipt.json"))
-    if receipt.run_id != run_id or seal.partition_content_hash != receipt.partition_hash:
+    if (
+        receipt.run_id != run_id
+        or receipt.partition_id != seal.partition_id
+        or seal.partition_content_hash != receipt.partition_hash
+        or receipt.reader_implementation_identity != success_reader_implementation_identity()
+        or receipt.opened_at < seal.sealed_at
+    ):
         raise ValueError("PIT success v2 partition open receipt mismatch")
     if manifest.get("partition_id") != specification.partition_id:
         raise ValueError("PIT success v2 partition identity mismatch")
     _verify_seal(specification, seal)
     source = _object(root / "source_artifacts.json")
+    if set(source) != {"provider_artifact_id", "source_hashes", "source_content_hash"}:
+        raise ValueError("PIT success v2 source Artifact fields mismatch")
     qualification = _object(root / "pit_qualification.json")
     amount = _object(root / "amount_unit_contract.json")
     if _object(root / "provider_selection.json") != {
@@ -120,6 +139,7 @@ def load_verified_pit_replication_success_v2(
     inputs = PITReplicationSuccessInputs(
         provider_artifact_id=str(source["provider_artifact_id"]),
         provider_source_hashes=tuple(str(value) for value in source["source_hashes"]),
+        provider_source_content_hash=str(source["source_content_hash"]),
         pit_qualification=qualification,
         partition_specification=specification,
         partition_seal=seal,
@@ -134,8 +154,30 @@ def load_verified_pit_replication_success_v2(
         path_rows=_rows(root / "path_diagnostics.parquet"),
         test_only=identity.test_only,
     )
-    if not identity.test_only and qualification.get("pit_correct_for_scope") is not True:
-        raise ValueError("formal PIT success requires qualified evidence")
+    expected_manifest_authority = {
+        "data_eligibility": (
+            "TEST_ONLY_NOT_RESEARCH_EVIDENCE"
+            if identity.test_only
+            else "CONTROLLED_REPLICATION_INPUT"
+        ),
+        "authority": protocol.authority_ceiling,
+        "provider": "XUNTOU",
+    }
+    if any(manifest.get(key) != value for key, value in expected_manifest_authority.items()):
+        raise ValueError("PIT success v2 manifest authority mismatch")
+    if not identity.test_only:
+        parsed_qualification = _parse_formal_qualification(qualification)
+        expected_provider_artifact_id = canonical_identity_hash(
+            {
+                "schema_version": QUALIFIED_PIT_MARKET_ARTIFACT_SCHEMA_VERSION,
+                "source_content_hash": inputs.provider_source_content_hash,
+                "qualification_id": parsed_qualification.qualification_id,
+            }
+        )
+        if inputs.provider_artifact_id != expected_provider_artifact_id:
+            raise ValueError("PIT success v2 provider Artifact is not reconstructible")
+    if dict(identity.input_evidence_hashes) != build_input_evidence_hashes(inputs):
+        raise ValueError("PIT success v2 input evidence identity mismatch")
     expected = build_pit_replication_success_results(inputs, protocol=protocol)
     _assert_rows(root / "candidate_model_scores.parquet", expected.model_score_rows, ("decision_date", "symbol"))
     _assert_rows(root / "candidate_rankings.parquet", expected.ranking_rows, ("decision_date", "symbol"))
@@ -162,6 +204,8 @@ def load_verified_pit_replication_success_v2(
         raise ValueError("PIT success v2 limitations mismatch")
     if identity.provider_artifact_id != inputs.provider_artifact_id:
         raise ValueError("PIT success v2 provider identity mismatch")
+    if identity.provider_source_content_hash != inputs.provider_source_content_hash:
+        raise ValueError("PIT success v2 provider source identity mismatch")
     if identity.partition_hash != seal.partition_content_hash:
         raise ValueError("PIT success v2 partition identity mismatch")
     return VerifiedPITReplicationSuccessV2(
@@ -189,6 +233,13 @@ def _amount_contract_qualified(payload: Mapping[str, Any]) -> bool:
 
 
 def _verify_seal(specification: ValidationPartitionSpecification, seal: PartitionSealArtifact) -> None:
+    if (
+        seal.partition_id != specification.partition_id
+        or seal.protocol_id != specification.protocol_id
+        or seal.model_spec_hash != specification.model_spec_hash
+        or seal.first_opened_at is not None
+    ):
+        raise ValueError("PIT success v2 partition seal binding mismatch")
     payload = {
         "schema_version": "pit-validation-partition-seal-v1",
         "partition_id": specification.partition_id,
@@ -203,6 +254,37 @@ def _verify_seal(specification: ValidationPartitionSpecification, seal: Partitio
     }
     if seal.specification_hash != specification.specification_hash or seal.partition_content_hash != canonical_identity_hash(payload):
         raise ValueError("PIT success v2 partition seal is not reconstructible")
+
+
+def _parse_formal_qualification(payload: Mapping[str, Any]) -> PITEvidenceQualification:
+    values = dict(payload)
+    qualification_id = values.pop("qualification_id", None)
+    if set(values) != set(PITEvidenceQualification.__dataclass_fields__):
+        raise ValueError("formal PIT qualification fields mismatch")
+    reasons = values.get("reasons")
+    if not isinstance(reasons, list):
+        raise ValueError("formal PIT qualification reasons are invalid")
+    values["reasons"] = tuple(str(reason) for reason in reasons)
+    qualification = PITEvidenceQualification(**values)
+    required = (
+        qualification.historical_membership_complete,
+        qualification.security_master_complete,
+        qualification.st_history_complete,
+        qualification.suspension_history_complete,
+        qualification.orderability_complete,
+        qualification.liquidity_unit_verified,
+        qualification.bar_finality_verified,
+        qualification.availability_verified,
+        qualification.evaluation_path_complete,
+    )
+    if (
+        qualification_id != qualification.qualification_id
+        or qualification.pit_correct_for_scope != all(required)
+        or qualification.reasons
+        or not qualification.pit_correct_for_scope
+    ):
+        raise ValueError("formal PIT success requires evidence-derived qualification")
+    return qualification
 
 
 def _specification(payload: Mapping[str, Any]) -> ValidationPartitionSpecification:

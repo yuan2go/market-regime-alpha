@@ -33,6 +33,7 @@ class XuntouPITV4Preflight:
     provider: str
     required_bundle_schema: str
     bundle_content_hash: str | None
+    source_content_hash: str | None
     qualification: PITEvidenceQualification | None
     provider_artifact_id: str | None
     reasons: tuple[str, ...]
@@ -117,6 +118,9 @@ def preflight_xuntou_pit_v4(bundle: Path | None) -> XuntouPITV4Preflight:
         content_hash,
         qualification,
         validation.reasons,
+        source_content_hash=(
+            validation.source.content_hash if validation.source is not None else None
+        ),
         provider_artifact_id=provider_artifact_id,
     )
 
@@ -127,6 +131,7 @@ def _result(
     qualification: PITEvidenceQualification | None,
     reasons: tuple[str, ...],
     *,
+    source_content_hash: str | None = None,
     provider_artifact_id: str | None = None,
 ) -> XuntouPITV4Preflight:
     return XuntouPITV4Preflight(
@@ -135,6 +140,7 @@ def _result(
         "XUNTOU",
         XUNTOU_PIT_V4_BUNDLE_SCHEMA_VERSION,
         content_hash,
+        source_content_hash,
         qualification,
         provider_artifact_id,
         reasons,

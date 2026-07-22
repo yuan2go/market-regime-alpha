@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date
+import math
 from statistics import median
 from typing import Any, Iterable, Mapping
 
@@ -19,6 +20,7 @@ from market_regime_alpha.research.pit_partition_v2 import (
     ValidationPartitionSpecification,
 )
 from market_regime_alpha.research.pit_replication_success_v2_features import (
+    frozen_b1e_feature_registry,
     reconstruct_b1e_scores,
 )
 from market_regime_alpha.research.pit_replication_success_v2_protocol import (
@@ -41,6 +43,7 @@ Row = Mapping[str, Any]
 class PITReplicationSuccessInputs:
     provider_artifact_id: str
     provider_source_hashes: tuple[str, ...]
+    provider_source_content_hash: str
     pit_qualification: Mapping[str, Any]
     partition_specification: ValidationPartitionSpecification
     partition_seal: PartitionSealArtifact
@@ -81,21 +84,31 @@ def build_pit_replication_success_results(
         raise ValueError("partition seal does not bind the Protocol")
     if inputs.partition_seal.partition_content_hash != inputs.partition_open_receipt.partition_hash:
         raise ValueError("partition open receipt does not bind the seal")
-    _validate_population_lineage(inputs)
+    population_keys = _validate_population_lineage(inputs)
+    _validate_feature_lineage(inputs, population_keys)
     scores, rankings = reconstruct_b1e_scores(inputs.feature_rows, protocol=protocol)
-    population_keys = {
-        (str(row["decision_date"]), str(row["symbol"])) for row in inputs.population_rows
-    }
     eligible_ranking_keys = {
         (str(row["decision_date"]), str(row["symbol"]))
         for row in rankings
         if row["eligible_for_ranking"] is True
     }
-    if eligible_ranking_keys != population_keys:
-        raise ValueError("strict B1-E complete-case ranking must equal the sealed Candidate population")
+    if not eligible_ranking_keys or not eligible_ranking_keys <= population_keys:
+        raise ValueError("B1-E model population must be a non-empty Candidate population subset")
+    model_population_rows = tuple(
+        row
+        for row in inputs.population_rows
+        if (str(row["decision_date"]), str(row["symbol"])) in eligible_ranking_keys
+    )
+    model_sizes: dict[str, int] = defaultdict(int)
+    for decision_date, _ in eligible_ranking_keys:
+        model_sizes[decision_date] += 1
+    if any(value < protocol.top_k for value in model_sizes.values()):
+        raise ValueError("B1-E model population is smaller than frozen Top-K")
     evaluation = _evaluation_index(inputs.evaluation_mark_rows, protocol=protocol)
+    if set(evaluation) != population_keys:
+        raise ValueError("10:30 evaluation evidence must cover the Candidate population exactly")
     selections, matched_returns, daily = _build_comparators(
-        population_rows=inputs.population_rows,
+        population_rows=model_population_rows,
         ranking_rows=rankings,
         evaluation=evaluation,
         protocol=protocol,
@@ -118,11 +131,30 @@ def build_pit_replication_success_results(
     )
 
 
-def _validate_population_lineage(inputs: PITReplicationSuccessInputs) -> None:
+def _validate_population_lineage(
+    inputs: PITReplicationSuccessInputs,
+) -> set[tuple[str, str]]:
     universe = _unique_index(inputs.universe_rows, "Universe")
     eligibility = _unique_index(inputs.eligibility_rows, "Eligibility")
     orderability = _unique_index(inputs.orderability_rows, "Orderability")
-    _unique_index(inputs.population_rows, "Candidate population")
+    population = _unique_index(inputs.population_rows, "Candidate population")
+    if set(universe) != set(eligibility) or set(universe) != set(orderability):
+        raise ValueError("Universe, Eligibility, and Orderability evidence scopes differ")
+    expected_population = {
+        key
+        for key in universe
+        if universe[key].get("is_member") is True
+        and eligibility[key].get("status") == "ELIGIBLE"
+        and orderability[key].get("orderability_status") == "RESEARCH_ORDERABLE"
+    }
+    if set(population) != expected_population:
+        raise ValueError(
+            "Candidate population is not reconstructible from ELIGIBLE and "
+            "RESEARCH_ORDERABLE evidence"
+        )
+    sealed_dates = {value.isoformat() for value in inputs.partition_seal.included_sessions}
+    if {decision_date for decision_date, _ in population} != sealed_dates:
+        raise ValueError("Candidate population does not cover the sealed Decision Dates")
     for row in inputs.population_rows:
         key = (str(row["decision_date"]), str(row["symbol"]))
         if universe.get(key, {}).get("is_member") is not True:
@@ -131,9 +163,57 @@ def _validate_population_lineage(inputs: PITReplicationSuccessInputs) -> None:
             raise ValueError("Candidate population lacks ELIGIBLE evidence")
         if orderability.get(key, {}).get("orderability_status") != "RESEARCH_ORDERABLE":
             raise ValueError("Candidate population lacks RESEARCH_ORDERABLE evidence")
+        expected_lineage = {
+            "universe_row_id": universe[key].get("row_id"),
+            "eligibility_row_id": eligibility[key].get("row_id"),
+            "orderability_evidence_id": orderability[key].get("evidence_id"),
+        }
+        if any(row.get(field) != value for field, value in expected_lineage.items()):
+            raise ValueError("Candidate population lineage identity mismatch")
+        if row.get("dataset_id") != inputs.provider_artifact_id:
+            raise ValueError("Candidate population provider lineage mismatch")
+        decision_times = {
+            row.get("decision_time"),
+            universe[key].get("decision_time"),
+            eligibility[key].get("decision_time"),
+            orderability[key].get("decision_time"),
+        }
+        if None in decision_times or len(decision_times) != 1:
+            raise ValueError("Candidate population Decision-Time lineage mismatch")
         for field in ("universe_row_id", "eligibility_row_id", "orderability_evidence_id", "decision_time"):
             if not row.get(field):
                 raise ValueError(f"Candidate population lineage field is missing: {field}")
+    return set(population)
+
+
+def _validate_feature_lineage(
+    inputs: PITReplicationSuccessInputs,
+    population_keys: set[tuple[str, str]],
+) -> None:
+    required_features = {value.feature_id for value in frozen_b1e_feature_registry()}
+    expected = {
+        (decision_date, symbol, feature_id)
+        for decision_date, symbol in population_keys
+        for feature_id in required_features
+    }
+    actual: set[tuple[str, str, str]] = set()
+    decision_time_by_key = {
+        (str(row["decision_date"]), str(row["symbol"])): str(row["decision_time"])
+        for row in inputs.population_rows
+    }
+    for row in inputs.feature_rows:
+        key = (
+            str(row.get("decision_date")),
+            str(row.get("symbol")),
+            str(row.get("feature_id")),
+        )
+        if key in actual:
+            raise ValueError("duplicate Candidate Feature evidence")
+        actual.add(key)
+        if row.get("decision_time") != decision_time_by_key.get(key[:2]):
+            raise ValueError("Feature evidence Decision-Time lineage mismatch")
+    if actual != expected:
+        raise ValueError("Feature evidence does not exactly cover the Candidate population")
 
 
 def _evaluation_index(
@@ -149,9 +229,17 @@ def _evaluation_index(
             raise ValueError("ranking Target cannot substitute for the 10:30 evaluation mark")
         if row.get("evaluation_time") != protocol.primary_evaluation_time:
             raise ValueError("evaluation endpoint must be exact 10:30")
-        if row.get("mark_status") == "AVAILABLE" and row.get("evaluation_price") is None:
-            raise ValueError("available 10:30 mark requires a price")
-        if row.get("mark_status") != "AVAILABLE" and row.get("fallback_close_price") is not None:
+        reference_price = row.get("reference_price")
+        if not _positive_finite(reference_price):
+            raise ValueError("10:30 evaluation evidence requires a positive reference price")
+        status = row.get("mark_status")
+        if status not in {"AVAILABLE", "UNAVAILABLE"}:
+            raise ValueError("10:30 evaluation mark status is invalid")
+        if status == "AVAILABLE" and not _positive_finite(row.get("evaluation_price")):
+            raise ValueError("available 10:30 mark requires a positive price")
+        if status == "UNAVAILABLE" and row.get("evaluation_price") is not None:
+            raise ValueError("unavailable 10:30 evidence cannot contain a price")
+        if status != "AVAILABLE" and row.get("fallback_close_price") is not None:
             raise ValueError("daily close cannot substitute for missing 10:30 evidence")
         output[key] = row
     return output
@@ -347,6 +435,15 @@ def _unique_index(rows: Iterable[Row], label: str) -> dict[tuple[str, str], Row]
             raise ValueError(f"duplicate {label} row")
         output[key] = row
     return output
+
+
+def _positive_finite(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and float(value) > 0
+    )
 
 
 def assessment_payload(value: PITReplicationAssessment) -> dict[str, Any]:

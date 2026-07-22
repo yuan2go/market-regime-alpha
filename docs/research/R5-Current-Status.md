@@ -43,7 +43,7 @@ F2B v3 run `mr2b-f2b-v3-11899de582c7a5ee0ee6` supersedes v2 as the current
 identity contract while preserving the exact frozen statistical result. Its implementation hash map
 is code-owned and exact; verifier routing is deliberately outside statistical identity. Its verified
 v2 comparison reference and projection are bound into the Run ID. The current PIT v2 blocker is
-`pit-replication-v2-21c5fb99c1dac32565e0`.
+`pit-replication-v2-4985eec50a6c63ecf536`.
 
 The qualified input boundary is now `xuntou-pit-validation-bundle-v4`. V3 remains REHEARSAL and
 cannot pass V4 preflight. The local capability probe reports `EXTERNAL_XTQUANT_RUNTIME_REQUIRED`;
@@ -56,11 +56,15 @@ booleans and provider Artifact IDs have no authority. A quote must be observed a
 14:55 Decision Time; stale or late snapshots remain `UNKNOWN`.
 
 The v2 success application now separates the ranking Target from the exact next-session 10:30
-evaluation mark, seals explicit Validation sessions before model access, persists Feature evidence,
-reconstructs frozen B1-E scores/ranks, reconstructs all 256 same-population matched-K selections,
-and semantically verifies costs and daily lift. The success branch is covered only by
+evaluation mark, durably seals explicit Validation sessions before model access, writes only one
+first-open receipt, persists Feature evidence, reconstructs frozen B1-E scores/ranks and the
+complete-case model population, reconstructs all 256 same-population matched-K selections, and
+semantically verifies provider identity, raw input projections, costs, diagnostics, and daily lift.
+The formal projection has an exact content-addressed contract tied to raw-source and all v4
+evidence-section hashes; arbitrary caller-supplied success inputs are rejected. The success branch
+is covered only by
 `TEST_ONLY_NOT_RESEARCH_EVIDENCE`. The actual formal run remains verified blocker
-`pit-replication-v2-21c5fb99c1dac32565e0`; no partition was specified, sealed, or opened and no
+`pit-replication-v2-4985eec50a6c63ecf536`; no partition was specified, sealed, or opened and no
 replication metrics were produced.
 
 Known historical residues include:
@@ -996,7 +1000,7 @@ v3 identity. The published v2/v3 semantic comparison is `EXACT_MATCH`; the curre
 remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`.
 
 PIT evidence status now has distinct v2 blocked, invalid, and reserved success Schemas. The actual
-missing-input run is `pit-replication-v2-21c5fb99c1dac32565e0` and contains no research result.
+missing-input run is `pit-replication-v2-4985eec50a6c63ecf536` and contains no research result.
 See `docs/research/Research-Artifact-Identity-V3.md`.
 
 The current ordered sequence is:

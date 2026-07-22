@@ -7,7 +7,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from market_regime_alpha.research.pit_replication_preflight import PITReplicationPreflightStatus
 from market_regime_alpha.research.pit_replication_v2_artifacts import (
@@ -30,7 +30,6 @@ from market_regime_alpha.research.prr_artifact_schemas import (
     canonical_identity_hash,
 )
 
-
 @dataclass(frozen=True, slots=True)
 class VerifiedPITReplicationRunV2:
     root: Path
@@ -41,6 +40,45 @@ class VerifiedPITReplicationRunV2:
     protocol: PITCandidateReplicationProtocolV2
     preflight: Mapping[str, Any]
     checksums_hash: str
+
+
+class VerifiedPITReplicationArtifactV2(Protocol):
+    @property
+    def root(self) -> Path: ...
+
+    @property
+    def run_id(self) -> str: ...
+
+    @property
+    def status(self) -> str: ...
+
+    @property
+    def checksums_hash(self) -> str: ...
+
+
+def load_verified_pit_replication_artifact_v2(
+    path: Path,
+) -> VerifiedPITReplicationArtifactV2:
+    """Route blocked, invalid, and success v2 strictly by manifest Schema."""
+
+    manifest = _read_object(path.resolve() / "manifest.json")
+    schema_version = manifest.get("schema_version")
+    if schema_version in {
+        PIT_REPLICATION_BLOCKED_V2_SCHEMA.schema_version,
+        PIT_REPLICATION_INVALID_V2_SCHEMA.schema_version,
+    }:
+        return load_verified_pit_replication_v2(path)
+    from market_regime_alpha.research.pit_replication_success_v2_reader import (
+        load_verified_pit_replication_success_v2,
+    )
+
+    from market_regime_alpha.research.prr_artifact_schemas import (
+        PIT_REPLICATION_SUCCESS_V2_SCHEMA,
+    )
+
+    if schema_version == PIT_REPLICATION_SUCCESS_V2_SCHEMA.schema_version:
+        return load_verified_pit_replication_success_v2(path)
+    raise ValueError(f"unsupported PIT replication v2 schema: {schema_version}")
 
 
 def load_verified_pit_replication_v2(path: Path) -> VerifiedPITReplicationRunV2:

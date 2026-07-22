@@ -17,7 +17,7 @@ from market_regime_alpha.research.pit_replication_success_v2_protocol import (
 def build_test_success_inputs() -> PITReplicationSuccessInputs:
     protocol = frozen_pit_replication_success_v2_protocol(test_only=True)
     dates = (date(2026, 1, 5), date(2026, 1, 6))
-    symbols = tuple(f"00000{index}.SZ" for index in range(1, 6))
+    symbols = tuple(f"00000{index}.SZ" for index in range(1, 7))
     created = datetime(2025, 12, 31, tzinfo=timezone.utc)
     specification = ValidationPartitionSpecification(
         "pit-validation-partition-specification-v1",
@@ -48,7 +48,7 @@ def build_test_success_inputs() -> PITReplicationSuccessInputs:
         specification.partition_id,
         created,
         "PENDING",
-        "pit-success-v2-test-reader",
+        "sha256:" + "2" * 64,
         seal.partition_content_hash,
     )
     universe = []
@@ -63,13 +63,13 @@ def build_test_success_inputs() -> PITReplicationSuccessInputs:
         for symbol_index, symbol in enumerate(symbols):
             key = f"{decision_date.isoformat()}|{symbol}"
             universe.append(
-                {"decision_date": decision_date.isoformat(), "symbol": symbol, "is_member": True, "membership_source": "HISTORICAL_PIT_COMPLETE", "row_id": "u|" + key}
+                {"decision_date": decision_date.isoformat(), "symbol": symbol, "decision_time": decision_time, "is_member": True, "membership_source": "HISTORICAL_PIT_COMPLETE", "row_id": "u|" + key}
             )
             eligibility.append(
-                {"decision_date": decision_date.isoformat(), "symbol": symbol, "status": "ELIGIBLE", "buyability": "RESEARCH_ORDERABLE", "row_id": "e|" + key}
+                {"decision_date": decision_date.isoformat(), "symbol": symbol, "decision_time": decision_time, "status": "ELIGIBLE", "buyability": "RESEARCH_ORDERABLE", "row_id": "e|" + key}
             )
             orderability.append(
-                {"decision_date": decision_date.isoformat(), "symbol": symbol, "orderability_status": "RESEARCH_ORDERABLE", "evidence_id": "o|" + key}
+                {"decision_date": decision_date.isoformat(), "symbol": symbol, "decision_time": decision_time, "orderability_status": "RESEARCH_ORDERABLE", "evidence_id": "o|" + key}
             )
             population.append(
                 {
@@ -111,6 +111,7 @@ def build_test_success_inputs() -> PITReplicationSuccessInputs:
     return PITReplicationSuccessInputs(
         provider_artifact_id="test-provider-artifact",
         provider_source_hashes=("sha256:" + "1" * 64,),
+        provider_source_content_hash="sha256:" + "3" * 64,
         pit_qualification={
             "pit_correct_for_scope": True,
             "evidence_classification": "TEST_ONLY_NOT_RESEARCH_EVIDENCE",
