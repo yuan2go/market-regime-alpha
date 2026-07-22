@@ -47,10 +47,13 @@ report.md
 SHA256SUMS.json
 ```
 
-The directory name equals the content-derived `snapshot_id`. Publication uses an owned staging
-directory and one rename. Existing final or staging paths fail closed; files are never overwritten.
+The directory name equals a content-derived `artifact_id` that binds the `snapshot_id`, snapshot
+content hash, every Recommendation and Entry Assessment identity, Authority, and the exact
+implementation identity. `snapshot_id` remains the identity of the information state rather than
+being overloaded as the package identity. Publication uses an owned staging directory and one
+rename. Existing final or staging paths fail closed; files are never overwritten.
 
-`SHA256SUMS.json` covers every other file. `manifest.json` binds the Schema, snapshot identity,
+`SHA256SUMS.json` covers every other file. `manifest.json` binds the Schema, package and snapshot identities,
 Authority, implementation identity, exact file set, and record counts.
 
 ## 3. Authority
