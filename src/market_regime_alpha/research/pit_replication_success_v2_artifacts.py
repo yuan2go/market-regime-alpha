@@ -7,6 +7,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import shutil
+from statistics import mean, median
 import subprocess
 from typing import Any, Mapping
 
@@ -14,8 +15,12 @@ import pandas as pd
 
 from market_regime_alpha.research.mr1_research_runner import mr1_cost_scenarios
 from market_regime_alpha.research.pit_replication_success_v2 import (
+    PITReplicationSuccessInputs,
     PITReplicationSuccessResults,
     assessment_payload,
+)
+from market_regime_alpha.research.pit_replication_success_v2_protocol import (
+    PITCandidateReplicationProtocolV2,
 )
 from market_regime_alpha.research.pit_replication_success_v2_features import (
     feature_set_payload,
@@ -46,6 +51,32 @@ PIT_SUCCESS_V2_LIMITATIONS = (
     "FEE_ASSUMPTIONS_REQUIRE_CURRENT_VERIFICATION",
     "NO_ENTRY_PORTFOLIO_OR_EXECUTION_AUTHORITY",
 )
+PIT_SUCCESS_V2_MANIFEST_FIELDS = frozenset(
+    {
+        "schema_version",
+        "run_id",
+        "status",
+        "data_eligibility",
+        "authority",
+        "required_artifacts",
+        "run_identity",
+        "protocol_id",
+        "provider",
+        "partition_id",
+        "row_counts",
+    }
+)
+PIT_SUCCESS_V2_INPUT_EVIDENCE_KEYS: tuple[str, ...] = (
+    "pit_qualification",
+    "amount_unit_contract",
+    "universe_snapshots",
+    "eligibility_snapshots",
+    "orderability_snapshots",
+    "candidate_populations",
+    "candidate_feature_evidence",
+    "evaluation_marks",
+    "path_diagnostics",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,20 +84,47 @@ class PITReplicationSuccessIdentityV2:
     protocol_id: str
     provider_artifact_id: str
     provider_source_hashes: tuple[str, ...]
+    provider_source_content_hash: str
     partition_hash: str
     model_spec_hash: str
     cost_model_hash: str
+    input_evidence_hashes: Mapping[str, str]
     git_commit_sha: str
     implementation_module_hashes: Mapping[str, str]
     test_only: bool
 
     def __post_init__(self) -> None:
+        hashes = (
+            self.provider_source_hashes
+            + (
+                self.provider_source_content_hash,
+                self.partition_hash,
+                self.cost_model_hash,
+            )
+        )
+        if any(not value.startswith("sha256:") for value in hashes):
+            raise ValueError("PIT success v2 content identity is invalid")
+        if (
+            len(self.model_spec_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.model_spec_hash)
+        ):
+            raise ValueError("PIT success v2 model specification hash is invalid")
+        if (
+            len(self.git_commit_sha) != 40
+            or any(character not in "0123456789abcdef" for character in self.git_commit_sha)
+        ):
+            raise ValueError("PIT success v2 Git revision is invalid")
         if set(self.implementation_module_hashes) != set(PIT_SUCCESS_V2_IMPLEMENTATION_MODULES):
             raise ValueError("PIT success v2 implementation module set mismatch")
+        if set(self.input_evidence_hashes) != set(PIT_SUCCESS_V2_INPUT_EVIDENCE_KEYS):
+            raise ValueError("PIT success v2 input evidence set mismatch")
+        if any(not value.startswith("sha256:") for value in self.input_evidence_hashes.values()):
+            raise ValueError("PIT success v2 input evidence hash is invalid")
 
     def to_canonical_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["provider_source_hashes"] = list(self.provider_source_hashes)
+        payload["input_evidence_hashes"] = dict(sorted(self.input_evidence_hashes.items()))
         payload["implementation_module_hashes"] = dict(sorted(self.implementation_module_hashes.items()))
         return payload
 
@@ -81,6 +139,10 @@ class PITReplicationSuccessIdentityV2:
             raise ValueError("PIT success v2 identity fields mismatch")
         values = dict(payload)
         values["provider_source_hashes"] = tuple(values["provider_source_hashes"])
+        input_hashes = values["input_evidence_hashes"]
+        if not isinstance(input_hashes, Mapping):
+            raise ValueError("PIT success v2 input evidence hashes are invalid")
+        values["input_evidence_hashes"] = dict(input_hashes)
         hashes = values["implementation_module_hashes"]
         if not isinstance(hashes, Mapping):
             raise ValueError("PIT success v2 implementation hashes are invalid")
@@ -89,18 +151,58 @@ class PITReplicationSuccessIdentityV2:
 
 
 def build_success_identity(results: PITReplicationSuccessResults) -> PITReplicationSuccessIdentityV2:
+    return build_success_identity_from_inputs(results.inputs, protocol=results.protocol)
+
+
+def build_success_identity_from_inputs(
+    inputs: PITReplicationSuccessInputs,
+    *,
+    protocol: PITCandidateReplicationProtocolV2,
+) -> PITReplicationSuccessIdentityV2:
     module_root = Path(__file__).resolve().parent
-    cost_payload = _cost_payload(results)
+    cost_payload = _cost_payload_for_protocol(protocol)
     return PITReplicationSuccessIdentityV2(
-        results.protocol.protocol_id,
-        results.inputs.provider_artifact_id,
-        results.inputs.provider_source_hashes,
-        results.inputs.partition_seal.partition_content_hash,
-        results.protocol.ranking_model_spec_hash,
+        protocol.protocol_id,
+        inputs.provider_artifact_id,
+        inputs.provider_source_hashes,
+        inputs.provider_source_content_hash,
+        inputs.partition_seal.partition_content_hash,
+        protocol.ranking_model_spec_hash,
         canonical_identity_hash(cost_payload),
+        build_input_evidence_hashes(inputs),
         _revision(),
         {name: _hash(module_root / name) for name in PIT_SUCCESS_V2_IMPLEMENTATION_MODULES},
-        results.inputs.test_only,
+        inputs.test_only,
+    )
+
+
+def build_input_evidence_hashes(
+    inputs: PITReplicationSuccessInputs,
+) -> dict[str, str]:
+    payloads: dict[str, object] = {
+        "pit_qualification": dict(inputs.pit_qualification),
+        "amount_unit_contract": dict(inputs.amount_unit_contract),
+        "universe_snapshots": list(inputs.universe_rows),
+        "eligibility_snapshots": list(inputs.eligibility_rows),
+        "orderability_snapshots": list(inputs.orderability_rows),
+        "candidate_populations": list(inputs.population_rows),
+        "candidate_feature_evidence": list(inputs.feature_rows),
+        "evaluation_marks": list(inputs.evaluation_mark_rows),
+        "path_diagnostics": list(inputs.path_rows),
+    }
+    return {
+        key: canonical_identity_hash(_canonical_value(payloads[key]))
+        for key in PIT_SUCCESS_V2_INPUT_EVIDENCE_KEYS
+    }
+
+
+def success_reader_implementation_identity() -> str:
+    module_root = Path(__file__).resolve().parent
+    return canonical_identity_hash(
+        {
+            name: _hash(module_root / name)
+            for name in PIT_SUCCESS_V2_IMPLEMENTATION_MODULES
+        }
     )
 
 
@@ -109,6 +211,16 @@ def publish_pit_replication_success_v2(
 ) -> Path:
     identity = build_success_identity(results)
     run_id = identity.run_id()
+    receipt = results.inputs.partition_open_receipt
+    seal = results.inputs.partition_seal
+    if (
+        receipt.run_id != run_id
+        or receipt.partition_id != seal.partition_id
+        or receipt.partition_hash != seal.partition_content_hash
+        or receipt.reader_implementation_identity != success_reader_implementation_identity()
+        or receipt.opened_at < seal.sealed_at
+    ):
+        raise ValueError("PIT success v2 publisher requires a valid first-open receipt")
     final = output_root / run_id
     stage = output_root / f".{run_id}.staging"
     if final.exists() or stage.exists():
@@ -134,7 +246,14 @@ def publish_pit_replication_success_v2(
         _json(stage / "manifest.json", manifest)
         _json(stage / "protocol.json", {**results.protocol.to_canonical_dict(), "protocol_id": results.protocol.protocol_id})
         _json(stage / "provider_selection.json", {"provider": "XUNTOU", "tencent_fallback_used": False})
-        _json(stage / "source_artifacts.json", {"provider_artifact_id": results.inputs.provider_artifact_id, "source_hashes": list(results.inputs.provider_source_hashes)})
+        _json(
+            stage / "source_artifacts.json",
+            {
+                "provider_artifact_id": results.inputs.provider_artifact_id,
+                "source_hashes": list(results.inputs.provider_source_hashes),
+                "source_content_hash": results.inputs.provider_source_content_hash,
+            },
+        )
         _json(stage / "pit_qualification.json", dict(results.inputs.pit_qualification))
         _json(stage / "partition_specification.json", results.inputs.partition_specification.to_canonical_dict())
         _json(stage / "partition_seal.json", asdict(results.inputs.partition_seal))
@@ -204,8 +323,13 @@ def _data_quality(results: PITReplicationSuccessResults) -> dict[str, Any]:
 
 
 def _chronological(results: PITReplicationSuccessResults) -> dict[str, Any]:
-    values = [float(row["net_lift_vs_multiseed_median"]) for row in results.daily_metric_rows]
+    daily_rows = tuple(
+        sorted(results.daily_metric_rows, key=lambda row: str(row["decision_date"]))
+    )
+    values = [float(row["net_lift_vs_multiseed_median"]) for row in daily_rows]
     split = len(values) // 2
+    population_sizes = [int(row["population_size"]) for row in daily_rows]
+    population_median = median(population_sizes)
     return {
         "schema_version": "pit-chronological-replication-summary-v2",
         "date_count": len(values),
@@ -224,15 +348,191 @@ def _chronological(results: PITReplicationSuccessResults) -> dict[str, Any]:
         "path_status": results.path_status,
         "first_half_date_count": split,
         "second_half_date_count": len(values) - split,
+        "monthly_slices": _temporal_slices(daily_rows, period="month"),
+        "quarterly_slices": _temporal_slices(daily_rows, period="quarter"),
+        "population_size_slices": _population_slices(
+            daily_rows,
+            threshold=population_median,
+        ),
+        "liquidity_slices": _liquidity_slices(results),
+        "feature_completeness": _feature_completeness(results),
+        "turnover": _turnover(results),
+    }
+
+
+def _temporal_slices(
+    rows: tuple[Mapping[str, Any], ...],
+    *,
+    period: str,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[float]] = {}
+    for row in rows:
+        decision_date = str(row["decision_date"])
+        key = (
+            decision_date[:7]
+            if period == "month"
+            else f"{decision_date[:4]}-Q{(int(decision_date[5:7]) - 1) // 3 + 1}"
+        )
+        grouped.setdefault(key, []).append(float(row["net_lift_vs_multiseed_median"]))
+    return [
+        {
+            "period": key,
+            "date_count": len(slice_values),
+            "mean_net_lift": mean(slice_values),
+            "status": (
+                "SUFFICIENT_FOR_DESCRIPTION"
+                if len(slice_values) >= 5
+                else "INSUFFICIENT_SLICE_COUNT"
+            ),
+        }
+        for key, slice_values in sorted(grouped.items())
+    ]
+
+
+def _population_slices(
+    rows: tuple[Mapping[str, Any], ...],
+    *,
+    threshold: float,
+) -> dict[str, Any]:
+    grouped = {
+        "AT_OR_BELOW_MEDIAN": [
+            float(row["net_lift_vs_multiseed_median"])
+            for row in rows
+            if int(row["population_size"]) <= threshold
+        ],
+        "ABOVE_MEDIAN": [
+            float(row["net_lift_vs_multiseed_median"])
+            for row in rows
+            if int(row["population_size"]) > threshold
+        ],
+    }
+    return {
+        "median_population_size": threshold,
+        "slices": [
+            {
+                "label": label,
+                "date_count": len(slice_values),
+                "mean_net_lift": mean(slice_values) if slice_values else None,
+            }
+            for label, slice_values in grouped.items()
+        ],
+    }
+
+
+def _liquidity_slices(results: PITReplicationSuccessResults) -> dict[str, Any]:
+    field = "liquidity_amount"
+    if not results.inputs.population_rows or any(
+        not isinstance(row.get(field), (int, float))
+        for row in results.inputs.population_rows
+    ):
+        return {
+            "status": "UNAVAILABLE",
+            "reason": "CANDIDATE_LIQUIDITY_EVIDENCE_NOT_PERSISTED",
+            "slices": [],
+        }
+    values_by_date: dict[str, list[float]] = {}
+    for row in results.inputs.population_rows:
+        values_by_date.setdefault(str(row["decision_date"]), []).append(float(row[field]))
+    date_liquidity = {
+        decision_date: median(values)
+        for decision_date, values in values_by_date.items()
+    }
+    threshold = median(date_liquidity.values())
+    effect_by_date = {
+        str(row["decision_date"]): float(row["net_lift_vs_multiseed_median"])
+        for row in results.daily_metric_rows
+    }
+    groups = {
+        "AT_OR_BELOW_MEDIAN": [
+            effect_by_date[key]
+            for key, value in date_liquidity.items()
+            if value <= threshold and key in effect_by_date
+        ],
+        "ABOVE_MEDIAN": [
+            effect_by_date[key]
+            for key, value in date_liquidity.items()
+            if value > threshold and key in effect_by_date
+        ],
+    }
+    return {
+        "status": "AVAILABLE_DESCRIPTIVE_ONLY",
+        "median_daily_candidate_liquidity": threshold,
+        "slices": [
+            {
+                "label": label,
+                "date_count": len(slice_values),
+                "mean_net_lift": mean(slice_values) if slice_values else None,
+            }
+            for label, slice_values in groups.items()
+        ],
+    }
+
+
+def _feature_completeness(results: PITReplicationSuccessResults) -> dict[str, Any]:
+    totals: dict[str, int] = {}
+    available: dict[str, int] = {}
+    for row in results.inputs.feature_rows:
+        decision_date = str(row["decision_date"])
+        totals[decision_date] = totals.get(decision_date, 0) + 1
+        if row.get("feature_status") == "AVAILABLE":
+            available[decision_date] = available.get(decision_date, 0) + 1
+    by_date = {
+        key: available.get(key, 0) / value
+        for key, value in sorted(totals.items())
+    }
+    total = sum(totals.values())
+    return {
+        "overall_ratio": sum(available.values()) / total,
+        "by_date": by_date,
+    }
+
+
+def _turnover(results: PITReplicationSuccessResults) -> dict[str, Any]:
+    top_by_date: dict[str, set[str]] = {}
+    for row in results.ranking_rows:
+        rank = row.get("rank")
+        if row.get("eligible_for_ranking") is True and isinstance(rank, int) and rank <= results.protocol.top_k:
+            top_by_date.setdefault(str(row["decision_date"]), set()).add(str(row["symbol"]))
+    previous: set[str] | None = None
+    by_date: dict[str, float | None] = {}
+    observed: list[float] = []
+    for decision_date, symbols in sorted(top_by_date.items()):
+        if previous is None:
+            by_date[decision_date] = None
+        else:
+            value = 1.0 - len(previous & symbols) / results.protocol.top_k
+            by_date[decision_date] = value
+            observed.append(value)
+        previous = symbols
+    return {
+        "definition_id": "top5-one-minus-overlap-v1",
+        "mean": mean(observed) if observed else None,
+        "by_date": by_date,
     }
 
 
 def _cost_payload(results: PITReplicationSuccessResults) -> dict[str, Any]:
+    return _cost_payload_for_protocol(results.protocol)
+
+
+def _cost_payload_for_protocol(
+    protocol: PITCandidateReplicationProtocolV2,
+) -> dict[str, Any]:
     costs = mr1_cost_scenarios()
     return {
         scenario: asdict(costs[scenario])
-        for scenario in results.protocol.cost_robustness_scenarios
+        for scenario in protocol.cost_robustness_scenarios
     }
+
+
+def _canonical_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _canonical_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_value(item) for item in value]
+    if hasattr(value, "tolist"):
+        return _canonical_value(value.tolist())
+    return value
 
 
 def _report(run_id: str, results: PITReplicationSuccessResults) -> str:

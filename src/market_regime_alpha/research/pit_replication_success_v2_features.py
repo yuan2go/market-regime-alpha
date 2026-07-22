@@ -92,17 +92,20 @@ def reconstruct_b1e_scores(
         seen.add(key)
         if feature_id not in required:
             raise ValueError("unknown B1-E Feature evidence")
-        if row.get("feature_status") != "AVAILABLE":
-            continue
+        values = grouped[decision_date][symbol]
         observed_at = datetime.fromisoformat(_text(row, "feature_observed_at"))
         available_at = datetime.fromisoformat(_text(row, "feature_available_at"))
         decision_time = datetime.fromisoformat(_text(row, "decision_time"))
         if observed_at > decision_time or available_at > decision_time:
             raise ValueError("Feature evidence is unavailable at Decision Time")
+        if row.get("feature_status") != "AVAILABLE":
+            if row.get("feature_value") is not None or not row.get("feature_rejection_reason"):
+                raise ValueError("unavailable Feature evidence requires an explicit rejection")
+            continue
         value = row.get("feature_value")
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
             raise ValueError("available Feature value must be finite numeric")
-        grouped[decision_date][symbol][feature_id] = float(value)
+        values[feature_id] = float(value)
 
     spec = r5_b1_fixed_specs()["B1-E"]
     score_rows: list[dict[str, Any]] = []

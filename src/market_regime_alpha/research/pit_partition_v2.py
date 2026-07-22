@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
+from hashlib import sha256
+import json
+from pathlib import Path
+import shutil
 from typing import Any, Iterable
 
 from market_regime_alpha.research.prr_artifact_schemas import canonical_identity_hash
@@ -64,6 +68,14 @@ class PartitionSealArtifact:
     first_opened_at: None
     partition_content_hash: str
 
+    def __post_init__(self) -> None:
+        if self.schema_version != "pit-validation-partition-seal-v1":
+            raise ValueError("partition seal schema mismatch")
+        if self.first_opened_at is not None:
+            raise ValueError("immutable partition seal must remain unopened")
+        if not self.partition_content_hash.startswith("sha256:"):
+            raise ValueError("partition content hash is invalid")
+
 
 @dataclass(frozen=True, slots=True)
 class PartitionOpenReceipt:
@@ -73,6 +85,16 @@ class PartitionOpenReceipt:
     run_id: str
     reader_implementation_identity: str
     partition_hash: str
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "pit-validation-partition-open-receipt-v1":
+            raise ValueError("partition open receipt schema mismatch")
+        if not self.partition_id or not self.run_id:
+            raise ValueError("partition open receipt identity is incomplete")
+        if not self.reader_implementation_identity.startswith("sha256:"):
+            raise ValueError("partition reader implementation identity is invalid")
+        if not self.partition_hash.startswith("sha256:"):
+            raise ValueError("partition open receipt hash is invalid")
 
 
 def seal_validation_partition(
@@ -105,6 +127,10 @@ def seal_validation_partition(
         raise ValueError("Validation partition session cannot be included and excluded")
     if len(included) < specification.minimum_decision_dates:
         raise ValueError("Validation partition has insufficient Decision Dates")
+    if not calendar_identity or not universe_identity or not provider_source_hashes:
+        raise ValueError("Validation partition source identity is incomplete")
+    if any(not value.startswith("sha256:") for value in provider_source_hashes):
+        raise ValueError("Validation partition source hash is invalid")
     payload = {
         "schema_version": "pit-validation-partition-seal-v1",
         "partition_id": specification.partition_id,
@@ -149,3 +175,123 @@ def open_partition(
         reader_implementation_identity,
         seal.partition_content_hash,
     )
+
+
+PARTITION_GOVERNANCE_DIRECTORY = ".pit-validation-partitions"
+
+
+def persist_partition_seal(
+    *,
+    output_root: Path,
+    specification: ValidationPartitionSpecification,
+    seal: PartitionSealArtifact,
+) -> Path:
+    """Persist a seal before model access so a failed run cannot reseal it."""
+
+    _validate_partition_component(specification.partition_id)
+    _verify_seal_binding(specification, seal)
+    parent = output_root / PARTITION_GOVERNANCE_DIRECTORY
+    final = parent / specification.partition_id
+    stage = parent / f".{specification.partition_id}.staging"
+    if final.exists() or stage.exists():
+        raise ValueError("sealed Validation partition cannot be resealed")
+    parent.mkdir(parents=True, exist_ok=True)
+    stage.mkdir()
+    try:
+        specification_path = stage / "partition_specification.json"
+        seal_path = stage / "partition_seal.json"
+        _write_json(specification_path, specification.to_canonical_dict())
+        _write_json(seal_path, asdict(seal))
+        _write_json(
+            stage / "SHA256SUMS.json",
+            {
+                specification_path.name: _content_hash(specification_path),
+                seal_path.name: _content_hash(seal_path),
+            },
+        )
+        stage.rename(final)
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return final
+
+
+def open_persisted_partition(
+    *,
+    output_root: Path,
+    seal: PartitionSealArtifact,
+    opened_at: datetime,
+    run_id: str,
+    reader_implementation_identity: str,
+) -> PartitionOpenReceipt:
+    """Write the sole first-open receipt with exclusive-create semantics."""
+
+    _validate_partition_component(seal.partition_id)
+    root = output_root / PARTITION_GOVERNANCE_DIRECTORY / seal.partition_id
+    _verify_persisted_seal(root, seal)
+    receipt = open_partition(
+        seal,
+        opened_at=opened_at,
+        run_id=run_id,
+        reader_implementation_identity=reader_implementation_identity,
+    )
+    path = root / "partition_open_receipt.json"
+    try:
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(receipt), sort_keys=True, indent=2, default=str))
+            handle.write("\n")
+    except FileExistsError as exc:
+        raise ValueError("Validation partition has already been opened") from exc
+    return receipt
+
+
+def _verify_seal_binding(
+    specification: ValidationPartitionSpecification,
+    seal: PartitionSealArtifact,
+) -> None:
+    if (
+        seal.partition_id != specification.partition_id
+        or seal.specification_hash != specification.specification_hash
+        or seal.protocol_id != specification.protocol_id
+        or seal.model_spec_hash != specification.model_spec_hash
+    ):
+        raise ValueError("Validation partition seal does not bind its specification")
+
+
+def _verify_persisted_seal(root: Path, seal: PartitionSealArtifact) -> None:
+    expected_files = {
+        "partition_specification.json",
+        "partition_seal.json",
+        "SHA256SUMS.json",
+    }
+    if not root.is_dir():
+        raise ValueError("persisted Validation partition seal is missing")
+    files = {item.name for item in root.iterdir() if item.is_file()}
+    if files not in (expected_files, expected_files | {"partition_open_receipt.json"}):
+        raise ValueError("persisted Validation partition file set mismatch")
+    checksums = json.loads((root / "SHA256SUMS.json").read_text(encoding="utf-8"))
+    if checksums != {
+        name: _content_hash(root / name)
+        for name in ("partition_specification.json", "partition_seal.json")
+    }:
+        raise ValueError("persisted Validation partition checksum mismatch")
+    persisted = json.loads((root / "partition_seal.json").read_text(encoding="utf-8"))
+    expected = json.loads(json.dumps(asdict(seal), sort_keys=True, default=str))
+    if persisted != expected:
+        raise ValueError("persisted Validation partition seal mismatch")
+
+
+def _validate_partition_component(value: str) -> None:
+    if not value or value in {".", ".."} or Path(value).name != value:
+        raise ValueError("partition_id is not a safe path component")
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.write_text(
+        json.dumps(payload, sort_keys=True, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _content_hash(path: Path) -> str:
+    return f"sha256:{sha256(path.read_bytes()).hexdigest()}"

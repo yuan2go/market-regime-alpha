@@ -15,6 +15,9 @@ from market_regime_alpha.research.pit_replication_success_v2_reader import (
 from market_regime_alpha.research.pit_replication_success_v2_runner import (
     run_pit_replication_success_v2,
 )
+from market_regime_alpha.research.pit_replication_v2_reader import (
+    load_verified_pit_replication_artifact_v2,
+)
 from tests.research.pit_replication_v2_fixtures import build_test_success_inputs
 
 
@@ -70,12 +73,21 @@ def _parquet_tamper(filename: str, column: str, value: object):
         ),
         _json_tamper("partition_seal.json", lambda row: row["included_sessions"].pop()),
         _json_tamper(
+            "partition_open_receipt.json",
+            lambda row: row.__setitem__("reader_implementation_identity", "sha256:" + "0" * 64),
+        ),
+        _json_tamper(
+            "manifest.json",
+            lambda row: row.__setitem__("authority", "FORMAL_OOS_ALPHA"),
+        ),
+        _json_tamper(
             "cost_model.json",
             lambda row: row["configs"]["BASE"].__setitem__("minimum_commission", 0.0),
         ),
         _parquet_tamper("candidate_feature_evidence.parquet", "feature_value", 999.0),
         _parquet_tamper("candidate_rankings.parquet", "rank", 999),
         _parquet_tamper("evaluation_marks.parquet", "evaluation_price", 999.0),
+        _parquet_tamper("path_diagnostics.parquet", "status", "FABRICATED"),
         _parquet_tamper("matched_k_selections.parquet", "symbol", "999999.SZ"),
         _parquet_tamper("daily_replication_metrics.parquet", "net_lift_vs_multiseed_median", 9.0),
     ),
@@ -97,3 +109,15 @@ def test_verified_success_result_is_typed_and_semantically_reconstructed(tmp_pat
     assert verified.test_only is True
     assert verified.decision_date_count == 2
     assert verified.path_status == "PATH_DIAGNOSTICS_UNAVAILABLE"
+    assert load_verified_pit_replication_artifact_v2(final).run_id == verified.run_id
+
+
+def test_checksum_valid_population_lineage_tampering_is_rejected(tmp_path: Path) -> None:
+    final = _published(tmp_path)
+    path = final / "candidate_populations.parquet"
+    frame = pd.read_parquet(path)
+    frame.loc[0, "universe_row_id"] = "unrelated-universe-row"
+    frame.to_parquet(path, index=False)
+    _rewrite_checksums(final)
+    with pytest.raises(ValueError, match="input evidence identity|lineage"):
+        load_verified_pit_replication_success_v2(final)
