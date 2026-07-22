@@ -39,7 +39,7 @@ evaluation marks, and partition evidence while rewriting checksums; the Reader r
 ## Actual execution
 
 No qualified Xuntou v4 bundle or XtQuant runtime is available locally. The formal CLI therefore
-published verified blocker `pit-replication-v2-297a8f2cb961c97cdeff` with no partition seal, first
+published verified blocker `pit-replication-v2-21c5fb99c1dac32565e0` with no partition seal, first
 open, Candidate metrics, or research result.
 
 ```text
@@ -48,4 +48,3 @@ MODEL WINNER NOT SELECTED
 NO MARKET REGIME GATE
 NO TRADING AUTHORITY
 ```
-

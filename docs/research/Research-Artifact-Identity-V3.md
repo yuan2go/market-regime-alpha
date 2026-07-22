@@ -19,9 +19,12 @@ F2B v3 corrects both boundaries without modifying the frozen v1/v2 modules:
 
 ## Actual evidence
 
-The actual v3 run is `mr2b-f2b-v3-bb34b06f7446aa0af9e7`, using Dataset
+The current v3 run is `mr2b-f2b-v3-11899de582c7a5ee0ee6`, using Dataset
 `prr-dataset-fa40337727427b2f1ff63548`, MR-1 `mr1-c06821bf7db2dc787244`, and F2A
-`mr2b-f2a-99cd5a71a92fa5eb0366`.
+`mr2b-f2a-99cd5a71a92fa5eb0366`. It also binds verified v2 run
+`mr2b-f2b-v2-3bc505b9e92138ffa2f8`, its checksum identity, and its semantic-projection hash into the
+v3 Run ID. The earlier v3 run `mr2b-f2b-v3-bb34b06f7446aa0af9e7` remains historical evidence but
+is superseded for current identity authority because its v2 comparison was not identity-bound.
 
 `v2_vs_v3_semantic_diff.json` reports `EXACT_MATCH`: UP 27, DOWN 33, observed effect
 `-0.0000844753476525215`, bootstrap 95% interval
@@ -29,9 +32,14 @@ The actual v3 run is `mr2b-f2b-v3-bb34b06f7446aa0af9e7`, using Dataset
 `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. The identity/Reader contract changed; the frozen statistical
 meaning did not.
 
-The actual missing-provider PIT v2 evidence is
-`pit-replication-v2-c681ed11199027ea819d` with status
+The current missing-provider PIT v2 evidence is
+`pit-replication-v2-21c5fb99c1dac32565e0` with status
 `BLOCKED_EXTERNAL_PROVIDER_INPUT`. It produced no replication result.
+
+The PIT v2 Reader now requires an exact manifest field set, code-owned authority constants, and a
+full preflight hash plus the versioned v3/v4 provider contract. Checksum-valid edits cannot promote
+provider, data eligibility, authority, product, membership source, provider Dataset identity, or
+Tencent fallback semantics.
 
 ## Authority boundary
 

@@ -39,10 +39,11 @@ the unconditional B1-E lift over the model-population multi-seed matched-K media
 auxiliary-watchlist UP/DOWN Gate is not being restored. Missing Xuntou input produces a checksummed
 blocker Artifact; Tencent/current-watchlist evidence cannot be silently substituted as PIT.
 
-F2B v3 run `mr2b-f2b-v3-bb34b06f7446aa0af9e7` supersedes v2 as the current
+F2B v3 run `mr2b-f2b-v3-11899de582c7a5ee0ee6` supersedes v2 as the current
 identity contract while preserving the exact frozen statistical result. Its implementation hash map
-is code-owned and exact; verifier routing is deliberately outside statistical identity. The actual
-PIT v2 blocker is `pit-replication-v2-c681ed11199027ea819d`.
+is code-owned and exact; verifier routing is deliberately outside statistical identity. Its verified
+v2 comparison reference and projection are bound into the Run ID. The current PIT v2 blocker is
+`pit-replication-v2-21c5fb99c1dac32565e0`.
 
 The qualified input boundary is now `xuntou-pit-validation-bundle-v4`. V3 remains REHEARSAL and
 cannot pass V4 preflight. The local capability probe reports `EXTERNAL_XTQUANT_RUNTIME_REQUIRED`;
@@ -54,7 +55,7 @@ evaluation mark, seals explicit Validation sessions before model access, persist
 reconstructs frozen B1-E scores/ranks, reconstructs all 256 same-population matched-K selections,
 and semantically verifies costs and daily lift. The success branch is covered only by
 `TEST_ONLY_NOT_RESEARCH_EVIDENCE`. The actual formal run remains verified blocker
-`pit-replication-v2-297a8f2cb961c97cdeff`; no partition was specified, sealed, or opened and no
+`pit-replication-v2-21c5fb99c1dac32565e0`; no partition was specified, sealed, or opened and no
 replication metrics were produced.
 
 Known historical residues include:
@@ -983,13 +984,14 @@ interval `[-0.002375137060807993, 0.0023412463545652395]`, circular-shift p-valu
 
 ### MR-2B-F2B v3 — Research Artifact Identity
 
-F2B v3 run `mr2b-f2b-v3-bb34b06f7446aa0af9e7` uses an exact, code-owned implementation
+F2B v3 run `mr2b-f2b-v3-11899de582c7a5ee0ee6` uses an exact, code-owned implementation
 module set and excludes the extensible verifier registry from statistical identity. Historical v1
-and v2 Readers remain available and unchanged. The published v2/v3 semantic comparison is
-`EXACT_MATCH`; the current assessment remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`.
+and v2 Readers remain available and unchanged. The v2 Run/checksum/projection reference is part of
+v3 identity. The published v2/v3 semantic comparison is `EXACT_MATCH`; the current assessment
+remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`.
 
 PIT evidence status now has distinct v2 blocked, invalid, and reserved success Schemas. The actual
-missing-input run is `pit-replication-v2-c681ed11199027ea819d` and contains no research result.
+missing-input run is `pit-replication-v2-21c5fb99c1dac32565e0` and contains no research result.
 See `docs/research/Research-Artifact-Identity-V3.md`.
 
 The current ordered sequence is:
