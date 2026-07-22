@@ -12,9 +12,10 @@ from typing import Any
 from market_regime_alpha.research.xuntou_pit_v4_contract import (
     XUNTOU_PIT_V4_BUNDLE_SCHEMA_VERSION,
 )
+from market_regime_alpha.research.xuntou_pit_v4_evidence import validate_pit_v4_evidence
 from market_regime_alpha.research.xuntou_pit_v4_qualification import (
     PITEvidenceQualification,
-    derive_pit_qualification,
+    build_qualified_pit_market_artifact,
 )
 
 
@@ -33,6 +34,7 @@ class XuntouPITV4Preflight:
     required_bundle_schema: str
     bundle_content_hash: str | None
     qualification: PITEvidenceQualification | None
+    provider_artifact_id: str | None
     reasons: tuple[str, ...]
     tencent_fallback_used: bool
     research_result_produced: bool
@@ -90,33 +92,33 @@ def preflight_xuntou_pit_v4(bundle: Path | None) -> XuntouPITV4Preflight:
             None,
             ("TEST_FIXTURE_NOT_RESEARCH_EVIDENCE",),
         )
-    inputs = payload.get("qualification_inputs")
-    if not isinstance(inputs, dict):
-        return _result(
-            XuntouPITV4PreflightStatus.INSUFFICIENT_PROVIDER_CAPABILITY,
-            content_hash,
-            None,
-            ("QUALIFICATION_EVIDENCE_MISSING",),
-        )
-    qualification = derive_pit_qualification(
-        historical_membership_complete=inputs.get("historical_membership_complete") is True,
-        security_master_complete=inputs.get("security_master_complete") is True,
-        st_history_complete=inputs.get("st_history_complete") is True,
-        suspension_history_complete=inputs.get("suspension_history_complete") is True,
-        orderability_complete=inputs.get("orderability_complete") is True,
-        liquidity_unit_verified=inputs.get("liquidity_unit_verified") is True,
-        bar_finality_verified=inputs.get("bar_finality_verified") is True,
-        availability_verified=inputs.get("availability_verified") is True,
-        evaluation_path_complete=inputs.get("evaluation_path_complete") is True,
-        membership_sources=tuple(str(value) for value in inputs.get("membership_sources", ())),
-        input_declared_pit_correct=payload.get("pit_correct_for_scope"),
+    validation = validate_pit_v4_evidence(payload)
+    qualification = validation.qualification
+    if any(_invalid_evidence_reason(reason) for reason in validation.reasons):
+        status = XuntouPITV4PreflightStatus.INVALID_PIT_EVIDENCE
+    elif (
+        qualification is not None
+        and qualification.pit_correct_for_scope
+        and not validation.reasons
+    ):
+        status = XuntouPITV4PreflightStatus.AVAILABLE
+    else:
+        status = XuntouPITV4PreflightStatus.INSUFFICIENT_PROVIDER_CAPABILITY
+    provider_artifact_id = None
+    if status is XuntouPITV4PreflightStatus.AVAILABLE:
+        if validation.source is None or qualification is None:
+            raise ValueError("available v4 evidence is missing its derived provider identity")
+        provider_artifact_id = build_qualified_pit_market_artifact(
+            source=validation.source,
+            qualification=qualification,
+        ).provider_artifact_id
+    return _result(
+        status,
+        content_hash,
+        qualification,
+        validation.reasons,
+        provider_artifact_id=provider_artifact_id,
     )
-    status = (
-        XuntouPITV4PreflightStatus.AVAILABLE
-        if qualification.pit_correct_for_scope
-        else XuntouPITV4PreflightStatus.INSUFFICIENT_PROVIDER_CAPABILITY
-    )
-    return _result(status, content_hash, qualification, qualification.reasons)
 
 
 def _result(
@@ -124,6 +126,8 @@ def _result(
     content_hash: str | None,
     qualification: PITEvidenceQualification | None,
     reasons: tuple[str, ...],
+    *,
+    provider_artifact_id: str | None = None,
 ) -> XuntouPITV4Preflight:
     return XuntouPITV4Preflight(
         "xuntou-pit-validation-preflight-v4",
@@ -132,6 +136,7 @@ def _result(
         XUNTOU_PIT_V4_BUNDLE_SCHEMA_VERSION,
         content_hash,
         qualification,
+        provider_artifact_id,
         reasons,
         False,
         False,
@@ -140,3 +145,21 @@ def _result(
 
 def _hash(path: Path) -> str:
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
+
+
+def _invalid_evidence_reason(reason: str) -> bool:
+    return (
+        reason.endswith("_CONTENT_HASH_MISMATCH")
+        or reason.endswith("_FIELDS_MISMATCH")
+        or reason.endswith("_EVIDENCE_INVALID")
+        or reason
+        in {
+            "SOURCE_ARTIFACT_RAW_HASH_IDENTITY_MISMATCH",
+            "SOURCE_EVIDENCE_CLASSIFICATION_NOT_QUALIFIED",
+            "RAW_SOURCE_HASH_EVIDENCE_INVALID",
+            "V4_MAPPING_CONTRACT_MISMATCH",
+            "V4_EVIDENCE_CONVENTION_MISMATCH",
+            "PIT_EVIDENCE_SCOPE_INVALID",
+            "EVIDENCE_SECTION_SET_MISMATCH",
+        }
+    )

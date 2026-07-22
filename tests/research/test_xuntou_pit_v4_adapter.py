@@ -67,6 +67,26 @@ def test_late_quote_is_not_decision_time_evidence() -> None:
     assert result.status is ResearchOrderabilityStatus.UNKNOWN
 
 
+def test_stale_quote_is_not_decision_time_evidence() -> None:
+    result = derive_research_orderability(
+        decision_time=DECISION,
+        quote_observed_at=datetime.fromisoformat("2026-07-18T09:30:00+08:00"),
+        available_at=DECISION,
+        snapshot_finalized=True,
+        trading_status="TRADING",
+        suspension_status="NOT_SUSPENDED",
+        reference_price=10.0,
+        best_ask_price=10.01,
+        best_ask_volume=1000.0,
+        best_bid_price=10.0,
+        best_bid_volume=1000.0,
+        limit_up_price=11.0,
+        limit_down_price=9.0,
+    )
+    assert result.status is ResearchOrderabilityStatus.UNKNOWN
+    assert result.reason == "DECISION_TIME_QUOTE_UNAVAILABLE"
+
+
 def test_daily_close_cannot_replace_next_session_1030_minute_evidence() -> None:
     result = qualify_evaluation_evidence(
         has_exact_1030_minute=False,

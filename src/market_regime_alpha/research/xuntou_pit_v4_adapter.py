@@ -61,7 +61,7 @@ def derive_research_orderability(
 ) -> ResearchOrderabilityDecision:
     if trading_status in {"SUSPENDED", "CLOSED", "HALTED"} or suspension_status == "SUSPENDED":
         return ResearchOrderabilityDecision(ResearchOrderabilityStatus.NOT_ORDERABLE, "CONFIRMED_NOT_TRADING")
-    if quote_observed_at is None or quote_observed_at > decision_time or available_at > decision_time:
+    if quote_observed_at != decision_time or available_at > decision_time:
         return ResearchOrderabilityDecision(ResearchOrderabilityStatus.UNKNOWN, "DECISION_TIME_QUOTE_UNAVAILABLE")
     values = (
         reference_price,

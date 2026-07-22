@@ -50,6 +50,11 @@ cannot pass V4 preflight. The local capability probe reports `EXTERNAL_XTQUANT_R
 historical membership, orderability, amount-unit, bar-finality, and 10:30 evaluation evidence have
 not been supplied. No Alpha result was generated.
 
+V4 availability is derived from content-addressed source identity, raw-source hashes, an explicit
+Decision-Time × symbol scope, and nine validated evidence sections. Caller-supplied qualification
+booleans and provider Artifact IDs have no authority. A quote must be observed at the exact frozen
+14:55 Decision Time; stale or late snapshots remain `UNKNOWN`.
+
 The v2 success application now separates the ranking Target from the exact next-session 10:30
 evaluation mark, seals explicit Validation sessions before model access, persists Feature evidence,
 reconstructs frozen B1-E scores/ranks, reconstructs all 256 same-population matched-K selections,

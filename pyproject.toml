@@ -149,6 +149,7 @@ files = [
     "src/market_regime_alpha/research/xuntou_pit_v4_contract.py",
     "src/market_regime_alpha/research/xuntou_pit_v4_adapter.py",
     "src/market_regime_alpha/research/xuntou_pit_v4_qualification.py",
+    "src/market_regime_alpha/research/xuntou_pit_v4_evidence.py",
     "src/market_regime_alpha/research/xuntou_pit_v4_preflight.py",
     "src/market_regime_alpha/research/xuntou_pit_v4_runtime.py",
     "src/market_regime_alpha/research/prr_artifact_reader.py",

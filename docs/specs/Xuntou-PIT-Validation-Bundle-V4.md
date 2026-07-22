@@ -35,4 +35,43 @@ intent. It is not historical fill proof, queue priority, or a slippage guarantee
 required domain must be complete; current-membership backfill, late availability, unknown quote,
 ambiguous amount units, incomplete finality, or missing 10:30 minute evidence fails closed.
 
+The normalized bundle must contain all of these code-owned fields:
+
+```text
+schema_version
+mapping_contract_id
+conventions {
+  completed 1m END_TIME label at 14:55,
+  60-second freshness,
+  Decision-Time availability cutoff,
+  exact next-session 10:30 close mark,
+  complete 1m 09:30-through-10:30 path
+}
+source_artifact
+raw_source_hashes
+evidence_scope { decision_times, symbols }
+evidence_sections {
+  historical_membership,
+  security_master,
+  st_history,
+  suspension_history,
+  orderability,
+  liquidity_unit,
+  bar_finality,
+  availability,
+  evaluation_path
+}
+```
+
+Every evidence section contains `records` and a canonical `content_hash` of those records. The
+source Artifact content hash is the canonical identity of the sorted raw-source hash map. The
+validator verifies exact Decision-Time/symbol coverage where applicable, recomputes orderability,
+checks amount units, availability/finality, requires a finalized 14:55 Decision-Time bar, and
+reconstructs every 1-minute label from 09:30 through the exact next-session 10:30 mark.
+`qualification_inputs` booleans have no authority and are not read by the v4 preflight.
+
+When all evidence qualifies, the preflight derives `QualifiedPITMarketArtifact.provider_artifact_id`
+from the source content hash and qualification receipt. A bundle-supplied provider Artifact ID is
+not authoritative.
+
 Test fixtures must carry `TEST_ONLY_NOT_RESEARCH_EVIDENCE` and are rejected by the formal preflight.

@@ -7,6 +7,11 @@ security master, ST history, suspension history, decision-time orderability, ver
 bar finality, availability, and next-session evaluation path. `pit_correct_for_scope` is true only
 when all nine are true and no current-membership backfill is present.
 
+Each requirement is derived from a content-addressed evidence section over an explicit
+Decision-Time × symbol scope. A nine-boolean `qualification_inputs` summary cannot produce
+`AVAILABLE`. Successful qualification also derives the `QualifiedPITMarketArtifact` identity; the
+input cannot self-assign that identity or its authority.
+
 The current macOS probe reports `EXTERNAL_XTQUANT_RUNTIME_REQUIRED`. Historical membership, quote,
 ST, suspension, price-limit, timezone, and finality semantics remain `UNVERIFIED`; no research
 evidence was produced.
