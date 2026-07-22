@@ -59,6 +59,9 @@ Tencent. The existing Trading Calendar, Historical PIT
 Universe, Historical Trading Eligibility, provider-rehearsal artifact, provider router, and WP-3
 Candidate seams remain authoritative; this work does not create a second Universe system.
 
+This clause supersedes every historical charter statement that named the normalized v3 REHEARSAL
+bundle as accepted PIT Validation input; v3 remains accepted only by its bounded REHEARSAL path.
+
 The Candidate Population is:
 
 ```text

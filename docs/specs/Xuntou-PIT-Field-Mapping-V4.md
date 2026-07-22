@@ -20,3 +20,7 @@ name is not proof of historical availability, finality, entitlement, or PIT corr
 No mapping converts missing ST rows to non-ST, missing suspension rows to tradable, or missing quote
 rows to orderable. Current instrument detail cannot be projected backward. `daily close` cannot
 replace the next-session 10:30 evaluation mark.
+
+Decision-Time quote evidence is exact-time evidence: `quote_observed_at` must equal the frozen
+14:55 `decision_time`. Earlier snapshots are stale and later snapshots are unavailable at the
+decision; both derive `UNKNOWN`, even when all book fields are populated.
