@@ -10,7 +10,9 @@ from market_regime_alpha.research.mr2b_f2b_primary import PrimaryAssessment, Pri
 from market_regime_alpha.research.mr2b_f2b_statistics import PrimaryObservationSet
 from market_regime_alpha.research.mr2b_f2b_v3 import F2BResultsV3
 from market_regime_alpha.research.mr2b_f2b_v3_artifacts import (
+    build_v2_v3_semantic_diff,
     build_f2b_v3_run_identity,
+    f2b_v3_semantic_projection,
     publish_f2b_v3_artifact,
 )
 from market_regime_alpha.research.mr2b_f2b_v3_competing_events import (
@@ -85,12 +87,21 @@ def _publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     results = _insufficient_results()
     runner = tmp_path / "runner.py"
     runner.write_text("# runner\n", encoding="utf-8")
+    v2_projection = f2b_v3_semantic_projection(results)
     identity = build_f2b_v3_run_identity(
         dataset_root=dataset.root, mr1_root=mr1.root, f2a_root=f2a.root,
         dataset_id=dataset.dataset_id, mr1_run_id=mr1.run_id, f2a_run_id=f2a.run_id,
+        f2b_v2_run_id="mr2b-f2b-v2-test",
+        f2b_v2_checksums_hash="sha256:" + "0" * 64,
+        f2b_v2_semantic_projection=v2_projection,
         protocol=results.protocol, runner_path=runner,
     )
-    final = publish_f2b_v3_artifact(output_root=tmp_path / "runs", identity=identity, results=results)
+    final = publish_f2b_v3_artifact(
+        output_root=tmp_path / "runs",
+        identity=identity,
+        results=results,
+        v2_semantic_projection=v2_projection,
+    )
     monkeypatch.setattr("market_regime_alpha.research.mr2b_f2b_v3_reader.frozen_f2b_v3_protocol", lambda: results.protocol)
     monkeypatch.setattr("market_regime_alpha.research.mr2b_f2b_v3_reader.build_f2b_v3_results", lambda **_: results)
     return final, dataset, mr1, f2a
@@ -155,4 +166,20 @@ def test_checksum_valid_inexact_implementation_module_map_fails(
     manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
     _rewrite_checksums(final)
     with pytest.raises(ValueError, match="module set"):
+        load_verified_f2b_v3_run(final, dataset=dataset, mr1=mr1, f2a=f2a)
+
+
+def test_checksum_valid_unbound_v2_projection_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    final, dataset, mr1, f2a = _publish(tmp_path, monkeypatch)
+    path = final / "v2_vs_v3_semantic_diff.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    forged = build_v2_v3_semantic_diff(
+        v2_projection={"forged": True},
+        v3_projection=payload["v3"],
+    )
+    path.write_text(json.dumps(forged, sort_keys=True), encoding="utf-8")
+    _rewrite_checksums(final)
+    with pytest.raises(ValueError, match="v2 reference"):
         load_verified_f2b_v3_run(final, dataset=dataset, mr1=mr1, f2a=f2a)

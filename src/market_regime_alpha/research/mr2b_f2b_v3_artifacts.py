@@ -58,6 +58,9 @@ class F2BRunIdentityV3:
     mr1_checksums_hash: str
     f2a_run_id: str
     f2a_checksums_hash: str
+    f2b_v2_run_id: str
+    f2b_v2_checksums_hash: str
+    f2b_v2_semantic_projection_hash: str
     git_commit_sha: str
     protocol_schema_version: str
     protocol_hash: str
@@ -74,6 +77,12 @@ class F2BRunIdentityV3:
             raise ValueError("F2B v3 authority must remain EXPLORATORY")
         if self.alternative != "UP_GREATER_THAN_DOWN":
             raise ValueError("F2B v3 direction must remain frozen")
+        if not self.f2b_v2_run_id.startswith("mr2b-f2b-v2-"):
+            raise ValueError("F2B v3 identity requires a verified v2 reference")
+        if not self.f2b_v2_checksums_hash.startswith("sha256:"):
+            raise ValueError("F2B v3 v2 checksum identity is invalid")
+        if not self.f2b_v2_semantic_projection_hash.startswith("sha256:"):
+            raise ValueError("F2B v3 v2 semantic projection identity is invalid")
         if set(self.implementation_module_hashes) != set(F2B_V3_IMPLEMENTATION_MODULES):
             raise ValueError("F2B v3 implementation module set mismatch")
         if any(
@@ -106,6 +115,8 @@ class F2BRunIdentityV3:
 def build_f2b_v3_run_identity(
     *, dataset_root: Path, mr1_root: Path, f2a_root: Path,
     dataset_id: str, mr1_run_id: str, f2a_run_id: str,
+    f2b_v2_run_id: str, f2b_v2_checksums_hash: str,
+    f2b_v2_semantic_projection: Mapping[str, Any],
     protocol: F2BProtocolV3, runner_path: Path,
 ) -> F2BRunIdentityV3:
     module_root = PROJECT_ROOT / "src" / "market_regime_alpha" / "research"
@@ -116,6 +127,11 @@ def build_f2b_v3_run_identity(
         mr1_checksums_hash=_hash(mr1_root / "SHA256SUMS.json"),
         f2a_run_id=f2a_run_id,
         f2a_checksums_hash=_hash(f2a_root / "SHA256SUMS.json"),
+        f2b_v2_run_id=f2b_v2_run_id,
+        f2b_v2_checksums_hash=f2b_v2_checksums_hash,
+        f2b_v2_semantic_projection_hash=canonical_identity_hash(
+            dict(f2b_v2_semantic_projection)
+        ),
         git_commit_sha=_revision(),
         protocol_schema_version=protocol.schema_version,
         protocol_hash=protocol.protocol_id,
@@ -136,10 +152,15 @@ def publish_f2b_v3_artifact(
     output_root: Path,
     identity: F2BRunIdentityV3,
     results: F2BResultsV3,
-    v2_semantic_projection: Mapping[str, Any] | None = None,
+    v2_semantic_projection: Mapping[str, Any],
 ) -> Path:
     if identity.protocol_hash != results.protocol.protocol_id:
         raise ValueError("F2B v3 identity and Protocol mismatch")
+    if (
+        canonical_identity_hash(dict(v2_semantic_projection))
+        != identity.f2b_v2_semantic_projection_hash
+    ):
+        raise ValueError("F2B v3 v2 reference projection does not match identity")
     run_id = identity.run_id()
     final = output_root / run_id
     stage = output_root / f".{run_id}.staging"
@@ -291,7 +312,7 @@ def _mapping_or_empty(value: object) -> Mapping[str, Any]:
 
 def run_f2b_v3_research(
     *, dataset_path: Path, mr1_run_path: Path, f2a_run_path: Path,
-    f2b_v2_run_path: Path | None = None,
+    f2b_v2_run_path: Path,
     runner_path: Path, output_root: Path = DEFAULT_F2B_V3_OUTPUT_ROOT,
 ) -> Path:
     dataset = load_verified_prr_dataset(dataset_path)
@@ -302,23 +323,24 @@ def run_f2b_v3_research(
     )
     protocol = frozen_f2b_v3_protocol()
     results = build_f2b_v3_results(dataset=dataset, mr1=mr1, f2a=f2a, protocol=protocol)
-    v2_projection: Mapping[str, Any] | None = None
-    if f2b_v2_run_path is not None:
-        from market_regime_alpha.research.mr2b_f2b_v2_reader import load_verified_f2b_v2_run
+    from market_regime_alpha.research.mr2b_f2b_v2_reader import load_verified_f2b_v2_run
 
-        verified_v2 = load_verified_f2b_v2_run(
-            f2b_v2_run_path, dataset=dataset, mr1=mr1, f2a=f2a
-        )
-        v2_projection = f2b_v2_semantic_projection(
-            primary_assessment=verified_v2.primary_assessment,
-            multiple_testing=json.loads(
-                (verified_v2.root / "multiple_testing_disclosure.json").read_text(encoding="utf-8")
-            ),
-            competing_event_status=verified_v2.competing_event_status,
-        )
+    verified_v2 = load_verified_f2b_v2_run(
+        f2b_v2_run_path, dataset=dataset, mr1=mr1, f2a=f2a
+    )
+    v2_projection = f2b_v2_semantic_projection(
+        primary_assessment=verified_v2.primary_assessment,
+        multiple_testing=json.loads(
+            (verified_v2.root / "multiple_testing_disclosure.json").read_text(encoding="utf-8")
+        ),
+        competing_event_status=verified_v2.competing_event_status,
+    )
     identity = build_f2b_v3_run_identity(
         dataset_root=dataset.root, mr1_root=mr1.root, f2a_root=f2a.root,
         dataset_id=dataset.dataset_id, mr1_run_id=mr1.run_id, f2a_run_id=f2a.run_id,
+        f2b_v2_run_id=verified_v2.run_id,
+        f2b_v2_checksums_hash=verified_v2.checksums_hash,
+        f2b_v2_semantic_projection=v2_projection,
         protocol=protocol, runner_path=runner_path,
     )
     final = publish_f2b_v3_artifact(

@@ -40,6 +40,19 @@ PIT_REPLICATION_V2_LIMITATIONS = (
     "NO_MODEL_WINNER_SELECTION",
     "NO_ENTRY_PORTFOLIO_OR_EXECUTION_AUTHORITY",
 )
+PIT_REPLICATION_V2_MANIFEST_FIELDS = frozenset(
+    {
+        "schema_version",
+        "run_id",
+        "status",
+        "data_eligibility",
+        "authority",
+        "required_artifacts",
+        "run_identity",
+        "protocol_id",
+        "provider",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +62,7 @@ class PITReplicationRunIdentityV2:
     git_commit_sha: str
     provider: str
     provider_preflight_schema: str
+    provider_preflight_hash: str
     provider_input_status: str
     provider_source_content_hash: str | None
     provider_artifact_id: str | None
@@ -59,6 +73,8 @@ class PITReplicationRunIdentityV2:
     def __post_init__(self) -> None:
         if self.provider != "XUNTOU":
             raise ValueError("PIT replication v2 identity must be Xuntou-bound")
+        if not self.provider_preflight_hash.startswith("sha256:"):
+            raise ValueError("PIT replication v2 preflight hash is invalid")
         if set(self.implementation_module_hashes) != set(PIT_REPLICATION_V2_IMPLEMENTATION_MODULES):
             raise ValueError("PIT replication v2 implementation module set mismatch")
         if any(not value.startswith("sha256:") for value in self.implementation_module_hashes.values()):
@@ -101,6 +117,7 @@ def build_pit_replication_v2_identity(
         git_commit_sha=_git_revision(),
         provider=preflight.provider,
         provider_preflight_schema=preflight.schema_version,
+        provider_preflight_hash=canonical_identity_hash(preflight.to_public_dict()),
         provider_input_status=preflight.status.value,
         provider_source_content_hash=preflight.bundle_content_hash,
         provider_artifact_id=preflight.provider_artifact_id,

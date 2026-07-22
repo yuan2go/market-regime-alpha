@@ -14,7 +14,7 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--mr1-run", type=Path, required=True)
     parser.add_argument("--f2a-run", type=Path, required=True)
-    parser.add_argument("--f2b-v2-run", type=Path)
+    parser.add_argument("--f2b-v2-run", type=Path, required=True)
     parser.add_argument(
         "--output-root",
         type=Path,
