@@ -1,5 +1,15 @@
 # PIT Replication Statistical Protocol V2
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 The frozen question is unconditional: does `prr-mvp-1-b1-e-v1` Top-5 produce positive daily net
 lift over the same model population's 256-seed matched-K median at exact next-session 10:30?
 

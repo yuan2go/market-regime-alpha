@@ -1,6 +1,16 @@
 # PIT Candidate Replication Success Path V2
 
-> **Status:** IMPLEMENTED; FORMAL EXECUTION BLOCKED BY MISSING XUNTOU V4 INPUT
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
+> **Historical Status at Original Publication:** IMPLEMENTED; FORMAL EXECUTION BLOCKED BY MISSING XUNTOU V4 INPUT
 >
 > **Authority ceiling:** `REHEARSAL_NOT_FORMAL_OOS`
 

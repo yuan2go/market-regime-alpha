@@ -1,5 +1,15 @@
 # MR-2A Leak-Free Market Regime Diagnostic
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 MR-2A supersedes the historical MR-2 regime conclusion. It constructs each Decision Time Context
 from normalized bars at or before 14:50 Asia/Shanghai; it does not read Decision Date full-session
 high, low, close, or amount. The current run is `mr2a-ffb5cc8e8c086092d338`, using Dataset

@@ -1,5 +1,15 @@
 # Xuntou / XtQuant Provider Documentation Reference
 
+> **Status:** CURRENT_SPECIFICATION  
+> **Authority:** Provider/Entry technical specification; lower than current architecture/status  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 Status: local reference index
 
 Retrieved: 2026-07-16
@@ -118,4 +128,4 @@ first-party Xuntou definitions and does not establish historical PIT, availabili
 
 - [Official-documentation evidence note](../../../research/R5-Xuntou-P0-Official-Documentation-Evidence.md)
 - [Xuntou P0 adapter status](../../../research/R5-Xuntou-P0-Adapter-Status.md)
-- [WP-3 provider-routing design](../../../superpowers/specs/2026-07-16-wp3-provider-routing-and-candidate-runs-design.md)
+- [WP-3 provider-routing design](../../../archive/superpowers/specs/2026-07-16-wp3-provider-routing-and-candidate-runs-design.md)

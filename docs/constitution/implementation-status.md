@@ -1,8 +1,25 @@
+# Implementation Status Redirect
+
+> **Status:** SUPERSEDED  
+> **Authority:** Historical redirect only  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** ../status/Current-State.md  
+> **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md  
+> **Code Evidence:** Do not use this file for current facts
+
+> **Historical snapshot notice:** All relative words such as “current”, “active”, “next” and “now” below describe the original publication context only. They grant no present authority.
+
+This path is retained for stable historical links. The sole current implementation-status authority is [`docs/status/Current-State.md`](../status/Current-State.md).
+
+## Historical content
+
 # Constitution Implementation Status
 
 > **Role:** implementation-status index; this file does not amend the Constitution.
 >
-> **Current authority:** `docs/research/R5-Current-Status.md`
+> **Historical authority at original publication:** `docs/research/R5-Current-Status.md`
 
 As of the Qualified PIT Replication Program:
 

@@ -1,5 +1,15 @@
 # MACD 买卖点研究审计（Task 11A.3）
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 本审计只使用 train、validation 和 rehearsal。它不读取 sealed test、不修改生产参数，也不把受控 fixture 的结果解释为策略收益证据。
 
 ## 标签定义

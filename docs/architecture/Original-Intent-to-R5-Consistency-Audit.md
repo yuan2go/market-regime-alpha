@@ -1,6 +1,16 @@
 # Original Intent to R5 Consistency Audit
 
-> **Status:** Current implementation-alignment audit before provider-backed R5 rehearsal work
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
+> **Historical Status at Original Publication:** Current implementation-alignment audit before provider-backed R5 rehearsal work
 > **Scope:** Preserved original ChatGPT project conversation, Constitution `00–09`, prior R0–R4 consistency audits, current R1 characterization, R5 Research Charter, R5 implementation status, and the controlled multi-date Candidate Discovery vertical slice
 > **Authority:** Architecture and implementation interpretation. This document does not override the Constitution.
 

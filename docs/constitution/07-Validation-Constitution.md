@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Validation, sample isolation and promotion governance  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume VIII — Validation Constitution
 
 > **Document:** `docs/constitution/07-Validation-Constitution.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide validation design, sample isolation, out-of-sample evidence, sealed-test governance, statistical and economic proof, robustness, promotion, degradation, quarantine and retirement rules  
 > **Applies to:** Research hypotheses, datasets in assigned research roles, features, factors, Candidate Discovery models, probability models, Market Regime models, ETF and Theme Rotation models, Entry policies, Position Lifecycle policies, Exit policies, complete strategies, portfolio-facing proposals, execution-aware simulations, experiment runners, metrics, reports, agents, Legacy migration and future production candidates  
 > **Project:** `market-regime-alpha`  
 > **Precedence:** Must remain consistent with `00-Project-Vision.md`, `01-Core-Principles.md`, `02-Architecture-Blueprint.md`, `03-Research-Framework.md`, `04-Data-Constitution.md`, `05-Factor-Constitution.md`, and `06-Strategy-Constitution.md`

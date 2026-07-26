@@ -1,5 +1,15 @@
 # MR-2B-F2A Exact-Context and Multi-Seed Conditionality Inputs
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 ## Authority and scope
 
 MR-2B-F2A produces `EXPLORATORY CONDITIONALITY INPUT EVIDENCE`. It does not run a

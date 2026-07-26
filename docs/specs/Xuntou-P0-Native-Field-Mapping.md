@@ -1,5 +1,15 @@
 # Xuntou P0 Native Field Mapping
 
+> **Status:** CURRENT_SPECIFICATION  
+> **Authority:** Provider/Entry technical specification; lower than current architecture/status  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 Status: `P0 MAPPING CONTRACT COMPLETE; RUNTIME SEMANTICS PARTIALLY VERIFIED`
 Contract version: `xuntou-p0-native-field-mapping-v3`
 Provider ID: `xuntou-thinktrader-xtquant-p0-v3`

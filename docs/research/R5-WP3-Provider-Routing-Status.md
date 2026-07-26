@@ -1,6 +1,16 @@
 # R5 WP-3 Provider Routing and Candidate Run Status
 
-> **Status:** CURRENT
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
+> **Historical Status at Original Publication:** CURRENT
 >
 > **Infrastructure:** IMPLEMENTED
 >

@@ -1,8 +1,18 @@
 # Xuntou PIT Validation Bundle V4
 
+> **Status:** CURRENT_SPECIFICATION  
+> **Authority:** Provider/Entry technical specification; lower than current architecture/status  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Schema:** `xuntou-pit-validation-bundle-v4`
 > **Authority ceiling:** `CONTROLLED_REPLICATION_INPUT`
-> **Status:** contract implemented; real input unavailable
+> **Embedded Document Role:** contract implemented; real input unavailable
 
 V4 is a new evidence contract. `xuntou-p0-native-bundle-v3` remains REHEARSAL and can never be
 renamed, self-declared, or limitation-stripped into V4.

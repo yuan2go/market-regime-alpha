@@ -1,5 +1,15 @@
 # Xuntou PIT Field Mapping V4
 
+> **Status:** CURRENT_SPECIFICATION  
+> **Authority:** Provider/Entry technical specification; lower than current architecture/status  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Contract:** `xuntou-pit-validation-field-mapping-v4`
 
 This specification is constrained by the repository's first-party evidence note. A documented API

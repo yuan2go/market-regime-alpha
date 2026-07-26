@@ -1,6 +1,16 @@
 # Xuntou PIT Evidence Qualification
 
-> **Status:** IMPLEMENTED CONTRACT / EXTERNAL INPUT BLOCKED
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
+> **Historical Status at Original Publication:** IMPLEMENTED CONTRACT / EXTERNAL INPUT BLOCKED
 
 The qualification receipt is derived from nine independent requirements: historical membership,
 security master, ST history, suspension history, decision-time orderability, verified amount unit,

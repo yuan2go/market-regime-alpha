@@ -1,7 +1,17 @@
 # R5 Data Source Role Matrix
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** CURRENT DATA-SOURCE ROLE POLICY
+> **Historical Status at Original Publication:** CURRENT DATA-SOURCE ROLE POLICY
 > **Purpose:** Keep data integration subordinate to strategy research while fixing Xuntou as the current primary provider and preserving public sources as explicit auxiliaries
 
 ---

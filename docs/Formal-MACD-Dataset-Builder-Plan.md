@@ -1,5 +1,15 @@
 # 正式 MACD 候选数据构建器计划（Task 11A.6）
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 状态：**数据适配与构建计划，未构建正式数据集，未访问 sealed test。**
 
 ## 责任边界与适配器

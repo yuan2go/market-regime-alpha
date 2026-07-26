@@ -1,6 +1,18 @@
 # A 股量化选股、买卖点与手动交易研究程序
 
-> **Status:** CURRENT RESEARCH PROGRAM  
+> **Status:** SUPERSEDED  
+> **Authority:** Historical program/status evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** Current-Research-Program.md  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+> **Historical snapshot notice:** All relative words such as “current”, “active”, “next” and “now” below describe the original publication context only. They grant no present authority.
+
+
+> **Historical Status at Original Publication:** CURRENT RESEARCH PROGRAM  
 > **Project:** `market-regime-alpha`  
 > **Decision date:** 2026-07-20  
 > **Primary objective:** 量化选股 + 买卖点识别 + 手动下单 + 每日复盘  

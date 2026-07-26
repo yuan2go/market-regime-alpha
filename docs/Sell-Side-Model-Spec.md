@@ -1,5 +1,15 @@
 # 卖点模型独立设计规格（Task 11A.5）
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 状态：**设计冻结，未授权大范围实现或启用生产。** 本规格不改变默认
 `score_weight=0.0`、`conflict_gate_enabled=False`，也不授权 sealed test。
 

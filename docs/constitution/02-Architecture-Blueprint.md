@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Target architecture and responsibility boundaries  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume III — Architecture Blueprint
 
 > **Document:** `docs/constitution/02-Architecture-Blueprint.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide target architecture and responsibility boundaries  
 > **Applies to:** Source layout, module ownership, runtime orchestration, research infrastructure, data flow, decision flow, migration, agents, and future production systems  
 > **Project:** `market-regime-alpha`  
 > **Audit baseline:** Repository state after `00-Project-Vision.md` and `01-Core-Principles.md` were introduced  
