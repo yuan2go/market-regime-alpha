@@ -11,7 +11,7 @@
 
 | Package | Objective | Dependencies | Primary outputs |
 |---|---|---|---|
-| [WP-D0](work-packages/WP-D0-Platform-Governance-Kernel.md) | Platform Governance Kernel | Draft PR #12 or equivalent reviewed implementation, current main research artifact contracts | one canonical registry namespace, model lifecycle and evidence-level gates, migration decision for PR #12, compatibility tests |
+| [WP-D0](work-packages/WP-D0-Platform-Governance-Kernel.md) | Platform Governance Kernel | current main Platform Kernel prototype, completed post-consolidation audit and Daily contract-convergence decision | one canonical registry namespace, model lifecycle and evidence-level gates, persistent/recoverable repository boundaries, compatibility tests and immutable PredictionRun |
 | [WP-D1](work-packages/WP-D1-Source-Manifest-and-Quality-Gates.md) | Daily Source Manifest and Data Quality Gates | WP-D0 for artifact identity, existing provider/data/time contracts | SourceManifest, DataQualityReport, raw immutable archive, freshness and authority gates |
 | [WP-D2](work-packages/WP-D2-Daily-Universe-and-Eligibility.md) | Daily Stock/ETF Universe and Eligibility | WP-D1, existing trading calendar/PIT universe/eligibility contracts | UniverseSnapshot, EligibilitySnapshot, ExclusionLedger |
 | [WP-D2E](work-packages/WP-D2E-Tencent-Exploratory-Daily-Loop.md) | Tencent Exploratory Daily Vertical Slice | WP-D0, WP-D1, WP-D2, existing B0/B1 and target materializers | DailyResearchSnapshot profile, B0/B1 PredictionRuns, CandidateRecommendations, next-session RecommendationOutcomes, minimal DailyReviewReport, raw/source archive |

@@ -22,13 +22,21 @@ Before editing:
 
 ## Current priority
 
-The next canonical implementation package is:
+The post-consolidation prerequisite sequence is:
 
 ```text
-WP-D0 — Platform Governance Kernel Hardening
+P0-A — Post-Consolidation Documentation Reconciliation
+→ P0-B — Daily Research Contract Convergence
+→ WP-D0 — Platform Governance Kernel Hardening
 ```
 
-Do not skip ahead to DailyResearchSnapshot, Entry, Holding, Exit, Portfolio, Codex Feedback, QuantDesk or broker execution until WP-D0 acceptance evidence is complete.
+The historical `daily_research` V1 implementation is an `IMPLEMENTED_NON_CANONICAL`
+compatibility layer. Freeze its schema, JSON, Reader semantics and Artifact identities.
+The current Phase D specifications remain the only canonical target authority.
+
+After P0-A and P0-B are complete, do not skip ahead to Source Manifest,
+canonical DailyResearchSnapshot runtime, Entry, Holding, Exit, Portfolio, Codex
+Feedback, QuantDesk or broker execution until WP-D0 acceptance evidence is complete.
 
 WP-D0 must:
 

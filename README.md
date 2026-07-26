@@ -45,12 +45,13 @@ Candidate Prediction
 
 ## 当前事实
 
-- 当前合并基线：`42fa35f172f16c7d86e516a9dee6d9b8c8e7a7be`。
+- 当前合并基线：`772ecfb09410588b5a406ad900d793a5850e60d5`。
 - 已具备 V2 identity/time/data/universe/eligibility/feature/candidate contracts、B0/B1、Candidate diagnostics、Entry Path Target infrastructure、Provider routing、Xuntou v4 evidence/adapters、PIT replication success path和不可变 Research Artifact验证器。
 - Research Platform Kernel V1 已进入 `main`：Theory/Observable/Model contracts、Target/Evaluation Protocol、Experiment Governance、Model Registry和第一版Multi-model Candidate Slice均已有代码与测试。
 - 当前Platform Kernel仍属于合同与内存治理实现；尚未形成持久化、可恢复的每日运行权威，也未建立正式Alpha或模型赢家。
+- 历史 `daily_research` V1 的 immutable DailyResearchSnapshot、CandidateRecommendation、EntryAssessment、Artifact Publisher和Semantic Reader已实现并有测试，但它是 `IMPLEMENTED_NON_CANONICAL` compatibility layer，不是Canonical Phase D Runtime。
 - 真实 Xuntou/XtQuant v4 输入在当前环境不可用，因此正式 PIT replication 仍为 `BLOCKED_EXTERNAL_INPUT`。
-- DailyResearchSnapshot运行时、正式CandidateRecommendation、EntryAssessment、PositionSnapshot、Holding/Exit Assessment、DailyReview、Portfolio Decision、Codex Evidence Pack和QuantDesk集成仍未形成权威实现。
+- Canonical Phase D DailyResearchSnapshot运行时、正式CandidateRecommendation/EntryAssessment服务、PositionSnapshot、Holding/Exit Assessment、DailyReview、Portfolio Decision、Codex Evidence Pack和QuantDesk集成仍未形成权威实现。
 - 当前不做真实 QMT/PTrade 自动委托、自动撤改单、无人值守实盘、自动再平衡或依赖逐笔 Level-2 的高频系统。
 
 唯一当前实现状态入口：[`docs/status/Current-State.md`](docs/status/Current-State.md)。
@@ -65,6 +66,7 @@ Candidate Prediction
 - [Phase D Daily Decision Engine](docs/architecture/05-Phase-D-Daily-Decision-Engine-V1.md)
 - [Phase D Work Packages](docs/roadmap/Phase-D-Work-Packages.md)
 - [Post-Merge Reconciliation Audit](docs/audit/Post-Merge-Reconciliation-2026-07-26.md)
+- [Post-Consolidation Code Audit](docs/audit/Post-Consolidation-Code-Audit-2026-07-26.md)
 
 ## Development
 

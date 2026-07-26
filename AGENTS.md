@@ -61,13 +61,23 @@ Never use a plan or design document to overrule executable evidence. Never chang
 
 ## Current implementation boundary
 
-Implemented/tested on current `main`: identity/time/data contracts, calendar, PIT universe/eligibility, Feature and Candidate datasets, B0/B1, diagnostics, provider routing, Tencent exploratory path, Xuntou native/v4 semantics, Entry Path Target infrastructure, Research Artifact verification, PIT replication mechanics, Research Platform contracts, Target/Evaluation Protocols, Experiment Governance, Model Registry and the first comparable Multi-model Candidate Slice.
+Implemented/tested on current `main`: identity/time/data contracts, calendar, PIT universe/eligibility, Feature and Candidate datasets, B0/B1, diagnostics, provider routing, Tencent exploratory path, Xuntou native/v4 semantics, Entry Path Target infrastructure, Research Artifact verification, PIT replication mechanics, Research Platform contracts, Target/Evaluation Protocols, Experiment Governance, Model Registry, the first comparable Multi-model Candidate Slice, and the historical `daily_research` V1 Artifact/Reader implementation.
 
 Externally blocked: real qualified Xuntou v4/XtQuant input and formal replication run.
 
-Not canonical on `main`: persistent/recoverable platform governance, DailyResearchSnapshot runtime, daily Prediction Ledger, CandidateRecommendation service, EntryAssessment, actual-position authority, Holding/Exit, review/attribution, portfolio simulation, Codex Evidence Pack and QuantDesk integration.
+Implemented but non-canonical on `main`: `daily_research` V1
+DailyResearchSnapshot, CandidateRecommendation, EntryAssessment, immutable package
+Publisher and semantic Reader. Preserve them as a frozen compatibility layer; do not
+claim that they implement the current Phase D contracts.
 
-The next implementation priority is `WP-D0 — Platform Governance Kernel Hardening`.
+Not canonical on `main`: persistent/recoverable platform governance, canonical
+DailyResearchSnapshot runtime, daily Prediction Ledger, CandidateRecommendation
+service, EntryAssessment service, actual-position authority, Holding/Exit,
+review/attribution, portfolio simulation, Codex Evidence Pack and QuantDesk
+integration.
+
+The current priority sequence is post-consolidation fact reconciliation, Daily
+contract convergence, then `WP-D0 — Platform Governance Kernel Hardening`.
 
 ## Non-negotiable rules
 

@@ -7,11 +7,15 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../roadmap/Phase-D-Work-Packages.md, ../specs/README.md, ../status/Gap-Register.md  
-> **Code Evidence:** DESIGNED_ONLY except reused V2 data/candidate/entry-path infrastructure
+> **Code Evidence:** Current Phase D runtime is DESIGNED_ONLY except reused data/candidate/entry-path infrastructure; `daily_research/**` is an IMPLEMENTED_NON_CANONICAL historical V1 compatibility layer
 
 ## Objective
 
 Phase D turns the existing research spine into an immutable daily research and manual-decision loop. It does not grant automatic trading authority.
+
+The implemented historical `daily_research` V1 contracts share several names
+with this architecture but have different fields and semantics. They remain a
+frozen compatibility layer and do not establish this runtime.
 
 ## Daily products
 

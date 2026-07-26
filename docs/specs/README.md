@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../architecture/05-Phase-D-Daily-Decision-Engine-V1.md, ../status/Gap-Register.md  
-> **Code Evidence:** Most contracts are DESIGNED_ONLY; see Capability-Matrix
+> **Code Evidence:** Current Phase D contracts are mostly DESIGNED_ONLY; the namesake `daily_research` V1 implementation is non-canonical; see Capability-Matrix
 
 ## Shared conventions
 
@@ -18,12 +18,12 @@
 
 | Specification | Purpose | Main state |
 |---|---|---|
-| [DailyResearchSnapshot](DailyResearchSnapshot.md) | Freeze the complete, point-in-time evidence root for one decision instant. | DESIGNED_ONLY |
+| [DailyResearchSnapshot](DailyResearchSnapshot.md) | Freeze the complete, point-in-time evidence root for one decision instant. | DESIGNED_ONLY current contract; namesake V1 is IMPLEMENTED_NON_CANONICAL |
 | [ETFDirectionSnapshot](ETFDirectionSnapshot.md) | Freeze ranked ETF direction evidence at one decision time without granting trade authority. | DESIGNED_ONLY |
 | [ThemeDirectionSnapshot](ThemeDirectionSnapshot.md) | Freeze theme breadth, leadership and lifecycle evidence under an identified PIT mapping. | DESIGNED_ONLY |
 | [CapitalContextSnapshot](CapitalContextSnapshot.md) | Freeze market-wide liquidity and capital-context observations with explicit field availability. | DESIGNED_ONLY |
-| [CandidateRecommendation](CandidateRecommendation.md) | Project one immutable CandidatePrediction into an explainable decision-support record without creating Entry or trade authority. | DESIGNED_ONLY |
-| [EntryAssessment](EntryAssessment.md) | Assess whether opening now, waiting, or rejecting adds value relative to the frozen Candidate baseline. | DESIGNED_ONLY |
+| [CandidateRecommendation](CandidateRecommendation.md) | Project one immutable CandidatePrediction into an explainable decision-support record without creating Entry or trade authority. | DESIGNED_ONLY current contract; namesake V1 is IMPLEMENTED_NON_CANONICAL |
+| [EntryAssessment](EntryAssessment.md) | Assess whether opening now, waiting, or rejecting adds value relative to the frozen Candidate baseline. | DESIGNED_ONLY current contract; namesake V1 is IMPLEMENTED_NON_CANONICAL |
 | [ManualTradeRecord](ManualTradeRecord.md) | Record the human decision, order intent, actual fills and deviation from the system proposal without inferring missing trades. | DESIGNED_ONLY |
 | [PositionSnapshot](PositionSnapshot.md) | Freeze actual account position state from manual-ledger or broker-reconciled evidence; never derive it from recommendations. | DESIGNED_ONLY |
 | [HoldingAssessment](HoldingAssessment.md) | Evaluate whether an actual position should be held, added, reduced, rotated or receive no model action. | DESIGNED_ONLY |
@@ -39,3 +39,7 @@
 - Xuntou/provider specifications already present in this directory retain their individual code evidence.
 
 A specification defines target semantics. Implementation status is owned by `docs/status/Current-State.md` and `Capability-Matrix.md`.
+
+The historical V1 implementation cannot be renamed into compliance. Contract
+convergence must freeze its JSON/Reader identities and define explicit,
+fail-closed migration boundaries.

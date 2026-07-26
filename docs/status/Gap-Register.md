@@ -6,15 +6,16 @@
 > **Last Updated:** 2026-07-26  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../audit/Post-Merge-Reconciliation-2026-07-26.md  
-> **Code Evidence:** Derived from current main code/tests at `42fa35f172f16c7d86e516a9dee6d9b8c8e7a7be`
+> **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../audit/Post-Consolidation-Code-Audit-2026-07-26.md
+> **Code Evidence:** Derived from current main code/tests at `772ecfb09410588b5a406ad900d793a5850e60d5`
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
+| Daily V1/Phase D contract convergence | P0 | historical V1 Artifact/Reader implemented but non-canonical; current Phase D contracts designed | fixed V1 characterization and current specs | one ADR and field matrix freeze V1, identify loss, and define one canonical V2/adapter boundary without changing V1 identity |
 | Platform Kernel governance hardening | P0 | contracts and in-memory prototype merged | current platform code/tests | registration gates closed; data/evidence semantics separated; persistent/recoverable boundary defined; platform included in mypy; B0/B1 equivalence evidence published |
 | Unique daily Source Manifest and quality gates | P0 | designed; provider contracts exist | data/time contracts | immutable Source Manifest and quality report produced |
 | Stock/ETF universe and mappings | P0 | partial contracts | provider/reference data | daily PIT snapshots with quality reports |
-| Tencent exploratory daily vertical slice | P0E | research components exist; canonical daily orchestration absent | Source Manifest, Universe, DailyResearchSnapshot | 10-session replay with frozen predictions, outcomes, blocked-day evidence and stable hashes |
+| Tencent exploratory daily vertical slice | P0E | research components and non-canonical daily V1 exist; canonical orchestration absent | Source Manifest, Universe, canonical DailyResearchSnapshot | 10-session replay with frozen predictions, outcomes, blocked-day evidence and stable hashes |
 | Market/ETF/theme/capital context | P1 | partial/none | universe/mappings | canonical snapshots and ablations |
 | Multi-model daily Prediction Ledger | P1 | mechanical multi-model slice exists | hardened platform kernel and daily snapshot | all shadow models run and freeze complete ranks/rejections as immutable PredictionRuns |
 | CandidateRecommendation presentation | P1 | designed | Prediction Ledger | structured reasons/risks generated without trade authority |

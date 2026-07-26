@@ -33,6 +33,13 @@ P9 qualified Xuntou PIT replication and shadow observation
 
 Can fixed, transparent Candidate models improve the cost-adjusted next-session outcome distribution over matched comparators under reproducible PIT scopes, and can Entry/Exit layers add incremental economic value without hiding Candidate quality?
 
+## Current implementation gate
+
+Before new Alpha, Entry or Exit work, the program must reconcile the
+post-consolidation facts, freeze the implemented non-canonical `daily_research`
+V1 compatibility semantics, and complete WP-D0 governance hardening. Historical
+V1 daily contracts are implementation evidence, not current Phase D authority.
+
 ## Frozen discipline
 
 - one primary hypothesis per experiment;

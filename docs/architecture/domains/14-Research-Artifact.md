@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../01-Domain-Boundaries.md, ../../specs/README.md, ../../roadmap/work-packages/README.md  
-> **Code Evidence:** path:src/market_regime_alpha/research/**; path:Draft PR #12 platform kernel
+> **Code Evidence:** path:src/market_regime_alpha/research/**; path:src/market_regime_alpha/platform/**
 
 ## Responsibility
 
@@ -93,11 +93,11 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 ## Current code mapping
 
 - `src/market_regime_alpha/research/**`
-- `Draft PR #12 platform kernel`
+- `src/market_regime_alpha/platform/**`
 
 ## Missing implementation
 
-- unified platform registry on main
+- hardened persistent/recoverable platform repositories
 - daily decision artifact profiles
 - promotion workflow integration
 
