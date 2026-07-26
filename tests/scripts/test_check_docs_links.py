@@ -10,6 +10,10 @@ docs_check = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(docs_check)
 
 
+def test_repository_documentation_is_consistent() -> None:
+    assert docs_check.validate(docs_check.ROOT) == []
+
+
 def test_duplicate_status_is_rejected(tmp_path: Path) -> None:
     doc = tmp_path / "docs" / "a.md"
     doc.parent.mkdir(parents=True)
