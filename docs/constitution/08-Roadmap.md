@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Constitutional migration sequence and phase gates  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume IX — Roadmap
 
 > **Document:** `docs/constitution/08-Roadmap.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide migration sequence, implementation priorities, stage dependencies, phase gates, Legacy preservation, V2 construction order, and refoundation completion criteria  
 > **Applies to:** Repository refoundation, architecture migration, data-platform work, feature/factor infrastructure, Candidate Discovery, validation infrastructure, strategy decomposition, ETF/Theme/Market Regime integration, portfolio and execution simulation, shadow observation, Legacy retirement, agents and future implementation plans  
 > **Project:** `market-regime-alpha`  
 > **Precedence:** Must remain consistent with `00-Project-Vision.md`, `01-Core-Principles.md`, `02-Architecture-Blueprint.md`, `03-Research-Framework.md`, `04-Data-Constitution.md`, `05-Factor-Constitution.md`, `06-Strategy-Constitution.md`, and `07-Validation-Constitution.md`

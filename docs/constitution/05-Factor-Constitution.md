@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Feature/factor identity and promotion governance  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume VI — Factor Constitution
 
 > **Document:** `docs/constitution/05-Factor-Constitution.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide feature and factor identity, lineage, information-family, transformation, normalization, redundancy, composition, research-use and promotion rules  
 > **Applies to:** Raw and derived features, factors, descriptors, context variables, scores, technical indicators, fundamental variables, market/ETF/theme features, capital-flow features, microstructure features, Chan-derived structures, Tuishen-inspired constructs, event/policy features, machine-learning inputs, feature registries, feature materialization, factor research, agents, legacy migration, and future production feature systems  
 > **Project:** `market-regime-alpha`  
 > **Precedence:** Must remain consistent with `00-Project-Vision.md`, `01-Core-Principles.md`, `02-Architecture-Blueprint.md`, `03-Research-Framework.md`, and `04-Data-Constitution.md`

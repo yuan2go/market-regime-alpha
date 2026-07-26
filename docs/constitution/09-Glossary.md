@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Canonical terminology  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume X — Glossary
 
 > **Document:** `docs/constitution/09-Glossary.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide canonical vocabulary, semantic disambiguation, Legacy-to-V2 terminology mapping, naming discipline, and interpretation rules  
 > **Applies to:** Constitution documents, architecture, data contracts, research artifacts, feature and factor registries, Candidate Discovery, strategies, portfolio and execution interfaces, validation, reports, dashboards, APIs, agents, migration plans, source code and future specifications  
 > **Project:** `market-regime-alpha`  
 > **Precedence:** This Glossary interprets and normalizes terminology established by `00-Project-Vision.md` through `08-Roadmap.md`. It does not override the substantive authority of those volumes and must not create a new architectural direction.
@@ -4158,3 +4168,15 @@ The first implementation work must follow the Roadmap rather than reopening foun
 The constitutional closure principle is:
 
 > **Use one precise vocabulary for one authority model, preserve Legacy meaning where history requires it, and never allow ambiguous words to reconnect boundaries that the architecture deliberately separated.**
+
+## 2026-07-26 Phase D Clarifications
+
+- **Candidate Prediction**: model score/rank/expectation; never a trade action.
+- **Candidate Recommendation**: structured application projection of Candidate evidence; still not Entry.
+- **Entry Assessment**: ENTER/WAIT/REJECT/NO_ACTION decision support for opening.
+- **Position Snapshot**: actual-fill-derived position authority.
+- **Holding Assessment**: affirmative continuation/add/reduce/rotate/exit assessment; `NO_ACTION` is not HOLD.
+- **Exit Assessment**: independent exit evidence and reason classification.
+- **Manual Trade Record**: user decision/order/fill/deviation record.
+- **Phase D**: daily research and manual decision-support engine; no automatic order authority.
+- **QuantDesk**: Application/UI/Research Workbench, not model/data/account authority.

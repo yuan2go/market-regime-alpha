@@ -1,3 +1,18 @@
+# Implementation Status Redirect
+
+> **Status:** SUPERSEDED  
+> **Authority:** Historical redirect only  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** ../status/Current-State.md  
+> **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md  
+> **Code Evidence:** Do not use this file for current facts
+
+This path is retained for stable historical links. The sole current implementation-status authority is [`docs/status/Current-State.md`](../status/Current-State.md).
+
+## Historical content
+
 # Constitution Implementation Status
 
 > **Role:** implementation-status index; this file does not amend the Constitution.

@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Data/PIT/provenance governance  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume V — Data Constitution
 
 > **Document:** `docs/constitution/04-Data-Constitution.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide data eligibility, point-in-time correctness, provenance, dataset identity, quality, revision, access, and data-governance rules  
 > **Applies to:** Market data, reference data, universe data, fundamentals, events, policy data, industry/theme mappings, ETF data, Level 1/Level 2 data, research datasets, replay datasets, model inputs, labels, sidecars, manifests, data providers, adapters, data builders, agents, research and future production systems  
 > **Project:** `market-regime-alpha`  
 > **Precedence:** Must remain consistent with `00-Project-Vision.md`, `01-Core-Principles.md`, `02-Architecture-Blueprint.md`, and `03-Research-Framework.md`
