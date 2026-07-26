@@ -1,0 +1,135 @@
+name: post-consolidation-audit
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Build repository evidence bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/repo-audit/logs
+          git rev-parse HEAD > /tmp/repo-audit/head.txt
+          git status --short --branch > /tmp/repo-audit/git-status.txt
+          git ls-files | sort > /tmp/repo-audit/tracked-files.txt
+          find src tests docs scripts .claude .github -type f 2>/dev/null | sort > /tmp/repo-audit/relevant-files.txt
+          find src -type f -name '*.py' -print0 | xargs -0 wc -l | sort -n > /tmp/repo-audit/python-line-counts.txt
+          find docs -type f -name '*.md' -print0 | xargs -0 wc -l | sort -n > /tmp/repo-audit/docs-line-counts.txt
+
+          python - <<'PY'
+          import ast
+          import json
+          import pathlib
+          import re
+
+          root = pathlib.Path('.')
+          rows = []
+          for path in sorted(root.rglob('*.py')):
+              if '.git' in path.parts or '.venv' in path.parts:
+                  continue
+              text = path.read_text(encoding='utf-8')
+              try:
+                  tree = ast.parse(text)
+                  parse_error = None
+              except SyntaxError as exc:
+                  tree = None
+                  parse_error = str(exc)
+              entry = {
+                  'path': path.as_posix(),
+                  'lines': len(text.splitlines()),
+                  'parse_error': parse_error,
+                  'classes': [],
+                  'functions': [],
+                  'imports': [],
+              }
+              if tree is not None:
+                  for node in ast.walk(tree):
+                      if isinstance(node, ast.ClassDef):
+                          entry['classes'].append({'name': node.name, 'line': node.lineno})
+                      elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                          entry['functions'].append({'name': node.name, 'line': node.lineno})
+                      elif isinstance(node, ast.Import):
+                          entry['imports'].extend(alias.name for alias in node.names)
+                      elif isinstance(node, ast.ImportFrom):
+                          entry['imports'].append('.' * node.level + (node.module or ''))
+              rows.append(entry)
+          pathlib.Path('/tmp/repo-audit/python-ast-index.json').write_text(
+              json.dumps(rows, ensure_ascii=False, indent=2), encoding='utf-8'
+          )
+
+          statuses = []
+          status_re = re.compile(r'^\s*>\s*\*\*Status:\*\*\s*(.+?)\s*$', re.I | re.M)
+          for path in sorted((root / 'docs').rglob('*.md')):
+              text = path.read_text(encoding='utf-8')
+              statuses.append({
+                  'path': path.as_posix(),
+                  'lines': len(text.splitlines()),
+                  'statuses': status_re.findall(text),
+                  'headings': [line.strip() for line in text.splitlines() if line.startswith('#')],
+              })
+          pathlib.Path('/tmp/repo-audit/docs-index.json').write_text(
+              json.dumps(statuses, ensure_ascii=False, indent=2), encoding='utf-8'
+          )
+          PY
+
+          tar --exclude='.git' --exclude='.venv' --exclude='*.pyc' --exclude='__pycache__' \
+              -czf /tmp/repo-audit/repository-snapshot.tar.gz .
+
+      - name: Run validation and capture exact results
+        shell: bash
+        run: |
+          set +e
+          mkdir -p /tmp/repo-audit/logs
+
+          python scripts/check_docs_links.py > /tmp/repo-audit/logs/docs-check.log 2>&1
+          echo $? > /tmp/repo-audit/logs/docs-check.exit
+
+          python -m pytest -q tests/scripts/test_check_docs_links.py > /tmp/repo-audit/logs/docs-tests.log 2>&1
+          echo $? > /tmp/repo-audit/logs/docs-tests.exit
+
+          python -m pytest -q tests/platform > /tmp/repo-audit/logs/platform-tests.log 2>&1
+          echo $? > /tmp/repo-audit/logs/platform-tests.exit
+
+          python -m pytest -q tests/daily_research > /tmp/repo-audit/logs/daily-research-tests.log 2>&1
+          echo $? > /tmp/repo-audit/logs/daily-research-tests.exit
+
+          python -m pytest -q > /tmp/repo-audit/logs/full-pytest.log 2>&1
+          echo $? > /tmp/repo-audit/logs/full-pytest.exit
+
+          python -m ruff check . > /tmp/repo-audit/logs/ruff.log 2>&1
+          echo $? > /tmp/repo-audit/logs/ruff.exit
+
+          python -m mypy > /tmp/repo-audit/logs/mypy.log 2>&1
+          echo $? > /tmp/repo-audit/logs/mypy.exit
+
+          git diff --check > /tmp/repo-audit/logs/git-diff-check.log 2>&1
+          echo $? > /tmp/repo-audit/logs/git-diff-check.exit
+
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: post-consolidation-audit
+          path: /tmp/repo-audit
+          retention-days: 3
