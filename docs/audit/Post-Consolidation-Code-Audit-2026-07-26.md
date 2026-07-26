@@ -1,12 +1,12 @@
 # Post-Consolidation Code Audit — 2026-07-26
 
-> **Status:** CURRENT_STATUS  
-> **Authority:** Commit-bound implementation-fact audit after branch consolidation  
-> **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-26  
-> **Supersedes:** None  
-> **Superseded By:** None  
-> **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md, Branch-Reconciliation-2026-07-26.md  
+> **Status:** CURRENT_STATUS
+> **Authority:** Commit-bound implementation-fact audit after branch consolidation
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-07-26
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md, Branch-Reconciliation-2026-07-26.md
 > **Code Evidence:** main@772ecfb09410588b5a406ad900d793a5850e60d5
 
 ## Objective
