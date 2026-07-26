@@ -14,7 +14,7 @@
 > evidence-derived `xuntou-pit-validation-bundle-v4`; buyability/orderability is not fill proof, and
 > the 10:30 endpoint requires next-session intraday evidence rather than daily close.
 
-> **Status:** FROZEN SUCCESS PROTOCOL IMPLEMENTED — EXTERNAL XUNTOU V4 INPUT REQUIRED
+> **Historical Status at Original Publication:** FROZEN SUCCESS PROTOCOL IMPLEMENTED — EXTERNAL XUNTOU V4 INPUT REQUIRED
 >
 > **Experiment:** `pit-b1e-unconditional-candidate-lift-replication-v2`
 >

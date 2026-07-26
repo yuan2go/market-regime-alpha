@@ -11,7 +11,7 @@
 
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** ARTIFACT CONTRACT IMPLEMENTED — provider adapter and real provider run remain pending
+> **Historical Status at Original Publication:** ARTIFACT CONTRACT IMPLEMENTED — provider adapter and real provider run remain pending
 > **Purpose:** Identify and compose the provider-backed/provider-export-backed evidence required by the first R5 Candidate research pipeline
 > **Eligibility basis:** `R5-Provider-Rehearsal-Trading-Eligibility-Policy-v2.md`
 

@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** IMPLEMENTED REHEARSAL CONTRACT
+> **Embedded Document Role:** IMPLEMENTED REHEARSAL CONTRACT
 > **Schema:** `entry-path-target-v1`
 > **Scope:** WP-4A.2 as-of evidence correction
 > **Authority:** subordinate to the Constitution and current R5 status

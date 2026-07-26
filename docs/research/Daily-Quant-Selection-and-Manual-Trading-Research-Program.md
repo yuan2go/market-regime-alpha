@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** CURRENT RESEARCH PROGRAM  
+> **Historical Status at Original Publication:** CURRENT RESEARCH PROGRAM  
 > **Project:** `market-regime-alpha`  
 > **Decision date:** 2026-07-20  
 > **Primary objective:** 量化选股 + 买卖点识别 + 手动下单 + 每日复盘  

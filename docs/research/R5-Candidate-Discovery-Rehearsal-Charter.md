@@ -11,7 +11,7 @@
 
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** ACTIVE — initial rehearsal research program
+> **Historical Status at Original Publication:** ACTIVE — initial rehearsal research program
 > **Authority:** Research Charter for the first independent cross-sectional Candidate Discovery vertical slice
 > **Constitutional basis:** `00-Project-Vision.md`, `03-Research-Framework.md`, `04-Data-Constitution.md`, `05-Factor-Constitution.md`, `07-Validation-Constitution.md`, `08-Roadmap.md`, `09-Glossary.md`
 > **Consistency audit:** `docs/architecture/Original-Intent-to-R5-Consistency-Audit.md`

@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** R0 closeout audit
+> **Historical Status at Original Publication:** R0 closeout audit
 > **Scope:** Original project intent, Constitution Volumes `00–09`, current Legacy architecture, and the transition into R1/R2 implementation
 > **Authority:** Implementation interpretation and R0 closeout record. This document does not create a new Constitution volume and does not override `docs/constitution/00–09`.
 

@@ -11,7 +11,7 @@
 
 
 > **Stages:** R3 Data / PIT and R4 Feature System MVP, with the minimum Candidate-facing contracts required to prove the vertical boundary
-> **Status:** ACTIVE — first contract spine implemented
+> **Historical Status at Original Publication:** ACTIVE — first contract spine implemented
 > **Constitutional basis:** `04-Data-Constitution.md`, `05-Factor-Constitution.md`, `07-Validation-Constitution.md`, `08-Roadmap.md`, `09-Glossary.md`
 > **Predecessor:** `R2-Minimal-V2-Kernel.md`
 

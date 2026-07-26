@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** IMPLEMENTED / LOCALLY VERIFIED
+> **Historical Status at Original Publication:** IMPLEMENTED / LOCALLY VERIFIED
 >
 > **Authority ceiling:** EXPLORATORY
 >

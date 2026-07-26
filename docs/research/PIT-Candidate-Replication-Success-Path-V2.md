@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** IMPLEMENTED; FORMAL EXECUTION BLOCKED BY MISSING XUNTOU V4 INPUT
+> **Historical Status at Original Publication:** IMPLEMENTED; FORMAL EXECUTION BLOCKED BY MISSING XUNTOU V4 INPUT
 >
 > **Authority ceiling:** `REHEARSAL_NOT_FORMAL_OOS`
 

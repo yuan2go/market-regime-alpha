@@ -11,7 +11,7 @@
 
 
 > **Stage:** R1 — Repository Truth and Legacy Characterization
-> **Status:** ACTIVE
+> **Historical Status at Original Publication:** ACTIVE
 > **Machine-readable inventory:** `docs/architecture/legacy-asset-inventory.json`
 > **Constitutional basis:** `02-Architecture-Blueprint.md`, `08-Roadmap.md`, `09-Glossary.md`
 

@@ -12,7 +12,7 @@
 # WP-4A.1 Entry Path Temporal and Price-Lineage Hardening Design
 
 > **Date:** 2026-07-18
-> **Status:** APPROVED DESIGN
+> **Historical Status at Original Publication:** APPROVED DESIGN
 > **Authority:** Bounded WP-4A.1 design under `AGENTS.md`, the Constitution, and
 > `docs/research/Entry-Position-Lifecycle-Exit-Research-Program.md`
 

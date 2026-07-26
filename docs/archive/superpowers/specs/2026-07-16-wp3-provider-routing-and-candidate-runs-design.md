@@ -11,7 +11,7 @@
 
 # WP-3 Provider Routing and Candidate Runs Design
 
-> **Status:** PROPOSED — approved conversational design, pending written-spec review
+> **Historical Status at Original Publication:** PROPOSED — approved conversational design, pending written-spec review
 > **Date:** 2026-07-16
 > **Authority:** Bounded WP-3 engineering design under `AGENTS.md`; the Constitution and current R5 authority documents remain higher authority
 

@@ -11,7 +11,7 @@
 
 
 > **Stage:** R2
-> **Status:** ACTIVE — initial kernel implemented
+> **Historical Status at Original Publication:** ACTIVE — initial kernel implemented
 > **Constitutional basis:** `02-Architecture-Blueprint.md`, `08-Roadmap.md`, `09-Glossary.md`
 > **R0 consistency record:** `docs/architecture/Constitution-Consistency-Audit.md`
 

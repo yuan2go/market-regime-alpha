@@ -12,7 +12,7 @@
 # WP-3 Candidate Directional Accuracy Diagnostics Design
 
 > **Date:** 2026-07-16
-> **Status:** APPROVED DESIGN
+> **Historical Status at Original Publication:** APPROVED DESIGN
 > **Authority:** Bounded WP-3 engineering design under `AGENTS.md`; the Constitution and current
 > R5 research authorities remain higher authority
 

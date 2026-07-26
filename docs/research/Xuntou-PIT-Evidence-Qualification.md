@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** IMPLEMENTED CONTRACT / EXTERNAL INPUT BLOCKED
+> **Historical Status at Original Publication:** IMPLEMENTED CONTRACT / EXTERNAL INPUT BLOCKED
 
 The qualification receipt is derived from nine independent requirements: historical membership,
 security master, ST history, suspension history, decision-time orderability, verified amount unit,

@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** READY FOR CODEX IMPLEMENTATION
+> **Historical Status at Original Publication:** READY FOR CODEX IMPLEMENTATION
 > **Owner boundary:** Candidate ranking verification and evaluation interface only
 > **Primary objective:** Close the current B1 verification gap without changing B1 ranking semantics
 > **Depends on:** Constitution, `AGENTS.md`, `R5-Current-Status.md`, `R5-Candidate-Model-Research-Program.md`

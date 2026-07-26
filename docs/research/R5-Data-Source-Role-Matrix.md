@@ -11,7 +11,7 @@
 
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** CURRENT DATA-SOURCE ROLE POLICY
+> **Historical Status at Original Publication:** CURRENT DATA-SOURCE ROLE POLICY
 > **Purpose:** Keep data integration subordinate to strategy research while fixing Xuntou as the current primary provider and preserving public sources as explicit auxiliaries
 
 ---

@@ -18,6 +18,7 @@ Build and validate a daily A-share research loop that separates opportunity sele
 ```text
 P0 Platform and evidence contracts
 P1 Daily stock/ETF universes and mappings
+P1E Tencent exploratory vertical slice using canonical contracts and an EXPLORATORY ceiling
 P2 Market/ETF/theme/capital context
 P3 Multi-model Candidate predictions and recommendations
 P4 Entry assessments
@@ -47,3 +48,7 @@ Can fixed, transparent Candidate models improve the cost-adjusted next-session o
 Daily: data quality, frozen predictions, outcomes, anomalies and hypotheses.  
 20-day: drift and provisional diagnostics.  
 60/120-day: promotion, suspension, parameter/Feature changes and strategy allocation decisions.
+
+## Early vertical slice
+
+After platform identity, source manifests and daily universe contracts exist, [WP-D2E](../roadmap/work-packages/WP-D2E-Tencent-Exploratory-Daily-Loop.md) runs the minimal daily B0/B1 prediction → next-session outcome → review loop. It must not tune model weights or acquire formal evidence authority.

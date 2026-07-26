@@ -17,7 +17,7 @@ This path is retained for stable historical links. The sole current implementati
 
 > **Role:** implementation-status index; this file does not amend the Constitution.
 >
-> **Current authority:** `docs/research/R5-Current-Status.md`
+> **Historical authority at original publication:** `docs/research/R5-Current-Status.md`
 
 As of the Qualified PIT Replication Program:
 

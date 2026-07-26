@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** IMPLEMENTED
+> **Historical Status at Original Publication:** IMPLEMENTED
 > **Authority:** EXPLORATORY evidence integrity only
 
 ## Why v3 exists

@@ -11,7 +11,7 @@
 
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** IMPLEMENTED CONTRACT — code and tests committed; provider-backed evidence materialization remains pending
+> **Historical Status at Original Publication:** IMPLEMENTED CONTRACT — code and tests committed; provider-backed evidence materialization remains pending
 > **Purpose:** Restore the original first-rehearsal Candidate-pool coverage for listing age, liquidity and Decision-Time buyability without conflating Candidate Eligibility with Execution Feasibility
 > **Current audit:** `docs/architecture/Original-Intent-to-R5-Eligibility-Readiness-Audit.md`
 

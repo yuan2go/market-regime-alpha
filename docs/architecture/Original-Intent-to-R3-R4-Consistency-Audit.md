@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** Current implementation-alignment audit
+> **Historical Status at Original Publication:** Current implementation-alignment audit
 > **Scope:** Preserved original ChatGPT project conversation, Constitution `00–09`, R0 consistency audit, R1 Legacy characterization, R2 V2 kernel, R3/R4 minimal research spine, and the current transition toward R5 Candidate Discovery
 > **Authority:** Architecture and implementation interpretation. This document does not override the Constitution.
 

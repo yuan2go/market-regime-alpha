@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** COMPLETE — EXPLORATORY NEGATIVE PRIMARY RESULT
+> **Historical Status at Original Publication:** COMPLETE — EXPLORATORY NEGATIVE PRIMARY RESULT
 >
 > **Run:** `mr2b-f2b-cfc48a658d50636610ac`
 >

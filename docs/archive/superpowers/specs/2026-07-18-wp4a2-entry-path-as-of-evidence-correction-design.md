@@ -12,7 +12,7 @@
 # WP-4A.2 Entry Path As-Of Evidence Correction Design
 
 > **Date:** 2026-07-18
-> **Status:** APPROVED DESIGN
+> **Historical Status at Original Publication:** APPROVED DESIGN
 > **Authority:** Bounded WP-4A.2 design under `AGENTS.md`, the Constitution, and the Entry/Lifecycle/Exit research program.
 
 ## Purpose

@@ -11,7 +11,7 @@
 
 # Tencent Composite Exploratory R5 Design
 
-> **Status:** APPROVED DESIGN
+> **Historical Status at Original Publication:** APPROVED DESIGN
 > **Date:** 2026-07-16
 > **Authority ceiling:** `EXPLORATORY`
 > **Primary objective:** Run one bounded 20-symbol, 60-decision-time Candidate experiment with Tencent current-session data plus explicitly identified local/BaoStock history, then refresh the same `dividend_t` watchlist.

@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** approved implementation boundary
+> **Historical Status at Original Publication:** approved implementation boundary
 > **Data eligibility ceiling:** `EXPLORATORY`
 
 ## Reuse boundary

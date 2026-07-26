@@ -11,7 +11,7 @@
 
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** CURRENT PROVIDER DECISION
+> **Historical Status at Original Publication:** CURRENT PROVIDER DECISION
 > **Purpose:** Fix Xuntou/ThinkTrader as the current concrete data provider while preventing provider integration from displacing quantitative-strategy research
 > **Authority:** Implementation sequencing and provider-role decision. This document does not override the Constitution.
 

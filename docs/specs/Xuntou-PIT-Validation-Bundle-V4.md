@@ -12,7 +12,7 @@
 
 > **Schema:** `xuntou-pit-validation-bundle-v4`
 > **Authority ceiling:** `CONTROLLED_REPLICATION_INPUT`
-> **Status:** contract implemented; real input unavailable
+> **Embedded Document Role:** contract implemented; real input unavailable
 
 V4 is a new evidence contract. `xuntou-p0-native-bundle-v3` remains REHEARSAL and can never be
 renamed, self-declared, or limitation-stripped into V4.

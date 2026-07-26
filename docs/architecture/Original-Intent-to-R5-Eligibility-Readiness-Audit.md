@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** CURRENT audit before provider-backed Candidate panels
+> **Historical Status at Original Publication:** CURRENT audit before provider-backed Candidate panels
 > **Scope:** Preserved original ChatGPT project conversation, Constitution `00–09`, current R5 Charter, current R5 status, versioned Trading Eligibility v1, and provider-backed rehearsal readiness
 > **Authority:** Architecture and implementation interpretation. This document does not override the Constitution.
 

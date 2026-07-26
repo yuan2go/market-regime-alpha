@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** CURRENT
+> **Historical Status at Original Publication:** CURRENT
 > **Mapping contract:** `xuntou-p0-native-field-mapping-v3`
 > **Native bundle schema:** `xuntou-p0-native-bundle-v3`
 > **Implementation revision:** `b81458c9880bf7463b86adba144ee6e3d7b890e7`

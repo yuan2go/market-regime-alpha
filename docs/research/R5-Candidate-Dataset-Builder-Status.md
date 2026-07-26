@@ -11,7 +11,7 @@
 
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** ACTIVE — controlled multi-date vertical slice, opportunity Target bundle, and historical Calendar/Universe/Eligibility artifact spine implemented; provider-backed rehearsal remains pending
+> **Historical Status at Original Publication:** ACTIVE — controlled multi-date vertical slice, opportunity Target bundle, and historical Calendar/Universe/Eligibility artifact spine implemented; provider-backed rehearsal remains pending
 > **Research Charter:** `docs/research/R5-Candidate-Discovery-Rehearsal-Charter.md`
 > **Current consistency audit:** `docs/architecture/Original-Intent-to-R5-Consistency-Audit.md`
 

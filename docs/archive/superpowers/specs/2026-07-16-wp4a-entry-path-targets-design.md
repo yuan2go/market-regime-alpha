@@ -12,7 +12,7 @@
 # WP-4A Entry Path Target Contracts and Materialization Design
 
 > **Date:** 2026-07-16
-> **Status:** APPROVED DESIGN
+> **Historical Status at Original Publication:** APPROVED DESIGN
 > **Authority:** Bounded WP-4A design under `AGENTS.md`, the Constitution, and
 > `docs/research/Entry-Position-Lifecycle-Exit-Research-Program.md`
 

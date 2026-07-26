@@ -6,35 +6,36 @@
 > **Last Updated:** 2026-07-26  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Conversation-to-Repository-Traceability.md, ../status/Current-State.md  
+> **Related Documents:** Conversation-Evidence-Index.md, Conversation-to-Repository-Traceability.md, ../status/Current-State.md  
 > **Code Evidence:** Conversation evidence; no runtime authority
 
-| decision_id | decision | decision_date_or_order | decision_type | status | supersedes | affected_domains | affected_documents | supporting_conversation |
-|---|---|---|---|---|---|---|---|---|
-| CD-001 | Alpha Research OS identity | 2026-07 project sequence | PROJECT_IDENTITY | FROZEN | single-strategy/Dividend-T identity | All | constitution, README | Current project conversation and audit instruction |
-| CD-002 | Current product is A-share research and manual decision support | latest | PROJECT_IDENTITY | FROZEN |  | Application, execution | Current State, Phase D | Current user instruction |
-| CD-003 | Canonical end-to-end chain includes context, Candidate, Entry, Lifecycle, Exit, Portfolio, review | latest | ARCHITECTURE | FROZEN |  | All | Architecture 00–05 | Current user instruction |
-| CD-004 | Prediction/action authorities remain separate | latest | ARCHITECTURE | FROZEN |  | Candidate through execution | Strategy Constitution/specs | Current user instruction |
-| CD-005 | Target horizon does not dictate holding/exit | latest | RESEARCH | FROZEN |  | Target/Lifecycle/Exit | Research/specs | Current user instruction |
-| CD-006 | Exit is independent, not inverse Entry | latest | MODEL | FROZEN |  | Entry/Exit | Exit Research/spec | Current user instruction |
-| CD-007 | Score is not probability without calibration | latest | MODEL | FROZEN |  | Models | AGENTS/specs | Current user instruction |
-| CD-008 | Empty Candidate/NO_ACTION valid; NO_ACTION != HOLD | latest | RESEARCH | FROZEN |  | Decision/Lifecycle | Specs | Current user instruction |
-| CD-009 | Xuntou primary; public data auxiliary/exploratory | latest | DATA | CURRENT |  | Data/Provider | Data semantics/status | Current user instruction |
-| CD-010 | No automatic QMT/PTrade/unattended execution in current stage | latest | NON_GOAL | FROZEN |  | Execution | Project Vision/Current State | Current user instruction |
-| CD-011 | Legacy migrates incrementally via Strangler boundary | latest | LEGACY_MIGRATION | FROZEN | big-bang rewrite | Legacy | Legacy Migration | Current user instruction |
-| CD-012 | QuantDesk is workbench/UI only | latest | APPLICATION_UI | CURRENT |  | Application | QuantDesk Boundary | Current user instruction |
-| CD-013 | Candidate first, then Entry/Lifecycle/Exit as separate validation layers | project sequence | ROADMAP | CURRENT |  | Research domains | Current Research Program | Project conversation |
-| CD-014 | Theories must become versioned Observables/Features/Signals | today | MODEL | FROZEN |  | Knowledge/Factor | Factor Constitution | Today discussion |
-| CD-015 | Models compare only in frozen comparable lanes | today | RESEARCH | FROZEN |  | Evaluation | Validation/Ablation | Today discussion |
-| CD-016 | No naive all-model leaderboard across strategy families | today | RESEARCH | FROZEN |  | Evaluation/Portfolio | Research framework | Today discussion |
-| CD-017 | Codex diagnoses/proposes but cannot mutate/promote/execute | today | RESEARCH | FROZEN |  | Feedback/Governance | Failure Attribution/Ops | Today discussion |
-| CD-018 | Daily feedback fast; model decisions slow and controlled | today | RESEARCH | CURRENT |  | Feedback | Current Research Program | Today discussion |
-| CD-019 | Free data can run engineering/exploratory loop with explicit ceiling | today | DATA | CURRENT |  | Data/Daily loop | Data semantics | Today discussion |
-| CD-020 | Incrementally platformize this repository; no second platform or big-bang rewrite | today | ARCHITECTURE | FROZEN | finish-old-then-new | Repository | Roadmap | Today discussion |
-| CD-021 | Platform kernel five-item work package | today | ROADMAP | CURRENT |  | Platform | PR #12 status | Today discussion |
-| CD-022 | Phase D daily products include context, Candidate, Entry, positions, review, attribution | latest | ROADMAP | FROZEN |  | Phase D | Architecture/Specs | Current user instruction |
-| CD-023 | Profit is evidence outcome, never an implementation promise | project-wide | RESEARCH | FROZEN |  | Validation | Validation Constitution | Project instructions |
+| decision_id | decision | status | affected domains | affected documents | conversation evidence | confidence |
+|---|---|---|---|---|---|---|
+| CD-001 | Alpha Research OS identity | FROZEN | All | constitution, README | CE-001, CE-008 | HIGH |
+| CD-002 | Current product is A-share research and manual decision support | FROZEN | Application, execution | Current State, Phase D | CE-004 | HIGH |
+| CD-003 | Canonical chain includes context, Universe, Features, Candidate, Entry, Lifecycle, Exit, Portfolio, review | FROZEN | All | Architecture 00–05 | CE-001, CE-004 | HIGH |
+| CD-004 | Prediction/action authorities remain separate | FROZEN | Candidate through execution | Strategy Constitution/specs | CE-006 | HIGH |
+| CD-005 | Target horizon does not dictate holding/exit | FROZEN | Target/Lifecycle/Exit | Research/specs | CE-006 | HIGH |
+| CD-006 | Exit is independent, not inverse Entry | FROZEN | Entry/Exit | Exit Research/spec | CE-006 | HIGH |
+| CD-007 | Score is not probability without calibration | FROZEN | Models | AGENTS/specs | CE-004 | HIGH |
+| CD-008 | Empty Candidate/NO_ACTION valid; NO_ACTION != HOLD | FROZEN | Decision/Lifecycle | Specs | CE-004 | HIGH |
+| CD-009 | Xuntou formal direction; public data auxiliary/exploratory | CURRENT | Data/Provider | Data semantics/status | CE-007 | HIGH |
+| CD-010 | No unattended QMT/PTrade execution in current stage | FROZEN | Execution | Project Vision/Current State | CE-004 | HIGH |
+| CD-011 | Legacy migrates incrementally through compatibility boundaries | FROZEN | Legacy | Legacy Migration | CE-002 | HIGH |
+| CD-012 | QuantDesk is workbench/UI only | CURRENT | Application | QuantDesk Boundary | CE-004 | MEDIUM |
+| CD-013 | Candidate first; Entry/Lifecycle/Exit remain separate validation layers | CURRENT | Research | Current Research Program | CE-006 | HIGH |
+| CD-014 | Theories become versioned Observables/Features/Signals | FROZEN | Knowledge/Factor | Factor Constitution | CE-001 | HIGH |
+| CD-015 | Models compare only in frozen comparable lanes | FROZEN | Evaluation | Validation/Ablation | CE-001 | HIGH |
+| CD-016 | No naive all-model leaderboard across strategy families | FROZEN | Evaluation/Portfolio | Research Framework | CE-001 | HIGH |
+| CD-017 | Codex diagnoses/proposes but cannot mutate/promote/execute | FROZEN | Feedback/Governance | Failure Attribution/Ops | CE-001 | HIGH |
+| CD-018 | Daily feedback is fast; model decisions are slow and governed | CURRENT | Feedback | Current Research Program | CE-001 | HIGH |
+| CD-019 | Free data runs engineering/exploratory loop under explicit ceiling | CURRENT | Data/Daily loop | Data semantics/WP-D2E | CE-007 | HIGH |
+| CD-020 | Platformize this repository; no second platform/big-bang rewrite | FROZEN | Repository | Roadmap | CE-002 | HIGH |
+| CD-021 | Platform kernel five-item work package | CURRENT | Platform | PR #12 status | CE-003 | HIGH |
+| CD-022 | Phase D includes context, Candidate, Entry, positions, review and attribution | FROZEN | Phase D | Architecture/Specs | CE-004 | HIGH |
+| CD-023 | Profit is an evidence outcome, never an implementation promise | FROZEN | Validation | Validation Constitution | CE-008 | HIGH |
+| CD-024 | Documentation correction set P0/P1/P2 is required before Ready for Review | CURRENT | Documentation | PR #13 | CE-005 | HIGH |
 
-## Evidence limitation
+## Evidence rule
 
-The current project conversation and supplied audit instruction are available. A separately preserved raw transcript referenced by older repository audits is not a tracked file and was not supplied independently. Exact quotes from that missing artifact are classified `MISSING_CONVERSATION_EVIDENCE`; this ledger does not reconstruct them from memory.
+`DIRECT_CURRENT_CONVERSATION` is strongest for this reconstruction. `PROJECT_CONVERSATION` and `PROJECT_INSTRUCTION` are retained with explicit grades. No row is presented as a verbatim quote unless the raw transcript is repository-addressable.

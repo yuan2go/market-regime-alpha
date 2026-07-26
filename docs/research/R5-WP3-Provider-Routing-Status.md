@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** CURRENT
+> **Historical Status at Original Publication:** CURRENT
 >
 > **Infrastructure:** IMPLEMENTED
 >

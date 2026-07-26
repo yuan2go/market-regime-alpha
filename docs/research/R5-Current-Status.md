@@ -10,9 +10,9 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** CURRENT
+> **Historical Status at Original Publication:** CURRENT
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Purpose:** Current short-form authority for active implementation sequencing
+> **Purpose:** Historical short-form authority at original publication for active implementation sequencing
 > **Current audit:** `docs/architecture/Original-Intent-to-Current-Docs-and-Codex-Readiness-Audit.md`
 > **Primary provider decision:** `docs/research/R5-Xuntou-Provider-and-Strategy-Priority.md`
 > **Data-source roles:** `docs/research/R5-Data-Source-Role-Matrix.md`

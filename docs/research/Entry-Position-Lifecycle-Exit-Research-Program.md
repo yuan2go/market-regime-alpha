@@ -10,7 +10,7 @@
 > **Code Evidence:** Historical references; verify against main
 
 
-> **Status:** CURRENT RESEARCH PROGRAM
+> **Historical Status at Original Publication:** CURRENT RESEARCH PROGRAM
 > **Authority:** Lower-level research sequencing under the Constitution and Strategy Constitution
 > **Scope:** A-share Entry timing, Position Lifecycle, and Exit research after Candidate Discovery
 > **Primary data provider:** Xuntou / ThinkTrader / XtQuant

@@ -11,7 +11,7 @@
 
 
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** IMPLEMENTED — strict normalized-export adapter contract and tests committed; concrete vendor mapping and real data run remain pending
+> **Historical Status at Original Publication:** IMPLEMENTED — strict normalized-export adapter contract and tests committed; concrete vendor mapping and real data run remain pending
 > **Input authority:** `R5-Provider-Rehearsal-Market-Artifact.md`
 > **Eligibility authority:** `R5-Provider-Rehearsal-Trading-Eligibility-Policy-v2.md`
 
