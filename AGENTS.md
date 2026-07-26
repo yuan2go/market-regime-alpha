@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-07-26  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** docs/README.md, docs/status/Current-State.md, docs/roadmap/work-packages/README.md  
+> **Related Documents:** CLAUDE.md, docs/README.md, docs/status/Current-State.md, docs/roadmap/work-packages/README.md  
 > **Code Evidence:** path:src/market_regime_alpha; path:tests
 
 ## Mission
@@ -25,6 +25,15 @@ Market / ETF / Theme / Capital Context
 → Execution Simulation / Manual Record
 → Validation / Review / Research Feedback
 ```
+
+## Agent entry points
+
+- `AGENTS.md`: shared cross-agent execution contract.
+- `CLAUDE.md`: Claude Code project memory; imports this file and adds Claude-specific workflow.
+- `.claude/agents/**`: bounded project subagents for read-only review.
+- `.claude/skills/**`: on-demand repeatable workflows.
+
+Do not create a parallel agent instruction hierarchy that contradicts these files.
 
 ## Normative authority order
 
@@ -58,6 +67,8 @@ Externally blocked: real qualified Xuntou v4/XtQuant input and formal replicatio
 
 Not canonical on `main`: persistent/recoverable platform governance, DailyResearchSnapshot runtime, daily Prediction Ledger, CandidateRecommendation service, EntryAssessment, actual-position authority, Holding/Exit, review/attribution, portfolio simulation, Codex Evidence Pack and QuantDesk integration.
 
+The next implementation priority is `WP-D0 — Platform Governance Kernel Hardening`.
+
 ## Non-negotiable rules
 
 - Candidate Prediction ≠ Entry ≠ Lifecycle ≠ Exit ≠ Portfolio ≠ Execution.
@@ -67,13 +78,25 @@ Not canonical on `main`: persistent/recoverable platform governance, DailyResear
 - A score is not a probability without calibration.
 - Data authority cannot inflate; no silent provider substitution or invented PIT/finality/adjustment.
 - One primary change per experiment; preserve negative results.
-- Codex diagnoses and proposes; it does not mutate, promote or execute.
+- Codex/Claude may diagnose and implement approved scope; they do not auto-mutate, promote or execute models.
 - New platform responsibility does not enter Legacy God Objects.
 - Every implementation claim cites code/test/artifact evidence.
+- Historical Artifacts and model identities are immutable unless an explicit migration/supersession contract exists.
 
 ## Provider rules
 
 Xuntou/ThinkTrader/XtQuant remains the formal provider direction. Tencent/BaoStock/Tushare/AKShare/EastMoney are explicit auxiliary or exploratory sources unless a qualified contract says otherwise. A runnable adapter is not formal evidence.
+
+## Branch and PR discipline
+
+- Never work directly on `main`.
+- One primary objective per branch and PR.
+- Fetch and inspect current `main` before starting.
+- A branch head that is not an ancestor of `main` is not automatically unmerged; verify merged-PR metadata and effective content.
+- Do not remerge stale branches whose content was already integrated through squash, rebase or later superseding PRs.
+- Do not force-push shared branches or delete remote branches without explicit authorization.
+- Merge only after required checks succeed and the requested scope is verified.
+- After merge, reconcile Current State, Capability Matrix and Gap Register when facts changed.
 
 ## Work-package discipline
 
@@ -82,10 +105,13 @@ Every work package declares objective, bounded contexts, dependencies, inputs, o
 ## Validation
 
 ```bash
+git diff --check
 python scripts/check_docs_links.py
+python -m pytest -q tests/scripts/test_check_docs_links.py
+python -m pytest -q tests/platform
 python -m pytest -q
 python -m ruff check .
 python -m mypy
 ```
 
-Report exactly what ran. Do not claim a capability, test result, Alpha result or provider authority that was not observed.
+Run additional focused tests required by the affected bounded contexts. Report every command as `PASS`, `FAIL`, `NOT_RUN`, or `BLOCKED`. Do not claim a capability, test result, Alpha result or provider authority that was not observed.
