@@ -56,6 +56,8 @@ A lower normative document cannot override Constitution. A document cannot estab
 - [08 Constitutional Roadmap](constitution/08-Roadmap.md)
 - [09 Glossary](constitution/09-Glossary.md)
 
+The canonical Constitution ends at `09`. Historical platform-kernel merge material is archived and cannot create a new constitutional authority.
+
 ### Current architecture
 
 - [System Context](architecture/00-System-Context.md)
@@ -73,6 +75,7 @@ A lower normative document cannot override Constitution. A document cannot estab
 
 - [Current Research Program](research/Current-Research-Program.md)
 - [Candidate Research](research/Candidate-Research.md)
+- [Research Platform Multi-model Candidate Slice V1](research/Research-Platform-Vertical-Slice-V1.md)
 - [Entry Research](research/Entry-Research.md)
 - [Position Lifecycle Research](research/Position-Lifecycle-Research.md)
 - [Exit Research](research/Exit-Research.md)
@@ -99,6 +102,7 @@ A lower normative document cannot override Constitution. A document cannot estab
 ### Audit and archive
 
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
+- [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
 - [Repository Map](audit/Repository-Map.md)
 - [Documentation Problem Report](audit/Docs-Problem-Report.md)
 - [Document Inventory and Migration Plan](audit/Docs-Inventory-and-Migration-Plan.md)
@@ -109,6 +113,7 @@ A lower normative document cannot override Constitution. A document cannot estab
 - [Supersession Registry](audit/Supersession-Registry.tsv)
 - [Code Evidence Registry](audit/Code-Evidence-Registry.tsv)
 - [Archive Index](archive/README.md)
+- [Historical Research Platform Kernel V1](archive/research-platform/Research-Platform-Kernel-V1.md)
 
 ### Provider operational authorities
 
