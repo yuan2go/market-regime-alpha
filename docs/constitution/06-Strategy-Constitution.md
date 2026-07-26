@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Model/strategy/lifecycle/portfolio boundaries  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume VII — Strategy Constitution
 
 > **Document:** `docs/constitution/06-Strategy-Constitution.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide strategy identity, decision-policy, Candidate, Entry, Position Lifecycle, Exit, strategy-state, position-proposal, risk, composition and decision-authority rules  
 > **Applies to:** Candidate Discovery consumers, entry policies, holding policies, add/reduce/rotate/exit policies, long-term strategies, dividend strategies, T overlays, ETF strategies, theme strategies, market-regime-conditioned strategies, position-state machines, portfolio proposals, research backtests, shadow/paper workflows, agents, Legacy migration and future live decision systems  
 > **Project:** `market-regime-alpha`  
 > **Precedence:** Must remain consistent with `00-Project-Vision.md`, `01-Core-Principles.md`, `02-Architecture-Blueprint.md`, `03-Research-Framework.md`, `04-Data-Constitution.md`, and `05-Factor-Constitution.md`

@@ -1,5 +1,15 @@
 # A 股买卖点识别模型
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 本文档对应历史 `strategies/ideas/Long-Term-Dividend-T-Model.md` 的第一版工程实现。当前对外定位已收敛为“买点 / 卖点识别模型”，不把它描述成自动交易或完整做 T 平台。
 
 当前实盘边界：

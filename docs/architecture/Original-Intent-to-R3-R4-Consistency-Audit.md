@@ -1,6 +1,16 @@
 # Original Intent to R3/R4 Consistency Audit
 
-> **Status:** Current implementation-alignment audit
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
+> **Historical Status at Original Publication:** Current implementation-alignment audit
 > **Scope:** Preserved original ChatGPT project conversation, Constitution `00–09`, R0 consistency audit, R1 Legacy characterization, R2 V2 kernel, R3/R4 minimal research spine, and the current transition toward R5 Candidate Discovery
 > **Authority:** Architecture and implementation interpretation. This document does not override the Constitution.
 

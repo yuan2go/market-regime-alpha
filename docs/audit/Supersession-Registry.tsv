@@ -1,0 +1,5 @@
+source_path	target_path	relation_source
+docs/constitution/implementation-status.md	docs/status/Current-State.md	metadata
+docs/research/Daily-Quant-Selection-and-Manual-Trading-Research-Program.md	docs/research/Current-Research-Program.md	metadata
+docs/research/Entry-Position-Lifecycle-Exit-Research-Program.md	docs/research/Current-Research-Program.md	metadata
+docs/research/R5-Current-Status.md	docs/status/Current-State.md	metadata

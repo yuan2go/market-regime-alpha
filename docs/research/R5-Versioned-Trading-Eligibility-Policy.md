@@ -1,7 +1,17 @@
 # R5 Versioned Trading Eligibility Policy and Materializer
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** IMPLEMENTED — code and tests committed; normal-environment execution remains pending
+> **Historical Status at Original Publication:** IMPLEMENTED — code and tests committed; normal-environment execution remains pending
 > **Scope:** Versioned raw-field Trading Eligibility Policy, exact-Decision-Time materialization, and Legacy rehearsal-sidecar compatibility
 > **Authority:** Research/implementation status. This document does not override the Constitution.
 > **Related:** `R5-Candidate-Discovery-Rehearsal-Charter.md`, `R5-Candidate-Dataset-Builder-Status.md`, `Original-Intent-to-R5-Consistency-Audit.md`

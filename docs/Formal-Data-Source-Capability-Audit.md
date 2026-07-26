@@ -1,5 +1,15 @@
 # 正式数据源能力审计（Task 11A.9）
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 状态：**能力审计完成；没有任何当前免费/缓存数据源被批准为正式 MACD 数据集主源。**
 
 本审计区分“接口能返回行情”与“可以证明正式研究所需的 point-in-time（PIT）语义”。后者

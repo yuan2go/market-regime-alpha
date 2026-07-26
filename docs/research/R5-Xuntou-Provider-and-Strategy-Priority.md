@@ -1,7 +1,17 @@
 # R5 Xuntou Provider Decision and Strategy-Research Priority
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** CURRENT PROVIDER DECISION
+> **Historical Status at Original Publication:** CURRENT PROVIDER DECISION
 > **Purpose:** Fix Xuntou/ThinkTrader as the current concrete data provider while preventing provider integration from displacing quantitative-strategy research
 > **Authority:** Implementation sequencing and provider-role decision. This document does not override the Constitution.
 

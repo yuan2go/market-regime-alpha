@@ -1,6 +1,16 @@
 # Entry Path Target V1
 
-> **Status:** IMPLEMENTED REHEARSAL CONTRACT
+> **Status:** CURRENT_SPECIFICATION  
+> **Authority:** Provider/Entry technical specification; lower than current architecture/status  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
+> **Embedded Document Role:** IMPLEMENTED REHEARSAL CONTRACT
 > **Schema:** `entry-path-target-v1`
 > **Scope:** WP-4A.2 as-of evidence correction
 > **Authority:** subordinate to the Constitution and current R5 status

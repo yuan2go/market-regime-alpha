@@ -1,5 +1,15 @@
 # MR-2 Morning-Pop Failure Decomposition
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 MR-2 is a bounded `EXPLORATORY` diagnosis of the fixed B0/B1 morning-pop replay. It does not
 create a model, select a winner, or authorize an Entry, Position, Exit, Portfolio, or execution
 change.

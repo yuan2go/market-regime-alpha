@@ -1,6 +1,16 @@
 # WP-0 — Close B1 Verification
 
-> **Status:** READY FOR CODEX IMPLEMENTATION
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
+> **Historical Status at Original Publication:** READY FOR CODEX IMPLEMENTATION
 > **Owner boundary:** Candidate ranking verification and evaluation interface only
 > **Primary objective:** Close the current B1 verification gap without changing B1 ranking semantics
 > **Depends on:** Constitution, `AGENTS.md`, `R5-Current-Status.md`, `R5-Candidate-Model-Research-Program.md`

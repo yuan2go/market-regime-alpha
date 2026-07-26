@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Research lifecycle and evidence framework  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume IV — Research Framework
 
 > **Document:** `docs/constitution/03-Research-Framework.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide research lifecycle, research-object model, experiment discipline and evidence-flow framework  
 > **Applies to:** Research programs, hypotheses, targets, experiments, baselines, model development, strategy research, ablation, attribution, research artifacts, promotion decisions, monitoring, agents, and legacy research migration  
 > **Project:** `market-regime-alpha`  
 > **Precedence:** Must remain consistent with `00-Project-Vision.md`, `01-Core-Principles.md`, and `02-Architecture-Blueprint.md`

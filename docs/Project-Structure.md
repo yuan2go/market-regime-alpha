@@ -1,5 +1,15 @@
 # Market Regime Alpha 目录与领域边界
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 `market-regime-alpha` 是面向 A 股市场的 Alpha Research Operating System。仓库继续承载已有买卖点、红利/T、单股时机、回测、数据适配、Dashboard 和通知能力，同时按照 Constitution 与 Roadmap 渐进建立新的研究边界。
 
 本文件定义的是**仓库物理目录边界和目标领域放置方向**。它不要求大爆炸重命名现有 `dividend_t` 包，也不把目录移动本身视为架构迁移。

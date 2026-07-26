@@ -1,10 +1,20 @@
 # The Constitution of Market Regime Alpha
 
+> **Status:** CONSTITUTION  
+> **Authority:** Project-wide governing principles  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../README.md, ../status/Current-State.md  
+> **Code Evidence:** Normative; implementation evidence belongs in status/code
+
+> **2026-07-26 interpretation:** This Constitution remains normative. Current implementation facts live only in `docs/status/Current-State.md`; Phase D executable sequencing lives in `docs/roadmap/Phase-D-Work-Packages.md`. Provider choices and the current manual-execution boundary are phase decisions, not permanent project identity.
+
+
 # Volume II — Core Principles
 
 > **Document:** `docs/constitution/01-Core-Principles.md`  
-> **Status:** Foundational / Normative  
-> **Authority:** Project-wide governing principles  
 > **Applies to:** Research, data, factors, strategies, validation, architecture, implementation, agents, reviews, migration, and future production systems  
 > **Project:** `market-regime-alpha`  
 

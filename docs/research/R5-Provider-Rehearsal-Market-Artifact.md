@@ -1,7 +1,17 @@
 # R5 Provider-Rehearsal Market Artifact
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
-> **Status:** ARTIFACT CONTRACT IMPLEMENTED — provider adapter and real provider run remain pending
+> **Historical Status at Original Publication:** ARTIFACT CONTRACT IMPLEMENTED — provider adapter and real provider run remain pending
 > **Purpose:** Identify and compose the provider-backed/provider-export-backed evidence required by the first R5 Candidate research pipeline
 > **Eligibility basis:** `R5-Provider-Rehearsal-Trading-Eligibility-Policy-v2.md`
 
