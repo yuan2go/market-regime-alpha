@@ -123,10 +123,11 @@ class ModelRegistry:
         if to_status is ModelLifecycleStatus.ACTIVE and approval_ref is None:
             raise ValueError("ACTIVE transition requires approval_ref")
         next_evidence = evidence_level or current.evidence_level
-        if next_evidence not in current.definition.supported_data_grades and next_evidence not in {
-            EvidenceLevel.SHADOW_EVIDENCE,
-            EvidenceLevel.LIVE_OBSERVED,
-        }:
+        if (
+            next_evidence is not EvidenceLevel.UNQUALIFIED
+            and next_evidence not in current.definition.supported_data_grades
+            and next_evidence not in {EvidenceLevel.SHADOW_EVIDENCE, EvidenceLevel.LIVE_OBSERVED}
+        ):
             raise ValueError("evidence level is incompatible with model definition")
         transition = ModelLifecycleTransition(
             model_id=model_id,
