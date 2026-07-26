@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Repository-Audit-Baseline-2026-07-26.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../roadmap/work-packages/WP-D0-Platform-Governance-Kernel.md  
-> **Code Evidence:** baseline main@42fa35f172f16c7d86e516a9dee6d9b8c8e7a7be; reconciliation branch `fix/post-merge-authority-and-ci-reconciliation`
+> **Code Evidence:** baseline main@42fa35f172f16c7d86e516a9dee6d9b8c8e7a7be; validated reconciliation tree@1a6053b533e1199e8fdb0e7be7852aad2a2ad946
 
 ## Purpose
 
@@ -54,7 +54,7 @@ Resolution: CI now runs `python scripts/check_docs_links.py` before tests, and t
 
 ## Corrected implementation interpretation
 
-The merged repository now contains a test-backed Platform Kernel for:
+The merged repository contains a test-backed Platform Kernel for:
 
 - Theory, Observable and Model contracts;
 - Target and Evaluation Protocols;
@@ -76,18 +76,20 @@ It does not yet contain:
 
 WP-D0 is redefined from “merge/reconcile PR #12” to “harden the already-merged Platform Kernel.” Its remaining work includes lifecycle-bypass closure, DataEligibility/EvidenceLevel separation, persistence/recovery protocols, mypy coverage, B0/B1 equivalence and protocol-bound immutable PredictionRun artifacts.
 
-## Validation protocol
+## Validation evidence
 
-The reconciliation PR must execute:
+GitHub Actions CI run `30203050356` (`CI #137`) completed successfully against reconciliation commit `1a6053b533e1199e8fdb0e7be7852aad2a2ad946`.
+
+The workflow executed, in order:
 
 ```text
-python scripts/check_docs_links.py
-python -m pytest -q
-python -m ruff check .
-python -m mypy
+python scripts/check_docs_links.py     PASS
+python -m pytest -q                    PASS
+python -m ruff check .                 PASS
+python -m mypy                         PASS
 ```
 
-Validation evidence is supplied by the GitHub Actions run attached to the reconciliation PR. Until that run succeeds, this audit records the implementation changes as proposed and `VALIDATION_PENDING_CI`.
+The documentation checker is now a first-class CI step rather than an out-of-band command. The pytest suite also validates the actual repository documentation tree through `docs_check.validate(docs_check.ROOT)`.
 
 ## Evidence boundary
 
