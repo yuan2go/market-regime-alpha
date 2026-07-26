@@ -1,5 +1,15 @@
 # Entry, Position Lifecycle and Exit Research Program
 
+> **Status:** SUPERSEDED  
+> **Authority:** Historical program/status evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** Current-Research-Program.md  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Status:** CURRENT RESEARCH PROGRAM
 > **Authority:** Lower-level research sequencing under the Constitution and Strategy Constitution
 > **Scope:** A-share Entry timing, Position Lifecycle, and Exit research after Candidate Discovery

@@ -1,5 +1,15 @@
 # R5 Candidate Discovery Rehearsal MVP — Implementation Status
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
 > **Status:** ACTIVE — controlled multi-date vertical slice, opportunity Target bundle, and historical Calendar/Universe/Eligibility artifact spine implemented; provider-backed rehearsal remains pending
 > **Research Charter:** `docs/research/R5-Candidate-Discovery-Rehearsal-Charter.md`

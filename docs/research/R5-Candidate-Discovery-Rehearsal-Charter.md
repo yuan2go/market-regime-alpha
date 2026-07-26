@@ -1,5 +1,15 @@
 # R5 Candidate Discovery Rehearsal Charter
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
 > **Status:** ACTIVE — initial rehearsal research program
 > **Authority:** Research Charter for the first independent cross-sectional Candidate Discovery vertical slice

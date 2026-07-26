@@ -1,5 +1,15 @@
 # Original Intent to R5 Eligibility Readiness Audit
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Status:** CURRENT audit before provider-backed Candidate panels
 > **Scope:** Preserved original ChatGPT project conversation, Constitution `00–09`, current R5 Charter, current R5 status, versioned Trading Eligibility v1, and provider-backed rehearsal readiness
 > **Authority:** Architecture and implementation interpretation. This document does not override the Constitution.

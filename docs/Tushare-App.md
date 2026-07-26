@@ -1,5 +1,15 @@
 # Tushare A股行情查询项目
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 这个模块提供两个入口：
 
 - 命令行抓取：`scripts/fetch_tushare_bars.py`
@@ -69,4 +79,3 @@ http://127.0.0.1:8000
 - Tushare 日线接口通常更容易直接使用。
 - A股分钟线需要 Tushare 单独开通分钟权限，否则可能返回空数据或权限错误。
 - 日线日期使用 `YYYYMMDD`，分钟线时间使用 `YYYY-MM-DD HH:MM:SS`。
-

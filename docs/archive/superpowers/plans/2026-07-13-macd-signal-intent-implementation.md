@@ -1,3 +1,14 @@
+# Historical Dated Work Package
+
+> **Status:** HISTORICAL  
+> **Authority:** Preserved dated design/plan; not current roadmap authority  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../../../roadmap/Phase-D-Work-Packages.md  
+> **Code Evidence:** Historical references may no longer match main
+
 # Intent-Aware MACD Integration Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -10,7 +21,7 @@
 
 ## Global Constraints
 
-- Follow `docs/superpowers/specs/2026-07-13-macd-signal-intent-design.md` as the normative specification.
+- Follow `docs/archive/superpowers/specs/2026-07-13-macd-signal-intent-design.md` as the normative specification.
 - Formal decisions use `closed_bars_only=True`; provisional bars are UI preview only.
 - Supported v1 intervals are exactly `1d` and `5m`.
 - Formal MACD uses `price_field=close`, `price_adjustment_mode=POINT_IN_TIME_ADJUSTED`, and `histogram_tolerance_mode=ABSOLUTE`.

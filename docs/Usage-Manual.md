@@ -1,5 +1,15 @@
 # A 股买卖点识别模型使用手册
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 ## 1. 项目定位
 
 `market-regime-alpha` 是独立的可运行量化研究项目，当前重点不是直接实盘交易，而是把 A 股买点 / 卖点识别流程拆成可验证的工程模块：

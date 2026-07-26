@@ -1,5 +1,15 @@
 # R3 / R4 — Minimal Data → PIT Universe → Feature → Candidate Research Spine
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stages:** R3 Data / PIT and R4 Feature System MVP, with the minimum Candidate-facing contracts required to prove the vertical boundary
 > **Status:** ACTIVE — first contract spine implemented
 > **Constitutional basis:** `04-Data-Constitution.md`, `05-Factor-Constitution.md`, `07-Validation-Constitution.md`, `08-Roadmap.md`, `09-Glossary.md`

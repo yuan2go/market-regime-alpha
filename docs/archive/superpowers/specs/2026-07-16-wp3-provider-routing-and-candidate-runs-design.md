@@ -1,3 +1,14 @@
+# Historical Dated Work Package
+
+> **Status:** HISTORICAL  
+> **Authority:** Preserved dated design/plan; not current roadmap authority  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../../../roadmap/Phase-D-Work-Packages.md  
+> **Code Evidence:** Historical references may no longer match main
+
 # WP-3 Provider Routing and Candidate Runs Design
 
 > **Status:** PROPOSED — approved conversational design, pending written-spec review

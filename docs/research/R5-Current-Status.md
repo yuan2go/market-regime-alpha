@@ -1,5 +1,15 @@
 # R5 Candidate Discovery — Current Status
 
+> **Status:** SUPERSEDED  
+> **Authority:** Historical program/status evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** ../status/Current-State.md  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Status:** CURRENT
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
 > **Purpose:** Current short-form authority for active implementation sequencing

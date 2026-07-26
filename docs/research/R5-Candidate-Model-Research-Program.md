@@ -1,5 +1,15 @@
 # R5 Candidate Model Research Program
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
 > **Status:** ACTIVE RESEARCH PROGRAM
 > **Purpose:** Convert external quantitative-finance research and the current Candidate vertical slice into an ordered, falsifiable, A-share-specific model-improvement program

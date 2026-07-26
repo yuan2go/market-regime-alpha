@@ -1,5 +1,15 @@
 # BaoStock 正式数据源 PoC（2026-07-14）
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 状态：**完成实际抓取；Builder 拒绝；不得进入真实 development dataset。**
 
 本 PoC 未读取 sealed test，未运行策略收益，也未修改生产 profile。候选源为 BaoStock 匿名

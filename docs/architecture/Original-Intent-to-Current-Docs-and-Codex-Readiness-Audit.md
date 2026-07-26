@@ -1,5 +1,15 @@
 # Original Intent to Current Documentation and Codex Readiness Audit
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Status:** CURRENT AUDIT
 > **Date:** 2026-07-15
 > **Purpose:** Reconcile the preserved original GPT conversation, Constitution, current R5 documents, latest repository changes and current Codex handoff readiness

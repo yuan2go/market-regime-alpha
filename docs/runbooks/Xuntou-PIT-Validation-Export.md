@@ -1,5 +1,15 @@
 # Xuntou PIT Validation Export Runbook
 
+> **Status:** CURRENT_SPECIFICATION  
+> **Authority:** Provider/Entry technical specification; lower than current architecture/status  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 Run this only in an authorized Windows/MiniQMT/XtQuant environment.
 
 1. Run `tools/xuntou/probe_xtquant_pit_capabilities.py` and retain its JSON output.

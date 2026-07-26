@@ -1,5 +1,15 @@
 # PIT Candidate Replication Charter
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Qualified provider input update:** Xuntou v3 remains REHEARSAL. Replication success requires
 > evidence-derived `xuntou-pit-validation-bundle-v4`; buyability/orderability is not fill proof, and
 > the 10:30 endpoint requires next-session intraday evidence rather than daily close.

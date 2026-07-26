@@ -1,5 +1,15 @@
 # R1 — Legacy Characterization Program
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R1 — Repository Truth and Legacy Characterization
 > **Status:** ACTIVE
 > **Machine-readable inventory:** `docs/architecture/legacy-asset-inventory.json`

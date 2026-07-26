@@ -1,5 +1,15 @@
 # MR-1 Overnight Morning-Pop Signal Validation
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 ## Scope
 
 MR-1 is an EXPLORATORY validation of the existing fixed Candidate B0/B1 ladder on the

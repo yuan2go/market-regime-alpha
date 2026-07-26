@@ -1,3 +1,14 @@
+# Historical Dated Work Package
+
+> **Status:** HISTORICAL  
+> **Authority:** Preserved dated design/plan; not current roadmap authority  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../../../roadmap/Phase-D-Work-Packages.md  
+> **Code Evidence:** Historical references may no longer match main
+
 # Xuntou P0 Native Adapter Implementation Plan
 
 > **For agentic workers:** Execute inline against the current branch. Do not dispatch implementation work; the official-document research note may be prepared independently. Steps use checkbox (`- [ ]`) syntax for tracking.

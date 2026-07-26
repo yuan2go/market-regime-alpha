@@ -1,5 +1,15 @@
 # R5 Generic Provider Export Adapter
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Stage:** R5 — Candidate Discovery Rehearsal MVP
 > **Status:** IMPLEMENTED — strict normalized-export adapter contract and tests committed; concrete vendor mapping and real data run remain pending
 > **Input authority:** `R5-Provider-Rehearsal-Market-Artifact.md`

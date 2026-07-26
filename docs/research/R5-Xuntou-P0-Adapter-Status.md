@@ -1,5 +1,15 @@
 # R5 Xuntou P0 Adapter Status
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical research/design/Legacy evidence  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** docs/README.md for current authority  
+> **Code Evidence:** Historical references; verify against main
+
+
 > **Status:** CURRENT
 > **Mapping contract:** `xuntou-p0-native-field-mapping-v3`
 > **Native bundle schema:** `xuntou-p0-native-bundle-v3`
