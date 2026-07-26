@@ -6,13 +6,15 @@
 > **Last Updated:** 2026-07-26  
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md  
-> **Code Evidence:** main@96e41a12d86b3b5f7472c2d4e44011736b087b6b
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../audit/Post-Merge-Reconciliation-2026-07-26.md  
+> **Code Evidence:** main@42fa35f172f16c7d86e516a9dee6d9b8c8e7a7be
 
 ## Overall stage
 
 ```text
-RESEARCH_INFRASTRUCTURE_AND_CANDIDATE_EVIDENCE_STAGE
+RESEARCH_PLATFORM_KERNEL_AND_CANDIDATE_EVIDENCE_STAGE
+PLATFORM_KERNEL_CONTRACT_IMPLEMENTED
+PLATFORM_KERNEL_GOVERNANCE_NOT_HARDENED
 PHASE_D_DESIGNED_NOT_IMPLEMENTED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
 TRADING_AUTHORITY_NOT_GRANTED
@@ -28,7 +30,18 @@ TRADING_AUTHORITY_NOT_GRANTED
 - Candidate diagnostics and immutable research artifacts/readers;
 - Provider routing, Tencent exploratory path and Xuntou native/v4 semantic adapters;
 - Entry Path Target infrastructure;
-- PIT replication success and blocker semantics.
+- PIT replication success and blocker semantics;
+- Theory/Observable/Model platform contracts;
+- content-addressed Target and Evaluation Protocol contracts;
+- frozen Experiment Protocol and access-budget mechanics;
+- in-memory Model Registry with lifecycle transition gates;
+- first comparable Multi-model Candidate Slice and contract tests.
+
+## Implemented but not yet hardened as operational authority
+
+The Platform Kernel is merged and test-backed, but its Registry and Experiment Governance are process-local in-memory implementations. The current Multi-model Slice proves comparable orchestration mechanics; it is not yet an immutable daily Prediction Ledger, persistent governance service, model winner or production runtime.
+
+Required WP-D0 hardening includes persistence/recovery boundaries, registration-bypass closure, DataEligibility/EvidenceLevel separation, platform mypy coverage, B0/B1 equivalence evidence and protocol-bound PredictionRun artifacts.
 
 ## Implemented mechanics but externally blocked
 
@@ -36,11 +49,7 @@ The qualified Xuntou v4 path requires an actual XtQuant runtime and a real quali
 
 ## Not implemented as canonical Phase D authority
 
-DailyResearchSnapshot, ETF/Theme/Capital snapshots, CandidateRecommendation, EntryAssessment, ManualTradeRecord, PositionSnapshot, HoldingAssessment, ExitAssessment, RecommendationOutcome, DailyReviewReport, PortfolioDecision, Codex Evidence Pack and QuantDesk integration.
-
-## Pending PR
-
-Draft PR #12 supplies platform domain/Target/Evaluation/Experiment/Model Registry and a first multi-model slice. CI passed, but main does not gain these capabilities until merge/rebase and post-merge verification.
+Daily Source Manifest service, DailyResearchSnapshot runtime, production stock/ETF universe snapshots, ETF/Theme/Capital context snapshots, daily multi-model Prediction Ledger, CandidateRecommendation service, EntryAssessment, ManualTradeRecord, PositionSnapshot, HoldingAssessment, ExitAssessment, RecommendationOutcome ledger, DailyReviewReport, PortfolioDecision, Codex Evidence Pack and QuantDesk integration.
 
 ## Negative result preserved
 
