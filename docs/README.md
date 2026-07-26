@@ -103,6 +103,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
 - [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
+- [Branch Reconciliation Audit](audit/Branch-Reconciliation-2026-07-26.md)
 - [Repository Map](audit/Repository-Map.md)
 - [Documentation Problem Report](audit/Docs-Problem-Report.md)
 - [Document Inventory and Migration Plan](audit/Docs-Inventory-and-Migration-Plan.md)
@@ -114,6 +115,12 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Code Evidence Registry](audit/Code-Evidence-Registry.tsv)
 - [Archive Index](archive/README.md)
 - [Historical Research Platform Kernel V1](archive/research-platform/Research-Platform-Kernel-V1.md)
+
+### Agent project assets
+
+- [`CLAUDE.md`](../CLAUDE.md) — Claude Code project memory and current execution priority.
+- [`AGENTS.md`](../AGENTS.md) — shared cross-agent execution contract.
+- [Claude project asset guide](../.claude/README.md) — shared Skills and Subagents.
 
 ### Provider operational authorities
 
