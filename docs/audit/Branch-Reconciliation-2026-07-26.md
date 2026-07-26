@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Post-Merge-Reconciliation-2026-07-26.md, ../status/Current-State.md, ../../AGENTS.md, ../../CLAUDE.md  
-> **Code Evidence:** remote-ref audit run `30203431240`; main after PR #16 `e2c5b04ef525d6339c58ce320119b3a2c01e844b`
+> **Code Evidence:** remote-ref audit run `30203431240`; reconciled main baseline `88ee41fed61be39b8b6875a822216d3a9cddead1`
 
 ## Purpose
 
@@ -43,16 +43,18 @@ Ancestry was treated only as one signal. A branch can remain non-ancestral after
 | `agent/research-platform-kernel-v1` | PR #12 merged | INTEGRATED_BY_MERGED_PR | Do not merge again. |
 | `docs/reconstruct-system-design-20260726` | PR #13 merged | INTEGRATED_BY_MERGED_PR | Do not merge again. |
 | `fix/post-merge-authority-and-ci-reconciliation` | PR #14 merged; two later audit-only commits merged by PR #16 | CONTAINED_BY_MERGED_PRS | No remaining unique content. |
-| `docs/agent-guidance-and-branch-reconciliation` | temporary audit workflow merged by PR #15 | SUPERSEDED_TEMPORARY_AUDIT | Remove temporary workflow in the final Agent-guidance PR. |
-| `docs/agent-guidance-finalization` | current bounded work branch | CURRENT_WORK_BRANCH | Merge only after CI succeeds. |
+| `docs/agent-guidance-and-branch-reconciliation` | temporary audit workflow merged by PR #15 and removed by PR #17 | SUPERSEDED_TEMPORARY_AUDIT | No remaining unique content. |
+| `docs/agent-guidance-finalization` | PR #17 merged after successful CI | INTEGRATED_BY_MERGED_PR | No remaining unique content. |
 
 ## Conclusion
 
-No historical feature/fix branch requires another merge. Their non-ancestral branch heads are historical topology, not evidence of missing code.
+No historical feature, fix, documentation or Agent-guidance branch requires another merge. Their non-ancestral branch heads are historical topology, not evidence of missing code.
 
 The only genuinely unintegrated commits found by the audit were two audit-text commits added after PR #14. They were submitted and merged through PR #16.
 
-PR #15 unintentionally integrated the temporary audit workflow. The current Agent-guidance finalization branch removes that workflow and adds the permanent Claude/Agent project assets.
+PR #15 temporarily integrated the audit workflow used to enumerate remote refs. PR #17 removed that workflow and merged the permanent `CLAUDE.md`, shared Agent contract, project Skills, project Subagents and this branch-audit evidence.
+
+At reconciled baseline `88ee41fed61be39b8b6875a822216d3a9cddead1`, there are no open pull requests and no known remote branch with reviewed unique content that still requires integration into `main`.
 
 ## Policy
 
