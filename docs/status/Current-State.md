@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../audit/Post-Consolidation-Code-Audit-2026-07-26.md
-> **Code Evidence:** main@772ecfb09410588b5a406ad900d793a5850e60d5
+> **Code Evidence:** main@772ecfb09410588b5a406ad900d793a5850e60d5 for the audited implementation baseline; path:tests/daily_research/test_v1_characterization.py for convergence evidence
 
 ## Overall stage
 
@@ -16,6 +16,7 @@ RESEARCH_PLATFORM_KERNEL_AND_CANDIDATE_EVIDENCE_STAGE
 PLATFORM_KERNEL_CONTRACT_IMPLEMENTED
 PLATFORM_KERNEL_GOVERNANCE_NOT_HARDENED
 DAILY_ARTIFACT_V1_IMPLEMENTED_NON_CANONICAL
+DAILY_RESEARCH_CONTRACT_CONVERGENCE_DESIGNED
 PHASE_D_DESIGNED_NOT_IMPLEMENTED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
 TRADING_AUTHORITY_NOT_GRANTED
@@ -50,6 +51,13 @@ This V1 is `IMPLEMENTED_NON_CANONICAL`. Its names overlap current Phase D
 specifications, but its fields and meanings do not implement those specifications.
 It does not establish a canonical daily runtime, Prediction Ledger, formal data
 authority, Position authority, Alpha evidence or trading authority.
+
+The convergence ADR and field-level migration matrix freeze V1 as a
+compatibility layer and keep the current Phase D specifications as the sole
+canonical target. Characterization tests pin the V1 module bytes, schema
+versions, enums and canonical JSON field sets. A production Adapter and
+Canonical Daily runtime remain deferred until WP-D0 stabilizes EvidenceLevel,
+governance and PredictionRun identities.
 
 ## Implemented but not yet hardened as operational authority
 

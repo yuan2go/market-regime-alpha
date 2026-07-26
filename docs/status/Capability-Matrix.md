@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Gap-Register.md, ../audit/Post-Consolidation-Code-Audit-2026-07-26.md
-> **Code Evidence:** main@772ecfb09410588b5a406ad900d793a5850e60d5
+> **Code Evidence:** main@772ecfb09410588b5a406ad900d793a5850e60d5 for the audited implementation baseline; path:tests/daily_research/test_v1_characterization.py for convergence evidence
 
 | capability | status | code_evidence | test_evidence | runtime_evidence | document_evidence | missing_evidence | blocker | next_action |
 |---|---|---|---|---|---|---|---|---|
@@ -29,7 +29,7 @@
 | Experiment Governance | IMPLEMENTED_PROTOTYPE | `platform/experiment_governance.py` | access-budget tests | in-memory only | Platform Kernel history/current audit | durable append-only access authority | process restart/concurrency | WP-D0 hardening |
 | Model Registry | IMPLEMENTED_PROTOTYPE | `platform/model_registry.py` | lifecycle transition tests | in-memory only | Platform Kernel history/current audit | registration hardening, durable recovery | direct registration/persistence gaps | WP-D0 hardening |
 | Multi-model Candidate Slice | IMPLEMENTED_PROTOTYPE | `platform/multi_model_slice.py` | three-model slice tests | fixture/in-process run | Research Platform Vertical Slice | protocol-bound immutable PredictionRun and outcomes | no daily ledger | WP-D0/WP-D4 |
-| Daily Research V1 compatibility layer | IMPLEMENTED_NON_CANONICAL | `daily_research/**` | `tests/daily_research/**` | immutable package publication/semantic read tested | historical V1 specification | contract convergence and explicit adapter boundary | field semantics differ from current Phase D specs | P0-B convergence |
+| Daily Research V1 compatibility layer | IMPLEMENTED_NON_CANONICAL | `daily_research/**` | `tests/daily_research/**`, including frozen module/schema/JSON characterization | immutable package publication/semantic read tested | convergence ADR and historical V1 specification | production Adapter after stabilized WP-D0 contracts | field semantics differ from current Phase D specs | post-WP-D0 Adapter |
 | Canonical Phase D DailyResearchSnapshot | DESIGNED_ONLY | spec only; V1 namesake is non-canonical | none for current contract | none | current specification | canonical code/runtime | V1 cannot be renamed into compliance | WP-D1/D2 |
 | Canonical CandidateRecommendation | DESIGNED_ONLY | spec only; V1 namesake is non-canonical | none for current contract | CandidatePrediction and V1 compatibility object only | current specification | application projection/ledger | requires canonical PredictionRun | WP-D4 |
 | Canonical EntryAssessment | DESIGNED_ONLY | spec only; V1 namesake is non-canonical | none for current contract | Entry target and V1 compatibility object only | current specification | model/assessment runtime | requires CandidateRecommendation and Entry evidence | WP-D5 |

@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-07-26  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** ../roadmap/Phase-D-Work-Packages.md, ../specs/README.md, ../status/Gap-Register.md  
+> **Related Documents:** decisions/ADR-Daily-Research-Contract-Convergence.md, ../roadmap/Phase-D-Work-Packages.md, ../specs/README.md, ../status/Gap-Register.md
 > **Code Evidence:** Current Phase D runtime is DESIGNED_ONLY except reused data/candidate/entry-path infrastructure; `daily_research/**` is an IMPLEMENTED_NON_CANONICAL historical V1 compatibility layer
 
 ## Objective

@@ -7,11 +7,11 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../audit/Post-Consolidation-Code-Audit-2026-07-26.md
-> **Code Evidence:** Derived from current main code/tests at `772ecfb09410588b5a406ad900d793a5850e60d5`
+> **Code Evidence:** Derived from main implementation baseline `772ecfb09410588b5a406ad900d793a5850e60d5` plus path:docs/architecture/decisions/ADR-Daily-Research-Contract-Convergence.md and path:tests/daily_research/test_v1_characterization.py
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
-| Daily V1/Phase D contract convergence | P0 | historical V1 Artifact/Reader implemented but non-canonical; current Phase D contracts designed | fixed V1 characterization and current specs | one ADR and field matrix freeze V1, identify loss, and define one canonical V2/adapter boundary without changing V1 identity |
+| Daily V1/Phase D contract convergence | P0 | ADR, field matrix and V1 freeze characterization completed; production Adapter not implemented | stabilized WP-D0 EvidenceLevel/PredictionRun/governance contracts | implement new V2 contracts and fail-closed Adapter without changing V1 identity |
 | Platform Kernel governance hardening | P0 | contracts and in-memory prototype merged | current platform code/tests | registration gates closed; data/evidence semantics separated; persistent/recoverable boundary defined; platform included in mypy; B0/B1 equivalence evidence published |
 | Unique daily Source Manifest and quality gates | P0 | designed; provider contracts exist | data/time contracts | immutable Source Manifest and quality report produced |
 | Stock/ETF universe and mappings | P0 | partial contracts | provider/reference data | daily PIT snapshots with quality reports |
