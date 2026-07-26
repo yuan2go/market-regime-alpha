@@ -25,6 +25,9 @@
 > **WP-3 routing / run status:** `docs/research/R5-WP3-Provider-Routing-Status.md`
 > **WP-4A Entry Target contract:** `docs/specs/Entry-Path-Target-V1.md`
 > **Current PIT replication charter:** `docs/research/PIT-Candidate-Replication-Charter.md`
+> **Current daily research program:** `docs/research/Daily-Quant-Selection-and-Manual-Trading-Research-Program.md`
+> **Daily current-state audit:** `docs/research/Daily-Quant-Selection-Current-State-Audit.md`
+> **Daily decision Artifact specification:** `docs/specs/Daily-Quant-Decision-Artifact-Specification-V1.md`
 
 ---
 
@@ -45,6 +48,28 @@ Qualified Xuntou PIT evidence v4 contract                IMPLEMENTED / INPUT BLO
 Expanded PIT replication result                         NOT PRODUCED
 Sealed PIT replication success path v2                  IMPLEMENTED / INPUT BLOCKED
 ```
+
+The current engineering mainline has entered the **Daily Quant Selection and Manual Trading
+Research Program**. The first two newly numbered work packages are:
+
+```text
+WP-DQS-0  code-evidence current-state audit                         COMPLETE
+WP-DQS-1  immutable daily snapshot / recommendation / Entry contract IMPLEMENTED
+WP-DQS-2  stock and ETF Universe                                     NOT STARTED
+WP-DQS-3  Market, ETF and Theme strength                              NOT STARTED
+```
+
+WP-DQS-1 adds a separate `daily_research` bounded context with content-addressed
+`DailyResearchSnapshot`, `CandidateRecommendation`, and `EntryAssessment` objects, an exact
+non-overwriting Artifact Publisher, and a semantic Reader. Candidate and Entry remain separate;
+the Artifact contains no manual trade, Position State, Exit action, broker order, Alpha claim, or
+trading authority.
+
+Formal Xuntou PIT validation remains `BLOCKED_EXTERNAL_PROVIDER_INPUT`. Strategy engineering is no
+longer wholly blocked by that missing input: explicitly identified auxiliary sources may support
+`EXPLORATORY` daily-contract and later Feature engineering, but they remain `NOT_FORMAL_OOS` and
+cannot supersede or bypass the qualified Xuntou route. Test fixtures remain
+`TEST_ONLY_NOT_RESEARCH_EVIDENCE`.
 
 The frozen MR-2B Primary remains `PRIMARY_HYPOTHESIS_NOT_SUPPORTED`. The next research question is
 the unconditional B1-E lift over the model-population multi-seed matched-K median. The rejected
