@@ -94,3 +94,7 @@ The documentation checker is now a first-class CI step rather than an out-of-ban
 ## Evidence boundary
 
 This reconciliation corrects repository truth and CI enforcement only. It does not establish Alpha, a model winner, production readiness, provider qualification, broker execution or trading authority.
+
+## Finalization note
+
+The validation-evidence update changes audit text only; normal CI remains required on the final PR head before review or merge.
