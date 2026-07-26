@@ -52,11 +52,11 @@ Never use a plan or design document to overrule executable evidence. Never chang
 
 ## Current implementation boundary
 
-Implemented/tested on the audited main baseline: identity/time/data contracts, calendar, PIT universe/eligibility, Feature and Candidate datasets, B0/B1, diagnostics, provider routing, Tencent exploratory path, Xuntou native/v4 semantics, Entry Path Target infrastructure, Research Artifact verification and PIT replication mechanics.
+Implemented/tested on current `main`: identity/time/data contracts, calendar, PIT universe/eligibility, Feature and Candidate datasets, B0/B1, diagnostics, provider routing, Tencent exploratory path, Xuntou native/v4 semantics, Entry Path Target infrastructure, Research Artifact verification, PIT replication mechanics, Research Platform contracts, Target/Evaluation Protocols, Experiment Governance, Model Registry and the first comparable Multi-model Candidate Slice.
 
 Externally blocked: real qualified Xuntou v4/XtQuant input and formal replication run.
 
-Not canonical on main: platform registry/governance until PR #12 is merged, Phase D daily snapshot/recommendations, actual-position authority, Holding/Exit, review/attribution, portfolio, Codex evidence pack and QuantDesk integration.
+Not canonical on `main`: persistent/recoverable platform governance, DailyResearchSnapshot runtime, daily Prediction Ledger, CandidateRecommendation service, EntryAssessment, actual-position authority, Holding/Exit, review/attribution, portfolio simulation, Codex Evidence Pack and QuantDesk integration.
 
 ## Non-negotiable rules
 
