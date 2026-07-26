@@ -45,11 +45,12 @@ Candidate Prediction
 
 ## 当前事实
 
-- `main` 基线：`96e41a12d86b3b5f7472c2d4e44011736b087b6b`。
+- 当前合并基线：`42fa35f172f16c7d86e516a9dee6d9b8c8e7a7be`。
 - 已具备 V2 identity/time/data/universe/eligibility/feature/candidate contracts、B0/B1、Candidate diagnostics、Entry Path Target infrastructure、Provider routing、Xuntou v4 evidence/adapters、PIT replication success path和不可变 Research Artifact验证器。
+- Research Platform Kernel V1 已进入 `main`：Theory/Observable/Model contracts、Target/Evaluation Protocol、Experiment Governance、Model Registry和第一版Multi-model Candidate Slice均已有代码与测试。
+- 当前Platform Kernel仍属于合同与内存治理实现；尚未形成持久化、可恢复的每日运行权威，也未建立正式Alpha或模型赢家。
 - 真实 Xuntou/XtQuant v4 输入在当前环境不可用，因此正式 PIT replication 仍为 `BLOCKED_EXTERNAL_INPUT`。
-- 每日决策快照、正式 Candidate Recommendation、Position Snapshot、Holding/Exit Assessment、Daily Review、Portfolio Decision 尚未形成 main 上的权威实现。
-- Draft PR #12 提供 Research Platform Kernel V1，但在合并前不得描述为 main 已实现能力。
+- DailyResearchSnapshot运行时、正式CandidateRecommendation、EntryAssessment、PositionSnapshot、Holding/Exit Assessment、DailyReview、Portfolio Decision、Codex Evidence Pack和QuantDesk集成仍未形成权威实现。
 - 当前不做真实 QMT/PTrade 自动委托、自动撤改单、无人值守实盘、自动再平衡或依赖逐笔 Level-2 的高频系统。
 
 唯一当前实现状态入口：[`docs/status/Current-State.md`](docs/status/Current-State.md)。
@@ -63,7 +64,7 @@ Candidate Prediction
 - [Capability Matrix](docs/status/Capability-Matrix.md)
 - [Phase D Daily Decision Engine](docs/architecture/05-Phase-D-Daily-Decision-Engine-V1.md)
 - [Phase D Work Packages](docs/roadmap/Phase-D-Work-Packages.md)
-- [Audit Baseline](docs/audit/Repository-Audit-Baseline-2026-07-26.md)
+- [Post-Merge Reconciliation Audit](docs/audit/Post-Merge-Reconciliation-2026-07-26.md)
 
 ## Development
 
@@ -71,10 +72,10 @@ Candidate Prediction
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-python3 -m pytest -q
-python3 -m ruff check .
-python3 -m mypy
-python3 scripts/check_docs_links.py
+python scripts/check_docs_links.py
+python -m pytest -q
+python -m ruff check .
+python -m mypy
 ```
 
 Legacy Dividend-T、Cosco timing、Dashboard、飞书调度和 broker adapters 仍保留用于行为复现与渐进迁移。它们不是 V2 Kernel，也不拥有平台最终研究或账户权威。Legacy 运行说明见 [`docs/archive/legacy/README.md`](docs/archive/legacy/README.md)。
