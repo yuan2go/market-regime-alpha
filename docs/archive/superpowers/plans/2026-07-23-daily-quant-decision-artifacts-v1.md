@@ -1,3 +1,14 @@
+# Historical Dated Work Package
+
+> **Status:** HISTORICAL  
+> **Authority:** Preserved dated design/plan; not current roadmap authority  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** None  
+> **Related Documents:** ../../../roadmap/work-packages/README.md  
+> **Code Evidence:** Historical references may no longer match main
+
 # Daily Quant Decision Artifacts V1 Implementation Plan
 
 > **For agentic workers:** Execute inline under the repository AGENTS.md contract. Subagent execution is intentionally not used for this bounded work package.

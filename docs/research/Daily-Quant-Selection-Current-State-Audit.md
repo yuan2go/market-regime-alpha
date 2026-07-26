@@ -1,5 +1,14 @@
 # Daily Quant Selection Current-State Audit
 
+> **Status:** HISTORICAL  
+> **Authority:** Historical engineering audit; no current Alpha, model-promotion, or trading authority  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** ../status/Current-State.md  
+> **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md  
+> **Code Evidence:** Audit baseline `96e41a12d86b3b5f7472c2d4e44011736b087b6b`
+>
 > **Audit date:** 2026-07-23
 > **Audited revision:** `96e41a12d86b3b5f7472c2d4e44011736b087b6b`
 > **Work package:** `WP-DQS-0`

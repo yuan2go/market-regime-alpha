@@ -1,8 +1,17 @@
 # Daily Quant Decision Artifact Specification V1
 
+> **Status:** HISTORICAL  
+> **Authority:** Preserved pre-Phase-D implementation specification; not current specification authority  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-07-26  
+> **Supersedes:** None  
+> **Superseded By:** README.md  
+> **Related Documents:** README.md, ../architecture/05-Phase-D-Daily-Decision-Engine-V1.md  
+> **Code Evidence:** path:src/market_regime_alpha/daily_research; path:tests/daily_research
+>
 > **Schema:** `daily-quant-decision-artifact-v1`
 > **Work package:** `WP-DQS-1`
-> **Status:** approved implementation specification
+> **Original status:** approved implementation specification
 > **Authority ceiling:** `AUXILIARY_NOT_FORMAL_OOS`
 > **Decision owner:** human; no order or broker authority
 
