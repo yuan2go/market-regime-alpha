@@ -64,3 +64,18 @@ Real qualified Xuntou v4 input is unavailable in the current environment, so for
 ## Pending PR boundary
 
 Draft PR #12 (`agent/research-platform-kernel-v1`) contains a CI-verified platform kernel proposal. Because it is not merged into `main`, this audit records it as `PENDING_PR`, not as current implementation fact.
+
+## Reconstruction validation
+
+The documentation reconstruction workflow executed the following checks against the generated branch tree:
+
+```text
+python scripts/check_docs_links.py                         PASS
+python -m py_compile scripts/check_docs_links.py          PASS
+documentation metadata/status validation                 PASS
+python -m pytest -q                                      PASS (946 tests)
+python -m ruff check .                                   PASS
+python -m mypy                                           PASS (128 source files)
+```
+
+Pytest emitted an existing invalid-escape `SyntaxWarning` in one test and existing pandas DataFrame fragmentation `PerformanceWarning` messages in the Top-1000 backtesting module. No test, Ruff or mypy failure was produced.
