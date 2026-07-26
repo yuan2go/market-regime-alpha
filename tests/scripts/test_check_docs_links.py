@@ -67,3 +67,26 @@ def test_inventory_requires_verified_target(tmp_path: Path) -> None:
     )
     errors = docs_check.check_inventory(tmp_path)
     assert any("inventory unresolved" in error for error in errors)
+
+
+def test_superseded_self_declared_current_authority_is_rejected(tmp_path: Path) -> None:
+    doc = tmp_path / "docs" / "old.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(
+        "# Old\n\n> **Status:** SUPERSEDED\n\n"
+        "This file is the current R5 implementation-status authority.\n",
+        encoding="utf-8",
+    )
+    errors = docs_check.check_statuses([doc])
+    assert any("self-declared current authority" in error for error in errors)
+
+
+def test_superseded_current_heading_is_rejected(tmp_path: Path) -> None:
+    doc = tmp_path / "docs" / "old.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(
+        "# Old\n\n> **Status:** SUPERSEDED\n\n## Current Implementation Status\n",
+        encoding="utf-8",
+    )
+    errors = docs_check.check_statuses([doc])
+    assert any("active Current heading" in error for error in errors)

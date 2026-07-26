@@ -9,6 +9,8 @@
 > **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md  
 > **Code Evidence:** Do not use this file for current facts
 
+> **Historical snapshot notice:** All relative words such as “current”, “active”, “next” and “now” below describe the original publication context only. They grant no present authority.
+
 This path is retained for stable historical links. The sole current implementation-status authority is [`docs/status/Current-State.md`](../status/Current-State.md).
 
 ## Historical content

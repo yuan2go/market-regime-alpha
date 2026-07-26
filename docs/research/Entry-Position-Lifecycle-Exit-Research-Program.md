@@ -9,6 +9,8 @@
 > **Related Documents:** docs/README.md for current authority  
 > **Code Evidence:** Historical references; verify against main
 
+> **Historical snapshot notice:** All relative words such as “current”, “active”, “next” and “now” below describe the original publication context only. They grant no present authority.
+
 
 > **Historical Status at Original Publication:** CURRENT RESEARCH PROGRAM
 > **Authority:** Lower-level research sequencing under the Constitution and Strategy Constitution
@@ -861,7 +863,7 @@ It does not require the entire Xuntou API surface before strategy experiments be
 
 ---
 
-## 14. Current Non-Claims
+## 14. Historical Non-Claims at Original Publication
 
 The project does not currently claim:
 

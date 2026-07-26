@@ -1,4 +1,4 @@
-# R5 Candidate Discovery — Current Status
+# R5 Candidate Discovery — Historical Status at Original Publication
 
 > **Status:** SUPERSEDED  
 > **Authority:** Historical program/status evidence  
@@ -8,6 +8,8 @@
 > **Superseded By:** ../status/Current-State.md  
 > **Related Documents:** docs/README.md for current authority  
 > **Code Evidence:** Historical references; verify against main
+
+> **Historical snapshot notice:** All relative words such as “current”, “active”, “next” and “now” below describe the original publication context only. They grant no present authority.
 
 
 > **Historical Status at Original Publication:** CURRENT
@@ -28,11 +30,11 @@
 
 ## 1. Status Precedence
 
-This file is the current R5 implementation-status authority.
+At original publication, this file served as the R5 implementation-status authority.
 
-Older documents remain historical records. Their stale status lines do not override this file.
+At that time, older documents were treated as historical records. This statement no longer grants authority to this superseded file.
 
-The current Candidate-validation sequence is now:
+The Candidate-validation sequence recorded at original publication was:
 
 ```text
 MR-2B F2B v3 exact implementation identity              COMPLETE
@@ -137,7 +139,7 @@ Entry and Exit remain independent.
 
 ---
 
-## 3. Current Provider Decision
+## 3. Historical Provider Decision at Original Publication
 
 The active primary provider is:
 
@@ -177,7 +179,7 @@ Eventually begin strategy research
 
 ---
 
-## 4. Current Implemented Research Chain
+## 4. Historical Implemented Research Chain at Original Publication
 
 ```text
 Historical Trading Calendar Artifact
@@ -527,7 +529,7 @@ suspension.
 
 ---
 
-## 9. Current Implementation Status
+## 9. Historical Implementation Status at Original Publication
 
 ```text
 Original-intent current-doc readiness audit                   COMPLETE
@@ -621,7 +623,7 @@ historical PIT, buyability, finality, adjustment, Level-2, or order-book semanti
 
 ---
 
-## 10. Current Verification Status
+## 10. Historical Verification Status at Original Publication
 
 WP-4A verification was executed on 2026-07-16. Its independent prerequisite quality repairs are:
 
@@ -1013,7 +1015,7 @@ PIT evidence status now has distinct v2 blocked, invalid, and reserved success S
 missing-input run is `pit-replication-v2-4985eec50a6c63ecf536` and contains no research result.
 See `docs/research/Research-Artifact-Identity-V3.md`.
 
-The current ordered sequence is:
+The ordered sequence recorded at original publication was:
 
 ```text
 WP-0
@@ -1051,7 +1053,7 @@ Do not broaden the Xuntou adapter beyond the evidence required by an approved ex
 
 ---
 
-## 12. Current Codex Handoff Boundary
+## 12. Historical Codex Handoff Boundary at Original Publication
 
 Repository-level coding-agent guidance is now defined in:
 
@@ -1059,7 +1061,7 @@ Repository-level coding-agent guidance is now defined in:
 AGENTS.md
 ```
 
-Current readiness:
+Readiness recorded at original publication:
 
 ```text
 Bounded Codex work packages              READY
@@ -1082,7 +1084,7 @@ expand Legacy God Objects as the new platform kernel
 
 ---
 
-## 13. Current Non-Goals
+## 13. Historical Non-Goals at Original Publication
 
 The current system does not claim to implement:
 
@@ -1100,6 +1102,6 @@ The current system does not claim to implement:
 
 ---
 
-## 14. Current Principle
+## 14. Historical Principle at Original Publication
 
 > **The project remains an A-share Candidate Discovery → Entry → Position Lifecycle → Exit research system. Xuntou is the active primary data provider and public sources are explicit auxiliaries, but strategy/model research remains the priority. WP-3 routing, Candidate-runner and immutable-artifact infrastructure are implemented while the real Xuntou provider-backed run remains unavailable. WP-4A now provides evidence-preserving Entry path Target contracts, not an Entry model or accuracy result. The next provider evidence step is an authorized, content-hashed Xuntou REHEARSAL input and a truthful run under existing PIT/buyability limits; any Entry experiment must separately establish its charter and chronological comparison. Codex may implement bounded work packages under `AGENTS.md`; it must not reinterpret the architecture or invent missing market-data semantics.**

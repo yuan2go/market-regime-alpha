@@ -9,6 +9,8 @@
 > **Related Documents:** docs/README.md for current authority  
 > **Code Evidence:** Historical references; verify against main
 
+> **Historical snapshot notice:** All relative words such as “current”, “active”, “next” and “now” below describe the original publication context only. They grant no present authority.
+
 
 > **Historical Status at Original Publication:** CURRENT RESEARCH PROGRAM  
 > **Project:** `market-regime-alpha`  

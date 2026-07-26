@@ -99,6 +99,20 @@ def check_statuses(docs: list[Path]) -> list[str]:
                     errors.append(f"{path}:{line_no}: active Current authority field in SUPERSEDED document")
                 if re.match(r"^\s*(?:>\s*)?Status:\s*CURRENT\b", line, re.IGNORECASE):
                     errors.append(f"{path}:{line_no}: secondary active CURRENT status")
+                if re.match(r"^#{1,6}\s+.*\bCurrent\b", line, re.IGNORECASE):
+                    errors.append(
+                        f"{path}:{line_no}: active Current heading in SUPERSEDED document"
+                    )
+                if re.search(
+                    r"\bthis\s+(?:file|document|path)\b.{0,20}"
+                    r"\b(?:is|remains|serves\s+as)\b.{0,30}"
+                    r"\bcurrent\b.{0,80}\bauthority\b",
+                    line,
+                    re.IGNORECASE,
+                ):
+                    errors.append(
+                        f"{path}:{line_no}: self-declared current authority in SUPERSEDED document"
+                    )
     return errors
 
 
