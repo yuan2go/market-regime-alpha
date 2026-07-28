@@ -169,6 +169,27 @@ def build_mr1_targets(
     return tuple(sorted(observations, key=lambda row: (row["decision_date"], row["symbol"], row["target_id"])))
 
 
+def build_mr1_next_session_1030_return_observation(
+    *,
+    symbol: str,
+    decision_date: date,
+    next_date: date,
+    reference_price: float,
+    endpoint_bar: CompositeBar | None,
+) -> dict[str, Any]:
+    """Expose the existing exact-endpoint MR1 10:30 Target for Phase D adapters."""
+
+    return _observation_for_endpoint(
+        symbol=symbol,
+        decision_date=decision_date,
+        next_date=next_date,
+        target_id=MR1TargetId.NEXT_SESSION_1030_RETURN,
+        reference_price=reference_price,
+        endpoint=time(10, 30),
+        endpoint_bar=endpoint_bar,
+    )
+
+
 def replay_mr1_fixed_portfolios(
     *,
     prepared: PreparedCompositeData,
