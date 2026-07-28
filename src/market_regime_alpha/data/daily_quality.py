@@ -54,6 +54,31 @@ class DataQualityFinding:
     reason_code: str
     blocking: bool
 
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("symbol", self.symbol),
+            ("field_id", self.field_id),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or not value
+                or value != value.strip()
+            ):
+                raise ValueError(f"{label} must be a trimmed string or None")
+        if self.critical_fact is not None and not isinstance(
+            self.critical_fact,
+            CriticalSourceFact,
+        ):
+            raise TypeError("critical_fact must be a CriticalSourceFact or None")
+        if (
+            not isinstance(self.reason_code, str)
+            or not self.reason_code
+            or self.reason_code != self.reason_code.strip()
+        ):
+            raise ValueError("reason_code must be a non-empty trimmed string")
+        if not isinstance(self.blocking, bool):
+            raise TypeError("blocking must be boolean")
+
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
@@ -119,6 +144,73 @@ class DataQualityReport:
             "content_hash": self.content_hash,
             "report_id": str(self.report_id),
         }
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> DataQualityReport:
+        expected = {
+            "schema_version",
+            "source_manifest_id",
+            "status",
+            "required_symbols",
+            "findings",
+            "data_eligibility",
+            "content_hash",
+            "report_id",
+        }
+        if set(payload) != expected or payload["schema_version"] != cls.SCHEMA_VERSION:
+            raise ValueError("DataQualityReport schema mismatch")
+        findings: list[DataQualityFinding] = []
+        for value in payload["findings"]:
+            if not isinstance(value, Mapping) or set(value) != {
+                "symbol",
+                "field_id",
+                "critical_fact",
+                "reason_code",
+                "blocking",
+            }:
+                raise ValueError("DataQualityFinding fields mismatch")
+            fact = value["critical_fact"]
+            if not isinstance(value["blocking"], bool):
+                raise ValueError("DataQualityFinding blocking must be boolean")
+            findings.append(
+                DataQualityFinding(
+                    symbol=(
+                        str(value["symbol"])
+                        if value["symbol"] is not None
+                        else None
+                    ),
+                    field_id=(
+                        str(value["field_id"])
+                        if value["field_id"] is not None
+                        else None
+                    ),
+                    critical_fact=(
+                        CriticalSourceFact(str(fact))
+                        if fact is not None
+                        else None
+                    ),
+                    reason_code=str(value["reason_code"]),
+                    blocking=value["blocking"],
+                )
+            )
+        report = cls(
+            source_manifest_id=ArtifactId(str(payload["source_manifest_id"])),
+            status=DailyDataQualityStatus(str(payload["status"])),
+            required_symbols=tuple(
+                str(item) for item in payload["required_symbols"]
+            ),
+            findings=tuple(findings),
+            data_eligibility=DataEligibility(str(payload["data_eligibility"])),
+        )
+        if (
+            report.content_hash != payload["content_hash"]
+            or str(report.report_id) != payload["report_id"]
+        ):
+            raise ValueError("DataQualityReport identity mismatch")
+        return report
 
 
 def evaluate_daily_data_quality(

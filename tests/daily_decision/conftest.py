@@ -29,6 +29,10 @@ from market_regime_alpha.daily_decision.snapshot import (
 from market_regime_alpha.features.daily_pipeline import (
     materialize_public_daily_baseline_features,
 )
+from market_regime_alpha.features.contracts import (
+    FeatureDefinition,
+    FeatureMaterialization,
+)
 from market_regime_alpha.platform.candidate_prediction_adapter import (
     b0_b1_model_definitions,
     publish_b0_b1_prediction_runs,
@@ -41,6 +45,7 @@ from market_regime_alpha.universe.daily_exploratory import (
     reconcile_daily_universe,
     smoke_pool_policy_v1,
 )
+from market_regime_alpha.data.source_manifest import SourceManifest
 from tests.application.daily_loop.public_fixture import public_fixture
 
 
@@ -50,7 +55,9 @@ class DailyDecisionFixture:
     quality_report: DataQualityReport
     decision_snapshot: DecisionPriceSnapshot
     prediction_runs: tuple[PredictionRun, PredictionRun]
-    source_manifest: object
+    source_manifest: SourceManifest
+    feature_definitions: tuple[FeatureDefinition, ...]
+    feature_materializations: tuple[FeatureMaterialization, ...]
 
 
 @pytest.fixture
@@ -144,4 +151,6 @@ def daily_decision_fixture() -> DailyDecisionFixture:
         decision_snapshot=decision_snapshot,
         prediction_runs=prediction_runs,
         source_manifest=source_manifest,
+        feature_definitions=feature_result.definitions,
+        feature_materializations=feature_result.materializations,
     )
