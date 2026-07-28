@@ -104,6 +104,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 ### Audit and archive
 
 - [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
+- [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
 - [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
 - [Branch Reconciliation Audit](audit/Branch-Reconciliation-2026-07-26.md)
