@@ -28,8 +28,10 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     AcquiredSourcePayload,
     PublicBar,
+    PublicCompositeBatch,
     PublicCompositeProviderResult,
     PublicCompositeLiveProfile,
+    SourceReplayArchiveReader,
     publish_source_archive,
 )
 from market_regime_alpha.data.source_manifest import (
@@ -37,6 +39,7 @@ from market_regime_alpha.data.source_manifest import (
     SourceManifest,
 )
 from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
+from market_regime_alpha.data_sources.a_share_bars import AShareDataError
 from tests.application.daily_loop.public_fixture import DECISION, public_fixture
 
 
@@ -271,6 +274,70 @@ def test_unavailable_live_provider_publishes_blocked_evidence_without_fallback(
         "NO_LOCAL_ARCHIVE_FALLBACK",
     )
     assert result.decision_artifact.bundle.prediction_runs == ()
+
+
+def test_live_current_failure_archives_successful_history_payload(
+    tmp_path: Path,
+) -> None:
+    history_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-baostock-public"),
+        product="fixture-history-success",
+        locator="baostock://fixture/history-success",
+        raw_payload=b"successful-history-before-current-failure",
+        retrieved_time=RetrievedAt(
+            datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI)
+        ),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    history = PublicCompositeBatch(
+        raw_payloads=(history_payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("BAOSTOCK_HISTORY_ONLY",),
+    )
+
+    class HistoryClient:
+        def acquire(self, request):
+            return history
+
+    class CurrentFailureClient:
+        def acquire(self, request):
+            raise AShareDataError("TENCENT_FIXTURE_UNAVAILABLE")
+
+    policy = smoke_pool_policy_v1()
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("daily-loop-test-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+    result = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=HistoryClient(),
+            current_client=CurrentFailureClient(),
+        ),
+        clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
+    ).run(command)
+
+    acquired = SourceReplayArchiveReader().read(result.source_archive_path)
+    assert result.record.status is DailyRunStatus.DATA_BLOCKED
+    assert tuple(
+        item.provider_id for item in acquired.provider_result.raw_payloads
+    ) == (
+        ProviderId("provider-baostock-public"),
+        ProviderId("provider-public-composite-live-runtime"),
+    )
+    assert acquired.provider_result.raw_payloads[0] == history_payload
+    assert "NO_LOCAL_ARCHIVE_FALLBACK" in (
+        acquired.provider_result.limitations
+    )
 
 
 def test_settlement_appends_review_without_mutating_daily_decision(

@@ -15,7 +15,11 @@ from .contracts import (
 )
 from .live_clients import BaoStockHistoryClient, TencentCurrentQuoteClient
 from .manifest_builder import build_public_source_manifest
-from .profiles import PublicCompositeLiveProfile, PublicCompositeReplayProfile
+from .profiles import (
+    PublicCompositeAcquisitionError,
+    PublicCompositeLiveProfile,
+    PublicCompositeReplayProfile,
+)
 from .replay_archive import (
     AcquiredReplaySource,
     SourceReplayArchiveReader,
@@ -34,6 +38,7 @@ __all__ = [
     "BaoStockHistoryClient",
     "PublicBar",
     "PublicCompositeBatch",
+    "PublicCompositeAcquisitionError",
     "PublicCompositeLiveProfile",
     "PublicCompositeProviderResult",
     "PublicCompositeReplayProfile",

@@ -40,6 +40,8 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     AcquiredReplaySource,
     AcquiredSourcePayload,
+    PublicCompositeAcquisitionError,
+    PublicCompositeBatch,
     PublicCompositeLiveProfile,
     PublicCompositeProviderResult,
     PublicCompositeReplayProfile,
@@ -533,6 +535,12 @@ class DailyLoopRunner:
             )
         try:
             result = self._live_profile.acquire(request)
+        except PublicCompositeAcquisitionError as exc:
+            result = self._live_failure_result(
+                request,
+                exc,
+                partial_batch=exc.partial_batch,
+            )
         except AShareDataError as exc:
             result = self._live_failure_result(request, exc)
         return result, build_public_source_manifest(result=result, request=request)
@@ -541,6 +549,8 @@ class DailyLoopRunner:
         self,
         request: PublicCompositeRequest,
         error: Exception,
+        *,
+        partial_batch: PublicCompositeBatch | None = None,
     ) -> PublicCompositeProviderResult:
         retrieved_at = RetrievedAt(self._now())
         raw = json.dumps(
@@ -564,17 +574,29 @@ class DailyLoopRunner:
                 "NO_LOCAL_ARCHIVE_FALLBACK",
             ),
         )
-        return PublicCompositeProviderResult(
-            profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
-            decision_time=request.decision_time,
-            raw_payloads=(payload,),
+        partial = partial_batch or PublicCompositeBatch(
+            raw_payloads=(),
             bars=(),
             quotes=(),
             source_conflicts=(),
-            limitations=(
-                "LIVE_ACQUISITION_FAILED",
-                "PUBLIC_DATA_EXPLORATORY_ONLY",
-                "NO_LOCAL_ARCHIVE_FALLBACK",
+            limitations=(),
+        )
+        return PublicCompositeProviderResult(
+            profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+            decision_time=request.decision_time,
+            raw_payloads=(*partial.raw_payloads, payload),
+            bars=partial.bars,
+            quotes=partial.quotes,
+            source_conflicts=partial.source_conflicts,
+            limitations=tuple(
+                dict.fromkeys(
+                    (
+                        *partial.limitations,
+                        "LIVE_ACQUISITION_FAILED",
+                        "PUBLIC_DATA_EXPLORATORY_ONLY",
+                        "NO_LOCAL_ARCHIVE_FALLBACK",
+                    )
+                )
             ),
         )
 

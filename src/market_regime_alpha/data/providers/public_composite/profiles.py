@@ -12,6 +12,7 @@ from market_regime_alpha.data.providers.public_composite.contracts import (
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     TENCENT_PUBLIC_PROVIDER_ID,
     PublicAcquisitionClient,
+    PublicCompositeBatch,
     PublicCompositeProviderResult,
     PublicCompositeRequest,
 )
@@ -19,6 +20,20 @@ from market_regime_alpha.data.providers.public_composite.replay_archive import (
     AcquiredReplaySource,
     SourceReplayArchiveReader,
 )
+from market_regime_alpha.data_sources.a_share_bars import AShareDataError
+
+
+class PublicCompositeAcquisitionError(AShareDataError):
+    """Expected LIVE failure carrying every successfully acquired partial byte."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        partial_batch: PublicCompositeBatch,
+    ) -> None:
+        super().__init__(message)
+        self.partial_batch = partial_batch
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,12 +49,18 @@ class PublicCompositeLiveProfile:
         request: PublicCompositeRequest,
     ) -> PublicCompositeProviderResult:
         history = self.history_client.acquire(request)
-        current = self.current_client.acquire(request)
         if any(
             item.provider_id != BAOSTOCK_PUBLIC_PROVIDER_ID
             for item in history.raw_payloads
         ):
             raise ValueError("LIVE history must come only from declared BaoStock")
+        try:
+            current = self.current_client.acquire(request)
+        except AShareDataError as exc:
+            raise PublicCompositeAcquisitionError(
+                f"current acquisition failed after history freeze: {exc}",
+                partial_batch=history,
+            ) from exc
         if any(
             item.provider_id != TENCENT_PUBLIC_PROVIDER_ID
             for item in current.raw_payloads
