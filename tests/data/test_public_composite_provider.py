@@ -1,0 +1,309 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from market_regime_alpha.core.identity import ArtifactId, ProviderId
+from market_regime_alpha.core.time import (
+    AvailabilityTime,
+    DecisionTime,
+    RetrievedAt,
+)
+from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.providers.public_composite import (
+    PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+    PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+    AcquiredSourcePayload,
+    PublicBar,
+    PublicCompositeBatch,
+    PublicCompositeLiveProfile,
+    PublicCompositeProviderResult,
+    PublicCompositeRequest,
+    PublicCompositeReplayProfile,
+    PublicQuote,
+    SourceReplayArchiveReader,
+    TradingStatus,
+    build_public_source_manifest,
+    publish_source_replay_archive,
+)
+from market_regime_alpha.data.daily_quality import (
+    DailyDataQualityStatus,
+    evaluate_daily_data_quality,
+)
+from market_regime_alpha.data.source_manifest import (
+    CriticalSourceFact,
+    SourceFieldFinality,
+    SourceFieldQualityStatus,
+    SourceManifest,
+    SourceManifestField,
+)
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+DECISION = DecisionTime(datetime(2025, 1, 6, 14, 55, tzinfo=SHANGHAI))
+RETRIEVED = RetrievedAt(datetime(2025, 1, 6, 14, 54, tzinfo=SHANGHAI))
+AVAILABLE = AvailabilityTime(datetime(2025, 1, 6, 14, 54, tzinfo=SHANGHAI))
+
+
+def _payload(provider: str, raw: bytes) -> AcquiredSourcePayload:
+    return AcquiredSourcePayload(
+        provider_id=ProviderId(provider),
+        product="test-product",
+        locator=f"https://example.invalid/{provider}",
+        raw_payload=raw,
+        retrieved_time=RETRIEVED,
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+
+
+def _history_batch() -> PublicCompositeBatch:
+    payload = _payload("provider-baostock-public", b"date,time,close\n2025-01-03,145500,10.0\n")
+    return PublicCompositeBatch(
+        raw_payloads=(payload,),
+        bars=(
+            PublicBar(
+                symbol="000001.SZ",
+                event_time=datetime(2025, 1, 3, 14, 55, tzinfo=SHANGHAI),
+                available_time=AvailabilityTime(
+                    datetime(2025, 1, 3, 15, 1, tzinfo=SHANGHAI)
+                ),
+                source_artifact_id=payload.source_artifact_id,
+                open=9.8,
+                high=10.1,
+                low=9.7,
+                close=10.0,
+                volume=1_000_000.0,
+                amount=10_000_000.0,
+                unit="CNY",
+                adjustment_basis="BAOSTOCK_ADJUSTFLAG_3",
+                finality=SourceFieldFinality.FINAL,
+            ),
+        ),
+        quotes=(),
+        source_conflicts=(),
+        limitations=(),
+    )
+
+
+def _current_batch() -> PublicCompositeBatch:
+    payload = _payload("provider-tencent-public", b'v_sz000001="51~name~000001~10.10";')
+    return PublicCompositeBatch(
+        raw_payloads=(payload,),
+        bars=(),
+        quotes=(
+            PublicQuote(
+                symbol="000001.SZ",
+                event_time=datetime(2025, 1, 6, 14, 54, tzinfo=SHANGHAI),
+                available_time=AVAILABLE,
+                source_artifact_id=payload.source_artifact_id,
+                price=10.1,
+                trading_status=TradingStatus.TRADING,
+                unit="CNY",
+                finality=SourceFieldFinality.PRELIMINARY,
+            ),
+        ),
+        source_conflicts=(),
+        limitations=(),
+    )
+
+
+class _Client:
+    def __init__(self, batch: PublicCompositeBatch) -> None:
+        self.batch = batch
+        self.calls = 0
+
+    def acquire(self, request: PublicCompositeRequest) -> PublicCompositeBatch:
+        self.calls += 1
+        assert request.symbols == ("000001.SZ",)
+        return self.batch
+
+
+def _request() -> PublicCompositeRequest:
+    return PublicCompositeRequest(
+        symbols=("000001.SZ",),
+        decision_time=DECISION,
+        history_start=date(2024, 12, 1),
+        minimum_history_sessions=1,
+    )
+
+
+def _replay_manifest(result: PublicCompositeProviderResult) -> SourceManifest:
+    references = result.source_artifact_references
+    quote = result.quotes[0]
+    fields = tuple(
+        SourceManifestField(
+            field_id=fact.value.lower(),
+            symbol=None if fact is CriticalSourceFact.DECISION_TIME else "000001.SZ",
+            critical_fact=fact,
+            provider_id=references[-1].provider_id,
+            source_artifact_id=references[-1].artifact_id,
+            event_time=quote.event_time,
+            available_time=quote.available_time,
+            retrieved_time=references[-1].retrieved_at,
+            decision_time=DECISION,
+            unit="CNY" if fact is CriticalSourceFact.PRICE else "DECLARATION",
+            adjustment_basis="NONE",
+            finality=SourceFieldFinality.FINAL,
+            data_eligibility=DataEligibility.EXPLORATORY,
+            quality_status=SourceFieldQualityStatus.COMPLETE,
+            reason_codes=(),
+        )
+        for fact in CriticalSourceFact
+        if fact is not CriticalSourceFact.AVAILABLE_TIME
+    )
+    return SourceManifest(
+        provider_profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+        decision_time=DECISION,
+        source_artifacts=references,
+        fields=fields,
+        source_conflicts=(),
+        limitations=("FIXTURE_REPLAY_ONLY",),
+        data_eligibility=DataEligibility.EXPLORATORY,
+    )
+
+
+def test_live_profile_calls_only_declared_baostock_and_tencent_clients() -> None:
+    history = _Client(_history_batch())
+    current = _Client(_current_batch())
+    profile = PublicCompositeLiveProfile(
+        history_client=history,
+        current_client=current,
+    )
+
+    result = profile.acquire(_request())
+
+    assert profile.profile_id == PUBLIC_COMPOSITE_LIVE_PROFILE_ID
+    assert history.calls == 1
+    assert current.calls == 1
+    assert tuple(item.provider_id.value for item in result.raw_payloads) == (
+        "provider-baostock-public",
+        "provider-tencent-public",
+    )
+    assert result.raw_payloads[0].raw_hash == (
+        "sha256:f0e66a0d5301d5c1a421a4506e6f71c4e3a80ad4eff2c64"
+        "b0a002e9134303dfe"
+    )
+    assert result.data_eligibility is DataEligibility.EXPLORATORY
+
+
+def test_unreferenced_normalized_data_is_rejected() -> None:
+    history = _history_batch()
+    unknown = PublicQuote(
+        symbol="000001.SZ",
+        event_time=datetime(2025, 1, 6, 14, 54, tzinfo=SHANGHAI),
+        available_time=AVAILABLE,
+        source_artifact_id=ArtifactId("missing-source"),
+        price=10.1,
+        trading_status=TradingStatus.TRADING,
+        unit="CNY",
+        finality=SourceFieldFinality.PRELIMINARY,
+    )
+
+    with pytest.raises(ValueError, match="unarchived source payload"):
+        PublicCompositeProviderResult(
+            profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+            decision_time=DECISION,
+            raw_payloads=history.raw_payloads,
+            bars=history.bars,
+            quotes=(unknown,),
+            source_conflicts=(),
+            limitations=(),
+        )
+
+
+def test_live_source_manifest_stays_blocked_when_membership_is_unproven() -> None:
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(_current_batch()),
+    ).acquire(_request())
+
+    manifest = build_public_source_manifest(result=result, request=_request())
+    report = evaluate_daily_data_quality(
+        manifest=manifest,
+        required_symbols=("000001.SZ",),
+    )
+
+    assert report.status is DailyDataQualityStatus.DATA_BLOCKED
+    assert report.blocked_reason_codes == (
+        "UNIVERSE_MEMBERSHIP_MISSING:000001.SZ",
+        "ELIGIBILITY_MISSING:000001.SZ",
+    )
+    assert all(
+        field.data_eligibility is DataEligibility.EXPLORATORY
+        for field in manifest.fields
+    )
+
+
+def test_replay_profile_reads_only_verified_manifest_and_immutable_archive(
+    tmp_path: Path,
+) -> None:
+    live = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(_current_batch()),
+    ).acquire(_request())
+    replay_result = PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+        decision_time=live.decision_time,
+        raw_payloads=live.raw_payloads,
+        bars=live.bars,
+        quotes=live.quotes,
+        source_conflicts=live.source_conflicts,
+        limitations=("FIXTURE_REPLAY_ONLY",),
+    )
+    manifest = _replay_manifest(replay_result)
+    archive = publish_source_replay_archive(
+        root=tmp_path,
+        provider_result=replay_result,
+        source_manifest=manifest,
+    )
+
+    profile = PublicCompositeReplayProfile(
+        archive_reader=SourceReplayArchiveReader()
+    )
+    acquired = profile.acquire(
+        archive_path=archive,
+        expected_source_manifest_id=manifest.source_manifest_id,
+    )
+
+    assert profile.profile_id == PUBLIC_COMPOSITE_REPLAY_PROFILE_ID
+    assert acquired.source_manifest == manifest
+    assert acquired.provider_result == replay_result
+    assert acquired.provider_result.raw_payloads[1].raw_payload.startswith(b"v_")
+
+    (archive / "provider_result.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="checksum"):
+        profile.acquire(
+            archive_path=archive,
+            expected_source_manifest_id=manifest.source_manifest_id,
+        )
+
+
+def test_replay_profile_rejects_a_different_manifest_identity(tmp_path: Path) -> None:
+    live = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(_current_batch()),
+    ).acquire(_request())
+    replay_result = PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+        decision_time=live.decision_time,
+        raw_payloads=live.raw_payloads,
+        bars=live.bars,
+        quotes=live.quotes,
+        source_conflicts=(),
+        limitations=(),
+    )
+    manifest = _replay_manifest(replay_result)
+    archive = publish_source_replay_archive(
+        root=tmp_path,
+        provider_result=replay_result,
+        source_manifest=manifest,
+    )
+
+    with pytest.raises(ValueError, match="SourceManifest identity"):
+        PublicCompositeReplayProfile().acquire(
+            archive_path=archive,
+            expected_source_manifest_id=ArtifactId("source-manifest-other"),
+        )
