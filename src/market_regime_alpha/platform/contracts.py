@@ -21,6 +21,7 @@ from market_regime_alpha.core.identity import (
     TargetId,
     UniverseId,
 )
+from market_regime_alpha.data.contracts import DataEligibility
 
 
 def _require_non_empty(label: str, value: str) -> None:
@@ -191,7 +192,7 @@ class ModelDefinition:
     result-affecting implementation without embedding mutable code or parameters.
     """
 
-    SCHEMA_VERSION: ClassVar[str] = "model-definition-v1"
+    SCHEMA_VERSION: ClassVar[str] = "model-definition-v2"
 
     model_id: ModelId
     name: str
@@ -207,7 +208,9 @@ class ModelDefinition:
     horizon: str
     theory_ids: tuple[TheoryId, ...] = ()
     parent_model_id: ModelId | None = None
-    supported_data_grades: tuple[EvidenceLevel, ...] = (EvidenceLevel.EXPLORATORY,)
+    supported_data_eligibilities: tuple[DataEligibility, ...] = (
+        DataEligibility.EXPLORATORY,
+    )
     compatibility_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -225,17 +228,29 @@ class ModelDefinition:
             raise TypeError("role must be a ModelRole")
         _require_unique("feature_ids", self.feature_ids)
         _require_unique("theory_ids", self.theory_ids)
-        _require_unique("supported_data_grades", self.supported_data_grades)
+        _require_unique(
+            "supported_data_eligibilities",
+            self.supported_data_eligibilities,
+        )
         _require_unique("compatibility_refs", self.compatibility_refs)
         if not self.feature_ids and self.role is not ModelRole.CONTEXT:
             raise ValueError("non-context model requires at least one feature")
-        if not self.supported_data_grades:
-            raise ValueError("supported_data_grades must not be empty")
-        for grade in self.supported_data_grades:
-            if not isinstance(grade, EvidenceLevel):
-                raise TypeError("supported_data_grades must contain EvidenceLevel values")
+        if not self.supported_data_eligibilities:
+            raise ValueError("supported_data_eligibilities must not be empty")
+        for eligibility in self.supported_data_eligibilities:
+            if not isinstance(eligibility, DataEligibility):
+                raise TypeError(
+                    "supported_data_eligibilities must contain DataEligibility values"
+                )
         if self.parent_model_id == self.model_id:
             raise ValueError("model cannot be its own parent")
+
+    def supports_data_eligibility(self, eligibility: DataEligibility) -> bool:
+        """Return whether one input-data authority is declared compatible."""
+
+        if not isinstance(eligibility, DataEligibility):
+            raise TypeError("eligibility must be a DataEligibility")
+        return eligibility in self.supported_data_eligibilities
 
     def canonical_payload(self) -> dict[str, Any]:
         return {
@@ -254,7 +269,9 @@ class ModelDefinition:
             "horizon": self.horizon,
             "theory_ids": [str(item) for item in self.theory_ids],
             "parent_model_id": str(self.parent_model_id) if self.parent_model_id else None,
-            "supported_data_grades": [item.value for item in self.supported_data_grades],
+            "supported_data_eligibilities": [
+                item.value for item in self.supported_data_eligibilities
+            ],
             "compatibility_refs": list(self.compatibility_refs),
         }
 

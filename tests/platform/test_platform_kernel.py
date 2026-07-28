@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -99,6 +100,28 @@ def _dataset() -> CandidateResearchDataset:
     )
 
 
+def _model_definition() -> ModelDefinition:
+    dataset = _dataset()
+    return ModelDefinition(
+        model_id=ModelId("candidate-model-test-v1"),
+        name="candidate model test",
+        version="1.0.0",
+        family="candidate-baseline",
+        role=ModelRole.CANDIDATE,
+        target_id=dataset.target_id,
+        universe_id=dataset.universe_id,
+        feature_ids=(dataset.feature_definition_ids[0],),
+        implementation_ref="market_regime_alpha.candidates.baselines:rank_candidates_by_feature",
+        parameter_hash="sha256:test",
+        decision_time_convention="14:50 Asia/Shanghai",
+        horizon="next session 10:30",
+        supported_data_eligibilities=(
+            DataEligibility.EXPLORATORY,
+            DataEligibility.FORMAL_RESEARCH,
+        ),
+    )
+
+
 def test_target_and_evaluation_protocols_are_content_addressable() -> None:
     dataset = _dataset()
     target = TargetProtocol(
@@ -141,23 +164,7 @@ def test_target_and_evaluation_protocols_are_content_addressable() -> None:
 
 
 def test_model_registry_requires_evidence_and_approval_for_active() -> None:
-    dataset = _dataset()
-    feature_id = dataset.feature_definition_ids[0]
-    model = ModelDefinition(
-        model_id=ModelId("candidate-model-test-v1"),
-        name="candidate model test",
-        version="1.0.0",
-        family="candidate-baseline",
-        role=ModelRole.CANDIDATE,
-        target_id=dataset.target_id,
-        universe_id=dataset.universe_id,
-        feature_ids=(feature_id,),
-        implementation_ref="market_regime_alpha.candidates.baselines:rank_candidates_by_feature",
-        parameter_hash="sha256:test",
-        decision_time_convention="14:50 Asia/Shanghai",
-        horizon="next session 10:30",
-        supported_data_grades=(EvidenceLevel.EXPLORATORY, EvidenceLevel.FORMAL_RESEARCH),
-    )
+    model = _model_definition()
     registry = ModelRegistry()
     registry.register(model)
     now = datetime(2026, 7, 25, 9, 0, tzinfo=SHANGHAI)
@@ -193,6 +200,75 @@ def test_model_registry_requires_evidence_and_approval_for_active() -> None:
             changed_at=now,
             reason="activate",
             evidence_refs=("artifact:shadow-v1",),
+        )
+
+
+def test_model_registry_register_only_creates_draft_unqualified() -> None:
+    model = _model_definition()
+    registry = ModelRegistry()
+
+    registration = registry.register(model)
+
+    assert registration.lifecycle_status is ModelLifecycleStatus.DRAFT
+    assert registration.evidence_level is EvidenceLevel.UNQUALIFIED
+    with pytest.raises(TypeError):
+        registry.register(  # type: ignore[call-arg]
+            model,
+            lifecycle_status=ModelLifecycleStatus.ACTIVE,
+        )
+    with pytest.raises(TypeError):
+        registry.register(  # type: ignore[call-arg]
+            model,
+            evidence_level=EvidenceLevel.FORMAL_RESEARCH,
+        )
+
+
+def test_model_definition_separates_data_eligibility_from_evidence_level() -> None:
+    model = _model_definition()
+
+    assert model.supported_data_eligibilities == (
+        DataEligibility.EXPLORATORY,
+        DataEligibility.FORMAL_RESEARCH,
+    )
+    assert model.supports_data_eligibility(DataEligibility.EXPLORATORY)
+    assert not model.supports_data_eligibility(DataEligibility.REHEARSAL)
+    with pytest.raises(TypeError, match="DataEligibility"):
+        replace(
+            model,
+            supported_data_eligibilities=(EvidenceLevel.EXPLORATORY,),  # type: ignore[arg-type]
+        )
+
+
+def test_model_registry_restore_replays_valid_history_and_rejects_forgery() -> None:
+    model = _model_definition()
+    now = datetime(2026, 7, 25, 9, 0, tzinfo=SHANGHAI)
+    source = ModelRegistry()
+    source.register(model)
+    source.transition(
+        model.model_id,
+        to_status=ModelLifecycleStatus.RESEARCH,
+        changed_at=now,
+        reason="research start",
+    )
+    final = source.transition(
+        model.model_id,
+        to_status=ModelLifecycleStatus.BACKTESTED,
+        changed_at=now,
+        reason="backtest complete",
+        evidence_refs=("artifact:backtest-v1",),
+        evidence_level=EvidenceLevel.EXPLORATORY,
+    )
+
+    restored = ModelRegistry().restore(final)
+
+    assert restored == final
+    with pytest.raises(ValueError, match="lifecycle status"):
+        ModelRegistry().restore(
+            replace(final, lifecycle_status=ModelLifecycleStatus.ACTIVE)
+        )
+    with pytest.raises(ValueError, match="transition history"):
+        ModelRegistry().restore(
+            replace(final, transitions=tuple(reversed(final.transitions)))
         )
 
 
