@@ -62,22 +62,13 @@ class AcquiredReplaySource:
     archive_id: str
 
 
-def publish_source_replay_archive(
+def source_archive_id(
     *,
-    root: Path,
     provider_result: PublicCompositeProviderResult,
     source_manifest: SourceManifest,
-) -> Path:
-    if provider_result.profile_id != PUBLIC_COMPOSITE_REPLAY_PROFILE_ID:
-        raise ValueError("source replay archive requires replay ProviderResult")
-    if source_manifest.provider_profile_id != PUBLIC_COMPOSITE_REPLAY_PROFILE_ID:
-        raise ValueError("source replay archive requires replay SourceManifest")
-    if (
-        provider_result.decision_time != source_manifest.decision_time
-        or provider_result.source_artifact_references
-        != source_manifest.source_artifacts
-    ):
-        raise ValueError("ProviderResult and SourceManifest source scope mismatch")
+) -> str:
+    """Derive the immutable archive identity from its semantic records."""
+
     identity_hash = _canonical_hash(
         {
             "schema_version": SOURCE_REPLAY_ARCHIVE_SCHEMA,
@@ -85,7 +76,27 @@ def publish_source_replay_archive(
             "source_manifest_hash": source_manifest.content_hash,
         }
     )
-    archive_id = f"source-replay-{identity_hash.split(':', 1)[1][:24]}"
+    return f"source-replay-{identity_hash.split(':', 1)[1][:24]}"
+
+
+def publish_source_archive(
+    *,
+    root: Path,
+    provider_result: PublicCompositeProviderResult,
+    source_manifest: SourceManifest,
+) -> Path:
+    if provider_result.profile_id != source_manifest.provider_profile_id:
+        raise ValueError("source archive profile mismatch")
+    if (
+        provider_result.decision_time != source_manifest.decision_time
+        or provider_result.source_artifact_references
+        != source_manifest.source_artifacts
+    ):
+        raise ValueError("ProviderResult and SourceManifest source scope mismatch")
+    archive_id = source_archive_id(
+        provider_result=provider_result,
+        source_manifest=source_manifest,
+    )
     root.mkdir(parents=True, exist_ok=True)
     final = root / archive_id
     if final.exists():
@@ -125,6 +136,25 @@ def publish_source_replay_archive(
         shutil.rmtree(stage, ignore_errors=True)
         raise
     return final
+
+
+def publish_source_replay_archive(
+    *,
+    root: Path,
+    provider_result: PublicCompositeProviderResult,
+    source_manifest: SourceManifest,
+) -> Path:
+    """Preserve the original replay-profile-only publisher contract."""
+
+    if provider_result.profile_id != PUBLIC_COMPOSITE_REPLAY_PROFILE_ID:
+        raise ValueError("source replay archive requires replay ProviderResult")
+    if source_manifest.provider_profile_id != PUBLIC_COMPOSITE_REPLAY_PROFILE_ID:
+        raise ValueError("source replay archive requires replay SourceManifest")
+    return publish_source_archive(
+        root=root,
+        provider_result=provider_result,
+        source_manifest=source_manifest,
+    )
 
 
 class SourceReplayArchiveReader:

@@ -80,8 +80,4 @@ class PublicCompositeReplayProfile:
         acquired = self.archive_reader.read(archive_path)
         if acquired.source_manifest.source_manifest_id != expected_source_manifest_id:
             raise ValueError("SourceManifest identity does not match replay request")
-        if acquired.source_manifest.provider_profile_id != self.profile_id:
-            raise ValueError("SourceManifest is not a replay profile manifest")
-        if acquired.provider_result.profile_id != self.profile_id:
-            raise ValueError("ProviderResult is not a replay profile result")
         return acquired

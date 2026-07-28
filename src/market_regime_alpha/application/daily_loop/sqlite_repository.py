@@ -12,6 +12,7 @@ from typing import Any, Mapping
 
 from market_regime_alpha.application.daily_loop.commands import (
     DailyRunCommand,
+    DailyRunId,
     DailyRunIdentity,
     RunRequestId,
 )
@@ -82,6 +83,22 @@ class SQLiteDailyRunRepository:
     def get(self, run_request_id: RunRequestId) -> DailyRunRecord:
         with self._connect() as connection:
             row = self._select(connection, run_request_id)
+        return _record_from_row(row)
+
+    def get_by_daily_run_id(self, daily_run_id: DailyRunId) -> DailyRunRecord:
+        if not isinstance(daily_run_id, DailyRunId):
+            raise TypeError("daily_run_id must be a DailyRunId")
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM daily_runs
+                WHERE daily_run_id = ?
+                """,
+                (str(daily_run_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(daily_run_id))
         return _record_from_row(row)
 
     def begin_source_acquisition(

@@ -201,6 +201,8 @@ class DailyRunRepository(Protocol):
 
     def get(self, run_request_id: RunRequestId) -> DailyRunRecord: ...
 
+    def get_by_daily_run_id(self, daily_run_id: DailyRunId) -> DailyRunRecord: ...
+
     def begin_source_acquisition(
         self,
         run_request_id: RunRequestId,

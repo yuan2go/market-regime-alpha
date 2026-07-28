@@ -14,6 +14,10 @@ from zoneinfo import ZoneInfo
 
 from market_regime_alpha.core.identity import ArtifactId, StableId
 from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.data.providers.public_composite.contracts import (
+    PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+    PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+)
 
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -101,6 +105,15 @@ class DailyRunCommand:
             raise ValueError("REPLAY requires replay_source_manifest_id")
         if self.run_mode is RunMode.LIVE and self.replay_source_manifest_id is not None:
             raise ValueError("LIVE cannot carry replay_source_manifest_id")
+        expected_profile = (
+            PUBLIC_COMPOSITE_LIVE_PROFILE_ID
+            if self.run_mode is RunMode.LIVE
+            else PUBLIC_COMPOSITE_REPLAY_PROFILE_ID
+        )
+        if self.provider_profile_id != expected_profile:
+            raise ValueError(
+                f"{self.run_mode.value} requires provider profile {expected_profile}"
+            )
         content_hash = _canonical_hash(self.semantic_payload())
         object.__setattr__(self, "content_hash", content_hash)
         object.__setattr__(

@@ -46,14 +46,16 @@ class VerifiedDailyReviewArtifact:
     checksums_hash: str
 
 
-def _artifact_id(settlement: OutcomeSettlement) -> str:
+def daily_review_artifact_id(settlement: OutcomeSettlement) -> str:
+    """Return the deterministic package identity for one settlement."""
+
     return f"daily-review-artifact-{settlement.content_hash.split(':', 1)[1][:24]}"
 
 
 def _manifest(settlement: OutcomeSettlement) -> dict[str, Any]:
     return {
         "schema_version": DAILY_REVIEW_ARTIFACT_SCHEMA,
-        "artifact_id": _artifact_id(settlement),
+        "artifact_id": daily_review_artifact_id(settlement),
         "settlement_id": str(settlement.settlement_id),
         "settlement_content_hash": settlement.content_hash,
         "daily_decision_artifact_id": str(
@@ -82,7 +84,7 @@ def publish_daily_review_artifact(
     settlement: OutcomeSettlement,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    final = root / _artifact_id(settlement)
+    final = root / daily_review_artifact_id(settlement)
     if final.exists():
         raise FileExistsError(f"DailyReview Artifact exists: {final}")
     stage = Path(tempfile.mkdtemp(prefix=f".{final.name}.", dir=root))
@@ -236,7 +238,7 @@ def load_verified_daily_review_artifact(
     )
     if manifest != _manifest(settlement):
         raise ValueError("DailyReview manifest is not reconstructible")
-    if root.name != _artifact_id(settlement):
+    if root.name != daily_review_artifact_id(settlement):
         raise ValueError("DailyReview directory identity mismatch")
     if (root / "report.md").read_text(
         encoding="utf-8"

@@ -19,7 +19,9 @@ from .profiles import PublicCompositeLiveProfile, PublicCompositeReplayProfile
 from .replay_archive import (
     AcquiredReplaySource,
     SourceReplayArchiveReader,
+    publish_source_archive,
     publish_source_replay_archive,
+    source_archive_id,
 )
 
 __all__ = [
@@ -41,5 +43,7 @@ __all__ = [
     "TencentCurrentQuoteClient",
     "TradingStatus",
     "build_public_source_manifest",
+    "publish_source_archive",
     "publish_source_replay_archive",
+    "source_archive_id",
 ]

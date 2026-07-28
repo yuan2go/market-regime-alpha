@@ -105,6 +105,7 @@ files = [
     "src/market_regime_alpha/application/daily_loop/commands.py",
     "src/market_regime_alpha/application/daily_loop/errors.py",
     "src/market_regime_alpha/application/daily_loop/repositories.py",
+    "src/market_regime_alpha/application/daily_loop/runner.py",
     "src/market_regime_alpha/application/daily_loop/sqlite_repository.py",
     "src/market_regime_alpha/application/daily_loop/state.py",
     "src/market_regime_alpha/daily_decision/__init__.py",

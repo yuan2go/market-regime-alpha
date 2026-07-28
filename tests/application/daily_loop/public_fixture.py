@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.core.identity import ProviderId
@@ -42,28 +42,40 @@ AVAILABLE = AvailabilityTime(datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI))
 def public_fixture(
     *,
     policy: DailyUniversePolicy,
+    decision_time: DecisionTime = DECISION,
     missing_price_symbol: str | None = None,
     suspended_symbol: str | None = None,
+    suspended_symbols: tuple[str, ...] = (),
     include_outsider: bool = False,
+    history_session_count: int = 21,
+    quote_age_minutes: int = 1,
 ) -> tuple[
     PublicCompositeRequest,
     PublicCompositeProviderResult,
     SourceManifest,
 ]:
+    local_decision = decision_time.value.astimezone(SHANGHAI)
+    retrieved = RetrievedAt(local_decision - timedelta(minutes=1))
+    available = AvailabilityTime(local_decision - timedelta(minutes=1))
+    date_suffix = (
+        b""
+        if decision_time == DECISION
+        else f":{local_decision.date().isoformat()}".encode()
+    )
     history_payload = AcquiredSourcePayload(
         provider_id=ProviderId("provider-baostock-public"),
         product="fixture-history",
         locator="archive://fixture/baostock",
-        raw_payload=b"fixture-baostock-history",
-        retrieved_time=RETRIEVED,
+        raw_payload=b"fixture-baostock-history" + date_suffix,
+        retrieved_time=retrieved,
         limitations=("FIXTURE_REPLAY_ONLY",),
     )
     quote_payload = AcquiredSourcePayload(
         provider_id=ProviderId("provider-tencent-public"),
         product="fixture-quotes",
         locator="archive://fixture/tencent",
-        raw_payload=b"fixture-tencent-quotes",
-        retrieved_time=RETRIEVED,
+        raw_payload=b"fixture-tencent-quotes" + date_suffix,
+        retrieved_time=retrieved,
         limitations=("FIXTURE_REPLAY_ONLY",),
     )
     symbols = (
@@ -71,7 +83,7 @@ def public_fixture(
         if include_outsider
         else SMOKE_POOL_SYMBOLS
     )
-    start = date(2025, 1, 2)
+    start = local_decision.date() - timedelta(days=32)
     bars = tuple(
         PublicBar(
             symbol=symbol,
@@ -99,18 +111,22 @@ def public_fixture(
             finality=SourceFieldFinality.FINAL,
         )
         for symbol in symbols
-        for index in range(21)
+        for index in range(history_session_count)
     )
     quotes = tuple(
         PublicQuote(
             symbol=symbol,
-            event_time=datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
-            available_time=AVAILABLE,
+            event_time=local_decision - timedelta(minutes=quote_age_minutes),
+            available_time=available,
             source_artifact_id=quote_payload.source_artifact_id,
             price=None if symbol == missing_price_symbol else 10.5,
             trading_status=(
                 TradingStatus.SUSPENDED
-                if symbol == suspended_symbol
+                if symbol
+                in {
+                    *suspended_symbols,
+                    *((suspended_symbol,) if suspended_symbol is not None else ()),
+                }
                 else TradingStatus.TRADING
             ),
             unit="CNY",
@@ -120,7 +136,7 @@ def public_fixture(
     )
     result = PublicCompositeProviderResult(
         profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
-        decision_time=DECISION,
+        decision_time=decision_time,
         raw_payloads=(history_payload, quote_payload),
         bars=bars,
         quotes=quotes,
@@ -129,7 +145,7 @@ def public_fixture(
     )
     request = PublicCompositeRequest(
         symbols=SMOKE_POOL_SYMBOLS,
-        decision_time=DECISION,
+        decision_time=decision_time,
         history_start=start,
         minimum_history_sessions=21,
     )
@@ -140,10 +156,10 @@ def public_fixture(
             critical_fact=fact,
             provider_id=quote_payload.provider_id,
             source_artifact_id=quote_payload.source_artifact_id,
-            event_time=DECISION.value,
-            available_time=AVAILABLE,
-            retrieved_time=RETRIEVED,
-            decision_time=DECISION,
+            event_time=decision_time.value,
+            available_time=available,
+            retrieved_time=retrieved,
+            decision_time=decision_time,
             unit="POLICY_DECLARATION",
             adjustment_basis="NONE",
             finality=SourceFieldFinality.FINAL,
