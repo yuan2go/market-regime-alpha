@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-29
+> **Last Updated:** 2026-07-30
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md
-> **Code Evidence:** feat/public-live-semantic-closure@2ce6773d597286cbb39a08d3b0f9a2d08983b1d3
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md
+> **Code Evidence:** feat/wp-d3-1-real-decision-evidence@347087c952cece0c7ee5cb475d717b4b098ee7da
 
 ## Overall stage
 
@@ -17,6 +17,7 @@ PLATFORM_MINIMUM_GOVERNANCE_BOUNDARY_HARDENED
 PHASE_D_EXPLORATORY_DAILY_LOOP_IMPLEMENTED
 EXPLORATORY_DAILY_LOOP_OPERATIONAL
 PUBLIC_LIVE_STILL_DATA_BLOCKED
+REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
 TRADING_AUTHORITY_NOT_GRANTED
 ```
@@ -43,6 +44,10 @@ TRADING_AUTHORITY_NOT_GRANTED
 - v2 protocol/Provider/Universe Policy/Eligibility Policy Source authority separation;
 - recoverable BaoStock history and Tencent Decision Quote acquisition stages whose immutable
   Artifacts are reused across Quote failure and pre-Receipt process failure;
+- independent exact-date BaoStock Security Status acquisition with typed Trading/ST/Listing
+  observations, prior-session scoping and immutable scope-bound V3 Stage Artifacts;
+- independently schedulable History, Security Status, Decision Quote and network-free Finalize
+  commands with exact-scope orphan recovery;
 - two-level public quality handling: global Source/Policy integrity gate plus per-symbol
   fail-closed eligibility;
 - versioned exploratory BaoStock prior-session daily history semantics without invented
@@ -73,11 +78,16 @@ The qualified Xuntou v4 path requires an actual XtQuant runtime and a real quali
 existing path can publish a verified blocker but has not produced formal Candidate replication
 metrics from real provider input.
 
-The observed public LIVE run archived 1,200 BaoStock prior daily bars and 20 Tencent Quotes. It
-correctly blocked because the run occurred after the 14:55 Decision window and Tencent did not
-qualify current trading status; independent ST and listing status were also unavailable. Universe
-membership and the resulting ineligibility decisions were fully policy-bound and did not claim
-Provider authority.
+The latest observed public LIVE run archived 1,200 BaoStock prior daily bars, 20 exact-date
+BaoStock Status Payloads and 20 Tencent Quotes. BaoStock returned explicit Trading, non-ST and
+listed values, but the run occurred at 00:47 on the following day. The status values and Quotes
+were therefore unavailable at the historical 14:55 Decision Time. The verified Artifact is
+`DATA_BLOCKED` with no Prediction, Recommendation or Entry output. Its real Source Archive
+replays offline with a stable repeated Replay Hash, but remains blocked.
+
+The same three-stage path reaches `OUTCOME_PENDING` in qualified fixtures and isolates five
+different per-symbol failures while retaining a 15-symbol Candidate Population. This is
+engineering evidence, not real public 14:55 runtime evidence.
 
 ## Not implemented as canonical Phase D authority
 

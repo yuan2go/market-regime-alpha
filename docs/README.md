@@ -110,6 +110,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
 - [WP-D3 Public LIVE Semantic Closure Audit](audit/WP-D3-Public-Live-Semantic-Closure.md)
 - [WP-D3.1 Real Decision Evidence Baseline Audit](audit/WP-D3-1-Real-Decision-Evidence-Baseline.md)
+- [WP-D3.1 Real Decision Evidence Delivery](audit/WP-D3-1-Real-Decision-Evidence-Delivery.md)
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
 - [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
 - [Post-Consolidation Code Audit](audit/Post-Consolidation-Code-Audit-2026-07-26.md)
