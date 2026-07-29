@@ -81,6 +81,65 @@ class ThemeRotationItem:
             "reason_codes": list(self.reason_codes),
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: dict[str, Any]
+    ) -> ThemeRotationItem:
+        expected = {
+            "theme_id",
+            "theme_name",
+            "benchmark_id",
+            "proxy_etf_ids",
+            "rotation_state",
+            "rotation_score",
+            "rank",
+            "confidence",
+            "relative_strength_1d",
+            "relative_strength_3d",
+            "relative_strength_5d",
+            "relative_strength_10d",
+            "amount_expansion",
+            "breadth",
+            "new_high_breadth",
+            "leader_strength",
+            "participation_change",
+            "persistence",
+            "reason_codes",
+        }
+        if set(payload) != expected:
+            raise ValueError("ThemeRotationItem fields mismatch")
+        return cls(
+            theme_id=str(payload["theme_id"]),
+            theme_name=str(payload["theme_name"]),
+            benchmark_id=str(payload["benchmark_id"]),
+            proxy_etf_ids=_strings(payload["proxy_etf_ids"]),
+            rotation_state=RotationState(str(payload["rotation_state"])),
+            rotation_score=_optional_float(payload["rotation_score"]),
+            rank=int(payload["rank"]),
+            confidence=float(payload["confidence"]),
+            relative_strength_1d=_optional_float(
+                payload["relative_strength_1d"]
+            ),
+            relative_strength_3d=_optional_float(
+                payload["relative_strength_3d"]
+            ),
+            relative_strength_5d=_optional_float(
+                payload["relative_strength_5d"]
+            ),
+            relative_strength_10d=_optional_float(
+                payload["relative_strength_10d"]
+            ),
+            amount_expansion=_optional_float(payload["amount_expansion"]),
+            breadth=_optional_float(payload["breadth"]),
+            new_high_breadth=_optional_float(payload["new_high_breadth"]),
+            leader_strength=_optional_float(payload["leader_strength"]),
+            participation_change=_optional_float(
+                payload["participation_change"]
+            ),
+            persistence=_optional_float(payload["persistence"]),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ThemeRotationSnapshot:
@@ -111,3 +170,47 @@ class ThemeRotationSnapshot:
             **self.artifact_payload(),
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: dict[str, Any]
+    ) -> ThemeRotationSnapshot:
+        if set(payload) != {"envelope", "themes", "reason_codes"}:
+            raise ValueError("ThemeRotationSnapshot fields mismatch")
+        return cls(
+            envelope=ArtifactEnvelope.from_canonical_dict(
+                _object(payload["envelope"])
+            ),
+            themes=tuple(
+                ThemeRotationItem.from_canonical_dict(_object(item))
+                for item in _array(payload["themes"])
+            ),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+def _object(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Theme Rotation value must be an object")
+    return value
+
+
+def _array(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise ValueError("Theme Rotation value must be an array")
+    return value
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise ValueError("Theme Rotation value must be a string array")
+    return tuple(value)
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Theme Rotation value must be numeric")
+    return float(value)

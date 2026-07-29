@@ -93,6 +93,73 @@ class CandidateRecord:
             ],
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: dict[str, Any]
+    ) -> CandidateRecord:
+        expected = {
+            "symbol",
+            "primary_theme_id",
+            "supporting_theme_ids",
+            "market_regime_status",
+            "theme_rotation_state",
+            "capital_evolution_state",
+            "market_regime_score",
+            "theme_score",
+            "capital_evolution_score",
+            "candidate_discovery_score",
+            "rank",
+            "selection_status",
+            "reason_codes",
+            "source_feature_ids",
+            "input_artifact_ids",
+        }
+        if set(payload) != expected:
+            raise ValueError("CandidateRecord fields mismatch")
+        return cls(
+            symbol=str(payload["symbol"]),
+            primary_theme_id=(
+                str(payload["primary_theme_id"])
+                if payload["primary_theme_id"] is not None
+                else None
+            ),
+            supporting_theme_ids=_strings(payload["supporting_theme_ids"]),
+            market_regime_status=MarketState(
+                str(payload["market_regime_status"])
+            ),
+            theme_rotation_state=RotationState(
+                str(payload["theme_rotation_state"])
+            ),
+            capital_evolution_state=CapitalEvolutionState(
+                str(payload["capital_evolution_state"])
+            ),
+            market_regime_score=_optional_float(
+                payload["market_regime_score"]
+            ),
+            theme_score=_optional_float(payload["theme_score"]),
+            capital_evolution_score=_optional_float(
+                payload["capital_evolution_score"]
+            ),
+            candidate_discovery_score=_optional_float(
+                payload["candidate_discovery_score"]
+            ),
+            rank=(
+                int(payload["rank"]) if payload["rank"] is not None else None
+            ),
+            selection_status=CandidateSelectionStatus(
+                str(payload["selection_status"])
+            ),
+            reason_codes=_strings(payload["reason_codes"]),
+            source_feature_ids=tuple(
+                FeatureDefinitionId(value)
+                for value in _strings(payload["source_feature_ids"])
+            ),
+            input_artifact_ids=tuple(
+                ArtifactId(value)
+                for value in _strings(payload["input_artifact_ids"])
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateSet:
@@ -150,3 +217,53 @@ class CandidateSet:
             **self.artifact_payload(),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: dict[str, Any]) -> CandidateSet:
+        if set(payload) != {
+            "envelope",
+            "records",
+            "minimum_candidate_population",
+            "reason_codes",
+        }:
+            raise ValueError("CandidateSet fields mismatch")
+        return cls(
+            envelope=ArtifactEnvelope.from_canonical_dict(
+                _object(payload["envelope"])
+            ),
+            records=tuple(
+                CandidateRecord.from_canonical_dict(_object(item))
+                for item in _array(payload["records"])
+            ),
+            minimum_candidate_population=int(
+                payload["minimum_candidate_population"]
+            ),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+def _object(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("CandidateSet value must be an object")
+    return value
+
+
+def _array(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise ValueError("CandidateSet value must be an array")
+    return value
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise ValueError("CandidateSet value must be a string array")
+    return tuple(value)
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("CandidateSet value must be numeric")
+    return float(value)

@@ -135,3 +135,90 @@ class MarketRegimeSnapshot:
             **self.artifact_payload(),
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: dict[str, Any]
+    ) -> MarketRegimeSnapshot:
+        expected = {
+            "envelope",
+            "market_state",
+            "trade_permission",
+            "maximum_gross_exposure",
+            "confidence",
+            "direction_score",
+            "breadth_score",
+            "liquidity_score",
+            "volatility_score",
+            "limit_structure_score",
+            "market_direction",
+            "market_breadth",
+            "market_liquidity",
+            "market_volatility",
+            "risk_appetite",
+            "observed_metrics",
+            "reason_codes",
+        }
+        if set(payload) != expected:
+            raise ValueError("MarketRegimeSnapshot fields mismatch")
+        return cls(
+            envelope=ArtifactEnvelope.from_canonical_dict(
+                _object(payload["envelope"])
+            ),
+            market_state=MarketState(str(payload["market_state"])),
+            trade_permission=TradePermission(str(payload["trade_permission"])),
+            maximum_gross_exposure=float(payload["maximum_gross_exposure"]),
+            confidence=float(payload["confidence"]),
+            direction_score=_optional_float(payload["direction_score"]),
+            breadth_score=_optional_float(payload["breadth_score"]),
+            liquidity_score=_optional_float(payload["liquidity_score"]),
+            volatility_score=_optional_float(payload["volatility_score"]),
+            limit_structure_score=_optional_float(
+                payload["limit_structure_score"]
+            ),
+            market_direction=MarketDirection(str(payload["market_direction"])),
+            market_breadth=MarketBreadth(str(payload["market_breadth"])),
+            market_liquidity=MarketLiquidity(str(payload["market_liquidity"])),
+            market_volatility=MarketVolatility(
+                str(payload["market_volatility"])
+            ),
+            risk_appetite=RiskAppetite(str(payload["risk_appetite"])),
+            observed_metrics=tuple(
+                _metric(_object(item))
+                for item in _array(payload["observed_metrics"])
+            ),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+def _object(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Market Regime value must be an object")
+    return value
+
+
+def _array(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise ValueError("Market Regime value must be an array")
+    return value
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise ValueError("Market Regime value must be a string array")
+    return tuple(value)
+
+
+def _metric(value: dict[str, Any]) -> tuple[str, float]:
+    if set(value) != {"metric", "value"}:
+        raise ValueError("Market Regime metric fields mismatch")
+    return str(value["metric"]), float(value["value"])
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Market Regime value must be numeric")
+    return float(value)
