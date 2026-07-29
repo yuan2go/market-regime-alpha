@@ -1,5 +1,14 @@
 # Public LIVE Semantic Closure Implementation Plan
 
+> **Status:** ROADMAP
+> **Authority:** Approved execution plan for public LIVE semantic closure
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-07-29
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../../audit/Run-First-Daily-Platform-Delivery.md, ../../status/Current-State.md, ../../roadmap/work-packages/WP-D2E-Tencent-Exploratory-Daily-Loop.md
+> **Code Evidence:** main@f99f6330192f410cde47234f2fc519818d269d76; `src/market_regime_alpha`; `tests`
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the fixed 20-symbol public-data LIVE path semantically honest and capable of reaching `OUTCOME_PENDING` from a verified archive when every required public fact is present, while preserving fail-closed behavior when it is not.

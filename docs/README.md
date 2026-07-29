@@ -93,6 +93,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Phase D Work Package Index](roadmap/Phase-D-Work-Packages.md)
 - [Detailed Work Packages](roadmap/work-packages/README.md)
 - [Run-First Exploratory Daily Platform Implementation Plan](superpowers/plans/2026-07-28-run-first-exploratory-daily-platform.md)
+- [Public LIVE Semantic Closure Implementation Plan](superpowers/plans/2026-07-29-public-live-semantic-closure.md)
 
 ### Current status
 
@@ -105,6 +106,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 - [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
 - [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
+- [WP-D3 Public LIVE Semantic Closure Audit](audit/WP-D3-Public-Live-Semantic-Closure.md)
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
 - [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
 - [Branch Reconciliation Audit](audit/Branch-Reconciliation-2026-07-26.md)

@@ -3,17 +3,18 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Ordered gap and dependency register  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-28
+> **Last Updated:** 2026-07-29
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../audit/Run-First-Daily-Platform-Delivery.md
-> **Code Evidence:** Derived from `feat/run-first-exploratory-daily-platform@dc9f27a68d3febd4a461e3e299af6ccbba3e70d0`
+> **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md
+> **Code Evidence:** Derived from `feat/public-live-semantic-closure@2ce6773d597286cbb39a08d3b0f9a2d08983b1d3`
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Platform governance persistence remainder | P1 | minimum registration/restore/data-evidence/PredictionRun boundary hardened; daily Runtime Journal durable | current platform code/tests | durable Model Registry and Experiment Governance with concurrency/recovery authority |
-| Public-source formal availability/PIT | P0 | immutable SourceManifest and fail-closed quality gate operational; LIVE dry run blocked truthfully | provider/reference data | qualified availability, trading status, PIT membership and eligibility evidence |
-| Operational 100–300 A-share universe | P0 | content-addressed configurable policy contract; fixed 20-symbol smoke runtime | approved membership/mapping/liquidity source | configured operational pool with every symbol eligible or excluded and stable replay |
+| Public LIVE current-status and Decision-window closure | P0 | staged real acquisition/recovery and policy evidence operational; real LIVE/Archive remain verified `DATA_BLOCKED` | qualified current trading/ST/listing source and controlled 14:55 schedule | real Archive reaches `OUTCOME_PENDING` with stable replay and nonempty Features/B0/B1 |
+| Public-source formal availability/PIT | P0 | historical public retrieval semantics are explicit and EXPLORATORY; no invented availability/finality | provider/reference data | qualified availability and formal PIT status/inventory evidence |
+| Operational 100–300 A-share universe | BLOCKED_P0 | content-addressed configurable policy contract; fixed 20-symbol smoke runtime only | successful real WP-D3 Archive plus approved membership/mapping/liquidity source | configured operational pool with every symbol eligible or excluded and stable replay |
 | Run-first exploratory daily vertical slice | DELIVERED_P0E | recoverable Phase D loop operational on delivery branch | implemented contracts and fixture/public evidence | completed: single/10-session replay, frozen predictions/outcomes/reviews, verified LIVE blocker and stable hashes |
 | Market/ETF/theme/capital context | P1 | partial/none | universe/mappings | canonical snapshots and ablations |
 | Multi-model daily Prediction Ledger | DELIVERED_P1 | B0/B1 complete immutable PredictionRuns published and replayed | existing model identities and rankers | completed for the fixed B0/B1 exploratory model set |
