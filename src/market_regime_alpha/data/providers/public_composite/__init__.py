@@ -19,7 +19,11 @@ from .contracts import (
     SecurityStatusFactType,
     TradingStatus,
 )
-from .live_clients import BaoStockHistoryClient, TencentCurrentQuoteClient
+from .live_clients import (
+    BaoStockHistoryClient,
+    BaoStockSecurityStatusClient,
+    TencentCurrentQuoteClient,
+)
 from .manifest_builder import (
     DailyControlSourceEvidence,
     build_daily_control_source_evidence,
@@ -54,6 +58,7 @@ __all__ = [
     "AcquiredReplaySource",
     "AcquiredSourcePayload",
     "BaoStockHistoryClient",
+    "BaoStockSecurityStatusClient",
     "PublicBar",
     "PublicCompositeBatch",
     "PublicCompositeAcquisitionError",
