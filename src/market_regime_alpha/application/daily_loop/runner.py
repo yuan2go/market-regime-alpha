@@ -47,6 +47,7 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeReplayProfile,
     PublicCompositeRequest,
     SourceReplayArchiveReader,
+    build_daily_control_source_evidence,
     build_public_source_manifest,
     publish_source_archive,
     source_archive_id,
@@ -483,7 +484,10 @@ class DailyLoopRunner:
             provider_result = acquired_input.provider_result
             source_manifest = acquired_input.source_manifest
         else:
-            provider_result, source_manifest = self._acquire_live(request)
+            provider_result, source_manifest = self._acquire_live(
+                request,
+                run_created_at=record.created_at,
+            )
         source_path = _publish_or_verify_source(
             root=command.output_root / "source_archives",
             provider_result=provider_result,
@@ -523,15 +527,18 @@ class DailyLoopRunner:
     def _acquire_live(
         self,
         request: PublicCompositeRequest,
+        *,
+        run_created_at: datetime,
     ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
         if self._live_profile is None:
             result = self._live_failure_result(
                 request,
                 RuntimeError("LIVE_PROVIDER_NOT_CONFIGURED"),
             )
-            return result, build_public_source_manifest(
+            return self._bind_live_control_evidence(
                 result=result,
                 request=request,
+                run_created_at=run_created_at,
             )
         try:
             result = self._live_profile.acquire(request)
@@ -543,7 +550,49 @@ class DailyLoopRunner:
             )
         except AShareDataError as exc:
             result = self._live_failure_result(request, exc)
-        return result, build_public_source_manifest(result=result, request=request)
+        return self._bind_live_control_evidence(
+            result=result,
+            request=request,
+            run_created_at=run_created_at,
+        )
+
+    def _bind_live_control_evidence(
+        self,
+        *,
+        result: PublicCompositeProviderResult,
+        request: PublicCompositeRequest,
+        run_created_at: datetime,
+    ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
+        evidence = build_daily_control_source_evidence(
+            request=request,
+            retrieved_time=RetrievedAt(run_created_at),
+            policy_id=self._policy.policy_id,
+            policy_hash=self._policy.content_hash,
+            policy_version=self._policy.policy_version,
+            instrument_scope=self._policy.instrument_scope,
+            symbols=self._policy.symbols,
+        )
+        bound = PublicCompositeProviderResult(
+            profile_id=result.profile_id,
+            decision_time=result.decision_time,
+            raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+            bars=result.bars,
+            quotes=result.quotes,
+            source_conflicts=result.source_conflicts,
+            limitations=tuple(
+                dict.fromkeys(
+                    (
+                        *result.limitations,
+                        "PROTOCOL_AND_POLICY_EVIDENCE_ARCHIVED",
+                    )
+                )
+            ),
+        )
+        return bound, build_public_source_manifest(
+            result=bound,
+            request=request,
+            declared_fields=evidence.fields,
+        )
 
     def _live_failure_result(
         self,

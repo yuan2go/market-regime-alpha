@@ -45,6 +45,18 @@ class SourceFieldQualityStatus(str, Enum):
     INSUFFICIENT = "INSUFFICIENT"
 
 
+class SourceAuthorityKind(str, Enum):
+    """The authority allowed to declare one Source fact."""
+
+    PROVIDER = "PROVIDER"
+    PROTOCOL = "PROTOCOL"
+    UNIVERSE_POLICY = "UNIVERSE_POLICY"
+    ELIGIBILITY_POLICY = "ELIGIBILITY_POLICY"
+
+
+SourceFactValue = str | bool | int | float | None
+
+
 def _require_text(label: str, value: str) -> None:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{label} must be a non-empty trimmed string")
@@ -72,6 +84,9 @@ def _canonical_hash(payload: Mapping[str, Any]) -> str:
 class SourceManifestField:
     """Lineage and temporal semantics for one normalized decision input."""
 
+    SCHEMA_V1 = "phase-d-source-manifest-field-v1"
+    SCHEMA_V2 = "phase-d-source-manifest-field-v2"
+
     field_id: str
     symbol: str | None
     critical_fact: CriticalSourceFact | None
@@ -87,8 +102,30 @@ class SourceManifestField:
     data_eligibility: DataEligibility
     quality_status: SourceFieldQualityStatus
     reason_codes: tuple[str, ...]
+    schema_version: str = SCHEMA_V1
+    authority_kind: SourceAuthorityKind = SourceAuthorityKind.PROVIDER
+    value: SourceFactValue = None
 
     def __post_init__(self) -> None:
+        if self.schema_version not in {self.SCHEMA_V1, self.SCHEMA_V2}:
+            raise ValueError("unsupported SourceManifestField schema")
+        if not isinstance(self.authority_kind, SourceAuthorityKind):
+            raise TypeError("authority_kind must be a SourceAuthorityKind")
+        if self.schema_version == self.SCHEMA_V1 and (
+            self.authority_kind is not SourceAuthorityKind.PROVIDER
+            or self.value is not None
+        ):
+            raise ValueError("v1 SourceManifestField cannot carry v2 semantics")
+        if isinstance(self.value, float) and (
+            self.value != self.value
+            or self.value in {float("inf"), float("-inf")}
+        ):
+            raise ValueError("Source fact value must be finite")
+        if self.value is not None and not isinstance(
+            self.value,
+            (str, bool, int, float),
+        ):
+            raise TypeError("Source fact value must be a canonical scalar")
         _require_text("field_id", self.field_id)
         if self.symbol is not None:
             _require_text("symbol", self.symbol)
@@ -117,7 +154,7 @@ class SourceManifestField:
             raise ValueError("COMPLETE field cannot carry reason_codes")
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "field_id": self.field_id,
             "symbol": self.symbol,
             "critical_fact": (
@@ -142,13 +179,22 @@ class SourceManifestField:
             "quality_status": self.quality_status.value,
             "reason_codes": list(self.reason_codes),
         }
+        if self.schema_version == self.SCHEMA_V2:
+            payload.update(
+                {
+                    "schema_version": self.schema_version,
+                    "authority_kind": self.authority_kind.value,
+                    "value": self.value,
+                }
+            )
+        return payload
 
     @classmethod
     def from_canonical_dict(
         cls,
         payload: Mapping[str, Any],
     ) -> SourceManifestField:
-        expected = {
+        expected_v1 = {
             "field_id",
             "symbol",
             "critical_fact",
@@ -165,7 +211,29 @@ class SourceManifestField:
             "quality_status",
             "reason_codes",
         }
-        if set(payload) != expected:
+        expected_v2 = {
+            *expected_v1,
+            "schema_version",
+            "authority_kind",
+            "value",
+        }
+        if set(payload) == expected_v1:
+            schema_version = cls.SCHEMA_V1
+            authority_kind = SourceAuthorityKind.PROVIDER
+            value: SourceFactValue = None
+        elif set(payload) == expected_v2:
+            schema_version = str(payload["schema_version"])
+            if schema_version != cls.SCHEMA_V2:
+                raise ValueError("unsupported SourceManifestField schema")
+            authority_kind = SourceAuthorityKind(str(payload["authority_kind"]))
+            raw_value = payload["value"]
+            if raw_value is not None and not isinstance(
+                raw_value,
+                (str, bool, int, float),
+            ):
+                raise ValueError("Source fact value must be a canonical scalar")
+            value = raw_value
+        else:
             raise ValueError("SourceManifestField fields mismatch")
         event_time = payload["event_time"]
         available_time = payload["available_time"]
@@ -204,6 +272,9 @@ class SourceManifestField:
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
             quality_status=SourceFieldQualityStatus(str(payload["quality_status"])),
             reason_codes=tuple(str(item) for item in payload["reason_codes"]),
+            schema_version=schema_version,
+            authority_kind=authority_kind,
+            value=value,
         )
 
 
@@ -211,7 +282,9 @@ class SourceManifestField:
 class SourceManifest:
     """Content-addressed Source Freeze evidence."""
 
-    SCHEMA_VERSION = "phase-d-source-manifest-v1"
+    SCHEMA_V1 = "phase-d-source-manifest-v1"
+    SCHEMA_V2 = "phase-d-source-manifest-v2"
+    SCHEMA_VERSION = SCHEMA_V1
 
     provider_profile_id: str
     decision_time: DecisionTime
@@ -220,10 +293,13 @@ class SourceManifest:
     source_conflicts: tuple[str, ...]
     limitations: tuple[str, ...]
     data_eligibility: DataEligibility
+    schema_version: str = SCHEMA_V1
     content_hash: str = field(init=False)
     source_manifest_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.schema_version not in {self.SCHEMA_V1, self.SCHEMA_V2}:
+            raise ValueError("unsupported SourceManifest schema")
         _require_text("provider_profile_id", self.provider_profile_id)
         if not isinstance(self.decision_time, DecisionTime):
             raise TypeError("decision_time must be a DecisionTime")
@@ -237,6 +313,13 @@ class SourceManifest:
         }
         field_keys: list[tuple[str | None, str]] = []
         for item in self.fields:
+            expected_field_schema = (
+                SourceManifestField.SCHEMA_V2
+                if self.schema_version == self.SCHEMA_V2
+                else SourceManifestField.SCHEMA_V1
+            )
+            if item.schema_version != expected_field_schema:
+                raise ValueError("SourceManifest and field schema versions disagree")
             if item.decision_time != self.decision_time:
                 raise ValueError("field Decision Time does not match SourceManifest")
             if (item.provider_id, item.source_artifact_id) not in artifact_scope:
@@ -267,7 +350,7 @@ class SourceManifest:
 
     def semantic_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": self.SCHEMA_VERSION,
+            "schema_version": self.schema_version,
             "provider_profile_id": self.provider_profile_id,
             "decision_time": self.decision_time.isoformat(),
             "source_artifacts": [
@@ -309,7 +392,8 @@ class SourceManifest:
         }
         if set(payload) != expected:
             raise ValueError("SourceManifest fields mismatch")
-        if payload["schema_version"] != cls.SCHEMA_VERSION:
+        schema_version = str(payload["schema_version"])
+        if schema_version not in {cls.SCHEMA_V1, cls.SCHEMA_V2}:
             raise ValueError("unsupported SourceManifest schema")
         artifacts = tuple(
             SourceArtifactReference(
@@ -338,6 +422,7 @@ class SourceManifest:
             ),
             limitations=tuple(str(item) for item in payload["limitations"]),
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
+            schema_version=schema_version,
         )
         if (
             manifest.content_hash != payload["content_hash"]

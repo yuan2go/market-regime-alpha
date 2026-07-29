@@ -14,7 +14,11 @@ from .contracts import (
     TradingStatus,
 )
 from .live_clients import BaoStockHistoryClient, TencentCurrentQuoteClient
-from .manifest_builder import build_public_source_manifest
+from .manifest_builder import (
+    DailyControlSourceEvidence,
+    build_daily_control_source_evidence,
+    build_public_source_manifest,
+)
 from .profiles import (
     PublicCompositeAcquisitionError,
     PublicCompositeLiveProfile,
@@ -48,6 +52,8 @@ __all__ = [
     "TencentCurrentQuoteClient",
     "TradingStatus",
     "build_public_source_manifest",
+    "build_daily_control_source_evidence",
+    "DailyControlSourceEvidence",
     "publish_source_archive",
     "publish_source_replay_archive",
     "source_archive_id",

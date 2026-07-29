@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from market_regime_alpha.core.identity import ArtifactId, ProviderId
 from market_regime_alpha.core.time import (
@@ -19,6 +22,7 @@ from market_regime_alpha.data.daily_quality import (
 )
 from market_regime_alpha.data.source_manifest import (
     CriticalSourceFact,
+    SourceAuthorityKind,
     SourceFieldFinality,
     SourceFieldQualityStatus,
     SourceManifest,
@@ -190,3 +194,68 @@ def test_noncritical_degradation_remains_explicit() -> None:
 
     assert report.status is DailyDataQualityStatus.DEGRADED
     assert report.blocked_reason_codes == ()
+
+
+def test_v1_source_manifest_round_trip_identity_is_unchanged_by_v2_support() -> None:
+    manifest = _complete_manifest()
+    restored = SourceManifest.from_canonical_dict(manifest.to_canonical_dict())
+
+    assert manifest.schema_version == "phase-d-source-manifest-v1"
+    assert restored == manifest
+    assert all(
+        field.authority_kind is SourceAuthorityKind.PROVIDER
+        and field.value is None
+        for field in restored.fields
+    )
+
+
+def test_reader_rejects_tampered_policy_membership() -> None:
+    membership = SourceManifestField(
+        field_id="universe_membership",
+        symbol="000001.SZ",
+        critical_fact=CriticalSourceFact.UNIVERSE_MEMBERSHIP,
+        provider_id=SOURCE.provider_id,
+        source_artifact_id=SOURCE.artifact_id,
+        event_time=DECISION.value,
+        available_time=AvailabilityTime(DECISION.value),
+        retrieved_time=RETRIEVED,
+        decision_time=DECISION,
+        unit="BOOLEAN",
+        adjustment_basis="NONE",
+        finality=SourceFieldFinality.FINAL,
+        data_eligibility=DataEligibility.EXPLORATORY,
+        quality_status=SourceFieldQualityStatus.COMPLETE,
+        reason_codes=(),
+        schema_version="phase-d-source-manifest-field-v2",
+        authority_kind=SourceAuthorityKind.UNIVERSE_POLICY,
+        value=True,
+    )
+    fields = tuple(
+        membership
+        if field.critical_fact is CriticalSourceFact.UNIVERSE_MEMBERSHIP
+        else replace(
+            field,
+            schema_version="phase-d-source-manifest-field-v2",
+        )
+        for field in _complete_manifest().fields
+    )
+    manifest = SourceManifest(
+        provider_profile_id="public-composite-replay-v1",
+        decision_time=DECISION,
+        source_artifacts=(SOURCE,),
+        fields=fields,
+        source_conflicts=(),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        schema_version="phase-d-source-manifest-v2",
+    )
+    payload = manifest.to_canonical_dict()
+    membership_payload = next(
+        item
+        for item in payload["fields"]
+        if item["critical_fact"] == "UNIVERSE_MEMBERSHIP"
+    )
+    membership_payload["value"] = False
+
+    with pytest.raises(ValueError, match="identity mismatch"):
+        SourceManifest.from_canonical_dict(payload)

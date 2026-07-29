@@ -272,6 +272,7 @@ def test_unavailable_live_provider_publishes_blocked_evidence_without_fallback(
         "LIVE_ACQUISITION_FAILED",
         "PUBLIC_DATA_EXPLORATORY_ONLY",
         "NO_LOCAL_ARCHIVE_FALLBACK",
+        "PROTOCOL_AND_POLICY_EVIDENCE_ARCHIVED",
     )
     assert result.decision_artifact.bundle.prediction_runs == ()
 
@@ -333,6 +334,8 @@ def test_live_current_failure_archives_successful_history_payload(
     ) == (
         ProviderId("provider-baostock-public"),
         ProviderId("provider-public-composite-live-runtime"),
+        ProviderId("provider-daily-run-protocol"),
+        ProviderId("authority-daily-universe-policy"),
     )
     assert acquired.provider_result.raw_payloads[0] == history_payload
     assert "NO_LOCAL_ARCHIVE_FALLBACK" in (
