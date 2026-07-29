@@ -17,6 +17,7 @@ from market_regime_alpha.data.contracts import (
 )
 from market_regime_alpha.data.providers.public_composite.contracts import (
     AcquiredSourcePayload,
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     PublicCompositeProviderResult,
     PublicCompositeRequest,
     TradingStatus,
@@ -323,10 +324,18 @@ def build_public_source_manifest(
         history_reasons: list[str] = []
         if len(history_sessions) < request.minimum_history_sessions:
             history_reasons.append("INSUFFICIENT_HISTORY")
+        exploratory_history = (
+            HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1
+            in result.limitations
+        )
         if not symbol_bars or any(
             item.available_time is None for item in symbol_bars
         ):
-            history_reasons.append("HISTORY_AVAILABLE_TIME_UNKNOWN")
+            history_reasons.append(
+                HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1
+                if exploratory_history and symbol_bars
+                else "HISTORY_AVAILABLE_TIME_UNKNOWN"
+            )
             history_available = None
         else:
             available_values = [
@@ -353,7 +362,11 @@ def build_public_source_manifest(
                 available_time=history_available,
                 retrieved_time=history_source.retrieved_at,
                 decision_time=request.decision_time,
-                unit="FIVE_MINUTE_BAR_WINDOW",
+                unit=(
+                    "DAILY_BAR_WINDOW"
+                    if exploratory_history
+                    else "FIVE_MINUTE_BAR_WINDOW"
+                ),
                 adjustment_basis=(
                     symbol_bars[-1].adjustment_basis
                     if symbol_bars
@@ -368,7 +381,12 @@ def build_public_source_manifest(
                 quality_status=(
                     SourceFieldQualityStatus.COMPLETE
                     if not history_reasons
-                    else SourceFieldQualityStatus.INSUFFICIENT
+                    else (
+                        SourceFieldQualityStatus.DEGRADED
+                        if history_reasons
+                        == [HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1]
+                        else SourceFieldQualityStatus.INSUFFICIENT
+                    )
                 ),
                 reason_codes=tuple(history_reasons),
                 schema_version=field_schema,

@@ -11,6 +11,7 @@ from market_regime_alpha.core.time import (
 )
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.providers.public_composite import (
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     AcquiredSourcePayload,
     PublicBar,
@@ -49,6 +50,7 @@ def public_fixture(
     include_outsider: bool = False,
     history_session_count: int = 21,
     quote_age_minutes: int = 1,
+    exploratory_daily_history: bool = False,
 ) -> tuple[
     PublicCompositeRequest,
     PublicCompositeProviderResult,
@@ -92,11 +94,15 @@ def public_fixture(
                 datetime.min.time().replace(hour=14, minute=55),
                 tzinfo=SHANGHAI,
             ),
-            available_time=AvailabilityTime(
-                datetime.combine(
-                    start + timedelta(days=index),
-                    datetime.min.time().replace(hour=15, minute=1),
-                    tzinfo=SHANGHAI,
+            available_time=(
+                None
+                if exploratory_daily_history
+                else AvailabilityTime(
+                    datetime.combine(
+                        start + timedelta(days=index),
+                        datetime.min.time().replace(hour=15, minute=1),
+                        tzinfo=SHANGHAI,
+                    )
                 )
             ),
             source_artifact_id=history_payload.source_artifact_id,
@@ -108,7 +114,11 @@ def public_fixture(
             amount=20_000_000.0 + index,
             unit="CNY",
             adjustment_basis="BAOSTOCK_ADJUSTFLAG_3",
-            finality=SourceFieldFinality.FINAL,
+            finality=(
+                SourceFieldFinality.UNKNOWN
+                if exploratory_daily_history
+                else SourceFieldFinality.FINAL
+            ),
         )
         for symbol in symbols
         for index in range(history_session_count)
@@ -141,7 +151,14 @@ def public_fixture(
         bars=bars,
         quotes=quotes,
         source_conflicts=(),
-        limitations=("FIXTURE_REPLAY_ONLY",),
+        limitations=(
+            "FIXTURE_REPLAY_ONLY",
+            *(
+                (HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,)
+                if exploratory_daily_history
+                else ()
+            ),
+        ),
     )
     request = PublicCompositeRequest(
         symbols=SMOKE_POOL_SYMBOLS,

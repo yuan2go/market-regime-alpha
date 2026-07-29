@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,6 +20,7 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     AcquiredSourcePayload,
+    BaoStockHistoryClient,
     PublicBar,
     PublicCompositeBatch,
     PublicCompositeLiveProfile,
@@ -26,6 +30,7 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicQuote,
     SourceReplayArchiveReader,
     TradingStatus,
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     build_public_source_manifest,
     build_daily_control_source_evidence,
     publish_source_replay_archive,
@@ -377,6 +382,119 @@ def test_membership_does_not_claim_provider_authority() -> None:
         ProviderId("provider-baostock-public"),
         ProviderId("provider-tencent-public"),
     }
+
+
+def test_history_semantics_remain_exploratory() -> None:
+    history = _history_batch()
+    exploratory_bar = replace(
+        history.bars[0],
+        available_time=None,
+        finality=SourceFieldFinality.UNKNOWN,
+    )
+    result = PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        decision_time=DECISION,
+        raw_payloads=(*history.raw_payloads, *_current_batch().raw_payloads),
+        bars=(exploratory_bar,),
+        quotes=_current_batch().quotes,
+        source_conflicts=(),
+        limitations=(HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,),
+    )
+
+    manifest = build_public_source_manifest(result=result, request=_request())
+    history_field = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.HISTORY_WINDOW
+    )
+
+    assert history_field.available_time is None
+    assert history_field.finality is SourceFieldFinality.UNKNOWN
+    assert (
+        HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1
+        in history_field.reason_codes
+    )
+    assert history_field.data_eligibility is DataEligibility.EXPLORATORY
+
+
+def test_baostock_live_history_uses_prior_unadjusted_daily_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Result:
+        error_code = "0"
+        error_msg = ""
+        fields = (
+            "date",
+            "code",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "adjustflag",
+            "tradestatus",
+            "isST",
+        )
+
+        def __init__(self) -> None:
+            self._rows = iter(
+                (
+                    [
+                        "2025-01-03",
+                        "sz.000001",
+                        "9.8",
+                        "10.1",
+                        "9.7",
+                        "10.0",
+                        "1000000",
+                        "10000000",
+                        "3",
+                        "1",
+                        "0",
+                    ],
+                )
+            )
+            self._current: list[str] | None = None
+
+        def next(self) -> bool:
+            self._current = next(self._rows, None)
+            return self._current is not None
+
+        def get_row_data(self) -> list[str]:
+            assert self._current is not None
+            return self._current
+
+    def query_history(code, fields, **kwargs):
+        captured.update({"code": code, "fields": fields, **kwargs})
+        return Result()
+
+    fake = SimpleNamespace(
+        login=lambda **kwargs: SimpleNamespace(
+            error_code="0",
+            error_msg="",
+        ),
+        logout=lambda: None,
+        query_history_k_data_plus=query_history,
+    )
+    monkeypatch.setitem(sys.modules, "baostock", fake)
+    client = BaoStockHistoryClient(
+        clock=lambda: datetime(2025, 1, 6, 14, 50, tzinfo=SHANGHAI)
+    )
+
+    batch = client.acquire(_request())
+
+    assert captured["frequency"] == "d"
+    assert captured["adjustflag"] == "3"
+    assert captured["end_date"] == "2025-01-05"
+    assert "tradestatus" in str(captured["fields"])
+    assert "isST" in str(captured["fields"])
+    assert len(batch.bars) == 1
+    assert batch.bars[0].available_time is None
+    assert batch.bars[0].finality is SourceFieldFinality.UNKNOWN
+    assert HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1 in batch.limitations
 
 
 def test_replay_profile_reads_only_verified_manifest_and_immutable_archive(

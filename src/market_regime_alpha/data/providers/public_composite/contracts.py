@@ -27,6 +27,9 @@ PUBLIC_COMPOSITE_LIVE_PROFILE_ID = "public-composite-live-v1"
 PUBLIC_COMPOSITE_REPLAY_PROFILE_ID = "public-composite-replay-v1"
 BAOSTOCK_PUBLIC_PROVIDER_ID = ProviderId("provider-baostock-public")
 TENCENT_PUBLIC_PROVIDER_ID = ProviderId("provider-tencent-public")
+HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1 = (
+    "HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1"
+)
 
 
 class TradingStatus(str, Enum):

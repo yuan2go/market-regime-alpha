@@ -8,9 +8,9 @@ from datetime import date
 from market_regime_alpha.candidates.contracts import CandidatePopulation
 from market_regime_alpha.core.time import AvailabilityTime
 from market_regime_alpha.data.providers.public_composite import (
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     PublicBar,
     PublicCompositeProviderResult,
-    TradingStatus,
 )
 from market_regime_alpha.data.rehearsal import (
     RehearsalDailyBar,
@@ -67,7 +67,6 @@ def materialize_public_daily_baseline_features(
         and item.event_time <= provider_result.decision_time.value
         and item.available_time is not None
         and item.available_time.value <= provider_result.decision_time.value
-        and item.trading_status is TradingStatus.TRADING
     )
     definitions = r5_baseline_feature_definitions()
     materializations = materialize_r5_baseline_features(
@@ -88,6 +87,10 @@ def materialize_public_daily_baseline_features(
 def _daily_bars(
     provider_result: PublicCompositeProviderResult,
 ) -> tuple[RehearsalDailyBar, ...]:
+    exploratory_history = (
+        HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1
+        in provider_result.limitations
+    )
     grouped: dict[tuple[str, date], list[PublicBar]] = {}
     for item in provider_result.bars:
         grouped.setdefault(
@@ -97,12 +100,28 @@ def _daily_bars(
     output: list[RehearsalDailyBar] = []
     for (symbol, session_date), raw_items in sorted(grouped.items()):
         items = sorted(raw_items, key=lambda value: value.event_time)
-        if any(item.available_time is None for item in items):
+        uses_exploratory_policy = (
+            exploratory_history
+            and all(
+                item.available_time is None
+                and item.event_time.date()
+                < provider_result.decision_time.value.date()
+                for item in items
+            )
+        )
+        if (
+            not uses_exploratory_policy
+            and any(item.available_time is None for item in items)
+        ):
             continue
         available_times = [
             item.available_time for item in items if item.available_time is not None
         ]
-        available = max(available_times, key=lambda value: value.as_utc())
+        available = (
+            AvailabilityTime(provider_result.decision_time.value)
+            if uses_exploratory_policy
+            else max(available_times, key=lambda value: value.as_utc())
+        )
         output.append(
             RehearsalDailyBar(
                 symbol=str(symbol),
@@ -110,7 +129,8 @@ def _daily_bars(
                 close=float(items[-1].close),
                 amount=sum(float(item.amount) for item in items),
                 available_at=AvailabilityTime(available.value),
-                finalized=all(
+                finalized=uses_exploratory_policy
+                or all(
                     item.finality is SourceFieldFinality.FINAL for item in items
                 ),
             )

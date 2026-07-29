@@ -10,6 +10,9 @@ from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.providers.public_composite.contracts import (
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
+)
 from market_regime_alpha.data.source_manifest import (
     CriticalSourceFact,
     SourceFieldQualityStatus,
@@ -301,13 +304,20 @@ def _field_findings(
     findings: list[DataQualityFinding] = []
     suffix = f"{item.symbol or 'GLOBAL'}:{item.field_id}"
     if item.available_time is None:
+        exploratory_history = (
+            item.critical_fact is CriticalSourceFact.HISTORY_WINDOW
+            and HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1
+            in item.reason_codes
+            and item.data_eligibility is DataEligibility.EXPLORATORY
+        )
         findings.append(
             DataQualityFinding(
                 symbol=item.symbol,
                 field_id=item.field_id,
                 critical_fact=item.critical_fact,
                 reason_code=f"AVAILABLE_TIME_MISSING:{suffix}",
-                blocking=item.critical_fact is not None,
+                blocking=item.critical_fact is not None
+                and not exploratory_history,
             )
         )
     elif item.available_time.as_utc() > manifest.decision_time.as_utc():

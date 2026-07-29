@@ -86,6 +86,104 @@ def test_replay_run_publishes_one_verified_daily_decision(
     } == {EntryAssessmentState.WAIT_CONFIRMATION}
 
 
+def test_public_daily_history_preserves_b0_b1_ranking_equivalence(
+    tmp_path: Path,
+) -> None:
+    policy = smoke_pool_policy_v1()
+    _, baseline_provider, baseline_manifest = public_fixture(policy=policy)
+    _, daily_provider, daily_manifest = public_fixture(
+        policy=policy,
+        exploratory_daily_history=True,
+    )
+    baseline_archive = publish_source_archive(
+        root=tmp_path / "baseline-archives",
+        provider_result=baseline_provider,
+        source_manifest=baseline_manifest,
+    )
+    daily_archive = publish_source_archive(
+        root=tmp_path / "daily-archives",
+        provider_result=daily_provider,
+        source_manifest=daily_manifest,
+    )
+
+    def run_one(
+        *,
+        name: str,
+        archive: Path,
+        manifest: SourceManifest,
+    ):
+        command = DailyRunCommand(
+            decision_date=DECISION.value.date(),
+            decision_time=DECISION,
+            run_mode=RunMode.REPLAY,
+            provider_profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+            universe_policy_id=str(policy.policy_id),
+            model_set_id="daily-b0-b1-v1",
+            configuration_identity=ArtifactId("daily-loop-test-config-v1"),
+            output_root=tmp_path / name,
+            replay_source_manifest_id=manifest.source_manifest_id,
+        )
+        return DailyLoopRunner(
+            repository=SQLiteDailyRunRepository(tmp_path / f"{name}.sqlite3"),
+            code_revision=CODE_REVISION,
+            clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
+        ).run(command, replay_archive_path=archive)
+
+    baseline = run_one(
+        name="baseline",
+        archive=baseline_archive,
+        manifest=baseline_manifest,
+    )
+    daily = run_one(
+        name="daily",
+        archive=daily_archive,
+        manifest=daily_manifest,
+    )
+
+    def ranking_projection(result):
+        return tuple(
+            (
+                str(run.model_id),
+                run.population_size,
+                run.ranking_coverage,
+                tuple(
+                    (
+                        prediction.symbol,
+                        prediction.model_score,
+                        prediction.rank,
+                        prediction.percentile,
+                    )
+                    for prediction in run.predictions
+                ),
+                tuple(
+                    (
+                        rejection.symbol,
+                        rejection.reason_code,
+                        str(rejection.feature_id),
+                    )
+                    for rejection in run.rejections
+                ),
+            )
+            for run in result.decision_artifact.bundle.prediction_runs
+        )
+
+    assert ranking_projection(daily) == ranking_projection(baseline)
+    assert tuple(
+        (item.model_id, item.symbol, item.rank, item.score)
+        for item in daily.decision_artifact.bundle.recommendations
+    ) == tuple(
+        (item.model_id, item.symbol, item.rank, item.score)
+        for item in baseline.decision_artifact.bundle.recommendations
+    )
+    assert tuple(
+        run.prediction_run_id
+        for run in daily.decision_artifact.bundle.prediction_runs
+    ) != tuple(
+        run.prediction_run_id
+        for run in baseline.decision_artifact.bundle.prediction_runs
+    )
+
+
 def test_repeated_command_reuses_frozen_source_and_artifacts(
     tmp_path: Path,
 ) -> None:
