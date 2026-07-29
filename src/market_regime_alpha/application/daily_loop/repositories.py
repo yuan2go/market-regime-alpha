@@ -16,6 +16,9 @@ from market_regime_alpha.application.daily_loop.commands import (
 )
 from market_regime_alpha.application.daily_loop.state import DailyRunStatus
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.providers.public_composite.stage_artifact import (
+    PublicSourceAcquisitionStage,
+)
 
 
 _POST_SOURCE_FREEZE_STATUSES = frozenset(
@@ -37,6 +40,11 @@ def _require_aware(label: str, value: datetime) -> None:
         raise TypeError(f"{label} must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{label} must be timezone-aware")
+
+
+def _require_text(label: str, value: str) -> None:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{label} must be a non-empty trimmed string")
 
 
 def _canonical_hash(payload: Mapping[str, Any]) -> str:
@@ -189,6 +197,67 @@ class StageReceipt:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class AcquisitionStageReceipt:
+    """Journal pointer to one verified immutable acquisition-stage Artifact."""
+
+    SCHEMA_VERSION = "daily-acquisition-stage-receipt-v1"
+
+    run_request_id: RunRequestId
+    stage: PublicSourceAcquisitionStage
+    artifact_id: ArtifactId
+    content_hash: str
+    locator: str
+    completed_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run_request_id, RunRequestId):
+            raise TypeError("run_request_id must be a RunRequestId")
+        if not isinstance(self.stage, PublicSourceAcquisitionStage):
+            raise TypeError("stage must be a PublicSourceAcquisitionStage")
+        _require_text("content_hash", self.content_hash)
+        if not self.content_hash.startswith("sha256:"):
+            raise ValueError("content_hash must be SHA-256")
+        _require_text("locator", self.locator)
+        _require_aware("completed_at", self.completed_at)
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "run_request_id": str(self.run_request_id),
+            "stage": self.stage.value,
+            "artifact_id": str(self.artifact_id),
+            "content_hash": self.content_hash,
+            "locator": self.locator,
+            "completed_at": self.completed_at.isoformat(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> AcquisitionStageReceipt:
+        expected = {
+            "schema_version",
+            "run_request_id",
+            "stage",
+            "artifact_id",
+            "content_hash",
+            "locator",
+            "completed_at",
+        }
+        if set(payload) != expected or payload["schema_version"] != cls.SCHEMA_VERSION:
+            raise ValueError("AcquisitionStageReceipt fields mismatch")
+        return cls(
+            run_request_id=RunRequestId(str(payload["run_request_id"])),
+            stage=PublicSourceAcquisitionStage(str(payload["stage"])),
+            artifact_id=ArtifactId(str(payload["artifact_id"])),
+            content_hash=str(payload["content_hash"]),
+            locator=str(payload["locator"]),
+            completed_at=_datetime_value(payload["completed_at"], "completed_at"),
+        )
+
+
 class DailyRunRepository(Protocol):
     """Persistence boundary for a replaceable Runtime Journal."""
 
@@ -249,6 +318,17 @@ class DailyRunRepository(Protocol):
         run_request_id: RunRequestId,
         stage: DailyRunStatus,
     ) -> StageReceipt | None: ...
+
+    def record_acquisition_receipt(
+        self,
+        receipt: AcquisitionStageReceipt,
+    ) -> AcquisitionStageReceipt: ...
+
+    def get_acquisition_receipt(
+        self,
+        run_request_id: RunRequestId,
+        stage: PublicSourceAcquisitionStage,
+    ) -> AcquisitionStageReceipt | None: ...
 
 
 def _string(value: object, label: str) -> str:

@@ -20,6 +20,7 @@ from market_regime_alpha.application.daily_loop.errors import (
     RuntimeJournalConflictError,
 )
 from market_regime_alpha.application.daily_loop.repositories import (
+    AcquisitionStageReceipt,
     DailyRunRecord,
     StageReceipt,
 )
@@ -27,6 +28,9 @@ from market_regime_alpha.application.daily_loop.state import (
     TERMINAL_DAILY_RUN_STATUSES,
     DailyRunStatus,
     validate_daily_run_transition,
+)
+from market_regime_alpha.data.providers.public_composite.stage_artifact import (
+    PublicSourceAcquisitionStage,
 )
 
 
@@ -382,6 +386,68 @@ class SQLiteDailyRunRepository:
             _json_object(str(row["receipt_json"]))
         )
 
+    def record_acquisition_receipt(
+        self,
+        receipt: AcquisitionStageReceipt,
+    ) -> AcquisitionStageReceipt:
+        payload = _canonical_json(receipt.to_canonical_dict())
+        with self._connect() as connection:
+            self._select(connection, receipt.run_request_id)
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO acquisition_stage_receipts (
+                    run_request_id,
+                    stage,
+                    receipt_json
+                ) VALUES (?, ?, ?)
+                """,
+                (
+                    str(receipt.run_request_id),
+                    receipt.stage.value,
+                    payload,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT receipt_json
+                FROM acquisition_stage_receipts
+                WHERE run_request_id = ? AND stage = ?
+                """,
+                (str(receipt.run_request_id), receipt.stage.value),
+            ).fetchone()
+        if row is None:
+            raise RuntimeJournalConflictError(
+                "acquisition stage receipt write failed"
+            )
+        stored = AcquisitionStageReceipt.from_canonical_dict(
+            _json_object(str(row["receipt_json"]))
+        )
+        if stored != receipt:
+            raise RuntimeJournalConflictError(
+                "acquisition stage receipt conflict"
+            )
+        return stored
+
+    def get_acquisition_receipt(
+        self,
+        run_request_id: RunRequestId,
+        stage: PublicSourceAcquisitionStage,
+    ) -> AcquisitionStageReceipt | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT receipt_json
+                FROM acquisition_stage_receipts
+                WHERE run_request_id = ? AND stage = ?
+                """,
+                (str(run_request_id), stage.value),
+            ).fetchone()
+        if row is None:
+            return None
+        return AcquisitionStageReceipt.from_canonical_dict(
+            _json_object(str(row["receipt_json"]))
+        )
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.execute("PRAGMA foreign_keys = ON")
@@ -398,6 +464,18 @@ class SQLiteDailyRunRepository:
                     version INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS acquisition_stage_receipts (
+                    run_request_id TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL,
+                    PRIMARY KEY (run_request_id, stage),
+                    FOREIGN KEY (run_request_id)
+                        REFERENCES daily_runs(run_request_id)
                 )
                 """
             )

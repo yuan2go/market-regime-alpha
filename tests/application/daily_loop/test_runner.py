@@ -441,6 +441,92 @@ def test_live_current_failure_archives_successful_history_payload(
     )
 
 
+def test_history_freeze_is_reused_after_quote_failure(
+    tmp_path: Path,
+) -> None:
+    history_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-baostock-public"),
+        product="fixture-history-stage",
+        locator="baostock://fixture/history-stage",
+        raw_payload=b"history-stage",
+        retrieved_time=RetrievedAt(
+            datetime(2025, 2, 3, 14, 50, tzinfo=SHANGHAI)
+        ),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    current_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-tencent-public"),
+        product="fixture-current-stage",
+        locator="https://qt.gtimg.cn/q=fixture-stage",
+        raw_payload=b"current-stage",
+        retrieved_time=RetrievedAt(
+            datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI)
+        ),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    history_batch = PublicCompositeBatch(
+        raw_payloads=(history_payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("BAOSTOCK_HISTORY_ONLY",),
+    )
+    current_batch = PublicCompositeBatch(
+        raw_payloads=(current_payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("TENCENT_CURRENT_QUOTE_ONLY",),
+    )
+
+    class CountingHistoryClient:
+        calls = 0
+
+        def acquire(self, request):
+            self.calls += 1
+            return history_batch
+
+    class InterruptThenSucceedCurrentClient:
+        calls = 0
+
+        def acquire(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("CRASH_AFTER_HISTORY_FREEZE")
+            return current_batch
+
+    history_client = CountingHistoryClient()
+    current_client = InterruptThenSucceedCurrentClient()
+    policy = smoke_pool_policy_v1()
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("daily-loop-test-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+    runner = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=history_client,
+            current_client=current_client,
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    )
+
+    with pytest.raises(RuntimeError, match="CRASH_AFTER_HISTORY_FREEZE"):
+        runner.run(command)
+    resumed = runner.run(command)
+
+    assert history_client.calls == 1
+    assert current_client.calls == 2
+    assert resumed.record.status is DailyRunStatus.DATA_BLOCKED
+
+
 def test_settlement_appends_review_without_mutating_daily_decision(
     tmp_path: Path,
 ) -> None:

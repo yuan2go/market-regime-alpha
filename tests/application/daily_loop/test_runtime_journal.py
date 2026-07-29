@@ -11,7 +11,10 @@ from market_regime_alpha.application.daily_loop.commands import (
     DailyRunIdentity,
     RunMode,
 )
-from market_regime_alpha.application.daily_loop.repositories import StageReceipt
+from market_regime_alpha.application.daily_loop.repositories import (
+    AcquisitionStageReceipt,
+    StageReceipt,
+)
 from market_regime_alpha.application.daily_loop.sqlite_repository import (
     SQLiteDailyRunRepository,
 )
@@ -21,6 +24,9 @@ from market_regime_alpha.application.daily_loop.state import (
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.data.providers.public_composite.stage_artifact import (
+    PublicSourceAcquisitionStage,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -269,3 +275,29 @@ def test_sqlite_stage_receipts_are_idempotent_and_conflict_checked(
                 completed_at=now,
             )
         )
+
+
+def test_sqlite_acquisition_receipts_survive_restart(tmp_path: Path) -> None:
+    command = _command(tmp_path / "runs")
+    journal = tmp_path / "runtime.sqlite"
+    repository = SQLiteDailyRunRepository(journal)
+    now = datetime(2026, 7, 24, 14, 54, tzinfo=SHANGHAI)
+    repository.create_or_get(command, created_at=now)
+    receipt = AcquisitionStageReceipt(
+        run_request_id=command.run_request_id,
+        stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+        artifact_id=ArtifactId("source-stage-history-test"),
+        content_hash="sha256:" + "8" * 64,
+        locator=str(tmp_path / "source-stage-history-test"),
+        completed_at=now,
+    )
+
+    assert repository.record_acquisition_receipt(receipt) == receipt
+    assert repository.record_acquisition_receipt(receipt) == receipt
+    assert (
+        SQLiteDailyRunRepository(journal).get_acquisition_receipt(
+            command.run_request_id,
+            PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+        )
+        == receipt
+    )

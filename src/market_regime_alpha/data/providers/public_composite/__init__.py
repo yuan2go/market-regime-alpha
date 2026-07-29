@@ -32,6 +32,12 @@ from .replay_archive import (
     publish_source_replay_archive,
     source_archive_id,
 )
+from .stage_artifact import (
+    PublicSourceAcquisitionStage,
+    VerifiedPublicSourceStageArtifact,
+    load_verified_public_source_stage_artifact,
+    publish_public_source_stage_artifact,
+)
 
 __all__ = [
     "BAOSTOCK_PUBLIC_PROVIDER_ID",
@@ -59,4 +65,8 @@ __all__ = [
     "publish_source_archive",
     "publish_source_replay_archive",
     "source_archive_id",
+    "PublicSourceAcquisitionStage",
+    "VerifiedPublicSourceStageArtifact",
+    "load_verified_public_source_stage_artifact",
+    "publish_public_source_stage_artifact",
 ]

@@ -17,6 +17,7 @@ from market_regime_alpha.application.daily_loop.commands import (
 )
 from market_regime_alpha.application.daily_loop.errors import OutcomeNotReadyError
 from market_regime_alpha.application.daily_loop.repositories import (
+    AcquisitionStageReceipt,
     DailyRunRecord,
     DailyRunRepository,
     StageReceipt,
@@ -40,15 +41,17 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     AcquiredReplaySource,
     AcquiredSourcePayload,
-    PublicCompositeAcquisitionError,
     PublicCompositeBatch,
     PublicCompositeLiveProfile,
     PublicCompositeProviderResult,
     PublicCompositeReplayProfile,
     PublicCompositeRequest,
+    PublicSourceAcquisitionStage,
     SourceReplayArchiveReader,
     build_daily_control_source_evidence,
     build_public_source_manifest,
+    load_verified_public_source_stage_artifact,
+    publish_public_source_stage_artifact,
     publish_source_archive,
     source_archive_id,
 )
@@ -486,6 +489,8 @@ class DailyLoopRunner:
         else:
             provider_result, source_manifest = self._acquire_live(
                 request,
+                record=record,
+                output_root=command.output_root,
                 run_created_at=record.created_at,
             )
         source_path = _publish_or_verify_source(
@@ -528,6 +533,8 @@ class DailyLoopRunner:
         self,
         request: PublicCompositeRequest,
         *,
+        record: DailyRunRecord,
+        output_root: Path,
         run_created_at: datetime,
     ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
         if self._live_profile is None:
@@ -540,21 +547,80 @@ class DailyLoopRunner:
                 request=request,
                 run_created_at=run_created_at,
             )
+        profile = self._live_profile
+        history = self._load_or_acquire_live_stage(
+            record=record,
+            output_root=output_root,
+            stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+            acquire=lambda: profile.acquire_history(request),
+        )
         try:
-            result = self._live_profile.acquire(request)
-        except PublicCompositeAcquisitionError as exc:
+            current = self._load_or_acquire_live_stage(
+                record=record,
+                output_root=output_root,
+                stage=PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
+                acquire=lambda: profile.acquire_current(request),
+            )
+        except AShareDataError as exc:
             result = self._live_failure_result(
                 request,
                 exc,
-                partial_batch=exc.partial_batch,
+                partial_batch=history,
             )
-        except AShareDataError as exc:
-            result = self._live_failure_result(request, exc)
+        else:
+            result = profile.compose(
+                history=history,
+                current=current,
+                request=request,
+            )
         return self._bind_live_control_evidence(
             result=result,
             request=request,
             run_created_at=run_created_at,
         )
+
+    def _load_or_acquire_live_stage(
+        self,
+        *,
+        record: DailyRunRecord,
+        output_root: Path,
+        stage: PublicSourceAcquisitionStage,
+        acquire: Callable[[], PublicCompositeBatch],
+    ) -> PublicCompositeBatch:
+        receipt = self._repository.get_acquisition_receipt(
+            record.run_request_id,
+            stage,
+        )
+        if receipt is not None:
+            verified = load_verified_public_source_stage_artifact(
+                Path(receipt.locator)
+            )
+            if (
+                verified.stage is not receipt.stage
+                or verified.artifact_id != receipt.artifact_id
+                or verified.content_hash != receipt.content_hash
+            ):
+                raise ValueError("acquisition receipt does not bind stage Artifact")
+            return verified.batch
+        batch = acquire()
+        stage_root = output_root / "source_stages"
+        artifact_path = publish_public_source_stage_artifact(
+            root=stage_root,
+            stage=stage,
+            batch=batch,
+        )
+        verified = load_verified_public_source_stage_artifact(artifact_path)
+        self._repository.record_acquisition_receipt(
+            AcquisitionStageReceipt(
+                run_request_id=record.run_request_id,
+                stage=stage,
+                artifact_id=verified.artifact_id,
+                content_hash=verified.content_hash,
+                locator=str(verified.root.resolve()),
+                completed_at=self._now(),
+            )
+        )
+        return verified.batch
 
     def _bind_live_control_evidence(
         self,
