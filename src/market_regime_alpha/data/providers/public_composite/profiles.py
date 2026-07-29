@@ -149,17 +149,25 @@ def compose_public_composite_live(
         ),
         bars=(*history.bars, *current.bars),
         quotes=(*history.quotes, *current.quotes),
-        source_conflicts=(
-            *history.source_conflicts,
-            *(status.source_conflicts if status is not None else ()),
-            *current.source_conflicts,
+        source_conflicts=tuple(
+            dict.fromkeys(
+                (
+                    *history.source_conflicts,
+                    *(status.source_conflicts if status is not None else ()),
+                    *current.source_conflicts,
+                )
+            )
         ),
-        limitations=(
-            *history.limitations,
-            *(status.limitations if status is not None else ()),
-            *current.limitations,
-            "PUBLIC_DATA_EXPLORATORY_ONLY",
-            "NO_LOCAL_ARCHIVE_FALLBACK",
+        limitations=tuple(
+            dict.fromkeys(
+                (
+                    *history.limitations,
+                    *(status.limitations if status is not None else ()),
+                    *current.limitations,
+                    "PUBLIC_DATA_EXPLORATORY_ONLY",
+                    "NO_LOCAL_ARCHIVE_FALLBACK",
+                )
+            )
         ),
     )
 

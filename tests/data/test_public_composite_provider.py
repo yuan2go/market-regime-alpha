@@ -254,6 +254,24 @@ def test_live_profile_calls_only_declared_baostock_and_tencent_clients() -> None
     assert result.data_eligibility is DataEligibility.EXPLORATORY
 
 
+def test_live_profile_deduplicates_shared_provider_limitations() -> None:
+    common = ("PUBLIC_DATA_EXPLORATORY_ONLY",)
+    profile = PublicCompositeLiveProfile(
+        history_client=_Client(replace(_history_batch(), limitations=common)),
+        security_status_client=_Client(
+            replace(_status_batch(), limitations=common)
+        ),
+        current_client=_Client(replace(_current_batch(), limitations=common)),
+    )
+
+    result = profile.acquire(_request())
+
+    assert result.limitations == (
+        "PUBLIC_DATA_EXPLORATORY_ONLY",
+        "NO_LOCAL_ARCHIVE_FALLBACK",
+    )
+
+
 def test_unreferenced_normalized_data_is_rejected() -> None:
     history = _history_batch()
     unknown = PublicQuote(
