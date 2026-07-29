@@ -47,10 +47,12 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeReplayProfile,
     PublicCompositeRequest,
     PublicSourceAcquisitionStage,
+    PublicSourceStageScope,
     SourceReplayArchiveReader,
     VerifiedPublicSourceStageArtifact,
     build_daily_control_source_evidence,
     build_public_source_manifest,
+    compose_public_composite_live,
     find_verified_public_source_stage_artifact,
     load_verified_public_source_stage_artifact,
     publish_public_source_stage_artifact,
@@ -184,7 +186,70 @@ class DailyLoopRunner:
         *,
         replay_archive_path: Path | None = None,
     ) -> DailyLoopRunResult:
-        """Run or resume one request without re-acquiring a frozen source."""
+        """Convenience composition over independent acquisition and finalize."""
+
+        if command.run_mode is RunMode.LIVE and self._live_profile is not None:
+            self.prepare_history(command)
+            self.freeze_security_status(command)
+            self.freeze_decision_quote(command)
+        return self.finalize_run(
+            command,
+            replay_archive_path=replay_archive_path,
+        )
+
+    def prepare_history(
+        self,
+        command: DailyRunCommand,
+    ) -> AcquisitionStageReceipt:
+        """Freeze prior-session history once for this RunRequest."""
+
+        return self._freeze_live_stage_command(
+            command,
+            stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+            prerequisite_stages=(),
+            acquire=lambda profile, request: profile.acquire_history(request),
+        )
+
+    def freeze_security_status(
+        self,
+        command: DailyRunCommand,
+    ) -> AcquisitionStageReceipt:
+        """Freeze exact decision-session status after History is durable."""
+
+        return self._freeze_live_stage_command(
+            command,
+            stage=PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
+            prerequisite_stages=(
+                PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+            ),
+            acquire=(
+                lambda profile, request: profile.acquire_security_status(request)
+            ),
+        )
+
+    def freeze_decision_quote(
+        self,
+        command: DailyRunCommand,
+    ) -> AcquisitionStageReceipt:
+        """Freeze Tencent decision quotes after History and Status are durable."""
+
+        return self._freeze_live_stage_command(
+            command,
+            stage=PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
+            prerequisite_stages=(
+                PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+                PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
+            ),
+            acquire=lambda profile, request: profile.acquire_current(request),
+        )
+
+    def finalize_run(
+        self,
+        command: DailyRunCommand,
+        *,
+        replay_archive_path: Path | None = None,
+    ) -> DailyLoopRunResult:
+        """Finalize from frozen stages or a replay Archive without network I/O."""
 
         self._validate_command(command)
         record = self._repository.create_or_get(
@@ -540,7 +605,20 @@ class DailyLoopRunner:
         output_root: Path,
         run_created_at: datetime,
     ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
-        if self._live_profile is None:
+        frozen_receipts = tuple(
+            self._repository.get_acquisition_receipt(
+                record.run_request_id,
+                stage,
+            )
+            for stage in (
+                PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+                PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
+                PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
+            )
+        )
+        if self._live_profile is None and any(
+            receipt is None for receipt in frozen_receipts
+        ):
             result = self._live_failure_result(
                 request,
                 RuntimeError("LIVE_PROVIDER_NOT_CONFIGURED"),
@@ -550,32 +628,27 @@ class DailyLoopRunner:
                 request=request,
                 run_created_at=run_created_at,
             )
-        profile = self._live_profile
-        history = self._load_or_acquire_live_stage(
+        history = self._load_required_live_stage(
             record=record,
             output_root=output_root,
             stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
-            acquire=lambda: profile.acquire_history(request),
         )
-        try:
-            current = self._load_or_acquire_live_stage(
-                record=record,
-                output_root=output_root,
-                stage=PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
-                acquire=lambda: profile.acquire_current(request),
-            )
-        except AShareDataError as exc:
-            result = self._live_failure_result(
-                request,
-                exc,
-                partial_batch=history,
-            )
-        else:
-            result = profile.compose(
-                history=history,
-                current=current,
-                request=request,
-            )
+        security_status = self._load_required_live_stage(
+            record=record,
+            output_root=output_root,
+            stage=PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
+        )
+        current = self._load_required_live_stage(
+            record=record,
+            output_root=output_root,
+            stage=PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
+        )
+        result = compose_public_composite_live(
+            history=history,
+            security_status=security_status,
+            current=current,
+            request=request,
+        )
         return self._bind_live_control_evidence(
             result=result,
             request=request,
@@ -590,6 +663,10 @@ class DailyLoopRunner:
         stage: PublicSourceAcquisitionStage,
         acquire: Callable[[], PublicCompositeBatch],
     ) -> PublicCompositeBatch:
+        expected_scope = self._source_stage_scope(
+            record.command,
+            stage=stage,
+        )
         receipt = self._repository.get_acquisition_receipt(
             record.run_request_id,
             stage,
@@ -602,6 +679,7 @@ class DailyLoopRunner:
                 verified.stage is not receipt.stage
                 or verified.artifact_id != receipt.artifact_id
                 or verified.content_hash != receipt.content_hash
+                or verified.scope != expected_scope
             ):
                 raise ValueError("acquisition receipt does not bind stage Artifact")
             return verified.batch
@@ -609,7 +687,7 @@ class DailyLoopRunner:
         orphan = find_verified_public_source_stage_artifact(
             root=stage_root,
             stage=stage,
-            acquisition_key=str(record.run_request_id),
+            scope=expected_scope,
         )
         if orphan is not None:
             self._record_acquisition_receipt(record, orphan)
@@ -619,11 +697,146 @@ class DailyLoopRunner:
             root=stage_root,
             stage=stage,
             batch=batch,
-            acquisition_key=str(record.run_request_id),
+            scope=expected_scope,
         )
         verified = load_verified_public_source_stage_artifact(artifact_path)
         self._record_acquisition_receipt(record, verified)
         return verified.batch
+
+    def _load_required_live_stage(
+        self,
+        *,
+        record: DailyRunRecord,
+        output_root: Path,
+        stage: PublicSourceAcquisitionStage,
+    ) -> PublicCompositeBatch:
+        receipt = self._repository.get_acquisition_receipt(
+            record.run_request_id,
+            stage,
+        )
+        if receipt is None:
+            raise ValueError(f"{stage.value} receipt is required before finalize")
+        verified = load_verified_public_source_stage_artifact(
+            Path(receipt.locator)
+        )
+        expected_scope = self._source_stage_scope(
+            record.command,
+            stage=stage,
+        )
+        if (
+            verified.stage is not receipt.stage
+            or verified.artifact_id != receipt.artifact_id
+            or verified.content_hash != receipt.content_hash
+            or verified.scope != expected_scope
+            or verified.root.resolve()
+            != (
+                output_root
+                / "source_stages"
+                / str(verified.artifact_id)
+            ).resolve()
+        ):
+            raise ValueError("acquisition receipt does not bind scoped stage Artifact")
+        return verified.batch
+
+    def _freeze_live_stage_command(
+        self,
+        command: DailyRunCommand,
+        *,
+        stage: PublicSourceAcquisitionStage,
+        prerequisite_stages: tuple[PublicSourceAcquisitionStage, ...],
+        acquire: Callable[
+            [PublicCompositeLiveProfile, PublicCompositeRequest],
+            PublicCompositeBatch,
+        ],
+    ) -> AcquisitionStageReceipt:
+        self._validate_command(command)
+        if command.run_mode is not RunMode.LIVE:
+            raise ValueError("acquisition stage commands require LIVE mode")
+        record = self._repository.create_or_get(
+            command,
+            created_at=self._now(),
+        )
+        if record.status is DailyRunStatus.FAILED:
+            record = self._repository.resume_failed(
+                record.run_request_id,
+                changed_at=self._now(),
+            )
+        try:
+            existing = self._repository.get_acquisition_receipt(
+                record.run_request_id,
+                stage,
+            )
+            if existing is not None:
+                self._load_required_live_stage(
+                    record=record,
+                    output_root=command.output_root,
+                    stage=stage,
+                )
+                return existing
+            if record.daily_run_identity is not None:
+                raise ValueError(
+                    f"{stage.value} receipt missing after Source Freeze"
+                )
+            if record.status is DailyRunStatus.CREATED:
+                self._repository.begin_source_acquisition(
+                    record.run_request_id,
+                    changed_at=self._now(),
+                )
+                record = self._repository.get(record.run_request_id)
+            if record.status is not DailyRunStatus.SOURCE_ACQUIRING:
+                raise ValueError(
+                    "run cannot acquire source from current status"
+                )
+            for prerequisite in prerequisite_stages:
+                self._load_required_live_stage(
+                    record=record,
+                    output_root=command.output_root,
+                    stage=prerequisite,
+                )
+            profile = self._live_profile
+            if profile is None:
+                raise AShareDataError("LIVE_PROVIDER_NOT_CONFIGURED")
+            request = self._provider_request(command)
+            self._load_or_acquire_live_stage(
+                record=record,
+                output_root=command.output_root,
+                stage=stage,
+                acquire=lambda: acquire(profile, request),
+            )
+            receipt = self._repository.get_acquisition_receipt(
+                record.run_request_id,
+                stage,
+            )
+            if receipt is None:
+                raise RuntimeError("acquisition stage receipt was not recorded")
+            return receipt
+        except Exception as exc:
+            current = self._repository.get(record.run_request_id)
+            if current.status not in {
+                DailyRunStatus.DATA_BLOCKED,
+                DailyRunStatus.REVIEW_PUBLISHED,
+            }:
+                self._repository.mark_failed(
+                    current.run_request_id,
+                    reason=f"{type(exc).__name__}:{exc}",
+                    changed_at=self._now(),
+                )
+            raise
+
+    def _source_stage_scope(
+        self,
+        command: DailyRunCommand,
+        *,
+        stage: PublicSourceAcquisitionStage,
+    ) -> PublicSourceStageScope:
+        return PublicSourceStageScope(
+            run_request_id=str(command.run_request_id),
+            decision_date=command.decision_date,
+            decision_time=command.decision_time,
+            provider_profile_id=command.provider_profile_id,
+            universe_policy_id=command.universe_policy_id,
+            acquisition_stage=stage,
+        )
 
     def _record_acquisition_receipt(
         self,

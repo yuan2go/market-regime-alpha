@@ -121,30 +121,47 @@ class PublicCompositeLiveProfile:
     ) -> PublicCompositeProviderResult:
         """Compose already-frozen stages without invoking either client."""
 
-        status = security_status
-        return PublicCompositeProviderResult(
-            profile_id=self.profile_id,
-            decision_time=request.decision_time,
-            raw_payloads=(
-                *history.raw_payloads,
-                *(status.raw_payloads if status is not None else ()),
-                *current.raw_payloads,
-            ),
-            bars=(*history.bars, *current.bars),
-            quotes=(*history.quotes, *current.quotes),
-            source_conflicts=(
-                *history.source_conflicts,
-                *(status.source_conflicts if status is not None else ()),
-                *current.source_conflicts,
-            ),
-            limitations=(
-                *history.limitations,
-                *(status.limitations if status is not None else ()),
-                *current.limitations,
-                "PUBLIC_DATA_EXPLORATORY_ONLY",
-                "NO_LOCAL_ARCHIVE_FALLBACK",
-            ),
+        return compose_public_composite_live(
+            history=history,
+            security_status=security_status,
+            current=current,
+            request=request,
         )
+
+
+def compose_public_composite_live(
+    *,
+    history: PublicCompositeBatch,
+    security_status: PublicCompositeBatch | None,
+    current: PublicCompositeBatch,
+    request: PublicCompositeRequest,
+) -> PublicCompositeProviderResult:
+    """Compose verified frozen LIVE stages without any client dependency."""
+
+    status = security_status
+    return PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        decision_time=request.decision_time,
+        raw_payloads=(
+            *history.raw_payloads,
+            *(status.raw_payloads if status is not None else ()),
+            *current.raw_payloads,
+        ),
+        bars=(*history.bars, *current.bars),
+        quotes=(*history.quotes, *current.quotes),
+        source_conflicts=(
+            *history.source_conflicts,
+            *(status.source_conflicts if status is not None else ()),
+            *current.source_conflicts,
+        ),
+        limitations=(
+            *history.limitations,
+            *(status.limitations if status is not None else ()),
+            *current.limitations,
+            "PUBLIC_DATA_EXPLORATORY_ONLY",
+            "NO_LOCAL_ARCHIVE_FALLBACK",
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)

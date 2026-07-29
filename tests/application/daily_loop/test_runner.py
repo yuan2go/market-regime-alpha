@@ -32,6 +32,7 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeBatch,
     PublicCompositeProviderResult,
     PublicCompositeLiveProfile,
+    PublicSourceAcquisitionStage,
     SourceReplayArchiveReader,
     TencentCurrentQuoteClient,
     publish_source_archive,
@@ -51,6 +52,63 @@ from tests.application.daily_loop.public_fixture import (
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 CODE_REVISION = "772ecfb09410588b5a406ad900d793a5850e60d5"
+
+
+def _status_stage_batch(*, raw: bytes = b"fixture-security-status") -> PublicCompositeBatch:
+    payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-baostock-public"),
+        product="fixture-security-status-stage",
+        locator="baostock://fixture/security-status-stage",
+        raw_payload=raw,
+        retrieved_time=RetrievedAt(
+            datetime(2025, 2, 3, 14, 50, tzinfo=SHANGHAI)
+        ),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    return PublicCompositeBatch(
+        raw_payloads=(payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("SECURITY_STATUS_FIXTURE_UNAVAILABLE",),
+    )
+
+
+def _raw_stage_batch(
+    *,
+    provider_id: str,
+    product: str,
+    locator: str,
+    raw: bytes,
+    limitation: str,
+) -> PublicCompositeBatch:
+    payload = AcquiredSourcePayload(
+        provider_id=ProviderId(provider_id),
+        product=product,
+        locator=locator,
+        raw_payload=raw,
+        retrieved_time=RetrievedAt(
+            datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI)
+        ),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    return PublicCompositeBatch(
+        raw_payloads=(payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=(limitation,),
+    )
+
+
+class _CountingStageClient:
+    def __init__(self, batch: PublicCompositeBatch) -> None:
+        self.batch = batch
+        self.calls = 0
+
+    def acquire(self, request):
+        self.calls += 1
+        return self.batch
 
 
 def test_replay_run_publishes_one_verified_daily_decision(
@@ -111,6 +169,213 @@ def test_replay_performs_no_network_calls(
     result = runner.run(command, replay_archive_path=archive)
 
     assert result.record.status is DailyRunStatus.OUTCOME_PENDING
+
+
+def test_live_stages_are_independent_idempotent_and_finalize_without_clients(
+    tmp_path: Path,
+) -> None:
+    history = _CountingStageClient(
+        _raw_stage_batch(
+            provider_id="provider-baostock-public",
+            product="fixture-independent-history",
+            locator="baostock://fixture/independent-history",
+            raw=b"independent-history",
+            limitation="BAOSTOCK_HISTORY_ONLY",
+        )
+    )
+    status = _CountingStageClient(_status_stage_batch())
+    current = _CountingStageClient(
+        _raw_stage_batch(
+            provider_id="provider-tencent-public",
+            product="fixture-independent-current",
+            locator="https://qt.gtimg.cn/q=independent",
+            raw=b"independent-current",
+            limitation="TENCENT_CURRENT_QUOTE_ONLY",
+        )
+    )
+    policy = smoke_pool_policy_v1()
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("independent-stage-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3")
+    acquiring = DailyLoopRunner(
+        repository=repository,
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=history,
+            security_status_client=status,
+            current_client=current,
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    )
+
+    history_receipt = acquiring.prepare_history(command)
+    assert acquiring.prepare_history(command) == history_receipt
+    status_receipt = acquiring.freeze_security_status(command)
+    assert acquiring.freeze_security_status(command) == status_receipt
+    quote_receipt = acquiring.freeze_decision_quote(command)
+    assert acquiring.freeze_decision_quote(command) == quote_receipt
+    assert (history.calls, status.calls, current.calls) == (1, 1, 1)
+
+    finalized = DailyLoopRunner(
+        repository=repository,
+        code_revision=CODE_REVISION,
+        live_profile=None,
+        clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
+    ).finalize_run(command)
+
+    assert finalized.record.status is DailyRunStatus.DATA_BLOCKED
+    assert (history.calls, status.calls, current.calls) == (1, 1, 1)
+    assert len(
+        SourceReplayArchiveReader()
+        .read(finalized.source_archive_path)
+        .provider_result.raw_payloads
+    ) == 6
+
+
+def test_security_status_failure_reuses_history_on_retry(tmp_path: Path) -> None:
+    history = _CountingStageClient(
+        _raw_stage_batch(
+            provider_id="provider-baostock-public",
+            product="fixture-status-retry-history",
+            locator="baostock://fixture/status-retry-history",
+            raw=b"status-retry-history",
+            limitation="BAOSTOCK_HISTORY_ONLY",
+        )
+    )
+
+    class StatusFailsOnce(_CountingStageClient):
+        def acquire(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                raise AShareDataError("STATUS_PROVIDER_TEMPORARILY_UNAVAILABLE")
+            return self.batch
+
+    status = StatusFailsOnce(_status_stage_batch())
+    current = _CountingStageClient(
+        _raw_stage_batch(
+            provider_id="provider-tencent-public",
+            product="fixture-status-retry-current",
+            locator="https://qt.gtimg.cn/q=status-retry",
+            raw=b"status-retry-current",
+            limitation="TENCENT_CURRENT_QUOTE_ONLY",
+        )
+    )
+    policy = smoke_pool_policy_v1()
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("status-retry-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+    runner = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=history,
+            security_status_client=status,
+            current_client=current,
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    )
+
+    with pytest.raises(
+        AShareDataError,
+        match="STATUS_PROVIDER_TEMPORARILY_UNAVAILABLE",
+    ):
+        runner.run(command)
+    completed = runner.run(command)
+
+    assert (history.calls, status.calls, current.calls) == (1, 2, 1)
+    assert completed.record.status is DailyRunStatus.DATA_BLOCKED
+
+
+@pytest.mark.parametrize(
+    "crash_stage",
+    [
+        PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
+        PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
+    ],
+)
+def test_status_and_quote_orphans_are_claimed_without_reacquisition(
+    tmp_path: Path,
+    crash_stage: PublicSourceAcquisitionStage,
+) -> None:
+    history = _CountingStageClient(
+        _raw_stage_batch(
+            provider_id="provider-baostock-public",
+            product=f"fixture-{crash_stage.value}-history",
+            locator=f"baostock://fixture/{crash_stage.value}/history",
+            raw=f"{crash_stage.value}-history".encode(),
+            limitation="BAOSTOCK_HISTORY_ONLY",
+        )
+    )
+    status = _CountingStageClient(
+        _status_stage_batch(raw=f"{crash_stage.value}-status".encode())
+    )
+    current = _CountingStageClient(
+        _raw_stage_batch(
+            provider_id="provider-tencent-public",
+            product=f"fixture-{crash_stage.value}-current",
+            locator=f"https://qt.gtimg.cn/q={crash_stage.value}",
+            raw=f"{crash_stage.value}-current".encode(),
+            limitation="TENCENT_CURRENT_QUOTE_ONLY",
+        )
+    )
+
+    class CrashReceiptRepository(SQLiteDailyRunRepository):
+        crashed = False
+
+        def record_acquisition_receipt(self, receipt):
+            if receipt.stage is crash_stage and not self.crashed:
+                self.crashed = True
+                raise RuntimeError(f"CRASH_BEFORE_{crash_stage.value}_RECEIPT")
+            return super().record_acquisition_receipt(receipt)
+
+    policy = smoke_pool_policy_v1()
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId(
+            f"orphan-{crash_stage.value.lower()}-config-v1"
+        ),
+        output_root=tmp_path / "runtime",
+    )
+    runner = DailyLoopRunner(
+        repository=CrashReceiptRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=history,
+            security_status_client=status,
+            current_client=current,
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    )
+
+    with pytest.raises(RuntimeError, match="CRASH_BEFORE_"):
+        runner.run(command)
+    before_retry = (history.calls, status.calls, current.calls)
+    runner.run(command)
+
+    assert history.calls == 1
+    assert status.calls == 1
+    assert current.calls == 1
+    assert before_retry in {(1, 1, 0), (1, 1, 1)}
 
 
 def test_public_daily_history_preserves_b0_b1_ranking_equivalence(
@@ -482,7 +747,7 @@ def test_live_never_uses_local_archive_fallback(tmp_path: Path) -> None:
     )
 
 
-def test_live_current_failure_archives_successful_history_payload(
+def test_live_current_failure_preserves_frozen_history_and_status_for_retry(
     tmp_path: Path,
 ) -> None:
     history_payload = AcquiredSourcePayload(
@@ -511,6 +776,10 @@ def test_live_current_failure_archives_successful_history_payload(
         def acquire(self, request):
             raise AShareDataError("TENCENT_FIXTURE_UNAVAILABLE")
 
+    class StatusClient:
+        def acquire(self, request):
+            return _status_stage_batch()
+
     policy = smoke_pool_policy_v1()
     command = DailyRunCommand(
         decision_date=DECISION.value.date(),
@@ -522,31 +791,35 @@ def test_live_current_failure_archives_successful_history_payload(
         configuration_identity=ArtifactId("daily-loop-test-config-v1"),
         output_root=tmp_path / "runtime",
     )
-    result = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3")
+    runner = DailyLoopRunner(
+        repository=repository,
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
             history_client=HistoryClient(),
             current_client=CurrentFailureClient(),
+            security_status_client=StatusClient(),
         ),
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
-    ).run(command)
+    )
 
-    acquired = SourceReplayArchiveReader().read(result.source_archive_path)
-    assert result.record.status is DailyRunStatus.DATA_BLOCKED
-    assert tuple(
-        item.provider_id for item in acquired.provider_result.raw_payloads
-    ) == (
-        ProviderId("provider-baostock-public"),
-        ProviderId("provider-public-composite-live-runtime"),
-        ProviderId("provider-daily-run-protocol"),
-        ProviderId("authority-daily-universe-policy"),
-        ProviderId("authority-daily-eligibility-policy"),
-    )
-    assert acquired.provider_result.raw_payloads[0] == history_payload
-    assert "NO_LOCAL_ARCHIVE_FALLBACK" in (
-        acquired.provider_result.limitations
-    )
+    with pytest.raises(AShareDataError, match="TENCENT_FIXTURE_UNAVAILABLE"):
+        runner.run(command)
+
+    assert repository.get(command.run_request_id).status is DailyRunStatus.FAILED
+    assert repository.get_acquisition_receipt(
+        command.run_request_id,
+        PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+    ) is not None
+    assert repository.get_acquisition_receipt(
+        command.run_request_id,
+        PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
+    ) is not None
+    assert repository.get_acquisition_receipt(
+        command.run_request_id,
+        PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
+    ) is None
+    assert not (command.output_root / "source_archives").exists()
 
 
 def test_history_freeze_is_reused_after_quote_failure(
@@ -603,7 +876,15 @@ def test_history_freeze_is_reused_after_quote_failure(
                 raise RuntimeError("CRASH_AFTER_HISTORY_FREEZE")
             return current_batch
 
+    class CountingStatusClient:
+        calls = 0
+
+        def acquire(self, request):
+            self.calls += 1
+            return _status_stage_batch()
+
     history_client = CountingHistoryClient()
+    status_client = CountingStatusClient()
     current_client = InterruptThenSucceedCurrentClient()
     policy = smoke_pool_policy_v1()
     command = DailyRunCommand(
@@ -622,6 +903,7 @@ def test_history_freeze_is_reused_after_quote_failure(
         live_profile=PublicCompositeLiveProfile(
             history_client=history_client,
             current_client=current_client,
+            security_status_client=status_client,
         ),
         clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
     )
@@ -631,6 +913,7 @@ def test_history_freeze_is_reused_after_quote_failure(
     resumed = runner.run(command)
 
     assert history_client.calls == 1
+    assert status_client.calls == 1
     assert current_client.calls == 2
     assert resumed.record.status is DailyRunStatus.DATA_BLOCKED
 
@@ -692,6 +975,7 @@ def test_receipt_write_before_crash_recovers_orphan_without_reacquisition(
             return super().record_acquisition_receipt(receipt)
 
     history_client = CountingClient(history_batch)
+    status_client = CountingClient(_status_stage_batch(raw=b"orphan-status-stage"))
     current_client = CountingClient(current_batch)
     policy = smoke_pool_policy_v1()
     command = DailyRunCommand(
@@ -712,6 +996,7 @@ def test_receipt_write_before_crash_recovers_orphan_without_reacquisition(
         live_profile=PublicCompositeLiveProfile(
             history_client=history_client,
             current_client=current_client,
+            security_status_client=status_client,
         ),
         clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
     )
@@ -724,6 +1009,7 @@ def test_receipt_write_before_crash_recovers_orphan_without_reacquisition(
     resumed = runner.run(command)
 
     assert history_client.calls == 1
+    assert status_client.calls == 1
     assert current_client.calls == 1
     assert resumed.record.status is DailyRunStatus.DATA_BLOCKED
 

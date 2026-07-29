@@ -33,6 +33,7 @@ from .profiles import (
     PublicCompositeAcquisitionError,
     PublicCompositeLiveProfile,
     PublicCompositeReplayProfile,
+    compose_public_composite_live,
 )
 from .replay_archive import (
     AcquiredReplaySource,
@@ -77,6 +78,7 @@ __all__ = [
     "SecurityStatusFactType",
     "TradingStatus",
     "build_public_source_manifest",
+    "compose_public_composite_live",
     "build_daily_control_source_evidence",
     "DailyControlSourceEvidence",
     "publish_source_archive",
