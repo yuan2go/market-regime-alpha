@@ -184,6 +184,41 @@ class _CountingStageClient:
         return self.batch
 
 
+def _qualified_stage_clients():
+    policy = smoke_pool_policy_v1()
+    _, base, _ = public_fixture(policy=policy)
+    return (
+        policy,
+        _CountingStageClient(
+            PublicCompositeBatch(
+                raw_payloads=(base.raw_payloads[0],),
+                bars=base.bars,
+                quotes=(),
+                source_conflicts=(),
+                limitations=("FIXTURE_HISTORY_STAGE",),
+            )
+        ),
+        _CountingStageClient(
+            _qualified_status_stage_batch(
+                symbols=policy.symbols,
+                decision_time=DECISION,
+            )
+        ),
+        _CountingStageClient(
+            PublicCompositeBatch(
+                raw_payloads=(base.raw_payloads[1],),
+                bars=(),
+                quotes=tuple(
+                    replace(item, trading_status=TradingStatus.UNKNOWN)
+                    for item in base.quotes
+                ),
+                source_conflicts=(),
+                limitations=("FIXTURE_QUOTE_STAGE",),
+            )
+        ),
+    )
+
+
 def test_replay_run_publishes_one_verified_daily_decision(
     tmp_path: Path,
 ) -> None:
@@ -316,35 +351,7 @@ def test_live_stages_are_independent_idempotent_and_finalize_without_clients(
 def test_staged_live_fixture_reaches_outcome_pending_from_provider_status(
     tmp_path: Path,
 ) -> None:
-    policy = smoke_pool_policy_v1()
-    _, base, _ = public_fixture(policy=policy)
-    history = _CountingStageClient(
-        PublicCompositeBatch(
-            raw_payloads=(base.raw_payloads[0],),
-            bars=base.bars,
-            quotes=(),
-            source_conflicts=(),
-            limitations=("FIXTURE_HISTORY_STAGE",),
-        )
-    )
-    status = _CountingStageClient(
-        _qualified_status_stage_batch(
-            symbols=policy.symbols,
-            decision_time=DECISION,
-        )
-    )
-    quote = _CountingStageClient(
-        PublicCompositeBatch(
-            raw_payloads=(base.raw_payloads[1],),
-            bars=(),
-            quotes=tuple(
-                replace(item, trading_status=TradingStatus.UNKNOWN)
-                for item in base.quotes
-            ),
-            source_conflicts=(),
-            limitations=("FIXTURE_QUOTE_STAGE",),
-        )
-    )
+    policy, history, status, quote = _qualified_stage_clients()
     command = DailyRunCommand(
         decision_date=DECISION.value.date(),
         decision_time=DECISION,
@@ -375,6 +382,11 @@ def test_staged_live_fixture_reaches_outcome_pending_from_provider_status(
         for item in result.decision_artifact.bundle.entry_assessments
     } == {EntryAssessmentState.WAIT_CONFIRMATION}
     assert (history.calls, status.calls, quote.calls) == (1, 1, 1)
+    identity = result.record.daily_run_identity
+    assert identity is not None
+    assert status.batch.raw_payloads[0].raw_hash in (
+        identity.source_content_hashes
+    )
     assert all(
         item.authority_kind is SourceAuthorityKind.PROVIDER
         for item in result.decision_artifact.bundle.source_manifest.fields
@@ -385,6 +397,111 @@ def test_staged_live_fixture_reaches_outcome_pending_from_provider_status(
             CriticalSourceFact.LISTING_STATUS,
         }
     )
+
+
+def test_qualified_source_archive_replay_preserves_features_and_rankings(
+    tmp_path: Path,
+) -> None:
+    policy, history, status, quote = _qualified_stage_clients()
+    live_command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("archive-equivalence-config-v1"),
+        output_root=tmp_path / "live-runtime",
+    )
+    live = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "live.sqlite3"),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=history,
+            security_status_client=status,
+            current_client=quote,
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    ).run(live_command)
+    replay_command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.REPLAY,
+        provider_profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("archive-equivalence-config-v1"),
+        output_root=tmp_path / "replay-runtime",
+        replay_source_manifest_id=(
+            live.decision_artifact.bundle.source_manifest.source_manifest_id
+        ),
+    )
+    replay_runner = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "replay.sqlite3"),
+        code_revision=CODE_REVISION,
+        clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
+    )
+
+    replay = replay_runner.run(
+        replay_command,
+        replay_archive_path=live.source_archive_path,
+    )
+    repeated = replay_runner.run(replay_command)
+
+    def feature_projection(result):
+        return tuple(
+            (
+                str(item.definition_id),
+                tuple(
+                    (observation.symbol, observation.status, observation.value)
+                    for observation in item.observations
+                ),
+            )
+            for item in result.decision_artifact.bundle.feature_materializations
+        )
+
+    def prediction_projection(result):
+        return tuple(
+            (
+                str(run.model_id),
+                run.population_size,
+                run.ranking_coverage,
+                tuple(
+                    (
+                        item.symbol,
+                        item.model_score,
+                        item.rank,
+                        item.percentile,
+                    )
+                    for item in run.predictions
+                ),
+                tuple(
+                    (
+                        item.symbol,
+                        item.reason_code,
+                        str(item.feature_id),
+                    )
+                    for item in run.rejections
+                ),
+            )
+            for run in result.decision_artifact.bundle.prediction_runs
+        )
+
+    assert live.record.status is DailyRunStatus.OUTCOME_PENDING
+    assert replay.record.status is DailyRunStatus.OUTCOME_PENDING
+    assert feature_projection(replay) == feature_projection(live)
+    assert prediction_projection(replay) == prediction_projection(live)
+    assert tuple(
+        (item.model_id, item.symbol, item.rank, item.score)
+        for item in replay.decision_artifact.bundle.recommendations
+    ) == tuple(
+        (item.model_id, item.symbol, item.rank, item.score)
+        for item in live.decision_artifact.bundle.recommendations
+    )
+    assert repeated.decision_artifact.checksums_hash == (
+        replay.decision_artifact.checksums_hash
+    )
+    assert (history.calls, status.calls, quote.calls) == (1, 1, 1)
 
 
 def test_five_independent_symbol_failures_preserve_remaining_population(
