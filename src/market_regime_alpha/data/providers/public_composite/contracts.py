@@ -21,6 +21,10 @@ from market_regime_alpha.data.contracts import (
     SourceArtifactReference,
 )
 from market_regime_alpha.data.source_manifest import SourceFieldFinality
+from market_regime_alpha.data.source_manifest import (
+    SourceAuthorityKind,
+    SourceFieldQualityStatus,
+)
 
 
 PUBLIC_COMPOSITE_LIVE_PROFILE_ID = "public-composite-live-v1"
@@ -36,6 +40,32 @@ class TradingStatus(str, Enum):
     TRADING = "TRADING"
     SUSPENDED = "SUSPENDED"
     UNKNOWN = "UNKNOWN"
+
+
+class STStatus(str, Enum):
+    ST = "ST"
+    NOT_ST = "NOT_ST"
+    UNKNOWN = "UNKNOWN"
+
+
+class ListingStatus(str, Enum):
+    LISTED = "LISTED"
+    DELISTED = "DELISTED"
+    UNKNOWN = "UNKNOWN"
+
+
+class SecurityStatusFactType(str, Enum):
+    TRADING_STATUS = "TRADING_STATUS"
+    ST_STATUS = "ST_STATUS"
+    LISTING_STATUS = "LISTING_STATUS"
+
+
+class SecurityStatusEvidenceScope(str, Enum):
+    PRIOR_SESSION_STATUS = "PRIOR_SESSION_STATUS"
+    CURRENT_DECISION_SESSION = "CURRENT_DECISION_SESSION"
+
+
+SecurityStatusValue = TradingStatus | STStatus | ListingStatus
 
 
 def _require_text(label: str, value: str) -> None:
@@ -339,12 +369,191 @@ class PublicQuote:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicSecurityStatusObservation:
+    """One Provider-declared status fact with explicit temporal scope."""
+
+    symbol: str
+    fact_type: SecurityStatusFactType
+    value: SecurityStatusValue
+    scope: SecurityStatusEvidenceScope
+    event_time: datetime | None
+    available_time: AvailabilityTime | None
+    retrieved_time: RetrievedAt
+    decision_time: DecisionTime
+    policy_effective_time: datetime | None
+    provider_id: ProviderId
+    source_artifact_id: ArtifactId
+    authority_kind: SourceAuthorityKind
+    quality_status: SourceFieldQualityStatus
+    reason_codes: tuple[str, ...]
+    finality: SourceFieldFinality
+    data_eligibility: DataEligibility
+
+    def __post_init__(self) -> None:
+        _require_text("symbol", self.symbol)
+        if not isinstance(self.fact_type, SecurityStatusFactType):
+            raise TypeError("fact_type must be a SecurityStatusFactType")
+        value_matches_fact = (
+            self.fact_type is SecurityStatusFactType.TRADING_STATUS
+            and isinstance(self.value, TradingStatus)
+        ) or (
+            self.fact_type is SecurityStatusFactType.ST_STATUS
+            and isinstance(self.value, STStatus)
+        ) or (
+            self.fact_type is SecurityStatusFactType.LISTING_STATUS
+            and isinstance(self.value, ListingStatus)
+        )
+        if not value_matches_fact:
+            raise TypeError("status value does not match fact_type")
+        if not isinstance(self.scope, SecurityStatusEvidenceScope):
+            raise TypeError("scope must be a SecurityStatusEvidenceScope")
+        if self.event_time is not None:
+            _require_aware("event_time", self.event_time)
+        if self.policy_effective_time is not None:
+            _require_aware("policy_effective_time", self.policy_effective_time)
+        if not isinstance(self.retrieved_time, RetrievedAt):
+            raise TypeError("retrieved_time must be a RetrievedAt")
+        if not isinstance(self.decision_time, DecisionTime):
+            raise TypeError("decision_time must be a DecisionTime")
+        if self.authority_kind is not SourceAuthorityKind.PROVIDER:
+            raise ValueError("security status must use Provider authority")
+        if not isinstance(self.quality_status, SourceFieldQualityStatus):
+            raise TypeError("quality_status must be a SourceFieldQualityStatus")
+        if not isinstance(self.finality, SourceFieldFinality):
+            raise TypeError("finality must be a SourceFieldFinality")
+        if self.data_eligibility is not DataEligibility.EXPLORATORY:
+            raise ValueError("public security status must remain EXPLORATORY")
+        for reason in self.reason_codes:
+            _require_text("reason_code", reason)
+        if len(self.reason_codes) != len(set(self.reason_codes)):
+            raise ValueError("reason_codes must be unique")
+        if (
+            self.quality_status is SourceFieldQualityStatus.COMPLETE
+            and self.reason_codes
+        ):
+            raise ValueError("COMPLETE status observation cannot carry reason_codes")
+        if self.value.value == "UNKNOWN" and (
+            self.quality_status is SourceFieldQualityStatus.COMPLETE
+            or not self.reason_codes
+        ):
+            raise ValueError("UNKNOWN status must be explicit and incomplete")
+        if (
+            self.scope is SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION
+            and self.value.value != "UNKNOWN"
+            and self.available_time is None
+        ):
+            raise ValueError("known current status requires available_time")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "fact_type": self.fact_type.value,
+            "value": self.value.value,
+            "scope": self.scope.value,
+            "event_time": (
+                self.event_time.isoformat() if self.event_time is not None else None
+            ),
+            "available_time": (
+                self.available_time.isoformat()
+                if self.available_time is not None
+                else None
+            ),
+            "retrieved_time": self.retrieved_time.isoformat(),
+            "decision_time": self.decision_time.isoformat(),
+            "policy_effective_time": (
+                self.policy_effective_time.isoformat()
+                if self.policy_effective_time is not None
+                else None
+            ),
+            "provider_id": str(self.provider_id),
+            "source_artifact_id": str(self.source_artifact_id),
+            "authority_kind": self.authority_kind.value,
+            "quality_status": self.quality_status.value,
+            "reason_codes": list(self.reason_codes),
+            "finality": self.finality.value,
+            "data_eligibility": self.data_eligibility.value,
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> PublicSecurityStatusObservation:
+        expected = {
+            "symbol",
+            "fact_type",
+            "value",
+            "scope",
+            "event_time",
+            "available_time",
+            "retrieved_time",
+            "decision_time",
+            "policy_effective_time",
+            "provider_id",
+            "source_artifact_id",
+            "authority_kind",
+            "quality_status",
+            "reason_codes",
+            "finality",
+            "data_eligibility",
+        }
+        if set(payload) != expected:
+            raise ValueError("PublicSecurityStatusObservation fields mismatch")
+        fact_type = SecurityStatusFactType(str(payload["fact_type"]))
+        raw_value = str(payload["value"])
+        if fact_type is SecurityStatusFactType.TRADING_STATUS:
+            value: SecurityStatusValue = TradingStatus(raw_value)
+        elif fact_type is SecurityStatusFactType.ST_STATUS:
+            value = STStatus(raw_value)
+        else:
+            value = ListingStatus(raw_value)
+        event_time = payload["event_time"]
+        available_time = payload["available_time"]
+        policy_effective_time = payload["policy_effective_time"]
+        return cls(
+            symbol=str(payload["symbol"]),
+            fact_type=fact_type,
+            value=value,
+            scope=SecurityStatusEvidenceScope(str(payload["scope"])),
+            event_time=(
+                datetime.fromisoformat(str(event_time))
+                if event_time is not None
+                else None
+            ),
+            available_time=(
+                AvailabilityTime(datetime.fromisoformat(str(available_time)))
+                if available_time is not None
+                else None
+            ),
+            retrieved_time=RetrievedAt(
+                datetime.fromisoformat(str(payload["retrieved_time"]))
+            ),
+            decision_time=DecisionTime(
+                datetime.fromisoformat(str(payload["decision_time"]))
+            ),
+            policy_effective_time=(
+                datetime.fromisoformat(str(policy_effective_time))
+                if policy_effective_time is not None
+                else None
+            ),
+            provider_id=ProviderId(str(payload["provider_id"])),
+            source_artifact_id=ArtifactId(str(payload["source_artifact_id"])),
+            authority_kind=SourceAuthorityKind(str(payload["authority_kind"])),
+            quality_status=SourceFieldQualityStatus(str(payload["quality_status"])),
+            reason_codes=tuple(str(value) for value in payload["reason_codes"]),
+            finality=SourceFieldFinality(str(payload["finality"])),
+            data_eligibility=DataEligibility(str(payload["data_eligibility"])),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PublicCompositeBatch:
     raw_payloads: tuple[AcquiredSourcePayload, ...]
     bars: tuple[PublicBar, ...]
     quotes: tuple[PublicQuote, ...]
     source_conflicts: tuple[str, ...]
     limitations: tuple[str, ...]
+    security_status_observations: tuple[PublicSecurityStatusObservation, ...] = ()
 
 
 class PublicAcquisitionClient(Protocol):

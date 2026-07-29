@@ -19,9 +19,18 @@ from market_regime_alpha.data.providers.public_composite.contracts import (
     PublicCompositeBatch,
     PublicCompositeRequest,
     PublicQuote,
+    PublicSecurityStatusObservation,
+    STStatus,
+    SecurityStatusEvidenceScope,
+    SecurityStatusFactType,
     TradingStatus,
 )
-from market_regime_alpha.data.source_manifest import SourceFieldFinality
+from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.source_manifest import (
+    SourceAuthorityKind,
+    SourceFieldFinality,
+    SourceFieldQualityStatus,
+)
 from market_regime_alpha.data_sources.a_share_bars import (
     AShareDataError,
     TENCENT_QUOTE_URL,
@@ -63,6 +72,7 @@ class BaoStockHistoryClient:
             login = bs.login(user_id=user_id, password=password)
         payloads: list[AcquiredSourcePayload] = []
         bars: list[PublicBar] = []
+        status_observations: list[PublicSecurityStatusObservation] = []
         try:
             if getattr(login, "error_code", "0") != "0":
                 raise AShareDataError(f"BaoStock login failed: {login.error_msg}")
@@ -119,6 +129,7 @@ class BaoStockHistoryClient:
                 payloads.append(source)
                 if not rows:
                     continue
+                latest_prior_record: dict[str, str] | None = None
                 for raw_row in rows:
                     record = dict(zip(result.fields, raw_row, strict=True))
                     try:
@@ -161,6 +172,20 @@ class BaoStockHistoryClient:
                             finality=SourceFieldFinality.UNKNOWN,
                         )
                     )
+                    if (
+                        latest_prior_record is None
+                        or record["date"] > latest_prior_record["date"]
+                    ):
+                        latest_prior_record = record
+                if latest_prior_record is not None:
+                    status_observations.extend(
+                        _prior_session_status_observations(
+                            symbol=symbol,
+                            record=latest_prior_record,
+                            source=source,
+                            request=request,
+                        )
+                    )
         finally:
             with redirect_stdout(StringIO()):
                 bs.logout()
@@ -174,6 +199,7 @@ class BaoStockHistoryClient:
                 "HISTORICAL_AVAILABLE_TIME_NOT_PROVIDED",
                 HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
             ),
+            security_status_observations=tuple(status_observations),
         )
 
 
@@ -267,3 +293,69 @@ def _parse_tencent_time(
         except ValueError:
             continue
     return None
+
+
+def _prior_session_status_observations(
+    *,
+    symbol: str,
+    record: dict[str, str],
+    source: AcquiredSourcePayload,
+    request: PublicCompositeRequest,
+) -> tuple[PublicSecurityStatusObservation, ...]:
+    """Retain BaoStock status columns without promoting them to current facts."""
+
+    raw_date = record.get("date")
+    event_time: datetime | None = None
+    if raw_date:
+        try:
+            event_time = datetime.combine(
+                datetime.strptime(raw_date, "%Y-%m-%d").date(),
+                time(15, 0),
+                tzinfo=request.decision_time.value.tzinfo,
+            )
+        except ValueError:
+            event_time = None
+    trading = {
+        "1": TradingStatus.TRADING,
+        "0": TradingStatus.SUSPENDED,
+    }.get(record.get("tradestatus", ""), TradingStatus.UNKNOWN)
+    st_status = {
+        "1": STStatus.ST,
+        "0": STStatus.NOT_ST,
+    }.get(record.get("isST", ""), STStatus.UNKNOWN)
+
+    def observation(
+        fact_type: SecurityStatusFactType,
+        value: TradingStatus | STStatus,
+    ) -> PublicSecurityStatusObservation:
+        reasons = (
+            "PRIOR_SESSION_STATUS_NOT_CURRENT",
+            *(
+                ("PROVIDER_STATUS_VALUE_UNKNOWN",)
+                if value.value == "UNKNOWN"
+                else ()
+            ),
+        )
+        return PublicSecurityStatusObservation(
+            symbol=symbol,
+            fact_type=fact_type,
+            value=value,
+            scope=SecurityStatusEvidenceScope.PRIOR_SESSION_STATUS,
+            event_time=event_time,
+            available_time=None,
+            retrieved_time=source.retrieved_time,
+            decision_time=request.decision_time,
+            policy_effective_time=None,
+            provider_id=source.provider_id,
+            source_artifact_id=source.source_artifact_id,
+            authority_kind=SourceAuthorityKind.PROVIDER,
+            quality_status=SourceFieldQualityStatus.DEGRADED,
+            reason_codes=reasons,
+            finality=SourceFieldFinality.UNKNOWN,
+            data_eligibility=DataEligibility.EXPLORATORY,
+        )
+
+    return (
+        observation(SecurityStatusFactType.TRADING_STATUS, trading),
+        observation(SecurityStatusFactType.ST_STATUS, st_status),
+    )

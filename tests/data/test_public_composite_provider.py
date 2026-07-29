@@ -28,6 +28,11 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeRequest,
     PublicCompositeReplayProfile,
     PublicQuote,
+    PublicSecurityStatusObservation,
+    STStatus,
+    ListingStatus,
+    SecurityStatusEvidenceScope,
+    SecurityStatusFactType,
     SourceReplayArchiveReader,
     TradingStatus,
     HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
@@ -631,6 +636,92 @@ def test_baostock_live_history_uses_prior_unadjusted_daily_product(
     assert batch.bars[0].available_time is None
     assert batch.bars[0].finality is SourceFieldFinality.UNKNOWN
     assert HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1 in batch.limitations
+    assert tuple(
+        (
+            item.fact_type,
+            item.value,
+            item.scope,
+            item.available_time,
+            item.quality_status,
+        )
+        for item in batch.security_status_observations
+    ) == (
+        (
+            SecurityStatusFactType.TRADING_STATUS,
+            TradingStatus.TRADING,
+            SecurityStatusEvidenceScope.PRIOR_SESSION_STATUS,
+            None,
+            SourceFieldQualityStatus.DEGRADED,
+        ),
+        (
+            SecurityStatusFactType.ST_STATUS,
+            STStatus.NOT_ST,
+            SecurityStatusEvidenceScope.PRIOR_SESSION_STATUS,
+            None,
+            SourceFieldQualityStatus.DEGRADED,
+        ),
+    )
+    assert all(
+        item.reason_codes == ("PRIOR_SESSION_STATUS_NOT_CURRENT",)
+        for item in batch.security_status_observations
+    )
+
+
+def test_security_status_fact_types_cannot_be_interchanged() -> None:
+    payload = _payload("provider-baostock-public", b"status-evidence")
+
+    with pytest.raises(TypeError, match="does not match fact_type"):
+        PublicSecurityStatusObservation(
+            symbol="000001.SZ",
+            fact_type=SecurityStatusFactType.LISTING_STATUS,
+            value=STStatus.NOT_ST,
+            scope=SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION,
+            event_time=None,
+            available_time=AVAILABLE,
+            retrieved_time=RETRIEVED,
+            decision_time=DECISION,
+            policy_effective_time=None,
+            provider_id=payload.provider_id,
+            source_artifact_id=payload.source_artifact_id,
+            authority_kind=SourceAuthorityKind.PROVIDER,
+            quality_status=SourceFieldQualityStatus.COMPLETE,
+            reason_codes=(),
+            finality=SourceFieldFinality.PRELIMINARY,
+            data_eligibility=DataEligibility.EXPLORATORY,
+        )
+
+
+def test_unknown_security_status_remains_explicit_and_incomplete() -> None:
+    payload = _payload("provider-baostock-public", b"unknown-status-evidence")
+    observation = PublicSecurityStatusObservation(
+        symbol="000001.SZ",
+        fact_type=SecurityStatusFactType.LISTING_STATUS,
+        value=ListingStatus.UNKNOWN,
+        scope=SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION,
+        event_time=None,
+        available_time=AVAILABLE,
+        retrieved_time=RETRIEVED,
+        decision_time=DECISION,
+        policy_effective_time=None,
+        provider_id=payload.provider_id,
+        source_artifact_id=payload.source_artifact_id,
+        authority_kind=SourceAuthorityKind.PROVIDER,
+        quality_status=SourceFieldQualityStatus.INSUFFICIENT,
+        reason_codes=("LISTING_STATUS_UNKNOWN",),
+        finality=SourceFieldFinality.UNKNOWN,
+        data_eligibility=DataEligibility.EXPLORATORY,
+    )
+
+    restored = PublicSecurityStatusObservation.from_canonical_dict(
+        observation.to_canonical_dict()
+    )
+
+    assert restored == observation
+    assert restored.value is ListingStatus.UNKNOWN
+    assert restored.available_time == AVAILABLE
+    assert restored.retrieved_time == RETRIEVED
+    assert restored.decision_time == DECISION
+    assert restored.policy_effective_time is None
 
 
 def test_replay_profile_reads_only_verified_manifest_and_immutable_archive(
