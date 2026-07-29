@@ -26,6 +26,13 @@ def _require_unit_weights(values: tuple[float, ...]) -> None:
         raise ValueError("model weights must sum to 1")
 
 
+def _require_assumption_ceiling(value: tuple[str, ...]) -> None:
+    if value != ASSUMPTIONS:
+        raise ValueError(
+            "research model assumptions are frozen for this schema"
+        )
+
+
 class _IdentifiedConfig:
     SCHEMA_VERSION: ClassVar[str]
     ID_PREFIX: ClassVar[str]
@@ -76,6 +83,7 @@ class MarketRegimeModelConfig(_IdentifiedConfig):
     configuration_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
+        _require_assumption_ceiling(self.assumptions)
         _require_unit_weights(
             (
                 self.direction_weight,
@@ -102,6 +110,8 @@ class MarketRegimeModelConfig(_IdentifiedConfig):
             raise ValueError("Market Regime scales must be positive")
         if not 0.0 <= self.restricted_exposure <= 1.0:
             raise ValueError("restricted_exposure must be within [0, 1]")
+        if not 0.0 <= self.minimum_coverage <= 1.0:
+            raise ValueError("minimum_coverage must be within [0, 1]")
         self._bind_identity()
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -144,6 +154,7 @@ class ThemeRotationModelConfig(_IdentifiedConfig):
     configuration_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
+        _require_assumption_ceiling(self.assumptions)
         _require_unit_weights(
             (
                 self.relative_strength_1d_weight,
@@ -171,6 +182,8 @@ class ThemeRotationModelConfig(_IdentifiedConfig):
             or self.participation_scale <= 0.0
         ):
             raise ValueError("Theme Rotation scales must be positive")
+        if not 0.0 <= self.minimum_confidence <= 1.0:
+            raise ValueError("minimum_confidence must be within [0, 1]")
         self._bind_identity()
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -224,6 +237,7 @@ class CapitalEvolutionModelConfig(_IdentifiedConfig):
     configuration_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
+        _require_assumption_ceiling(self.assumptions)
         _require_unit_weights(
             (
                 self.relative_strength_weight,
@@ -269,6 +283,10 @@ class CapitalEvolutionModelConfig(_IdentifiedConfig):
             )
         ):
             raise ValueError("Capital Evolution scales must be positive")
+        if not 0.0 <= self.minimum_theme_confidence <= 1.0:
+            raise ValueError(
+                "minimum_theme_confidence must be within [0, 1]"
+            )
         self._bind_identity()
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -298,6 +316,7 @@ class CandidateDiscoveryModelConfig(_IdentifiedConfig):
     configuration_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
+        _require_assumption_ceiling(self.assumptions)
         _require_unit_weights(
             (
                 self.market_regime_weight,
@@ -333,8 +352,7 @@ class ResearchPipelineConfig(_IdentifiedConfig):
     configuration_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.assumptions != ASSUMPTIONS:
-            raise ValueError("Research Pipeline assumptions are frozen for V1")
+        _require_assumption_ceiling(self.assumptions)
         self._bind_identity()
 
     def semantic_payload(self) -> dict[str, Any]:

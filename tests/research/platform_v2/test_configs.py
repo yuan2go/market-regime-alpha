@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from market_regime_alpha.research.platform_v2.configs import (
@@ -56,3 +58,42 @@ def test_weight_changes_change_configuration_identity() -> None:
 def test_invalid_model_weights_are_rejected() -> None:
     with pytest.raises(ValueError, match="sum to 1"):
         CandidateDiscoveryModelConfig(market_regime_weight=0.90)
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    (
+        MarketRegimeModelConfig(),
+        ThemeRotationModelConfig(),
+        CapitalEvolutionModelConfig(),
+        CandidateDiscoveryModelConfig(),
+    ),
+)
+def test_model_configuration_cannot_remove_unvalidated_assumption_ceiling(
+    configuration: object,
+) -> None:
+    with pytest.raises(ValueError, match="assumptions are frozen"):
+        replace(configuration, assumptions=("EMPIRICALLY_VALIDATED",))
+
+
+def test_model_coverage_and_confidence_accept_unit_interval_boundaries() -> None:
+    assert MarketRegimeModelConfig(minimum_coverage=0.0).minimum_coverage == 0.0
+    assert (
+        ThemeRotationModelConfig(minimum_confidence=1.0).minimum_confidence
+        == 1.0
+    )
+    assert (
+        CapitalEvolutionModelConfig(
+            minimum_theme_confidence=0.0
+        ).minimum_theme_confidence
+        == 0.0
+    )
+
+
+def test_model_coverage_and_confidence_reject_outside_unit_interval() -> None:
+    with pytest.raises(ValueError, match="within"):
+        MarketRegimeModelConfig(minimum_coverage=1.01)
+    with pytest.raises(ValueError, match="within"):
+        ThemeRotationModelConfig(minimum_confidence=-0.01)
+    with pytest.raises(ValueError, match="within"):
+        CapitalEvolutionModelConfig(minimum_theme_confidence=1.01)
