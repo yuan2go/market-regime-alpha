@@ -18,6 +18,10 @@ branches and the previously local daily-research branch were consolidated into
 This audit records implementation facts. It does not promote a model, establish
 Alpha, grant provider authority or authorize trading.
 
+This is a commit-bound snapshot of `main@772ecfb`. Later implementation state is
+owned by `../status/Current-State.md` and the Run-First/WP-D3 delivery audits;
+no finding in this document is a claim about later commits.
+
 ## Scope and non-goals
 
 This is a documentation-only reconciliation. It does not:

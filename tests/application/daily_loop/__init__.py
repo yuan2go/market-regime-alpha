@@ -1,0 +1,1 @@
+"""Daily-loop application tests."""

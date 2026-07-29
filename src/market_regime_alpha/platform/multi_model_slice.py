@@ -14,10 +14,12 @@ import json
 from typing import TypeAlias
 
 from market_regime_alpha.candidates.baselines import (
+    CandidateRankingRun,
     CandidateRankingRejection,
     rank_candidates_by_feature,
 )
 from market_regime_alpha.candidates.composite_baseline import (
+    CompositeCandidateRankingRun,
     CompositeFeatureComponent,
     CompositeFeatureDirection,
     CompositeFeatureRole,
@@ -191,6 +193,7 @@ def run_multi_model_candidate_slice(
 
     results: list[ModelSliceResult] = []
     for spec in model_specs:
+        run: CandidateRankingRun | CompositeCandidateRankingRun
         if isinstance(spec, SingleFeatureCandidateModelSpec):
             run = rank_candidates_by_feature(
                 dataset,

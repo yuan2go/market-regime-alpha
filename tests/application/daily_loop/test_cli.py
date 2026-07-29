@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+from market_regime_alpha.application.daily_loop import (
+    DailyLoopRunner,
+    DailyRunCommand,
+    RunMode,
+    SQLiteDailyRunRepository,
+)
+from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.providers.public_composite import (
+    PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+    publish_source_archive,
+)
+from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
+from tests.application.daily_loop.public_fixture import DECISION, public_fixture
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = PROJECT_ROOT / "scripts" / "run_exploratory_daily_loop.py"
+CODE_REVISION = "772ecfb09410588b5a406ad900d793a5850e60d5"
+
+
+def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
+    policy = smoke_pool_policy_v1()
+    _, provider_result, source_manifest = public_fixture(policy=policy)
+    archive = publish_source_archive(
+        root=tmp_path / "fixture-archives",
+        provider_result=provider_result,
+        source_manifest=source_manifest,
+    )
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.REPLAY,
+        provider_profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("daily-loop-cli-test-config-v1"),
+        output_root=tmp_path / "runtime",
+        replay_source_manifest_id=source_manifest.source_manifest_id,
+    )
+    runner = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+    )
+    completed = runner.run(command, replay_archive_path=archive)
+    assert completed.record.daily_run_id is not None
+
+    process = subprocess.run(
+        (
+            sys.executable,
+            str(SCRIPT),
+            "--output-root",
+            str(command.output_root),
+            "--journal",
+            str(tmp_path / "runtime.sqlite3"),
+            "replay",
+            "--run-id",
+            str(completed.record.daily_run_id),
+        ),
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert process.returncode == 0, process.stderr
+    payload = json.loads(process.stdout)
+    assert payload["daily_run_id"] == str(completed.record.daily_run_id)
+    assert payload["artifact_id"] == completed.decision_artifact.artifact_id
+    assert payload["replay_hash"] == completed.decision_artifact.checksums_hash
+
+
+def test_new_cli_has_no_legacy_or_broker_dependency() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    assert "dividend_t.storage" not in source
+    assert "xtquant" not in source
+    assert "broker" not in source.lower()

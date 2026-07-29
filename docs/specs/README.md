@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../architecture/05-Phase-D-Daily-Decision-Engine-V1.md, ../status/Gap-Register.md  
-> **Code Evidence:** Current Phase D contracts are mostly DESIGNED_ONLY; the namesake `daily_research` V1 implementation is non-canonical; see Capability-Matrix
+> **Code Evidence:** Implementation varies by contract; exploratory Phase D profiles live under `daily_decision/**`; the namesake `daily_research` V1 implementation is frozen and non-canonical; see Capability-Matrix
 
 ## Shared conventions
 
@@ -22,14 +22,14 @@
 | [ETFDirectionSnapshot](ETFDirectionSnapshot.md) | Freeze ranked ETF direction evidence at one decision time without granting trade authority. | DESIGNED_ONLY |
 | [ThemeDirectionSnapshot](ThemeDirectionSnapshot.md) | Freeze theme breadth, leadership and lifecycle evidence under an identified PIT mapping. | DESIGNED_ONLY |
 | [CapitalContextSnapshot](CapitalContextSnapshot.md) | Freeze market-wide liquidity and capital-context observations with explicit field availability. | DESIGNED_ONLY |
-| [CandidateRecommendation](CandidateRecommendation.md) | Project one immutable CandidatePrediction into an explainable decision-support record without creating Entry or trade authority. | DESIGNED_ONLY current contract; namesake V1 is IMPLEMENTED_NON_CANONICAL |
-| [EntryAssessment](EntryAssessment.md) | Assess whether opening now, waiting, or rejecting adds value relative to the frozen Candidate baseline. | DESIGNED_ONLY current contract; namesake V1 is IMPLEMENTED_NON_CANONICAL |
+| [CandidateRecommendation](CandidateRecommendation.md) | Project one immutable CandidatePrediction into an explainable decision-support record without creating Entry or trade authority. | IMPLEMENTED_EXPLORATORY Phase D projection; namesake V1 is FROZEN_COMPATIBILITY |
+| [EntryAssessment](EntryAssessment.md) | Assess whether opening now, waiting, or rejecting adds value relative to the frozen Candidate baseline. | IMPLEMENTED_PLUMBING_ONLY; current gate emits WAIT/REJECT, never ENTER; namesake V1 is FROZEN_COMPATIBILITY |
 | [ManualTradeRecord](ManualTradeRecord.md) | Record the human decision, order intent, actual fills and deviation from the system proposal without inferring missing trades. | DESIGNED_ONLY |
 | [PositionSnapshot](PositionSnapshot.md) | Freeze actual account position state from manual-ledger or broker-reconciled evidence; never derive it from recommendations. | DESIGNED_ONLY |
 | [HoldingAssessment](HoldingAssessment.md) | Evaluate whether an actual position should be held, added, reduced, rotated or receive no model action. | DESIGNED_ONLY |
 | [ExitAssessment](ExitAssessment.md) | Evaluate independent exit, reduction and monitoring reasons for an actual position. | DESIGNED_ONLY |
-| [RecommendationOutcome](RecommendationOutcome.md) | Attach an observed target/path result to a frozen recommendation without mutating the original prediction. | DESIGNED_ONLY |
-| [DailyReviewReport](DailyReviewReport.md) | Aggregate immutable daily facts, layer-specific metrics, failures and controlled research proposals. | DESIGNED_ONLY |
+| [RecommendationOutcome](RecommendationOutcome.md) | Attach an observed target/path result to a frozen recommendation without mutating the original prediction. | IMPLEMENTED_EXPLORATORY for MR1 next-session 10:30 |
+| [DailyReviewReport](DailyReviewReport.md) | Aggregate immutable daily facts, layer-specific metrics, failures and controlled research proposals. | IMPLEMENTED_EXPLORATORY daily review; rolling 5/20/60 review remains designed |
 | [FailureReasonTaxonomy](FailureReasonTaxonomy.md) | Version hierarchical, evidence-bound failure codes used by daily review and research governance. | DESIGNED_ONLY |
 
 ## Existing implemented research contracts

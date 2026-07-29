@@ -35,10 +35,11 @@ Can fixed, transparent Candidate models improve the cost-adjusted next-session o
 
 ## Current implementation gate
 
-Before new Alpha, Entry or Exit work, the program must reconcile the
-post-consolidation facts, freeze the implemented non-canonical `daily_research`
-V1 compatibility semantics, and complete WP-D0 governance hardening. Historical
-V1 daily contracts are implementation evidence, not current Phase D authority.
+Post-consolidation facts are reconciled and the historical `daily_research` V1
+compatibility semantics are frozen behind a Versioned Reader boundary. Before
+new Alpha, Entry or Exit work, the program must complete the remaining durable
+WP-D0 governance authority. Historical V1 daily contracts remain implementation
+evidence, not current Phase D authority.
 
 ## Frozen discipline
 

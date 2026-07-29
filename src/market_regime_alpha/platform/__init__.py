@@ -23,6 +23,15 @@ from market_regime_alpha.platform.experiment_governance import (
     ResearchHypothesis,
 )
 from market_regime_alpha.platform.model_registry import ModelRegistration, ModelRegistry
+from market_regime_alpha.platform.prediction_artifacts import (
+    PREDICTION_RUN_ARTIFACT_FILES,
+    publish_prediction_run_artifact,
+)
+from market_regime_alpha.platform.prediction_reader import (
+    VerifiedPredictionRunArtifact,
+    load_verified_prediction_run_artifact,
+)
+from market_regime_alpha.platform.prediction_run import PredictionRun
 from market_regime_alpha.platform.multi_model_slice import (
     CompositeCandidateModelSpec,
     MultiModelCandidateSliceRun,
@@ -63,6 +72,8 @@ __all__ = [
     "ObservableDefinition",
     "ObservableId",
     "PredictionDisposition",
+    "PredictionRun",
+    "PREDICTION_RUN_ARTIFACT_FILES",
     "PriceMark",
     "PrimaryChangeDimension",
     "ResearchHypothesis",
@@ -73,6 +84,9 @@ __all__ = [
     "TargetProtocol",
     "TheoryDefinition",
     "TheoryId",
+    "VerifiedPredictionRunArtifact",
     "build_default_candidate_slice_specs",
+    "load_verified_prediction_run_artifact",
+    "publish_prediction_run_artifact",
     "run_multi_model_candidate_slice",
 ]

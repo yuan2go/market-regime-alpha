@@ -98,7 +98,7 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 ## Missing implementation
 
 - hardened persistent/recoverable platform repositories
-- daily decision artifact profiles
+- formal/production daily decision Artifact profiles
 - promotion workflow integration
 
 ## Transaction and persistence boundary

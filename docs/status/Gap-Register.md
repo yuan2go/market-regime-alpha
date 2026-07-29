@@ -3,27 +3,27 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Ordered gap and dependency register  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-07-29
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../audit/Post-Consolidation-Code-Audit-2026-07-26.md
-> **Code Evidence:** Derived from current main code/tests at `772ecfb09410588b5a406ad900d793a5850e60d5`
+> **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md
+> **Code Evidence:** Derived from `feat/public-live-semantic-closure@2ce6773d597286cbb39a08d3b0f9a2d08983b1d3`
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
-| Daily V1/Phase D contract convergence | P0 | historical V1 Artifact/Reader implemented but non-canonical; current Phase D contracts designed | fixed V1 characterization and current specs | one ADR and field matrix freeze V1, identify loss, and define one canonical V2/adapter boundary without changing V1 identity |
-| Platform Kernel governance hardening | P0 | contracts and in-memory prototype merged | current platform code/tests | registration gates closed; data/evidence semantics separated; persistent/recoverable boundary defined; platform included in mypy; B0/B1 equivalence evidence published |
-| Unique daily Source Manifest and quality gates | P0 | designed; provider contracts exist | data/time contracts | immutable Source Manifest and quality report produced |
-| Stock/ETF universe and mappings | P0 | partial contracts | provider/reference data | daily PIT snapshots with quality reports |
-| Tencent exploratory daily vertical slice | P0E | research components and non-canonical daily V1 exist; canonical orchestration absent | Source Manifest, Universe, canonical DailyResearchSnapshot | 10-session replay with frozen predictions, outcomes, blocked-day evidence and stable hashes |
+| Platform governance persistence remainder | P1 | minimum registration/restore/data-evidence/PredictionRun boundary hardened; daily Runtime Journal durable | current platform code/tests | durable Model Registry and Experiment Governance with concurrency/recovery authority |
+| Public LIVE current-status and Decision-window closure | P0 | staged real acquisition/recovery and policy evidence operational; real LIVE/Archive remain verified `DATA_BLOCKED` | qualified current trading/ST/listing source and controlled 14:55 schedule | real Archive reaches `OUTCOME_PENDING` with stable replay and nonempty Features/B0/B1 |
+| Public-source formal availability/PIT | P0 | historical public retrieval semantics are explicit and EXPLORATORY; no invented availability/finality | provider/reference data | qualified availability and formal PIT status/inventory evidence |
+| Operational 100–300 A-share universe | BLOCKED_P0 | content-addressed configurable policy contract; fixed 20-symbol smoke runtime only | successful real WP-D3 Archive plus approved membership/mapping/liquidity source | configured operational pool with every symbol eligible or excluded and stable replay |
+| Run-first exploratory daily vertical slice | DELIVERED_P0E | recoverable Phase D loop operational on delivery branch | implemented contracts and fixture/public evidence | completed: single/10-session replay, frozen predictions/outcomes/reviews, verified LIVE blocker and stable hashes |
 | Market/ETF/theme/capital context | P1 | partial/none | universe/mappings | canonical snapshots and ablations |
-| Multi-model daily Prediction Ledger | P1 | mechanical multi-model slice exists | hardened platform kernel and daily snapshot | all shadow models run and freeze complete ranks/rejections as immutable PredictionRuns |
-| CandidateRecommendation presentation | P1 | designed | Prediction Ledger | structured reasons/risks generated without trade authority |
-| EntryAssessment | P1 | target infrastructure only | Candidate and intraday evidence | ENTER/WAIT/REJECT assessed and evaluated |
+| Multi-model daily Prediction Ledger | DELIVERED_P1 | B0/B1 complete immutable PredictionRuns published and replayed | existing model identities and rankers | completed for the fixed B0/B1 exploratory model set |
+| CandidateRecommendation presentation | DELIVERED_P1 | per-model Top-5 structured reasons/risks without trade authority | PredictionRuns | completed for exploratory daily loop |
+| Real Entry Model | P1 | plumbing gate only; eligible Candidates always WAIT_CONFIRMATION | Candidate and qualified intraday evidence | validated Entry model with frozen protocol; no authority inflation |
 | Canonical PositionSnapshot/manual records | P1 | Legacy only | manual execution domain | actual fills own position state |
 | Holding and Exit | P1 | designed/Legacy | position authority | independent targets/models/assessments |
-| Outcome matching and rolling scorecards | P1 | partial diagnostics | frozen predictions | automated 5/20/60-day results |
+| Outcome matching and rolling scorecards | P1 | append-only MR1 10:30 daily Outcome/Review implemented | frozen predictions | automated 5/20/60-session review and attribution |
 | Failure Attribution/Codex Evidence Pack | P2 | designed | review ledger | proposals generated without model mutation |
 | Portfolio/execution simulation | P2 | Legacy only | validated component models | T+1/cost/capacity-aware simulator |
-| Qualified Xuntou formal run | External P0 | blocked | XtQuant/v4 bundle | real partition run and verified artifact |
+| Xuntou Provider shadow integration | External P0 | Provider boundary ready; qualified input still blocked | XtQuant/v4 bundle and Windows exporter | same-pipeline shadow run and ProviderComparisonReport without authority promotion |
 | QuantDesk workbench | P3 | not started | stable APIs/contracts | UI consumes canonical artifacts only |
