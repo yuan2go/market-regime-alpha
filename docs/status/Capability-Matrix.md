@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Gap-Register.md, ../architecture/09-Platform-Architecture-V2.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md, ../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md
-> **Code Evidence:** feat/platform-architecture-v2-research-layer@64cacd2
+> **Code Evidence:** feat/platform-architecture-v2-research-layer@45fdaa9
 
 | capability | status | code_evidence | test_evidence | runtime_evidence | document_evidence | missing_evidence | blocker | next_action |
 |---|---|---|---|---|---|---|---|---|

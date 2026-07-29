@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, ../roadmap/Phase-D-Work-Packages.md, ../architecture/09-Platform-Architecture-V2.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md, ../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md
-> **Code Evidence:** Derived from `feat/platform-architecture-v2-research-layer@64cacd2`
+> **Code Evidence:** Derived from `feat/platform-architecture-v2-research-layer@45fdaa9`
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|

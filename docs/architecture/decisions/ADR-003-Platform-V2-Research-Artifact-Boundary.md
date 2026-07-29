@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** README.md, ../09-Platform-Architecture-V2.md, ../../roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md
-> **Code Evidence:** `feat/platform-architecture-v2-research-layer@64cacd2`
+> **Code Evidence:** `feat/platform-architecture-v2-research-layer@45fdaa9`
 
 ## Decision status
 

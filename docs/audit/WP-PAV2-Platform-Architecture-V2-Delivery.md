@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../architecture/09-Platform-Architecture-V2.md, ../architecture/decisions/ADR-003-Platform-V2-Research-Artifact-Boundary.md, ../roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md, ../status/Current-State.md
-> **Code Evidence:** `feat/platform-architecture-v2-research-layer@64cacd2`; documentation commit is recorded in Git history
+> **Code Evidence:** `feat/platform-architecture-v2-research-layer@45fdaa9`; documentation commit is recorded in Git history
 
 ## Conclusion
 
@@ -88,7 +88,7 @@ an institution, controlling actor or dealer has a particular intent.
 ## Test and runtime evidence
 
 ```text
-pytest = PASS, 1164 passed, 0 failed, 0 skipped
+pytest = PASS, 1170 passed, 0 failed, 0 skipped
 mypy = PASS, 224 source files
 ruff = PASS
 pip_check = PASS
@@ -114,9 +114,9 @@ theme_count = 1
 capital_symbol_count = 6
 candidate_reconciliation_count = 6
 selected_candidate_count = 5
-artifact_id = research-layer-artifact-08430638860f4f5fc209738f
-content_hash = sha256:08430638860f4f5fc209738f1af4efca631f0e2218dd1ea4fd5bf526fe63562f
-checksum_manifest_hash = sha256:2cf4eec6abd617397b318ade27554cb888e13574f245629b4e53a0238e9762db
+artifact_id = research-layer-artifact-f1b5fe7bbf2e5386f434baea
+content_hash = sha256:f1b5fe7bbf2e5386f434baeaef643dff57db7fc03ee970b852a8183fa5df510e
+checksum_manifest_hash = sha256:7ab2a81ab3e2a39994c1722fca7867ab9d1e41f88f7b76c2506bc3d6335ca6c7
 ```
 
 Two consecutive CLI Replay commands returned the same Artifact ID and content

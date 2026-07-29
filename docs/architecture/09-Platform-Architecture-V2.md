@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** 01-Domain-Boundaries.md, 03-Research-Artifact-Architecture.md, 05-Phase-D-Daily-Decision-Engine-V1.md, decisions/ADR-003-Platform-V2-Research-Artifact-Boundary.md, ../roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md
-> **Code Evidence:** `feat/platform-architecture-v2-research-layer@64cacd2`
+> **Code Evidence:** `feat/platform-architecture-v2-research-layer@45fdaa9`
 
 ## Scope
 

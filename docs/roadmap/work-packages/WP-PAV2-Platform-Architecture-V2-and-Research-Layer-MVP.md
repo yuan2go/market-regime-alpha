@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** README.md, ../../architecture/09-Platform-Architecture-V2.md, ../../architecture/decisions/ADR-003-Platform-V2-Research-Artifact-Boundary.md, ../../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md
-> **Code Evidence:** `feat/platform-architecture-v2-research-layer@64cacd2`
+> **Code Evidence:** `feat/platform-architecture-v2-research-layer@45fdaa9`
 
 ## Objective
 
@@ -97,7 +97,7 @@ Automated evidence covers:
 - CLI run/replay/report;
 - legacy DailyLoop, B0/B1 and Reader compatibility.
 
-At delivery, all 1,164 repository tests pass; mypy, Ruff, pip check and
+At delivery, all 1,170 repository tests pass; mypy, Ruff, pip check and
 `git diff --check` pass.
 
 ## Risks and stop conditions
