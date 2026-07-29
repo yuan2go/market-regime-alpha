@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run, replay, settle, or report the exploratory Phase D daily loop."""
+"""Acquire, finalize, replay, settle, or report the Phase D daily loop."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from market_regime_alpha.application.daily_loop import (
     DAILY_B0_B1_MODEL_SET_ID,
+    DailyLoopRunResult,
     DailyLoopRunner,
     DailyRunCommand,
     DailyRunId,
@@ -32,6 +33,7 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     BaoStockHistoryClient,
+    BaoStockSecurityStatusClient,
     PublicCompositeLiveProfile,
     SourceReplayArchiveReader,
     TencentCurrentQuoteClient,
@@ -55,22 +57,32 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="operation", required=True)
 
     run = commands.add_parser("run", help="run one LIVE or archive-backed day")
-    run.add_argument("--decision-date", type=date.fromisoformat, required=True)
-    run.add_argument(
-        "--provider-profile",
-        choices=(
-            PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
-            PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
-        ),
-        default=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
-    )
+    _add_daily_arguments(run, allow_replay=True)
     run.add_argument("--source-archive", type=Path)
-    run.add_argument(
-        "--configuration-identity",
-        type=ArtifactId,
-        default=DEFAULT_CONFIGURATION_ID,
+
+    prepare_history = commands.add_parser(
+        "prepare-history",
+        help="freeze BaoStock prior-session daily history",
     )
-    run.add_argument("--timeout-seconds", type=float, default=8.0)
+    _add_daily_arguments(prepare_history, allow_replay=False)
+
+    freeze_status = commands.add_parser(
+        "freeze-security-status",
+        help="freeze exact decision-session BaoStock status evidence",
+    )
+    _add_daily_arguments(freeze_status, allow_replay=False)
+
+    freeze_quote = commands.add_parser(
+        "freeze-decision-quote",
+        help="freeze Tencent quotes inside the decision window",
+    )
+    _add_daily_arguments(freeze_quote, allow_replay=False)
+
+    finalize = commands.add_parser(
+        "finalize-run",
+        help="finalize from three verified frozen LIVE stages without network",
+    )
+    _add_daily_arguments(finalize, allow_replay=False)
 
     replay = commands.add_parser(
         "replay",
@@ -93,6 +105,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_daily_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    allow_replay: bool,
+) -> None:
+    parser.add_argument("--decision-date", type=date.fromisoformat, required=True)
+    choices = (
+        (
+            PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+            PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+        )
+        if allow_replay
+        else (PUBLIC_COMPOSITE_LIVE_PROFILE_ID,)
+    )
+    parser.add_argument(
+        "--provider-profile",
+        choices=choices,
+        default=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+    )
+    parser.add_argument(
+        "--configuration-identity",
+        type=ArtifactId,
+        default=DEFAULT_CONFIGURATION_ID,
+    )
+    parser.add_argument("--timeout-seconds", type=float, default=8.0)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     output_root = args.output_root.resolve()
@@ -103,11 +142,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     repository = SQLiteDailyRunRepository(journal)
     live_profile = None
-    if args.operation == "run" and (
+    if args.operation in {
+        "run",
+        "prepare-history",
+        "freeze-security-status",
+        "freeze-decision-quote",
+    } and (
         args.provider_profile == PUBLIC_COMPOSITE_LIVE_PROFILE_ID
     ):
         live_profile = PublicCompositeLiveProfile(
             history_client=BaoStockHistoryClient(),
+            security_status_client=BaoStockSecurityStatusClient(
+                timeout_seconds=args.timeout_seconds
+            ),
             current_client=TencentCurrentQuoteClient(
                 timeout_seconds=args.timeout_seconds
             ),
@@ -119,6 +166,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if args.operation == "run":
         return _run(args, runner, output_root)
+    if args.operation in {
+        "prepare-history",
+        "freeze-security-status",
+        "freeze-decision-quote",
+    }:
+        command = _build_command(args, output_root=output_root)
+        operation = {
+            "prepare-history": runner.prepare_history,
+            "freeze-security-status": runner.freeze_security_status,
+            "freeze-decision-quote": runner.freeze_decision_quote,
+        }[args.operation]
+        receipt = operation(command)
+        _print_json(
+            {
+                "run_request_id": str(receipt.run_request_id),
+                "stage": receipt.stage.value,
+                "artifact_id": str(receipt.artifact_id),
+                "content_hash": receipt.content_hash,
+                "status": "SOURCE_ACQUIRING",
+            }
+        )
+        return 0
+    if args.operation == "finalize-run":
+        completed = runner.finalize_run(
+            _build_command(args, output_root=output_root)
+        )
+        _print_completed(completed)
+        return 0
     if args.operation == "replay":
         verified = runner.replay_daily_run(args.run_id)
         _print_json(
@@ -168,7 +243,6 @@ def _run(
     runner: DailyLoopRunner,
     output_root: Path,
 ) -> int:
-    policy = smoke_pool_policy_v1()
     run_mode = (
         RunMode.LIVE
         if args.provider_profile == PUBLIC_COMPOSITE_LIVE_PROFILE_ID
@@ -187,10 +261,37 @@ def _run(
         )
     elif source_archive is not None:
         raise ValueError("LIVE does not accept --source-archive")
+    command = _build_command(
+        args,
+        output_root=output_root,
+        replay_source_manifest_id=replay_source_manifest_id,
+    )
+    completed = runner.run(
+        command,
+        replay_archive_path=(
+            source_archive.resolve() if source_archive is not None else None
+        ),
+    )
+    _print_completed(completed)
+    return 0
+
+
+def _build_command(
+    args: argparse.Namespace,
+    *,
+    output_root: Path,
+    replay_source_manifest_id: ArtifactId | None = None,
+) -> DailyRunCommand:
+    policy = smoke_pool_policy_v1()
+    run_mode = (
+        RunMode.REPLAY
+        if args.provider_profile == PUBLIC_COMPOSITE_REPLAY_PROFILE_ID
+        else RunMode.LIVE
+    )
     decision_time = DecisionTime(
         datetime.combine(args.decision_date, time(14, 55), tzinfo=SHANGHAI)
     )
-    command = DailyRunCommand(
+    return DailyRunCommand(
         decision_date=args.decision_date,
         decision_time=decision_time,
         run_mode=run_mode,
@@ -201,12 +302,9 @@ def _run(
         output_root=output_root,
         replay_source_manifest_id=replay_source_manifest_id,
     )
-    completed = runner.run(
-        command,
-        replay_archive_path=(
-            source_archive.resolve() if source_archive is not None else None
-        ),
-    )
+
+
+def _print_completed(completed: DailyLoopRunResult) -> None:
     _print_json(
         {
             "run_request_id": str(completed.record.run_request_id),
@@ -226,7 +324,6 @@ def _run(
             "trading_authority": "TRADING_AUTHORITY_NOT_GRANTED",
         }
     )
-    return 0
 
 
 def _current_git_revision() -> str:

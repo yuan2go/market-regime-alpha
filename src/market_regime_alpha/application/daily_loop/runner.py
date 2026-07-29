@@ -199,6 +199,10 @@ class DailyLoopRunner:
         return self.finalize_run(
             command,
             replay_archive_path=replay_archive_path,
+            _allow_live_failure_fallback=(
+                command.run_mode is RunMode.LIVE
+                and self._live_profile is None
+            ),
         )
 
     def prepare_history(
@@ -252,6 +256,7 @@ class DailyLoopRunner:
         command: DailyRunCommand,
         *,
         replay_archive_path: Path | None = None,
+        _allow_live_failure_fallback: bool = False,
     ) -> DailyLoopRunResult:
         """Finalize from frozen stages or a replay Archive without network I/O."""
 
@@ -276,6 +281,7 @@ class DailyLoopRunner:
                 command=command,
                 record=record,
                 replay_archive_path=replay_archive_path,
+                allow_live_failure_fallback=_allow_live_failure_fallback,
             )
             quality_report = evaluate_daily_data_quality(
                 manifest=acquired.source_manifest,
@@ -531,6 +537,7 @@ class DailyLoopRunner:
         command: DailyRunCommand,
         record: DailyRunRecord,
         replay_archive_path: Path | None,
+        allow_live_failure_fallback: bool,
     ) -> tuple[AcquiredReplaySource, Path, DailyRunRecord]:
         if record.daily_run_identity is not None:
             source_path = self._source_archive_path(record)
@@ -564,6 +571,7 @@ class DailyLoopRunner:
                 record=record,
                 output_root=command.output_root,
                 run_created_at=record.created_at,
+                allow_failure_fallback=allow_live_failure_fallback,
             )
         source_path = _publish_or_verify_source(
             root=command.output_root / "source_archives",
@@ -608,6 +616,7 @@ class DailyLoopRunner:
         record: DailyRunRecord,
         output_root: Path,
         run_created_at: datetime,
+        allow_failure_fallback: bool,
     ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
         frozen_receipts = tuple(
             self._repository.get_acquisition_receipt(
@@ -620,8 +629,13 @@ class DailyLoopRunner:
                 PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
             )
         )
-        if self._live_profile is None and any(
+        missing_frozen_stage = any(
             receipt is None for receipt in frozen_receipts
+        )
+        if (
+            self._live_profile is None
+            and missing_frozen_stage
+            and allow_failure_fallback
         ):
             result = self._live_failure_result(
                 request,
@@ -631,6 +645,10 @@ class DailyLoopRunner:
                 result=result,
                 request=request,
                 run_created_at=run_created_at,
+            )
+        if missing_frozen_stage:
+            raise ValueError(
+                "finalize requires History, Security Status, and Quote receipts"
             )
         history = self._load_required_live_stage(
             record=record,
