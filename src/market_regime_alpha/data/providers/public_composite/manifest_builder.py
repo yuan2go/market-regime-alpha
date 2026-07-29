@@ -260,8 +260,23 @@ def build_public_source_manifest(
         price_reasons: list[str] = []
         if quote is None or quote.price is None:
             price_reasons.append("PRICE_UNAVAILABLE")
+        if quote is not None and quote.available_time is None:
+            price_reasons.append("QUOTE_AVAILABLE_TIME_UNKNOWN")
+        elif (
+            quote is not None
+            and quote.available_time is not None
+            and quote.available_time.as_utc()
+            > request.decision_time.as_utc()
+        ):
+            price_reasons.append("QUOTE_AVAILABLE_AFTER_DECISION")
         if quote is not None and quote.event_time is None:
             price_reasons.append("QUOTE_EVENT_TIME_UNKNOWN")
+        elif (
+            quote is not None
+            and quote.event_time is not None
+            and quote.event_time > request.decision_time.value
+        ):
+            price_reasons.append("QUOTE_EVENT_AFTER_DECISION")
         elif (
             quote is not None
             and quote.event_time is not None
@@ -304,12 +319,18 @@ def build_public_source_manifest(
                 ),
             )
         )
-        trading_reasons = (
-            ()
-            if quote is not None
-            and quote.trading_status is not TradingStatus.UNKNOWN
-            else ("TRADING_STATUS_UNKNOWN",)
-        )
+        trading_reasons: list[str] = []
+        if quote is None or quote.trading_status is TradingStatus.UNKNOWN:
+            trading_reasons.append("TRADING_STATUS_UNKNOWN")
+        if quote is not None and quote.available_time is None:
+            trading_reasons.append("TRADING_STATUS_AVAILABLE_TIME_UNKNOWN")
+        elif (
+            quote is not None
+            and quote.available_time is not None
+            and quote.available_time.as_utc()
+            > request.decision_time.as_utc()
+        ):
+            trading_reasons.append("TRADING_STATUS_AVAILABLE_AFTER_DECISION")
         fields.append(
             SourceManifestField(
                 field_id="trading_status",
@@ -336,7 +357,7 @@ def build_public_source_manifest(
                     if not trading_reasons
                     else SourceFieldQualityStatus.INSUFFICIENT
                 ),
-                reason_codes=trading_reasons,
+                reason_codes=tuple(trading_reasons),
                 schema_version=field_schema,
                 authority_kind=SourceAuthorityKind.PROVIDER,
                 value=(

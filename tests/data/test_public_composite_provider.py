@@ -418,6 +418,58 @@ def test_decision_time_not_blocked_by_late_runtime_retrieval() -> None:
     )
 
 
+def test_quote_after_decision_is_explicit_symbol_insufficiency() -> None:
+    late_available = AvailabilityTime(
+        datetime(2025, 1, 6, 16, 0, tzinfo=SHANGHAI)
+    )
+    current = _current_batch()
+    late_current = replace(
+        current,
+        quotes=tuple(
+            replace(item, available_time=late_available)
+            for item in current.quotes
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(late_current),
+    ).acquire(_request())
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RetrievedAt(late_available.value),
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = replace(
+        result,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+    )
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=evidence.fields,
+    )
+
+    price = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.PRICE
+    )
+    trading = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.TRADING_STATUS
+    )
+
+    assert price.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert "QUOTE_AVAILABLE_AFTER_DECISION" in price.reason_codes
+    assert trading.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert "TRADING_STATUS_AVAILABLE_AFTER_DECISION" in trading.reason_codes
+
+
 def test_smoke_pool_membership_has_policy_lineage() -> None:
     evidence = build_daily_control_source_evidence(
         request=_request(),
