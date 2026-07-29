@@ -48,8 +48,10 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeRequest,
     PublicSourceAcquisitionStage,
     SourceReplayArchiveReader,
+    VerifiedPublicSourceStageArtifact,
     build_daily_control_source_evidence,
     build_public_source_manifest,
+    find_verified_public_source_stage_artifact,
     load_verified_public_source_stage_artifact,
     publish_public_source_stage_artifact,
     publish_source_archive,
@@ -603,25 +605,41 @@ class DailyLoopRunner:
             ):
                 raise ValueError("acquisition receipt does not bind stage Artifact")
             return verified.batch
-        batch = acquire()
         stage_root = output_root / "source_stages"
+        orphan = find_verified_public_source_stage_artifact(
+            root=stage_root,
+            stage=stage,
+            acquisition_key=str(record.run_request_id),
+        )
+        if orphan is not None:
+            self._record_acquisition_receipt(record, orphan)
+            return orphan.batch
+        batch = acquire()
         artifact_path = publish_public_source_stage_artifact(
             root=stage_root,
             stage=stage,
             batch=batch,
+            acquisition_key=str(record.run_request_id),
         )
         verified = load_verified_public_source_stage_artifact(artifact_path)
+        self._record_acquisition_receipt(record, verified)
+        return verified.batch
+
+    def _record_acquisition_receipt(
+        self,
+        record: DailyRunRecord,
+        verified: VerifiedPublicSourceStageArtifact,
+    ) -> None:
         self._repository.record_acquisition_receipt(
             AcquisitionStageReceipt(
                 run_request_id=record.run_request_id,
-                stage=stage,
+                stage=verified.stage,
                 artifact_id=verified.artifact_id,
                 content_hash=verified.content_hash,
                 locator=str(verified.root.resolve()),
                 completed_at=self._now(),
             )
         )
-        return verified.batch
 
     def _bind_live_control_evidence(
         self,

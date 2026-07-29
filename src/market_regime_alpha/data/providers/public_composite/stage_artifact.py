@@ -25,7 +25,9 @@ class PublicSourceAcquisitionStage(str, Enum):
     DECISION_QUOTE_SOURCE_FROZEN = "DECISION_QUOTE_SOURCE_FROZEN"
 
 
-SOURCE_STAGE_ARTIFACT_SCHEMA = "public-source-acquisition-stage-v1"
+SOURCE_STAGE_ARTIFACT_SCHEMA_V1 = "public-source-acquisition-stage-v1"
+SOURCE_STAGE_ARTIFACT_SCHEMA_V2 = "public-source-acquisition-stage-v2"
+SOURCE_STAGE_ARTIFACT_SCHEMA = SOURCE_STAGE_ARTIFACT_SCHEMA_V2
 SOURCE_STAGE_ARTIFACT_FILES = (
     "SHA256SUMS.json",
     "batch.json",
@@ -91,14 +93,22 @@ def source_stage_artifact_id(
     *,
     stage: PublicSourceAcquisitionStage,
     batch: PublicCompositeBatch,
+    acquisition_key: str | None = None,
 ) -> tuple[ArtifactId, str]:
-    content_hash = _canonical_hash(
-        {
-            "schema_version": SOURCE_STAGE_ARTIFACT_SCHEMA,
-            "stage": stage.value,
-            "batch": _batch_payload(batch),
-        }
+    schema_version = (
+        SOURCE_STAGE_ARTIFACT_SCHEMA_V2
+        if acquisition_key is not None
+        else SOURCE_STAGE_ARTIFACT_SCHEMA_V1
     )
+    semantic: dict[str, Any] = {
+        "schema_version": schema_version,
+        "stage": stage.value,
+        "batch": _batch_payload(batch),
+    }
+    if acquisition_key is not None:
+        _require_acquisition_key(acquisition_key)
+        semantic["acquisition_key"] = acquisition_key
+    content_hash = _canonical_hash(semantic)
     return (
         ArtifactId(
             f"source-stage-{stage.value.lower().replace('_', '-')}-"
@@ -116,6 +126,7 @@ class VerifiedPublicSourceStageArtifact:
     batch: PublicCompositeBatch
     content_hash: str
     checksums_hash: str
+    acquisition_key: str | None
 
 
 def publish_public_source_stage_artifact(
@@ -123,10 +134,17 @@ def publish_public_source_stage_artifact(
     root: Path,
     stage: PublicSourceAcquisitionStage,
     batch: PublicCompositeBatch,
+    acquisition_key: str | None = None,
 ) -> Path:
     artifact_id, content_hash = source_stage_artifact_id(
         stage=stage,
         batch=batch,
+        acquisition_key=acquisition_key,
+    )
+    schema_version = (
+        SOURCE_STAGE_ARTIFACT_SCHEMA_V2
+        if acquisition_key is not None
+        else SOURCE_STAGE_ARTIFACT_SCHEMA_V1
     )
     root.mkdir(parents=True, exist_ok=True)
     final = root / str(artifact_id)
@@ -137,16 +155,16 @@ def publish_public_source_stage_artifact(
     )
     try:
         _write_json(staging / "batch.json", _batch_payload(batch))
-        _write_json(
-            staging / "manifest.json",
-            {
-                "schema_version": SOURCE_STAGE_ARTIFACT_SCHEMA,
-                "artifact_id": str(artifact_id),
-                "stage": stage.value,
-                "content_hash": content_hash,
-                "required_artifacts": sorted(SOURCE_STAGE_ARTIFACT_FILES),
-            },
-        )
+        manifest: dict[str, Any] = {
+            "schema_version": schema_version,
+            "artifact_id": str(artifact_id),
+            "stage": stage.value,
+            "content_hash": content_hash,
+            "required_artifacts": sorted(SOURCE_STAGE_ARTIFACT_FILES),
+        }
+        if acquisition_key is not None:
+            manifest["acquisition_key"] = acquisition_key
+        _write_json(staging / "manifest.json", manifest)
         _write_json(
             staging / "SHA256SUMS.json",
             {
@@ -181,17 +199,47 @@ def load_verified_public_source_stage_artifact(
         if _file_hash(path / name) != expected:
             raise ValueError(f"source stage checksum mismatch: {name}")
     manifest = _read_json(path / "manifest.json")
-    if (
-        manifest.get("schema_version") != SOURCE_STAGE_ARTIFACT_SCHEMA
-        or manifest.get("required_artifacts")
-        != sorted(SOURCE_STAGE_ARTIFACT_FILES)
+    schema_version = str(manifest.get("schema_version"))
+    if schema_version not in {
+        SOURCE_STAGE_ARTIFACT_SCHEMA_V1,
+        SOURCE_STAGE_ARTIFACT_SCHEMA_V2,
+    } or manifest.get("required_artifacts") != sorted(
+        SOURCE_STAGE_ARTIFACT_FILES
     ):
         raise ValueError("source stage manifest mismatch")
+    raw_acquisition_key = manifest.get("acquisition_key")
+    if (
+        schema_version == SOURCE_STAGE_ARTIFACT_SCHEMA_V2
+        and not isinstance(raw_acquisition_key, str)
+    ):
+        raise ValueError("source stage acquisition key mismatch")
+    acquisition_key = (
+        raw_acquisition_key
+        if schema_version == SOURCE_STAGE_ARTIFACT_SCHEMA_V2
+        else None
+    )
+    expected_manifest_fields = {
+        "schema_version",
+        "artifact_id",
+        "stage",
+        "content_hash",
+        "required_artifacts",
+        *(
+            ("acquisition_key",)
+            if schema_version == SOURCE_STAGE_ARTIFACT_SCHEMA_V2
+            else ()
+        ),
+    }
+    if set(manifest) != expected_manifest_fields:
+        raise ValueError("source stage manifest fields mismatch")
+    if acquisition_key is not None:
+        _require_acquisition_key(acquisition_key)
     stage = PublicSourceAcquisitionStage(str(manifest["stage"]))
     batch = _batch_from_payload(_read_json(path / "batch.json"))
     artifact_id, content_hash = source_stage_artifact_id(
         stage=stage,
         batch=batch,
+        acquisition_key=acquisition_key,
     )
     if (
         manifest.get("artifact_id") != str(artifact_id)
@@ -208,7 +256,34 @@ def load_verified_public_source_stage_artifact(
         checksums_hash=_canonical_hash(
             {str(key): value for key, value in sorted(checksums.items())}
         ),
+        acquisition_key=acquisition_key,
     )
+
+
+def find_verified_public_source_stage_artifact(
+    *,
+    root: Path,
+    stage: PublicSourceAcquisitionStage,
+    acquisition_key: str,
+) -> VerifiedPublicSourceStageArtifact | None:
+    """Find a v2 Artifact published before its Runtime Journal receipt."""
+
+    _require_acquisition_key(acquisition_key)
+    if not root.exists():
+        return None
+    matches: list[VerifiedPublicSourceStageArtifact] = []
+    for path in sorted(root.iterdir()):
+        if not path.is_dir() or path.name.startswith("."):
+            continue
+        verified = load_verified_public_source_stage_artifact(path)
+        if (
+            verified.stage is stage
+            and verified.acquisition_key == acquisition_key
+        ):
+            matches.append(verified)
+    if len(matches) > 1:
+        raise ValueError("multiple acquisition stage Artifacts bind one request")
+    return matches[0] if matches else None
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -237,3 +312,8 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _file_hash(path: Path) -> str:
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
+
+
+def _require_acquisition_key(value: str) -> None:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("acquisition_key must be a non-empty trimmed string")

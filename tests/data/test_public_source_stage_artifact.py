@@ -12,6 +12,7 @@ from market_regime_alpha.data.providers.public_composite import (
     AcquiredSourcePayload,
     PublicCompositeBatch,
     PublicSourceAcquisitionStage,
+    find_verified_public_source_stage_artifact,
     load_verified_public_source_stage_artifact,
     publish_public_source_stage_artifact,
 )
@@ -70,3 +71,24 @@ def test_source_stage_reader_rejects_tampered_batch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="checksum"):
         load_verified_public_source_stage_artifact(path)
+
+
+def test_v2_stage_can_be_recovered_by_run_request_before_receipt(
+    tmp_path: Path,
+) -> None:
+    path = publish_public_source_stage_artifact(
+        root=tmp_path,
+        stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+        batch=_history_batch(),
+        acquisition_key="run-request-stage-recovery",
+    )
+
+    recovered = find_verified_public_source_stage_artifact(
+        root=tmp_path,
+        stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+        acquisition_key="run-request-stage-recovery",
+    )
+
+    assert recovered is not None
+    assert recovered.root == path
+    assert recovered.acquisition_key == "run-request-stage-recovery"

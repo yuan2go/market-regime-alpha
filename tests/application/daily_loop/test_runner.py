@@ -27,11 +27,13 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     AcquiredSourcePayload,
+    BaoStockHistoryClient,
     PublicBar,
     PublicCompositeBatch,
     PublicCompositeProviderResult,
     PublicCompositeLiveProfile,
     SourceReplayArchiveReader,
+    TencentCurrentQuoteClient,
     publish_source_archive,
 )
 from market_regime_alpha.data.source_manifest import (
@@ -88,6 +90,27 @@ def test_replay_run_publishes_one_verified_daily_decision(
         item.entry_state
         for item in result.decision_artifact.bundle.entry_assessments
     } == {EntryAssessmentState.WAIT_CONFIRMATION}
+
+
+def test_replay_performs_no_network_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, command, archive = _replay_runner(tmp_path)
+
+    def unexpected_network(*args, **kwargs):
+        raise AssertionError("REPLAY_ATTEMPTED_NETWORK_ACCESS")
+
+    monkeypatch.setattr(BaoStockHistoryClient, "acquire", unexpected_network)
+    monkeypatch.setattr(
+        TencentCurrentQuoteClient,
+        "acquire",
+        unexpected_network,
+    )
+
+    result = runner.run(command, replay_archive_path=archive)
+
+    assert result.record.status is DailyRunStatus.OUTCOME_PENDING
 
 
 def test_public_daily_history_preserves_b0_b1_ranking_equivalence(
@@ -188,6 +211,31 @@ def test_public_daily_history_preserves_b0_b1_ranking_equivalence(
     )
 
 
+def test_artifact_records_public_history_semantic_limitations(
+    tmp_path: Path,
+) -> None:
+    policy = smoke_pool_policy_v1()
+    _, result, manifest = public_fixture(
+        policy=policy,
+        exploratory_daily_history=True,
+    )
+
+    completed = _run_fixture(
+        tmp_path=tmp_path,
+        provider_result=result,
+        source_manifest=manifest,
+    )
+
+    assert completed.record.status is DailyRunStatus.OUTCOME_PENDING
+    assert (
+        "HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1"
+        in completed.decision_artifact.bundle.source_manifest.limitations
+    )
+    assert completed.decision_artifact.bundle.source_manifest.data_eligibility is (
+        DataEligibility.EXPLORATORY
+    )
+
+
 def test_repeated_command_reuses_frozen_source_and_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -205,6 +253,28 @@ def test_repeated_command_reuses_frozen_source_and_artifacts(
         first.decision_artifact.checksums_hash
     )
     assert _artifact_counts(command.output_root) == counts
+
+
+def test_daily_run_id_binds_history_and_quote_hashes(tmp_path: Path) -> None:
+    runner, command, archive = _replay_runner(tmp_path)
+    source = SourceReplayArchiveReader().read(archive)
+
+    completed = runner.run(command, replay_archive_path=archive)
+
+    identity = completed.record.daily_run_identity
+    assert identity is not None
+    assert identity.source_manifest_id == source.source_manifest.source_manifest_id
+    assert identity.source_manifest_content_hash == (
+        source.source_manifest.content_hash
+    )
+    assert identity.source_content_hashes == tuple(
+        sorted(
+            {
+                item.raw_hash
+                for item in source.provider_result.raw_payloads
+            }
+        )
+    )
 
 
 def test_failure_after_source_freeze_resumes_without_provider_access(
@@ -380,6 +450,38 @@ def test_global_provider_failure_blocks_run(
     assert result.decision_artifact.bundle.prediction_runs == ()
 
 
+def test_live_never_uses_local_archive_fallback(tmp_path: Path) -> None:
+    policy = smoke_pool_policy_v1()
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("daily-loop-test-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+    local_archive = tmp_path / "old-local-cache"
+    local_archive.mkdir()
+    (local_archive / "fixture.json").write_text("{}", encoding="utf-8")
+
+    result = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+        clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
+    ).run(command)
+    acquired = SourceReplayArchiveReader().read(result.source_archive_path)
+
+    assert result.record.status is DailyRunStatus.DATA_BLOCKED
+    assert "NO_LOCAL_ARCHIVE_FALLBACK" in acquired.provider_result.limitations
+    assert all(
+        item.locator != str(local_archive)
+        and not item.locator.startswith("archive://fixture")
+        for item in acquired.provider_result.raw_payloads
+    )
+
+
 def test_live_current_failure_archives_successful_history_payload(
     tmp_path: Path,
 ) -> None:
@@ -530,6 +632,99 @@ def test_history_freeze_is_reused_after_quote_failure(
 
     assert history_client.calls == 1
     assert current_client.calls == 2
+    assert resumed.record.status is DailyRunStatus.DATA_BLOCKED
+
+
+def test_receipt_write_before_crash_recovers_orphan_without_reacquisition(
+    tmp_path: Path,
+) -> None:
+    history_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-baostock-public"),
+        product="fixture-orphan-history-stage",
+        locator="baostock://fixture/orphan-history-stage",
+        raw_payload=b"orphan-history-stage",
+        retrieved_time=RetrievedAt(
+            datetime(2025, 2, 3, 14, 50, tzinfo=SHANGHAI)
+        ),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    current_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-tencent-public"),
+        product="fixture-orphan-current-stage",
+        locator="https://qt.gtimg.cn/q=fixture-orphan",
+        raw_payload=b"orphan-current-stage",
+        retrieved_time=RetrievedAt(
+            datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI)
+        ),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    history_batch = PublicCompositeBatch(
+        raw_payloads=(history_payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("BAOSTOCK_HISTORY_ONLY",),
+    )
+    current_batch = PublicCompositeBatch(
+        raw_payloads=(current_payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("TENCENT_CURRENT_QUOTE_ONLY",),
+    )
+
+    class CountingClient:
+        def __init__(self, batch: PublicCompositeBatch) -> None:
+            self.batch = batch
+            self.calls = 0
+
+        def acquire(self, request):
+            self.calls += 1
+            return self.batch
+
+    class FailFirstReceiptRepository(SQLiteDailyRunRepository):
+        fail_first_receipt = True
+
+        def record_acquisition_receipt(self, receipt):
+            if self.fail_first_receipt:
+                self.fail_first_receipt = False
+                raise RuntimeError("CRASH_BEFORE_ACQUISITION_RECEIPT")
+            return super().record_acquisition_receipt(receipt)
+
+    history_client = CountingClient(history_batch)
+    current_client = CountingClient(current_batch)
+    policy = smoke_pool_policy_v1()
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("daily-loop-test-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+    runner = DailyLoopRunner(
+        repository=FailFirstReceiptRepository(
+            tmp_path / "runtime.sqlite3"
+        ),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=history_client,
+            current_client=current_client,
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="CRASH_BEFORE_ACQUISITION_RECEIPT",
+    ):
+        runner.run(command)
+    resumed = runner.run(command)
+
+    assert history_client.calls == 1
+    assert current_client.calls == 1
     assert resumed.record.status is DailyRunStatus.DATA_BLOCKED
 
 
@@ -719,6 +914,25 @@ def test_partial_symbol_failure_preserves_remaining_population(
         and excluded not in {item.symbol for item in run.predictions}
         for run in completed.decision_artifact.bundle.prediction_runs
     )
+
+
+def test_successful_public_replay_reaches_outcome_pending(
+    tmp_path: Path,
+) -> None:
+    policy = smoke_pool_policy_v1()
+    _, result, manifest = public_v2_fixture(policy=policy)
+
+    completed = _run_fixture(
+        tmp_path=tmp_path,
+        provider_result=result,
+        source_manifest=manifest,
+    )
+
+    bundle = completed.decision_artifact.bundle
+    assert completed.record.status is DailyRunStatus.OUTCOME_PENDING
+    assert all(run.population_size == 20 for run in bundle.prediction_runs)
+    assert len(bundle.recommendations) == 10
+    assert len(bundle.entry_assessments) == 10
 
 
 def test_feature_window_missing_blocks_without_partial_predictions(
