@@ -224,8 +224,14 @@ def _snapshot(
         configuration_hash=config.configuration_hash,
         source_manifest_id=inputs.source_manifest.source_manifest_id,
         source_manifest_hash=inputs.source_manifest.content_hash,
-        input_artifact_ids=inputs.input_artifact_ids,
-        input_content_hashes=inputs.input_content_hashes,
+        input_artifact_ids=(
+            *inputs.input_artifact_ids,
+            inputs.input_bundle_id,
+        ),
+        input_content_hashes=(
+            *inputs.input_content_hashes,
+            inputs.content_hash,
+        ),
         model_id=config.model_id,
         model_version=config.model_version,
         data_eligibility=DataEligibility.EXPLORATORY,

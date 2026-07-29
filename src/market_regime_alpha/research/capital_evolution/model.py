@@ -81,10 +81,12 @@ def evaluate_capital_evolution_v0(
     }
     input_ids = (
         *inputs.input_artifact_ids,
+        inputs.input_bundle_id,
         theme_rotation.envelope.artifact_id,
     )
     input_hashes = (
         *inputs.input_content_hashes,
+        inputs.content_hash,
         theme_rotation.envelope.content_hash,
     )
     envelope = ArtifactEnvelope.create(
