@@ -39,6 +39,7 @@ from market_regime_alpha.data.providers.public_composite import (
     HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     build_public_source_manifest,
     build_daily_control_source_evidence,
+    build_security_status_source_evidence,
     publish_source_replay_archive,
 )
 from market_regime_alpha.data.daily_quality import (
@@ -868,6 +869,139 @@ def test_baostock_security_status_does_not_promote_prior_or_late_rows(
         "STATUS_RETRIEVED_AFTER_DECISION",
     )
     assert "SECURITY_STATUS_PROVIDER_UNUSABLE" in batch.limitations
+
+
+def test_current_status_provider_evidence_replaces_tencent_status_placeholder() -> None:
+    status = _status_batch()
+    current = replace(
+        _current_batch(),
+        quotes=tuple(
+            replace(item, trading_status=TradingStatus.UNKNOWN)
+            for item in _current_batch().quotes
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        security_status_client=_Client(status),
+        current_client=_Client(current),
+    ).acquire(_request())
+    status_fields = build_security_status_source_evidence(
+        batch=status,
+        request=_request(),
+    )
+
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=status_fields,
+    )
+    by_fact = {
+        field.critical_fact: field
+        for field in manifest.fields
+        if field.symbol == "000001.SZ"
+        and field.critical_fact
+        in {
+            CriticalSourceFact.TRADING_STATUS,
+            CriticalSourceFact.ST_STATUS,
+            CriticalSourceFact.LISTING_STATUS,
+        }
+    }
+
+    assert by_fact[CriticalSourceFact.TRADING_STATUS].value == "TRADING"
+    assert by_fact[CriticalSourceFact.ST_STATUS].value == "NOT_ST"
+    assert by_fact[CriticalSourceFact.LISTING_STATUS].value == "LISTED"
+    assert all(
+        field.provider_id == ProviderId("provider-baostock-public")
+        and field.authority_kind is SourceAuthorityKind.PROVIDER
+        for field in by_fact.values()
+    )
+    assert result.quotes[0].trading_status is TradingStatus.UNKNOWN
+
+
+def test_prior_session_status_never_satisfies_current_manifest_fact() -> None:
+    current = replace(
+        _current_batch(),
+        quotes=tuple(
+            replace(item, trading_status=TradingStatus.UNKNOWN)
+            for item in _current_batch().quotes
+        ),
+    )
+    prior = replace(
+        _status_batch(),
+        security_status_observations=tuple(
+            replace(
+                item,
+                scope=SecurityStatusEvidenceScope.PRIOR_SESSION_STATUS,
+                available_time=None,
+                quality_status=SourceFieldQualityStatus.DEGRADED,
+                reason_codes=("PRIOR_SESSION_STATUS_NOT_CURRENT",),
+                finality=SourceFieldFinality.UNKNOWN,
+            )
+            for item in _status_batch().security_status_observations
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        security_status_client=_Client(prior),
+        current_client=_Client(current),
+    ).acquire(_request())
+    prior_fields = build_security_status_source_evidence(
+        batch=prior,
+        request=_request(),
+    )
+
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=prior_fields,
+    )
+    trading = next(
+        field
+        for field in manifest.fields
+        if field.symbol == "000001.SZ"
+        and field.critical_fact is CriticalSourceFact.TRADING_STATUS
+    )
+
+    assert all(field.critical_fact is None for field in prior_fields)
+    assert trading.value == TradingStatus.UNKNOWN.value
+    assert trading.provider_id == ProviderId("provider-tencent-public")
+    assert trading.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+
+
+def test_quote_retrieved_after_decision_is_explicitly_insufficient() -> None:
+    late_retrieved = RetrievedAt(
+        datetime(2025, 1, 6, 14, 55, 1, tzinfo=SHANGHAI)
+    )
+    late_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-tencent-public"),
+        product="late-quote",
+        locator="https://qt.gtimg.cn/q=late",
+        raw_payload=b"late-quote-payload",
+        retrieved_time=late_retrieved,
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    quote = replace(
+        _current_batch().quotes[0],
+        source_artifact_id=late_payload.source_artifact_id,
+    )
+    history = _history_batch()
+    result = PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        decision_time=DECISION,
+        raw_payloads=(*history.raw_payloads, late_payload),
+        bars=history.bars,
+        quotes=(quote,),
+        source_conflicts=(),
+        limitations=(),
+    )
+
+    manifest = build_public_source_manifest(result=result, request=_request())
+    price = next(
+        field for field in manifest.fields if field.field_id == "price"
+    )
+
+    assert price.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert "QUOTE_RETRIEVED_AFTER_DECISION" in price.reason_codes
 
 
 def test_security_status_fact_types_cannot_be_interchanged() -> None:

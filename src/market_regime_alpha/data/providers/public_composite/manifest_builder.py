@@ -20,7 +20,10 @@ from market_regime_alpha.data.providers.public_composite.contracts import (
     AcquiredSourcePayload,
     HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     PublicCompositeProviderResult,
+    PublicCompositeBatch,
     PublicCompositeRequest,
+    SecurityStatusEvidenceScope,
+    SecurityStatusFactType,
     TENCENT_PUBLIC_PROVIDER_ID,
     TradingStatus,
 )
@@ -48,6 +51,78 @@ class DailyControlSourceEvidence:
 
     raw_payloads: tuple[AcquiredSourcePayload, ...]
     fields: tuple[SourceManifestField, ...]
+
+
+def build_security_status_source_evidence(
+    *,
+    batch: PublicCompositeBatch,
+    request: PublicCompositeRequest,
+) -> tuple[SourceManifestField, ...]:
+    """Project scoped Provider observations without promoting prior status."""
+
+    known_sources = {
+        item.source_artifact_id: item for item in batch.raw_payloads
+    }
+    current_keys: set[tuple[str, SecurityStatusFactType]] = set()
+    fields: list[SourceManifestField] = []
+    fact_mapping = {
+        SecurityStatusFactType.TRADING_STATUS: (
+            CriticalSourceFact.TRADING_STATUS,
+            "trading_status",
+        ),
+        SecurityStatusFactType.ST_STATUS: (
+            CriticalSourceFact.ST_STATUS,
+            "st_status",
+        ),
+        SecurityStatusFactType.LISTING_STATUS: (
+            CriticalSourceFact.LISTING_STATUS,
+            "listing_status",
+        ),
+    }
+    for observation in batch.security_status_observations:
+        if observation.source_artifact_id not in known_sources:
+            raise ValueError("security status references unarchived source bytes")
+        if observation.decision_time != request.decision_time:
+            raise ValueError("security status Decision Time mismatch")
+        if observation.provider_id != known_sources[
+            observation.source_artifact_id
+        ].provider_id:
+            raise ValueError("security status Provider lineage mismatch")
+        critical_fact, field_id = fact_mapping[observation.fact_type]
+        current = (
+            observation.scope
+            is SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION
+        )
+        if current:
+            key = (observation.symbol, observation.fact_type)
+            if key in current_keys:
+                raise ValueError("duplicate current security status fact")
+            current_keys.add(key)
+        fields.append(
+            SourceManifestField(
+                field_id=(
+                    field_id if current else f"prior_session_{field_id}"
+                ),
+                symbol=observation.symbol,
+                critical_fact=critical_fact if current else None,
+                provider_id=observation.provider_id,
+                source_artifact_id=observation.source_artifact_id,
+                event_time=observation.event_time,
+                available_time=observation.available_time,
+                retrieved_time=observation.retrieved_time,
+                decision_time=observation.decision_time,
+                unit="STATUS",
+                adjustment_basis=observation.scope.value,
+                finality=observation.finality,
+                data_eligibility=observation.data_eligibility,
+                quality_status=observation.quality_status,
+                reason_codes=observation.reason_codes,
+                schema_version=SourceManifestField.SCHEMA_V2,
+                authority_kind=observation.authority_kind,
+                value=observation.value.value,
+            )
+        )
+    return tuple(fields)
 
 
 def build_daily_control_source_evidence(
@@ -269,6 +344,12 @@ def build_public_source_manifest(
             > request.decision_time.as_utc()
         ):
             price_reasons.append("QUOTE_AVAILABLE_AFTER_DECISION")
+        if (
+            quote is not None
+            and quote_source.retrieved_at.as_utc()
+            > request.decision_time.as_utc()
+        ):
+            price_reasons.append("QUOTE_RETRIEVED_AFTER_DECISION")
         if quote is not None and quote.event_time is None:
             price_reasons.append("QUOTE_EVENT_TIME_UNKNOWN")
         elif (
@@ -319,54 +400,61 @@ def build_public_source_manifest(
                 ),
             )
         )
-        trading_reasons: list[str] = []
-        if quote is None or quote.trading_status is TradingStatus.UNKNOWN:
-            trading_reasons.append("TRADING_STATUS_UNKNOWN")
-        if quote is not None and quote.available_time is None:
-            trading_reasons.append("TRADING_STATUS_AVAILABLE_TIME_UNKNOWN")
-        elif (
-            quote is not None
-            and quote.available_time is not None
-            and quote.available_time.as_utc()
-            > request.decision_time.as_utc()
-        ):
-            trading_reasons.append("TRADING_STATUS_AVAILABLE_AFTER_DECISION")
-        fields.append(
-            SourceManifestField(
-                field_id="trading_status",
-                symbol=symbol,
-                critical_fact=CriticalSourceFact.TRADING_STATUS,
-                provider_id=quote_source.provider_id,
-                source_artifact_id=quote_source.artifact_id,
-                event_time=quote.event_time if quote is not None else None,
-                available_time=(
-                    quote.available_time if quote is not None else None
-                ),
-                retrieved_time=quote_source.retrieved_at,
-                decision_time=request.decision_time,
-                unit="STATUS",
-                adjustment_basis="NONE",
-                finality=(
-                    quote.finality
-                    if quote is not None
-                    else SourceFieldFinality.UNKNOWN
-                ),
-                data_eligibility=DataEligibility.EXPLORATORY,
-                quality_status=(
-                    SourceFieldQualityStatus.COMPLETE
-                    if not trading_reasons
-                    else SourceFieldQualityStatus.INSUFFICIENT
-                ),
-                reason_codes=tuple(trading_reasons),
-                schema_version=field_schema,
-                authority_kind=SourceAuthorityKind.PROVIDER,
-                value=(
-                    quote.trading_status.value
-                    if use_v2 and quote is not None
-                    else None
-                ),
+        if (symbol, CriticalSourceFact.TRADING_STATUS) not in declared_keys:
+            trading_reasons: list[str] = []
+            if quote is None or quote.trading_status is TradingStatus.UNKNOWN:
+                trading_reasons.append("TRADING_STATUS_UNKNOWN")
+            if quote is not None and quote.available_time is None:
+                trading_reasons.append("TRADING_STATUS_AVAILABLE_TIME_UNKNOWN")
+            elif (
+                quote is not None
+                and quote.available_time is not None
+                and quote.available_time.as_utc()
+                > request.decision_time.as_utc()
+            ):
+                trading_reasons.append("TRADING_STATUS_AVAILABLE_AFTER_DECISION")
+            if (
+                quote is not None
+                and quote_source.retrieved_at.as_utc()
+                > request.decision_time.as_utc()
+            ):
+                trading_reasons.append("TRADING_STATUS_RETRIEVED_AFTER_DECISION")
+            fields.append(
+                SourceManifestField(
+                    field_id="trading_status",
+                    symbol=symbol,
+                    critical_fact=CriticalSourceFact.TRADING_STATUS,
+                    provider_id=quote_source.provider_id,
+                    source_artifact_id=quote_source.artifact_id,
+                    event_time=quote.event_time if quote is not None else None,
+                    available_time=(
+                        quote.available_time if quote is not None else None
+                    ),
+                    retrieved_time=quote_source.retrieved_at,
+                    decision_time=request.decision_time,
+                    unit="STATUS",
+                    adjustment_basis="NONE",
+                    finality=(
+                        quote.finality
+                        if quote is not None
+                        else SourceFieldFinality.UNKNOWN
+                    ),
+                    data_eligibility=DataEligibility.EXPLORATORY,
+                    quality_status=(
+                        SourceFieldQualityStatus.COMPLETE
+                        if not trading_reasons
+                        else SourceFieldQualityStatus.INSUFFICIENT
+                    ),
+                    reason_codes=tuple(trading_reasons),
+                    schema_version=field_schema,
+                    authority_kind=SourceAuthorityKind.PROVIDER,
+                    value=(
+                        quote.trading_status.value
+                        if use_v2 and quote is not None
+                        else None
+                    ),
+                )
             )
-        )
         if use_v2:
             for fact, field_id, reason_code in (
                 (

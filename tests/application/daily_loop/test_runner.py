@@ -32,13 +32,22 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeBatch,
     PublicCompositeProviderResult,
     PublicCompositeLiveProfile,
+    PublicSecurityStatusObservation,
     PublicSourceAcquisitionStage,
+    STStatus,
+    ListingStatus,
+    SecurityStatusEvidenceScope,
+    SecurityStatusFactType,
     SourceReplayArchiveReader,
     TencentCurrentQuoteClient,
+    TradingStatus,
     publish_source_archive,
 )
 from market_regime_alpha.data.source_manifest import (
+    CriticalSourceFact,
+    SourceAuthorityKind,
     SourceFieldFinality,
+    SourceFieldQualityStatus,
     SourceManifest,
 )
 from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
@@ -71,6 +80,70 @@ def _status_stage_batch(*, raw: bytes = b"fixture-security-status") -> PublicCom
         quotes=(),
         source_conflicts=(),
         limitations=("SECURITY_STATUS_FIXTURE_UNAVAILABLE",),
+    )
+
+
+def _qualified_status_stage_batch(
+    *,
+    symbols: tuple[str, ...],
+    decision_time: DecisionTime,
+) -> PublicCompositeBatch:
+    retrieved = RetrievedAt(
+        decision_time.value.replace(hour=14, minute=50)
+    )
+    payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-baostock-public"),
+        product="fixture-qualified-security-status-stage",
+        locator="baostock://fixture/qualified-security-status-stage",
+        raw_payload=b"fixture-qualified-current-security-status",
+        retrieved_time=retrieved,
+        limitations=("FIXTURE_REPLAY_ONLY",),
+    )
+    common = {
+        "scope": SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION,
+        "event_time": None,
+        "available_time": AvailabilityTime(retrieved.value),
+        "retrieved_time": retrieved,
+        "decision_time": decision_time,
+        "policy_effective_time": None,
+        "provider_id": payload.provider_id,
+        "source_artifact_id": payload.source_artifact_id,
+        "authority_kind": SourceAuthorityKind.PROVIDER,
+        "quality_status": SourceFieldQualityStatus.COMPLETE,
+        "reason_codes": (),
+        "finality": SourceFieldFinality.PRELIMINARY,
+        "data_eligibility": DataEligibility.EXPLORATORY,
+    }
+    return PublicCompositeBatch(
+        raw_payloads=(payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("FIXTURE_QUALIFIED_SECURITY_STATUS_ONLY",),
+        security_status_observations=tuple(
+            observation
+            for symbol in symbols
+            for observation in (
+                PublicSecurityStatusObservation(
+                    symbol=symbol,
+                    fact_type=SecurityStatusFactType.TRADING_STATUS,
+                    value=TradingStatus.TRADING,
+                    **common,
+                ),
+                PublicSecurityStatusObservation(
+                    symbol=symbol,
+                    fact_type=SecurityStatusFactType.ST_STATUS,
+                    value=STStatus.NOT_ST,
+                    **common,
+                ),
+                PublicSecurityStatusObservation(
+                    symbol=symbol,
+                    fact_type=SecurityStatusFactType.LISTING_STATUS,
+                    value=ListingStatus.LISTED,
+                    **common,
+                ),
+            )
+        ),
     )
 
 
@@ -238,6 +311,186 @@ def test_live_stages_are_independent_idempotent_and_finalize_without_clients(
         .read(finalized.source_archive_path)
         .provider_result.raw_payloads
     ) == 6
+
+
+def test_staged_live_fixture_reaches_outcome_pending_from_provider_status(
+    tmp_path: Path,
+) -> None:
+    policy = smoke_pool_policy_v1()
+    _, base, _ = public_fixture(policy=policy)
+    history = _CountingStageClient(
+        PublicCompositeBatch(
+            raw_payloads=(base.raw_payloads[0],),
+            bars=base.bars,
+            quotes=(),
+            source_conflicts=(),
+            limitations=("FIXTURE_HISTORY_STAGE",),
+        )
+    )
+    status = _CountingStageClient(
+        _qualified_status_stage_batch(
+            symbols=policy.symbols,
+            decision_time=DECISION,
+        )
+    )
+    quote = _CountingStageClient(
+        PublicCompositeBatch(
+            raw_payloads=(base.raw_payloads[1],),
+            bars=(),
+            quotes=tuple(
+                replace(item, trading_status=TradingStatus.UNKNOWN)
+                for item in base.quotes
+            ),
+            source_conflicts=(),
+            limitations=("FIXTURE_QUOTE_STAGE",),
+        )
+    )
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("staged-qualified-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+
+    result = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=history,
+            security_status_client=status,
+            current_client=quote,
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    ).run(command)
+
+    assert result.record.status is DailyRunStatus.OUTCOME_PENDING
+    assert len(result.decision_artifact.bundle.prediction_runs) == 2
+    assert len(result.decision_artifact.bundle.recommendations) == 10
+    assert {
+        item.entry_state
+        for item in result.decision_artifact.bundle.entry_assessments
+    } == {EntryAssessmentState.WAIT_CONFIRMATION}
+    assert (history.calls, status.calls, quote.calls) == (1, 1, 1)
+    assert all(
+        item.authority_kind is SourceAuthorityKind.PROVIDER
+        for item in result.decision_artifact.bundle.source_manifest.fields
+        if item.critical_fact
+        in {
+            CriticalSourceFact.TRADING_STATUS,
+            CriticalSourceFact.ST_STATUS,
+            CriticalSourceFact.LISTING_STATUS,
+        }
+    )
+
+
+def test_five_independent_symbol_failures_preserve_remaining_population(
+    tmp_path: Path,
+) -> None:
+    policy = smoke_pool_policy_v1()
+    trading_unknown, st_unknown, listing_unknown, late_quote, short_history = (
+        policy.symbols[:5]
+    )
+    _, base, _ = public_fixture(policy=policy)
+    status_batch = _qualified_status_stage_batch(
+        symbols=policy.symbols,
+        decision_time=DECISION,
+    )
+    unknown_by_fact = {
+        SecurityStatusFactType.TRADING_STATUS: TradingStatus.UNKNOWN,
+        SecurityStatusFactType.ST_STATUS: STStatus.UNKNOWN,
+        SecurityStatusFactType.LISTING_STATUS: ListingStatus.UNKNOWN,
+    }
+    target_by_fact = {
+        SecurityStatusFactType.TRADING_STATUS: trading_unknown,
+        SecurityStatusFactType.ST_STATUS: st_unknown,
+        SecurityStatusFactType.LISTING_STATUS: listing_unknown,
+    }
+    status_batch = replace(
+        status_batch,
+        security_status_observations=tuple(
+            replace(
+                item,
+                value=unknown_by_fact[item.fact_type],
+                quality_status=SourceFieldQualityStatus.INSUFFICIENT,
+                reason_codes=(f"CURRENT_{item.fact_type.value}_UNKNOWN",),
+                finality=SourceFieldFinality.UNKNOWN,
+            )
+            if item.symbol == target_by_fact[item.fact_type]
+            else item
+            for item in status_batch.security_status_observations
+        ),
+    )
+    quote_batch = PublicCompositeBatch(
+        raw_payloads=(base.raw_payloads[1],),
+        bars=(),
+        quotes=tuple(
+            replace(
+                item,
+                trading_status=TradingStatus.UNKNOWN,
+                available_time=AvailabilityTime(
+                    DECISION.value.replace(second=1)
+                ),
+            )
+            if item.symbol == late_quote
+            else replace(item, trading_status=TradingStatus.UNKNOWN)
+            for item in base.quotes
+        ),
+        source_conflicts=(),
+        limitations=("FIXTURE_QUOTE_STAGE",),
+    )
+    history_batch = PublicCompositeBatch(
+        raw_payloads=(base.raw_payloads[0],),
+        bars=tuple(
+            item for item in base.bars if item.symbol != short_history
+        ),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("FIXTURE_HISTORY_STAGE",),
+    )
+    command = DailyRunCommand(
+        decision_date=DECISION.value.date(),
+        decision_time=DECISION,
+        run_mode=RunMode.LIVE,
+        provider_profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        universe_policy_id=str(policy.policy_id),
+        model_set_id="daily-b0-b1-v1",
+        configuration_identity=ArtifactId("symbol-isolation-config-v1"),
+        output_root=tmp_path / "runtime",
+    )
+
+    result = DailyLoopRunner(
+        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        code_revision=CODE_REVISION,
+        live_profile=PublicCompositeLiveProfile(
+            history_client=_CountingStageClient(history_batch),
+            security_status_client=_CountingStageClient(status_batch),
+            current_client=_CountingStageClient(quote_batch),
+        ),
+        clock=lambda: datetime(2025, 2, 3, 14, 54, tzinfo=SHANGHAI),
+    ).run(command)
+
+    assert result.record.status is DailyRunStatus.OUTCOME_PENDING
+    assert {
+        run.population_size
+        for run in result.decision_artifact.bundle.prediction_runs
+    } == {15}
+    eligibility = {
+        item.symbol: item
+        for item in result.decision_artifact.bundle.eligibility_snapshot.records
+    }
+    assert eligibility[trading_unknown].reasons == (
+        "TRADING_STATUS_UNKNOWN",
+    )
+    assert eligibility[st_unknown].reasons == ("ST_STATUS_UNKNOWN",)
+    assert eligibility[listing_unknown].reasons == (
+        "LISTING_STATUS_UNKNOWN",
+    )
+    assert eligibility[late_quote].reasons == ("PRICE_UNAVAILABLE",)
+    assert eligibility[short_history].reasons == ("INSUFFICIENT_HISTORY",)
 
 
 def test_security_status_failure_reuses_history_on_retry(tmp_path: Path) -> None:

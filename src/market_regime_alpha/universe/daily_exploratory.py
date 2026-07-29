@@ -555,6 +555,8 @@ def _evaluate_daily_policy_inputs(
                     and history_field.event_time
                     > source_manifest.decision_time.value
                 )
+                or history_field.retrieved_time.as_utc()
+                > source_manifest.decision_time.as_utc()
             ):
                 reasons.append(DailyEligibilityReason.INSUFFICIENT_HISTORY.value)
             daily_amounts = _daily_amounts(bars_by_symbol[symbol])
@@ -589,6 +591,8 @@ def _fact_available_at_decision(
     return (
         field.available_time is not None
         and field.available_time.as_utc()
+        <= source_manifest.decision_time.as_utc()
+        and field.retrieved_time.as_utc()
         <= source_manifest.decision_time.as_utc()
         and (
             field.event_time is None

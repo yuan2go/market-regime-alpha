@@ -52,6 +52,7 @@ from market_regime_alpha.data.providers.public_composite import (
     VerifiedPublicSourceStageArtifact,
     build_daily_control_source_evidence,
     build_public_source_manifest,
+    build_security_status_source_evidence,
     compose_public_composite_live,
     find_verified_public_source_stage_artifact,
     load_verified_public_source_stage_artifact,
@@ -59,7 +60,10 @@ from market_regime_alpha.data.providers.public_composite import (
     publish_source_archive,
     source_archive_id,
 )
-from market_regime_alpha.data.source_manifest import SourceManifest
+from market_regime_alpha.data.source_manifest import (
+    SourceManifest,
+    SourceManifestField,
+)
 from market_regime_alpha.daily_decision.artifact import (
     DailyDecisionArtifactStatus,
     PhaseDDailyDecisionBundle,
@@ -653,6 +657,10 @@ class DailyLoopRunner:
             result=result,
             request=request,
             run_created_at=run_created_at,
+            declared_provider_fields=build_security_status_source_evidence(
+                batch=security_status,
+                request=request,
+            ),
         )
 
     def _load_or_acquire_live_stage(
@@ -860,6 +868,7 @@ class DailyLoopRunner:
         result: PublicCompositeProviderResult,
         request: PublicCompositeRequest,
         run_created_at: datetime,
+        declared_provider_fields: tuple[SourceManifestField, ...] = (),
     ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
         evidence = build_daily_control_source_evidence(
             request=request,
@@ -889,7 +898,10 @@ class DailyLoopRunner:
         control_manifest = build_public_source_manifest(
             result=control_bound,
             request=request,
-            declared_fields=evidence.fields,
+            declared_fields=(
+                *evidence.fields,
+                *declared_provider_fields,
+            ),
         )
         eligibility = build_daily_eligibility_source_evidence(
             policy=self._policy,
@@ -919,7 +931,11 @@ class DailyLoopRunner:
         return bound, build_public_source_manifest(
             result=bound,
             request=request,
-            declared_fields=(*evidence.fields, *eligibility.fields),
+            declared_fields=(
+                *evidence.fields,
+                *declared_provider_fields,
+                *eligibility.fields,
+            ),
         )
 
     def _live_failure_result(

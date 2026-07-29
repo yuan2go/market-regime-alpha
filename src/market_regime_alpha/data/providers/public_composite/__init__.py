@@ -28,6 +28,7 @@ from .manifest_builder import (
     DailyControlSourceEvidence,
     build_daily_control_source_evidence,
     build_public_source_manifest,
+    build_security_status_source_evidence,
 )
 from .profiles import (
     PublicCompositeAcquisitionError,
@@ -80,6 +81,7 @@ __all__ = [
     "build_public_source_manifest",
     "compose_public_composite_live",
     "build_daily_control_source_evidence",
+    "build_security_status_source_evidence",
     "DailyControlSourceEvidence",
     "publish_source_archive",
     "publish_source_replay_archive",
