@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from market_regime_alpha.candidates.contracts import build_candidate_population
 from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.daily_quality import (
+    DailyDataQualityStatus,
+    evaluate_daily_data_quality,
+)
 from market_regime_alpha.universe.contracts import TradingEligibilityStatus
 from market_regime_alpha.universe.daily_exploratory import (
     DailyEligibilityReason,
@@ -9,7 +13,10 @@ from market_regime_alpha.universe.daily_exploratory import (
     reconcile_daily_universe,
     smoke_pool_policy_v1,
 )
-from tests.application.daily_loop.public_fixture import public_fixture
+from tests.application.daily_loop.public_fixture import (
+    public_fixture,
+    public_v2_fixture,
+)
 
 
 def test_smoke_policy_reuses_the_fixed_twenty_a_share_symbols() -> None:
@@ -77,3 +84,30 @@ def test_daily_eligibility_reason_vocabulary_covers_fail_closed_cases() -> None:
         "PRICE_UNAVAILABLE",
         "MAPPING_UNKNOWN",
     }
+
+
+def test_single_symbol_unknown_status_excludes_symbol_not_global_run() -> None:
+    policy = smoke_pool_policy_v1()
+    excluded = policy.symbols[0]
+    _, result, manifest = public_v2_fixture(
+        policy=policy,
+        unknown_trading_symbol=excluded,
+    )
+    quality = evaluate_daily_data_quality(
+        manifest=manifest,
+        required_symbols=policy.symbols,
+    )
+
+    reconciled = reconcile_daily_universe(
+        policy=policy,
+        source_manifest=manifest,
+        provider_result=result,
+    )
+    decisions = {item.symbol: item for item in reconciled.decisions}
+
+    assert quality.status is DailyDataQualityStatus.INSUFFICIENT
+    assert quality.blocked_reason_codes == ()
+    assert decisions[excluded].status is TradingEligibilityStatus.INELIGIBLE
+    assert decisions[excluded].reasons == ("TRADING_STATUS_UNKNOWN",)
+    assert len(reconciled.population.symbols) == 19
+    assert excluded not in reconciled.population.symbols

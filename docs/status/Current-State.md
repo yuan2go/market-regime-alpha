@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-28
+> **Last Updated:** 2026-07-29
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../audit/Run-First-Daily-Platform-Delivery.md
-> **Code Evidence:** feat/run-first-exploratory-daily-platform@dc9f27a68d3febd4a461e3e299af6ccbba3e70d0
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md
+> **Code Evidence:** feat/public-live-semantic-closure@2ce6773d597286cbb39a08d3b0f9a2d08983b1d3
 
 ## Overall stage
 
@@ -16,6 +16,7 @@ RESEARCH_PLATFORM_KERNEL_AND_CANDIDATE_EVIDENCE_STAGE
 PLATFORM_MINIMUM_GOVERNANCE_BOUNDARY_HARDENED
 PHASE_D_EXPLORATORY_DAILY_LOOP_IMPLEMENTED
 EXPLORATORY_DAILY_LOOP_OPERATIONAL
+PUBLIC_LIVE_STILL_DATA_BLOCKED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
 TRADING_AUTHORITY_NOT_GRANTED
 ```
@@ -39,6 +40,13 @@ TRADING_AUTHORITY_NOT_GRANTED
 - recoverable SQLite Runtime Journal with separate RunRequestId and source-bound DailyRunId;
 - distinct LIVE and REPLAY public Provider profiles, immutable raw archives, field-level
   SourceManifest and fail-closed DataQualityReport;
+- v2 protocol/Provider/Universe Policy/Eligibility Policy Source authority separation;
+- recoverable BaoStock history and Tencent Decision Quote acquisition stages whose immutable
+  Artifacts are reused across Quote failure and pre-Receipt process failure;
+- two-level public quality handling: global Source/Policy integrity gate plus per-symbol
+  fail-closed eligibility;
+- versioned exploratory BaoStock prior-session daily history semantics without invented
+  historical Available Time or finality;
 - content-addressed A-share smoke Universe policy and daily Feature/Candidate materialization;
 - per-model CandidateRecommendation and non-ENTER Entry plumbing;
 - exact-file-set Phase D Daily Decision Artifact, semantic Reader and Versioned Reader Registry;
@@ -55,15 +63,21 @@ loop; it does not claim complete WP-D0 governance persistence.
 
 The smoke loop is limited to 20 A-share stocks. The policy contract is configurable, but an
 approved 100–300-symbol membership source and formal PIT eligibility evidence are not delivered.
+Operational-pool expansion is additionally blocked until a real public Archive reaches
+`OUTCOME_PENDING`.
 Parquet/DuckDB query projections are deferred and remain rebuildable, non-authoritative views.
 
 ## Implemented mechanics but externally blocked
 
 The qualified Xuntou v4 path requires an actual XtQuant runtime and a real qualified bundle. The
 existing path can publish a verified blocker but has not produced formal Candidate replication
-metrics from real provider input. Public LIVE data likewise cannot establish formal PIT:
-the observed dry run correctly blocked on availability, trading-status and PIT
-membership/eligibility evidence.
+metrics from real provider input.
+
+The observed public LIVE run archived 1,200 BaoStock prior daily bars and 20 Tencent Quotes. It
+correctly blocked because the run occurred after the 14:55 Decision window and Tencent did not
+qualify current trading status; independent ST and listing status were also unavailable. Universe
+membership and the resulting ineligibility decisions were fully policy-bound and did not claim
+Provider authority.
 
 ## Not implemented as canonical Phase D authority
 

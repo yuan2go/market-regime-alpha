@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -11,6 +12,7 @@ from market_regime_alpha.core.time import (
 )
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.providers.public_composite import (
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     AcquiredSourcePayload,
     PublicBar,
@@ -18,10 +20,12 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeRequest,
     PublicQuote,
     TradingStatus,
+    build_daily_control_source_evidence,
     build_public_source_manifest,
 )
 from market_regime_alpha.data.source_manifest import (
     CriticalSourceFact,
+    SourceAuthorityKind,
     SourceFieldFinality,
     SourceFieldQualityStatus,
     SourceManifest,
@@ -30,6 +34,7 @@ from market_regime_alpha.data.source_manifest import (
 from market_regime_alpha.universe.daily_exploratory import (
     DailyUniversePolicy,
     SMOKE_POOL_SYMBOLS,
+    build_daily_eligibility_source_evidence,
 )
 
 
@@ -49,6 +54,7 @@ def public_fixture(
     include_outsider: bool = False,
     history_session_count: int = 21,
     quote_age_minutes: int = 1,
+    exploratory_daily_history: bool = False,
 ) -> tuple[
     PublicCompositeRequest,
     PublicCompositeProviderResult,
@@ -92,11 +98,15 @@ def public_fixture(
                 datetime.min.time().replace(hour=14, minute=55),
                 tzinfo=SHANGHAI,
             ),
-            available_time=AvailabilityTime(
-                datetime.combine(
-                    start + timedelta(days=index),
-                    datetime.min.time().replace(hour=15, minute=1),
-                    tzinfo=SHANGHAI,
+            available_time=(
+                None
+                if exploratory_daily_history
+                else AvailabilityTime(
+                    datetime.combine(
+                        start + timedelta(days=index),
+                        datetime.min.time().replace(hour=15, minute=1),
+                        tzinfo=SHANGHAI,
+                    )
                 )
             ),
             source_artifact_id=history_payload.source_artifact_id,
@@ -108,7 +118,11 @@ def public_fixture(
             amount=20_000_000.0 + index,
             unit="CNY",
             adjustment_basis="BAOSTOCK_ADJUSTFLAG_3",
-            finality=SourceFieldFinality.FINAL,
+            finality=(
+                SourceFieldFinality.UNKNOWN
+                if exploratory_daily_history
+                else SourceFieldFinality.FINAL
+            ),
         )
         for symbol in symbols
         for index in range(history_session_count)
@@ -141,7 +155,14 @@ def public_fixture(
         bars=bars,
         quotes=quotes,
         source_conflicts=(),
-        limitations=("FIXTURE_REPLAY_ONLY",),
+        limitations=(
+            "FIXTURE_REPLAY_ONLY",
+            *(
+                (HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,)
+                if exploratory_daily_history
+                else ()
+            ),
+        ),
     )
     request = PublicCompositeRequest(
         symbols=SMOKE_POOL_SYMBOLS,
@@ -179,3 +200,106 @@ def public_fixture(
         declared_fields=declarations,
     )
     return request, result, manifest
+
+
+def public_v2_fixture(
+    *,
+    policy: DailyUniversePolicy,
+    unknown_trading_symbol: str | None = None,
+) -> tuple[
+    PublicCompositeRequest,
+    PublicCompositeProviderResult,
+    SourceManifest,
+]:
+    """Fixture-only v2 Archive with explicit independent status evidence."""
+
+    request, base_result, _ = public_fixture(policy=policy)
+    result = replace(
+        base_result,
+        quotes=tuple(
+            replace(item, trading_status=TradingStatus.UNKNOWN)
+            if item.symbol == unknown_trading_symbol
+            else item
+            for item in base_result.quotes
+        ),
+    )
+    control = build_daily_control_source_evidence(
+        request=request,
+        retrieved_time=RETRIEVED,
+        policy_id=policy.policy_id,
+        policy_hash=policy.content_hash,
+        policy_version=policy.policy_version,
+        instrument_scope=policy.instrument_scope,
+        symbols=policy.symbols,
+    )
+    status_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-fixture-security-status"),
+        product="fixture-security-status",
+        locator="archive://fixture/security-status",
+        raw_payload=b"fixture-explicit-not-st-and-listed-status",
+        retrieved_time=RETRIEVED,
+        limitations=("FIXTURE_REPLAY_ONLY",),
+    )
+    status_fields = tuple(
+        SourceManifestField(
+            field_id=field_id,
+            symbol=symbol,
+            critical_fact=fact,
+            provider_id=status_payload.provider_id,
+            source_artifact_id=status_payload.source_artifact_id,
+            event_time=DECISION.value,
+            available_time=AVAILABLE,
+            retrieved_time=RETRIEVED,
+            decision_time=DECISION,
+            unit="STATUS",
+            adjustment_basis="NONE",
+            finality=SourceFieldFinality.FINAL,
+            data_eligibility=DataEligibility.EXPLORATORY,
+            quality_status=SourceFieldQualityStatus.COMPLETE,
+            reason_codes=(),
+            schema_version=SourceManifestField.SCHEMA_V2,
+            authority_kind=SourceAuthorityKind.PROVIDER,
+            value=value,
+        )
+        for symbol in policy.symbols
+        for fact, field_id, value in (
+            (CriticalSourceFact.ST_STATUS, "st_status", "NOT_ST"),
+            (CriticalSourceFact.LISTING_STATUS, "listing_status", "LISTED"),
+        )
+    )
+    control_bound = replace(
+        result,
+        raw_payloads=(
+            *result.raw_payloads,
+            *control.raw_payloads,
+            status_payload,
+        ),
+    )
+    control_manifest = build_public_source_manifest(
+        result=control_bound,
+        request=request,
+        declared_fields=(*control.fields, *status_fields),
+    )
+    eligibility = build_daily_eligibility_source_evidence(
+        policy=policy,
+        source_manifest=control_manifest,
+        provider_result=control_bound,
+        retrieved_time=RETRIEVED,
+    )
+    final_result = replace(
+        control_bound,
+        raw_payloads=(
+            *control_bound.raw_payloads,
+            *eligibility.raw_payloads,
+        ),
+    )
+    manifest = build_public_source_manifest(
+        result=final_result,
+        request=request,
+        declared_fields=(
+            *control.fields,
+            *status_fields,
+            *eligibility.fields,
+        ),
+    )
+    return request, final_result, manifest

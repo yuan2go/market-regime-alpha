@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,6 +20,7 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     AcquiredSourcePayload,
+    BaoStockHistoryClient,
     PublicBar,
     PublicCompositeBatch,
     PublicCompositeLiveProfile,
@@ -26,7 +30,9 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicQuote,
     SourceReplayArchiveReader,
     TradingStatus,
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     build_public_source_manifest,
+    build_daily_control_source_evidence,
     publish_source_replay_archive,
 )
 from market_regime_alpha.data.daily_quality import (
@@ -35,6 +41,7 @@ from market_regime_alpha.data.daily_quality import (
 )
 from market_regime_alpha.data.source_manifest import (
     CriticalSourceFact,
+    SourceAuthorityKind,
     SourceFieldFinality,
     SourceFieldQualityStatus,
     SourceManifest,
@@ -235,6 +242,395 @@ def test_live_source_manifest_stays_blocked_when_membership_is_unproven() -> Non
         field.data_eligibility is DataEligibility.EXPLORATORY
         for field in manifest.fields
     )
+
+
+def test_unknown_trading_status_is_explicit() -> None:
+    current = _current_batch()
+    unknown_current = replace(
+        current,
+        quotes=tuple(
+            replace(item, trading_status=TradingStatus.UNKNOWN)
+            for item in current.quotes
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(unknown_current),
+    ).acquire(_request())
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RETRIEVED,
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = replace(
+        result,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+    )
+
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=evidence.fields,
+    )
+    trading = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.TRADING_STATUS
+    )
+
+    assert trading.value == "UNKNOWN"
+    assert trading.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert trading.reason_codes == ("TRADING_STATUS_UNKNOWN",)
+    assert trading.authority_kind is SourceAuthorityKind.PROVIDER
+
+
+def test_missing_membership_policy_blocks_run() -> None:
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(_current_batch()),
+    ).acquire(_request())
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RETRIEVED,
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = replace(
+        result,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+    )
+    protocol_only = tuple(
+        field
+        for field in evidence.fields
+        if field.critical_fact is CriticalSourceFact.DECISION_TIME
+    )
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=protocol_only,
+    )
+
+    report = evaluate_daily_data_quality(
+        manifest=manifest,
+        required_symbols=("000001.SZ",),
+    )
+
+    assert report.status is DailyDataQualityStatus.DATA_BLOCKED
+    assert "UNIVERSE_MEMBERSHIP_MISSING:000001.SZ" in (
+        report.blocked_reason_codes
+    )
+
+
+def test_decision_time_is_protocol_fact() -> None:
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(_current_batch()),
+    ).acquire(_request())
+    late_retrieval = RetrievedAt(
+        datetime(2025, 1, 6, 16, 0, tzinfo=SHANGHAI)
+    )
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=late_retrieval,
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = PublicCompositeProviderResult(
+        profile_id=result.profile_id,
+        decision_time=result.decision_time,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+        bars=result.bars,
+        quotes=result.quotes,
+        source_conflicts=result.source_conflicts,
+        limitations=result.limitations,
+    )
+
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=evidence.fields,
+    )
+
+    decision = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.DECISION_TIME
+    )
+    assert manifest.schema_version == "phase-d-source-manifest-v2"
+    assert decision.schema_version == "phase-d-source-manifest-field-v2"
+    assert decision.authority_kind is SourceAuthorityKind.PROTOCOL
+    assert decision.provider_id == ProviderId("provider-daily-run-protocol")
+    assert decision.available_time == AvailabilityTime(DECISION.value)
+    assert decision.retrieved_time == late_retrieval
+    assert decision.value == DECISION.isoformat()
+
+
+def test_decision_time_not_blocked_by_late_runtime_retrieval() -> None:
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(_current_batch()),
+    ).acquire(_request())
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RetrievedAt(
+            datetime(2025, 1, 6, 16, 0, tzinfo=SHANGHAI)
+        ),
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = PublicCompositeProviderResult(
+        profile_id=result.profile_id,
+        decision_time=result.decision_time,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+        bars=result.bars,
+        quotes=result.quotes,
+        source_conflicts=result.source_conflicts,
+        limitations=result.limitations,
+    )
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=evidence.fields,
+    )
+
+    report = evaluate_daily_data_quality(
+        manifest=manifest,
+        required_symbols=("000001.SZ",),
+    )
+
+    assert not any(
+        "GLOBAL:decision_time" in reason
+        and reason.startswith("AVAILABLE_AFTER_DECISION")
+        for reason in report.blocked_reason_codes
+    )
+
+
+def test_quote_after_decision_is_explicit_symbol_insufficiency() -> None:
+    late_available = AvailabilityTime(
+        datetime(2025, 1, 6, 16, 0, tzinfo=SHANGHAI)
+    )
+    current = _current_batch()
+    late_current = replace(
+        current,
+        quotes=tuple(
+            replace(item, available_time=late_available)
+            for item in current.quotes
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(late_current),
+    ).acquire(_request())
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RetrievedAt(late_available.value),
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = replace(
+        result,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+    )
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=evidence.fields,
+    )
+
+    price = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.PRICE
+    )
+    trading = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.TRADING_STATUS
+    )
+
+    assert price.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert "QUOTE_AVAILABLE_AFTER_DECISION" in price.reason_codes
+    assert trading.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert "TRADING_STATUS_AVAILABLE_AFTER_DECISION" in trading.reason_codes
+
+
+def test_smoke_pool_membership_has_policy_lineage() -> None:
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RETRIEVED,
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+
+    membership = next(
+        field
+        for field in evidence.fields
+        if field.critical_fact is CriticalSourceFact.UNIVERSE_MEMBERSHIP
+    )
+    policy_payload = next(
+        payload
+        for payload in evidence.raw_payloads
+        if payload.product == "daily-universe-policy-evidence-v1"
+    )
+    assert membership.authority_kind is SourceAuthorityKind.UNIVERSE_POLICY
+    assert membership.provider_id == ProviderId("authority-daily-universe-policy")
+    assert membership.source_artifact_id == policy_payload.source_artifact_id
+    assert membership.value is True
+    assert policy_payload.locator == "policy://a-share-smoke-pool@v1"
+
+
+def test_membership_does_not_claim_provider_authority() -> None:
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RETRIEVED,
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+
+    membership = next(
+        field
+        for field in evidence.fields
+        if field.critical_fact is CriticalSourceFact.UNIVERSE_MEMBERSHIP
+    )
+    assert membership.provider_id not in {
+        ProviderId("provider-baostock-public"),
+        ProviderId("provider-tencent-public"),
+    }
+
+
+def test_history_semantics_remain_exploratory() -> None:
+    history = _history_batch()
+    exploratory_bar = replace(
+        history.bars[0],
+        available_time=None,
+        finality=SourceFieldFinality.UNKNOWN,
+    )
+    result = PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        decision_time=DECISION,
+        raw_payloads=(*history.raw_payloads, *_current_batch().raw_payloads),
+        bars=(exploratory_bar,),
+        quotes=_current_batch().quotes,
+        source_conflicts=(),
+        limitations=(HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,),
+    )
+
+    manifest = build_public_source_manifest(result=result, request=_request())
+    history_field = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.HISTORY_WINDOW
+    )
+
+    assert history_field.available_time is None
+    assert history_field.finality is SourceFieldFinality.UNKNOWN
+    assert (
+        HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1
+        in history_field.reason_codes
+    )
+    assert history_field.data_eligibility is DataEligibility.EXPLORATORY
+
+
+def test_baostock_live_history_uses_prior_unadjusted_daily_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Result:
+        error_code = "0"
+        error_msg = ""
+        fields = (
+            "date",
+            "code",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "adjustflag",
+            "tradestatus",
+            "isST",
+        )
+
+        def __init__(self) -> None:
+            self._rows = iter(
+                (
+                    [
+                        "2025-01-03",
+                        "sz.000001",
+                        "9.8",
+                        "10.1",
+                        "9.7",
+                        "10.0",
+                        "1000000",
+                        "10000000",
+                        "3",
+                        "1",
+                        "0",
+                    ],
+                )
+            )
+            self._current: list[str] | None = None
+
+        def next(self) -> bool:
+            self._current = next(self._rows, None)
+            return self._current is not None
+
+        def get_row_data(self) -> list[str]:
+            assert self._current is not None
+            return self._current
+
+    def query_history(code, fields, **kwargs):
+        captured.update({"code": code, "fields": fields, **kwargs})
+        return Result()
+
+    fake = SimpleNamespace(
+        login=lambda **kwargs: SimpleNamespace(
+            error_code="0",
+            error_msg="",
+        ),
+        logout=lambda: None,
+        query_history_k_data_plus=query_history,
+    )
+    monkeypatch.setitem(sys.modules, "baostock", fake)
+    client = BaoStockHistoryClient(
+        clock=lambda: datetime(2025, 1, 6, 14, 50, tzinfo=SHANGHAI)
+    )
+
+    batch = client.acquire(_request())
+
+    assert captured["frequency"] == "d"
+    assert captured["adjustflag"] == "3"
+    assert captured["end_date"] == "2025-01-05"
+    assert "tradestatus" in str(captured["fields"])
+    assert "isST" in str(captured["fields"])
+    assert len(batch.bars) == 1
+    assert batch.bars[0].available_time is None
+    assert batch.bars[0].finality is SourceFieldFinality.UNKNOWN
+    assert HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1 in batch.limitations
 
 
 def test_replay_profile_reads_only_verified_manifest_and_immutable_archive(

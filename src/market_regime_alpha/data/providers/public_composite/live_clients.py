@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from io import StringIO
 import json
 from typing import Any, Callable
@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from market_regime_alpha.core.time import AvailabilityTime, RetrievedAt
 from market_regime_alpha.data.providers.public_composite.contracts import (
     BAOSTOCK_PUBLIC_PROVIDER_ID,
+    HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     TENCENT_PUBLIC_PROVIDER_ID,
     AcquiredSourcePayload,
     PublicBar,
@@ -26,7 +27,6 @@ from market_regime_alpha.data_sources.a_share_bars import (
     TENCENT_QUOTE_URL,
     TENCENT_USER_AGENT,
     baostock_credentials,
-    normalize_baostock_minute_frame,
     parse_tencent_quote_text,
     to_baostock_code,
     to_tencent_code,
@@ -48,7 +48,7 @@ def _retrieved_at(clock: Clock) -> RetrievedAt:
 
 
 class BaoStockHistoryClient:
-    """Acquire exact BaoStock response rows without local cache substitution."""
+    """Acquire prior-session BaoStock daily rows without cache substitution."""
 
     def __init__(self, *, clock: Clock = _utc_now) -> None:
         self._clock = clock
@@ -56,7 +56,6 @@ class BaoStockHistoryClient:
     def acquire(self, request: PublicCompositeRequest) -> PublicCompositeBatch:
         try:
             import baostock as bs
-            import pandas as pd
         except ImportError as exc:
             raise AShareDataError("baostock is not installed") from exc
         user_id, password = baostock_credentials()
@@ -68,12 +67,18 @@ class BaoStockHistoryClient:
             if getattr(login, "error_code", "0") != "0":
                 raise AShareDataError(f"BaoStock login failed: {login.error_msg}")
             for symbol in request.symbols:
+                history_end = (
+                    request.decision_time.value.date() - timedelta(days=1)
+                )
                 result = bs.query_history_k_data_plus(
                     to_baostock_code(symbol),
-                    "date,time,code,open,high,low,close,volume,amount",
+                    (
+                        "date,code,open,high,low,close,volume,amount,"
+                        "adjustflag,tradestatus,isST"
+                    ),
                     start_date=request.history_start.isoformat(),
-                    end_date=request.decision_time.value.date().isoformat(),
-                    frequency="5",
+                    end_date=history_end.isoformat(),
+                    frequency="d",
                     adjustflag="3",
                 )
                 if getattr(result, "error_code", "0") != "0":
@@ -90,8 +95,8 @@ class BaoStockHistoryClient:
                         "request": {
                             "symbol": symbol,
                             "start_date": request.history_start.isoformat(),
-                            "end_date": request.decision_time.value.date().isoformat(),
-                            "frequency": "5",
+                            "end_date": history_end.isoformat(),
+                            "frequency": "d",
                             "adjustflag": "3",
                         },
                     },
@@ -101,29 +106,43 @@ class BaoStockHistoryClient:
                 ).encode("utf-8")
                 source = AcquiredSourcePayload(
                     provider_id=BAOSTOCK_PUBLIC_PROVIDER_ID,
-                    product="query_history_k_data_plus:5min:adjustflag=3",
+                    product="query_history_k_data_plus:daily:adjustflag=3",
                     locator=f"baostock://history/{to_baostock_code(symbol)}",
                     raw_payload=raw,
                     retrieved_time=_retrieved_at(self._clock),
                     limitations=(
                         "HISTORICAL_AVAILABLE_TIME_NOT_PROVIDED",
+                        HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
                         "PUBLIC_DATA_EXPLORATORY_ONLY",
                     ),
                 )
                 payloads.append(source)
                 if not rows:
                     continue
-                frame = normalize_baostock_minute_frame(
-                    pd.DataFrame(rows, columns=result.fields),
-                    symbol=symbol,
-                    source_freq="5min",
-                )
-                for record in frame.to_dict(orient="records"):
-                    event_time = _as_aware_datetime(
-                        record["timestamp"],
-                        request.decision_time,
-                    )
-                    if event_time > request.decision_time.value:
+                for raw_row in rows:
+                    record = dict(zip(result.fields, raw_row, strict=True))
+                    try:
+                        event_time = datetime.combine(
+                            datetime.strptime(
+                                str(record["date"]),
+                                "%Y-%m-%d",
+                            ).date(),
+                            time(15, 0),
+                            tzinfo=request.decision_time.value.tzinfo,
+                        )
+                        open_price = float(record["open"])
+                        high_price = float(record["high"])
+                        low_price = float(record["low"])
+                        close_price = float(record["close"])
+                        volume = float(record["volume"])
+                        amount = float(record["amount"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if (
+                        event_time.date()
+                        >= request.decision_time.value.date()
+                        or event_time > request.decision_time.value
+                    ):
                         continue
                     bars.append(
                         PublicBar(
@@ -131,12 +150,12 @@ class BaoStockHistoryClient:
                             event_time=event_time,
                             available_time=None,
                             source_artifact_id=source.source_artifact_id,
-                            open=float(record["open"]),
-                            high=float(record["high"]),
-                            low=float(record["low"]),
-                            close=float(record["close"]),
-                            volume=float(record["volume"]),
-                            amount=float(record.get("amount") or 0.0),
+                            open=open_price,
+                            high=high_price,
+                            low=low_price,
+                            close=close_price,
+                            volume=volume,
+                            amount=amount,
                             unit="CNY",
                             adjustment_basis="BAOSTOCK_ADJUSTFLAG_3",
                             finality=SourceFieldFinality.UNKNOWN,
@@ -153,6 +172,7 @@ class BaoStockHistoryClient:
             limitations=(
                 "BAOSTOCK_HISTORY_ONLY",
                 "HISTORICAL_AVAILABLE_TIME_NOT_PROVIDED",
+                HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
             ),
         )
 
@@ -230,15 +250,6 @@ class TencentCurrentQuoteClient:
             source_conflicts=(),
             limitations=("TENCENT_CURRENT_QUOTE_ONLY",),
         )
-
-
-def _as_aware_datetime(value: Any, decision_time: Any) -> datetime:
-    parsed = value.to_pydatetime() if hasattr(value, "to_pydatetime") else value
-    if not isinstance(parsed, datetime):
-        parsed = datetime.fromisoformat(str(parsed))
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        parsed = parsed.replace(tzinfo=decision_time.value.tzinfo)
-    return parsed
 
 
 def _parse_tencent_time(

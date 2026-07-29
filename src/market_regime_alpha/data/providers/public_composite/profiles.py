@@ -48,24 +48,53 @@ class PublicCompositeLiveProfile:
         self,
         request: PublicCompositeRequest,
     ) -> PublicCompositeProviderResult:
+        history = self.acquire_history(request)
+        try:
+            current = self.acquire_current(request)
+        except AShareDataError as exc:
+            raise PublicCompositeAcquisitionError(
+                f"current acquisition failed after history freeze: {exc}",
+                partial_batch=history,
+            ) from exc
+        return self.compose(history=history, current=current, request=request)
+
+    def acquire_history(
+        self,
+        request: PublicCompositeRequest,
+    ) -> PublicCompositeBatch:
+        """Acquire only declared BaoStock history."""
+
         history = self.history_client.acquire(request)
         if any(
             item.provider_id != BAOSTOCK_PUBLIC_PROVIDER_ID
             for item in history.raw_payloads
         ):
             raise ValueError("LIVE history must come only from declared BaoStock")
-        try:
-            current = self.current_client.acquire(request)
-        except AShareDataError as exc:
-            raise PublicCompositeAcquisitionError(
-                f"current acquisition failed after history freeze: {exc}",
-                partial_batch=history,
-            ) from exc
+        return history
+
+    def acquire_current(
+        self,
+        request: PublicCompositeRequest,
+    ) -> PublicCompositeBatch:
+        """Acquire only declared Tencent decision quotes."""
+
+        current = self.current_client.acquire(request)
         if any(
             item.provider_id != TENCENT_PUBLIC_PROVIDER_ID
             for item in current.raw_payloads
         ):
             raise ValueError("LIVE current data must come only from declared Tencent")
+        return current
+
+    def compose(
+        self,
+        *,
+        history: PublicCompositeBatch,
+        current: PublicCompositeBatch,
+        request: PublicCompositeRequest,
+    ) -> PublicCompositeProviderResult:
+        """Compose already-frozen stages without invoking either client."""
+
         return PublicCompositeProviderResult(
             profile_id=self.profile_id,
             decision_time=request.decision_time,

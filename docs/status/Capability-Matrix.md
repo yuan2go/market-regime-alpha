@@ -3,21 +3,22 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Canonical implementation-status matrix  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-28
+> **Last Updated:** 2026-07-29
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/Run-First-Daily-Platform-Delivery.md
-> **Code Evidence:** feat/run-first-exploratory-daily-platform@dc9f27a68d3febd4a461e3e299af6ccbba3e70d0
+> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md
+> **Code Evidence:** feat/public-live-semantic-closure@2ce6773d597286cbb39a08d3b0f9a2d08983b1d3
 
 | capability | status | code_evidence | test_evidence | runtime_evidence | document_evidence | missing_evidence | blocker | next_action |
 |---|---|---|---|---|---|---|---|---|
 | Historical Trading Calendar | IMPLEMENTED_AND_VERIFIED | `data/trading_calendar.py` | calendar tests | contract/test only; no daily service | Constitution 04 | operational daily integration |  | WP-D2 |
 | PIT Universe | IMPLEMENTED_AND_VERIFIED | `universe/contracts.py`, `artifacts.py` | universe tests | artifact construction tested | PIT docs | complete stock/ETF production snapshots |  | WP-D2 |
-| Eligibility | IMPLEMENTED_AND_VERIFIED | `universe/eligibility_policy.py`, `eligibility_artifacts.py` | eligibility tests | v1/v2 policies tested | eligibility docs | liquidity/limit/orderability breadth |  | WP-D2 |
-| Provider Artifact/Dataset contracts | IMPLEMENTED_AND_VERIFIED | `data/contracts.py`, `data/providers/public_composite/**`, `data/source_manifest.py` | data/provider/manifest tests | LIVE and Replay profiles; immutable Source Archive; verified LIVE blocker | Data Constitution; delivery audit | formal PIT/availability authority | public source semantics | Xuntou shadow/Formal PIT |
+| Eligibility | IMPLEMENTED_AND_VERIFIED | `universe/eligibility_policy.py`, `eligibility_artifacts.py`, `daily_exploratory.py` | eligibility and two-level-gate tests | v2 policy-owned decisions; every smoke symbol accounted | eligibility docs; WP-D3 audit | qualified current status inputs; liquidity/limit/orderability breadth | public status semantics | continue WP-D3 |
+| Provider Artifact/Dataset contracts | IMPLEMENTED_AND_VERIFIED | `data/contracts.py`, `data/providers/public_composite/**`, `data/source_manifest.py` | data/provider/manifest/stage recovery tests | separate History/Quote stage Artifacts; real LIVE Source Archive; stable offline replay | Data Constitution; delivery audits | formal PIT/availability and qualified security status | public source semantics | continue WP-D3 |
+| Public LIVE semantic closure | BLOCKED_PROVIDER_SEMANTICS | `public_composite/live_clients.py`, `manifest_builder.py`, `application/daily_loop/runner.py` | protocol fact, status, per-symbol isolation, recovery and no-fallback tests | real run: 1,200 bars, 20 Quotes, verified `DATA_BLOCKED`; real Archive replay stable | WP-D3 audit | in-window 14:55 Quote plus qualified trading/ST/listing status | current free-source contracts | continue WP-D3; do not expand pool |
 | Xuntou Adapter/v4 semantics | IMPLEMENTED_AND_VERIFIED | `research/xuntou_provider_adapter.py`, `xuntou_pit_v4_*` | adapter/preflight/qualification tests | no real runtime in audit env | Xuntou specs/evidence | real qualified bundle | external XtQuant/runtime | Export and qualify input |
 | Candidate Dataset | IMPLEMENTED_AND_VERIFIED | `candidates/dataset.py`, `features/daily_pipeline.py` | candidate and daily-pipeline tests | complete outcome-pending daily population in Replay | Candidate Research; delivery audit | formal PIT population evidence | public-source authority | Xuntou shadow/Formal PIT |
-| Feature Materialization | IMPLEMENTED_AND_VERIFIED | `features/contracts.py`, baselines, `features/daily_pipeline.py` | feature and daily-pipeline tests | daily smoke materialization and explicit missing-feature block | Factor Constitution; delivery audit | persistent registry/more approved factors |  | WP-D3 |
+| Feature Materialization | IMPLEMENTED_AND_VERIFIED | `features/contracts.py`, baselines, `features/daily_pipeline.py` | daily-history values and B0/B1 equivalence tests | v2 Fixture Archive materializes all four Features; real LIVE blocked before Feature by eligibility | Factor Constitution; WP-D3 audit | real in-window eligible public population | current status inputs | continue WP-D3 |
 | B0 | IMPLEMENTED_AND_VERIFIED | `candidates/baselines.py`, `platform/candidate_prediction_adapter.py` | complete PredictionRun equivalence tests | 10-session immutable daily PredictionRuns | Candidate Research; delivery audit | economic/OOS authority |  | Formal PIT/OOS |
 | B1 | IMPLEMENTED_AND_VERIFIED | `candidates/composite_baseline.py`, `platform/candidate_prediction_adapter.py` | complete PredictionRun equivalence tests | 10-session immutable daily PredictionRuns | Candidate Research; delivery audit | formal OOS/model winner |  | Formal PIT/OOS |
 | B2 regularized statistical baseline | NOT_STARTED | none | none | none | model ladder | implementation/validation |  | After WP-D0 |
@@ -38,7 +39,7 @@
 | Manual Trade Record | DESIGNED_ONLY | spec only | none | none | specification | write API and persistence |  | WP-D6 |
 | Recommendation Outcome | IMPLEMENTED_EXPLORATORY | `daily_decision/outcome.py`, `outcome_artifact.py` | outcome append/unresolved/tamper tests | MR1 10:30 settlement across 10 Replay sessions | delivery audit | formal PIT/OOS and broader horizons |  | Formal PIT/OOS |
 | Daily Review | IMPLEMENTED_EXPLORATORY | `daily_decision/outcome.py`, `outcome_artifact.py` | review reconstruction tests | 10 immutable reviews with full fixture coverage | delivery audit | rolling 5/20/60 review and attribution |  | WP-D8 remainder |
-| Daily Runtime Journal | IMPLEMENTED_EXPLORATORY | `application/daily_loop/**` | identity/state/idempotency/recovery tests | SQLite restart recovery; single/10-session Replay; LIVE blocker | ADR/delivery audit | leases/concurrent worker/postgres authority | single-process runtime | later service hardening |
+| Daily Runtime Journal | IMPLEMENTED_EXPLORATORY | `application/daily_loop/**` | identity/state/idempotency/stage/orphan recovery tests | SQLite restart recovery; History/Quote receipts; single/10-session Replay; real LIVE blocker | ADR/delivery audits | leases/concurrent worker/postgres authority | single-process runtime | later service hardening |
 | Historical daily_research V1 | FROZEN_COMPATIBILITY | `daily_research/**` | unchanged V1 tests | historical six-file semantics preserved | ADR/baseline audit | none in Phase D scope | must not mutate | Versioned Reader only |
 | Portfolio Decision | NOT_STARTED | Legacy position sizing only | Legacy tests | none canonical | Strategy Constitution | canonical policy/simulator |  | WP-D9 |
 | Codex Feedback | DESIGNED_ONLY | none canonical | none | none | Failure Attribution | Evidence Pack/proposal workflow |  | WP-D10 |

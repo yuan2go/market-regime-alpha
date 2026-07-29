@@ -67,6 +67,7 @@ files = [
     "src/market_regime_alpha/data/providers/public_composite/manifest_builder.py",
     "src/market_regime_alpha/data/providers/public_composite/profiles.py",
     "src/market_regime_alpha/data/providers/public_composite/replay_archive.py",
+    "src/market_regime_alpha/data/providers/public_composite/stage_artifact.py",
     "src/market_regime_alpha/data/rehearsal.py",
     "src/market_regime_alpha/data/path_evidence.py",
     "src/market_regime_alpha/data/trading_calendar.py",

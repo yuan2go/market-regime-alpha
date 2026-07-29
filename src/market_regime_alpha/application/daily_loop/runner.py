@@ -17,6 +17,7 @@ from market_regime_alpha.application.daily_loop.commands import (
 )
 from market_regime_alpha.application.daily_loop.errors import OutcomeNotReadyError
 from market_regime_alpha.application.daily_loop.repositories import (
+    AcquisitionStageReceipt,
     DailyRunRecord,
     DailyRunRepository,
     StageReceipt,
@@ -40,14 +41,19 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     AcquiredReplaySource,
     AcquiredSourcePayload,
-    PublicCompositeAcquisitionError,
     PublicCompositeBatch,
     PublicCompositeLiveProfile,
     PublicCompositeProviderResult,
     PublicCompositeReplayProfile,
     PublicCompositeRequest,
+    PublicSourceAcquisitionStage,
     SourceReplayArchiveReader,
+    VerifiedPublicSourceStageArtifact,
+    build_daily_control_source_evidence,
     build_public_source_manifest,
+    find_verified_public_source_stage_artifact,
+    load_verified_public_source_stage_artifact,
+    publish_public_source_stage_artifact,
     publish_source_archive,
     source_archive_id,
 )
@@ -108,6 +114,7 @@ from market_regime_alpha.platform.prediction_reader import (
 from market_regime_alpha.platform.prediction_run import PredictionRun
 from market_regime_alpha.universe.daily_exploratory import (
     DailyUniversePolicy,
+    build_daily_eligibility_source_evidence,
     reconcile_daily_universe,
     smoke_pool_policy_v1,
 )
@@ -483,7 +490,12 @@ class DailyLoopRunner:
             provider_result = acquired_input.provider_result
             source_manifest = acquired_input.source_manifest
         else:
-            provider_result, source_manifest = self._acquire_live(request)
+            provider_result, source_manifest = self._acquire_live(
+                request,
+                record=record,
+                output_root=command.output_root,
+                run_created_at=record.created_at,
+            )
         source_path = _publish_or_verify_source(
             root=command.output_root / "source_archives",
             provider_result=provider_result,
@@ -523,27 +535,179 @@ class DailyLoopRunner:
     def _acquire_live(
         self,
         request: PublicCompositeRequest,
+        *,
+        record: DailyRunRecord,
+        output_root: Path,
+        run_created_at: datetime,
     ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
         if self._live_profile is None:
             result = self._live_failure_result(
                 request,
                 RuntimeError("LIVE_PROVIDER_NOT_CONFIGURED"),
             )
-            return result, build_public_source_manifest(
+            return self._bind_live_control_evidence(
                 result=result,
                 request=request,
+                run_created_at=run_created_at,
             )
+        profile = self._live_profile
+        history = self._load_or_acquire_live_stage(
+            record=record,
+            output_root=output_root,
+            stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+            acquire=lambda: profile.acquire_history(request),
+        )
         try:
-            result = self._live_profile.acquire(request)
-        except PublicCompositeAcquisitionError as exc:
+            current = self._load_or_acquire_live_stage(
+                record=record,
+                output_root=output_root,
+                stage=PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
+                acquire=lambda: profile.acquire_current(request),
+            )
+        except AShareDataError as exc:
             result = self._live_failure_result(
                 request,
                 exc,
-                partial_batch=exc.partial_batch,
+                partial_batch=history,
             )
-        except AShareDataError as exc:
-            result = self._live_failure_result(request, exc)
-        return result, build_public_source_manifest(result=result, request=request)
+        else:
+            result = profile.compose(
+                history=history,
+                current=current,
+                request=request,
+            )
+        return self._bind_live_control_evidence(
+            result=result,
+            request=request,
+            run_created_at=run_created_at,
+        )
+
+    def _load_or_acquire_live_stage(
+        self,
+        *,
+        record: DailyRunRecord,
+        output_root: Path,
+        stage: PublicSourceAcquisitionStage,
+        acquire: Callable[[], PublicCompositeBatch],
+    ) -> PublicCompositeBatch:
+        receipt = self._repository.get_acquisition_receipt(
+            record.run_request_id,
+            stage,
+        )
+        if receipt is not None:
+            verified = load_verified_public_source_stage_artifact(
+                Path(receipt.locator)
+            )
+            if (
+                verified.stage is not receipt.stage
+                or verified.artifact_id != receipt.artifact_id
+                or verified.content_hash != receipt.content_hash
+            ):
+                raise ValueError("acquisition receipt does not bind stage Artifact")
+            return verified.batch
+        stage_root = output_root / "source_stages"
+        orphan = find_verified_public_source_stage_artifact(
+            root=stage_root,
+            stage=stage,
+            acquisition_key=str(record.run_request_id),
+        )
+        if orphan is not None:
+            self._record_acquisition_receipt(record, orphan)
+            return orphan.batch
+        batch = acquire()
+        artifact_path = publish_public_source_stage_artifact(
+            root=stage_root,
+            stage=stage,
+            batch=batch,
+            acquisition_key=str(record.run_request_id),
+        )
+        verified = load_verified_public_source_stage_artifact(artifact_path)
+        self._record_acquisition_receipt(record, verified)
+        return verified.batch
+
+    def _record_acquisition_receipt(
+        self,
+        record: DailyRunRecord,
+        verified: VerifiedPublicSourceStageArtifact,
+    ) -> None:
+        self._repository.record_acquisition_receipt(
+            AcquisitionStageReceipt(
+                run_request_id=record.run_request_id,
+                stage=verified.stage,
+                artifact_id=verified.artifact_id,
+                content_hash=verified.content_hash,
+                locator=str(verified.root.resolve()),
+                completed_at=self._now(),
+            )
+        )
+
+    def _bind_live_control_evidence(
+        self,
+        *,
+        result: PublicCompositeProviderResult,
+        request: PublicCompositeRequest,
+        run_created_at: datetime,
+    ) -> tuple[PublicCompositeProviderResult, SourceManifest]:
+        evidence = build_daily_control_source_evidence(
+            request=request,
+            retrieved_time=RetrievedAt(run_created_at),
+            policy_id=self._policy.policy_id,
+            policy_hash=self._policy.content_hash,
+            policy_version=self._policy.policy_version,
+            instrument_scope=self._policy.instrument_scope,
+            symbols=self._policy.symbols,
+        )
+        control_bound = PublicCompositeProviderResult(
+            profile_id=result.profile_id,
+            decision_time=result.decision_time,
+            raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+            bars=result.bars,
+            quotes=result.quotes,
+            source_conflicts=result.source_conflicts,
+            limitations=tuple(
+                dict.fromkeys(
+                    (
+                        *result.limitations,
+                        "PROTOCOL_AND_POLICY_EVIDENCE_ARCHIVED",
+                    )
+                )
+            ),
+        )
+        control_manifest = build_public_source_manifest(
+            result=control_bound,
+            request=request,
+            declared_fields=evidence.fields,
+        )
+        eligibility = build_daily_eligibility_source_evidence(
+            policy=self._policy,
+            source_manifest=control_manifest,
+            provider_result=control_bound,
+            retrieved_time=RetrievedAt(run_created_at),
+        )
+        bound = PublicCompositeProviderResult(
+            profile_id=control_bound.profile_id,
+            decision_time=control_bound.decision_time,
+            raw_payloads=(
+                *control_bound.raw_payloads,
+                *eligibility.raw_payloads,
+            ),
+            bars=control_bound.bars,
+            quotes=control_bound.quotes,
+            source_conflicts=control_bound.source_conflicts,
+            limitations=tuple(
+                dict.fromkeys(
+                    (
+                        *control_bound.limitations,
+                        "ELIGIBILITY_POLICY_EVIDENCE_ARCHIVED",
+                    )
+                )
+            ),
+        )
+        return bound, build_public_source_manifest(
+            result=bound,
+            request=request,
+            declared_fields=(*evidence.fields, *eligibility.fields),
+        )
 
     def _live_failure_result(
         self,
