@@ -15,6 +15,7 @@ from market_regime_alpha.data.providers.public_composite.contracts import (
 )
 from market_regime_alpha.data.source_manifest import (
     CriticalSourceFact,
+    SourceAuthorityKind,
     SourceFieldQualityStatus,
     SourceManifest,
     SourceManifestField,
@@ -35,6 +36,10 @@ _SYMBOL_REQUIRED = (
     CriticalSourceFact.HISTORY_WINDOW,
     CriticalSourceFact.UNIVERSE_MEMBERSHIP,
     CriticalSourceFact.ELIGIBILITY,
+)
+_V2_STATUS_FACTS = (
+    CriticalSourceFact.ST_STATUS,
+    CriticalSourceFact.LISTING_STATUS,
 )
 
 
@@ -227,6 +232,16 @@ def evaluate_daily_data_quality(
     if not symbols or len(symbols) != len(set(symbols)):
         raise ValueError("required_symbols must be non-empty and unique")
     findings: list[DataQualityFinding] = []
+    if "LIVE_ACQUISITION_FAILED" in manifest.limitations:
+        findings.append(
+            DataQualityFinding(
+                symbol=None,
+                field_id=None,
+                critical_fact=None,
+                reason_code="GLOBAL_PROVIDER_FAILURE",
+                blocking=True,
+            )
+        )
     for fact in _GLOBAL_REQUIRED:
         matches = [
             item
@@ -245,8 +260,14 @@ def evaluate_daily_data_quality(
             )
         else:
             findings.extend(_field_findings(manifest, matches[0]))
+            findings.extend(_authority_findings(manifest, matches[0]))
     for symbol in symbols:
-        for fact in _SYMBOL_REQUIRED:
+        symbol_required = (
+            (*_SYMBOL_REQUIRED, *_V2_STATUS_FACTS)
+            if manifest.schema_version == SourceManifest.SCHEMA_V2
+            else _SYMBOL_REQUIRED
+        )
+        for fact in symbol_required:
             matches = [
                 item
                 for item in manifest.fields
@@ -259,11 +280,15 @@ def evaluate_daily_data_quality(
                         field_id=None,
                         critical_fact=fact,
                         reason_code=f"{fact.value}_MISSING:{symbol}",
-                        blocking=True,
+                        blocking=_missing_symbol_fact_blocks(
+                            manifest,
+                            fact,
+                        ),
                     )
                 )
             else:
                 findings.extend(_field_findings(manifest, matches[0]))
+                findings.extend(_authority_findings(manifest, matches[0]))
     for item in manifest.fields:
         if item.critical_fact is None:
             findings.extend(_field_findings(manifest, item))
@@ -303,6 +328,7 @@ def _field_findings(
 ) -> list[DataQualityFinding]:
     findings: list[DataQualityFinding] = []
     suffix = f"{item.symbol or 'GLOBAL'}:{item.field_id}"
+    blocking = _field_failure_blocks(manifest, item)
     if item.available_time is None:
         exploratory_history = (
             item.critical_fact is CriticalSourceFact.HISTORY_WINDOW
@@ -316,8 +342,7 @@ def _field_findings(
                 field_id=item.field_id,
                 critical_fact=item.critical_fact,
                 reason_code=f"AVAILABLE_TIME_MISSING:{suffix}",
-                blocking=item.critical_fact is not None
-                and not exploratory_history,
+                blocking=blocking and not exploratory_history,
             )
         )
     elif item.available_time.as_utc() > manifest.decision_time.as_utc():
@@ -327,7 +352,7 @@ def _field_findings(
                 field_id=item.field_id,
                 critical_fact=item.critical_fact,
                 reason_code=f"AVAILABLE_AFTER_DECISION:{suffix}",
-                blocking=item.critical_fact is not None,
+                blocking=blocking,
             )
         )
     if (
@@ -341,7 +366,7 @@ def _field_findings(
                 field_id=item.field_id,
                 critical_fact=item.critical_fact,
                 reason_code=f"EVENT_AFTER_DECISION:{suffix}",
-                blocking=item.critical_fact is not None,
+                blocking=blocking,
             )
         )
     if item.quality_status is SourceFieldQualityStatus.INSUFFICIENT:
@@ -352,7 +377,7 @@ def _field_findings(
                 field_id=item.field_id,
                 critical_fact=item.critical_fact,
                 reason_code=f"INSUFFICIENT:{suffix}:{reason}",
-                blocking=item.critical_fact is not None,
+                blocking=blocking,
             )
             for reason in reasons
         )
@@ -369,3 +394,66 @@ def _field_findings(
             for reason in reasons
         )
     return findings
+
+
+def _missing_symbol_fact_blocks(
+    manifest: SourceManifest,
+    fact: CriticalSourceFact,
+) -> bool:
+    if manifest.schema_version == SourceManifest.SCHEMA_V1:
+        return True
+    return fact in {
+        CriticalSourceFact.UNIVERSE_MEMBERSHIP,
+        CriticalSourceFact.ELIGIBILITY,
+    }
+
+
+def _field_failure_blocks(
+    manifest: SourceManifest,
+    item: SourceManifestField,
+) -> bool:
+    if item.critical_fact is None:
+        return False
+    if item.symbol is None:
+        return True
+    if manifest.schema_version == SourceManifest.SCHEMA_V1:
+        return True
+    return item.critical_fact is CriticalSourceFact.UNIVERSE_MEMBERSHIP
+
+
+def _authority_findings(
+    manifest: SourceManifest,
+    item: SourceManifestField,
+) -> list[DataQualityFinding]:
+    if manifest.schema_version != SourceManifest.SCHEMA_V2:
+        return []
+    if item.critical_fact is None:
+        return []
+    expected = {
+        CriticalSourceFact.DECISION_TIME: SourceAuthorityKind.PROTOCOL,
+        CriticalSourceFact.UNIVERSE_MEMBERSHIP: (
+            SourceAuthorityKind.UNIVERSE_POLICY
+        ),
+        CriticalSourceFact.ELIGIBILITY: SourceAuthorityKind.ELIGIBILITY_POLICY,
+    }.get(item.critical_fact)
+    if expected is None:
+        return []
+    value_valid = True
+    if item.critical_fact is CriticalSourceFact.UNIVERSE_MEMBERSHIP:
+        value_valid = isinstance(item.value, bool)
+    elif item.critical_fact is CriticalSourceFact.ELIGIBILITY:
+        value_valid = item.value in {"ELIGIBLE", "INELIGIBLE", "UNKNOWN"}
+    elif item.critical_fact is CriticalSourceFact.DECISION_TIME:
+        value_valid = item.value == manifest.decision_time.isoformat()
+    if item.authority_kind is expected and value_valid:
+        return []
+    suffix = f"{item.symbol or 'GLOBAL'}:{item.field_id}"
+    return [
+        DataQualityFinding(
+            symbol=item.symbol,
+            field_id=item.field_id,
+            critical_fact=item.critical_fact,
+            reason_code=f"AUTHORITY_INVALID:{suffix}:{expected.value}",
+            blocking=True,
+        )
+    ]

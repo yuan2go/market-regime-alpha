@@ -14,21 +14,25 @@ from market_regime_alpha.candidates.contracts import (
     CandidatePopulation,
     build_candidate_population,
 )
-from market_regime_alpha.core.identity import ArtifactId, DatasetId
-from market_regime_alpha.core.time import AsOfTime
+from market_regime_alpha.core.identity import ArtifactId, DatasetId, ProviderId
+from market_regime_alpha.core.time import AsOfTime, AvailabilityTime, RetrievedAt
 from market_regime_alpha.data.contracts import (
     DataEligibility,
     DatasetContract,
     ProviderReference,
 )
 from market_regime_alpha.data.providers.public_composite import (
+    AcquiredSourcePayload,
     PublicCompositeProviderResult,
     TradingStatus,
 )
 from market_regime_alpha.data.source_manifest import (
     CriticalSourceFact,
+    SourceAuthorityKind,
+    SourceFieldFinality,
     SourceFieldQualityStatus,
     SourceManifest,
+    SourceManifestField,
 )
 from market_regime_alpha.universe.artifacts import (
     HistoricalUniverseMembershipRecord,
@@ -77,7 +81,9 @@ _A_SHARE_SYMBOL = re.compile(r"^\d{6}\.(SH|SZ)$")
 class DailyEligibilityReason(str, Enum):
     NOT_IN_FIXED_UNIVERSE = "NOT_IN_FIXED_UNIVERSE"
     SUSPENDED = "SUSPENDED"
+    TRADING_STATUS_UNKNOWN = "TRADING_STATUS_UNKNOWN"
     ST_STATUS_UNKNOWN = "ST_STATUS_UNKNOWN"
+    LISTING_STATUS_UNKNOWN = "LISTING_STATUS_UNKNOWN"
     INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
     INSUFFICIENT_LIQUIDITY = "INSUFFICIENT_LIQUIDITY"
     QUOTE_STALE = "QUOTE_STALE"
@@ -180,6 +186,111 @@ class DailyUniverseDecision:
     reasons: tuple[str, ...]
 
 
+DAILY_ELIGIBILITY_POLICY_AUTHORITY_ID = ProviderId(
+    "authority-daily-eligibility-policy"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DailyEligibilitySourceEvidence:
+    """Immutable policy decisions over explicit SourceManifest inputs."""
+
+    raw_payloads: tuple[AcquiredSourcePayload, ...]
+    fields: tuple[SourceManifestField, ...]
+
+
+def build_daily_eligibility_source_evidence(
+    *,
+    policy: DailyUniversePolicy,
+    source_manifest: SourceManifest,
+    provider_result: PublicCompositeProviderResult,
+    retrieved_time: RetrievedAt,
+) -> DailyEligibilitySourceEvidence:
+    """Materialize policy-owned eligibility without claiming Provider authority."""
+
+    decisions = _evaluate_daily_policy_inputs(
+        policy=policy,
+        source_manifest=source_manifest,
+        provider_result=provider_result,
+    )
+    payload = AcquiredSourcePayload(
+        provider_id=DAILY_ELIGIBILITY_POLICY_AUTHORITY_ID,
+        product="daily-eligibility-policy-evidence-v1",
+        locator=f"policy://eligibility/{policy.policy_version}",
+        raw_payload=json.dumps(
+            {
+                "schema_version": "daily-eligibility-policy-evidence-v1",
+                "policy_id": str(policy.policy_id),
+                "policy_hash": policy.content_hash,
+                "policy_version": policy.policy_version,
+                "source_manifest_id": str(source_manifest.source_manifest_id),
+                "source_manifest_hash": source_manifest.content_hash,
+                "decision_date": (
+                    provider_result.decision_time.value.date().isoformat()
+                ),
+                "decisions": [
+                    {
+                        "symbol": item.symbol,
+                        "member": item.member,
+                        "status": item.status.value,
+                        "reasons": list(item.reasons),
+                    }
+                    for item in decisions
+                ],
+                "data_eligibility": DataEligibility.EXPLORATORY.value,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8"),
+        retrieved_time=retrieved_time,
+        limitations=(
+            "ELIGIBILITY_POLICY_DECISION_NOT_PROVIDER_MARKET_DATA",
+            "PUBLIC_STATUS_METADATA_NOT_QUALIFIED",
+            "FORMAL_PIT_NOT_ESTABLISHED",
+        ),
+    )
+    fields = tuple(
+        SourceManifestField(
+            field_id="eligibility",
+            symbol=item.symbol,
+            critical_fact=CriticalSourceFact.ELIGIBILITY,
+            provider_id=payload.provider_id,
+            source_artifact_id=payload.source_artifact_id,
+            event_time=provider_result.decision_time.value,
+            available_time=AvailabilityTime(provider_result.decision_time.value),
+            retrieved_time=retrieved_time,
+            decision_time=provider_result.decision_time,
+            unit="POLICY_DECISION",
+            adjustment_basis="NONE",
+            finality=SourceFieldFinality.FINAL,
+            data_eligibility=DataEligibility.EXPLORATORY,
+            quality_status=(
+                SourceFieldQualityStatus.COMPLETE
+                if item.status is TradingEligibilityStatus.ELIGIBLE
+                else (
+                    SourceFieldQualityStatus.DEGRADED
+                    if item.status is TradingEligibilityStatus.INELIGIBLE
+                    else SourceFieldQualityStatus.INSUFFICIENT
+                )
+            ),
+            reason_codes=(
+                ()
+                if item.status is TradingEligibilityStatus.ELIGIBLE
+                else item.reasons or ("ELIGIBILITY_UNKNOWN",)
+            ),
+            schema_version=SourceManifestField.SCHEMA_V2,
+            authority_kind=SourceAuthorityKind.ELIGIBILITY_POLICY,
+            value=item.status.value,
+        )
+        for item in decisions
+    )
+    return DailyEligibilitySourceEvidence(
+        raw_payloads=(payload,),
+        fields=fields,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DailyUniverseReconciliation:
     policy: DailyUniversePolicy
@@ -209,98 +320,17 @@ def reconcile_daily_universe(
         {item.artifact_id for item in source_manifest.source_artifacts}
     ):
         raise ValueError("SourceManifest omits ProviderResult source evidence")
-    observed_symbols = {
-        *(item.symbol for item in provider_result.bars),
-        *(item.symbol for item in provider_result.quotes),
-    }
-    all_symbols = tuple(sorted(set(policy.symbols) | observed_symbols))
-    field_by_fact = {
-        (item.symbol, item.critical_fact): item
-        for item in source_manifest.fields
-        if item.symbol is not None and item.critical_fact is not None
-    }
-    quote_by_symbol = {item.symbol: item for item in provider_result.quotes}
-    bars_by_symbol = {
-        symbol: tuple(
-            sorted(
-                (
-                    item
-                    for item in provider_result.bars
-                    if item.symbol == symbol
-                ),
-                key=lambda item: item.event_time,
-            )
+    if source_manifest.schema_version == SourceManifest.SCHEMA_V2:
+        decisions = _decisions_from_policy_evidence(
+            policy=policy,
+            source_manifest=source_manifest,
+            provider_result=provider_result,
         )
-        for symbol in all_symbols
-    }
-    decisions: list[DailyUniverseDecision] = []
-    for symbol in all_symbols:
-        member = symbol in policy.symbols
-        reasons: list[str] = []
-        if _A_SHARE_SYMBOL.fullmatch(symbol) is None:
-            reasons.append(DailyEligibilityReason.MAPPING_UNKNOWN.value)
-        if not member:
-            reasons.append(DailyEligibilityReason.NOT_IN_FIXED_UNIVERSE.value)
-        if member:
-            quote = quote_by_symbol.get(symbol)
-            price_field = field_by_fact.get((symbol, CriticalSourceFact.PRICE))
-            trading_field = field_by_fact.get(
-                (symbol, CriticalSourceFact.TRADING_STATUS)
-            )
-            history_field = field_by_fact.get(
-                (symbol, CriticalSourceFact.HISTORY_WINDOW)
-            )
-            eligibility_field = field_by_fact.get(
-                (symbol, CriticalSourceFact.ELIGIBILITY)
-            )
-            if (
-                quote is None
-                or quote.price is None
-                or price_field is None
-                or price_field.quality_status
-                is SourceFieldQualityStatus.INSUFFICIENT
-            ):
-                reasons.append(DailyEligibilityReason.PRICE_UNAVAILABLE.value)
-            elif "QUOTE_STALE" in price_field.reason_codes:
-                reasons.append(DailyEligibilityReason.QUOTE_STALE.value)
-            if quote is not None and quote.trading_status is TradingStatus.SUSPENDED:
-                reasons.append(DailyEligibilityReason.SUSPENDED.value)
-            if (
-                trading_field is None
-                or trading_field.quality_status
-                is SourceFieldQualityStatus.INSUFFICIENT
-                or eligibility_field is None
-                or eligibility_field.quality_status
-                is SourceFieldQualityStatus.INSUFFICIENT
-            ):
-                reasons.append(DailyEligibilityReason.ST_STATUS_UNKNOWN.value)
-            if (
-                history_field is None
-                or history_field.quality_status
-                is SourceFieldQualityStatus.INSUFFICIENT
-            ):
-                reasons.append(DailyEligibilityReason.INSUFFICIENT_HISTORY.value)
-            daily_amounts = _daily_amounts(bars_by_symbol[symbol])
-            if (
-                len(daily_amounts) >= policy.minimum_history_sessions
-                and median(daily_amounts[-20:])
-                < policy.minimum_median_daily_amount
-            ):
-                reasons.append(
-                    DailyEligibilityReason.INSUFFICIENT_LIQUIDITY.value
-                )
-        unique_reasons = tuple(dict.fromkeys(reasons))
-        decisions.append(
-            DailyUniverseDecision(
-                symbol=symbol,
-                member=member,
-                status=(
-                    TradingEligibilityStatus.ELIGIBLE
-                    if not unique_reasons
-                    else TradingEligibilityStatus.INELIGIBLE
-                ),
-                reasons=unique_reasons,
-            )
+    else:
+        decisions = _evaluate_daily_policy_inputs(
+            policy=policy,
+            source_manifest=source_manifest,
+            provider_result=provider_result,
         )
     source_dataset_id = _source_dataset_id(source_manifest, policy)
     universe_artifact = build_historical_pit_universe_artifact(
@@ -379,6 +409,252 @@ def reconcile_daily_universe(
         population=population,
         decisions=tuple(decisions),
     )
+
+
+def _evaluate_daily_policy_inputs(
+    *,
+    policy: DailyUniversePolicy,
+    source_manifest: SourceManifest,
+    provider_result: PublicCompositeProviderResult,
+) -> tuple[DailyUniverseDecision, ...]:
+    """Evaluate explicit Provider/policy inputs before policy evidence is frozen."""
+
+    observed_symbols = {
+        *(item.symbol for item in provider_result.bars),
+        *(item.symbol for item in provider_result.quotes),
+    }
+    all_symbols = tuple(sorted(set(policy.symbols) | observed_symbols))
+    field_by_fact = {
+        (item.symbol, item.critical_fact): item
+        for item in source_manifest.fields
+        if item.symbol is not None and item.critical_fact is not None
+    }
+    quote_by_symbol = {item.symbol: item for item in provider_result.quotes}
+    bars_by_symbol = {
+        symbol: tuple(
+            sorted(
+                (
+                    item
+                    for item in provider_result.bars
+                    if item.symbol == symbol
+                ),
+                key=lambda item: item.event_time,
+            )
+        )
+        for symbol in all_symbols
+    }
+    decisions: list[DailyUniverseDecision] = []
+    for symbol in all_symbols:
+        member = symbol in policy.symbols
+        reasons: list[str] = []
+        if _A_SHARE_SYMBOL.fullmatch(symbol) is None:
+            reasons.append(DailyEligibilityReason.MAPPING_UNKNOWN.value)
+        if not member:
+            reasons.append(DailyEligibilityReason.NOT_IN_FIXED_UNIVERSE.value)
+        if member:
+            quote = quote_by_symbol.get(symbol)
+            price_field = field_by_fact.get((symbol, CriticalSourceFact.PRICE))
+            trading_field = field_by_fact.get(
+                (symbol, CriticalSourceFact.TRADING_STATUS)
+            )
+            history_field = field_by_fact.get(
+                (symbol, CriticalSourceFact.HISTORY_WINDOW)
+            )
+            if (
+                quote is None
+                or quote.price is None
+                or price_field is None
+                or price_field.quality_status
+                is SourceFieldQualityStatus.INSUFFICIENT
+                or not _fact_available_at_decision(
+                    price_field,
+                    source_manifest,
+                )
+            ):
+                reasons.append(DailyEligibilityReason.PRICE_UNAVAILABLE.value)
+            elif "QUOTE_STALE" in price_field.reason_codes:
+                reasons.append(DailyEligibilityReason.QUOTE_STALE.value)
+            if (
+                (
+                    source_manifest.schema_version
+                    == SourceManifest.SCHEMA_V2
+                    and trading_field is not None
+                    and trading_field.value == TradingStatus.SUSPENDED.value
+                )
+                or (
+                    source_manifest.schema_version
+                    == SourceManifest.SCHEMA_V1
+                    and quote is not None
+                    and quote.trading_status is TradingStatus.SUSPENDED
+                )
+            ):
+                reasons.append(DailyEligibilityReason.SUSPENDED.value)
+            if (
+                trading_field is None
+                or trading_field.quality_status
+                is SourceFieldQualityStatus.INSUFFICIENT
+                or not _fact_available_at_decision(
+                    trading_field,
+                    source_manifest,
+                )
+                or (
+                    source_manifest.schema_version
+                    == SourceManifest.SCHEMA_V2
+                    and trading_field.value
+                    not in {
+                        TradingStatus.TRADING.value,
+                        TradingStatus.SUSPENDED.value,
+                    }
+                )
+            ):
+                reasons.append(
+                    (
+                        DailyEligibilityReason.TRADING_STATUS_UNKNOWN.value
+                        if source_manifest.schema_version
+                        == SourceManifest.SCHEMA_V2
+                        else DailyEligibilityReason.ST_STATUS_UNKNOWN.value
+                    )
+                )
+            if source_manifest.schema_version == SourceManifest.SCHEMA_V2:
+                st_field = field_by_fact.get(
+                    (symbol, CriticalSourceFact.ST_STATUS)
+                )
+                listing_field = field_by_fact.get(
+                    (symbol, CriticalSourceFact.LISTING_STATUS)
+                )
+                if (
+                    st_field is None
+                    or st_field.quality_status
+                    is SourceFieldQualityStatus.INSUFFICIENT
+                    or not _fact_available_at_decision(
+                        st_field,
+                        source_manifest,
+                    )
+                    or st_field.value != "NOT_ST"
+                ):
+                    reasons.append(DailyEligibilityReason.ST_STATUS_UNKNOWN.value)
+                if (
+                    listing_field is None
+                    or listing_field.quality_status
+                    is SourceFieldQualityStatus.INSUFFICIENT
+                    or not _fact_available_at_decision(
+                        listing_field,
+                        source_manifest,
+                    )
+                    or listing_field.value != "LISTED"
+                ):
+                    reasons.append(
+                        DailyEligibilityReason.LISTING_STATUS_UNKNOWN.value
+                    )
+            if (
+                history_field is None
+                or history_field.quality_status
+                is SourceFieldQualityStatus.INSUFFICIENT
+                or (
+                    history_field.event_time is not None
+                    and history_field.event_time
+                    > source_manifest.decision_time.value
+                )
+            ):
+                reasons.append(DailyEligibilityReason.INSUFFICIENT_HISTORY.value)
+            daily_amounts = _daily_amounts(bars_by_symbol[symbol])
+            if (
+                len(daily_amounts) >= policy.minimum_history_sessions
+                and median(daily_amounts[-20:])
+                < policy.minimum_median_daily_amount
+            ):
+                reasons.append(
+                    DailyEligibilityReason.INSUFFICIENT_LIQUIDITY.value
+                )
+        unique_reasons = tuple(dict.fromkeys(reasons))
+        decisions.append(
+            DailyUniverseDecision(
+                symbol=symbol,
+                member=member,
+                status=(
+                    TradingEligibilityStatus.ELIGIBLE
+                    if not unique_reasons
+                    else TradingEligibilityStatus.INELIGIBLE
+                ),
+                reasons=unique_reasons,
+            )
+        )
+    return tuple(decisions)
+
+
+def _fact_available_at_decision(
+    field: SourceManifestField,
+    source_manifest: SourceManifest,
+) -> bool:
+    return (
+        field.available_time is not None
+        and field.available_time.as_utc()
+        <= source_manifest.decision_time.as_utc()
+        and (
+            field.event_time is None
+            or field.event_time <= source_manifest.decision_time.value
+        )
+    )
+
+
+def _decisions_from_policy_evidence(
+    *,
+    policy: DailyUniversePolicy,
+    source_manifest: SourceManifest,
+    provider_result: PublicCompositeProviderResult,
+) -> tuple[DailyUniverseDecision, ...]:
+    observed_symbols = {
+        *(item.symbol for item in provider_result.bars),
+        *(item.symbol for item in provider_result.quotes),
+    }
+    all_symbols = tuple(sorted(set(policy.symbols) | observed_symbols))
+    field_by_fact = {
+        (item.symbol, item.critical_fact): item
+        for item in source_manifest.fields
+        if item.symbol is not None and item.critical_fact is not None
+    }
+    decisions: list[DailyUniverseDecision] = []
+    for symbol in all_symbols:
+        membership = field_by_fact.get(
+            (symbol, CriticalSourceFact.UNIVERSE_MEMBERSHIP)
+        )
+        eligibility = field_by_fact.get(
+            (symbol, CriticalSourceFact.ELIGIBILITY)
+        )
+        member = bool(
+            membership is not None
+            and membership.authority_kind
+            is SourceAuthorityKind.UNIVERSE_POLICY
+            and membership.value is True
+        )
+        reasons: list[str] = []
+        if _A_SHARE_SYMBOL.fullmatch(symbol) is None:
+            reasons.append(DailyEligibilityReason.MAPPING_UNKNOWN.value)
+        if not member:
+            reasons.append(DailyEligibilityReason.NOT_IN_FIXED_UNIVERSE.value)
+        if (
+            eligibility is None
+            or eligibility.authority_kind
+            is not SourceAuthorityKind.ELIGIBILITY_POLICY
+            or eligibility.value
+            not in {item.value for item in TradingEligibilityStatus}
+        ):
+            status = TradingEligibilityStatus.UNKNOWN
+            reasons.append("ELIGIBILITY_POLICY_EVIDENCE_INVALID")
+        else:
+            status = TradingEligibilityStatus(str(eligibility.value))
+            reasons.extend(eligibility.reason_codes)
+        if not member:
+            status = TradingEligibilityStatus.INELIGIBLE
+        decisions.append(
+            DailyUniverseDecision(
+                symbol=symbol,
+                member=member,
+                status=status,
+                reasons=tuple(dict.fromkeys(reasons)),
+            )
+        )
+    return tuple(decisions)
 
 
 def _daily_amounts(bars: tuple[Any, ...]) -> list[float]:

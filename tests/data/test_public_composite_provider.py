@@ -244,6 +244,90 @@ def test_live_source_manifest_stays_blocked_when_membership_is_unproven() -> Non
     )
 
 
+def test_unknown_trading_status_is_explicit() -> None:
+    current = _current_batch()
+    unknown_current = replace(
+        current,
+        quotes=tuple(
+            replace(item, trading_status=TradingStatus.UNKNOWN)
+            for item in current.quotes
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(unknown_current),
+    ).acquire(_request())
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RETRIEVED,
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = replace(
+        result,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+    )
+
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=evidence.fields,
+    )
+    trading = next(
+        field
+        for field in manifest.fields
+        if field.critical_fact is CriticalSourceFact.TRADING_STATUS
+    )
+
+    assert trading.value == "UNKNOWN"
+    assert trading.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert trading.reason_codes == ("TRADING_STATUS_UNKNOWN",)
+    assert trading.authority_kind is SourceAuthorityKind.PROVIDER
+
+
+def test_missing_membership_policy_blocks_run() -> None:
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        current_client=_Client(_current_batch()),
+    ).acquire(_request())
+    evidence = build_daily_control_source_evidence(
+        request=_request(),
+        retrieved_time=RETRIEVED,
+        policy_id=ArtifactId("universe-policy-smoke-v1"),
+        policy_hash="sha256:" + "a" * 64,
+        policy_version="a-share-smoke-pool@v1",
+        instrument_scope="A_SHARE_STOCK",
+        symbols=("000001.SZ",),
+    )
+    result = replace(
+        result,
+        raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
+    )
+    protocol_only = tuple(
+        field
+        for field in evidence.fields
+        if field.critical_fact is CriticalSourceFact.DECISION_TIME
+    )
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=protocol_only,
+    )
+
+    report = evaluate_daily_data_quality(
+        manifest=manifest,
+        required_symbols=("000001.SZ",),
+    )
+
+    assert report.status is DailyDataQualityStatus.DATA_BLOCKED
+    assert "UNIVERSE_MEMBERSHIP_MISSING:000001.SZ" in (
+        report.blocked_reason_codes
+    )
+
+
 def test_decision_time_is_protocol_fact() -> None:
     result = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),

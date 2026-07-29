@@ -112,6 +112,7 @@ from market_regime_alpha.platform.prediction_reader import (
 from market_regime_alpha.platform.prediction_run import PredictionRun
 from market_regime_alpha.universe.daily_exploratory import (
     DailyUniversePolicy,
+    build_daily_eligibility_source_evidence,
     reconcile_daily_universe,
     smoke_pool_policy_v1,
 )
@@ -638,7 +639,7 @@ class DailyLoopRunner:
             instrument_scope=self._policy.instrument_scope,
             symbols=self._policy.symbols,
         )
-        bound = PublicCompositeProviderResult(
+        control_bound = PublicCompositeProviderResult(
             profile_id=result.profile_id,
             decision_time=result.decision_time,
             raw_payloads=(*result.raw_payloads, *evidence.raw_payloads),
@@ -654,10 +655,40 @@ class DailyLoopRunner:
                 )
             ),
         )
+        control_manifest = build_public_source_manifest(
+            result=control_bound,
+            request=request,
+            declared_fields=evidence.fields,
+        )
+        eligibility = build_daily_eligibility_source_evidence(
+            policy=self._policy,
+            source_manifest=control_manifest,
+            provider_result=control_bound,
+            retrieved_time=RetrievedAt(run_created_at),
+        )
+        bound = PublicCompositeProviderResult(
+            profile_id=control_bound.profile_id,
+            decision_time=control_bound.decision_time,
+            raw_payloads=(
+                *control_bound.raw_payloads,
+                *eligibility.raw_payloads,
+            ),
+            bars=control_bound.bars,
+            quotes=control_bound.quotes,
+            source_conflicts=control_bound.source_conflicts,
+            limitations=tuple(
+                dict.fromkeys(
+                    (
+                        *control_bound.limitations,
+                        "ELIGIBILITY_POLICY_EVIDENCE_ARCHIVED",
+                    )
+                )
+            ),
+        )
         return bound, build_public_source_manifest(
             result=bound,
             request=request,
-            declared_fields=evidence.fields,
+            declared_fields=(*evidence.fields, *eligibility.fields),
         )
 
     def _live_failure_result(

@@ -40,7 +40,11 @@ from market_regime_alpha.data.source_manifest import (
 )
 from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError
-from tests.application.daily_loop.public_fixture import DECISION, public_fixture
+from tests.application.daily_loop.public_fixture import (
+    DECISION,
+    public_fixture,
+    public_v2_fixture,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -344,7 +348,7 @@ def test_missing_price_is_a_verified_data_blocked_terminal(
     )
 
 
-def test_unavailable_live_provider_publishes_blocked_evidence_without_fallback(
+def test_global_provider_failure_blocks_run(
     tmp_path: Path,
 ) -> None:
     policy = smoke_pool_policy_v1()
@@ -371,6 +375,7 @@ def test_unavailable_live_provider_publishes_blocked_evidence_without_fallback(
         "PUBLIC_DATA_EXPLORATORY_ONLY",
         "NO_LOCAL_ARCHIVE_FALLBACK",
         "PROTOCOL_AND_POLICY_EVIDENCE_ARCHIVED",
+        "ELIGIBILITY_POLICY_EVIDENCE_ARCHIVED",
     )
     assert result.decision_artifact.bundle.prediction_runs == ()
 
@@ -434,6 +439,7 @@ def test_live_current_failure_archives_successful_history_payload(
         ProviderId("provider-public-composite-live-runtime"),
         ProviderId("provider-daily-run-protocol"),
         ProviderId("authority-daily-universe-policy"),
+        ProviderId("authority-daily-eligibility-policy"),
     )
     assert acquired.provider_result.raw_payloads[0] == history_payload
     assert "NO_LOCAL_ARCHIVE_FALLBACK" in (
@@ -688,6 +694,31 @@ def test_insufficient_candidate_pool_blocks_with_full_accounting(
     assert blocked.decision_artifact.bundle.data_quality_report.blocked_reason_codes[
         -1
     ] == "CANDIDATE_POPULATION_INSUFFICIENT"
+
+
+def test_partial_symbol_failure_preserves_remaining_population(
+    tmp_path: Path,
+) -> None:
+    policy = smoke_pool_policy_v1()
+    excluded = policy.symbols[0]
+    _, result, manifest = public_v2_fixture(
+        policy=policy,
+        unknown_trading_symbol=excluded,
+    )
+
+    completed = _run_fixture(
+        tmp_path=tmp_path,
+        provider_result=result,
+        source_manifest=manifest,
+    )
+
+    assert completed.record.status is DailyRunStatus.OUTCOME_PENDING
+    assert all(
+        run.population_size == 19
+        and len(run.predictions) == 19
+        and excluded not in {item.symbol for item in run.predictions}
+        for run in completed.decision_artifact.bundle.prediction_runs
+    )
 
 
 def test_feature_window_missing_blocks_without_partial_predictions(

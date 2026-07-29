@@ -16,10 +16,12 @@ from market_regime_alpha.data.contracts import (
     SourceArtifactReference,
 )
 from market_regime_alpha.data.providers.public_composite.contracts import (
+    BAOSTOCK_PUBLIC_PROVIDER_ID,
     AcquiredSourcePayload,
     HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     PublicCompositeProviderResult,
     PublicCompositeRequest,
+    TENCENT_PUBLIC_PROVIDER_ID,
     TradingStatus,
 )
 from market_regime_alpha.data.source_manifest import (
@@ -34,6 +36,9 @@ from market_regime_alpha.data.source_manifest import (
 DAILY_RUN_PROTOCOL_AUTHORITY_ID = ProviderId("provider-daily-run-protocol")
 DAILY_UNIVERSE_POLICY_AUTHORITY_ID = ProviderId(
     "authority-daily-universe-policy"
+)
+DAILY_ELIGIBILITY_POLICY_AUTHORITY_ID = ProviderId(
+    "authority-daily-eligibility-policy"
 )
 
 
@@ -170,7 +175,31 @@ def build_public_source_manifest(
     )
     if not references:
         raise ValueError("ProviderResult has no source artifacts")
-    default_reference = provider_references[-1]
+    provider_payloads = tuple(
+        item
+        for item in result.raw_payloads
+        if item.provider_id
+        not in {
+            DAILY_RUN_PROTOCOL_AUTHORITY_ID,
+            DAILY_UNIVERSE_POLICY_AUTHORITY_ID,
+            DAILY_ELIGIBILITY_POLICY_AUTHORITY_ID,
+        }
+    )
+    if not provider_payloads:
+        raise ValueError("SourceManifest has no Provider-owned source Artifact")
+    default_payload = next(
+        (
+            item
+            for provider_id in (
+                TENCENT_PUBLIC_PROVIDER_ID,
+                BAOSTOCK_PUBLIC_PROVIDER_ID,
+            )
+            for item in reversed(provider_payloads)
+            if item.provider_id == provider_id
+        ),
+        provider_payloads[-1],
+    )
+    default_reference = default_payload.reference
     use_v2 = any(
         item.schema_version == SourceManifestField.SCHEMA_V2
         for item in declared_fields
@@ -217,6 +246,9 @@ def build_public_source_manifest(
     }
     payload_by_id = {
         item.source_artifact_id: item for item in result.raw_payloads
+    }
+    declared_keys = {
+        (item.symbol, item.critical_fact) for item in declared_fields
     }
     for symbol in request.symbols:
         quote = quote_by_symbol.get(symbol)
@@ -314,6 +346,47 @@ def build_public_source_manifest(
                 ),
             )
         )
+        if use_v2:
+            for fact, field_id, reason_code in (
+                (
+                    CriticalSourceFact.ST_STATUS,
+                    "st_status",
+                    "ST_STATUS_UNKNOWN",
+                ),
+                (
+                    CriticalSourceFact.LISTING_STATUS,
+                    "listing_status",
+                    "LISTING_STATUS_UNKNOWN",
+                ),
+            ):
+                if (symbol, fact) in declared_keys:
+                    continue
+                fields.append(
+                    SourceManifestField(
+                        field_id=field_id,
+                        symbol=symbol,
+                        critical_fact=fact,
+                        provider_id=quote_source.provider_id,
+                        source_artifact_id=quote_source.artifact_id,
+                        event_time=(
+                            quote.event_time if quote is not None else None
+                        ),
+                        available_time=(
+                            quote.available_time if quote is not None else None
+                        ),
+                        retrieved_time=quote_source.retrieved_at,
+                        decision_time=request.decision_time,
+                        unit="STATUS",
+                        adjustment_basis="NONE",
+                        finality=SourceFieldFinality.UNKNOWN,
+                        data_eligibility=DataEligibility.EXPLORATORY,
+                        quality_status=SourceFieldQualityStatus.INSUFFICIENT,
+                        reason_codes=(reason_code,),
+                        schema_version=SourceManifestField.SCHEMA_V2,
+                        authority_kind=SourceAuthorityKind.PROVIDER,
+                        value="UNKNOWN",
+                    )
+                )
         symbol_bars = bars_by_symbol[symbol]
         history_source = (
             payload_by_id[symbol_bars[-1].source_artifact_id].reference
