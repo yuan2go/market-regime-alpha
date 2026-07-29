@@ -7,11 +7,20 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../roadmap/Phase-D-Work-Packages.md, ../specs/README.md, ../status/Gap-Register.md  
-> **Code Evidence:** DESIGNED_ONLY except reused V2 data/candidate/entry-path infrastructure
+> **Code Evidence:** Exploratory Phase D daily runtime implemented under `application/daily_loop/**` and `daily_decision/**`; broader production/position/portfolio contracts remain designed; `daily_research/**` is a frozen historical V1 compatibility layer
 
 ## Objective
 
 Phase D turns the existing research spine into an immutable daily research and manual-decision loop. It does not grant automatic trading authority.
+
+The exploratory implementation covers the recoverable daily loop, B0/B1
+PredictionRuns, CandidateRecommendation projection, non-`ENTER` Entry plumbing,
+MR1 outcome settlement and Daily Review. It does not establish formal data,
+Alpha, position, portfolio or trading authority.
+
+The implemented historical `daily_research` V1 contracts share several names
+with this architecture but have different fields and semantics. They remain a
+frozen compatibility layer and do not establish the Phase D runtime.
 
 ## Daily products
 

@@ -28,18 +28,16 @@ The next canonical implementation package is:
 WP-D0 — Platform Governance Kernel Hardening
 ```
 
-Do not skip ahead to DailyResearchSnapshot, Entry, Holding, Exit, Portfolio, Codex Feedback, QuantDesk or broker execution until WP-D0 acceptance evidence is complete.
+The historical `daily_research` V1 schema, JSON, Reader semantics and Artifact identities are frozen.
+The exploratory Phase D loop, Source Manifest/quality gates, B0/B1 PredictionRuns, daily decision
+Artifacts and review flow are already implemented; do not reimplement them inside WP-D0.
 
-WP-D0 must:
+WP-D0 must finish the remaining durable authority boundary:
 
-- close direct Model Registry lifecycle-bypass paths;
-- separate input `DataEligibility` from model `EvidenceLevel`;
-- define persistence/recovery protocols for Registry and Experiment Governance;
-- include the Platform package in mypy coverage;
-- preserve B0/B1 behavior through adapters and characterization tests;
-- resolve the transparent-composite model currently misnamed as B2 through explicit migration;
-- bind Multi-model Candidate runs to registered Model, Target, Evaluation and Frozen Experiment identities;
-- produce an immutable, content-addressed PredictionRun.
+- durable Model Registry persistence and recovery;
+- durable Experiment Governance access authority and idempotency;
+- explicit process-restart and concurrency behavior;
+- compatibility with the existing Runtime Journal, PredictionRuns and frozen model identities.
 
 WP-D0 must not change factors, weights, Target definitions, Universe semantics or Alpha conclusions.
 

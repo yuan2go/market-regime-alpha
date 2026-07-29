@@ -11,6 +11,20 @@
 
 ## Ordered packages
 
+The bounded P0 prerequisite sequence reached WP-D0 before the exploratory
+Phase D delivery:
+
+```text
+Post-Consolidation Documentation Reconciliation
+→ Daily Research Contract Convergence
+→ WP-D0
+```
+
+The historical `daily_research` V1 implementation now remains a frozen,
+non-canonical compatibility layer behind a Versioned Reader boundary. WP-D0
+continues with the durable governance remainder; delivered WP-D1–D3
+exploratory mechanics are not reopened by that work.
+
 1. [WP-D0 — Platform Governance Kernel](WP-D0-Platform-Governance-Kernel.md)
 2. [WP-D1 — Daily Source Manifest and Data Quality Gates](WP-D1-Source-Manifest-and-Quality-Gates.md)
 3. [WP-D2 — Daily Stock/ETF Universe and Eligibility](WP-D2-Daily-Universe-and-Eligibility.md)
