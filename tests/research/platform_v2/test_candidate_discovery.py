@@ -48,6 +48,7 @@ from market_regime_alpha.research.platform_v2.inputs import (
 from market_regime_alpha.research.theme_rotation.model import (
     evaluate_theme_rotation_v0,
 )
+from market_regime_alpha.universe.contracts import TradingEligibilityStatus
 
 from .test_capital_evolution import _symbol
 from .test_theme_rotation import _theme
@@ -286,3 +287,81 @@ def test_candidate_population_below_minimum_selects_nothing(
     )
     assert not candidates.selected
     assert "CANDIDATE_POPULATION_INSUFFICIENT" in candidates.reason_codes
+
+
+def test_unqualified_theme_cannot_be_bypassed_by_b0_b1(
+    research_input_bundle: ResearchInputBundle,
+) -> None:
+    inputs = _qualified(research_input_bundle)
+    inputs = replace(
+        inputs,
+        theme_observations=(_theme("theme-a", -0.10),),
+    )
+
+    _, _, _, candidates = _run(inputs)
+
+    assert not candidates.selected
+    assert all(
+        "THEME_ROTATION_NOT_QUALIFIED" in item.reason_codes
+        for item in candidates.records
+    )
+
+
+def test_missing_theme_membership_has_explicit_reconciliation(
+    research_input_bundle: ResearchInputBundle,
+) -> None:
+    inputs = _qualified(research_input_bundle)
+    missing_symbol = inputs.universe_snapshot.member_symbols[0]
+    inputs = replace(
+        inputs,
+        theme_memberships=tuple(
+            item
+            for item in inputs.theme_memberships
+            if item.symbol != missing_symbol
+        ),
+    )
+
+    _, _, _, candidates = _run(inputs)
+
+    record = next(
+        item for item in candidates.records if item.symbol == missing_symbol
+    )
+    assert (
+        record.selection_status
+        is CandidateSelectionStatus.DATA_INSUFFICIENT
+    )
+    assert record.reason_codes == ("THEME_MEMBERSHIP_MISSING",)
+    assert len(candidates.records) == len(
+        inputs.universe_snapshot.member_symbols
+    )
+
+
+def test_ineligible_symbol_is_rejected_without_silent_drop(
+    research_input_bundle: ResearchInputBundle,
+) -> None:
+    inputs = _qualified(research_input_bundle)
+    first = inputs.eligibility_snapshot.records[0]
+    eligibility = replace(
+        inputs.eligibility_snapshot,
+        records=(
+            replace(
+                first,
+                status=TradingEligibilityStatus.INELIGIBLE,
+                reasons=("POLICY_INELIGIBLE",),
+            ),
+            *inputs.eligibility_snapshot.records[1:],
+        ),
+    )
+
+    _, _, _, candidates = _run(
+        replace(inputs, eligibility_snapshot=eligibility)
+    )
+
+    record = next(
+        item for item in candidates.records if item.symbol == first.symbol
+    )
+    assert record.selection_status is CandidateSelectionStatus.REJECTED
+    assert record.reason_codes == ("ELIGIBILITY_INELIGIBLE",)
+    assert len(candidates.records) == len(
+        inputs.universe_snapshot.member_symbols
+    )
