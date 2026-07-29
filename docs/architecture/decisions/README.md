@@ -11,3 +11,4 @@
 
 - [ADR-001 — Run-First Phase D Daily Platform Boundaries](ADR-001-Run-First-Phase-D-Daily-Platform-Boundaries.md)
 - [ADR-002 — Decision-Time Security Status Evidence](ADR-002-Decision-Time-Security-Status-Evidence.md)
+- [ADR-003 — Platform V2 Research Artifact Boundary](ADR-003-Platform-V2-Research-Artifact-Boundary.md)
