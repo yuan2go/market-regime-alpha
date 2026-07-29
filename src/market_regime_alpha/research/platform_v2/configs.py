@@ -131,6 +131,7 @@ class ThemeRotationModelConfig(_IdentifiedConfig):
     persistence_weight: float = 0.10
     return_scale: float = 0.05
     amount_scale: float = 0.50
+    participation_scale: float = 0.20
     leading_threshold: float = 0.60
     strengthening_threshold: float = 0.30
     starting_threshold: float = 0.05
@@ -164,7 +165,11 @@ class ThemeRotationModelConfig(_IdentifiedConfig):
             < self.leading_threshold
         ):
             raise ValueError("Theme Rotation thresholds must be ordered")
-        if self.return_scale <= 0.0 or self.amount_scale <= 0.0:
+        if (
+            self.return_scale <= 0.0
+            or self.amount_scale <= 0.0
+            or self.participation_scale <= 0.0
+        ):
             raise ValueError("Theme Rotation scales must be positive")
         self._bind_identity()
 
@@ -194,6 +199,17 @@ class CapitalEvolutionModelConfig(_IdentifiedConfig):
     rank_persistence_weight: float = 0.05
     amount_persistence_weight: float = 0.05
     diffusion_weight: float = 0.10
+    symbol_relative_strength_weight: float = 0.20
+    symbol_amount_expansion_weight: float = 0.25
+    symbol_participation_weight: float = 0.15
+    symbol_leader_correlation_weight: float = 0.10
+    symbol_leader_lag_weight: float = 0.05
+    symbol_rank_persistence_weight: float = 0.10
+    symbol_amount_persistence_weight: float = 0.15
+    return_scale: float = 0.05
+    amount_scale: float = 0.50
+    participation_scale: float = 0.20
+    leader_lag_scale: float = 5.0
     accumulation_threshold: float = 0.10
     ignition_threshold: float = 0.30
     diffusion_threshold: float = 0.50
@@ -223,6 +239,17 @@ class CapitalEvolutionModelConfig(_IdentifiedConfig):
                 self.diffusion_weight,
             )
         )
+        _require_unit_weights(
+            (
+                self.symbol_relative_strength_weight,
+                self.symbol_amount_expansion_weight,
+                self.symbol_participation_weight,
+                self.symbol_leader_correlation_weight,
+                self.symbol_leader_lag_weight,
+                self.symbol_rank_persistence_weight,
+                self.symbol_amount_persistence_weight,
+            )
+        )
         if not (
             self.collapse_threshold
             < self.exhaustion_threshold
@@ -232,6 +259,16 @@ class CapitalEvolutionModelConfig(_IdentifiedConfig):
             < self.acceleration_threshold
         ):
             raise ValueError("Capital Evolution thresholds must be ordered")
+        if any(
+            value <= 0.0
+            for value in (
+                self.return_scale,
+                self.amount_scale,
+                self.participation_scale,
+                self.leader_lag_scale,
+            )
+        ):
+            raise ValueError("Capital Evolution scales must be positive")
         self._bind_identity()
 
     def semantic_payload(self) -> dict[str, Any]:
