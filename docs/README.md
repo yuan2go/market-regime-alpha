@@ -89,8 +89,10 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Specification Index](specs/README.md)
 - [Contract Conventions](specs/Contract-Conventions.md)
 - [Error Catalog](specs/Error-Catalog.md)
+- [Architecture Decision Records](architecture/decisions/README.md)
 - [Phase D Work Package Index](roadmap/Phase-D-Work-Packages.md)
 - [Detailed Work Packages](roadmap/work-packages/README.md)
+- [Run-First Exploratory Daily Platform Implementation Plan](superpowers/plans/2026-07-28-run-first-exploratory-daily-platform.md)
 
 ### Current status
 
@@ -101,6 +103,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 ### Audit and archive
 
+- [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
+- [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
 - [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
 - [Branch Reconciliation Audit](audit/Branch-Reconciliation-2026-07-26.md)
