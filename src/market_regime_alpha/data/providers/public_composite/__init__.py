@@ -43,6 +43,7 @@ from .replay_archive import (
 )
 from .stage_artifact import (
     PublicSourceAcquisitionStage,
+    PublicSourceStageScope,
     VerifiedPublicSourceStageArtifact,
     find_verified_public_source_stage_artifact,
     load_verified_public_source_stage_artifact,
@@ -82,6 +83,7 @@ __all__ = [
     "publish_source_replay_archive",
     "source_archive_id",
     "PublicSourceAcquisitionStage",
+    "PublicSourceStageScope",
     "VerifiedPublicSourceStageArtifact",
     "find_verified_public_source_stage_artifact",
     "load_verified_public_source_stage_artifact",
