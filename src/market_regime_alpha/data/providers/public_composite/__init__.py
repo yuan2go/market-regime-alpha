@@ -12,18 +12,29 @@ from .contracts import (
     PublicCompositeProviderResult,
     PublicCompositeRequest,
     PublicQuote,
+    PublicSecurityStatusObservation,
+    STStatus,
+    ListingStatus,
+    SecurityStatusEvidenceScope,
+    SecurityStatusFactType,
     TradingStatus,
 )
-from .live_clients import BaoStockHistoryClient, TencentCurrentQuoteClient
+from .live_clients import (
+    BaoStockHistoryClient,
+    BaoStockSecurityStatusClient,
+    TencentCurrentQuoteClient,
+)
 from .manifest_builder import (
     DailyControlSourceEvidence,
     build_daily_control_source_evidence,
     build_public_source_manifest,
+    build_security_status_source_evidence,
 )
 from .profiles import (
     PublicCompositeAcquisitionError,
     PublicCompositeLiveProfile,
     PublicCompositeReplayProfile,
+    compose_public_composite_live,
 )
 from .replay_archive import (
     AcquiredReplaySource,
@@ -34,6 +45,7 @@ from .replay_archive import (
 )
 from .stage_artifact import (
     PublicSourceAcquisitionStage,
+    PublicSourceStageScope,
     VerifiedPublicSourceStageArtifact,
     find_verified_public_source_stage_artifact,
     load_verified_public_source_stage_artifact,
@@ -49,6 +61,7 @@ __all__ = [
     "AcquiredReplaySource",
     "AcquiredSourcePayload",
     "BaoStockHistoryClient",
+    "BaoStockSecurityStatusClient",
     "PublicBar",
     "PublicCompositeBatch",
     "PublicCompositeAcquisitionError",
@@ -57,16 +70,24 @@ __all__ = [
     "PublicCompositeReplayProfile",
     "PublicCompositeRequest",
     "PublicQuote",
+    "PublicSecurityStatusObservation",
     "SourceReplayArchiveReader",
     "TencentCurrentQuoteClient",
+    "STStatus",
+    "ListingStatus",
+    "SecurityStatusEvidenceScope",
+    "SecurityStatusFactType",
     "TradingStatus",
     "build_public_source_manifest",
+    "compose_public_composite_live",
     "build_daily_control_source_evidence",
+    "build_security_status_source_evidence",
     "DailyControlSourceEvidence",
     "publish_source_archive",
     "publish_source_replay_archive",
     "source_archive_id",
     "PublicSourceAcquisitionStage",
+    "PublicSourceStageScope",
     "VerifiedPublicSourceStageArtifact",
     "find_verified_public_source_stage_artifact",
     "load_verified_public_source_stage_artifact",

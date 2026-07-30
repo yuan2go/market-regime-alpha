@@ -243,7 +243,29 @@ def build_decision_price_snapshot(
             reasons.append("AVAILABLE_TIME_UNKNOWN")
         elif quote.available_time.as_utc() > provider_result.decision_time.as_utc():
             reasons.append("AVAILABLE_AFTER_DECISION")
-        if quote.trading_status is not TradingStatus.TRADING:
+        source = payload_by_id[quote.source_artifact_id]
+        if source.retrieved_time.as_utc() > provider_result.decision_time.as_utc():
+            reasons.append("RETRIEVED_AFTER_DECISION")
+        manifest_trading = next(
+            (
+                item
+                for item in source_manifest.fields
+                if item.symbol == quote.symbol
+                and item.field_id == "trading_status"
+            ),
+            None,
+        )
+        trading_confirmed = (
+            quote.trading_status is TradingStatus.TRADING
+            if source_manifest.schema_version == SourceManifest.SCHEMA_V1
+            else (
+                manifest_trading is not None
+                and manifest_trading.quality_status
+                is not SourceFieldQualityStatus.INSUFFICIENT
+                and manifest_trading.value == TradingStatus.TRADING.value
+            )
+        )
+        if not trading_confirmed:
             reasons.append("TRADING_STATUS_NOT_CONFIRMED")
         manifest_price = next(
             (
@@ -261,7 +283,6 @@ def build_decision_price_snapshot(
             is SourceFieldQualityStatus.INSUFFICIENT
         ):
             reasons.extend(manifest_price.reason_codes or ("PRICE_INSUFFICIENT",))
-        source = payload_by_id[quote.source_artifact_id]
         observations.append(
             DecisionPriceObservation(
                 symbol=quote.symbol,

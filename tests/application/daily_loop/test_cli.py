@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import runpy
 import subprocess
 import sys
+
+import pytest
 
 from market_regime_alpha.application.daily_loop import (
     DailyLoopRunner,
@@ -82,3 +85,64 @@ def test_new_cli_has_no_legacy_or_broker_dependency() -> None:
     assert "dividend_t.storage" not in source
     assert "xtquant" not in source
     assert "broker" not in source.lower()
+
+
+def test_staged_cli_commands_share_one_run_request_identity(
+    tmp_path: Path,
+) -> None:
+    namespace = runpy.run_path(str(SCRIPT), run_name="daily_loop_cli_test")
+    parser = namespace["build_parser"]()
+    build_command = namespace["_build_command"]
+    commands = []
+    for operation in (
+        "prepare-history",
+        "freeze-security-status",
+        "freeze-decision-quote",
+        "finalize-run",
+    ):
+        args = parser.parse_args(
+            (
+                "--output-root",
+                str(tmp_path / "runtime"),
+                operation,
+                "--decision-date",
+                "2025-02-03",
+                "--provider-profile",
+                "public-composite-live-v1",
+            )
+        )
+        commands.append(
+            build_command(
+                args,
+                output_root=(tmp_path / "runtime").resolve(),
+            )
+        )
+
+    assert len({item.run_request_id for item in commands}) == 1
+    assert all(item == commands[0] for item in commands)
+
+
+def test_finalize_cli_does_not_construct_live_clients(
+    tmp_path: Path,
+) -> None:
+    namespace = runpy.run_path(str(SCRIPT), run_name="daily_loop_cli_test")
+
+    def forbidden_client(*args, **kwargs):
+        raise AssertionError("FINALIZE_ATTEMPTED_TO_CONSTRUCT_LIVE_CLIENT")
+
+    namespace["BaoStockHistoryClient"] = forbidden_client
+    namespace["BaoStockSecurityStatusClient"] = forbidden_client
+    namespace["TencentCurrentQuoteClient"] = forbidden_client
+
+    with pytest.raises(ValueError, match="finalize requires"):
+        namespace["main"](
+            (
+                "--output-root",
+                str(tmp_path / "runtime"),
+                "--journal",
+                str(tmp_path / "runtime.sqlite3"),
+                "finalize-run",
+                "--decision-date",
+                "2025-02-03",
+            )
+        )

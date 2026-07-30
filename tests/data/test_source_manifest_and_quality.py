@@ -196,6 +196,26 @@ def test_noncritical_degradation_remains_explicit() -> None:
     assert report.blocked_reason_codes == ()
 
 
+def test_unusable_security_status_provider_is_a_global_block() -> None:
+    manifest = replace(
+        _complete_manifest(),
+        limitations=(
+            "PUBLIC_DATA_EXPLORATORY_ONLY",
+            "SECURITY_STATUS_PROVIDER_UNUSABLE",
+        ),
+    )
+
+    report = evaluate_daily_data_quality(
+        manifest=manifest,
+        required_symbols=("000001.SZ",),
+    )
+
+    assert report.status is DailyDataQualityStatus.DATA_BLOCKED
+    assert report.blocked_reason_codes == (
+        "GLOBAL_SECURITY_STATUS_PROVIDER_FAILURE",
+    )
+
+
 def test_v1_source_manifest_round_trip_identity_is_unchanged_by_v2_support() -> None:
     manifest = _complete_manifest()
     restored = SourceManifest.from_canonical_dict(manifest.to_canonical_dict())

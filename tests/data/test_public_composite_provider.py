@@ -21,6 +21,7 @@ from market_regime_alpha.data.providers.public_composite import (
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     AcquiredSourcePayload,
     BaoStockHistoryClient,
+    BaoStockSecurityStatusClient,
     PublicBar,
     PublicCompositeBatch,
     PublicCompositeLiveProfile,
@@ -28,11 +29,17 @@ from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeRequest,
     PublicCompositeReplayProfile,
     PublicQuote,
+    PublicSecurityStatusObservation,
+    STStatus,
+    ListingStatus,
+    SecurityStatusEvidenceScope,
+    SecurityStatusFactType,
     SourceReplayArchiveReader,
     TradingStatus,
     HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
     build_public_source_manifest,
     build_daily_control_source_evidence,
+    build_security_status_source_evidence,
     publish_source_replay_archive,
 )
 from market_regime_alpha.data.daily_quality import (
@@ -117,6 +124,53 @@ def _current_batch() -> PublicCompositeBatch:
     )
 
 
+def _status_batch() -> PublicCompositeBatch:
+    payload = _payload(
+        "provider-baostock-public",
+        b'{"tradestatus":"1","isST":"0","status":"1"}',
+    )
+    common = {
+        "symbol": "000001.SZ",
+        "scope": SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION,
+        "event_time": None,
+        "available_time": AVAILABLE,
+        "retrieved_time": RETRIEVED,
+        "decision_time": DECISION,
+        "policy_effective_time": None,
+        "provider_id": payload.provider_id,
+        "source_artifact_id": payload.source_artifact_id,
+        "authority_kind": SourceAuthorityKind.PROVIDER,
+        "quality_status": SourceFieldQualityStatus.COMPLETE,
+        "reason_codes": (),
+        "finality": SourceFieldFinality.PRELIMINARY,
+        "data_eligibility": DataEligibility.EXPLORATORY,
+    }
+    return PublicCompositeBatch(
+        raw_payloads=(payload,),
+        bars=(),
+        quotes=(),
+        source_conflicts=(),
+        limitations=("BAOSTOCK_CURRENT_SECURITY_STATUS_ONLY",),
+        security_status_observations=(
+            PublicSecurityStatusObservation(
+                fact_type=SecurityStatusFactType.TRADING_STATUS,
+                value=TradingStatus.TRADING,
+                **common,
+            ),
+            PublicSecurityStatusObservation(
+                fact_type=SecurityStatusFactType.ST_STATUS,
+                value=STStatus.NOT_ST,
+                **common,
+            ),
+            PublicSecurityStatusObservation(
+                fact_type=SecurityStatusFactType.LISTING_STATUS,
+                value=ListingStatus.LISTED,
+                **common,
+            ),
+        ),
+    )
+
+
 class _Client:
     def __init__(self, batch: PublicCompositeBatch) -> None:
         self.batch = batch
@@ -174,18 +228,22 @@ def _replay_manifest(result: PublicCompositeProviderResult) -> SourceManifest:
 
 def test_live_profile_calls_only_declared_baostock_and_tencent_clients() -> None:
     history = _Client(_history_batch())
+    status = _Client(_status_batch())
     current = _Client(_current_batch())
     profile = PublicCompositeLiveProfile(
         history_client=history,
         current_client=current,
+        security_status_client=status,
     )
 
     result = profile.acquire(_request())
 
     assert profile.profile_id == PUBLIC_COMPOSITE_LIVE_PROFILE_ID
     assert history.calls == 1
+    assert status.calls == 1
     assert current.calls == 1
     assert tuple(item.provider_id.value for item in result.raw_payloads) == (
+        "provider-baostock-public",
         "provider-baostock-public",
         "provider-tencent-public",
     )
@@ -194,6 +252,24 @@ def test_live_profile_calls_only_declared_baostock_and_tencent_clients() -> None
         "b0a002e9134303dfe"
     )
     assert result.data_eligibility is DataEligibility.EXPLORATORY
+
+
+def test_live_profile_deduplicates_shared_provider_limitations() -> None:
+    common = ("PUBLIC_DATA_EXPLORATORY_ONLY",)
+    profile = PublicCompositeLiveProfile(
+        history_client=_Client(replace(_history_batch(), limitations=common)),
+        security_status_client=_Client(
+            replace(_status_batch(), limitations=common)
+        ),
+        current_client=_Client(replace(_current_batch(), limitations=common)),
+    )
+
+    result = profile.acquire(_request())
+
+    assert result.limitations == (
+        "PUBLIC_DATA_EXPLORATORY_ONLY",
+        "NO_LOCAL_ARCHIVE_FALLBACK",
+    )
 
 
 def test_unreferenced_normalized_data_is_rejected() -> None:
@@ -225,6 +301,7 @@ def test_live_source_manifest_stays_blocked_when_membership_is_unproven() -> Non
     result = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(_current_batch()),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
 
     manifest = build_public_source_manifest(result=result, request=_request())
@@ -256,6 +333,7 @@ def test_unknown_trading_status_is_explicit() -> None:
     result = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(unknown_current),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
     evidence = build_daily_control_source_evidence(
         request=_request(),
@@ -292,6 +370,7 @@ def test_missing_membership_policy_blocks_run() -> None:
     result = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(_current_batch()),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
     evidence = build_daily_control_source_evidence(
         request=_request(),
@@ -332,6 +411,7 @@ def test_decision_time_is_protocol_fact() -> None:
     result = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(_current_batch()),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
     late_retrieval = RetrievedAt(
         datetime(2025, 1, 6, 16, 0, tzinfo=SHANGHAI)
@@ -379,6 +459,7 @@ def test_decision_time_not_blocked_by_late_runtime_retrieval() -> None:
     result = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(_current_batch()),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
     evidence = build_daily_control_source_evidence(
         request=_request(),
@@ -433,6 +514,7 @@ def test_quote_after_decision_is_explicit_symbol_insufficiency() -> None:
     result = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(late_current),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
     evidence = build_daily_control_source_evidence(
         request=_request(),
@@ -631,6 +713,370 @@ def test_baostock_live_history_uses_prior_unadjusted_daily_product(
     assert batch.bars[0].available_time is None
     assert batch.bars[0].finality is SourceFieldFinality.UNKNOWN
     assert HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1 in batch.limitations
+    assert tuple(
+        (
+            item.fact_type,
+            item.value,
+            item.scope,
+            item.available_time,
+            item.quality_status,
+        )
+        for item in batch.security_status_observations
+    ) == (
+        (
+            SecurityStatusFactType.TRADING_STATUS,
+            TradingStatus.TRADING,
+            SecurityStatusEvidenceScope.PRIOR_SESSION_STATUS,
+            None,
+            SourceFieldQualityStatus.DEGRADED,
+        ),
+        (
+            SecurityStatusFactType.ST_STATUS,
+            STStatus.NOT_ST,
+            SecurityStatusEvidenceScope.PRIOR_SESSION_STATUS,
+            None,
+            SourceFieldQualityStatus.DEGRADED,
+        ),
+    )
+    assert all(
+        item.reason_codes == ("PRIOR_SESSION_STATUS_NOT_CURRENT",)
+        for item in batch.security_status_observations
+    )
+
+
+def test_baostock_security_status_preserves_exact_current_provider_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        error_code = "0"
+        error_msg = ""
+
+        def __init__(
+            self,
+            fields: tuple[str, ...],
+            rows: tuple[tuple[str, ...], ...],
+        ) -> None:
+            self.fields = fields
+            self._rows = iter(rows)
+            self._current: tuple[str, ...] | None = None
+
+        def next(self) -> bool:
+            self._current = next(self._rows, None)
+            return self._current is not None
+
+        def get_row_data(self) -> list[str]:
+            assert self._current is not None
+            return list(self._current)
+
+    captured: dict[str, object] = {}
+
+    def query_history(code, fields, **kwargs):
+        captured.update({"code": code, "fields": fields, **kwargs})
+        return Result(
+            ("date", "code", "tradestatus", "isST"),
+            (("2025-01-06", "sz.000001", "1", "0"),),
+        )
+
+    fake = SimpleNamespace(
+        login=lambda **kwargs: SimpleNamespace(error_code="0", error_msg=""),
+        logout=lambda: None,
+        query_history_k_data_plus=query_history,
+        query_stock_basic=lambda **kwargs: Result(
+            ("code", "code_name", "ipoDate", "outDate", "type", "status"),
+            (("sz.000001", "Ping An", "1991-04-03", "", "1", "1"),),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "baostock", fake)
+    client = BaoStockSecurityStatusClient(
+        timeout_seconds=3.0,
+        clock=lambda: RETRIEVED.value,
+    )
+
+    batch = client.acquire(_request())
+
+    assert captured["start_date"] == "2025-01-06"
+    assert captured["end_date"] == "2025-01-06"
+    assert tuple(
+        (item.fact_type, item.value, item.quality_status)
+        for item in batch.security_status_observations
+    ) == (
+        (
+            SecurityStatusFactType.TRADING_STATUS,
+            TradingStatus.TRADING,
+            SourceFieldQualityStatus.COMPLETE,
+        ),
+        (
+            SecurityStatusFactType.ST_STATUS,
+            STStatus.NOT_ST,
+            SourceFieldQualityStatus.COMPLETE,
+        ),
+        (
+            SecurityStatusFactType.LISTING_STATUS,
+            ListingStatus.LISTED,
+            SourceFieldQualityStatus.COMPLETE,
+        ),
+    )
+    assert all(
+        item.scope is SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION
+        and item.available_time == AVAILABLE
+        and item.retrieved_time == RETRIEVED
+        and item.data_eligibility is DataEligibility.EXPLORATORY
+        for item in batch.security_status_observations
+    )
+    assert b'"tradestatus","isST"' in batch.raw_payloads[0].raw_payload
+    assert "CURRENT_OBSERVATION_AVAILABLE_TIME_IS_RETRIEVAL_TIME" in (
+        batch.raw_payloads[0].limitations
+    )
+
+
+def test_baostock_security_status_does_not_promote_prior_or_late_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        error_code = "0"
+        error_msg = ""
+
+        def __init__(
+            self,
+            fields: tuple[str, ...],
+            rows: tuple[tuple[str, ...], ...],
+        ) -> None:
+            self.fields = fields
+            self._rows = iter(rows)
+            self._current: tuple[str, ...] | None = None
+
+        def next(self) -> bool:
+            self._current = next(self._rows, None)
+            return self._current is not None
+
+        def get_row_data(self) -> list[str]:
+            assert self._current is not None
+            return list(self._current)
+
+    fake = SimpleNamespace(
+        login=lambda **kwargs: SimpleNamespace(error_code="0", error_msg=""),
+        logout=lambda: None,
+        query_history_k_data_plus=lambda *args, **kwargs: Result(
+            ("date", "code", "tradestatus", "isST"),
+            (("2025-01-03", "sz.000001", "1", "0"),),
+        ),
+        query_stock_basic=lambda **kwargs: Result(
+            ("code", "status"),
+            (("sz.000001", "1"),),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "baostock", fake)
+    late = datetime(2025, 1, 6, 14, 55, 1, tzinfo=SHANGHAI)
+
+    batch = BaoStockSecurityStatusClient(clock=lambda: late).acquire(_request())
+
+    by_fact = {
+        item.fact_type: item for item in batch.security_status_observations
+    }
+    assert by_fact[SecurityStatusFactType.TRADING_STATUS].value is (
+        TradingStatus.UNKNOWN
+    )
+    assert by_fact[SecurityStatusFactType.ST_STATUS].value is STStatus.UNKNOWN
+    assert by_fact[SecurityStatusFactType.LISTING_STATUS].value is (
+        ListingStatus.LISTED
+    )
+    assert by_fact[SecurityStatusFactType.LISTING_STATUS].quality_status is (
+        SourceFieldQualityStatus.INSUFFICIENT
+    )
+    assert by_fact[SecurityStatusFactType.LISTING_STATUS].reason_codes == (
+        "STATUS_RETRIEVED_AFTER_DECISION",
+    )
+    assert "SECURITY_STATUS_PROVIDER_UNUSABLE" in batch.limitations
+
+
+def test_current_status_provider_evidence_replaces_tencent_status_placeholder() -> None:
+    status = _status_batch()
+    current = replace(
+        _current_batch(),
+        quotes=tuple(
+            replace(item, trading_status=TradingStatus.UNKNOWN)
+            for item in _current_batch().quotes
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        security_status_client=_Client(status),
+        current_client=_Client(current),
+    ).acquire(_request())
+    status_fields = build_security_status_source_evidence(
+        batch=status,
+        request=_request(),
+    )
+
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=status_fields,
+    )
+    by_fact = {
+        field.critical_fact: field
+        for field in manifest.fields
+        if field.symbol == "000001.SZ"
+        and field.critical_fact
+        in {
+            CriticalSourceFact.TRADING_STATUS,
+            CriticalSourceFact.ST_STATUS,
+            CriticalSourceFact.LISTING_STATUS,
+        }
+    }
+
+    assert by_fact[CriticalSourceFact.TRADING_STATUS].value == "TRADING"
+    assert by_fact[CriticalSourceFact.ST_STATUS].value == "NOT_ST"
+    assert by_fact[CriticalSourceFact.LISTING_STATUS].value == "LISTED"
+    assert all(
+        field.provider_id == ProviderId("provider-baostock-public")
+        and field.authority_kind is SourceAuthorityKind.PROVIDER
+        for field in by_fact.values()
+    )
+    assert result.quotes[0].trading_status is TradingStatus.UNKNOWN
+
+
+def test_prior_session_status_never_satisfies_current_manifest_fact() -> None:
+    current = replace(
+        _current_batch(),
+        quotes=tuple(
+            replace(item, trading_status=TradingStatus.UNKNOWN)
+            for item in _current_batch().quotes
+        ),
+    )
+    prior = replace(
+        _status_batch(),
+        security_status_observations=tuple(
+            replace(
+                item,
+                scope=SecurityStatusEvidenceScope.PRIOR_SESSION_STATUS,
+                available_time=None,
+                quality_status=SourceFieldQualityStatus.DEGRADED,
+                reason_codes=("PRIOR_SESSION_STATUS_NOT_CURRENT",),
+                finality=SourceFieldFinality.UNKNOWN,
+            )
+            for item in _status_batch().security_status_observations
+        ),
+    )
+    result = PublicCompositeLiveProfile(
+        history_client=_Client(_history_batch()),
+        security_status_client=_Client(prior),
+        current_client=_Client(current),
+    ).acquire(_request())
+    prior_fields = build_security_status_source_evidence(
+        batch=prior,
+        request=_request(),
+    )
+
+    manifest = build_public_source_manifest(
+        result=result,
+        request=_request(),
+        declared_fields=prior_fields,
+    )
+    trading = next(
+        field
+        for field in manifest.fields
+        if field.symbol == "000001.SZ"
+        and field.critical_fact is CriticalSourceFact.TRADING_STATUS
+    )
+
+    assert all(field.critical_fact is None for field in prior_fields)
+    assert trading.value == TradingStatus.UNKNOWN.value
+    assert trading.provider_id == ProviderId("provider-tencent-public")
+    assert trading.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+
+
+def test_quote_retrieved_after_decision_is_explicitly_insufficient() -> None:
+    late_retrieved = RetrievedAt(
+        datetime(2025, 1, 6, 14, 55, 1, tzinfo=SHANGHAI)
+    )
+    late_payload = AcquiredSourcePayload(
+        provider_id=ProviderId("provider-tencent-public"),
+        product="late-quote",
+        locator="https://qt.gtimg.cn/q=late",
+        raw_payload=b"late-quote-payload",
+        retrieved_time=late_retrieved,
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+    )
+    quote = replace(
+        _current_batch().quotes[0],
+        source_artifact_id=late_payload.source_artifact_id,
+    )
+    history = _history_batch()
+    result = PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        decision_time=DECISION,
+        raw_payloads=(*history.raw_payloads, late_payload),
+        bars=history.bars,
+        quotes=(quote,),
+        source_conflicts=(),
+        limitations=(),
+    )
+
+    manifest = build_public_source_manifest(result=result, request=_request())
+    price = next(
+        field for field in manifest.fields if field.field_id == "price"
+    )
+
+    assert price.quality_status is SourceFieldQualityStatus.INSUFFICIENT
+    assert "QUOTE_RETRIEVED_AFTER_DECISION" in price.reason_codes
+
+
+def test_security_status_fact_types_cannot_be_interchanged() -> None:
+    payload = _payload("provider-baostock-public", b"status-evidence")
+
+    with pytest.raises(TypeError, match="does not match fact_type"):
+        PublicSecurityStatusObservation(
+            symbol="000001.SZ",
+            fact_type=SecurityStatusFactType.LISTING_STATUS,
+            value=STStatus.NOT_ST,
+            scope=SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION,
+            event_time=None,
+            available_time=AVAILABLE,
+            retrieved_time=RETRIEVED,
+            decision_time=DECISION,
+            policy_effective_time=None,
+            provider_id=payload.provider_id,
+            source_artifact_id=payload.source_artifact_id,
+            authority_kind=SourceAuthorityKind.PROVIDER,
+            quality_status=SourceFieldQualityStatus.COMPLETE,
+            reason_codes=(),
+            finality=SourceFieldFinality.PRELIMINARY,
+            data_eligibility=DataEligibility.EXPLORATORY,
+        )
+
+
+def test_unknown_security_status_remains_explicit_and_incomplete() -> None:
+    payload = _payload("provider-baostock-public", b"unknown-status-evidence")
+    observation = PublicSecurityStatusObservation(
+        symbol="000001.SZ",
+        fact_type=SecurityStatusFactType.LISTING_STATUS,
+        value=ListingStatus.UNKNOWN,
+        scope=SecurityStatusEvidenceScope.CURRENT_DECISION_SESSION,
+        event_time=None,
+        available_time=AVAILABLE,
+        retrieved_time=RETRIEVED,
+        decision_time=DECISION,
+        policy_effective_time=None,
+        provider_id=payload.provider_id,
+        source_artifact_id=payload.source_artifact_id,
+        authority_kind=SourceAuthorityKind.PROVIDER,
+        quality_status=SourceFieldQualityStatus.INSUFFICIENT,
+        reason_codes=("LISTING_STATUS_UNKNOWN",),
+        finality=SourceFieldFinality.UNKNOWN,
+        data_eligibility=DataEligibility.EXPLORATORY,
+    )
+
+    restored = PublicSecurityStatusObservation.from_canonical_dict(
+        observation.to_canonical_dict()
+    )
+
+    assert restored == observation
+    assert restored.value is ListingStatus.UNKNOWN
+    assert restored.available_time == AVAILABLE
+    assert restored.retrieved_time == RETRIEVED
+    assert restored.decision_time == DECISION
+    assert restored.policy_effective_time is None
 
 
 def test_replay_profile_reads_only_verified_manifest_and_immutable_archive(
@@ -639,6 +1085,7 @@ def test_replay_profile_reads_only_verified_manifest_and_immutable_archive(
     live = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(_current_batch()),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
     replay_result = PublicCompositeProviderResult(
         profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
@@ -667,7 +1114,7 @@ def test_replay_profile_reads_only_verified_manifest_and_immutable_archive(
     assert profile.profile_id == PUBLIC_COMPOSITE_REPLAY_PROFILE_ID
     assert acquired.source_manifest == manifest
     assert acquired.provider_result == replay_result
-    assert acquired.provider_result.raw_payloads[1].raw_payload.startswith(b"v_")
+    assert acquired.provider_result.raw_payloads[-1].raw_payload.startswith(b"v_")
 
     (archive / "provider_result.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="checksum"):
@@ -681,6 +1128,7 @@ def test_replay_profile_rejects_a_different_manifest_identity(tmp_path: Path) ->
     live = PublicCompositeLiveProfile(
         history_client=_Client(_history_batch()),
         current_client=_Client(_current_batch()),
+        security_status_client=_Client(_status_batch()),
     ).acquire(_request())
     replay_result = PublicCompositeProviderResult(
         profile_id=PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,

@@ -242,6 +242,16 @@ def evaluate_daily_data_quality(
                 blocking=True,
             )
         )
+    if "SECURITY_STATUS_PROVIDER_UNUSABLE" in manifest.limitations:
+        findings.append(
+            DataQualityFinding(
+                symbol=None,
+                field_id=None,
+                critical_fact=None,
+                reason_code="GLOBAL_SECURITY_STATUS_PROVIDER_FAILURE",
+                blocking=True,
+            )
+        )
     for fact in _GLOBAL_REQUIRED:
         matches = [
             item
@@ -356,6 +366,19 @@ def _field_findings(
             )
         )
     if (
+        item.authority_kind is SourceAuthorityKind.PROVIDER
+        and item.retrieved_time.as_utc() > manifest.decision_time.as_utc()
+    ):
+        findings.append(
+            DataQualityFinding(
+                symbol=item.symbol,
+                field_id=item.field_id,
+                critical_fact=item.critical_fact,
+                reason_code=f"RETRIEVED_AFTER_DECISION:{suffix}",
+                blocking=blocking,
+            )
+        )
+    if (
         item.event_time is not None
         and item.event_time.astimezone(manifest.decision_time.value.tzinfo)
         > manifest.decision_time.value
@@ -435,6 +458,11 @@ def _authority_findings(
             SourceAuthorityKind.UNIVERSE_POLICY
         ),
         CriticalSourceFact.ELIGIBILITY: SourceAuthorityKind.ELIGIBILITY_POLICY,
+        CriticalSourceFact.PRICE: SourceAuthorityKind.PROVIDER,
+        CriticalSourceFact.TRADING_STATUS: SourceAuthorityKind.PROVIDER,
+        CriticalSourceFact.ST_STATUS: SourceAuthorityKind.PROVIDER,
+        CriticalSourceFact.LISTING_STATUS: SourceAuthorityKind.PROVIDER,
+        CriticalSourceFact.HISTORY_WINDOW: SourceAuthorityKind.PROVIDER,
     }.get(item.critical_fact)
     if expected is None:
         return []

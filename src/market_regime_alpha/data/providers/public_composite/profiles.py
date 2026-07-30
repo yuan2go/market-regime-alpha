@@ -42,6 +42,7 @@ class PublicCompositeLiveProfile:
 
     history_client: PublicAcquisitionClient
     current_client: PublicAcquisitionClient
+    security_status_client: PublicAcquisitionClient | None = None
     profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID
 
     def acquire(
@@ -50,13 +51,19 @@ class PublicCompositeLiveProfile:
     ) -> PublicCompositeProviderResult:
         history = self.acquire_history(request)
         try:
+            status = self.acquire_security_status(request)
             current = self.acquire_current(request)
         except AShareDataError as exc:
             raise PublicCompositeAcquisitionError(
-                f"current acquisition failed after history freeze: {exc}",
+                f"decision acquisition failed after history freeze: {exc}",
                 partial_batch=history,
             ) from exc
-        return self.compose(history=history, current=current, request=request)
+        return self.compose(
+            history=history,
+            security_status=status,
+            current=current,
+            request=request,
+        )
 
     def acquire_history(
         self,
@@ -86,32 +93,83 @@ class PublicCompositeLiveProfile:
             raise ValueError("LIVE current data must come only from declared Tencent")
         return current
 
+    def acquire_security_status(
+        self,
+        request: PublicCompositeRequest,
+    ) -> PublicCompositeBatch:
+        """Acquire exact-date BaoStock status without prior-session promotion."""
+
+        if self.security_status_client is None:
+            raise AShareDataError("LIVE security status client is not configured")
+        status = self.security_status_client.acquire(request)
+        if any(
+            item.provider_id != BAOSTOCK_PUBLIC_PROVIDER_ID
+            for item in status.raw_payloads
+        ):
+            raise ValueError(
+                "LIVE security status must come only from declared BaoStock"
+            )
+        return status
+
     def compose(
         self,
         *,
         history: PublicCompositeBatch,
         current: PublicCompositeBatch,
         request: PublicCompositeRequest,
+        security_status: PublicCompositeBatch | None = None,
     ) -> PublicCompositeProviderResult:
         """Compose already-frozen stages without invoking either client."""
 
-        return PublicCompositeProviderResult(
-            profile_id=self.profile_id,
-            decision_time=request.decision_time,
-            raw_payloads=(*history.raw_payloads, *current.raw_payloads),
-            bars=(*history.bars, *current.bars),
-            quotes=(*history.quotes, *current.quotes),
-            source_conflicts=(
-                *history.source_conflicts,
-                *current.source_conflicts,
-            ),
-            limitations=(
-                *history.limitations,
-                *current.limitations,
-                "PUBLIC_DATA_EXPLORATORY_ONLY",
-                "NO_LOCAL_ARCHIVE_FALLBACK",
-            ),
+        return compose_public_composite_live(
+            history=history,
+            security_status=security_status,
+            current=current,
+            request=request,
         )
+
+
+def compose_public_composite_live(
+    *,
+    history: PublicCompositeBatch,
+    security_status: PublicCompositeBatch | None,
+    current: PublicCompositeBatch,
+    request: PublicCompositeRequest,
+) -> PublicCompositeProviderResult:
+    """Compose verified frozen LIVE stages without any client dependency."""
+
+    status = security_status
+    return PublicCompositeProviderResult(
+        profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        decision_time=request.decision_time,
+        raw_payloads=(
+            *history.raw_payloads,
+            *(status.raw_payloads if status is not None else ()),
+            *current.raw_payloads,
+        ),
+        bars=(*history.bars, *current.bars),
+        quotes=(*history.quotes, *current.quotes),
+        source_conflicts=tuple(
+            dict.fromkeys(
+                (
+                    *history.source_conflicts,
+                    *(status.source_conflicts if status is not None else ()),
+                    *current.source_conflicts,
+                )
+            )
+        ),
+        limitations=tuple(
+            dict.fromkeys(
+                (
+                    *history.limitations,
+                    *(status.limitations if status is not None else ()),
+                    *current.limitations,
+                    "PUBLIC_DATA_EXPLORATORY_ONLY",
+                    "NO_LOCAL_ARCHIVE_FALLBACK",
+                )
+            )
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)

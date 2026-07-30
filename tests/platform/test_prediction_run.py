@@ -207,12 +207,36 @@ def test_b0_b1_adapter_preserves_complete_legacy_ranking_semantics() -> None:
         assert projected.predictions == direct.predictions
         assert projected.rejections == direct.rejections
         assert tuple(
-            (item.symbol, item.model_score, item.rank)
+            (
+                item.symbol,
+                item.model_score,
+                item.rank,
+                item.percentile,
+            )
             for item in projected.predictions
         ) == tuple(
-            (item.symbol, item.model_score, item.rank)
+            (
+                item.symbol,
+                item.model_score,
+                item.rank,
+                item.percentile,
+            )
             for item in direct.predictions
         )
+        for score in {
+            item.model_score for item in direct.predictions
+        }:
+            direct_tie_group = tuple(
+                item.symbol
+                for item in direct.predictions
+                if item.model_score == score
+            )
+            projected_tie_group = tuple(
+                item.symbol
+                for item in projected.predictions
+                if item.model_score == score
+            )
+            assert projected_tie_group == direct_tie_group
         assert projected.ranking_coverage == direct.ranking_coverage
         assert projected.target_id == direct.target_id == TARGET_ID
         assert projected.dataset_id == direct.dataset_id == dataset.dataset_id
