@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-07-30
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md
-> **Code Evidence:** feat/wp-d3-1-real-decision-evidence@347087c952cece0c7ee5cb475d717b4b098ee7da
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md, ../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md
+> **Code Evidence:** feat/platform-architecture-v2-research-layer@45fdaa9
 
 ## Overall stage
 
@@ -16,6 +16,8 @@ RESEARCH_PLATFORM_KERNEL_AND_CANDIDATE_EVIDENCE_STAGE
 PLATFORM_MINIMUM_GOVERNANCE_BOUNDARY_HARDENED
 PHASE_D_EXPLORATORY_DAILY_LOOP_IMPLEMENTED
 EXPLORATORY_DAILY_LOOP_OPERATIONAL
+PLATFORM_ARCHITECTURE_V2_COMPLETE
+RESEARCH_LAYER_MVP_COMPLETE
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -58,6 +60,17 @@ TRADING_AUTHORITY_NOT_GRANTED
 - append-only MR1 next-session 10:30 Outcome Settlement and DailyReview Artifact;
 - single-session and ten-session Replay with stable hashes;
 - real public-source LIVE dry run that published a verified `DATA_BLOCKED` Artifact.
+- strict Platform V2 Artifact Envelope and six-layer ownership catalog;
+- executable offline Research Layer V0 for Market Regime, Theme Rotation,
+  inferred Capital Evolution and Candidate Discovery;
+- content-addressed, versioned model configurations whose thresholds and
+  weights are explicitly unvalidated assumptions;
+- exact-file-set ResearchLayerArtifact, semantic Reader, versioned Reader
+  Registry and deterministic recomputation;
+- independent PlatformResearchRunner and fixture/archive-only run, replay and
+  report CLI;
+- compatibility-preserving MR2A and B0/B1 adapters without changes to legacy
+  scores, ranks, PredictionRuns or Readers.
 
 ## Deliberately limited operational authority
 
@@ -71,6 +84,13 @@ approved 100–300-symbol membership source and formal PIT eligibility evidence 
 Operational-pool expansion is additionally blocked until a real public Archive reaches
 `OUTCOME_PENDING`.
 Parquet/DuckDB query projections are deferred and remain rebuildable, non-authoritative views.
+
+Platform V2 is an offline Research Layer engineering MVP. Its current inputs
+are explicitly labelled synthetic fixtures or historical immutable archives.
+No public LIVE Adapter creates a ResearchInputBundle, and the initial Market,
+Theme, Capital and Candidate thresholds have not established predictive
+validity. CandidateSet is opportunity-discovery evidence, not a Recommendation
+or buy list.
 
 ## Implemented mechanics but externally blocked
 
@@ -91,9 +111,12 @@ engineering evidence, not real public 14:55 runtime evidence.
 
 ## Not implemented as canonical Phase D authority
 
-Production stock/ETF Universe snapshots, ETF/Theme/Capital context snapshots, a validated Entry
-model, ManualTradeRecord, PositionSnapshot authority, HoldingAssessment, ExitAssessment, rolling
-review/attribution, PortfolioDecision, Codex Evidence Pack and QuantDesk integration.
+Production stock/ETF Universe snapshots, operational PIT theme mappings, a
+validated Signal or Forecast model, a validated Entry model, ManualTradeRecord,
+PositionSnapshot authority, HoldingAssessment, ExitAssessment, rolling
+review/attribution, PortfolioDecision, Codex Evidence Pack and QuantDesk
+integration. Platform V2 Theme and Capital snapshots are executable
+exploratory research contracts, not validated operational authority.
 
 The historical `daily_research` V1 six-file Artifact, Schema, IDs, Reader and `ENTER` semantics
 remain a frozen compatibility layer. The new Phase D schema and Reader do not rename or mutate it.

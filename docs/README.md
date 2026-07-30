@@ -70,6 +70,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Legacy Migration](architecture/06-Legacy-Migration.md)
 - [QuantDesk Boundary](architecture/07-QuantDesk-Integration-Boundary.md)
 - [Deployment and Operations Boundary](architecture/08-Deployment-Operations-Boundary.md)
+- [Platform Architecture V2](architecture/09-Platform-Architecture-V2.md)
 
 ### Current research
 
@@ -96,6 +97,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Public LIVE Semantic Closure Implementation Plan](superpowers/plans/2026-07-29-public-live-semantic-closure.md)
 - [WP-D3.1 Real Decision Evidence Implementation Plan](superpowers/plans/2026-07-30-wp-d3-1-real-decision-evidence.md)
 - [WP-D3.1 Real Decision Evidence Design](superpowers/specs/2026-07-30-wp-d3-1-real-decision-evidence-design.md)
+- [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 
 ### Current status
 
@@ -111,6 +113,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-D3 Public LIVE Semantic Closure Audit](audit/WP-D3-Public-Live-Semantic-Closure.md)
 - [WP-D3.1 Real Decision Evidence Baseline Audit](audit/WP-D3-1-Real-Decision-Evidence-Baseline.md)
 - [WP-D3.1 Real Decision Evidence Delivery](audit/WP-D3-1-Real-Decision-Evidence-Delivery.md)
+- [WP-PAV2 Platform Architecture V2 Delivery](audit/WP-PAV2-Platform-Architecture-V2-Delivery.md)
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
 - [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
 - [Post-Consolidation Code Audit](audit/Post-Consolidation-Code-Audit-2026-07-26.md)

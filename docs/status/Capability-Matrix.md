@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-07-30
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md
-> **Code Evidence:** feat/wp-d3-1-real-decision-evidence@347087c952cece0c7ee5cb475d717b4b098ee7da
+> **Related Documents:** Current-State.md, Gap-Register.md, ../architecture/09-Platform-Architecture-V2.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md, ../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md
+> **Code Evidence:** feat/platform-architecture-v2-research-layer@45fdaa9
 
 | capability | status | code_evidence | test_evidence | runtime_evidence | document_evidence | missing_evidence | blocker | next_action |
 |---|---|---|---|---|---|---|---|---|
@@ -19,6 +19,14 @@
 | Xuntou Adapter/v4 semantics | IMPLEMENTED_AND_VERIFIED | `research/xuntou_provider_adapter.py`, `xuntou_pit_v4_*` | adapter/preflight/qualification tests | no real runtime in audit env | Xuntou specs/evidence | real qualified bundle | external XtQuant/runtime | Export and qualify input |
 | Candidate Dataset | IMPLEMENTED_AND_VERIFIED | `candidates/dataset.py`, `features/daily_pipeline.py` | candidate and daily-pipeline tests | complete outcome-pending daily population in Replay | Candidate Research; delivery audit | formal PIT population evidence | public-source authority | Xuntou shadow/Formal PIT |
 | Feature Materialization | IMPLEMENTED_AND_VERIFIED | `features/contracts.py`, baselines, `features/daily_pipeline.py` | daily-history values and B0/B1 equivalence tests | v2 Fixture Archive materializes all four Features; real LIVE blocked before Feature by eligibility | Factor Constitution; WP-D3 audit | real in-window eligible public population | current status inputs | continue WP-D3 |
+| Platform V2 Artifact Envelope | IMPLEMENTED_AND_VERIFIED | `evidence/envelope.py`, `evidence/canonical.py` | strict schema/hash/lineage/authority tests | Research Layer packages verified and replayed | Platform Architecture V2; ADR-003 | broader adoption by later layers |  | WP-RL2 |
+| Market Regime V0 | IMPLEMENTED_EXPLORATORY | `research/market_regime/**` | five state, permission, insufficiency and MR2A Adapter tests | synthetic Fixture only | WP-PAV2 delivery | historical evaluation and operating validation | unvalidated thresholds | WP-RL2 prerequisite evidence |
+| Theme Rotation V0 | IMPLEMENTED_EXPLORATORY | `research/theme_rotation/**` | state/rank/tie/insufficiency tests | synthetic Fixture only | WP-PAV2 delivery | PIT mappings, historical evaluation and ablation | unvalidated weights | Research evaluation |
+| Capital Evolution V0 | IMPLEMENTED_EXPLORATORY | `research/capital_evolution/**` | scoring/gate/state-machine/leakage tests | synthetic Fixture only | WP-PAV2 delivery | qualified observable proxies and historical evaluation | unvalidated inferred states | Research evaluation |
+| Candidate Discovery V2 | IMPLEMENTED_EXPLORATORY | `research/candidate_discovery/**` | complete reconciliation, gate, Top-N, tie and B0/B1 Adapter tests | deterministic Fixture Replay | WP-PAV2 delivery | historical Archive evaluation | Theme/Capital evidence | WP-RL2 |
+| Research Layer Artifact/Replay | IMPLEMENTED_AND_VERIFIED | `research/platform_v2/**`, `application/research_layer/**`, `scripts/run_research_layer.py` | exact-file, tamper, Reader, Replay and CLI tests | fixture Artifact replayed to identical identity/hash | WP-PAV2 delivery | qualified historical Archive and Runtime integration | offline-only input boundary | WP-RL2 |
+| Signal/Forecast/Trade V2 Boundary | CONTRACT_ONLY | `signals/contracts.py`, `forecasting/contracts.py`, `decision/contracts.py` | vocabulary and calibration guard tests | none | Platform Architecture V2 | executable models and evaluation | intentionally deferred | WP-RL2 |
+| Position/Execution/Evaluation V2 Boundary | CONTRACT_ONLY | `position/contracts.py`, `portfolio/contracts.py`, `execution/contracts.py`, `evaluation/contracts.py` | architecture-boundary tests | none | Platform Architecture V2 | executable behavior and actual authority | intentionally deferred | later work packages |
 | B0 | IMPLEMENTED_AND_VERIFIED | `candidates/baselines.py`, `platform/candidate_prediction_adapter.py` | complete PredictionRun equivalence tests | 10-session immutable daily PredictionRuns | Candidate Research; delivery audit | economic/OOS authority |  | Formal PIT/OOS |
 | B1 | IMPLEMENTED_AND_VERIFIED | `candidates/composite_baseline.py`, `platform/candidate_prediction_adapter.py` | complete PredictionRun equivalence tests | 10-session immutable daily PredictionRuns | Candidate Research; delivery audit | formal OOS/model winner |  | Formal PIT/OOS |
 | B2 regularized statistical baseline | NOT_STARTED | none | none | none | model ladder | implementation/validation |  | After WP-D0 |

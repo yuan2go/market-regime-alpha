@@ -40,6 +40,14 @@ exploratory mechanics are not reopened by that work.
 13. [WP-D11 — Qualified Xuntou PIT Replication and Shadow](WP-D11-Qualified-Xuntou-PIT-and-Shadow.md)
 14. [WP-D12 — QuantDesk Workbench Integration](WP-D12-QuantDesk-Workbench-Integration.md)
 
+The post-Phase-D architecture slice is:
+
+- [WP-PAV2 — Platform Architecture V2 and Research Layer MVP](WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
+
+WP-PAV2 reuses the delivered Phase D evidence and Candidate identities. It
+does not supersede the outstanding public LIVE validation or durable
+governance gaps.
+
 ## Sequencing note
 
 `WP-D2E` is the early Tencent/public-source vertical slice. It uses canonical identities and carries a hard `EXPLORATORY` ceiling. It exists to validate the daily engineering loop early, not to establish formal PIT Alpha.
