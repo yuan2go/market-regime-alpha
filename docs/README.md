@@ -105,7 +105,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 ### Operations and implementation prompts
 
 - [Production Decision Lifecycle Runbook](operations/Production-Decision-Lifecycle-Runbook.md)
-- [Claude Code Production Decision Lifecycle Prompt](prompts/Claude-Code-Production-Decision-Lifecycle.md)
+- [Claude Code Production Decision Lifecycle Master Prompt](prompts/Claude-Code-Production-Decision-Lifecycle.md)
 
 ### Current status
 
@@ -116,6 +116,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 ### Audit and archive
 
+- [Claude Code Engineering Program Update — 2026-08-01](audit/Claude-Code-Engineering-Program-Update-2026-08-01.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
@@ -142,9 +143,11 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 ### Agent project assets
 
-- [`CLAUDE.md`](../CLAUDE.md) — Claude Code project memory and current execution priority.
+- [`CLAUDE.md`](../CLAUDE.md) — Claude Code project memory and current WP-PDL execution priority.
 - [`AGENTS.md`](../AGENTS.md) — shared cross-agent execution contract.
 - [Claude project asset guide](../.claude/README.md) — shared Skills and Subagents.
+- [Continuous WP-PDL Skill](../.claude/skills/advance-production-lifecycle/SKILL.md) — dependency-ordered whole-program execution.
+- [Single Work Package Skill](../.claude/skills/implement-work-package/SKILL.md) — one bounded work package or phase.
 
 ### Provider operational authorities
 
