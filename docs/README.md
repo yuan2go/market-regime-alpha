@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Canonical documentation entry point and authority policy  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** constitution/**, architecture/**, research/**, specs/**, status/**, roadmap/**, audit/**, archive/**  
@@ -20,7 +20,7 @@ Use this order to determine what the project **should** do:
 ```text
 1. Latest explicit user decision that has not been superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–08 and architecture/domains/**
+3. docs/architecture/00–10 and architecture/domains/**
 4. docs/research/Current-Research-Program.md and focused current research programs
 5. docs/specs/** and docs/roadmap/work-packages/**
 6. HISTORICAL/SUPERSEDED material for context only
@@ -70,6 +70,9 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Legacy Migration](architecture/06-Legacy-Migration.md)
 - [QuantDesk Boundary](architecture/07-QuantDesk-Integration-Boundary.md)
 - [Deployment and Operations Boundary](architecture/08-Deployment-Operations-Boundary.md)
+- [Platform Architecture V2](architecture/09-Platform-Architecture-V2.md)
+- [Production Decision Lifecycle](architecture/10-Production-Decision-Lifecycle.md)
+- [Architecture Decision Records](architecture/decisions/README.md)
 
 ### Current research
 
@@ -89,13 +92,22 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Specification Index](specs/README.md)
 - [Contract Conventions](specs/Contract-Conventions.md)
 - [Error Catalog](specs/Error-Catalog.md)
-- [Architecture Decision Records](architecture/decisions/README.md)
+- [Production Decision Lifecycle Requirements](specs/Production-Decision-Lifecycle-Requirements.md)
 - [Phase D Work Package Index](roadmap/Phase-D-Work-Packages.md)
 - [Detailed Work Packages](roadmap/work-packages/README.md)
 - [Run-First Exploratory Daily Platform Implementation Plan](superpowers/plans/2026-07-28-run-first-exploratory-daily-platform.md)
 - [Public LIVE Semantic Closure Implementation Plan](superpowers/plans/2026-07-29-public-live-semantic-closure.md)
 - [WP-D3.1 Real Decision Evidence Implementation Plan](superpowers/plans/2026-07-30-wp-d3-1-real-decision-evidence.md)
 - [WP-D3.1 Real Decision Evidence Design](superpowers/specs/2026-07-30-wp-d3-1-real-decision-evidence-design.md)
+- [Production Decision Lifecycle Approved Design](superpowers/specs/2026-08-01-production-decision-lifecycle-design.md)
+- [Production Decision Lifecycle Implementation Plan](superpowers/plans/2026-08-01-production-decision-lifecycle.md)
+- [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
+- [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
+
+### Operations and implementation prompts
+
+- [Production Decision Lifecycle Runbook](operations/Production-Decision-Lifecycle-Runbook.md)
+- [Claude Code Production Decision Lifecycle Master Prompt](prompts/Claude-Code-Production-Decision-Lifecycle.md)
 
 ### Current status
 
@@ -106,11 +118,16 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 ### Audit and archive
 
+- [Claude Code Engineering Program Update — 2026-08-01](audit/Claude-Code-Engineering-Program-Update-2026-08-01.md)
+- [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
+- [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
+- [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)
 - [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
 - [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
 - [WP-D3 Public LIVE Semantic Closure Audit](audit/WP-D3-Public-Live-Semantic-Closure.md)
 - [WP-D3.1 Real Decision Evidence Baseline Audit](audit/WP-D3-1-Real-Decision-Evidence-Baseline.md)
 - [WP-D3.1 Real Decision Evidence Delivery](audit/WP-D3-1-Real-Decision-Evidence-Delivery.md)
+- [WP-PAV2 Platform Architecture V2 Delivery](audit/WP-PAV2-Platform-Architecture-V2-Delivery.md)
 - [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
 - [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
 - [Post-Consolidation Code Audit](audit/Post-Consolidation-Code-Audit-2026-07-26.md)
@@ -129,9 +146,11 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 ### Agent project assets
 
-- [`CLAUDE.md`](../CLAUDE.md) — Claude Code project memory and current execution priority.
+- [`CLAUDE.md`](../CLAUDE.md) — Claude Code project memory and current WP-PDL execution priority.
 - [`AGENTS.md`](../AGENTS.md) — shared cross-agent execution contract.
 - [Claude project asset guide](../.claude/README.md) — shared Skills and Subagents.
+- [Continuous WP-PDL Skill](../.claude/skills/advance-production-lifecycle/SKILL.md) — dependency-ordered whole-program execution.
+- [Single Work Package Skill](../.claude/skills/implement-work-package/SKILL.md) — one bounded work package or phase.
 
 ### Provider operational authorities
 
@@ -146,8 +165,13 @@ CONSTITUTION
 CURRENT_ARCHITECTURE
 CURRENT_RESEARCH_PROGRAM
 CURRENT_SPECIFICATION
+CURRENT_EXECUTION_PROMPT
 CURRENT_STATUS
+PROPOSED_ARCHITECTURE
+PROPOSED_REQUIREMENTS
+PROPOSED_OPERATIONS
 ROADMAP
+PLANNED
 HISTORICAL
 SUPERSEDED
 DRAFT

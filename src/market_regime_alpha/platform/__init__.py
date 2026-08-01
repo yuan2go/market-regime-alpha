@@ -22,6 +22,10 @@ from market_regime_alpha.platform.experiment_governance import (
     PrimaryChangeDimension,
     ResearchHypothesis,
 )
+from market_regime_alpha.platform.durable_governance import (
+    PersistentExperimentGovernance,
+    PersistentModelRegistry,
+)
 from market_regime_alpha.platform.model_registry import ModelRegistration, ModelRegistry
 from market_regime_alpha.platform.prediction_artifacts import (
     PREDICTION_RUN_ARTIFACT_FILES,
@@ -49,6 +53,10 @@ from market_regime_alpha.platform.target_evaluation import (
     TargetKind,
     TargetProtocol,
 )
+from market_regime_alpha.platform.sqlite_governance import (
+    SQLiteExperimentGovernanceRepository,
+    SQLiteModelRegistryRepository,
+)
 
 __all__ = [
     "CompositeCandidateModelSpec",
@@ -73,6 +81,8 @@ __all__ = [
     "ObservableId",
     "PredictionDisposition",
     "PredictionRun",
+    "PersistentExperimentGovernance",
+    "PersistentModelRegistry",
     "PREDICTION_RUN_ARTIFACT_FILES",
     "PriceMark",
     "PrimaryChangeDimension",
@@ -80,6 +90,8 @@ __all__ = [
     "ResearchHypothesisId",
     "ReturnBasis",
     "SingleFeatureCandidateModelSpec",
+    "SQLiteExperimentGovernanceRepository",
+    "SQLiteModelRegistryRepository",
     "TargetKind",
     "TargetProtocol",
     "TheoryDefinition",

@@ -86,3 +86,58 @@ class StrategyId(StableId):
 @dataclass(frozen=True, slots=True)
 class ExperimentId(StableId):
     """Identity of an experiment run or experiment configuration."""
+
+
+@dataclass(frozen=True, slots=True)
+class OpportunityId(StableId):
+    """Identity of a mutable TradingOpportunity aggregate."""
+
+
+@dataclass(frozen=True, slots=True)
+class ThesisId(StableId):
+    """Identity of a mutable TradingThesis aggregate."""
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioDecisionId(StableId):
+    """Identity of a versioned PortfolioDecision."""
+
+
+@dataclass(frozen=True, slots=True)
+class RiskDecisionId(StableId):
+    """Identity of an independent RiskDecision."""
+
+
+@dataclass(frozen=True, slots=True)
+class ManualTradeId(StableId):
+    """Identity of a human-recorded trade intent aggregate."""
+
+
+@dataclass(frozen=True, slots=True)
+class FillId(StableId):
+    """Identity of one append-only execution or correction event."""
+
+
+@dataclass(frozen=True, slots=True)
+class PositionSnapshotId(StableId):
+    """Content identity of a PositionSnapshot rebuilt from Fill events."""
+
+
+@dataclass(frozen=True, slots=True)
+class HoldingAssessmentId(StableId):
+    """Content identity of one versioned HoldingAssessment."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExitAssessmentId(StableId):
+    """Content identity of one versioned ExitAssessment."""
+
+
+@dataclass(frozen=True, slots=True)
+class TradeOutcomeId(StableId):
+    """Content identity of one closed-trade evaluation outcome."""
+
+
+@dataclass(frozen=True, slots=True)
+class RollingScorecardId(StableId):
+    """Content identity of one rolling evaluation scorecard."""

@@ -3,7 +3,7 @@
 > **Status:** ROADMAP  
 > **Authority:** Dependency-ordered implementation packages with explicit evidence and stop conditions  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../Phase-D-Work-Packages.md, ../../status/Gap-Register.md  
@@ -40,10 +40,21 @@ exploratory mechanics are not reopened by that work.
 13. [WP-D11 — Qualified Xuntou PIT Replication and Shadow](WP-D11-Qualified-Xuntou-PIT-and-Shadow.md)
 14. [WP-D12 — QuantDesk Workbench Integration](WP-D12-QuantDesk-Workbench-Integration.md)
 
+## Platform V2 and production-decision packages
+
+- [WP-PAV2 — Platform Architecture V2 and Research Layer MVP](WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
+- [WP-PDL — Production Decision Lifecycle](WP-PDL-Production-Decision-Lifecycle.md)
+
+WP-PAV2 reuses delivered Phase D evidence and Candidate identities. WP-PDL is the dependency-ordered target implementation package that connects verified operational evidence to Signal, Forecast, Opportunity, Thesis, Portfolio/Risk, manual records, Position, Holding/Exit and Attribution.
+
+Neither package supersedes outstanding public LIVE validation, formal PIT, durable governance or model-validation gaps.
+
 ## Sequencing note
 
 `WP-D2E` is the early Tencent/public-source vertical slice. It uses canonical identities and carries a hard `EXPLORATORY` ceiling. It exists to validate the daily engineering loop early, not to establish formal PIT Alpha.
 
+WP-PDL begins with architecture reconciliation and the Operational Research Bridge. It must not skip directly to execution or Position implementation while data authority, risk and manual fill semantics remain unresolved.
+
 ## Completion rule
 
-A package is complete only when its acceptance conditions, evidence, tests, migration effect and documentation updates are all satisfied. Code written without evidence is not completion.
+A package is complete only when its acceptance conditions, evidence, tests, migration effect and documentation updates are all satisfied. Code written without evidence is not completion. Documentation of a target state is not implementation evidence.

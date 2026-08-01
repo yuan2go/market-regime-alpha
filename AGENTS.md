@@ -3,104 +3,130 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Repository execution contract for coding and research agents  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** CLAUDE.md, docs/README.md, docs/status/Current-State.md, docs/roadmap/work-packages/README.md  
-> **Code Evidence:** path:src/market_regime_alpha; path:tests
+> **Related Documents:** CLAUDE.md, docs/README.md, docs/status/Current-State.md, docs/architecture/10-Production-Decision-Lifecycle.md, docs/roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md  
+> **Code Evidence:** `src/market_regime_alpha`; `tests`; target-state statements are explicitly separated from implementation facts.
 
 ## Mission
 
-`market-regime-alpha` is an A-share Alpha Research Operating System. The current delivery boundary is research and manual decision support, not unattended trading.
+`market-regime-alpha` is an A-share Alpha Research Operating System. The current product boundary is a production-grade, human-in-the-loop research and trading decision-support platform, not unattended live trading.
 
 ```text
-Market / ETF / Theme / Capital Context
-→ Tradable Universe
-→ Feature / Factor
+Data and Evidence
+→ Market / ETF / Theme / Capital Context
+→ Tradable Universe and Features
 → Candidate Discovery
-→ Entry
-→ Position Lifecycle
-→ Exit
-→ Portfolio Decision
-→ Execution Simulation / Manual Record
-→ Validation / Review / Research Feedback
+→ Signal and Path Forecast
+→ Trading Opportunity and Thesis
+→ Portfolio and Risk
+→ Manual Execution Record
+→ Fill-derived Position Lifecycle
+→ Holding and Exit
+→ Validation, Attribution and Research Feedback
 ```
 
 ## Agent entry points
 
 - `AGENTS.md`: shared cross-agent execution contract.
 - `CLAUDE.md`: Claude Code project memory; imports this file and adds Claude-specific workflow.
-- `.claude/agents/**`: bounded project subagents for read-only review.
-- `.claude/skills/**`: on-demand repeatable workflows.
+- `.claude/agents/**`: bounded project subagents for evidence collection and review.
+- `.claude/skills/**`: repeatable execution procedures.
+- `docs/prompts/Claude-Code-Production-Decision-Lifecycle.md`: master program prompt.
 
-Do not create a parallel agent instruction hierarchy that contradicts these files.
+Do not create a parallel instruction hierarchy that contradicts these files.
 
 ## Normative authority order
 
 ```text
 1. Latest explicit user decision not superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–08 and architecture/domains/**
+3. docs/architecture/00–10 and architecture/domains/**
 4. current research programs
-5. current specifications and work packages
+5. current specifications, accepted ADRs and work packages
 6. historical material for context only
 ```
 
 ## Implementation fact authority order
 
 ```text
-1. current code
+1. current checked-out code and actual call chains
 2. current tests and static checks
-3. reproducible runtime/research Artifacts
+3. reproducible runtime/research Artifacts and manifests
 4. docs/status/Current-State.md and Capability-Matrix.md
 5. commit-bound audit evidence
-6. historical status/plans
+6. historical status and plans
 ```
 
 Never use a plan or design document to overrule executable evidence. Never change Constitution without explicit authorization.
 
 ## Current implementation boundary
 
-Implemented/tested on current `main`: identity/time/data contracts, calendar, PIT universe/eligibility, Feature and Candidate datasets, B0/B1, diagnostics, provider routing, Tencent exploratory path, Xuntou native/v4 semantics, Entry Path Target infrastructure, Research Artifact verification, PIT replication mechanics, Research Platform contracts, Target/Evaluation Protocols, Experiment Governance, Model Registry and the first comparable Multi-model Candidate Slice, minimum platform-governance hardening, a recoverable exploratory daily Runtime Journal, Source Manifest and quality gates, B0/B1 PredictionRuns, Phase D daily decision Artifacts, CandidateRecommendation projections, non-ENTER Entry plumbing, MR1 outcome settlement, Daily Review and public LIVE semantic closure.
+Implemented and tested on the current repository baseline include stable identity and semantic-time contracts, Provider and SourceManifest boundaries, PIT Universe and Eligibility contracts, Feature and Candidate datasets, B0/B1 PredictionRuns, Entry Path Target infrastructure, immutable Artifacts and Readers, the recoverable exploratory Daily Runtime Journal, public exploratory acquisition and replay, Platform V2 boundaries, and the executable offline Market Regime → Theme Rotation → Capital Evolution → Candidate Discovery research slice.
 
-Externally blocked: real qualified Xuntou v4/XtQuant input and formal replication run.
+Documented but not yet canonical production behavior includes the Operational Research Bridge, durable Model Registry and Experiment Governance authority, executable Signal and multi-horizon PathForecast models, TradingOpportunity, TradingThesis, independent Portfolio/Risk authority, ManualTradeRecord, fill-derived PositionSnapshot, HoldingAssessment, ExitAssessment, complete-trade Attribution, sustained Shadow operation and operator workbench.
 
-Not canonical on `main`: durable Model Registry and Experiment Governance authority, qualified formal data, a validated Entry model, actual-position authority, Holding/Exit, rolling review/attribution, portfolio simulation, Codex Evidence Pack and QuantDesk integration.
+External or evidence blockers remain for qualified formal data, operational PIT theme mappings, formal OOS Alpha, calibrated model probabilities and any live broker authority.
 
-The next implementation priority is `WP-D0 — Platform Governance Kernel Hardening`.
+The current implementation program is `WP-PDL — Production Decision Lifecycle`. Its phases must be executed in dependency order and must preserve the existing evidence ceiling.
 
-## Non-negotiable rules
+## Non-negotiable domain rules
 
-- Candidate Prediction ≠ Entry ≠ Lifecycle ≠ Exit ≠ Portfolio ≠ Execution.
-- Target horizon ≠ holding or exit time.
+- Candidate ≠ Signal ≠ Forecast ≠ Opportunity ≠ Thesis ≠ Portfolio ≠ Risk ≠ Execution ≠ Position ≠ Holding ≠ Exit.
+- Target horizon is not an automatic holding or exit time.
 - Exit is not inverse Entry.
-- Empty results and `NO_ACTION` are valid; `NO_ACTION ≠ HOLD`.
+- Empty results, `WAIT`, `DATA_INSUFFICIENT` and `NO_ACTION` are valid outcomes; `NO_ACTION ≠ HOLD`.
 - A score is not a probability without calibration.
-- Data authority cannot inflate; no silent provider substitution or invented PIT/finality/adjustment.
-- One primary change per experiment; preserve negative results.
-- Codex/Claude may diagnose and implement approved scope; they do not auto-mutate, promote or execute models.
+- Publicly observable capital proxies do not identify hidden institutional intent.
+- Data authority cannot inflate; no silent Provider substitution or invented PIT, finality, availability or adjustment semantics.
+- A recommendation, target position or intended order cannot create an actual position.
+- Actual positions come only from observed manual or future broker fills.
+- Risk rejection cannot be bypassed by strategy code or ordinary operator action.
+- One primary research change per experiment; preserve negative and inconclusive results.
+- Agents may diagnose, implement approved scope and propose model changes; they do not auto-mutate, auto-promote or execute models.
 - New platform responsibility does not enter Legacy God Objects.
-- Every implementation claim cites code/test/artifact evidence.
-- Historical Artifacts and model identities are immutable unless an explicit migration/supersession contract exists.
+- Every implementation claim cites code, test, Artifact or runtime evidence.
+- Historical Artifacts and identities remain immutable unless an explicit migration or supersession contract exists.
+- Existing MR1 next-session 10:30 and `daily_research` compatibility identities retain their established meaning.
 
 ## Provider rules
 
-Xuntou/ThinkTrader/XtQuant remains the formal provider direction. Tencent/BaoStock/Tushare/AKShare/EastMoney are explicit auxiliary or exploratory sources unless a qualified contract says otherwise. A runnable adapter is not formal evidence.
+Xuntou/ThinkTrader/XtQuant remains the formal Provider direction unless a later qualified contract changes that decision. Tencent, BaoStock, Tushare, AKShare and EastMoney remain explicit auxiliary or exploratory sources unless formal qualification evidence exists. A runnable adapter is not formal evidence.
 
-## Branch and PR discipline
+## Workspace, branch and commit discipline
 
-- Never work directly on `main`.
-- One primary objective per branch and PR.
-- Fetch and inspect current `main` before starting.
-- A branch head that is not an ancestor of `main` is not automatically unmerged; verify merged-PR metadata and effective content.
-- Do not remerge stale branches whose content was already integrated through squash, rebase or later superseding PRs.
-- Do not force-push shared branches or delete remote branches without explicit authorization.
-- Merge only after required checks succeed and the requested scope is verified.
-- After merge, reconcile Current State, Capability Matrix and Gap Register when facts changed.
+- Inspect the current workspace before any Git mutation.
+- Preserve all unrelated user changes, untracked files and local configuration.
+- Do not fetch, pull, switch, reset, clean, stash, force-push, rewrite history or delete branches unless explicitly authorized.
+- Never implement directly on `main`; use the current isolated branch or create a dedicated feature branch from the verified local HEAD.
+- Use one dependency-coherent phase or bounded correction per checkpoint commit.
+- Do not pause merely to request permission for ordinary checkpoint commits when the user asked for continuous engineering execution.
+- Do not merge automatically. Open or update a Draft PR only when requested or required by the repository workflow.
+- Before every commit, run `git diff --check`, inspect all staged and unstaged changes, and exclude credentials, generated secrets, personal paths and unrelated files.
+- After merge, reconcile Current State, Capability Matrix, Gap Register and delivery evidence when implementation facts changed.
 
-## Work-package discipline
+## Continuous program discipline
 
-Every work package declares objective, bounded contexts, dependencies, inputs, outputs, affected files, contracts, code work, tests, acceptance evidence, risks, stop conditions, migration effect, documentation updates and non-goals. Use [the detailed Phase D work packages](docs/roadmap/work-packages/README.md).
+When the user requests completion or broad improvement of the engineering project, the main agent must continue across dependency-ready WP-PDL phases rather than stop after a plan or a single ordinary defect.
+
+Each phase must declare:
+
+- objective and bounded contexts;
+- current facts and assumptions;
+- dependencies and non-goals;
+- input and output contracts;
+- invariants and authority ceilings;
+- code and migration scope;
+- focused and regression tests;
+- acceptance evidence;
+- rollback or forward-repair plan;
+- documentation updates;
+- genuine stop conditions.
+
+A phase is complete only when it has executable behavior, required tests, compatibility evidence, documentation and a reviewable checkpoint commit. Documentation-only or contract-only work must be reported as such.
+
+Stop only when a genuine blocker cannot be resolved safely from repository evidence, tests or implementation work. Ordinary compile errors, red tests, refactoring needs, documentation drift and local implementation defects are not stop conditions.
 
 ## Validation
 
@@ -114,4 +140,4 @@ python -m ruff check .
 python -m mypy
 ```
 
-Run additional focused tests required by the affected bounded contexts. Report every command as `PASS`, `FAIL`, `NOT_RUN`, or `BLOCKED`. Do not claim a capability, test result, Alpha result or provider authority that was not observed.
+Run additional focused tests for affected bounded contexts, migrations, idempotency, concurrency, replay, recovery and compatibility Readers. Report every command as `PASS`, `FAIL`, `NOT_RUN`, or `BLOCKED`. Never claim a capability, Alpha result, Provider authority or production status that was not observed.
