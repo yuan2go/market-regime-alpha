@@ -153,8 +153,30 @@ V1 allocation-local schema and reader remain compatible, but they are not a
 complete-account authority.
 
 H1 does not yet derive A-share sellable quantity from Fill and the trading
-calendar or isolate Thesis position books. Those are H2/H3 dependencies; no
-production Risk limits are established.
+calendar. That remains the H3 dependency; no production Risk limits are
+established.
+
+## H2 complete authority trace
+
+The traceable V2 manual-execution path now binds each `ManualTradeRecord` to
+the exact Opportunity, approved Thesis, complete-account PortfolioDecision,
+independently recomputable RiskDecision, post-trade snapshot and target delta.
+`PositionBook` limits one OPEN Thesis to an `account_id + symbol`; its SQLite
+unique index is a concurrency backstop, and closing the Fill-derived position
+book permits a later Thesis without merging histories.
+
+Fill remains the single append-only execution fact. The trace index does not
+copy Fill authority. A versioned traceable PositionSnapshot records its book,
+Thesis, Opportunity, contributing ManualTrade IDs and Fill IDs. A traceable
+TradeOutcome wrapper validates the complete authority chain and rejects mixed
+book, Thesis, Portfolio, Risk, trade or Fill inputs before invoking the
+existing outcome evaluator. Existing V1 schemas and readers remain exact and
+readable. Migration 006 is isolated and restart/replay tested.
+
+This is attribution integrity for manual/exploratory records, not a broker
+Fill, live execution, production Position or trading-authority claim. H3 must
+still derive A-share sellability from Fill plus explicit trading-calendar
+authority.
 
 ## Documentation baseline added on 2026-08-01
 

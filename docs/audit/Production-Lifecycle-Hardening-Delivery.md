@@ -91,3 +91,63 @@ complete-account authority.
 
 No production RiskBudget, Position authority promotion, LIVE execution,
 formal PIT/OOS or Alpha claim is established.
+
+## H2 — Thesis-to-Outcome authority trace
+
+Delivered in the H2 semantic checkpoint containing this record:
+
+- deterministic `PositionBook` identity scoped to account, symbol and Thesis;
+- a database-enforced single OPEN Thesis per account/symbol, with explicit
+  close transition and later-Thesis reopening;
+- exact V2 ManualTrade schema binding Opportunity, Thesis, complete-account
+  Portfolio/Risk, post-trade snapshot and target-delta hashes;
+- V2 Position projection that admits only ManualTrade/Fill events belonging
+  to the book while retaining Fill as the only position-changing evidence;
+- immutable SQLite authority-chain bindings, reconstruction checks,
+  idempotent commands and CAS close;
+- `TraceableTradeOutcome` and evaluator that recompute Risk and validate all
+  upstream identities before calculating existing outcome metrics;
+- exact compatibility for V1 ManualTrade, PositionSnapshot and TradeOutcome
+  schemas/readers.
+
+Focused evidence before the full phase gate:
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q tests/execution/test_traceable_execution_chain.py tests/execution/test_manual_position_authority.py tests/evaluation` | PASS — 20 tests |
+| focused Ruff | PASS |
+| `python -m mypy` | PASS — 253 source files |
+
+Full phase gate:
+
+| Command | Result |
+|---|---|
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 tests |
+| `python -m pytest -q tests/platform` | PASS — 23 tests |
+| `python -m pytest -q` | PASS — 1,248 tests; six pre-existing pandas fragmentation warnings |
+| `python -m ruff check .` | PASS |
+| `python -m mypy` | PASS — 253 source files |
+
+### Migration 006
+
+| Table or index | Purpose and constraint |
+|---|---|
+| `position_books` | reconstructible OPEN/CLOSED account-symbol-Thesis projection |
+| `one_open_position_book_per_account_symbol` | SQLite partial unique concurrency backstop |
+| `position_book_events` | append-only open/close history with idempotency keys |
+| `traceable_manual_trade_bindings` | immutable upstream identity/hash index referencing the existing manual-trade ledger |
+
+The down migration removes only H2 tables/index/triggers and receipt 006. It
+does not remove or rewrite `manual_trade_records`, `manual_trade_events`,
+`manual_fills`, Position snapshots or immutable outcome artifacts. For a
+non-disposable database, stop traceable commands and export/read-retain the
+index before any rollback.
+
+### Evidence ceiling after H2
+
+H2 proves deterministic engineering traceability for synthetic/manual records.
+It does not prove broker Fill truth, A-share T+1 sellability, multi-strategy
+sleeves, qualified operational reconciliation, LIVE execution, formal PIT/OOS,
+calibration or Alpha.

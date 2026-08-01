@@ -238,6 +238,15 @@ an exact non-zero TargetPosition. The Fill command records a human-observed
 event; it does not contact a broker. Never edit a Fill row. Supply
 `correction_of_fill_id` in a new record.
 
+For hardened V2 operations, the application service must create a traceable
+manual record from the exact confirmed Opportunity, approved Thesis,
+complete-account PortfolioDecision, recomputable RiskDecision and proposed
+delta. The resulting `PositionBook` is scoped to one account, symbol and
+Thesis. A second active Thesis for that scope is rejected. Operators must close
+the book only after its Fill-derived Position is CLOSED; a later Thesis then
+receives a distinct book. Migration 006 adds only the book and immutable trace
+index—the migration-004 `manual_fills` table remains the sole Fill authority.
+
 For every actual action:
 
 - create or reference an approved ManualTradeRecord;
@@ -258,11 +267,18 @@ sell quantity without authoritative lots fails or produces
 
 After fills:
 
-1. Rebuild PositionSnapshot from the complete fill ledger.
+1. Rebuild the traceable PositionSnapshot from the PositionBook's complete
+   bound Fill ledger.
 2. Compare against the operator or broker statement when available.
 3. If quantity, side, cost or fill history differs, enter `RECONCILIATION_REQUIRED`.
 4. Block new exposure for the affected account/symbol until resolved.
 5. Record the resolution as append-only evidence.
+
+Before publishing a closed-trade outcome, run the traceable evaluator with all
+source Opportunity, Thesis, PortfolioDecision, RiskDecision, ManualTrade,
+Position and Fill objects. Mixed books or missing/recomputed authority must be
+treated as an attribution failure, never repaired by matching symbol and
+quantity alone.
 
 ### 3.9 Holding and exit review
 

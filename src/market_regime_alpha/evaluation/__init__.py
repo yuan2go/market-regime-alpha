@@ -15,11 +15,17 @@ from market_regime_alpha.evaluation.lifecycle import (
     TradeOutcomeEvaluator,
     TradePathObservation,
 )
+from market_regime_alpha.evaluation.traceability import (
+    TRACEABLE_TRADE_OUTCOME_SCHEMA,
+    TraceableTradeOutcome,
+    TraceableTradeOutcomeEvaluator,
+)
 
 __all__ = [
     "ROLLING_SCORECARD_SCHEMA",
     "TRADE_EVALUATION_CONFIG_SCHEMA",
     "TRADE_OUTCOME_SCHEMA",
+    "TRACEABLE_TRADE_OUTCOME_SCHEMA",
     "AttributionComponent",
     "AttributionRecord",
     "EvaluationReport",
@@ -30,4 +36,6 @@ __all__ = [
     "TradeOutcome",
     "TradeOutcomeEvaluator",
     "TradePathObservation",
+    "TraceableTradeOutcome",
+    "TraceableTradeOutcomeEvaluator",
 ]

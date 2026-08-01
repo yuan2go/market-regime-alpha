@@ -124,6 +124,11 @@ class PositionSnapshotId(StableId):
 
 
 @dataclass(frozen=True, slots=True)
+class PositionBookId(StableId):
+    """Identity of one account/symbol Thesis attribution book."""
+
+
+@dataclass(frozen=True, slots=True)
 class HoldingAssessmentId(StableId):
     """Content identity of one versioned HoldingAssessment."""
 

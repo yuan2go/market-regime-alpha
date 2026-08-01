@@ -7,12 +7,27 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from market_regime_alpha.core.identity import FillId, PositionSnapshotId
+from market_regime_alpha.core.identity import (
+    FillId,
+    ManualTradeId,
+    OpportunityId,
+    PositionBookId,
+    PositionSnapshotId,
+    ThesisId,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
-from market_regime_alpha.execution.manual import Fill, FillKind, TradeSide
+from market_regime_alpha.execution.manual import (
+    TRACEABLE_MANUAL_TRADE_SCHEMA,
+    Fill,
+    FillKind,
+    ManualTradeRecord,
+    TradeSide,
+)
+from market_regime_alpha.execution.position_book import PositionBook
 
 
 POSITION_SNAPSHOT_SCHEMA = "position-snapshot-v1"
+TRACEABLE_POSITION_SNAPSHOT_SCHEMA = "position-snapshot-v2-traceable"
 
 
 class PositionState(str, Enum):
@@ -74,9 +89,16 @@ class PositionSnapshot:
     effective_fill_ids: tuple[FillId, ...]
     version: int
     reason_codes: tuple[str, ...]
+    position_book_id: PositionBookId | None = None
+    thesis_id: ThesisId | None = None
+    opportunity_id: OpportunityId | None = None
+    source_manual_trade_ids: tuple[ManualTradeId, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.schema_version != POSITION_SNAPSHOT_SCHEMA:
+        if self.schema_version not in {
+            POSITION_SNAPSHOT_SCHEMA,
+            TRACEABLE_POSITION_SNAPSHOT_SCHEMA,
+        }:
             raise ValueError("unsupported PositionSnapshot schema")
         if not self.source_fill_ids or self.version != len(self.source_fill_ids):
             raise ValueError("PositionSnapshot version must equal source Fill count")
@@ -88,12 +110,29 @@ class PositionSnapshot:
             raise ValueError("open Position requires average cost")
         if self.state is PositionState.RECONCILIATION_REQUIRED and not self.reason_codes:
             raise ValueError("reconciliation Position requires reason_codes")
+        trace_values = (
+            self.position_book_id,
+            self.thesis_id,
+            self.opportunity_id,
+        )
+        if self.schema_version == POSITION_SNAPSHOT_SCHEMA:
+            if any(value is not None for value in trace_values) or self.source_manual_trade_ids:
+                raise ValueError("V1 PositionSnapshot cannot carry V2 trace")
+        else:
+            if any(value is None for value in trace_values):
+                raise ValueError("traceable PositionSnapshot requires complete trace")
+            if not self.source_manual_trade_ids:
+                raise ValueError("traceable PositionSnapshot requires ManualTrade IDs")
+            if self.source_manual_trade_ids != tuple(
+                sorted(set(self.source_manual_trade_ids), key=str)
+            ):
+                raise ValueError("Position ManualTrade IDs must be sorted and unique")
         expected = _snapshot_id(self.semantic_payload())
         if self.snapshot_id != expected:
             raise ValueError("PositionSnapshot content identity mismatch")
 
     def semantic_payload(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "account_id": self.account_id,
             "symbol": self.symbol,
@@ -108,6 +147,21 @@ class PositionSnapshot:
             "version": self.version,
             "reason_codes": list(self.reason_codes),
         }
+        if self.schema_version == TRACEABLE_POSITION_SNAPSHOT_SCHEMA:
+            assert self.position_book_id is not None
+            assert self.thesis_id is not None
+            assert self.opportunity_id is not None
+            payload.update(
+                {
+                    "position_book_id": str(self.position_book_id),
+                    "thesis_id": str(self.thesis_id),
+                    "opportunity_id": str(self.opportunity_id),
+                    "source_manual_trade_ids": [
+                        str(item) for item in self.source_manual_trade_ids
+                    ],
+                }
+            )
+        return payload
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {"snapshot_id": str(self.snapshot_id), **self.semantic_payload()}
@@ -130,15 +184,24 @@ class PositionSnapshot:
             "version",
             "reason_codes",
         }
+        schema = str(payload.get("schema_version"))
+        if schema == TRACEABLE_POSITION_SNAPSHOT_SCHEMA:
+            expected |= {
+                "position_book_id",
+                "thesis_id",
+                "opportunity_id",
+                "source_manual_trade_ids",
+            }
         if set(payload) != expected:
             raise ValueError("PositionSnapshot fields mismatch")
         lots = payload["lots"]
         source_ids = payload["source_fill_ids"]
         effective_ids = payload["effective_fill_ids"]
         reasons = payload["reason_codes"]
+        manual_ids = payload.get("source_manual_trade_ids", [])
         if not all(
             isinstance(value, list)
-            for value in (lots, source_ids, effective_ids, reasons)
+            for value in (lots, source_ids, effective_ids, reasons, manual_ids)
         ):
             raise ValueError("PositionSnapshot array field mismatch")
         average_cost = payload["average_cost"]
@@ -161,6 +224,24 @@ class PositionSnapshot:
             effective_fill_ids=tuple(FillId(str(item)) for item in effective_ids),
             version=int(payload["version"]),
             reason_codes=tuple(str(item) for item in reasons),
+            position_book_id=(
+                PositionBookId(str(payload["position_book_id"]))
+                if schema == TRACEABLE_POSITION_SNAPSHOT_SCHEMA
+                else None
+            ),
+            thesis_id=(
+                ThesisId(str(payload["thesis_id"]))
+                if schema == TRACEABLE_POSITION_SNAPSHOT_SCHEMA
+                else None
+            ),
+            opportunity_id=(
+                OpportunityId(str(payload["opportunity_id"]))
+                if schema == TRACEABLE_POSITION_SNAPSHOT_SCHEMA
+                else None
+            ),
+            source_manual_trade_ids=tuple(
+                ManualTradeId(str(item)) for item in manual_ids
+            ),
         )
 
 
@@ -286,6 +367,70 @@ class PositionProjector:
             effective_fill_ids=tuple(item.fill_id for item in effective),
             version=len(source_ids),
             reason_codes=reasons,
+        )
+
+    def project_book(
+        self,
+        *,
+        book: PositionBook,
+        trades: tuple[ManualTradeRecord, ...],
+        fills: tuple[Fill, ...],
+        as_of: datetime,
+    ) -> PositionSnapshot:
+        """Project one Thesis book and reject any cross-book Fill."""
+
+        if not trades:
+            raise ValueError("traceable Position requires ManualTrade records")
+        trade_by_id = {item.manual_trade_id: item for item in trades}
+        if len(trade_by_id) != len(trades):
+            raise ValueError("duplicate ManualTrade identity in Position book")
+        for trade in trades:
+            if (
+                trade.schema_version != TRACEABLE_MANUAL_TRADE_SCHEMA
+                or trade.position_book_id != book.position_book_id
+                or trade.thesis_id != book.thesis_id
+                or trade.opportunity_id != book.opportunity_id
+                or trade.account_id != book.account_id
+                or trade.symbol != book.symbol
+            ):
+                raise ValueError("ManualTrade does not belong to Position book")
+        fill_trade_ids = {item.manual_trade_id for item in fills}
+        if not fill_trade_ids or not fill_trade_ids.issubset(trade_by_id):
+            raise ValueError("Fill does not belong to Position book ManualTrade")
+        base = self.project(
+            account_id=book.account_id,
+            symbol=book.symbol,
+            fills=fills,
+            as_of=as_of,
+        )
+        manual_ids = tuple(sorted(fill_trade_ids, key=str))
+        semantic = {
+            **base.semantic_payload(),
+            "schema_version": TRACEABLE_POSITION_SNAPSHOT_SCHEMA,
+            "position_book_id": str(book.position_book_id),
+            "thesis_id": str(book.thesis_id),
+            "opportunity_id": str(book.opportunity_id),
+            "source_manual_trade_ids": [str(item) for item in manual_ids],
+        }
+        return PositionSnapshot(
+            schema_version=TRACEABLE_POSITION_SNAPSHOT_SCHEMA,
+            snapshot_id=_snapshot_id(semantic),
+            account_id=base.account_id,
+            symbol=base.symbol,
+            as_of=base.as_of,
+            state=base.state,
+            total_quantity=base.total_quantity,
+            average_cost=base.average_cost,
+            realized_pnl=base.realized_pnl,
+            lots=base.lots,
+            source_fill_ids=base.source_fill_ids,
+            effective_fill_ids=base.effective_fill_ids,
+            version=base.version,
+            reason_codes=base.reason_codes,
+            position_book_id=book.position_book_id,
+            thesis_id=book.thesis_id,
+            opportunity_id=book.opportunity_id,
+            source_manual_trade_ids=manual_ids,
         )
 
 

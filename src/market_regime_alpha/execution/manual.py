@@ -9,15 +9,20 @@ from math import isfinite
 from typing import Any
 
 from market_regime_alpha.core.identity import (
+    ArtifactId,
     FillId,
     ManualTradeId,
+    OpportunityId,
     PortfolioDecisionId,
+    PositionBookId,
     RiskDecisionId,
+    ThesisId,
 )
 from market_regime_alpha.evidence.canonical import require_sha256
 
 
 MANUAL_TRADE_SCHEMA = "manual-trade-record-v1"
+TRACEABLE_MANUAL_TRADE_SCHEMA = "manual-trade-record-v2-traceable"
 FILL_SCHEMA = "manual-fill-v1"
 
 
@@ -64,9 +69,17 @@ class ManualTradeRecord:
     updated_at: datetime
     last_actor: str
     last_reason: str
+    position_book_id: PositionBookId | None = None
+    thesis_id: ThesisId | None = None
+    opportunity_id: OpportunityId | None = None
+    post_trade_snapshot_id: ArtifactId | None = None
+    post_trade_snapshot_hash: str | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != MANUAL_TRADE_SCHEMA:
+        if self.schema_version not in {
+            MANUAL_TRADE_SCHEMA,
+            TRACEABLE_MANUAL_TRADE_SCHEMA,
+        }:
             raise ValueError("unsupported ManualTradeRecord schema")
         require_sha256("risk_decision_hash", self.risk_decision_hash)
         require_sha256("target_position_hash", self.target_position_hash)
@@ -110,9 +123,25 @@ class ManualTradeRecord:
                 raise ValueError("manual trade timestamps must be timezone-aware")
         if self.updated_at < self.created_at:
             raise ValueError("manual trade update cannot precede creation")
+        trace_values = (
+            self.position_book_id,
+            self.thesis_id,
+            self.opportunity_id,
+            self.post_trade_snapshot_id,
+            self.post_trade_snapshot_hash,
+        )
+        if self.schema_version == MANUAL_TRADE_SCHEMA:
+            if any(value is not None for value in trace_values):
+                raise ValueError("V1 ManualTradeRecord cannot carry V2 trace")
+        elif any(value is None for value in trace_values):
+            raise ValueError("traceable ManualTradeRecord requires complete trace")
+        elif self.post_trade_snapshot_hash is not None:
+            require_sha256(
+                "post_trade_snapshot_hash", self.post_trade_snapshot_hash
+            )
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "manual_trade_id": str(self.manual_trade_id),
             "risk_decision_id": str(self.risk_decision_id),
@@ -135,6 +164,24 @@ class ManualTradeRecord:
             "last_actor": self.last_actor,
             "last_reason": self.last_reason,
         }
+        if self.schema_version == TRACEABLE_MANUAL_TRADE_SCHEMA:
+            assert self.position_book_id is not None
+            assert self.thesis_id is not None
+            assert self.opportunity_id is not None
+            assert self.post_trade_snapshot_id is not None
+            assert self.post_trade_snapshot_hash is not None
+            payload.update(
+                {
+                    "position_book_id": str(self.position_book_id),
+                    "thesis_id": str(self.thesis_id),
+                    "opportunity_id": str(self.opportunity_id),
+                    "post_trade_snapshot_id": str(
+                        self.post_trade_snapshot_id
+                    ),
+                    "post_trade_snapshot_hash": self.post_trade_snapshot_hash,
+                }
+            )
+        return payload
 
     @classmethod
     def from_canonical_dict(cls, payload: dict[str, Any]) -> ManualTradeRecord:
@@ -146,6 +193,16 @@ class ManualTradeRecord:
             "filled_quantity", "version", "actor", "reason", "created_at",
             "updated_at", "last_actor", "last_reason",
         }
+        schema = str(payload.get("schema_version"))
+        trace_expected = {
+            "position_book_id",
+            "thesis_id",
+            "opportunity_id",
+            "post_trade_snapshot_id",
+            "post_trade_snapshot_hash",
+        }
+        if schema == TRACEABLE_MANUAL_TRADE_SCHEMA:
+            expected |= trace_expected
         if set(payload) != expected:
             raise ValueError("ManualTradeRecord fields mismatch")
         return cls(
@@ -170,6 +227,31 @@ class ManualTradeRecord:
             updated_at=datetime.fromisoformat(str(payload["updated_at"])),
             last_actor=str(payload["last_actor"]),
             last_reason=str(payload["last_reason"]),
+            position_book_id=(
+                PositionBookId(str(payload["position_book_id"]))
+                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                else None
+            ),
+            thesis_id=(
+                ThesisId(str(payload["thesis_id"]))
+                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                else None
+            ),
+            opportunity_id=(
+                OpportunityId(str(payload["opportunity_id"]))
+                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                else None
+            ),
+            post_trade_snapshot_id=(
+                ArtifactId(str(payload["post_trade_snapshot_id"]))
+                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                else None
+            ),
+            post_trade_snapshot_hash=(
+                str(payload["post_trade_snapshot_hash"])
+                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                else None
+            ),
         )
 
 

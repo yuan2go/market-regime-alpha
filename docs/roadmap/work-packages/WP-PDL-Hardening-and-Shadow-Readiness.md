@@ -175,6 +175,16 @@ sellability. All named limits are synthetic explicit fixture configuration.
 Disable new commands; preserve V1 readers and append-only ledger. Do not
 rewrite historical Fill identities.
 
+### Implementation evidence
+
+Delivered on the H2 checkpoint with `PositionBook`, exact V2
+`ManualTradeRecord`/`PositionSnapshot` schemas, an immutable SQLite trace
+index and `TraceableTradeOutcome`. Migration 006 creates no Fill table and
+does not change migration 004. Tests cover active-Thesis uniqueness,
+Opportunity/Thesis expiry, upstream mismatch, cross-book Fill, correction,
+close/reopen, restart/replay and isolated down migration. H3 still owns all
+sellable-quantity and trading-calendar semantics.
+
 ## 9. H3 — Fill-derived A-share T+1
 
 ### Deliverables

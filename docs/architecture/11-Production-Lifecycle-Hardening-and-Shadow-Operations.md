@@ -135,6 +135,17 @@ A database constraint and domain validation prevent two open Thesis books for
 one account and symbol. Closing the historical book permits a later Thesis
 without merging its fills into the prior outcome.
 
+### H2 implementation status
+
+The traceable V2 path implements this first-version restriction with
+`PositionBook`, migration 006 and an immutable binding index. Fill continues
+to live only in the migration-004 append-only ledger. V2 ManualTrade and
+PositionSnapshot schemas add exact authority identities without altering V1
+canonical field sets. `TraceableTradeOutcomeEvaluator` recomputes each Risk
+decision and validates each ManualTrade target delta before delegating metric
+calculation to the existing evaluator. The design intentionally does not yet
+support concurrent strategy sleeves in one account/symbol.
+
 ## 6. Fill-derived A-share T+1 authority
 
 For ordinary long-only A-share stock, each PositionLot records trade date,
