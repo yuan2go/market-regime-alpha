@@ -96,3 +96,13 @@ class OpportunityId(StableId):
 @dataclass(frozen=True, slots=True)
 class ThesisId(StableId):
     """Identity of a mutable TradingThesis aggregate."""
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioDecisionId(StableId):
+    """Identity of a versioned PortfolioDecision."""
+
+
+@dataclass(frozen=True, slots=True)
+class RiskDecisionId(StableId):
+    """Identity of an independent RiskDecision."""

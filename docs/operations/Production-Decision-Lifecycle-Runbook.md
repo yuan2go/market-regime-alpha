@@ -170,6 +170,22 @@ The operator may reject an opportunity without changing its evidence. Rejection 
 
 ### 3.6 Portfolio and risk
 
+Implemented exploratory/manual-support CLI:
+
+```bash
+python scripts/run_portfolio_risk.py --database portfolio.sqlite3 \
+  run --request PORTFOLIO_RISK_REQUEST.json
+
+python scripts/run_portfolio_risk.py --database portfolio.sqlite3 \
+  show-risk --risk-decision-id RISK_DECISION_ID
+```
+
+The request must contain the complete RiskBudget, approved Thesis snapshots,
+explicit allocation requests, an account snapshot and one current-position
+input for every symbol. Missing configuration, stale account data or a risk
+service duration beyond the configured timeout fails closed. Fixture profiles
+are not production limits.
+
 Before manual action:
 
 1. Load current authoritative positions and available cash.

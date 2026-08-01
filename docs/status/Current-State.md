@@ -23,7 +23,8 @@ OPERATIONAL_RESEARCH_BRIDGE_IMPLEMENTED_EXPLORATORY
 SQLITE_MODEL_AND_EXPERIMENT_GOVERNANCE_IMPLEMENTED
 SIGNAL_AND_UNCALIBRATED_PATH_FORECAST_IMPLEMENTED_EXPLORATORY
 DURABLE_OPPORTUNITY_AND_THESIS_LIFECYCLE_IMPLEMENTED
-PRODUCTION_DECISION_LIFECYCLE_PHASES_5_TO_7_NOT_IMPLEMENTED
+INDEPENDENT_PORTFOLIO_RISK_AUTHORITY_IMPLEMENTED_SQLITE
+PRODUCTION_DECISION_LIFECYCLE_PHASES_6_TO_7_NOT_IMPLEMENTED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -92,6 +93,12 @@ TRADING_AUTHORITY_NOT_GRANTED
   histories;
 - atomic Opportunity confirmation and Thesis creation through a
   storage-neutral Repository Protocol and CLI-first application service;
+- explicit-config Portfolio proposals from approved Thesis plus independently
+  recomputed RiskDecision for gross, symbol, theme, liquidity, cash, current
+  position, T+1 and loss-budget constraints;
+- fail-closed risk timeout/data insufficiency, structured rejection codes,
+  exact RiskBudget snapshots and durable SQLite/CLI operation restricted to
+  `SIMULATION` or `MANUAL_CONFIRMATION`;
 - compatibility-preserving MR2A and B0/B1 adapters without changes to legacy scores, ranks, PredictionRuns or Readers.
 
 ## Documentation baseline added on 2026-08-01
@@ -162,8 +169,8 @@ The following are not implemented as canonical production-decision authority:
 - calibrated or production-qualified multi-horizon PathForecast;
 - production-qualified TradingOpportunity operating policy;
 - production-qualified TradingThesis approval/invalidation policy;
-- independent RiskDecision;
-- complete PortfolioDecision;
+- production-qualified RiskBudget and independent RiskDecision policy;
+- production-qualified PortfolioDecision allocation policy;
 - ManualTradeRecord and Fill ledger;
 - PositionSnapshot authority;
 - HoldingAssessment;

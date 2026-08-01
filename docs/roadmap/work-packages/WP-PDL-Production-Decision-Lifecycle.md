@@ -376,6 +376,27 @@ tests/decision/test_risk.py
 - all decisions carry exact limit snapshots and reasons;
 - portfolio tests include conflicting theses and partial capacity.
 
+### Implementation evidence
+
+Implemented on `feat/production-decision-lifecycle`:
+
+- content-identified `RiskBudget` with every constraint and timeout supplied
+  explicitly; no omitted configuration or implicit default is accepted;
+- `TargetPosition`, `PortfolioDecision`, `PortfolioConstraint` and independent
+  `RiskDecision` contracts limited to simulation/manual-confirmation modes;
+- approved-Thesis matching, exact current-position coverage and conflicting
+  same-symbol Thesis rejection before risk;
+- gross, single-symbol, theme, liquidity, cash, long-only current-position,
+  T+1 available quantity and maximum-loss constraints with structured codes;
+- risk timeout and late account snapshot fail closed;
+- storage-neutral Repository Protocol, isolated SQLite migration, idempotent
+  commands and persistence-time independent risk recomputation;
+- application service and CLI plus approval/rejection/timeout/conflict/forgery
+  and migration tests.
+
+`test_risk_profile_v1` and allocation values are test fixtures only. No risk,
+position-size or theme-concentration parameter is promoted to production truth.
+
 ### Rollback
 
 Pause new portfolio decisions; existing theses remain observable but cannot create new intents.

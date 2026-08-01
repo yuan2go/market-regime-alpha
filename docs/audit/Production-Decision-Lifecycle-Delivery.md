@@ -73,7 +73,7 @@ Phase quality gate:
 
 ## Pending phases
 
-Phases 5–7 remain pending until their separate executable behavior, tests,
+Phases 6–7 remain pending until their separate executable behavior, tests,
 documentation and semantic checkpoint commits are present. Qualified
 operational supplemental data remains an external evidence blocker, not a
 blocker to the fail-closed engineering mechanics.
@@ -181,6 +181,52 @@ Focused evidence before the phase quality gate:
 | `python -m pytest -q tests/decision` | PASS — 8 |
 | focused Ruff | PASS |
 | `python -m mypy` | PASS — 237 source files |
+
+## Phase 5 — Portfolio and independent Risk Authority
+
+Delivered on the Phase 5 checkpoint:
+
+- explicit content-identified RiskBudget and exact limit snapshot binding;
+- PortfolioDecision/TargetPosition proposal separated from independent
+  RiskDecision approval;
+- gross, symbol, theme, liquidity, cash, long-only current-position, T+1 and
+  maximum-loss constraints with structured fail-closed reason codes;
+- timeout, missing configuration and late input failure paths;
+- SQLite repository that recomputes RiskDecision before accepting a write,
+  preventing caller-forged approval;
+- idempotent immutable decisions and CLI restricted to simulation/manual modes.
+
+Database changes:
+
+| Table | Authority and constraint |
+|---|---|
+| `portfolio_risk_commands` | unique idempotency key and command hash |
+| `portfolio_decisions` | immutable version-0 proposal and full RiskBudget snapshot |
+| `risk_decisions` | one independently validated version-0 result per PortfolioDecision |
+
+`003_portfolio_risk_down.sql` removes only these Phase 5 tables and its
+migration receipt. The account/position inputs remain explicit snapshots; they
+are not yet Phase 6 actual-position authority.
+
+Focused evidence before the phase quality gate:
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q tests/portfolio` | PASS — 13 |
+| focused Ruff | PASS |
+| `python -m mypy` | PASS — 242 source files |
+
+Phase quality gate:
+
+| Command | Result |
+|---|---|
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
+| `python -m pytest -q tests/platform` | PASS — 22 |
+| `python -m pytest -q` | PASS — 1212 |
+| `python -m ruff check .` | PASS |
+| `python -m mypy` | PASS — 242 source files |
 
 Phase quality gate:
 
