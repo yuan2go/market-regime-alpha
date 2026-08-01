@@ -1,6 +1,6 @@
 # WP-PDL — Production Decision Lifecycle
 
-> **Status:** PLANNED  
+> **Status:** ROADMAP  
 > **Authority:** Executable implementation work package  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-01  
