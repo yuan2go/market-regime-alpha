@@ -6,45 +6,105 @@
 > **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Baseline.md, ../audit/Production-Lifecycle-Hardening-Delivery.md
-> **Code Evidence:** Current `main`; production-lifecycle target documents do not establish implementation.
+> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md  
+> **Code Evidence:** `main@e183fdac285786ed448c835e65c99dc67189c2b9`  
+> **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
+
+## 1. Immediate P0 gaps
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
-| Production Decision Lifecycle Phase 0–7 | DELIVERED_ENGINEERING | modular contexts and fixture/manual chain through complete-trade review implemented and tested | qualified evidence and production admission remain separate | preserve compatibility and harden through WP-PDL-HARDENING |
-| Complete-account Portfolio/Risk | H1_DELIVERED_SQLITE | V2 content-identified account snapshot/deltas/post-trade Portfolio and independent Risk include all holdings; partial/stale/unreconciled input is structured fail-closed | H3 Fill-derived sellability and validated operating limits | engineering completion verified by full-account/restart/migration/CLI tests; V1 retained as compatibility |
-| Thesis-to-Outcome authority trace | H2_DELIVERED_SQLITE | PositionBook enforces one OPEN account/symbol Thesis; traceable ManualTrade/Position/Outcome validate exact Opportunity→Portfolio→Risk→Fill chain while V1 remains readable | H3 T+1 and future multi-sleeve design if required | duplicate/mismatch/mixed chain, correction, close/reopen, restart/replay and migration tests pass; no broker authority claimed |
-| A-share T+1 Position Authority | H3_DELIVERED_FILL_CALENDAR_DERIVED | V3 lots/snapshot derive available/frozen/today-acquired and sellable sessions from effective Fill, explicit calendar and typed status evidence; hardened Risk entry enumerates OPEN books | qualified operational calendar/status/account reconciliation evidence | same-day/Friday/holiday/suspension/correction/missingness/restart tests pass; compatibility H1 input is not the hardened path |
-| Increasing versus reducing risk | H4_CONFIRMED_GAP | REDUCE/EXIT requires normal Portfolio/Risk and can be blocked by its timeout | strict reducing-risk execution gate | valid reduction survives opening-risk timeout but cannot bypass position/execution constraints |
-| Thesis-health evidence derivation | H5_CONFIRMED_GAP | caller supplies signal/theme/capital support booleans | verified Artifact builder and explicit config | operational input contains references/config only and replay derives identical health |
-| Composite operational evidence | H6_CONFIRMED_GAP | bridge uses historical evidence kind and downstream Daily SourceManifest plus flat lineage arrays | composite lineage index and operational exploratory kind | both original manifests and per-field authority remain queryable without inflation |
-| Durable Holding/Exit operations | H7_CONFIRMED_GAP | assessments exist only in immutable one-shot review package | append-only repository, projection, schedule/blocked/ack state | CAS/restart/rebuild/migration tests pass |
-| Shadow Operations | H8_CONFIRMED_GAP | no ShadowRun, queues, lifecycle receipts, metrics, alerts or acknowledgement | H1–H7 plus recoverable CLI orchestration | synthetic E2E/restart/replay and Shadow Ready engineering criteria pass; no real sustained-run claim |
-| Signal/Path validation infrastructure | H9_CONFIRMED_GAP | Signal/Path are exploratory baseline mechanics without incremental-value, calibration or formal OOS evidence | validation protocols and qualified future data | infrastructure passes leakage/control tests; evidence claims remain blocked until formal runs |
-| Platform governance persistence remainder | DELIVERED_P2_SQLITE | storage-neutral Protocols, domain-validating services, isolated SQLite migrations, CAS and append-only Model/Experiment histories implemented | future PostgreSQL repository contract suite and operational deployment | SQLite engineering slice complete; no database write API bypasses lifecycle/budget validation |
-| Operational Research Bridge | DELIVERED_P1 | verified Daily and supplemental Artifacts compose through a fail-closed adapter and explicit-config run/replay CLI; duplicate execution is content-idempotent | qualified operational Theme/Capital/PIT mapping evidence | engineering slice complete; external evidence remains blocked without authority inflation |
-| Public LIVE current-status and Decision-window closure | P0 | History/Status/Quote V3 stages, exact-date BaoStock status and scheduling CLI implemented; off-window real LIVE/Archive remain verified `DATA_BLOCKED` | observe BaoStock current row and Tencent Quote inside controlled 14:55 schedule | real Archive reaches `OUTCOME_PENDING` with stable replay and nonempty Features/B0/B1 |
-| Public-source formal availability/PIT | P0 | historical public retrieval semantics are explicit and EXPLORATORY; no invented availability/finality | provider/reference data | qualified availability and formal PIT status/inventory evidence |
-| Operational 100–300 A-share universe | BLOCKED_P0 | content-addressed configurable policy contract; fixed 20-symbol smoke runtime only | successful real WP-D3 Archive plus approved membership/mapping/liquidity source | configured operational pool with every symbol eligible or excluded and stable replay |
-| Run-first exploratory daily vertical slice | DELIVERED_P0E | recoverable Phase D loop operational on delivery branch | implemented contracts and fixture/public evidence | completed: single/10-session replay, frozen predictions/outcomes/reviews, verified LIVE blocker and stable hashes |
-| Platform V2 Research Layer MVP | DELIVERED_P1 | six-layer boundaries plus executable Market/Theme/Capital/Candidate pipeline, Artifact Reader and deterministic Replay | typed fixture or historical immutable Archive | completed engineering slice; remains EXPLORATORY and offline |
-| Market/ETF/theme/capital operational evidence | P1 | deterministic V0 snapshots implemented from typed observations; weights and thresholds unvalidated | PIT theme mappings and qualified historical observations | historical Archive evaluation, overlap ablation and calibrated operating protocol |
-| Theme and Capital historical lifecycle semantics | P1 | current V0 labels are direct score classifications without previous-state duration or hysteresis | historical typed observations and transition protocol | separate replayable lifecycle snapshots with validated transition behavior |
-| Signal Engine MVP | DELIVERED_P3_EXPLORATORY | explicit versioned five-confirmation model, Candidate/source lineage, exact Artifact reader/replay and CLI implemented | qualified CandidateSet observations and parameter evaluation | engineering slice complete; remains research-only with no Entry/order authority |
-| Multi-horizon PathForecast | DELIVERED_P3_UNCALIBRATED | existing EntryPathTarget reused by explicit Path config; historical availability gate, MFE/MAE, quantiles, ambiguity/missingness and replay implemented | qualified historical path samples, calibration and validated barrier/horizon profile | engineering slice complete; no probability and no validated operating parameters claimed |
-| TradingOpportunity and TradingThesis | DELIVERED_P4_SQLITE | exact evidence binding, expiry, approval/invalidation, CAS, idempotency, append-only restore and CLI implemented | qualified operational evidence, authorization policy and PostgreSQL parity | engineering lifecycle complete; remains human decision support with no Risk/Execution authority |
-| Independent Risk Authority | DELIVERED_P5_EXPLORATORY | versioned Portfolio proposal and independently recomputed SQLite RiskDecision implement gross/symbol/theme/liquidity/cash/current/T+1/loss/timeout checks | authoritative Position/cash and validated operating limits | engineering authority complete for fixture/manual support; no production risk profile or LIVE authority |
-| Multi-model daily Prediction Ledger | DELIVERED_P1 | B0/B1 complete immutable PredictionRuns published and replayed | existing model identities and rankers | completed for the fixed B0/B1 exploratory model set |
-| CandidateRecommendation presentation | DELIVERED_P1 | per-model Top-5 structured reasons/risks without trade authority | PredictionRuns | completed for exploratory daily loop; fixed MR1 semantics preserved |
-| Real Entry Model | P1 | plumbing gate only; eligible Candidates always WAIT_CONFIRMATION | Candidate, Signal and qualified decision-time evidence | validated Entry/Opportunity protocol with no authority inflation |
-| Manual Execution Ledger | DELIVERED_P6_MANUAL_SQLITE | approved-Risk-bound manual intent, append-only Fill/correction, idempotency and order states implemented; no broker integration | authentication and external statement reconciliation | engineering ledger complete for manual records; LIVE_ORDER remains prohibited |
-| Canonical PositionSnapshot | DELIVERED_P6_FILL_DERIVED | FIFO lots, quantity/cost/realized PnL and reconciliation state rebuild solely from Fill | operational ledger and account reconciliation evidence | canonical projection exists; no PositionPlan/model path can create actual Position |
-| Holding and Exit | DELIVERED_P7_EXPLORATORY | independent Holding/Exit roles consume Fill-derived Position and versioned evidence; ADD recomputes fresh RiskDecision | qualified observations and validated configuration | engineering actions/replay complete; operating thresholds remain unvalidated |
-| Complete-trade attribution and rolling scorecards | DELIVERED_P7_EXPLORATORY | Fill-bound closed TradeOutcome, MFE/MAE/capture, execution deviation, four-part diagnostic attribution and protocol-bound rolling scorecard implemented | qualified closed trades and approved evaluation protocol | engineering replay complete; diagnostics are not causal Alpha proof and cannot mutate models |
-| Authentication, permissions and operator audit | P1 | no confirmed canonical production implementation | application commands and role model | actor/permission enforcement for risk, manual records, reconciliation and model transitions |
-| Operational metrics, trace and alerts | P1 | artifact/reason-code audit exists; no confirmed production telemetry stack | operational application services | source/stage/opportunity/risk/execution/position/model metrics, trace and alerts |
-| Failure Attribution/Codex Evidence Pack | P2 | designed | review ledger | proposals generated without model mutation |
-| Portfolio/execution simulation | P2 | Legacy only | validated component models and Risk Authority | T+1/cost/capacity-aware simulator using canonical target positions |
-| Xuntou Provider shadow integration | External P0 | Provider boundary ready; qualified input still blocked | XtQuant/v4 bundle and Windows exporter | same-pipeline shadow run and ProviderComparisonReport without authority promotion |
-| QuantDesk workbench | P3 | not started | stable application commands, queries and read models | UI consumes canonical artifacts and ledgers only |
-| Future broker adapter | DEFERRED | not authorized by WP-PDL | sustained shadow/manual evidence and separate security/architecture approval | versioned approved-intent port, append-only execution events, reconciliation and kill switch |
+| H4 current-main integration failure | P0-BLOCKING | `portfolio/risk_routes.py`, migration 007 and H4 tests exist, but `portfolio/sqlite_risk_routes.py`, `SQLiteRiskRouteRepository`, `RiskRouteApplicationService`, package exports and application integration are absent; the test module imports missing symbols/modules | Complete H4 Repository/Application/CLI integration | Focused H4 tests collect and pass; migration up/down isolation passes; full current-HEAD gate passes |
+| Current HEAD verification | P0-BLOCKING | Historical Phase/H1–H3 PASS records exist, but no observed GitHub Actions/status for `e183fdac`; independent full test could not run in the audit environment | H4 repair and reproducible build environment | Exact commit has recorded pytest, Ruff, mypy, docs, migration and package-build results |
+| Reproducible dependency set | P0 | Dependencies use lower bounds and no confirmed lockfile is present | Select one package workflow | Clean Python 3.12 environment installs from a committed lock and reproduces the full gate |
+| Status-document authority drift | P0 | Previous `Current-State` referenced `a7ce0b4`; H4 code existed while Gap Register still described only an unimplemented gap | Current-state update and future automation | Status, matrix and gaps reference the same commit and fail CI when stale |
+| CI baseline | P0 | No observed current commit checks | Reproducible environment | Pull requests require package build, pytest, Ruff, mypy, docs links and migration smoke |
+
+## 2. Pre-Shadow hardening gaps
+
+| Gap | Priority | Current state | Dependency | Exit condition |
+|---|---|---|---|---|
+| H5 Artifact-derived Thesis health | P1 | Holding/Exit callers can provide signal/theme/capital support state instead of deriving it from verified source artifacts | Green H4 baseline and explicit health configuration | Builder accepts only verified artifact references/config, derives health deterministically and reproduces the same identity on replay |
+| H6 composite operational evidence | P1 | Operational bridge combines a Daily SourceManifest with supplemental evidence but records historical evidence kind and flat lineage; no composite owner exposes both source authorities cleanly | H5 input requirements and current bridge contracts | Composite manifest/index preserves both original manifests, per-field authority and DecisionTime without eligibility inflation |
+| H7 durable Holding/Exit operations | P1 | Holding/Exit assessments are computed in one-shot review flows; no append-only schedule, blocked state, acknowledgement or durable projection | H5 health builder and H6 evidence | Repository supports CAS, idempotency, restart, rebuild, due/blocked/acknowledged state and migration isolation |
+| H8 recoverable ShadowRun | P1 | Daily research, operational research, Signal/Path, Decision, Risk, Fill and Review are separate CLIs; no whole-lifecycle run owner exists | H4–H7 | ShadowRun has stage receipts, retries, resume, deadlines, operator acknowledgement, metrics, alerts and deterministic replay |
+| H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
+| Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
+| PostgreSQL repository parity | P1 | Lifecycle persistence is SQLite local/test authority | Stable Repository protocols and contract suite | PostgreSQL adapters pass the same concurrency, idempotency, reconstruction and migration contract tests |
+
+## 3. Data and operational evidence gaps
+
+| Gap | Priority | Current state | Dependency | Exit condition |
+|---|---|---|---|---|
+| Controlled 14:55 public runtime | P0-EXTERNAL | Public acquisition stages exist; latest real run was outside the historical DecisionTime and correctly became `DATA_BLOCKED` | Controlled scheduling and provider availability | Sustained exact-window archives reach `OUTCOME_PENDING` and replay with stable hashes |
+| Qualified Xuntou V4 input | P0-EXTERNAL | Adapter/preflight/evidence contracts exist; no qualified real XtQuant bundle has passed | Windows XtQuant exporter and source inventory | Real bundle passes qualification and same-pipeline comparison without authority promotion |
+| Operational stock Universe | P1 | Runtime uses a fixed 20-symbol smoke pool | Successful provider archive and approved PIT membership/liquidity source | Versioned 100–300 symbol Universe accounts for every inclusion/exclusion and replays identically |
+| Canonical ETF Universe | P1 | ETF observations/mappings are supplemental only; no ETF Universe, tracking-index identity or primary/alternative policy | ETF reference data and PIT mapping | Separate immutable ETF Universe and eligibility artifact supports replay and delisting/duplication rules |
+| PIT theme membership | P1 | Bridge requires full membership coverage, but no qualified daily producer exists | Theme taxonomy and effective-dated source | Every symbol’s primary/supporting membership is available by DecisionTime and versioned |
+| Theme/ETF mapping | P1 | Supplemental contract requires exact mapping coverage; no operational producer exists | ETF Universe and theme taxonomy | Every proxy mapping has effective time, source lineage and deterministic Reader |
+| Theme and Capital observations | P1 | V0 models run from typed fixtures/supplemental artifacts | Qualified market/ETF/symbol history | Daily materializer produces complete decision-time observations with missingness and coverage reports |
+| External account authority | P1 | H1 snapshots and H3 positions are based on explicit/manual evidence | Broker statement/import boundary | Complete cash/position statement is authenticated, versioned and reconciled before Risk |
+| Fill reconciliation | P1 | Fill is append-only human-recorded evidence, not broker truth | External execution statement and operator roles | Every manual Fill is matched, disputed or corrected through an append-only reconciliation workflow |
+
+## 4. Research and model gaps
+
+| Gap | Priority | Current state | Dependency | Exit condition |
+|---|---|---|---|---|
+| Real Entry Model | P1 | Canonical Entry emits only `REJECT` or `WAIT_CONFIRMATION`; `ENTER` is intentionally absent | Qualified Candidate/Signal/path evidence and validation protocol | Independent Entry model has frozen inputs, thresholds, target, cost assumptions, calibration and OOS result |
+| Market Regime validation | P1 | Deterministic weighted gate with explicit thresholds | Qualified historical observations | Walk-forward comparison proves usefulness for exposure/gating versus simpler controls |
+| Theme lifecycle semantics | P1 | Theme Rotation V0 is direct per-day classification | PIT history and transition protocol | Versioned state machine includes persistence, duration, hysteresis and validated decay behavior |
+| Capital Evolution validation | P1 | Observable-proxy inference exists | Theme/ETF/symbol historical observations | Ablation and incremental-value tests show what the inferred score contributes beyond price/volume baselines |
+| Candidate incremental value | P1 | Market/Theme/Capital gates feed Candidate Discovery over B0/B1 factors | Qualified historical archive | Frozen comparison reports hit rate, return, drawdown, turnover and overlap versus B0/B1 controls |
+| PathForecast calibration | P1 | MFE/MAE, barriers and quantiles exist without validated profile or event probability | H9 and qualified samples | Horizon/barrier profile is selected only from training data and evaluated on locked OOS |
+| Risk parameter validation | P1 | Risk constraints are explicit engineering fixtures | Shadow account/position/outcome sample | Limits are approved through a versioned protocol with sensitivity and incident review |
+| Holding/Exit parameter validation | P1 | Actions and contracts exist with synthetic profiles | H5/H7/H8 and closed shadow trades | Frozen configurations are evaluated by regime/theme/liquidity slices without causal overclaim |
+| Formal PIT/OOS Alpha | P0-RESEARCH | No model has current formal winning evidence | Qualified data, H9 and locked protocol | Formal study publishes immutable protocol, access history, results and negative outcomes; no data reuse violation |
+
+## 5. Product, security and operations gaps
+
+| Gap | Priority | Current state | Dependency | Exit condition |
+|---|---|---|---|---|
+| Authentication and RBAC | P1 | Domain `actor` is a string, not an authenticated principal | Operator/API architecture | Roles govern approval, risk, Fill, reconciliation, model transition and incident actions |
+| Artifact signatures | P2 | SHA-256 proves content consistency but not trusted producer identity | Key management and authenticated runtime | Artifacts carry verifiable producer/operator signatures and rotation/revocation rules |
+| Metrics, tracing and alerts | P1 | Reason codes and artifacts exist; no production telemetry stack | H8 | Stage latency/failure/data-quality/risk/reconciliation metrics, trace IDs and actionable alerts are operational |
+| Backup and recovery | P1 | Append-only histories and artifacts are reconstructible, but no production recovery evidence exists | PostgreSQL/filesystem deployment | Point-in-time restore, artifact restore and reconciliation drills are documented and tested |
+| QuantDesk read model | P2 | Canonical lifecycle is CLI-driven; Legacy FastAPI is not Reader-backed | Stable H8 commands/queries | UI reads verified artifacts and durable projections without recomputing decisions |
+| Legacy Dashboard isolation | P1 | `web/dividend_t_app.py` can use static fallback and Legacy strategy/risk paths | QuantDesk replacement or explicit isolation | Legacy endpoint is local-only/clearly labelled and cannot be confused with canonical authority |
+| Broker adapter architecture | DEFERRED | QMT/PTrade adapters safely reject live operations | Sustained shadow evidence, security review and separate approval | Versioned intent port, external receipts, reconciliation, permissions and kill switch pass dedicated admission |
+
+## 6. Delivered engineering mechanics retained
+
+The following are not open implementation gaps, although their operating/model evidence remains limited:
+
+- immutable content-addressed artifacts and semantic Readers;
+- SourceManifest and fail-closed DataQuality;
+- B0/B1 PredictionRuns and candidate baselines;
+- recoverable exploratory DailyLoop;
+- Market/Theme/Capital/Candidate research mechanics;
+- Signal and uncalibrated PathForecast mechanics;
+- SQLite Opportunity/Thesis lifecycle;
+- H1 complete-account Portfolio/Risk;
+- H2 Thesis-scoped authority trace;
+- H3 Fill/calendar-derived T+1 Position;
+- append-only manual Fill ledger;
+- exploratory Holding/Exit, TradeOutcome and rolling diagnostics.
+
+Delivered mechanics must not be upgraded to production, Alpha or trading-authority claims without the separate exit conditions above.
+
+## 7. Required implementation order
+
+```text
+P0 H4 repair
+→ current-head full gate and lockfile/CI
+→ H5 Artifact-derived Thesis health
+→ H6 composite operational evidence
+→ H7 durable Holding/Exit
+→ H8 recoverable ShadowRun
+→ qualified 14:55/Universe/Theme/Capital/account evidence
+→ H9 formal validation infrastructure
+→ sustained shadow evidence
+→ security/PostgreSQL/observability/QuantDesk
+→ separately approved broker architecture
+```
+
+Do not start production UI or live broker integration while the current main branch is not green and the ShadowRun/evidence/validation layers remain incomplete.
