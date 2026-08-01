@@ -1,6 +1,6 @@
 # Production Decision Lifecycle Requirements
 
-> **Status:** PROPOSED_REQUIREMENTS  
+> **Status:** CURRENT_SPECIFICATION  
 > **Authority:** Product and engineering requirements for the next production-decision work stream  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-01  
