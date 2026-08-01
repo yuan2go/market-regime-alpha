@@ -10,15 +10,19 @@ from pathlib import Path
 from typing import Any
 
 from market_regime_alpha.application.trading_lifecycle import (
+    CompleteAccountPortfolioRiskApplicationService,
     PortfolioRiskApplicationService,
 )
 from market_regime_alpha.core.identity import RiskDecisionId, ThesisId
 from market_regime_alpha.decision import TradingThesis
 from market_regime_alpha.portfolio import (
+    AuthoritativeAccountPortfolioSnapshot,
+    CompleteAccountRiskConfiguration,
     CurrentPositionInput,
     PortfolioAccountSnapshot,
     PortfolioOutputMode,
     RiskBudget,
+    SQLiteCompleteAccountPortfolioRiskRepository,
     SQLitePortfolioDecisionRepository,
     ThesisAllocationRequest,
 )
@@ -81,6 +85,38 @@ def _run(database: Path, payload: dict[str, Any]):
     )
 
 
+def _run_full_account(database: Path, payload: dict[str, Any]):
+    service = CompleteAccountPortfolioRiskApplicationService(
+        SQLiteCompleteAccountPortfolioRiskRepository(database)
+    )
+    return service.run(
+        theses=tuple(
+            TradingThesis.from_canonical_dict(_object(item))
+            for item in _array(payload["theses"])
+        ),
+        allocations=tuple(
+            _allocation(_object(item)) for item in _array(payload["allocations"])
+        ),
+        account_snapshot=AuthoritativeAccountPortfolioSnapshot.from_canonical_dict(
+            _object(payload["account_snapshot"])
+        ),
+        configuration=CompleteAccountRiskConfiguration.from_canonical_dict(
+            _object(payload["configuration"])
+        ),
+        mode=PortfolioOutputMode(str(payload["mode"])),
+        actor=str(payload["actor"]),
+        reason=str(payload["reason"]),
+        portfolio_created_at=datetime.fromisoformat(
+            str(payload["portfolio_created_at"])
+        ),
+        risk_started_at=datetime.fromisoformat(str(payload["risk_started_at"])),
+        risk_completed_at=datetime.fromisoformat(
+            str(payload["risk_completed_at"])
+        ),
+        idempotency_key=str(payload["idempotency_key"]),
+    )
+
+
 def _allocation(payload: dict[str, Any]) -> ThesisAllocationRequest:
     return ThesisAllocationRequest(
         thesis_id=ThesisId(str(payload["thesis_id"])),
@@ -108,8 +144,12 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     run = subparsers.add_parser("run")
     run.add_argument("--request", type=Path, required=True)
+    run_full = subparsers.add_parser("run-full-account")
+    run_full.add_argument("--request", type=Path, required=True)
     show = subparsers.add_parser("show-risk")
     show.add_argument("--risk-decision-id", required=True)
+    show_full = subparsers.add_parser("show-full-account-risk")
+    show_full.add_argument("--risk-decision-id", required=True)
     args = parser.parse_args()
     if args.command == "run":
         portfolio, risk = _run(args.database, _read(args.request))
@@ -117,6 +157,18 @@ def main() -> int:
             "portfolio": portfolio.to_canonical_dict(),
             "risk": risk.to_canonical_dict(),
         }
+    elif args.command == "run-full-account":
+        portfolio, risk = _run_full_account(args.database, _read(args.request))
+        result = {
+            "portfolio": portfolio.to_canonical_dict(),
+            "risk": risk.to_canonical_dict(),
+        }
+    elif args.command == "show-full-account-risk":
+        result = SQLiteCompleteAccountPortfolioRiskRepository(
+            args.database
+        ).get_complete_account_risk(
+            RiskDecisionId(args.risk_decision_id)
+        ).to_canonical_dict()
     else:
         result = SQLitePortfolioDecisionRepository(args.database).get_risk(
             RiskDecisionId(args.risk_decision_id)

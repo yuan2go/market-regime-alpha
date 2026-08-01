@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-08-01  
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/Production-Lifecycle-Hardening-Baseline.md
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/Production-Lifecycle-Hardening-Baseline.md, ../audit/Production-Lifecycle-Hardening-Delivery.md
 > **Code Evidence:** `main@a7ce0b4`; Phase 0–7 checkpoint evidence is recorded in the production-lifecycle delivery audit and H0 hardening facts in the new baseline audit.
 
 ## Overall stage
@@ -28,6 +28,7 @@ MANUAL_FILL_LEDGER_AND_POSITION_AUTHORITY_IMPLEMENTED_SQLITE
 HOLDING_EXIT_AND_TRADE_ATTRIBUTION_IMPLEMENTED_EXPLORATORY
 PRODUCTION_DECISION_LIFECYCLE_PHASES_0_TO_7_ENGINEERING_COMPLETE
 PRODUCTION_LIFECYCLE_HARDENING_H0_BASELINE_CONFIRMED
+COMPLETE_ACCOUNT_PORTFOLIO_RISK_IMPLEMENTED_SQLITE
 SHADOW_READY_NOT_ESTABLISHED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
@@ -136,6 +137,24 @@ are not durable, and continuous Shadow operations do not exist.
 The complete evidence and refinements are in
 [Production Lifecycle Hardening Baseline](../audit/Production-Lifecycle-Hardening-Baseline.md).
 H0 changes documentation only and makes no runtime capability claim.
+
+## H1 complete-account Portfolio/Risk
+
+The hardened V2 path now requires a typed account snapshot whose scope,
+completeness, reconciliation state, source Position references and version are
+explicit. It applies Thesis-bound deltas to every existing account position and
+computes Risk against the full resulting Portfolio, including positions not
+mentioned by the current allocation.
+
+Partial, stale, future or unreconciled account input produces a structured
+fail-closed result. Migration 005 persists the exact account/proposal/risk
+chain atomically with command idempotency and restart reconstruction. The old
+V1 allocation-local schema and reader remain compatible, but they are not a
+complete-account authority.
+
+H1 does not yet derive A-share sellable quantity from Fill and the trading
+calendar or isolate Thesis position books. Those are H2/H3 dependencies; no
+production Risk limits are established.
 
 ## Documentation baseline added on 2026-08-01
 

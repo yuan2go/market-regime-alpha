@@ -126,6 +126,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)
 - [Production Lifecycle Hardening Baseline](audit/Production-Lifecycle-Hardening-Baseline.md)
+- [Production Lifecycle Hardening Delivery](audit/Production-Lifecycle-Hardening-Delivery.md)
 - [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
 - [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
 - [WP-D3 Public LIVE Semantic Closure Audit](audit/WP-D3-Public-Live-Semantic-Closure.md)

@@ -142,6 +142,17 @@ Revert the H0 documentation commit. No runtime or database state changes.
 Stop H1 commands and retain previous decisions read-only. The isolated down
 migration is permitted only for disposable local/test databases after export.
 
+### Implementation evidence
+
+Delivered on the H1 checkpoint with V2 content-addressed account/configuration/
+post-trade contracts, complete-account constraint evaluation, storage-neutral
+repository, atomic SQLite migration 005, CLI, idempotency and restart restore.
+Focused tests cover unrelated-holding gross/theme/loss, partial/stale/
+unreconciled input, empty account, pure reduction, closure and rollback.
+
+The source Position ID/hash is retained, but H3 still owns Fill/calendar-derived
+sellability. All named limits are synthetic explicit fixture configuration.
+
 ## 8. H2 — Complete authority trace
 
 ### Deliverables

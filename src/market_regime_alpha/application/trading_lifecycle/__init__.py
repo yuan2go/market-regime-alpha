@@ -6,6 +6,9 @@ from market_regime_alpha.application.trading_lifecycle.service import (
 from market_regime_alpha.application.trading_lifecycle.portfolio_risk import (
     PortfolioRiskApplicationService,
 )
+from market_regime_alpha.application.trading_lifecycle.complete_account_risk import (
+    CompleteAccountPortfolioRiskApplicationService,
+)
 from market_regime_alpha.application.trading_lifecycle.manual_execution import (
     ManualExecutionApplicationService,
 )
@@ -20,6 +23,7 @@ from market_regime_alpha.application.trading_lifecycle.review import (
 )
 
 __all__ = [
+    "CompleteAccountPortfolioRiskApplicationService",
     "DecisionLifecycleService",
     "LifecycleReviewApplicationService",
     "LifecycleReviewRun",

@@ -6,13 +6,13 @@
 > **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Baseline.md
+> **Related Documents:** Current-State.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Baseline.md, ../audit/Production-Lifecycle-Hardening-Delivery.md
 > **Code Evidence:** Current `main`; production-lifecycle target documents do not establish implementation.
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Production Decision Lifecycle Phase 0–7 | DELIVERED_ENGINEERING | modular contexts and fixture/manual chain through complete-trade review implemented and tested | qualified evidence and production admission remain separate | preserve compatibility and harden through WP-PDL-HARDENING |
-| Complete-account Portfolio/Risk | H1_CONFIRMED_GAP | Portfolio requires positions exactly for allocation symbols; Risk exposure uses target positions only | authoritative complete account snapshot and post-trade projection | unrelated holdings enter gross/theme/loss constraints; incomplete/stale/unreconciled input fails closed |
+| Complete-account Portfolio/Risk | H1_DELIVERED_SQLITE | V2 content-identified account snapshot/deltas/post-trade Portfolio and independent Risk include all holdings; partial/stale/unreconciled input is structured fail-closed | H2/H3 position-book trace and Fill-derived sellability; validated operating limits | engineering completion verified by full-account/restart/migration/CLI tests; V1 retained as compatibility |
 | Thesis-to-Outcome authority trace | H2_CONFIRMED_GAP | ManualTrade omits Thesis/Opportunity; Position merges account/symbol Fill; Outcome cannot validate upstream decision chain | position-book/open-Thesis constraint and versioned trace | every Fill/Position/Outcome reconstructs the exact Opportunity→Risk chain across restart/replay |
 | A-share T+1 Position Authority | H3_CONFIRMED_GAP | Position lacks available/frozen/today-acquired/sellable-session fields; Risk accepts caller availability | Fill-derived lots plus explicit TradingCalendarArtifact | same-day and missing-calendar sells fail; cross-session replay is deterministic |
 | Increasing versus reducing risk | H4_CONFIRMED_GAP | REDUCE/EXIT requires normal Portfolio/Risk and can be blocked by its timeout | strict reducing-risk execution gate | valid reduction survives opening-risk timeout but cannot bypass position/execution constraints |

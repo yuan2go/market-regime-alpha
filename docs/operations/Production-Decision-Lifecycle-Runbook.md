@@ -197,6 +197,26 @@ Before manual action:
 
 No operator or strategy may convert a rejected decision into an approved system action. A human may still act outside the system, but that deviation must be recorded explicitly and shall not be represented as system approval.
 
+Hardened complete-account command:
+
+```bash
+python scripts/run_portfolio_risk.py --database portfolio.sqlite3 \
+  run-full-account --request COMPLETE_ACCOUNT_RISK_REQUEST.json
+
+python scripts/run_portfolio_risk.py --database portfolio.sqlite3 \
+  show-full-account-risk --risk-decision-id RISK_DECISION_ID
+```
+
+New operations must use this V2 command. The request must contain a content-
+identified complete account snapshot, every existing position, explicit
+completeness/reconciliation state, source Position IDs/hashes and the full
+versioned risk configuration. Partial, stale, future or unreconciled snapshots
+produce DATA_INSUFFICIENT. The older `run` command remains V1 compatibility and
+must not be described as complete-account approval.
+
+Until H3, source Position references and declared available quantity are
+retained but not yet reconstructed from Fill plus TradingCalendarArtifact.
+
 ### 3.7 Manual action recording
 
 Implemented manual-only commands:

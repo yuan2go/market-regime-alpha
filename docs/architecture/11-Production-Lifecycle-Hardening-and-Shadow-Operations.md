@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-08-01
 > **Supersedes:** None
 > **Superseded By:** None
-> **Related Documents:** 09-Platform-Architecture-V2.md, 10-Production-Decision-Lifecycle.md, decisions/ADR-004-Production-Decision-Lifecycle-Organization.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../audit/Production-Lifecycle-Hardening-Baseline.md, ../operations/Production-Decision-Lifecycle-Runbook.md
+> **Related Documents:** 09-Platform-Architecture-V2.md, 10-Production-Decision-Lifecycle.md, decisions/ADR-004-Production-Decision-Lifecycle-Organization.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../audit/Production-Lifecycle-Hardening-Baseline.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../operations/Production-Decision-Lifecycle-Runbook.md
 > **Code Evidence:** `a7ce0b444e77506a85e1c1c7b240c22c8421580d`; target changes require phase delivery evidence before they become implementation facts
 
 ## 1. Purpose and evidence ceiling
@@ -98,6 +98,14 @@ all resulting positions. Cash and liquidity use the proposed deltas. T+1 uses
 Position Authority quantities, not an unrelated caller field. The repository
 persists exact input and resulting snapshot identities so Risk can be
 recomputed on restore.
+
+### H1 implementation status
+
+The V2 path is implemented with content-addressed account, risk-configuration
+and post-trade snapshots, immutable Portfolio/Risk decisions, migration 005 and
+CLI/restart support. The original allocation-local V1 schema remains readable
+but is not a full-account authority. H1 preserves source Position IDs/hashes;
+H2/H3 must still establish book identity and Fill/calendar-derived sellability.
 
 ## 5. One traceable position book
 
