@@ -73,7 +73,7 @@ Phase quality gate:
 
 ## Pending phases
 
-Phases 4–7 remain pending until their separate executable behavior, tests,
+Phases 5–7 remain pending until their separate executable behavior, tests,
 documentation and semantic checkpoint commits are present. Qualified
 operational supplemental data remains an external evidence blocker, not a
 blocker to the fail-closed engineering mechanics.
@@ -145,6 +145,54 @@ Focused evidence before the phase quality gate:
 | `python -m pytest -q tests/signals tests/forecasting` | PASS — 8 |
 | focused Ruff | PASS |
 | `python -m mypy` | PASS — 233 source files |
+
+## Phase 4 — TradingOpportunity and TradingThesis
+
+Delivered on the Phase 4 checkpoint:
+
+- exact verified CandidateSet, SignalSnapshot and PathForecast evidence binding;
+- versioned Opportunity/Thesis aggregates with expiry, approval, time and typed
+  invalidation semantics;
+- actor, reason and timestamps on creation and every mutable transition;
+- storage-neutral Repository Protocol and isolated SQLite migration;
+- CAS conflicts, globally idempotent commands, append-only event histories and
+  complete restore validation;
+- atomic Opportunity confirmation plus initial approved Thesis;
+- application service and CLI without a Candidate-to-Thesis path.
+
+Database changes:
+
+| Table | Authority and constraint |
+|---|---|
+| `decision_commands` | unique idempotency key and exact command hash |
+| `trading_opportunities` | current versioned projection; not evidence authority |
+| `opportunity_events` | append-only state snapshots and human audit fields |
+| `trading_theses` | one versioned Thesis projection per Opportunity |
+| `thesis_events` | append-only approval/invalidation history |
+
+The isolated `002_decision_lifecycle_down.sql` removes only Phase 4 tables and
+its migration receipt. Back up histories before destructive rollback. The
+existing `daily_runs` semantics and immutable Artifact authority are untouched.
+
+Focused evidence before the phase quality gate:
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q tests/decision` | PASS — 8 |
+| focused Ruff | PASS |
+| `python -m mypy` | PASS — 237 source files |
+
+Phase quality gate:
+
+| Command | Result |
+|---|---|
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
+| `python -m pytest -q tests/platform` | PASS — 22 |
+| `python -m pytest -q` | PASS — 1199 |
+| `python -m ruff check .` | PASS |
+| `python -m mypy` | PASS — 237 source files |
 
 Phase quality gate:
 

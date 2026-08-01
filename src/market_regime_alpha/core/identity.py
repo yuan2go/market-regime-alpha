@@ -86,3 +86,13 @@ class StrategyId(StableId):
 @dataclass(frozen=True, slots=True)
 class ExperimentId(StableId):
     """Identity of an experiment run or experiment configuration."""
+
+
+@dataclass(frozen=True, slots=True)
+class OpportunityId(StableId):
+    """Identity of a mutable TradingOpportunity aggregate."""
+
+
+@dataclass(frozen=True, slots=True)
+class ThesisId(StableId):
+    """Identity of a mutable TradingThesis aggregate."""

@@ -317,6 +317,26 @@ tests/decision/
 - concurrent confirmation has one winner;
 - evidence mismatch is rejected.
 
+### Implementation evidence
+
+Implemented on `feat/production-decision-lifecycle`:
+
+- independent `TradingOpportunity` and `TradingThesis` versioned aggregates;
+- exact immutable CandidateSet, SignalSnapshot and PathForecast references plus
+  exact Signal/Forecast model and configuration identities;
+- explicit Opportunity expiry, Thesis time invalidation, typed invalidation
+  conditions and human actor/reason fields;
+- storage-neutral `DecisionLifecycleRepository` and SQLite adapter with CAS,
+  command idempotency, current projections and append-only reconstructible
+  event histories;
+- one transaction for Opportunity confirmation and initial approved Thesis;
+- application service and CLI commands; no Candidate-to-Thesis shortcut;
+- expiry, evidence mismatch, state transition, duplicate confirmation,
+  concurrent winner, restore and migration tests.
+
+This phase creates decision-support records only. It does not approve risk,
+allocate capital, record fills or mutate Position.
+
 ### Rollback
 
 Disable opportunity/thesis commands and keep persisted records read-only.

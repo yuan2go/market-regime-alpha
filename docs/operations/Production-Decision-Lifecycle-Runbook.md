@@ -134,6 +134,27 @@ Operator checks:
 
 ### 3.5 Opportunity and thesis review
 
+Implemented durable CLI entry points:
+
+```bash
+python scripts/run_decision_lifecycle.py --database decision.sqlite3 \
+  create-opportunity --request CREATE_OPPORTUNITY.json
+
+python scripts/run_decision_lifecycle.py --database decision.sqlite3 \
+  confirm-opportunity --request CONFIRM_OPPORTUNITY.json
+
+python scripts/run_decision_lifecycle.py --database decision.sqlite3 \
+  reject-opportunity --request REJECT_OPPORTUNITY.json
+
+python scripts/run_decision_lifecycle.py --database decision.sqlite3 \
+  invalidate-thesis --request INVALIDATE_THESIS.json
+```
+
+Every mutable request carries `expected_version` where applicable and a unique
+idempotency key. A reused key with different request content is rejected.
+Confirmation after `valid_until`, omitted Candidate/Signal/Path evidence or a
+stale version fails closed.
+
 The operator shall review:
 
 - market permission and exposure ceiling;

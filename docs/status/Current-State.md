@@ -22,7 +22,8 @@ PRODUCTION_DECISION_LIFECYCLE_DOCUMENTATION_BASELINE_CREATED
 OPERATIONAL_RESEARCH_BRIDGE_IMPLEMENTED_EXPLORATORY
 SQLITE_MODEL_AND_EXPERIMENT_GOVERNANCE_IMPLEMENTED
 SIGNAL_AND_UNCALIBRATED_PATH_FORECAST_IMPLEMENTED_EXPLORATORY
-PRODUCTION_DECISION_LIFECYCLE_PHASES_4_TO_7_NOT_IMPLEMENTED
+DURABLE_OPPORTUNITY_AND_THESIS_LIFECYCLE_IMPLEMENTED
+PRODUCTION_DECISION_LIFECYCLE_PHASES_5_TO_7_NOT_IMPLEMENTED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -85,6 +86,12 @@ TRADING_AUTHORITY_NOT_GRANTED
   without an uncalibrated event probability;
 - exact-file-set Signal and PathForecast Artifact readers, deterministic replay
   and CLI run/replay operations;
+- versioned TradingOpportunity and TradingThesis aggregates with exact
+  Candidate/Signal/Path evidence binding, human actor/reason, expiry,
+  invalidation conditions, optimistic concurrency and append-only SQLite
+  histories;
+- atomic Opportunity confirmation and Thesis creation through a
+  storage-neutral Repository Protocol and CLI-first application service;
 - compatibility-preserving MR2A and B0/B1 adapters without changes to legacy scores, ranks, PredictionRuns or Readers.
 
 ## Documentation baseline added on 2026-08-01
@@ -153,8 +160,8 @@ The following are not implemented as canonical production-decision authority:
   multi-process operational deployment;
 - validated Signal configuration or operating model;
 - calibrated or production-qualified multi-horizon PathForecast;
-- TradingOpportunity;
-- TradingThesis;
+- production-qualified TradingOpportunity operating policy;
+- production-qualified TradingThesis approval/invalidation policy;
 - independent RiskDecision;
 - complete PortfolioDecision;
 - ManualTradeRecord and Fill ledger;
