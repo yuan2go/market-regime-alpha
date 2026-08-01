@@ -27,6 +27,30 @@ def test_all_six_platform_layers_have_exclusive_boundaries() -> None:
     )
 
 
+def test_production_lifecycle_outputs_remain_in_existing_six_layers() -> None:
+    by_layer = {item.layer: item for item in PLATFORM_V2_BOUNDARIES}
+    assert {
+        "TradingOpportunity",
+        "TradingThesis",
+        "PortfolioDecision",
+        "RiskDecision",
+    }.issubset(by_layer[PlatformLayer.TRADE_DECISION_RISK].owned_outputs)
+    assert {
+        "ManualTradeRecord",
+        "Fill",
+        "PositionSnapshot",
+        "HoldingAssessment",
+        "ExitAssessment",
+    }.issubset(
+        by_layer[PlatformLayer.POSITION_LIFECYCLE_EXECUTION].owned_outputs
+    )
+    assert {
+        "TradeOutcome",
+        "AttributionRecord",
+        "RollingScorecard",
+    }.issubset(by_layer[PlatformLayer.OUTCOME_EVALUATION_LEARNING].owned_outputs)
+
+
 def test_trade_decision_vocabulary_has_no_live_actions() -> None:
     assert {item.value for item in TradeDecisionState} == {
         "REJECT",

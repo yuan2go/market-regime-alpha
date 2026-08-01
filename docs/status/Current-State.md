@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md, ../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md, ../audit/Production-Decision-Lifecycle-Documentation-Delivery.md  
-> **Code Evidence:** `feat/production-decision-lifecycle`; Phase 0–3 checkpoint evidence is recorded in the production-lifecycle delivery audit.
+> **Code Evidence:** `feat/production-decision-lifecycle`; Phase 0–7 checkpoint evidence is recorded in the production-lifecycle delivery audit.
 
 ## Overall stage
 
@@ -25,7 +25,8 @@ SIGNAL_AND_UNCALIBRATED_PATH_FORECAST_IMPLEMENTED_EXPLORATORY
 DURABLE_OPPORTUNITY_AND_THESIS_LIFECYCLE_IMPLEMENTED
 INDEPENDENT_PORTFOLIO_RISK_AUTHORITY_IMPLEMENTED_SQLITE
 MANUAL_FILL_LEDGER_AND_POSITION_AUTHORITY_IMPLEMENTED_SQLITE
-PRODUCTION_DECISION_LIFECYCLE_PHASE_7_NOT_IMPLEMENTED
+HOLDING_EXIT_AND_TRADE_ATTRIBUTION_IMPLEMENTED_EXPLORATORY
+PRODUCTION_DECISION_LIFECYCLE_PHASES_0_TO_7_ENGINEERING_COMPLETE
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -106,6 +107,17 @@ TRADING_AUTHORITY_NOT_GRANTED
 - deterministic PositionProjector whose only position-changing inputs are
   effective Fill events, with FIFO lots, quantity/cost/realized-PnL replay and
   reconciliation-required anomalies;
+- versioned A-share long-only PositionLifecycleConfig with independent Holding
+  and Exit model roles, explicit thesis-health missingness and actions covering
+  HOLD, ADD, REDUCE, EXIT, WAIT and DATA_INSUFFICIENT;
+- ADD validation that recomputes and binds a fresh independent RiskDecision;
+  invalidated Thesis and missing risk authority fail closed without ADD;
+- closed-trade TradeOutcome with Fill-bound realized return, MFE, MAE, capture
+  ratio, execution deviation and non-causal selection/entry/holding/exit
+  diagnostics;
+- protocol-bound RollingScorecard and exact-file LifecycleReview Artifact with
+  checksum verification, content-idempotent publish, Reader, CLI and full
+  Fill-to-Position-to-assessment-to-outcome deterministic replay;
 - compatibility-preserving MR2A and B0/B1 adapters without changes to legacy scores, ranks, PredictionRuns or Readers.
 
 ## Documentation baseline added on 2026-08-01
@@ -123,9 +135,10 @@ The repository now contains an agreed target documentation set for the productio
 
 This documentation establishes the intended sequence from verified evidence through Signal, PathForecast, TradingOpportunity, TradingThesis, Portfolio/Risk, manual records, Position, Holding/Exit and Attribution.
 
-The documentation alone is not runtime implementation evidence. Phases 1–3 now
-have separate code and test evidence; later components do not become
-implemented merely because the documents exist.
+The documentation alone is not runtime implementation evidence. Phases 0–7
+now have separate code, test, full-gate and semantic-checkpoint evidence on the
+delivery branch. Shadow operations, qualified inputs, validated parameters and
+production admission remain separate future evidence.
 
 ## Deliberately limited operational authority
 
@@ -153,7 +166,10 @@ list. The fixture profiles `exploratory_a_share_1455_v1` and
 validated operating parameters. No Path barrier, horizon, Signal threshold or
 empirical path statistic has production validity or calibration evidence.
 
-The target production-decision architecture explicitly preserves the same authority ceiling. It authorizes no unattended broker operation and declares manual fill records as the first future authority for actual Position state.
+The production-decision architecture explicitly preserves the same authority
+ceiling. It authorizes no unattended broker operation; the implemented
+Position authority is limited to append-only human-recorded Fill evidence and
+does not establish broker truth.
 
 ## Implemented mechanics but externally blocked
 
@@ -180,9 +196,8 @@ The following are not implemented as canonical production-decision authority:
 - production-qualified PortfolioDecision allocation policy;
 - production authentication/reconciliation operation for ManualTradeRecord and Fill;
 - external statement reconciliation around the implemented Fill-derived PositionSnapshot;
-- HoldingAssessment;
-- ExitAssessment;
-- complete-trade attribution and rolling scorecards;
+- production-qualified Holding/Exit configurations and operating evidence;
+- production-qualified complete-trade attribution protocol and rolling sample;
 - production authentication, permissions, metrics, tracing and alerts;
 - QuantDesk production integration;
 - automated broker adapter.

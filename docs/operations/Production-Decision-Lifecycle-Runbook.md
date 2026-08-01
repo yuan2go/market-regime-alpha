@@ -258,6 +258,26 @@ For each open position, review:
 
 ADD requires a still-valid thesis and a fresh portfolio/risk decision.
 
+Holding/Exit and closed-trade review parameters must be provided through an
+identified `PositionLifecycleConfig` and `TradeEvaluationConfig`. There is no
+implicit production profile. Missing evidence or configuration fails closed.
+
+Run a review from an explicit canonical input and replay the resulting exact
+package:
+
+```bash
+python scripts/run_lifecycle_review.py \
+  --input var/review-input.json \
+  --artifact-root var/lifecycle-reviews
+
+python scripts/replay_lifecycle_review.py \
+  var/lifecycle-reviews/<lifecycle-review-artifact-id>
+```
+
+The CLI output always retains
+`TRADING_AUTHORITY_NOT_GRANTED`. An EXIT or REDUCE assessment is not an order;
+it must enter a new Portfolio/Risk decision and manual-confirmation cycle.
+
 If exit is recommended but execution is unavailable because of T+1, suspension or price limit, record the pending exit condition and continue risk monitoring.
 
 ### 3.10 End-of-day review
@@ -267,6 +287,7 @@ If exit is recommended but execution is unavailable because of T+1, suspension o
 - verify no unresolved fill or position mismatch;
 - settle outcomes whose evidence is available;
 - publish review and attribution artifacts;
+- replay the LifecycleReview package and verify its checksum/identity;
 - record provider, model and operational incidents;
 - preserve all source and decision artifacts.
 

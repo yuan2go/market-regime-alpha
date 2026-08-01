@@ -38,6 +38,25 @@ class PositionLot:
             "acquired_at": self.acquired_at.isoformat(),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: dict[str, Any]) -> PositionLot:
+        expected = {
+            "source_fill_id",
+            "symbol",
+            "quantity_remaining",
+            "unit_cost",
+            "acquired_at",
+        }
+        if set(payload) != expected:
+            raise ValueError("PositionLot fields mismatch")
+        return cls(
+            source_fill_id=FillId(str(payload["source_fill_id"])),
+            symbol=str(payload["symbol"]),
+            quantity_remaining=int(payload["quantity_remaining"]),
+            unit_cost=float(payload["unit_cost"]),
+            acquired_at=datetime.fromisoformat(str(payload["acquired_at"])),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PositionSnapshot:
@@ -92,6 +111,57 @@ class PositionSnapshot:
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {"snapshot_id": str(self.snapshot_id), **self.semantic_payload()}
+
+    @classmethod
+    def from_canonical_dict(cls, payload: dict[str, Any]) -> PositionSnapshot:
+        expected = {
+            "schema_version",
+            "snapshot_id",
+            "account_id",
+            "symbol",
+            "as_of",
+            "state",
+            "total_quantity",
+            "average_cost",
+            "realized_pnl",
+            "lots",
+            "source_fill_ids",
+            "effective_fill_ids",
+            "version",
+            "reason_codes",
+        }
+        if set(payload) != expected:
+            raise ValueError("PositionSnapshot fields mismatch")
+        lots = payload["lots"]
+        source_ids = payload["source_fill_ids"]
+        effective_ids = payload["effective_fill_ids"]
+        reasons = payload["reason_codes"]
+        if not all(
+            isinstance(value, list)
+            for value in (lots, source_ids, effective_ids, reasons)
+        ):
+            raise ValueError("PositionSnapshot array field mismatch")
+        average_cost = payload["average_cost"]
+        return cls(
+            schema_version=str(payload["schema_version"]),
+            snapshot_id=PositionSnapshotId(str(payload["snapshot_id"])),
+            account_id=str(payload["account_id"]),
+            symbol=str(payload["symbol"]),
+            as_of=datetime.fromisoformat(str(payload["as_of"])),
+            state=PositionState(str(payload["state"])),
+            total_quantity=int(payload["total_quantity"]),
+            average_cost=(
+                float(average_cost) if average_cost is not None else None
+            ),
+            realized_pnl=float(payload["realized_pnl"]),
+            lots=tuple(
+                PositionLot.from_canonical_dict(_object(item)) for item in lots
+            ),
+            source_fill_ids=tuple(FillId(str(item)) for item in source_ids),
+            effective_fill_ids=tuple(FillId(str(item)) for item in effective_ids),
+            version=int(payload["version"]),
+            reason_codes=tuple(str(item) for item in reasons),
+        )
 
 
 @dataclass(slots=True)
@@ -246,3 +316,9 @@ def _effective_fills(fills: tuple[Fill, ...]) -> tuple[Fill, ...]:
 def _snapshot_id(payload: dict[str, Any]) -> PositionSnapshotId:
     digest = canonical_hash(payload).split(":", 1)[1]
     return PositionSnapshotId(f"position-snapshot-{digest[:24]}")
+
+
+def _object(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Position value must be an object")
+    return value

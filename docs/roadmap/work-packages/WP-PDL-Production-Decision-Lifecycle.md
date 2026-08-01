@@ -469,10 +469,11 @@ Complete the open-position and closed-trade feedback loop.
 ### Target paths
 
 ```text
-src/market_regime_alpha/position/holding.py
-src/market_regime_alpha/position/exit.py
-src/market_regime_alpha/evaluation/attribution.py
-src/market_regime_alpha/application/review_loop/
+src/market_regime_alpha/position/assessment.py
+src/market_regime_alpha/evaluation/lifecycle.py
+src/market_regime_alpha/application/trading_lifecycle/review.py
+scripts/run_lifecycle_review.py
+scripts/replay_lifecycle_review.py
 tests/position/
 tests/evaluation/
 ```
@@ -490,8 +491,26 @@ tests/evaluation/
 
 - complete trade lifecycle can be replayed;
 - all actions and outcomes trace to immutable evidence;
-- attribution differentiates selection, entry, holding, exit, sizing and execution;
+- diagnostic attribution differentiates selection, entry, holding and exit,
+  while execution deviation is retained as its own typed metric;
 - current model lifecycle rules consume evidence references without automatic promotion.
+
+### Implemented engineering evidence
+
+- versioned explicit PositionLifecycleConfig and TradeEvaluationConfig with no
+  implicit production defaults;
+- independent Holding and Exit roles covering HOLD, ADD, REDUCE, EXIT, WAIT
+  and DATA_INSUFFICIENT;
+- ADD requires a recomputed approved RiskDecision bound to an incremental
+  TargetPosition; invalidated Thesis cannot ADD;
+- Fill-bound TradeOutcome with realized return, MFE, MAE, capture ratio,
+  execution deviation and four-part non-causal diagnostic attribution;
+- protocol-bound RollingScorecard without Model Registry mutation access;
+- exact-file immutable LifecycleReview package, explicit-input run CLI,
+  verification Reader and deterministic replay CLI.
+
+All named configurations in tests are synthetic fixtures. No Holding, Exit,
+capture, Path, Risk or allocation parameter has production validity.
 
 ### Rollback
 

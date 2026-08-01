@@ -121,3 +121,23 @@ class FillId(StableId):
 @dataclass(frozen=True, slots=True)
 class PositionSnapshotId(StableId):
     """Content identity of a PositionSnapshot rebuilt from Fill events."""
+
+
+@dataclass(frozen=True, slots=True)
+class HoldingAssessmentId(StableId):
+    """Content identity of one versioned HoldingAssessment."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExitAssessmentId(StableId):
+    """Content identity of one versioned ExitAssessment."""
+
+
+@dataclass(frozen=True, slots=True)
+class TradeOutcomeId(StableId):
+    """Content identity of one closed-trade evaluation outcome."""
+
+
+@dataclass(frozen=True, slots=True)
+class RollingScorecardId(StableId):
+    """Content identity of one rolling evaluation scorecard."""

@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** 01-Domain-Boundaries.md, 09-Platform-Architecture-V2.md, decisions/ADR-004-Production-Decision-Lifecycle-Organization.md, ../specs/Production-Decision-Lifecycle-Requirements.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md  
-> **Code Evidence:** Architecture is based on current `main` contracts and runtime behavior. Components marked as target state are not implementation claims.
+> **Code Evidence:** `feat/production-decision-lifecycle`; Phase 0–7 engineering status is recorded in Current State and the delivery audit. Qualified production operation remains a target, not an implementation claim.
 
 ## 1. Purpose
 
@@ -39,7 +39,11 @@ The current repository already provides:
 - model lifecycle and experiment-governance rules;
 - exploratory MR1 recommendation, entry plumbing, outcome settlement and review.
 
-The current foundation does not yet provide a canonical operational bridge into Platform V2, an executable Signal Engine, a general multi-horizon forecast, a TradingThesis, a hard Risk Authority, a manual execution ledger, a canonical PositionSnapshot, holding/exit models, durable governance repositories or a production operator surface.
+The Phase 0–7 delivery adds the operational bridge, Signal/Path engineering,
+durable governance, Opportunity/Thesis, independent Portfolio/Risk, manual Fill
+ledger, Fill-derived Position, independent Holding/Exit and closed-trade review.
+It does not provide qualified operational evidence, validated parameters,
+production authentication, a production operator surface or a broker adapter.
 
 ## 3. Architecture decision
 
@@ -458,11 +462,15 @@ Possible outputs:
 
 | Holding | Exit |
 |---|---|
-| HOLD | NO_ACTION |
+| HOLD | WAIT |
 | ADD | WAIT |
-| REDUCE | EXIT |
 | WAIT | DATA_INSUFFICIENT |
 | DATA_INSUFFICIENT |  |
+|  | REDUCE |
+|  | EXIT |
+
+REDUCE is owned by the Exit role in V1. `NO_ACTION` remains distinct from HOLD
+in existing contracts and is not introduced as an alias by the new assessment.
 
 ADD always requires a new PortfolioDecision and RiskDecision.
 
@@ -478,6 +486,10 @@ Evaluation shall be layer-specific. A complete trade review should calculate:
 - holding and exit contribution;
 - portfolio sizing contribution;
 - manual execution deviation;
+
+The Phase 7 V1 attribution values are diagnostics, not an identified causal
+decomposition. They cannot mutate Model Registry state, model weights or
+promotion decisions.
 - market and theme conditional slices;
 - model/configuration/evidence references.
 

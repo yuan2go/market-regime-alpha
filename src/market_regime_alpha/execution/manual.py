@@ -284,6 +284,69 @@ class ExecutionDeviation:
     expected_mid_price: float
     price_deviation: float | None
 
+    def __post_init__(self) -> None:
+        if self.intended_quantity <= 0 or self.effective_filled_quantity < 0:
+            raise ValueError("ExecutionDeviation quantities are invalid")
+        if self.quantity_deviation != (
+            self.effective_filled_quantity - self.intended_quantity
+        ):
+            raise ValueError("ExecutionDeviation quantity mismatch")
+        if not isfinite(self.expected_mid_price) or self.expected_mid_price <= 0.0:
+            raise ValueError("ExecutionDeviation expected price is invalid")
+        if (self.volume_weighted_price is None) is not (
+            self.price_deviation is None
+        ):
+            raise ValueError("ExecutionDeviation price fields must align")
+        if self.volume_weighted_price is not None:
+            if (
+                not isfinite(self.volume_weighted_price)
+                or self.volume_weighted_price <= 0.0
+                or not isfinite(self.price_deviation or 0.0)
+            ):
+                raise ValueError("ExecutionDeviation price fields are invalid")
+            if self.price_deviation != (
+                self.volume_weighted_price - self.expected_mid_price
+            ):
+                raise ValueError("ExecutionDeviation price mismatch")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "manual_trade_id": str(self.manual_trade_id),
+            "intended_quantity": self.intended_quantity,
+            "effective_filled_quantity": self.effective_filled_quantity,
+            "quantity_deviation": self.quantity_deviation,
+            "volume_weighted_price": self.volume_weighted_price,
+            "expected_mid_price": self.expected_mid_price,
+            "price_deviation": self.price_deviation,
+        }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: dict[str, Any]) -> ExecutionDeviation:
+        expected = {
+            "manual_trade_id",
+            "intended_quantity",
+            "effective_filled_quantity",
+            "quantity_deviation",
+            "volume_weighted_price",
+            "expected_mid_price",
+            "price_deviation",
+        }
+        if set(payload) != expected:
+            raise ValueError("ExecutionDeviation fields mismatch")
+        vwap = payload["volume_weighted_price"]
+        price_deviation = payload["price_deviation"]
+        return cls(
+            manual_trade_id=ManualTradeId(str(payload["manual_trade_id"])),
+            intended_quantity=int(payload["intended_quantity"]),
+            effective_filled_quantity=int(payload["effective_filled_quantity"]),
+            quantity_deviation=int(payload["quantity_deviation"]),
+            volume_weighted_price=float(vwap) if vwap is not None else None,
+            expected_mid_price=float(payload["expected_mid_price"]),
+            price_deviation=(
+                float(price_deviation) if price_deviation is not None else None
+            ),
+        )
+
 
 def transition_manual_trade(
     record: ManualTradeRecord,

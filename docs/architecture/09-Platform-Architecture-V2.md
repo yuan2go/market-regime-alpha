@@ -116,7 +116,11 @@ Successful replay cannot raise that ceiling.
 
 ## Production decision lifecycle extension
 
-[Production Decision Lifecycle](10-Production-Decision-Lifecycle.md) defines the next architecture increment. It does not change the implementation status of Platform V2.
+[Production Decision Lifecycle](10-Production-Decision-Lifecycle.md) defines the
+next architecture increment. Its Phase 0–7 engineering slices are implemented
+on the delivery branch without changing the authority ceiling of Platform V2:
+the evidence remains EXPLORATORY, parameters remain unvalidated and no LIVE
+execution authority exists.
 
 The accepted organization is:
 
@@ -141,4 +145,7 @@ The dependency-ordered target work is:
 7. independent Holding/Exit assessments and complete-trade attribution;
 8. sustained shadow operation and operator surface.
 
-The fixed MR1 next-session 10:30 path remains independent. No target production-decision component may be presented as implemented until code, tests and delivery evidence exist.
+The fixed MR1 next-session 10:30 path remains independent. Phase 0–7
+components may be described only at their observed engineering status in the
+Current State, Capability Matrix and delivery audit; none may be described as
+production-qualified without separate evidence.

@@ -46,23 +46,43 @@ PLATFORM_V2_BOUNDARIES = (
     ),
     PlatformBoundary(
         PlatformLayer.SIGNAL_TIMING,
-        ("SignalSnapshot", "NextSessionForecast"),
+        ("SignalSnapshot", "NextSessionForecast", "PathForecast"),
         ("PositionPlan", "ExecutionRecord"),
     ),
     PlatformBoundary(
         PlatformLayer.TRADE_DECISION_RISK,
-        ("TradeDecision", "PositionPlan"),
+        (
+            "TradeDecision",
+            "PositionPlan",
+            "TradingOpportunity",
+            "TradingThesis",
+            "PortfolioDecision",
+            "RiskDecision",
+        ),
         ("LIVE_ORDER", "BROKER_FILL"),
     ),
     PlatformBoundary(
         PlatformLayer.POSITION_LIFECYCLE_EXECUTION,
-        ("ExecutionRecord", "ExitDecision"),
+        (
+            "ExecutionRecord",
+            "ExitDecision",
+            "ManualTradeRecord",
+            "Fill",
+            "PositionSnapshot",
+            "HoldingAssessment",
+            "ExitAssessment",
+        ),
         ("MODEL_PROMOTION",),
     ),
     PlatformBoundary(
         PlatformLayer.OUTCOME_EVALUATION_LEARNING,
-        ("EvaluationReport", "DailyReviewReport"),
+        (
+            "EvaluationReport",
+            "DailyReviewReport",
+            "TradeOutcome",
+            "AttributionRecord",
+            "RollingScorecard",
+        ),
         ("AUTO_MODEL_PROMOTION", "LIVE_ORDER"),
     ),
 )
-

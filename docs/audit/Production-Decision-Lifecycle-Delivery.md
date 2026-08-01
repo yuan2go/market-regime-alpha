@@ -293,9 +293,56 @@ Phase quality gate:
 | `python -m ruff check .` | PASS |
 | `python -m mypy` | PASS — 246 source files |
 
-## Pending phases
+## Phase 7 — Holding, Exit and Attribution
 
-Phase 7 remains pending until its executable behavior, tests, documentation
-and semantic checkpoint commit are present. Qualified operational supplemental
-data remains an external evidence blocker, not a blocker to the fail-closed
-engineering mechanics.
+Delivered on the Phase 7 checkpoint:
+
+- separate HoldingAssessmentModel and ExitAssessmentModel roles over the
+  Fill-derived authoritative PositionSnapshot;
+- explicit versioned A-share long-only assessment/evaluation configuration
+  without implicit production parameters;
+- HOLD, ADD, REDUCE, EXIT, WAIT and DATA_INSUFFICIENT behavior with typed
+  thesis-health missingness and invalidation;
+- ADD gated by independent RiskDecision recomputation and an incremental
+  TargetPosition; invalidated Thesis cannot ADD;
+- closed TradeOutcome with realized return, MFE, MAE, capture ratio, manual
+  execution deviation and selection/entry/holding/exit diagnostics;
+- RollingScorecard as a pure diagnostic aggregate with no Model Registry or
+  automatic weight/promotion mutation path;
+- exact-file immutable LifecycleReview package, content-idempotent publish,
+  semantic Reader, explicit-input run CLI and deterministic replay CLI;
+- complete synthetic manual lifecycle replay from entry Fill through open
+  Position assessment, exit Fill, closed Position, outcome and scorecard.
+
+The fixture profiles `synthetic_holding_exit_profile_v1` and
+`synthetic_trade_evaluation_v1` are test inputs only. Attribution is diagnostic,
+not a causal Alpha decomposition. No production parameter, formal PIT/OOS
+claim, broker Fill or LIVE authority is established.
+
+Focused evidence before the phase quality gate:
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q tests/position tests/evaluation` | PASS — 12 |
+| focused Ruff | PASS |
+| focused mypy | PASS |
+
+Phase quality gate:
+
+| Command | Result |
+|---|---|
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
+| `python -m pytest -q tests/platform` | PASS — 23 |
+| `python -m pytest -q` | PASS — 1235 |
+| `python -m ruff check .` | PASS |
+| `python -m mypy` | PASS — 248 source files |
+
+## Remaining admission work
+
+Phases 0–7 are engineering-complete on the delivery branch. Qualified
+operational supplemental data, validated Signal/Path/Risk/Holding/Exit
+configuration, sustained shadow evidence, authentication, PostgreSQL parity,
+operator surfaces and any future broker architecture remain separate work.
+None blocks the fail-closed engineering mechanics, and none is claimed here.

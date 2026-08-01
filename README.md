@@ -49,10 +49,10 @@ Candidate Prediction
 
 - 已具备 V2 identity/time/data/universe/eligibility/feature/candidate contracts、B0/B1、Candidate diagnostics、Entry Path Target infrastructure、Provider routing、Xuntou v4 evidence/adapters、PIT replication success path 和不可变 Research Artifact 验证器。
 - Research Platform Kernel V1 已进入 `main`：Theory/Observable/Model contracts、Target/Evaluation Protocol、Experiment Governance、Model Registry 和第一版 Multi-model Candidate Slice 均已有代码与测试。
-- 当前已具备可恢复的探索性每日 Runtime Journal、Source Manifest 与质量门、B0/B1 PredictionRun、Phase D 每日决策 Artifact、CandidateRecommendation 投影、禁止 `ENTER` 的 Entry plumbing、MR1 outcome settlement 和 Daily Review；Model Registry 与 Experiment Governance 仍是进程内权威。
+- 当前已具备可恢复的探索性每日 Runtime Journal、Source Manifest 与质量门、B0/B1 PredictionRun、Phase D 每日决策 Artifact、CandidateRecommendation 投影、禁止 `ENTER` 的 Entry plumbing、MR1 outcome settlement 和 Daily Review；Model Registry 与 Experiment Governance 已增加保留原领域规则的 SQLite durable adapters。
 - Platform V2 Research Layer 已实现 Market Regime、Theme Rotation、Capital Evolution 和 Candidate Discovery 的离线可回放工程闭环，但当前模型权重与阈值仍是未验证假设。
 - 2026-08-01 已提交 Production Decision Lifecycle 文档基线，明确采用“现有仓库内模块化单体，未来仅按真实部署边界拆分执行适配器”的组织方式。
-- Production Decision Lifecycle 当前仍是目标架构，不代表 Signal Engine、PathForecast、TradingOpportunity、TradingThesis、Risk Authority、Manual Fill Ledger、PositionSnapshot、Holding/Exit 或 Attribution 已经实现。
+- Production Decision Lifecycle Phase 0–7 的工程闭环已在开发分支实现：Operational Research Bridge、Signal/Path、Opportunity/Thesis、Portfolio/Risk、人工 Fill ledger、Fill-derived Position、独立 Holding/Exit 和闭仓归因均有显式配置、测试及回放。它们仍是探索/人工决策辅助能力，不代表参数有效、正式 PIT/OOS、真实 Provider 资格或交易权限。
 - 历史 `daily_research` V1 的 immutable DailyResearchSnapshot、CandidateRecommendation、EntryAssessment、Artifact Publisher 和 Semantic Reader 已实现并有测试，但它是 frozen compatibility layer，不是 Canonical Phase D Runtime。
 - 真实 Xuntou/XtQuant v4 输入在当前环境不可用，因此正式 PIT replication 仍为 `BLOCKED_EXTERNAL_INPUT`。
 - 真实 public LIVE 运行仍因 Decision-window 与资格状态数据不足而 `DATA_BLOCKED`；正式 PIT、OOS Alpha 与模型赢家均未建立。
@@ -69,6 +69,7 @@ Candidate Prediction
 - [Production Decision Lifecycle Requirements](docs/specs/Production-Decision-Lifecycle-Requirements.md)
 - [WP-PDL — Production Decision Lifecycle](docs/roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [Production Decision Lifecycle Gap Analysis](docs/audit/Production-Decision-Lifecycle-Gap-Analysis.md)
+- [Production Decision Lifecycle Delivery](docs/audit/Production-Decision-Lifecycle-Delivery.md)
 - [Production Decision Lifecycle Runbook](docs/operations/Production-Decision-Lifecycle-Runbook.md)
 - [Claude Code Implementation Prompt](docs/prompts/Claude-Code-Production-Decision-Lifecycle.md)
 
@@ -80,7 +81,7 @@ Candidate Prediction
 + 明确 bounded contexts
 + Application 编排
 + 不可变 Evidence Authority
-+ 实际 Fill 作为 Position 的未来权威来源
++ 人工记录的实际 Fill 作为当前 Position 权威来源
 + 仅在真实外部运行边界出现后拆分 Broker Adapter
 ```
 
