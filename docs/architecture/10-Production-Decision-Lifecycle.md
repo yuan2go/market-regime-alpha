@@ -109,6 +109,13 @@ flowchart TB
 
 The dependency direction is strictly downward. Application services may orchestrate layers but must not redefine their owned entities.
 
+The first L2 implementation binds five Signal confirmations to exact
+CandidateSet/source evidence and embeds the existing EntryPathTarget contract
+inside each explicit PathForecast configuration. Decision clock, barriers,
+horizon, thresholds, sample count and quantile levels are versioned inputs, not
+domain constants or production defaults. Unavailable or late evidence fails
+closed; an uncalibrated PathForecast exposes no event probability.
+
 ## 6. Target module map
 
 ```text

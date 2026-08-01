@@ -258,6 +258,29 @@ tests/forecasting/
 - artifact publication, reader and replay are deterministic;
 - Signal output has no order or position authority.
 
+### Implementation evidence
+
+Implemented on `feat/production-decision-lifecycle`:
+
+- explicit, content-identified `SignalModelConfig` for A-share long-only
+  decision profiles and the five V1 confirmation families;
+- CandidateSet-bound Signal observations whose AvailabilityTime must not exceed
+  DecisionTime, with missing metrics becoming `DATA_INSUFFICIENT`;
+- immutable Signal run packages with checksum Reader, semantic reconstruction,
+  idempotent content publication and deterministic replay;
+- `PathForecastConfig` that embeds and reconstructs the existing
+  `EntryPathTargetContract`, so barrier and horizon changes produce identified
+  configuration/Target changes rather than hidden defaults;
+- historical Path samples with explicit resolved, dual-touch ambiguous and
+  missing-future-bar states; only resolved samples available by the current
+  DecisionTime enter MFE/MAE and empirical quantiles;
+- PathForecast packages and CLI run/replay with the public authority ceiling
+  unchanged.
+
+The fixture profiles are synthetic/exploratory only. V1 implements no
+calibration method, positive-return probability, Entry action or operating
+parameter promotion.
+
 ### Rollback
 
 Disable model registrations and stop publishing V1 Signal/PathForecast artifacts; Candidate research remains operational.

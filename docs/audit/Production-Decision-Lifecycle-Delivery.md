@@ -73,7 +73,7 @@ Phase quality gate:
 
 ## Pending phases
 
-Phases 3–7 remain pending until their separate executable behavior, tests,
+Phases 4–7 remain pending until their separate executable behavior, tests,
 documentation and semantic checkpoint commits are present. Qualified
 operational supplemental data remains an external evidence blocker, not a
 blocker to the fail-closed engineering mechanics.
@@ -117,3 +117,43 @@ Phase quality gate:
 | `python -m pytest -q` | PASS — 1183 |
 | `python -m ruff check .` | PASS |
 | `python -m mypy` | PASS — 229 source files |
+
+## Phase 3 — Signal Engine and PathForecast
+
+Delivered on the Phase 3 checkpoint:
+
+- explicit content-identified Signal and Path configuration contracts with no
+  implicit parameter defaults;
+- A-share, long-only, versioned decision-time profile validation;
+- five-factor Signal confirmation over selected CandidateSet members with exact
+  source Artifact lineage and fail-closed missingness/time checks;
+- PathForecast over the existing identified EntryPathTarget contract, with
+  horizon, upper/lower barriers, MFE, MAE, empirical return quantiles and
+  explicit calibration status;
+- preservation of dual-touch ambiguity and missing-future-bar exclusions;
+- exact-file immutable packages, semantic Readers, content-idempotent publish,
+  deterministic replay and CLI operations.
+
+The named profiles in tests are fixture configuration only. No configuration
+is a production default, no forecast probability is emitted, and Signal does
+not create an Entry, Opportunity, Thesis, order or Position.
+
+Focused evidence before the phase quality gate:
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q tests/signals tests/forecasting` | PASS — 8 |
+| focused Ruff | PASS |
+| `python -m mypy` | PASS — 233 source files |
+
+Phase quality gate:
+
+| Command | Result |
+|---|---|
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
+| `python -m pytest -q tests/platform` | PASS — 22 |
+| `python -m pytest -q` | PASS — 1191 |
+| `python -m ruff check .` | PASS |
+| `python -m mypy` | PASS — 233 source files |

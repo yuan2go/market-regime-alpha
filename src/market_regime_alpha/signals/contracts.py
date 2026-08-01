@@ -72,3 +72,52 @@ class SignalSnapshot:
             "reason_codes": list(self.reason_codes),
         }
 
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "envelope": self.envelope.to_canonical_dict(),
+            **self.artifact_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: dict[str, Any]) -> SignalSnapshot:
+        expected = {
+            "envelope",
+            "symbol",
+            "signal_family",
+            "signal_state",
+            "price_action_state",
+            "volume_confirmation_state",
+            "trend_confirmation_state",
+            "vwap_state",
+            "overheat_state",
+            "signal_score",
+            "confidence",
+            "reason_codes",
+        }
+        if set(payload) != expected:
+            raise ValueError("SignalSnapshot fields mismatch")
+        envelope = payload["envelope"]
+        reason_codes = payload["reason_codes"]
+        if not isinstance(envelope, dict) or not isinstance(reason_codes, list):
+            raise ValueError("SignalSnapshot canonical value type mismatch")
+        score = payload["signal_score"]
+        return cls(
+            envelope=ArtifactEnvelope.from_canonical_dict(envelope),
+            symbol=str(payload["symbol"]),
+            signal_family=SignalFamily(str(payload["signal_family"])),
+            signal_state=SignalState(str(payload["signal_state"])),
+            price_action_state=ConfirmationState(
+                str(payload["price_action_state"])
+            ),
+            volume_confirmation_state=ConfirmationState(
+                str(payload["volume_confirmation_state"])
+            ),
+            trend_confirmation_state=ConfirmationState(
+                str(payload["trend_confirmation_state"])
+            ),
+            vwap_state=ConfirmationState(str(payload["vwap_state"])),
+            overheat_state=ConfirmationState(str(payload["overheat_state"])),
+            signal_score=float(score) if score is not None else None,
+            confidence=float(payload["confidence"]),
+            reason_codes=tuple(str(item) for item in reason_codes),
+        )

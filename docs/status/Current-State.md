@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md, ../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md, ../audit/Production-Decision-Lifecycle-Documentation-Delivery.md  
-> **Code Evidence:** `main`; latest implementation baseline remains the Platform V2 delivery, while the 2026-08-01 production-lifecycle addition is documentation-only.
+> **Code Evidence:** `feat/production-decision-lifecycle`; Phase 0–3 checkpoint evidence is recorded in the production-lifecycle delivery audit.
 
 ## Overall stage
 
@@ -21,7 +21,8 @@ RESEARCH_LAYER_MVP_COMPLETE
 PRODUCTION_DECISION_LIFECYCLE_DOCUMENTATION_BASELINE_CREATED
 OPERATIONAL_RESEARCH_BRIDGE_IMPLEMENTED_EXPLORATORY
 SQLITE_MODEL_AND_EXPERIMENT_GOVERNANCE_IMPLEMENTED
-PRODUCTION_DECISION_LIFECYCLE_PHASES_3_TO_7_NOT_IMPLEMENTED
+SIGNAL_AND_UNCALIBRATED_PATH_FORECAST_IMPLEMENTED_EXPLORATORY
+PRODUCTION_DECISION_LIFECYCLE_PHASES_4_TO_7_NOT_IMPLEMENTED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -75,6 +76,15 @@ TRADING_AUTHORITY_NOT_GRANTED
   verified Phase D Daily Artifact plus verified supplemental evidence into the
   existing ResearchInputBundle, PlatformResearchRunner and deterministic
   ResearchLayerArtifact replay;
+- versioned, explicit-config A-share long-only Signal model for Price Action,
+  Volume Confirmation, Trend Confirmation, VWAP and Overheat, with exact
+  CandidateSet/source lineage and no Entry or order action;
+- multi-horizon PathForecast that reuses identified EntryPathTarget semantics,
+  admits only historical samples available by DecisionTime, preserves
+  dual-touch and missing-bar exclusions, and emits MFE/MAE and return quantiles
+  without an uncalibrated event probability;
+- exact-file-set Signal and PathForecast Artifact readers, deterministic replay
+  and CLI run/replay operations;
 - compatibility-preserving MR2A and B0/B1 adapters without changes to legacy scores, ranks, PredictionRuns or Readers.
 
 ## Documentation baseline added on 2026-08-01
@@ -92,8 +102,8 @@ The repository now contains an agreed target documentation set for the productio
 
 This documentation establishes the intended sequence from verified evidence through Signal, PathForecast, TradingOpportunity, TradingThesis, Portfolio/Risk, manual records, Position, Holding/Exit and Attribution.
 
-The documentation alone is not runtime implementation evidence. Phase 1 now
-has separate code and test evidence; later components do not become
+The documentation alone is not runtime implementation evidence. Phases 1–3 now
+have separate code and test evidence; later components do not become
 implemented merely because the documents exist.
 
 ## Deliberately limited operational authority
@@ -117,7 +127,10 @@ supplemental evidence Artifact, but no qualified operational supplemental
 Theme/Capital/PIT mapping bundle currently exists. The initial Market, Theme,
 Capital and Candidate thresholds have not established predictive validity.
 CandidateSet is opportunity-discovery evidence, not a Recommendation or buy
-list.
+list. The fixture profiles `exploratory_a_share_1455_v1` and
+`synthetic_path_profile_v1` are explicit exploratory/test configurations, not
+validated operating parameters. No Path barrier, horizon, Signal threshold or
+empirical path statistic has production validity or calibration evidence.
 
 The target production-decision architecture explicitly preserves the same authority ceiling. It authorizes no unattended broker operation and declares manual fill records as the first future authority for actual Position state.
 
@@ -138,8 +151,8 @@ The following are not implemented as canonical production-decision authority:
 - operational PIT theme mappings;
 - PostgreSQL Model Registry and Experiment Governance adapters and an approved
   multi-process operational deployment;
-- validated executable Signal model;
-- multi-horizon PathForecast;
+- validated Signal configuration or operating model;
+- calibrated or production-qualified multi-horizon PathForecast;
 - TradingOpportunity;
 - TradingThesis;
 - independent RiskDecision;

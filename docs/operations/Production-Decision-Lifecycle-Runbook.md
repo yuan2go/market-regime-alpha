@@ -101,7 +101,30 @@ Operator checks:
 
 ### 3.4 Signal and forecast
 
-Planned checks:
+Implemented exploratory CLI:
+
+```bash
+python scripts/run_signal_path_research.py run-signal \
+  --request SIGNAL_REQUEST.json \
+  --output-root SIGNAL_ROOT
+
+python scripts/run_signal_path_research.py replay-signal \
+  --artifact SIGNAL_ROOT/signal-run-ID
+
+python scripts/run_signal_path_research.py run-path \
+  --request PATH_REQUEST.json \
+  --output-root FORECAST_ROOT
+
+python scripts/run_signal_path_research.py replay-path \
+  --artifact FORECAST_ROOT/path-forecast-ID
+```
+
+Both run requests must provide a complete versioned configuration. There is no
+default barrier, horizon, threshold or decision-time profile. The initial
+1455/synthetic profiles are exploratory fixtures and do not establish valid
+production parameters.
+
+Operator checks:
 
 - SignalSnapshot references the selected CandidateSet and exact feature evidence;
 - Signal state is not treated as an order;
