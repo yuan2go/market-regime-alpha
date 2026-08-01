@@ -139,6 +139,23 @@ tests/application/operational_research/
 - late evidence is rejected;
 - current DailyLoop and Platform V2 tests remain unchanged and green.
 
+### Implementation evidence
+
+Implemented on `feat/production-decision-lifecycle` as an exploratory
+engineering slice:
+
+- typed, content-addressed `SupplementalResearchEvidenceBundle` Artifact;
+- exact supplemental SourceManifest and source-hash coverage;
+- DecisionTime and per-item AvailabilityTime validation;
+- complete PIT Theme Membership and ETF/Theme mapping reconciliation;
+- fail-closed missingness and DataEligibility enforcement;
+- verified Daily Artifact → ResearchInputBundle → ResearchLayerArtifact run;
+- content-idempotent repeated execution, semantic replay and explicit-config
+  CLI tests.
+
+No qualified operational supplemental evidence, formal PIT or trading
+authority is claimed.
+
 ### Rollback
 
 Disable or remove the adapter and CLI; existing DailyLoop and offline research remain unaffected.

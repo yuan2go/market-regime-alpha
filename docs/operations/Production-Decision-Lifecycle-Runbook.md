@@ -63,7 +63,7 @@ Operational rules:
 
 ### 3.3 Research run
 
-Planned operational sequence:
+Implemented exploratory engineering sequence:
 
 ```text
 Verified Daily Artifact
@@ -71,6 +71,25 @@ Verified Daily Artifact
 → PlatformResearchRunner
 → ResearchLayerArtifact
 ```
+
+The bridge requires two verified immutable inputs. It never derives Theme,
+Capital or mapping evidence from the Daily Artifact:
+
+```bash
+python scripts/run_operational_research.py run \
+  --daily-artifact ARTIFACT_ROOT/daily-decision-ID \
+  --supplemental-artifact SUPPLEMENTAL_ROOT/supplemental-research-evidence-ID \
+  --research-config CONFIG.json \
+  --output-root RESEARCH_ROOT \
+  --code-revision REVISION
+
+python scripts/run_operational_research.py replay \
+  --artifact RESEARCH_ROOT/research-layer-artifact-ID
+```
+
+There is no default operational configuration. A missing or invalid config,
+late observation, uncovered source Artifact, missing Theme/Capital evidence or
+incomplete PIT/ETF mapping stops the command.
 
 Operator checks:
 

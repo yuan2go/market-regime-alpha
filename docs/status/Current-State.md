@@ -19,7 +19,8 @@ EXPLORATORY_DAILY_LOOP_OPERATIONAL
 PLATFORM_ARCHITECTURE_V2_COMPLETE
 RESEARCH_LAYER_MVP_COMPLETE
 PRODUCTION_DECISION_LIFECYCLE_DOCUMENTATION_BASELINE_CREATED
-PRODUCTION_DECISION_LIFECYCLE_RUNTIME_NOT_IMPLEMENTED
+OPERATIONAL_RESEARCH_BRIDGE_IMPLEMENTED_EXPLORATORY
+PRODUCTION_DECISION_LIFECYCLE_PHASES_2_TO_7_NOT_IMPLEMENTED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -61,6 +62,13 @@ TRADING_AUTHORITY_NOT_GRANTED
 - content-addressed, versioned model configurations whose thresholds and weights are explicitly unvalidated assumptions;
 - exact-file-set ResearchLayerArtifact, semantic Reader, versioned Reader Registry and deterministic recomputation;
 - independent PlatformResearchRunner and fixture/archive-only run, replay and report CLI;
+- content-addressed SupplementalResearchEvidenceBundle with exact SourceManifest,
+  DecisionTime, AvailabilityTime, PIT Theme Membership, ETF/Theme mapping,
+  Theme/Capital/Symbol observations, missingness and reason-code validation;
+- fail-closed Operational Research Bridge and explicit-config CLI from a
+  verified Phase D Daily Artifact plus verified supplemental evidence into the
+  existing ResearchInputBundle, PlatformResearchRunner and deterministic
+  ResearchLayerArtifact replay;
 - compatibility-preserving MR2A and B0/B1 adapters without changes to legacy scores, ranks, PredictionRuns or Readers.
 
 ## Documentation baseline added on 2026-08-01
@@ -78,7 +86,9 @@ The repository now contains an agreed target documentation set for the productio
 
 This documentation establishes the intended sequence from verified evidence through Signal, PathForecast, TradingOpportunity, TradingThesis, Portfolio/Risk, manual records, Position, Holding/Exit and Attribution.
 
-It is not runtime implementation evidence. None of the target components becomes implemented merely because the documents now exist.
+The documentation alone is not runtime implementation evidence. Phase 1 now
+has separate code and test evidence; later components do not become
+implemented merely because the documents exist.
 
 ## Deliberately limited operational authority
 
@@ -88,7 +98,14 @@ The smoke loop is limited to 20 A-share stocks. The policy contract is configura
 
 Parquet/DuckDB query projections are deferred and remain rebuildable, non-authoritative views.
 
-Platform V2 is an offline Research Layer engineering MVP. Its current inputs are explicitly labelled synthetic fixtures or historical immutable archives. No public LIVE Adapter creates a ResearchInputBundle, and the initial Market, Theme, Capital and Candidate thresholds have not established predictive validity. CandidateSet is opportunity-discovery evidence, not a Recommendation or buy list.
+Platform V2 is an exploratory Research Layer engineering MVP. Its inputs remain
+synthetic fixtures or verified immutable artifacts. The Operational Research
+Bridge can combine a verified Daily Artifact with a separately verified
+supplemental evidence Artifact, but no qualified operational supplemental
+Theme/Capital/PIT mapping bundle currently exists. The initial Market, Theme,
+Capital and Candidate thresholds have not established predictive validity.
+CandidateSet is opportunity-discovery evidence, not a Recommendation or buy
+list.
 
 The target production-decision architecture explicitly preserves the same authority ceiling. It authorizes no unattended broker operation and declares manual fill records as the first future authority for actual Position state.
 
@@ -104,7 +121,7 @@ The same three-stage path reaches `OUTCOME_PENDING` in qualified fixtures and is
 
 The following are not implemented as canonical production-decision authority:
 
-- operational Daily Artifact to Platform V2 ResearchInput adapter;
+- qualified operational supplemental Theme/Capital/PIT mapping evidence;
 - production stock/ETF Universe snapshots;
 - operational PIT theme mappings;
 - durable Model Registry and Experiment Governance repositories;
