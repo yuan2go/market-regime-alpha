@@ -1,18 +1,19 @@
-# Phase D Specifications
+# Phase D and Production Decision Specifications
 
 > **Status:** CURRENT_SPECIFICATION  
-> **Authority:** Index of current Phase D contracts and shared conventions  
+> **Authority:** Index of current Phase D contracts, production-decision requirements and shared conventions  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** ../architecture/05-Phase-D-Daily-Decision-Engine-V1.md, ../status/Gap-Register.md  
-> **Code Evidence:** Implementation varies by contract; exploratory Phase D profiles live under `daily_decision/**`; the namesake `daily_research` V1 implementation is frozen and non-canonical; see Capability-Matrix
+> **Related Documents:** ../architecture/05-Phase-D-Daily-Decision-Engine-V1.md, ../architecture/10-Production-Decision-Lifecycle.md, ../status/Gap-Register.md  
+> **Code Evidence:** Implementation varies by contract; exploratory Phase D profiles live under `daily_decision/**`; the namesake `daily_research` V1 implementation is frozen and non-canonical; see Capability-Matrix.
 
 ## Shared conventions
 
 - [Contract Conventions](Contract-Conventions.md)
 - [Error Catalog](Error-Catalog.md)
+- [Production Decision Lifecycle Requirements](Production-Decision-Lifecycle-Requirements.md)
 
 ## Aggregate contracts
 
@@ -38,8 +39,12 @@
 - [Entry Path Target V1](Entry-Path-Target-V1.md)
 - Xuntou/provider specifications already present in this directory retain their individual code evidence.
 
+## Production decision specification boundary
+
+The production decision lifecycle requirements define the target sequence from verified operational evidence through Signal, PathForecast, TradingOpportunity, TradingThesis, Portfolio/Risk, Manual Execution, Position, Holding/Exit and Attribution. They do not establish implementation by documentation.
+
+The fixed Phase D MR1 next-session 10:30 recommendation and entry-plumbing contracts remain independent and must not be repurposed in place.
+
 A specification defines target semantics. Implementation status is owned by `docs/status/Current-State.md` and `Capability-Matrix.md`.
 
-The historical V1 implementation cannot be renamed into compliance. Contract
-convergence must freeze its JSON/Reader identities and define explicit,
-fail-closed migration boundaries.
+The historical V1 implementation cannot be renamed into compliance. Contract convergence must freeze its JSON/Reader identities and define explicit, fail-closed migration boundaries.
