@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-01  
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../audit/Run-First-Daily-Platform-Delivery.md, ../audit/WP-D3-Public-Live-Semantic-Closure.md, ../audit/WP-D3-1-Real-Decision-Evidence-Delivery.md, ../audit/WP-PAV2-Platform-Architecture-V2-Delivery.md, ../audit/Production-Decision-Lifecycle-Documentation-Delivery.md  
-> **Code Evidence:** `feat/production-decision-lifecycle`; Phase 0–7 checkpoint evidence is recorded in the production-lifecycle delivery audit.
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/Production-Lifecycle-Hardening-Baseline.md
+> **Code Evidence:** `main@a7ce0b4`; Phase 0–7 checkpoint evidence is recorded in the production-lifecycle delivery audit and H0 hardening facts in the new baseline audit.
 
 ## Overall stage
 
@@ -27,6 +27,8 @@ INDEPENDENT_PORTFOLIO_RISK_AUTHORITY_IMPLEMENTED_SQLITE
 MANUAL_FILL_LEDGER_AND_POSITION_AUTHORITY_IMPLEMENTED_SQLITE
 HOLDING_EXIT_AND_TRADE_ATTRIBUTION_IMPLEMENTED_EXPLORATORY
 PRODUCTION_DECISION_LIFECYCLE_PHASES_0_TO_7_ENGINEERING_COMPLETE
+PRODUCTION_LIFECYCLE_HARDENING_H0_BASELINE_CONFIRMED
+SHADOW_READY_NOT_ESTABLISHED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -120,6 +122,21 @@ TRADING_AUTHORITY_NOT_GRANTED
   Fill-to-Position-to-assessment-to-outcome deterministic replay;
 - compatibility-preserving MR2A and B0/B1 adapters without changes to legacy scores, ranks, PredictionRuns or Readers.
 
+## H0 hardening baseline
+
+The current Phase 0–7 chain is mechanically executable but not yet
+account-complete or Shadow-ready. Direct code inspection at `a7ce0b4`
+confirmed that Portfolio/Risk sees allocation-local positions only, Position
+does not own A-share available/frozen/sellable quantities, ManualTrade/Fill and
+TradeOutcome do not preserve a complete Thesis authority chain, REDUCE/EXIT
+uses the normal Risk path, Thesis-health support booleans are caller inputs,
+the operational bridge has no composite manifest/evidence kind, assessments
+are not durable, and continuous Shadow operations do not exist.
+
+The complete evidence and refinements are in
+[Production Lifecycle Hardening Baseline](../audit/Production-Lifecycle-Hardening-Baseline.md).
+H0 changes documentation only and makes no runtime capability claim.
+
 ## Documentation baseline added on 2026-08-01
 
 The repository now contains an agreed target documentation set for the production decision-support lifecycle:
@@ -198,7 +215,15 @@ The following are not implemented as canonical production-decision authority:
 - external statement reconciliation around the implemented Fill-derived PositionSnapshot;
 - production-qualified Holding/Exit configurations and operating evidence;
 - production-qualified complete-trade attribution protocol and rolling sample;
-- production authentication, permissions, metrics, tracing and alerts;
+- complete-account Portfolio/Risk snapshots and post-trade exposure;
+- strict Opportunity/Thesis/Portfolio/Risk/ManualTrade/Fill/Position/Outcome trace;
+- Fill-derived A-share T+1 available/frozen/sellable quantity;
+- a separate reducing-risk execution gate;
+- Artifact-derived Thesis-health observation building;
+- a composite operational evidence manifest and explicit operational evidence kind;
+- durable Holding/Exit schedules, histories, exceptions and acknowledgements;
+- recoverable ShadowRun, queues, metrics, tracing and alerts;
+- production authentication and permissions;
 - QuantDesk production integration;
 - automated broker adapter.
 
@@ -214,4 +239,6 @@ The frozen MR-2B primary context-conditioned hypothesis was not supported. No se
 
 Research outputs may support manual decisions. No current component may send real orders, mutate broker positions or promote itself based on a daily result. Entry plumbing emits `WAIT_CONFIRMATION` or `REJECT`, never `ENTER`.
 
-The new production-decision documentation does not alter this boundary. Runtime implementation must progress through the dependency-ordered phases in WP-PDL and must retain fail-closed evidence and risk semantics.
+The hardening documentation does not alter this boundary. Runtime work follows
+WP-PDL-HARDENING H1–H9 and retains fail-closed evidence, full-account risk and
+manual-only execution semantics.

@@ -44,8 +44,13 @@ exploratory mechanics are not reopened by that work.
 
 - [WP-PAV2 — Platform Architecture V2 and Research Layer MVP](WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL — Production Decision Lifecycle](WP-PDL-Production-Decision-Lifecycle.md)
+- [WP-PDL-HARDENING — Production Lifecycle Hardening and Shadow Readiness](WP-PDL-Hardening-and-Shadow-Readiness.md)
 
-WP-PAV2 reuses delivered Phase D evidence and Candidate identities. WP-PDL is the dependency-ordered target implementation package that connects verified operational evidence to Signal, Forecast, Opportunity, Thesis, Portfolio/Risk, manual records, Position, Holding/Exit and Attribution.
+WP-PAV2 reuses delivered Phase D evidence and Candidate identities. WP-PDL
+delivered the dependency-ordered engineering chain from operational evidence
+through closed-trade review. WP-PDL-HARDENING closes its complete-account,
+traceability, T+1, reducing-risk, evidence-construction, durable-assessment and
+Shadow-operations gaps.
 
 Neither package supersedes outstanding public LIVE validation, formal PIT, durable governance or model-validation gaps.
 
@@ -53,7 +58,9 @@ Neither package supersedes outstanding public LIVE validation, formal PIT, durab
 
 `WP-D2E` is the early Tencent/public-source vertical slice. It uses canonical identities and carries a hard `EXPLORATORY` ceiling. It exists to validate the daily engineering loop early, not to establish formal PIT Alpha.
 
-WP-PDL begins with architecture reconciliation and the Operational Research Bridge. It must not skip directly to execution or Position implementation while data authority, risk and manual fill semantics remain unresolved.
+WP-PDL-HARDENING begins from the exact Phase 0–7 code baseline. It must not
+start Shadow scheduling before complete-account Risk, traceability, T+1,
+reducing-risk and durable assessment dependencies are verified.
 
 ## Completion rule
 

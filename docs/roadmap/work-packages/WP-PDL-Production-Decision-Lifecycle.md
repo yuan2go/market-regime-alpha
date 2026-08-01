@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../../architecture/10-Production-Decision-Lifecycle.md, ../../architecture/decisions/ADR-004-Production-Decision-Lifecycle-Organization.md, ../../specs/Production-Decision-Lifecycle-Requirements.md, ../../audit/Production-Decision-Lifecycle-Gap-Analysis.md  
-> **Code Evidence:** Planned against current `main`; delivery claims must be recorded separately after implementation and verification.
+> **Code Evidence:** Phase 0–7 engineering baseline `a7ce0b4`; commit-bound results are recorded in `docs/audit/Production-Decision-Lifecycle-Delivery.md`; hardening continues in WP-PDL-HARDENING.
 
 ## 1. Work-package objective
 
@@ -533,7 +533,10 @@ Run the full lifecycle with real-time evidence and no unattended execution.
 
 ### Completion criteria
 
-The shadow period and minimum sample count must be approved before the repository makes any stronger production claim. The exact duration is an open governance decision and must not be invented by implementation code.
+The original WP-PDL did not deliver this phase. It is refined and implemented
+only through WP-PDL-HARDENING H8. Engineering Shadow readiness remains distinct
+from the future approved real run period, whose duration is not invented by
+implementation code.
 
 ## Phase 9 — Operator surface
 

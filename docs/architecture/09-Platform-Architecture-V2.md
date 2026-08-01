@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** 01-Domain-Boundaries.md, 03-Research-Artifact-Architecture.md, 05-Phase-D-Daily-Decision-Engine-V1.md, 10-Production-Decision-Lifecycle.md, decisions/ADR-003-Platform-V2-Research-Artifact-Boundary.md, decisions/ADR-004-Production-Decision-Lifecycle-Organization.md, ../roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md  
-> **Code Evidence:** Platform V2 implementation baseline `feat/platform-architecture-v2-research-layer@45fdaa9`; production-decision extension is documented target state only.
+> **Related Documents:** 01-Domain-Boundaries.md, 03-Research-Artifact-Architecture.md, 05-Phase-D-Daily-Decision-Engine-V1.md, 10-Production-Decision-Lifecycle.md, 11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, decisions/ADR-003-Platform-V2-Research-Artifact-Boundary.md, decisions/ADR-004-Production-Decision-Lifecycle-Organization.md, ../roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md
+> **Code Evidence:** Platform V2 research baseline `45fdaa9`; Phase 0–7 production-decision extension baseline `a7ce0b4`; qualified Shadow/production operation is not established.
 
 ## Scope
 
@@ -37,7 +37,11 @@ The executable boundary catalog is `src/market_regime_alpha/platform/architectur
 | 4 — Position Lifecycle & Execution | simulation records and future actual-position boundary | unattended trading in this repository |
 | 5 — Outcome Evaluation & Learning | layer-scoped EvaluationReport | automatic model mutation or promotion |
 
-The packages `signals`, `forecasting`, `decision`, `portfolio`, `execution`, `position` and `evaluation` define only the future ownership boundary in the WP-PAV2 delivery. Layer 1 is the only executable Platform V2 model flow at the current implementation baseline.
+In the historical WP-PAV2 delivery, `signals`, `forecasting`, `decision`,
+`portfolio`, `execution`, `position` and `evaluation` defined ownership seams
+only. Phase 0–7 subsequently added executable exploratory/manual mechanics in
+those contexts. Architecture 11 records the remaining hardening gaps; their
+existence does not qualify the mechanics for production or LIVE execution.
 
 ## Evidence boundary
 

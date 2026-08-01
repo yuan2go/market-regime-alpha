@@ -141,9 +141,8 @@ src/market_regime_alpha/
 └── application/
     ├── daily_loop/               # current source-to-daily-artifact runtime
     ├── research_layer/           # current offline Platform V2 runner
-    ├── operational_research/     # target Daily Artifact → Research bridge
-    ├── trading_lifecycle/        # target opportunity-to-position orchestration
-    └── review_loop/              # target holding/exit/outcome orchestration
+    ├── operational_research/     # implemented exploratory Daily Artifact → Research bridge
+    └── trading_lifecycle/        # implemented decision/manual/review orchestration
 ```
 
 `daily_decision/**` remains the fixed exploratory MR1 10:30 path. It must not be repurposed as the general production decision lifecycle.
@@ -680,15 +679,15 @@ Inject failure after every durable boundary. Recovery must not reacquire immutab
 - Mark `daily_research` as compatibility-only.
 - Allow adapters from old outputs only when lineage and semantic loss are explicit.
 
-## 27. Open architecture decisions
+## 27. Hardening and admission remainder
 
-Before Portfolio and Position implementation, maintainers must freeze:
+The first engineering scope is A-share, long-only, CLI-first and SQLite-first.
+Decision time, Path targets and Portfolio/Risk values are explicit versioned
+configurations with no implicit production defaults. Their production validity
+is not established.
 
-- first tradable instrument scope;
-- production Decision Time;
-- initial path targets;
-- hard-risk limits;
-- manual execution input channel;
-- formal provider and theme-mapping authority;
-- operational database choice;
-- minimum operator UI scope.
+Architecture 11 owns the remaining complete-account Risk, traceability, T+1,
+reducing-risk, evidence-building, durable assessment and Shadow-operation
+design. Formal Provider/theme-mapping authority, validated parameters,
+PostgreSQL admission, authentication, a sustained real Shadow period and any
+operator UI remain future evidence or scope.

@@ -18,8 +18,10 @@ Before editing:
    - `docs/status/Gap-Register.md`;
    - `docs/architecture/09-Platform-Architecture-V2.md`;
    - `docs/architecture/10-Production-Decision-Lifecycle.md`;
+   - `docs/architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md`;
    - `docs/specs/Production-Decision-Lifecycle-Requirements.md`;
    - `docs/roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md`;
+   - `docs/roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md`;
    - `docs/audit/Production-Decision-Lifecycle-Gap-Analysis.md`;
    - the bounded-context documents and tests affected by the next phase.
 5. Inspect executable code, imports, call chains, migrations and tests before accepting any implementation claim from prose.
@@ -30,24 +32,25 @@ Before editing:
 The current canonical engineering program is:
 
 ```text
-WP-PDL — Production Decision Lifecycle
+WP-PDL-HARDENING — Production Lifecycle Hardening and Shadow Readiness
 ```
 
-The objective is to complete the existing repository as a production-grade, human-in-the-loop A-share research and decision-support platform. The system remains a modular monolith with explicit bounded contexts and immutable evidence authority. It does not become an unattended live-trading system in this program.
+The Phase 0–7 production-decision mechanics are implemented. The current objective is to harden their complete-account risk, authority trace, T+1, reducing-risk, evidence-construction, durable assessment and Shadow operation behavior. The system remains a modular monolith with immutable evidence authority and no unattended live trading.
 
 The dependency-ordered implementation sequence is:
 
 ```text
-Phase 0  Code facts, architecture reconciliation and test baseline
-Phase 1  Operational Research Bridge
-Phase 2  Durable Model Registry and Experiment Governance
-Phase 3  Signal Engine and multi-horizon PathForecast
-Phase 4  TradingOpportunity and TradingThesis
-Phase 5  Portfolio construction and independent Risk Authority
-Phase 6  Manual Execution Record and fill-derived Position authority
-Phase 7  Holding, Exit and Attribution
-Phase 8  Sustained Shadow operations and operator surface
-Future   Separately approved broker adapter; no authority is implied now
+H0  Code facts and unchanged quality baseline
+H1  Complete-account Portfolio and Risk Authority
+H2  Thesis-to-Outcome authority trace
+H3  Fill-derived A-share T+1 sellability
+H4  Increasing-risk and reducing-risk separation
+H5  Derived Thesis-health observation
+H6  Composite operational evidence manifest
+H7  Durable Holding, Exit and exception state
+H8  Recoverable Shadow operations
+H9  Validation infrastructure without formal evidence claims
+Future  Real sustained Shadow evidence and separately approved broker work
 ```
 
 Work vertically in dependency order. Do not horizontally create every future interface before the preceding phase has an executable, tested and replayable slice.

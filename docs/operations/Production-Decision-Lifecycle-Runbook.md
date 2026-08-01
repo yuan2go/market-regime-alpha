@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-08-01  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** ../architecture/10-Production-Decision-Lifecycle.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md, ../specs/Production-Decision-Lifecycle-Requirements.md  
+> **Related Documents:** ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md
 > **Code Evidence:** Target-state runbook. Commands and components that do not yet exist are labelled as planned.
 
 ## 1. Operating boundary
@@ -460,16 +460,39 @@ For any selected trade or completed position, an auditor must be able to locate:
 - model, configuration and code revision;
 - operator and approver actions.
 
-## 9. Production-readiness blockers
+## 9. H0 hardening operating warning
+
+The Phase 0–7 CLIs are engineering/manual-support tools, not a continuous
+Shadow operating system. At baseline `a7ce0b4`:
+
+- Portfolio/Risk requests are allocation-local and must not be treated as a
+  complete-account approval;
+- caller-provided available quantity is not Position Authority;
+- Position lacks Fill-derived A-share sellable quantity;
+- ManualTrade/Fill/Position/Outcome does not yet prove a complete Thesis trace;
+- REDUCE/EXIT still uses the normal increasing-risk approval path;
+- lifecycle review accepts caller-constructed Thesis support values;
+- Holding/Exit state and exceptions are not durably scheduled;
+- there is no ShadowRun, operational queue, metric or alert authority.
+
+Until the corresponding H1–H8 phase is delivered, operators must not infer
+that a successful fixture CLI invocation closes these gaps. H0 adds no command
+and changes no runtime procedure.
+
+## 10. Production-readiness blockers
 
 This runbook does not declare production readiness. The following remain blockers until implemented and evidenced:
 
 - formal provider/PIT authority;
 - operational universe and theme mapping;
-- durable governance repositories;
-- executable Signal and PathForecast;
-- independent Risk Authority;
-- manual fill and position ledger;
+- complete-account Risk and authoritative account snapshots;
+- end-to-end Thesis/Fill/Position/Outcome trace;
+- Fill-derived A-share T+1 and sellable quantity;
+- independent reducing-risk execution gate;
+- Artifact-derived Thesis-health observations;
+- composite operational evidence lineage;
+- durable assessment/exception/reconciliation state;
+- recoverable ShadowRun, queues and daily operations report;
 - authentication and permissions;
 - metrics, tracing and alerts;
 - sustained shadow evidence;

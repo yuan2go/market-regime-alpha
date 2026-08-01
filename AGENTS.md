@@ -42,7 +42,7 @@ Do not create a parallel instruction hierarchy that contradicts these files.
 ```text
 1. Latest explicit user decision not superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–10 and architecture/domains/**
+3. docs/architecture/00–11 and architecture/domains/**
 4. current research programs
 5. current specifications, accepted ADRs and work packages
 6. historical material for context only
@@ -63,13 +63,13 @@ Never use a plan or design document to overrule executable evidence. Never chang
 
 ## Current implementation boundary
 
-Implemented and tested on the current repository baseline include stable identity and semantic-time contracts, Provider and SourceManifest boundaries, PIT Universe and Eligibility contracts, Feature and Candidate datasets, B0/B1 PredictionRuns, Entry Path Target infrastructure, immutable Artifacts and Readers, the recoverable exploratory Daily Runtime Journal, public exploratory acquisition and replay, Platform V2 boundaries, and the executable offline Market Regime → Theme Rotation → Capital Evolution → Candidate Discovery research slice.
+Implemented and tested on the current repository baseline include stable identity and semantic-time contracts, Provider and SourceManifest boundaries, PIT Universe and Eligibility contracts, Feature and Candidate datasets, B0/B1 PredictionRuns, Entry Path Target infrastructure, immutable Artifacts and Readers, the recoverable exploratory Daily Runtime Journal, public exploratory acquisition and replay, Platform V2 research, the Operational Research Bridge, durable SQLite Model Registry and Experiment Governance adapters, Signal and uncalibrated PathForecast research, durable Opportunity/Thesis and Portfolio/Risk decisions, a manual Fill ledger, Fill-derived PositionSnapshot, independent Holding/Exit assessment models and complete-trade diagnostic evaluation/replay.
 
-Documented but not yet canonical production behavior includes the Operational Research Bridge, durable Model Registry and Experiment Governance authority, executable Signal and multi-horizon PathForecast models, TradingOpportunity, TradingThesis, independent Portfolio/Risk authority, ManualTradeRecord, fill-derived PositionSnapshot, HoldingAssessment, ExitAssessment, complete-trade Attribution, sustained Shadow operation and operator workbench.
+These Phase 0–7 mechanics are not production-qualified. The complete-account Portfolio/Risk view, strict Thesis-to-Outcome trace, Fill-derived A-share T+1 sellability, reducing-risk gate, derived Thesis-health builder, composite operational manifest, durable assessment state, sustained Shadow operation and operator workbench remain unimplemented at the H0 hardening baseline.
 
 External or evidence blockers remain for qualified formal data, operational PIT theme mappings, formal OOS Alpha, calibrated model probabilities and any live broker authority.
 
-The current implementation program is `WP-PDL — Production Decision Lifecycle`. Its phases must be executed in dependency order and must preserve the existing evidence ceiling.
+The current implementation program is `WP-PDL-HARDENING — Production Lifecycle Hardening and Shadow Readiness`. It extends the delivered WP-PDL mechanics in dependency order and preserves the existing evidence ceiling.
 
 ## Non-negotiable domain rules
 
