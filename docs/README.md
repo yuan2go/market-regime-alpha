@@ -99,6 +99,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Public LIVE Semantic Closure Implementation Plan](superpowers/plans/2026-07-29-public-live-semantic-closure.md)
 - [WP-D3.1 Real Decision Evidence Implementation Plan](superpowers/plans/2026-07-30-wp-d3-1-real-decision-evidence.md)
 - [WP-D3.1 Real Decision Evidence Design](superpowers/specs/2026-07-30-wp-d3-1-real-decision-evidence-design.md)
+- [Production Decision Lifecycle Approved Design](superpowers/specs/2026-08-01-production-decision-lifecycle-design.md)
+- [Production Decision Lifecycle Implementation Plan](superpowers/plans/2026-08-01-production-decision-lifecycle.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 

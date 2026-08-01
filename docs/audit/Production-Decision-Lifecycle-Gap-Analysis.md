@@ -74,6 +74,36 @@ The current runtime is a Python application with local/durable artifacts and SQL
 
 ## 4. Direct conflicts between target behavior and current implementation
 
+### 4.0 Phase 0 code-fact reconciliation
+
+The current operational `DailyLoopRunner` publishes a verified Phase D daily
+decision Artifact, but that Artifact does not own the complete Theme
+Observation, Capital Observation, PIT Theme Membership or ETF-to-Theme mapping
+evidence required by `ResearchInputBundle`. The Operational Research Bridge
+therefore cannot derive or infer those facts from Candidate, Feature,
+PredictionRun or Daily Decision payloads.
+
+The bridge must instead consume a separate, immutable and content-addressed
+supplemental research evidence bundle. That bundle must preserve exact source
+Artifact references and hashes, its own SourceManifest, DecisionTime,
+per-observation AvailabilityTime, PIT mappings, DataEligibility, missingness
+and reason codes. The application adapter may validate and combine this bundle
+with verified DailyLoop evidence, but it does not become a second data
+authority. Missing, late, unverifiable or authority-incompatible supplemental
+evidence fails closed.
+
+`ModelRegistry` and `ExperimentGovernance` remain in-memory authorities. Their
+domain transition and access-budget validation is implemented, while durable
+Repository Protocols, optimistic concurrency and restart recovery are absent.
+
+The `signals`, `forecasting`, `decision`, `portfolio`, `execution`, `position`
+and `evaluation` packages currently provide mainly versioned contract
+boundaries or placeholders. They do not yet provide the complete application
+services, repositories, replay paths or lifecycle state machines described by
+the target architecture. In particular, no actual Position Authority exists,
+and there is no LIVE execution authority. Existing simulated execution records
+do not establish fills or actual positions.
+
 ### 4.1 Fixed MR1 horizon
 
 `daily_decision/recommendation.py` binds recommendations to the frozen next-session 10:30 target. The target production lifecycle needs configurable multi-horizon path semantics and cannot silently change the existing schema.

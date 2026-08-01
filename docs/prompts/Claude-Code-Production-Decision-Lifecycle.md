@@ -1,6 +1,6 @@
 # Claude Code Master Prompt — Complete the Production Decision Lifecycle
 
-> **Status:** CURRENT_EXECUTION_PROMPT  
+> **Status:** CURRENT_SPECIFICATION
 > **Authority:** Master implementation prompt for Claude Code  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-01  

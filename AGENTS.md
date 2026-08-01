@@ -48,7 +48,7 @@ Do not create a parallel instruction hierarchy that contradicts these files.
 6. historical material for context only
 ```
 
-## Implementation-fact authority order
+## Implementation fact authority order
 
 ```text
 1. current checked-out code and actual call chains
