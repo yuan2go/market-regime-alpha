@@ -1,6 +1,6 @@
 # Production Decision Lifecycle
 
-> **Status:** PROPOSED_ARCHITECTURE  
+> **Status:** CURRENT_ARCHITECTURE  
 > **Authority:** Target architecture for the production decision-support lifecycle  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-01  
