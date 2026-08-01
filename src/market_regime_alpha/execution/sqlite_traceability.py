@@ -227,6 +227,21 @@ class SQLiteTraceableManualExecutionRepository(SQLiteManualExecutionRepository):
                 for row in rows
             )
 
+    def open_position_books(self, account_id: str) -> tuple[PositionBook, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT position_book_id FROM position_books "
+                "WHERE account_id = ? AND state = 'OPEN' "
+                "ORDER BY symbol, position_book_id",
+                (account_id,),
+            ).fetchall()
+            return tuple(
+                _load_book(
+                    connection, PositionBookId(str(row["position_book_id"]))
+                )
+                for row in rows
+            )
+
     def close_position_book(
         self,
         book: PositionBook,

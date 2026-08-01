@@ -15,6 +15,9 @@ from market_regime_alpha.application.trading_lifecycle.manual_execution import (
 from market_regime_alpha.application.trading_lifecycle.traceable_execution import (
     TraceableManualExecutionApplicationService,
 )
+from market_regime_alpha.application.trading_lifecycle.position_authoritative_risk import (
+    PositionAuthoritativePortfolioRiskApplicationService,
+)
 from market_regime_alpha.application.trading_lifecycle.review import (
     LifecycleReviewApplicationService,
     LifecycleReviewRun,
@@ -32,6 +35,7 @@ __all__ = [
     "LifecycleReviewRun",
     "ManualExecutionApplicationService",
     "PortfolioRiskApplicationService",
+    "PositionAuthoritativePortfolioRiskApplicationService",
     "TraceableManualExecutionApplicationService",
     "VerifiedLifecycleReview",
     "load_verified_lifecycle_review",

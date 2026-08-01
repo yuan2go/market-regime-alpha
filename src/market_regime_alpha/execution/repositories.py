@@ -80,6 +80,8 @@ class TraceableManualExecutionRepository(ManualExecutionRepository, Protocol):
 
     def fills_for_book(self, book_id: PositionBookId) -> tuple[Fill, ...]: ...
 
+    def open_position_books(self, account_id: str) -> tuple[PositionBook, ...]: ...
+
     def close_position_book(
         self,
         book: PositionBook,

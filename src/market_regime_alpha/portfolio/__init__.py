@@ -19,6 +19,10 @@ from market_regime_alpha.portfolio.account_authority import (
     PostTradePosition,
     ProposedTradeDelta,
 )
+from market_regime_alpha.portfolio.position_authority import (
+    PositionAuthorityAccountSnapshotBuilder,
+    PositionRiskValuationInput,
+)
 from market_regime_alpha.portfolio.contracts import PositionPlan, PositionPlanState
 from market_regime_alpha.portfolio.lifecycle import (
     RISK_BUDGET_SCHEMA,
@@ -77,6 +81,8 @@ __all__ = [
     "PortfolioDecisionRepository",
     "PortfolioDecisionState",
     "PortfolioOutputMode",
+    "PositionAuthorityAccountSnapshotBuilder",
+    "PositionRiskValuationInput",
     "PositionPlan",
     "PositionPlanState",
     "RiskBudget",

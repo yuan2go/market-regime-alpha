@@ -174,9 +174,34 @@ existing outcome evaluator. Existing V1 schemas and readers remain exact and
 readable. Migration 006 is isolated and restart/replay tested.
 
 This is attribution integrity for manual/exploratory records, not a broker
-Fill, live execution, production Position or trading-authority claim. H3 must
-still derive A-share sellability from Fill plus explicit trading-calendar
-authority.
+Fill, live execution, production Position or trading-authority claim.
+
+## H3 Fill-derived A-share T+1 Position Authority
+
+The V3 Position path now derives each lot's trade date, remaining quantity,
+available/frozen quantity, first sellable session and settlement state from the
+effective append-only Fill ledger plus the existing immutable
+`TradingCalendarArtifact`. It records total, available, frozen and
+today-acquired quantities, the exact calendar ID/hash, typed symbol-session
+status evidence and a structured sellability state.
+
+Same-session buys are frozen. The next sellable date is the next explicit
+exchange session—not a natural-day or weekday calculation—so Friday and
+holiday spans are deterministic. Same-session or excess sells produce
+`RECONCILIATION_REQUIRED`; missing calendar coverage or status evidence fails
+closed; suspension sets available quantity to zero without relabeling it as a
+holding signal. Fill correction deterministically rebuilds all settlement
+quantities.
+
+`PositionAuthoritativePortfolioRiskApplicationService` enumerates every OPEN
+PositionBook, rebuilds each V3 Position and constructs the complete-account
+Risk input from those snapshots. This hardened path has no caller field for
+available quantity. The H1/V1 compatibility APIs remain readable but are not
+sellability-authoritative.
+
+The symbol-session status fixtures are synthetic evidence and no external
+statement or broker authority is established. H4 still owns the separate
+risk-reducing execution gate.
 
 ## Documentation baseline added on 2026-08-01
 

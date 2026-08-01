@@ -161,6 +161,18 @@ Corrections never mutate a Fill. Replaying effective Fill plus the same
 calendar produces exactly the same lot availability, realized PnL and
 PositionSnapshot identity.
 
+### H3 implementation status
+
+V3 PositionSnapshot implements the settlement fields and retains exact
+calendar ID/hash plus typed symbol-session status IDs. Its projector consumes
+only a traceable book's effective Fill ledger. A sell exceeding quantities
+whose explicit next session has arrived creates reconciliation-required state;
+suspension or unknown status yields zero available quantity with a distinct
+sellability reason. `PositionAuthoritativePortfolioRiskApplicationService`
+enumerates repository OPEN books and removes caller-authored availability from
+the hardened Risk route. Existing H1 and V1/V2 inputs remain compatibility
+readers, not H3 sellability authority.
+
 ## 7. Increasing risk versus reducing risk
 
 Increasing exposure (`OPEN`, `ADD`, or a larger target) requires the complete

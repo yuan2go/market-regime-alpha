@@ -214,8 +214,12 @@ versioned risk configuration. Partial, stale, future or unreconciled snapshots
 produce DATA_INSUFFICIENT. The older `run` command remains V1 compatibility and
 must not be described as complete-account approval.
 
-Until H3, source Position references and declared available quantity are
-retained but not yet reconstructed from Fill plus TradingCalendarArtifact.
+For new hardened operations, do not submit declared available quantity through
+the H1 compatibility command. Use the position-authoritative application path,
+which enumerates every OPEN PositionBook and rebuilds V3 positions from Fill,
+the explicit `TradingCalendarArtifact` and typed symbol-session status
+evidence. Missing calendar coverage, missing/late status or reconciliation
+state fails closed.
 
 ### 3.7 Manual action recording
 
@@ -273,6 +277,18 @@ After fills:
 3. If quantity, side, cost or fill history differs, enter `RECONCILIATION_REQUIRED`.
 4. Block new exposure for the affected account/symbol until resolved.
 5. Record the resolution as append-only evidence.
+
+For A-share T+1 review, additionally verify:
+
+- the Fill trade date and assessment date both exist in the identified
+  calendar;
+- each buy lot's `sellable_from_session` is the next explicit exchange
+  session;
+- `available_quantity + frozen_quantity == total_quantity`;
+- same-session acquisition remains frozen;
+- current symbol-session status evidence was available by assessment time;
+- suspension/unknown state is recorded as an execution constraint, not a
+  HOLD signal.
 
 Before publishing a closed-trade outcome, run the traceable evaluator with all
 source Opportunity, Thesis, PortfolioDecision, RiskDecision, ManualTrade,

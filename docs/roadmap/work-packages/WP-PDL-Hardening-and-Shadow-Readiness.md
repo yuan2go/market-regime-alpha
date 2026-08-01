@@ -189,9 +189,9 @@ sellable-quantity and trading-calendar semantics.
 
 ### Deliverables
 
-- PositionLot V2 availability, frozen quantity, trade date, sellable session
+- PositionLot V3 availability, frozen quantity, trade date, sellable session
   and settlement fields;
-- PositionSnapshot V2 total/available/frozen/today-acquired authority;
+- PositionSnapshot V3 total/available/frozen/today-acquired authority;
 - projector input includes identified TradingCalendarArtifact and explicit
   market-executability evidence;
 - Risk derives sellable quantity only from Position Authority.
@@ -205,8 +205,19 @@ sellable-quantity and trading-calendar semantics.
 
 ### Rollback
 
-Retain Fill history, stop V2 projections and rebuild from the previous verified
+Retain Fill history, stop V3 projections and rebuild from the previous verified
 code only for read-only comparison. Never synthesize sellability.
+
+### Implementation evidence
+
+Delivered on the H3 checkpoint with an exact V3 Position schema, settled lot
+fields, typed symbol-session status evidence and the existing explicit
+TradingCalendarArtifact. The hardened Risk application enumerates all OPEN
+books and builds account positions from those V3 projections; arbitrary
+available quantity is not an input. Tests cover same-session restriction,
+Friday/Monday, a holiday gap, suspension, partial/multi-lot sells, correction,
+missing/late evidence, canonical Reader and SQLite restart. H3 adds no table or
+migration. All evidence remains synthetic/manual.
 
 ## 10. H4 — Increasing-risk and reducing-risk separation
 

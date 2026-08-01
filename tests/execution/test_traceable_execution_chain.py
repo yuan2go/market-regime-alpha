@@ -10,9 +10,16 @@ import pytest
 
 from market_regime_alpha.application.trading_lifecycle import (
     CompleteAccountPortfolioRiskApplicationService,
+    PositionAuthoritativePortfolioRiskApplicationService,
     TraceableManualExecutionApplicationService,
 )
-from market_regime_alpha.core.identity import ArtifactId, ModelId, OpportunityId, ThesisId
+from market_regime_alpha.core.identity import (
+    ArtifactId,
+    DatasetId,
+    ModelId,
+    OpportunityId,
+    ThesisId,
+)
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.decision import (
     DecisionEvidenceReference,
@@ -26,6 +33,7 @@ from market_regime_alpha.decision import (
 )
 from market_regime_alpha.decision.opportunity import TRADING_OPPORTUNITY_SCHEMA
 from market_regime_alpha.decision.thesis import TRADING_THESIS_SCHEMA
+from market_regime_alpha.data import TradingSession, build_trading_calendar_artifact
 from market_regime_alpha.execution import (
     SQLiteTraceableManualExecutionRepository,
 )
@@ -47,11 +55,17 @@ from market_regime_alpha.portfolio import (
     AuthoritativeAccountPortfolioSnapshot,
     CompleteAccountRiskConfiguration,
     PortfolioOutputMode,
+    PositionRiskValuationInput,
     RiskBudget,
     SQLiteCompleteAccountPortfolioRiskRepository,
     ThesisAllocationRequest,
 )
-from market_regime_alpha.position import PositionProjector, PositionState
+from market_regime_alpha.position import (
+    PositionProjector,
+    PositionState,
+    SymbolTradingSessionStatus,
+    SymbolTradingState,
+)
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -315,6 +329,94 @@ def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
     ).rebuild_position(
         book.position_book_id, as_of=NOW + timedelta(minutes=4)
     ) == corrected
+    next_day = (NOW + timedelta(days=1)).date()
+    calendar = build_trading_calendar_artifact(
+        source_dataset_id=DatasetId("synthetic-restart-calendar"),
+        market="CN_A_SHARE",
+        calendar_version="synthetic-restart-v1",
+        timezone_name="Asia/Shanghai",
+        sessions=(
+            TradingSession(trade_date=NOW.date(), session_close=NOW.replace(hour=15, minute=0)),
+            TradingSession(
+                trade_date=next_day,
+                session_close=(NOW + timedelta(days=1)).replace(hour=15, minute=0),
+            ),
+        ),
+    )
+    status = SymbolTradingSessionStatus.create(
+        symbol=book.symbol,
+        session_date=NOW.date(),
+        state=SymbolTradingState.TRADABLE,
+        source_artifact_id=ArtifactId("synthetic-restart-status"),
+        source_artifact_hash=_sha("6"),
+        availability_time=NOW.replace(hour=9, minute=0),
+        reason_code="SYNTHETIC_TRADABLE",
+    )
+    t_plus_one = service.rebuild_a_share_position(
+        book.position_book_id,
+        calendar=calendar,
+        symbol_session_statuses=(status,),
+        as_of=NOW + timedelta(minutes=4),
+    )
+    assert t_plus_one.available_quantity == 0
+    assert TraceableManualExecutionApplicationService(
+        SQLiteTraceableManualExecutionRepository(path)
+    ).rebuild_a_share_position(
+        book.position_book_id,
+        calendar=calendar,
+        symbol_session_statuses=(status,),
+        as_of=NOW + timedelta(minutes=4),
+    ) == t_plus_one
+    hardened_risk = PositionAuthoritativePortfolioRiskApplicationService(
+        execution_repository=repository,
+        risk_repository=SQLiteCompleteAccountPortfolioRiskRepository(
+            tmp_path / "position-authoritative-risk.sqlite3"
+        ),
+    )
+    exit_allocation = ThesisAllocationRequest(
+        thesis_id=first_authority[1].thesis_id,
+        symbol=first_authority[1].symbol,
+        theme_id="theme-bank",
+        target_quantity=0,
+        reference_price=10.0,
+        average_daily_trade_value=1_000_000.0,
+        loss_per_share=1.0,
+    )
+    account, positions, _, risk = hardened_risk.run(
+        opportunities=(first_authority[0],),
+        theses=(first_authority[1],),
+        allocations=(exit_allocation,),
+        account_id="account-a",
+        account_as_of=NOW + timedelta(minutes=4),
+        account_source_reference="synthetic-reconciled-manual-account",
+        net_asset_value=100_000.0,
+        available_cash=99_200.0,
+        reconciliation_state=AccountReconciliationState.RECONCILED,
+        account_version=1,
+        valuations=(
+            PositionRiskValuationInput(
+                symbol=book.symbol,
+                theme_id="theme-bank",
+                market_price=10.0,
+                loss_per_share=1.0,
+                source_artifact_id=ArtifactId("synthetic-risk-valuation"),
+                source_artifact_hash=_sha("5"),
+            ),
+        ),
+        calendar=calendar,
+        symbol_session_statuses={book.symbol: (status,)},
+        configuration=_configuration(),
+        mode=PortfolioOutputMode.MANUAL_CONFIRMATION,
+        actor="risk-operator",
+        reason="derive T+1 sellability from Position Authority",
+        portfolio_created_at=NOW + timedelta(minutes=4),
+        risk_started_at=NOW + timedelta(minutes=4),
+        risk_completed_at=NOW + timedelta(minutes=4, seconds=1),
+        idempotency_key="position-authoritative-risk",
+    )
+    assert account.all_positions[0].available_quantity == 0
+    assert positions == (t_plus_one,)
+    assert "T_PLUS_ONE_AVAILABLE_QUANTITY_EXCEEDED" in risk.reason_codes
 
     second_authority = _authority(tmp_path, index=2)
     second_book, second_trade = _create_trade(

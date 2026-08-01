@@ -69,6 +69,35 @@ class TradingCalendarArtifact:
     def trading_dates(self) -> tuple[date, ...]:
         return tuple(session.trade_date for session in self.sessions)
 
+    def semantic_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": "trading-calendar-artifact-v1",
+            "source_dataset_id": str(self.source_dataset_id),
+            "market": self.market,
+            "calendar_version": self.calendar_version,
+            "timezone_name": self.timezone_name,
+            "sessions": [
+                {
+                    "trade_date": session.trade_date.isoformat(),
+                    "session_close": session.session_close.isoformat(),
+                }
+                for session in self.sessions
+            ],
+        }
+
+    @property
+    def content_hash(self) -> str:
+        canonical = json.dumps(
+            self.semantic_payload(),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return f"sha256:{sha256(canonical.encode('utf-8')).hexdigest()}"
+
+    def to_canonical_dict(self) -> dict[str, object]:
+        return {"artifact_id": str(self.artifact_id), **self.semantic_payload()}
+
     def resolve_next_session_date(self, decision_time: DecisionTime) -> date:
         """Return the first explicit trading session strictly after the local decision date."""
 

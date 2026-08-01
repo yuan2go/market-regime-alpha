@@ -10,6 +10,7 @@ from market_regime_alpha.application.trading_lifecycle.manual_execution import (
 from market_regime_alpha.core.identity import FillId, ManualTradeId, PositionBookId
 from market_regime_alpha.decision.opportunity import TradingOpportunity
 from market_regime_alpha.decision.thesis import TradingThesis
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.manual import (
     TRACEABLE_MANUAL_TRADE_SCHEMA,
@@ -33,6 +34,7 @@ from market_regime_alpha.position.authority import (
     PositionProjector,
     PositionSnapshot,
     PositionState,
+    SymbolTradingSessionStatus,
 )
 
 
@@ -169,6 +171,24 @@ class TraceableManualExecutionApplicationService:
             book=book,
             trades=trades,
             fills=fills,
+            as_of=as_of,
+        )
+
+    def rebuild_a_share_position(
+        self,
+        book_id: PositionBookId,
+        *,
+        calendar: TradingCalendarArtifact,
+        symbol_session_statuses: tuple[SymbolTradingSessionStatus, ...],
+        as_of: datetime,
+    ) -> PositionSnapshot:
+        book = self._repository.get_position_book(book_id)
+        return PositionProjector().project_book_t_plus_one(
+            book=book,
+            trades=self._repository.trades_for_book(book_id),
+            fills=self._repository.fills_for_book(book_id),
+            calendar=calendar,
+            symbol_session_statuses=symbol_session_statuses,
             as_of=as_of,
         )
 
