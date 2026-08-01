@@ -192,9 +192,29 @@ tests/platform/repositories/
 - restore rejects non-contiguous history;
 - existing in-memory behavior remains available for unit tests.
 
+### Implementation evidence
+
+Implemented on `feat/production-decision-lifecycle`:
+
+- storage-neutral Model Registry and Experiment Governance Repository
+  Protocols;
+- domain-validating persistent application services that replay the existing
+  lifecycle and access-budget rules;
+- isolated SQLite migration `001_governance` with no change to `daily_runs`;
+- optimistic compare-and-swap versions and global command idempotency keys;
+- append-only model transition and experiment access tables;
+- restart restore, duplicate, conflicting-key, stale-writer, forged-state,
+  transaction rollback and up/down migration tests.
+
+SQLite is the local/test durable adapter. PostgreSQL implementation and
+operational database promotion are not claimed.
+
 ### Rollback
 
-Switch application composition to the in-memory adapters; retain persisted data for audit.
+Switch application composition to the in-memory adapters and retain the SQLite
+file read-only for audit. For an unused local/test database, the isolated
+`001_governance_down.sql` migration removes only governance tables. Back up or
+export append-only histories before any destructive schema rollback.
 
 ## Phase 3 — Signal Engine and PathForecast
 

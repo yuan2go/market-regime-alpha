@@ -306,6 +306,24 @@ Procedure:
 - never delete append-only execution or audit history;
 - if schema rollback is unsafe, stop writes and use the prior application in read-only mode until a forward repair is available.
 
+Phase 2 governance migration:
+
+```text
+src/market_regime_alpha/platform/migrations/001_governance_up.sql
+src/market_regime_alpha/platform/migrations/001_governance_down.sql
+```
+
+The up migration creates only `pdl_schema_migrations`,
+`governance_commands`, `model_registrations`,
+`model_lifecycle_transitions`, `governed_experiments` and
+`experiment_access_events`. It does not create or alter `daily_runs`.
+
+Normal rollback is an application-composition rollback to the in-memory
+domain validators while retaining the SQLite file read-only. Run the down
+migration only for a disposable local/test database, or after a verified
+backup/export of append-only governance history. PostgreSQL is not an
+implemented authority in this phase.
+
 ## 7. Routine verification commands
 
 Current repository quality gate:

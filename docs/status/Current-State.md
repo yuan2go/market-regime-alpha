@@ -20,7 +20,8 @@ PLATFORM_ARCHITECTURE_V2_COMPLETE
 RESEARCH_LAYER_MVP_COMPLETE
 PRODUCTION_DECISION_LIFECYCLE_DOCUMENTATION_BASELINE_CREATED
 OPERATIONAL_RESEARCH_BRIDGE_IMPLEMENTED_EXPLORATORY
-PRODUCTION_DECISION_LIFECYCLE_PHASES_2_TO_7_NOT_IMPLEMENTED
+SQLITE_MODEL_AND_EXPERIMENT_GOVERNANCE_IMPLEMENTED
+PRODUCTION_DECISION_LIFECYCLE_PHASES_3_TO_7_NOT_IMPLEMENTED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -41,7 +42,12 @@ TRADING_AUTHORITY_NOT_GRANTED
 - Theory/Observable/Model platform contracts;
 - content-addressed Target and Evaluation Protocol contracts;
 - frozen Experiment Protocol and access-budget mechanics;
-- in-memory Model Registry with closed registration and validated transition/restore boundaries;
+- Model Registry domain validation with closed registration and validated
+  transition/restore boundaries, plus a SQLite Repository adapter with
+  optimistic versioning, command idempotency and append-only transitions;
+- Experiment Governance access-budget validation plus a SQLite Repository
+  adapter with optimistic versioning, command idempotency and append-only
+  access events;
 - immutable protocol-bound Candidate PredictionRuns with full B0/B1 equivalence evidence;
 - recoverable SQLite Runtime Journal with separate RunRequestId and source-bound DailyRunId;
 - distinct LIVE and REPLAY public Provider profiles, immutable raw archives, field-level SourceManifest and fail-closed DataQualityReport;
@@ -92,7 +98,13 @@ implemented merely because the documents exist.
 
 ## Deliberately limited operational authority
 
-The daily Runtime Journal is persistent and recoverable, but Model Registry and Experiment Governance remain process-local in-memory implementations. The delivery closes only the minimum registration, lifecycle, data/evidence-separation and PredictionRun boundaries required by the current loop; it does not claim complete WP-D0 governance persistence.
+The daily Runtime Journal remains an independent persistent and recoverable
+authority. Model Registry and Experiment Governance now have storage-neutral
+Repository Protocols and isolated SQLite durable adapters; the original
+in-memory classes remain the domain validators and unit-test implementation.
+The DailyLoop does not silently adopt or mutate shared governance state, and
+the existing `daily_runs` schema is unchanged. PostgreSQL parity and
+multi-process operational deployment remain future work.
 
 The smoke loop is limited to 20 A-share stocks. The policy contract is configurable, but an approved 100–300-symbol membership source and formal PIT eligibility evidence are not delivered. Operational-pool expansion is additionally blocked until a real public Archive reaches `OUTCOME_PENDING`.
 
@@ -124,7 +136,8 @@ The following are not implemented as canonical production-decision authority:
 - qualified operational supplemental Theme/Capital/PIT mapping evidence;
 - production stock/ETF Universe snapshots;
 - operational PIT theme mappings;
-- durable Model Registry and Experiment Governance repositories;
+- PostgreSQL Model Registry and Experiment Governance adapters and an approved
+  multi-process operational deployment;
 - validated executable Signal model;
 - multi-horizon PathForecast;
 - TradingOpportunity;

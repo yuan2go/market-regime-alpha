@@ -73,7 +73,47 @@ Phase quality gate:
 
 ## Pending phases
 
-Phases 2–7 remain pending until their separate executable behavior, tests,
+Phases 3–7 remain pending until their separate executable behavior, tests,
 documentation and semantic checkpoint commits are present. Qualified
 operational supplemental data remains an external evidence blocker, not a
 blocker to the fail-closed engineering mechanics.
+
+## Phase 2 — durable governance repositories
+
+Delivered on the Phase 2 checkpoint:
+
+- `ModelRegistryRepository` and `ExperimentGovernanceRepository` Protocols;
+- persistent services that validate with the existing in-memory domain rules;
+- isolated SQLite up/down migration and packaged SQL resources;
+- `version` compare-and-swap and globally unique idempotency commands;
+- append-only model lifecycle transitions and experiment access events;
+- restore, duplicate, conflicting key, stale writer, forged state, transaction
+  rollback and migration isolation tests.
+
+Database changes:
+
+| Table | Authority and constraint |
+|---|---|
+| `pdl_schema_migrations` | applied governance schema versions only |
+| `governance_commands` | unique idempotency key, command hash and result version |
+| `model_registrations` | current validated projection with CAS version |
+| `model_lifecycle_transitions` | append-only sequence per ModelId |
+| `governed_experiments` | frozen protocol and current access projection |
+| `experiment_access_events` | append-only validation/sealed access sequence |
+
+No table stores a second Artifact authority, and the existing DailyRun tables
+are untouched. SQLite is local/test authority only; PostgreSQL is not
+implemented.
+
+Phase quality gate:
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q tests/platform/test_governance_persistence.py` | PASS — 7 |
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
+| `python -m pytest -q tests/platform` | PASS — 22 |
+| `python -m pytest -q` | PASS — 1183 |
+| `python -m ruff check .` | PASS |
+| `python -m mypy` | PASS — 229 source files |
