@@ -1,6 +1,6 @@
 # Production Decision Lifecycle Runbook
 
-> **Status:** PROPOSED_OPERATIONS  
+> **Status:** CURRENT_SPECIFICATION  
 > **Authority:** Operational procedure for the human-in-the-loop production decision lifecycle  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-01  
