@@ -199,6 +199,25 @@ No operator or strategy may convert a rejected decision into an approved system 
 
 ### 3.7 Manual action recording
 
+Implemented manual-only commands:
+
+```bash
+python scripts/record_manual_trade.py \
+  --database execution.sqlite3 \
+  --request MANUAL_TRADE_REQUEST.json
+
+python scripts/record_manual_fill.py --database execution.sqlite3 \
+  record --request MANUAL_FILL_OR_CORRECTION.json
+
+python scripts/record_manual_fill.py --database execution.sqlite3 \
+  position --account-id ACCOUNT --symbol SYMBOL --as-of ISO_TIME
+```
+
+The trade request must bind an approved RiskDecision, its PortfolioDecision and
+an exact non-zero TargetPosition. The Fill command records a human-observed
+event; it does not contact a broker. Never edit a Fill row. Supply
+`correction_of_fill_id` in a new record.
+
 For every actual action:
 
 - create or reference an approved ManualTradeRecord;
@@ -211,6 +230,11 @@ For every actual action:
 - never edit a previous fill; use a correction record.
 
 ### 3.8 Position reconciliation
+
+The implemented Position projector accepts only the append-only Fill ledger.
+An empty ledger, future recorded Fill, duplicate FillId, invalid correction or
+sell quantity without authoritative lots fails or produces
+`RECONCILIATION_REQUIRED`; a PositionPlan is not an input type.
 
 After fills:
 

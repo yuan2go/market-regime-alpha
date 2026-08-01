@@ -148,6 +148,10 @@ def _target(payload: dict[str, Any]) -> TargetPosition:
     )
 
 
+def target_position_from_dict(payload: dict[str, Any]) -> TargetPosition:
+    return _target(payload)
+
+
 def _constraint(payload: dict[str, Any]) -> PortfolioConstraint:
     expected = {
         "constraint_type",

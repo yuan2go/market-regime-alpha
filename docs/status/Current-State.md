@@ -24,7 +24,8 @@ SQLITE_MODEL_AND_EXPERIMENT_GOVERNANCE_IMPLEMENTED
 SIGNAL_AND_UNCALIBRATED_PATH_FORECAST_IMPLEMENTED_EXPLORATORY
 DURABLE_OPPORTUNITY_AND_THESIS_LIFECYCLE_IMPLEMENTED
 INDEPENDENT_PORTFOLIO_RISK_AUTHORITY_IMPLEMENTED_SQLITE
-PRODUCTION_DECISION_LIFECYCLE_PHASES_6_TO_7_NOT_IMPLEMENTED
+MANUAL_FILL_LEDGER_AND_POSITION_AUTHORITY_IMPLEMENTED_SQLITE
+PRODUCTION_DECISION_LIFECYCLE_PHASE_7_NOT_IMPLEMENTED
 PUBLIC_LIVE_STILL_DATA_BLOCKED
 REAL_1455_RUNTIME_VALIDATION_PENDING
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -99,6 +100,12 @@ TRADING_AUTHORITY_NOT_GRANTED
 - fail-closed risk timeout/data insufficiency, structured rejection codes,
   exact RiskBudget snapshots and durable SQLite/CLI operation restricted to
   `SIMULATION` or `MANUAL_CONFIRMATION`;
+- approved-Risk-bound ManualTradeRecord lifecycle and append-only SQLite Fill
+  ledger supporting partial fill, cancellation, rejection, unknown state and
+  correction records without any broker adapter;
+- deterministic PositionProjector whose only position-changing inputs are
+  effective Fill events, with FIFO lots, quantity/cost/realized-PnL replay and
+  reconciliation-required anomalies;
 - compatibility-preserving MR2A and B0/B1 adapters without changes to legacy scores, ranks, PredictionRuns or Readers.
 
 ## Documentation baseline added on 2026-08-01
@@ -171,8 +178,8 @@ The following are not implemented as canonical production-decision authority:
 - production-qualified TradingThesis approval/invalidation policy;
 - production-qualified RiskBudget and independent RiskDecision policy;
 - production-qualified PortfolioDecision allocation policy;
-- ManualTradeRecord and Fill ledger;
-- PositionSnapshot authority;
+- production authentication/reconciliation operation for ManualTradeRecord and Fill;
+- external statement reconciliation around the implemented Fill-derived PositionSnapshot;
 - HoldingAssessment;
 - ExitAssessment;
 - complete-trade attribution and rolling scorecards;

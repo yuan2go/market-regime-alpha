@@ -435,6 +435,27 @@ tests/position/
 - correction records preserve history;
 - mismatch moves the account/symbol into reconciliation-required state.
 
+### Implementation evidence
+
+Implemented on `feat/production-decision-lifecycle`:
+
+- approved RiskDecision and exact TargetPosition binding before a human
+  `ManualTradeRecord` can be created;
+- versioned manual order states for recorded, partial, filled, cancelled,
+  rejected, unknown and reconciliation-required outcomes;
+- append-only `Fill` and correction records with unique internal/external IDs,
+  command idempotency and SQLite UPDATE/DELETE prevention triggers;
+- repository restore from append-only ManualTradeRecord state snapshots;
+- pure `PositionProjector` consuming Fill only, with FIFO lots, average cost,
+  realized PnL, correction replacement and missing-lot reconciliation;
+- manual trade/fill and Position rebuild CLIs;
+- partial, duplicate, correction, terminal state, restart rebuild, future/dual
+  identity, FIFO PnL, no-Fill and migration tests.
+
+No broker Fill, LIVE_ORDER, QMT, PTrade or PositionPlan-to-Position path is
+implemented. Actual Position authority here means only the human-recorded Fill
+ledger supplied to the projector.
+
 ### Rollback
 
 Stop new writes and rebuild read-only positions from the retained fill ledger.

@@ -71,13 +71,6 @@ Phase quality gate:
 | `python -m ruff check .` | PASS |
 | `python -m mypy` | PASS — 229 source files |
 
-## Pending phases
-
-Phases 6–7 remain pending until their separate executable behavior, tests,
-documentation and semantic checkpoint commits are present. Qualified
-operational supplemental data remains an external evidence blocker, not a
-blocker to the fail-closed engineering mechanics.
-
 ## Phase 2 — durable governance repositories
 
 Delivered on the Phase 2 checkpoint:
@@ -146,6 +139,18 @@ Focused evidence before the phase quality gate:
 | focused Ruff | PASS |
 | `python -m mypy` | PASS — 233 source files |
 
+Phase quality gate:
+
+| Command | Result |
+|---|---|
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
+| `python -m pytest -q tests/platform` | PASS — 22 |
+| `python -m pytest -q` | PASS — 1191 |
+| `python -m ruff check .` | PASS |
+| `python -m mypy` | PASS — 233 source files |
+
 ## Phase 4 — TradingOpportunity and TradingThesis
 
 Delivered on the Phase 4 checkpoint:
@@ -180,6 +185,18 @@ Focused evidence before the phase quality gate:
 |---|---|
 | `python -m pytest -q tests/decision` | PASS — 8 |
 | focused Ruff | PASS |
+| `python -m mypy` | PASS — 237 source files |
+
+Phase quality gate:
+
+| Command | Result |
+|---|---|
+| `git diff --check` | PASS |
+| `python scripts/check_docs_links.py` | PASS |
+| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
+| `python -m pytest -q tests/platform` | PASS — 22 |
+| `python -m pytest -q` | PASS — 1199 |
+| `python -m ruff check .` | PASS |
 | `python -m mypy` | PASS — 237 source files |
 
 ## Phase 5 — Portfolio and independent Risk Authority
@@ -228,6 +245,42 @@ Phase quality gate:
 | `python -m ruff check .` | PASS |
 | `python -m mypy` | PASS — 242 source files |
 
+## Phase 6 — Manual Execution and Position Authority
+
+Delivered on the Phase 6 checkpoint:
+
+- approved RiskDecision/PortfolioDecision/TargetPosition binding for manual
+  intent creation;
+- versioned manual order lifecycle with partial, filled, cancelled, rejected,
+  unknown and reconciliation-required states;
+- append-only Fill/correction ledger with internal/external identity and command
+  idempotency;
+- SQLite triggers preventing Fill UPDATE and DELETE;
+- PositionSnapshot rebuilt only from Fill, including FIFO lot cost, realized
+  PnL, correction replacement and reconciliation anomalies;
+- separate record-trade, record-fill and Position rebuild CLI paths.
+
+Database changes:
+
+| Table | Authority and constraint |
+|---|---|
+| `execution_commands` | unique command key/hash and historical result version |
+| `manual_trade_records` | current versioned human-intent projection |
+| `manual_trade_events` | append-only state snapshots |
+| `manual_fills` | append-only Fill/correction authority with unique IDs |
+
+`004_manual_execution_down.sql` removes only Phase 6 ledger tables, triggers
+and its migration receipt. Back up Fill history before rollback; Position can
+always be rebuilt from the retained ledger. No DailyRun table is changed.
+
+Focused evidence before the phase quality gate:
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q tests/execution tests/position` | PASS — 13 |
+| focused Ruff | PASS |
+| `python -m mypy` | PASS — 246 source files |
+
 Phase quality gate:
 
 | Command | Result |
@@ -236,18 +289,13 @@ Phase quality gate:
 | `python scripts/check_docs_links.py` | PASS |
 | `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
 | `python -m pytest -q tests/platform` | PASS — 22 |
-| `python -m pytest -q` | PASS — 1199 |
+| `python -m pytest -q` | PASS — 1225 |
 | `python -m ruff check .` | PASS |
-| `python -m mypy` | PASS — 237 source files |
+| `python -m mypy` | PASS — 246 source files |
 
-Phase quality gate:
+## Pending phases
 
-| Command | Result |
-|---|---|
-| `git diff --check` | PASS |
-| `python scripts/check_docs_links.py` | PASS |
-| `python -m pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 |
-| `python -m pytest -q tests/platform` | PASS — 22 |
-| `python -m pytest -q` | PASS — 1191 |
-| `python -m ruff check .` | PASS |
-| `python -m mypy` | PASS — 233 source files |
+Phase 7 remains pending until its executable behavior, tests, documentation
+and semantic checkpoint commit are present. Qualified operational supplemental
+data remains an external evidence blocker, not a blocker to the fail-closed
+engineering mechanics.

@@ -106,3 +106,18 @@ class PortfolioDecisionId(StableId):
 @dataclass(frozen=True, slots=True)
 class RiskDecisionId(StableId):
     """Identity of an independent RiskDecision."""
+
+
+@dataclass(frozen=True, slots=True)
+class ManualTradeId(StableId):
+    """Identity of a human-recorded trade intent aggregate."""
+
+
+@dataclass(frozen=True, slots=True)
+class FillId(StableId):
+    """Identity of one append-only execution or correction event."""
+
+
+@dataclass(frozen=True, slots=True)
+class PositionSnapshotId(StableId):
+    """Content identity of a PositionSnapshot rebuilt from Fill events."""
