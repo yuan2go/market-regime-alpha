@@ -12,7 +12,6 @@ from market_regime_alpha.application.daily_loop.commands import (
     RunRequestId,
 )
 from market_regime_alpha.application.operational_research.bridge import (
-    OperationalResearchRunner,
     adapt_operational_research_inputs,
 )
 from market_regime_alpha.application.operational_research.contracts import (
@@ -61,6 +60,8 @@ from market_regime_alpha.research.platform_v2.configs import (
 from market_regime_alpha.research.platform_v2.inputs import (
     ETFObservation,
     MarketObservation,
+    ResearchEvidenceKind,
+    ResearchInputBundle,
     SymbolResearchObservation,
 )
 from tests.daily_decision.conftest import DailyDecisionFixture
@@ -341,7 +342,7 @@ def test_bridge_fails_closed_on_missing_or_incomplete_mapping(
         )
 
 
-def test_daily_to_research_pipeline_is_verified_idempotent_and_replayable(
+def test_legacy_v1_adapter_remains_canonically_readable_without_runner_entry(
     tmp_path: Path,
     daily_decision_fixture: DailyDecisionFixture,
 ) -> None:
@@ -353,33 +354,20 @@ def test_daily_to_research_pipeline_is_verified_idempotent_and_replayable(
         root=tmp_path / "supplemental",
         bundle=_supplemental(daily_decision_fixture),
     )
-    runner = OperationalResearchRunner()
+    daily = load_verified_daily_decision_artifact(daily_path)
+    supplemental = load_verified_supplemental_research_evidence(
+        supplemental_path
+    )
+    legacy = adapt_operational_research_inputs(daily, supplemental.bundle)
+    restored = ResearchInputBundle.from_canonical_dict(
+        legacy.to_canonical_dict()
+    )
 
-    first = runner.run(
-        daily_artifact_path=daily_path,
-        supplemental_artifact_path=supplemental_path,
-        configuration=default_research_pipeline_config(),
-        output_root=tmp_path / "research",
-        code_revision="phase-1-test-revision",
-    )
-    second = runner.run(
-        daily_artifact_path=daily_path,
-        supplemental_artifact_path=supplemental_path,
-        configuration=default_research_pipeline_config(),
-        output_root=tmp_path / "research",
-        code_revision="phase-1-test-revision",
-    )
-    replayed = runner.replay(first.root)
-
-    assert first.root == second.root == replayed.root
-    assert first.artifact == second.artifact == replayed.artifact
-    assert first.artifact.inputs.data_eligibility is DataEligibility.EXPLORATORY
-    assert (
-        first.artifact.envelope.trading_authority
-        == "TRADING_AUTHORITY_NOT_GRANTED"
-    )
+    assert restored == legacy
+    assert restored.evidence_kind is ResearchEvidenceKind.HISTORICAL_IMMUTABLE_ARCHIVE
+    assert restored.data_eligibility is DataEligibility.EXPLORATORY
     assert str(_supplemental(daily_decision_fixture).bundle_id) in {
-        str(item) for item in first.artifact.inputs.input_artifact_ids
+        str(item) for item in restored.input_artifact_ids
     }
 
 
@@ -442,6 +430,33 @@ def test_operational_research_cli_runs_and_replays(
         root=tmp_path / "supplemental",
         bundle=_supplemental(daily_decision_fixture),
     )
+    from market_regime_alpha.application.operational_research.composite_artifact import (
+        publish_composite_operational_manifest,
+    )
+    from market_regime_alpha.application.operational_research.composite_manifest import (
+        CompositeOperationalManifestBuilder,
+    )
+    from tests.application.operational_research.test_composite_manifest_builder import (
+        _policy,
+    )
+
+    daily = load_verified_daily_decision_artifact(daily_path)
+    supplemental = load_verified_supplemental_research_evidence(
+        supplemental_path
+    )
+    composite_path = publish_composite_operational_manifest(
+        root=tmp_path / "composite",
+        manifest=CompositeOperationalManifestBuilder().build(
+            daily=daily,
+            supplemental=supplemental,
+            composition_policy=_policy(),
+            created_at=(
+                daily.bundle.source_manifest.decision_time.value
+                + timedelta(minutes=10)
+            ),
+        ),
+        composition_policy=_policy(),
+    )
     config_path = tmp_path / "research-config.json"
     config_path.write_text(
         json.dumps(default_research_pipeline_config().to_canonical_dict()),
@@ -452,6 +467,8 @@ def test_operational_research_cli_runs_and_replays(
     assert operational_research_main(
         (
             "run",
+            "--composite-package",
+            str(composite_path),
             "--daily-artifact",
             str(daily_path),
             "--supplemental-artifact",

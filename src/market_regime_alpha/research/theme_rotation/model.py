@@ -14,7 +14,7 @@ from market_regime_alpha.research.platform_v2.configs import (
     ThemeRotationModelConfig,
 )
 from market_regime_alpha.research.platform_v2.inputs import (
-    ResearchInputBundle,
+    ResearchInputView,
     ThemeResearchObservation,
 )
 from market_regime_alpha.research.theme_rotation.contracts import (
@@ -25,7 +25,7 @@ from market_regime_alpha.research.theme_rotation.contracts import (
 
 
 def evaluate_theme_rotation_v0(
-    inputs: ResearchInputBundle,
+    inputs: ResearchInputView,
     config: ThemeRotationModelConfig,
     *,
     code_revision: str,

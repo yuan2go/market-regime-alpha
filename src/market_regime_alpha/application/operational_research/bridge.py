@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from market_regime_alpha.application.operational_research.contracts import (
     SupplementalResearchEvidenceBundle,
 )
+from market_regime_alpha.application.operational_research.composite_artifact import (
+    VerifiedCompositeOperationalManifest,
+    load_verified_composite_operational_manifest,
+)
+from market_regime_alpha.application.operational_research.composite_manifest import (
+    CompositeOperationalCompositionStatus,
+    CompositeOperationalManifestBuilder,
+)
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
+    VerifiedSupplementalResearchEvidence,
     load_verified_supplemental_research_evidence,
 )
 from market_regime_alpha.application.research_layer.runner import (
@@ -35,6 +45,8 @@ from market_regime_alpha.research.platform_v2.configs import (
 from market_regime_alpha.research.platform_v2.inputs import (
     ResearchEvidenceKind,
     ResearchInputBundle,
+    ResearchInputBundleAny,
+    ResearchInputBundleV2,
     ThemeMembership,
     ThemeResearchObservation,
 )
@@ -43,11 +55,13 @@ from market_regime_alpha.research.platform_v2.reader import (
 )
 
 
-def adapt_operational_research_inputs(
+def _adapt_operational_research_inputs(
     daily: VerifiedPhaseDDailyDecisionArtifact,
     supplemental: SupplementalResearchEvidenceBundle,
-) -> ResearchInputBundle:
-    """Validate and combine authorities without deriving missing evidence."""
+    *,
+    verified_composite: VerifiedCompositeOperationalManifest | None,
+) -> ResearchInputBundleAny:
+    """Validate shared values, then construct exactly one requested schema."""
 
     bundle = daily.bundle
     if bundle.status is not DailyDecisionArtifactStatus.DECISION_PUBLISHED:
@@ -168,17 +182,32 @@ def adapt_operational_research_inputs(
     )
     for source in supplemental.source_manifest.source_artifacts:
         add_lineage(source.artifact_id, source.content_hash)
+    if verified_composite is not None:
+        manifest = verified_composite.manifest
+        for artifact_id, content_hash in (
+            (manifest.manifest_id, manifest.content_hash),
+            (manifest.daily_artifact_id, manifest.daily_artifact_hash),
+            (manifest.supplemental_bundle_id, manifest.supplemental_bundle_hash),
+            (
+                manifest.daily_source_manifest_id,
+                manifest.daily_source_manifest_hash,
+            ),
+            (
+                manifest.supplemental_source_manifest_id,
+                manifest.supplemental_source_manifest_hash,
+            ),
+        ):
+            add_lineage(artifact_id, content_hash)
     ordered = tuple(sorted(input_lineage.items(), key=lambda item: str(item[0])))
-    return ResearchInputBundle(
-        evidence_kind=ResearchEvidenceKind.HISTORICAL_IMMUTABLE_ARCHIVE,
-        source_manifest=bundle.source_manifest,
-        universe_snapshot=bundle.universe_snapshot,
-        eligibility_snapshot=bundle.eligibility_snapshot,
-        decision_price_snapshot=bundle.decision_price_snapshot,
-        market_observation=supplemental.market_observation,
-        theme_observations=theme_observations,
-        symbol_observations=supplemental.symbol_observations,
-        theme_memberships=tuple(
+    common: dict[str, Any] = {
+        "source_manifest": bundle.source_manifest,
+        "universe_snapshot": bundle.universe_snapshot,
+        "eligibility_snapshot": bundle.eligibility_snapshot,
+        "decision_price_snapshot": bundle.decision_price_snapshot,
+        "market_observation": supplemental.market_observation,
+        "theme_observations": theme_observations,
+        "symbol_observations": supplemental.symbol_observations,
+        "theme_memberships": tuple(
             ThemeMembership(
                 symbol=item.symbol,
                 primary_theme_id=item.primary_theme_id,
@@ -186,14 +215,101 @@ def adapt_operational_research_inputs(
             )
             for item in supplemental.theme_memberships
         ),
-        etf_observations=supplemental.etf_observations,
-        stock_daily_bars=supplemental.stock_daily_bars,
-        prediction_runs=bundle.prediction_runs,
-        input_artifact_ids=tuple(item[0] for item in ordered),
-        input_content_hashes=tuple(item[1] for item in ordered),
-        created_at=supplemental.created_at,
-        data_eligibility=DataEligibility.EXPLORATORY,
+        "etf_observations": supplemental.etf_observations,
+        "stock_daily_bars": supplemental.stock_daily_bars,
+        "prediction_runs": bundle.prediction_runs,
+        "input_artifact_ids": tuple(item[0] for item in ordered),
+        "input_content_hashes": tuple(item[1] for item in ordered),
+        "created_at": supplemental.created_at,
+        "data_eligibility": DataEligibility.EXPLORATORY,
+    }
+    if verified_composite is None:
+        return ResearchInputBundle(
+            evidence_kind=ResearchEvidenceKind.HISTORICAL_IMMUTABLE_ARCHIVE,
+            **common,
+        )
+    return ResearchInputBundleV2(
+        evidence_kind=ResearchEvidenceKind.OPERATIONAL_EXPLORATORY_ARCHIVE,
+        composite_manifest=verified_composite.manifest,
+        composition_policy=verified_composite.composition_policy,
+        **common,
     )
+
+
+def adapt_legacy_operational_research_inputs(
+    daily: VerifiedPhaseDDailyDecisionArtifact,
+    supplemental: SupplementalResearchEvidenceBundle,
+) -> ResearchInputBundle:
+    """V1 compatibility adapter; unavailable from the operational Runner/CLI."""
+
+    result = _adapt_operational_research_inputs(
+        daily,
+        supplemental,
+        verified_composite=None,
+    )
+    if not isinstance(result, ResearchInputBundle) or isinstance(
+        result, ResearchInputBundleV2
+    ):
+        raise AssertionError("legacy adapter did not construct V1")
+    return result
+
+
+adapt_operational_research_inputs = adapt_legacy_operational_research_inputs
+
+
+def adapt_verified_composite_operational_inputs(
+    *,
+    composite: VerifiedCompositeOperationalManifest,
+    daily: VerifiedPhaseDDailyDecisionArtifact,
+    supplemental: VerifiedSupplementalResearchEvidence,
+) -> ResearchInputBundleV2:
+    """Build V2 only after verified H6 authority binds both source packages."""
+
+    if not isinstance(composite, VerifiedCompositeOperationalManifest):
+        raise TypeError(
+            "composite must be VerifiedCompositeOperationalManifest"
+        )
+    if not isinstance(daily, VerifiedPhaseDDailyDecisionArtifact):
+        raise TypeError("daily must be VerifiedPhaseDDailyDecisionArtifact")
+    if not isinstance(supplemental, VerifiedSupplementalResearchEvidence):
+        raise TypeError(
+            "supplemental must be VerifiedSupplementalResearchEvidence"
+        )
+    manifest = composite.manifest
+    if (
+        manifest.daily_artifact_id != ArtifactId(daily.artifact_id)
+        or manifest.daily_artifact_hash != daily.bundle.content_hash
+        or manifest.supplemental_bundle_id != supplemental.bundle.bundle_id
+        or manifest.supplemental_bundle_hash
+        != supplemental.bundle.content_hash
+        or manifest.daily_source_manifest_id
+        != daily.bundle.source_manifest.source_manifest_id
+        or manifest.daily_source_manifest_hash
+        != daily.bundle.source_manifest.content_hash
+        or manifest.supplemental_source_manifest_id
+        != supplemental.bundle.source_manifest.source_manifest_id
+        or manifest.supplemental_source_manifest_hash
+        != supplemental.bundle.source_manifest.content_hash
+    ):
+        raise ValueError("Composite Manifest does not bind exact source packages")
+    if manifest.status is not CompositeOperationalCompositionStatus.VERIFIED:
+        raise ValueError("operational research requires a VERIFIED Composite Manifest")
+    replayed = CompositeOperationalManifestBuilder().build(
+        daily=daily,
+        supplemental=supplemental,
+        composition_policy=composite.composition_policy,
+        created_at=manifest.created_at,
+    )
+    if replayed != manifest:
+        raise ValueError("Composite Manifest Builder replay mismatch")
+    result = _adapt_operational_research_inputs(
+        daily,
+        supplemental.bundle,
+        verified_composite=composite,
+    )
+    if not isinstance(result, ResearchInputBundleV2):
+        raise AssertionError("verified composite adapter did not construct V2")
+    return result
 
 
 class OperationalResearchRunner:
@@ -205,17 +321,25 @@ class OperationalResearchRunner:
     def run(
         self,
         *,
+        composite_artifact_path: Path,
         daily_artifact_path: Path,
         supplemental_artifact_path: Path,
         configuration: ResearchPipelineConfig,
         output_root: Path,
         code_revision: str,
     ) -> VerifiedResearchLayerArtifact:
+        composite = load_verified_composite_operational_manifest(
+            composite_artifact_path
+        )
         daily = load_verified_daily_decision_artifact(daily_artifact_path)
         supplemental = load_verified_supplemental_research_evidence(
             supplemental_artifact_path
         )
-        inputs = adapt_operational_research_inputs(daily, supplemental.bundle)
+        inputs = adapt_verified_composite_operational_inputs(
+            composite=composite,
+            daily=daily,
+            supplemental=supplemental,
+        )
         return self._research.run(
             inputs=inputs,
             configuration=configuration,

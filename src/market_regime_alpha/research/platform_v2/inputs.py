@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
 from math import isfinite
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from market_regime_alpha.application.operational_research.composite_manifest import (
+        CompositeOperationalCompositionPolicy,
+        CompositeOperationalInputManifest,
+    )
 
 from market_regime_alpha.core.identity import (
     ArtifactId,
@@ -38,6 +44,7 @@ from market_regime_alpha.universe.contracts import (
 class ResearchEvidenceKind(str, Enum):
     SYNTHETIC_FIXTURE = "SYNTHETIC_FIXTURE"
     HISTORICAL_IMMUTABLE_ARCHIVE = "HISTORICAL_IMMUTABLE_ARCHIVE"
+    OPERATIONAL_EXPLORATORY_ARCHIVE = "OPERATIONAL_EXPLORATORY_ARCHIVE"
 
 
 def _finite_optional(label: str, value: float | None) -> None:
@@ -545,6 +552,66 @@ class ResearchDailyBar:
         )
 
 
+class ResearchInputView(Protocol):
+    """Read-only model seam shared by exact V1 and V2 input schemas."""
+
+    @property
+    def evidence_kind(self) -> ResearchEvidenceKind: ...
+
+    @property
+    def source_manifest(self) -> SourceManifest: ...
+
+    @property
+    def universe_snapshot(self) -> PITUniverseSnapshot: ...
+
+    @property
+    def eligibility_snapshot(self) -> TradingEligibilitySnapshot: ...
+
+    @property
+    def decision_price_snapshot(self) -> DecisionPriceSnapshot: ...
+
+    @property
+    def market_observation(self) -> MarketObservation | None: ...
+
+    @property
+    def theme_observations(self) -> tuple[ThemeResearchObservation, ...]: ...
+
+    @property
+    def symbol_observations(self) -> tuple[SymbolResearchObservation, ...]: ...
+
+    @property
+    def theme_memberships(self) -> tuple[ThemeMembership, ...]: ...
+
+    @property
+    def etf_observations(self) -> tuple[ETFObservation, ...]: ...
+
+    @property
+    def stock_daily_bars(self) -> tuple[ResearchDailyBar, ...]: ...
+
+    @property
+    def prediction_runs(self) -> tuple[PredictionRun, ...]: ...
+
+    @property
+    def input_artifact_ids(self) -> tuple[ArtifactId, ...]: ...
+
+    @property
+    def input_content_hashes(self) -> tuple[str, ...]: ...
+
+    @property
+    def created_at(self) -> datetime: ...
+
+    @property
+    def data_eligibility(self) -> DataEligibility: ...
+
+    @property
+    def content_hash(self) -> str: ...
+
+    @property
+    def input_bundle_id(self) -> ArtifactId: ...
+
+    def to_canonical_dict(self) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResearchInputBundle:
     """Self-contained typed Research Layer input with exact evidence lineage."""
@@ -800,6 +867,246 @@ class ResearchInputBundle:
         ):
             raise ValueError("ResearchInputBundle identity mismatch")
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchInputBundleV2(ResearchInputBundle):
+    """Operational V2 input bound to one verified H6 composite manifest."""
+
+    SCHEMA_VERSION = "research-input-bundle-v2"
+
+    composite_manifest: CompositeOperationalInputManifest
+    composition_policy: CompositeOperationalCompositionPolicy
+
+    def __post_init__(self) -> None:
+        from market_regime_alpha.application.operational_research.composite_manifest import (
+            CompositeOperationalCompositionPolicy,
+            CompositeOperationalCompositionStatus,
+            CompositeOperationalInputManifest,
+        )
+
+        if not isinstance(
+            self.composite_manifest, CompositeOperationalInputManifest
+        ):
+            raise TypeError(
+                "composite_manifest must be CompositeOperationalInputManifest"
+            )
+        if not isinstance(
+            self.composition_policy, CompositeOperationalCompositionPolicy
+        ):
+            raise TypeError(
+                "composition_policy must be CompositeOperationalCompositionPolicy"
+            )
+        if (
+            self.composite_manifest.composition_policy_id
+            != self.composition_policy.policy_id
+            or self.composite_manifest.composition_policy_hash
+            != self.composition_policy.policy_hash
+            or self.composite_manifest.builder_revision
+            != self.composition_policy.builder_revision
+        ):
+            raise ValueError("ResearchInputBundleV2 composition policy mismatch")
+        if (
+            self.composite_manifest.status
+            is not CompositeOperationalCompositionStatus.VERIFIED
+        ):
+            raise ValueError("ResearchInputBundleV2 requires a VERIFIED manifest")
+        if (
+            self.evidence_kind
+            is not ResearchEvidenceKind.OPERATIONAL_EXPLORATORY_ARCHIVE
+        ):
+            raise ValueError(
+                "ResearchInputBundleV2 requires operational exploratory evidence"
+            )
+        if (
+            self.source_manifest.source_manifest_id
+            != self.composite_manifest.daily_source_manifest_id
+            or self.source_manifest.content_hash
+            != self.composite_manifest.daily_source_manifest_hash
+        ):
+            raise ValueError("ResearchInputBundleV2 primary SourceManifest mismatch")
+        lineage = dict(
+            zip(
+                self.input_artifact_ids,
+                self.input_content_hashes,
+                strict=True,
+            )
+        )
+        required = {
+            self.composite_manifest.manifest_id: (
+                self.composite_manifest.content_hash
+            ),
+            self.composite_manifest.daily_artifact_id: (
+                self.composite_manifest.daily_artifact_hash
+            ),
+            self.composite_manifest.supplemental_bundle_id: (
+                self.composite_manifest.supplemental_bundle_hash
+            ),
+            self.composite_manifest.daily_source_manifest_id: (
+                self.composite_manifest.daily_source_manifest_hash
+            ),
+            self.composite_manifest.supplemental_source_manifest_id: (
+                self.composite_manifest.supplemental_source_manifest_hash
+            ),
+        }
+        if any(lineage.get(key) != value for key, value in required.items()):
+            raise ValueError("ResearchInputBundleV2 omits H6 composite lineage")
+        ResearchInputBundle.__post_init__(self)
+
+    @property
+    def primary_source_manifest(self) -> SourceManifest:
+        return self.source_manifest
+
+    @property
+    def composite_manifest_id(self) -> ArtifactId:
+        return self.composite_manifest.manifest_id
+
+    @property
+    def composite_manifest_hash(self) -> str:
+        return str(self.composite_manifest.content_hash)
+
+    def semantic_payload(self) -> dict[str, Any]:
+        payload = ResearchInputBundle.semantic_payload(self)
+        source = payload.pop("source_manifest")
+        payload["primary_source_manifest"] = source
+        payload["composite_manifest"] = self.composite_manifest.to_canonical_dict()
+        payload["composition_policy"] = self.composition_policy.to_canonical_dict()
+        payload["composite_manifest_id"] = str(self.composite_manifest_id)
+        payload["composite_manifest_hash"] = self.composite_manifest_hash
+        return payload
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: dict[str, Any]
+    ) -> ResearchInputBundleV2:
+        from market_regime_alpha.application.operational_research.composite_manifest import (
+            CompositeOperationalCompositionPolicy,
+            CompositeOperationalInputManifest,
+        )
+
+        expected = {
+            "schema_version",
+            "evidence_kind",
+            "primary_source_manifest",
+            "universe_snapshot_id",
+            "eligibility_snapshot_id",
+            "decision_price_snapshot_id",
+            "market_observation",
+            "theme_observations",
+            "symbol_observations",
+            "theme_memberships",
+            "etf_observations",
+            "stock_daily_bars",
+            "prediction_runs",
+            "input_artifact_ids",
+            "input_content_hashes",
+            "created_at",
+            "data_eligibility",
+            "composite_manifest",
+            "composition_policy",
+            "composite_manifest_id",
+            "composite_manifest_hash",
+            "universe_snapshot",
+            "eligibility_snapshot",
+            "decision_price_snapshot",
+            "content_hash",
+            "input_bundle_id",
+        }
+        _expect_fields(payload, expected, "ResearchInputBundleV2")
+        if payload["schema_version"] != cls.SCHEMA_VERSION:
+            raise ValueError("unsupported ResearchInputBundleV2 schema")
+        composite_payload = _object(payload["composite_manifest"])
+        policy = CompositeOperationalCompositionPolicy.from_canonical_dict(
+            _object(payload["composition_policy"])
+        )
+        manifest = CompositeOperationalInputManifest.from_canonical_dict(
+            composite_payload,
+            composition_policy=policy,
+        )
+        market = payload["market_observation"]
+        result = cls(
+            evidence_kind=ResearchEvidenceKind(str(payload["evidence_kind"])),
+            source_manifest=SourceManifest.from_canonical_dict(
+                _object(payload["primary_source_manifest"])
+            ),
+            universe_snapshot=universe_snapshot_from_dict(
+                _object(payload["universe_snapshot"])
+            ),
+            eligibility_snapshot=eligibility_snapshot_from_dict(
+                _object(payload["eligibility_snapshot"])
+            ),
+            decision_price_snapshot=DecisionPriceSnapshot.from_canonical_dict(
+                _object(payload["decision_price_snapshot"])
+            ),
+            market_observation=(
+                MarketObservation.from_canonical_dict(_object(market))
+                if market is not None
+                else None
+            ),
+            theme_observations=tuple(
+                ThemeResearchObservation.from_canonical_dict(_object(item))
+                for item in _array(payload["theme_observations"])
+            ),
+            symbol_observations=tuple(
+                SymbolResearchObservation.from_canonical_dict(_object(item))
+                for item in _array(payload["symbol_observations"])
+            ),
+            theme_memberships=tuple(
+                ThemeMembership.from_canonical_dict(_object(item))
+                for item in _array(payload["theme_memberships"])
+            ),
+            etf_observations=tuple(
+                ETFObservation.from_canonical_dict(_object(item))
+                for item in _array(payload["etf_observations"])
+            ),
+            stock_daily_bars=tuple(
+                ResearchDailyBar.from_canonical_dict(_object(item))
+                for item in _array(payload["stock_daily_bars"])
+            ),
+            prediction_runs=tuple(
+                PredictionRun.from_canonical_dict(_object(item))
+                for item in _array(payload["prediction_runs"])
+            ),
+            input_artifact_ids=tuple(
+                ArtifactId(value)
+                for value in _strings(payload["input_artifact_ids"])
+            ),
+            input_content_hashes=_strings(payload["input_content_hashes"]),
+            created_at=datetime.fromisoformat(str(payload["created_at"])),
+            data_eligibility=DataEligibility(str(payload["data_eligibility"])),
+            composite_manifest=manifest,
+            composition_policy=policy,
+        )
+        if (
+            str(result.universe_snapshot.evidence_artifact_id)
+            != payload["universe_snapshot_id"]
+            or str(result.eligibility_snapshot.evidence_artifact_id)
+            != payload["eligibility_snapshot_id"]
+            or str(result.decision_price_snapshot.decision_snapshot_id)
+            != payload["decision_price_snapshot_id"]
+            or str(result.composite_manifest_id)
+            != payload["composite_manifest_id"]
+            or result.composite_manifest_hash
+            != payload["composite_manifest_hash"]
+            or result.content_hash != payload["content_hash"]
+            or str(result.input_bundle_id) != payload["input_bundle_id"]
+        ):
+            raise ValueError("ResearchInputBundleV2 identity mismatch")
+        return result
+
+
+ResearchInputBundleAny = ResearchInputBundle | ResearchInputBundleV2
+
+
+def research_input_bundle_from_canonical_dict(
+    payload: dict[str, Any],
+) -> ResearchInputBundleAny:
+    schema = payload.get("schema_version")
+    if schema == ResearchInputBundle.SCHEMA_VERSION:
+        return ResearchInputBundle.from_canonical_dict(payload)
+    if schema == ResearchInputBundleV2.SCHEMA_VERSION:
+        return ResearchInputBundleV2.from_canonical_dict(payload)
+    raise ValueError("unsupported Research Input Bundle schema")
 
 
 def _require_unique_by(label: str, values: tuple[str, ...]) -> None:

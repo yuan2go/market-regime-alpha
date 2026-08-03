@@ -32,7 +32,7 @@ from market_regime_alpha.research.platform_v2.configs import (
     CandidateDiscoveryModelConfig,
 )
 from market_regime_alpha.research.platform_v2.inputs import (
-    ResearchInputBundle,
+    ResearchInputView,
     SymbolResearchObservation,
     ThemeMembership,
 )
@@ -58,7 +58,7 @@ _QUALIFIED_CAPITAL = {
 
 
 def discover_candidates_v2(
-    inputs: ResearchInputBundle,
+    inputs: ResearchInputView,
     market_regime: MarketRegimeSnapshot,
     theme_rotation: ThemeRotationSnapshot,
     capital_evolution: CapitalEvolutionSnapshot,
@@ -207,7 +207,7 @@ def discover_candidates_v2(
 
 def _reconcile(
     symbol: str,
-    inputs: ResearchInputBundle,
+    inputs: ResearchInputView,
     market_regime: MarketRegimeSnapshot,
     theme_by_id: dict[str, ThemeRotationItem],
     capital_by_symbol: dict[str, SymbolCapitalEvolution],

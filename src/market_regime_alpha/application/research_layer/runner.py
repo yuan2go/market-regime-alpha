@@ -12,7 +12,7 @@ from market_regime_alpha.research.platform_v2.artifact import (
 from market_regime_alpha.research.platform_v2.configs import (
     ResearchPipelineConfig,
 )
-from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundle
+from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundleAny
 from market_regime_alpha.research.platform_v2.pipeline import (
     run_research_pipeline_v2,
 )
@@ -31,7 +31,7 @@ class PlatformResearchRunner:
     def run(
         self,
         *,
-        inputs: ResearchInputBundle,
+        inputs: ResearchInputBundleAny,
         configuration: ResearchPipelineConfig,
         output_root: Path,
         code_revision: str,
@@ -61,11 +61,10 @@ class PlatformResearchRunner:
     def compute(
         self,
         *,
-        inputs: ResearchInputBundle,
+        inputs: ResearchInputBundleAny,
         configuration: ResearchPipelineConfig,
         code_revision: str,
     ) -> ResearchLayerArtifact:
         return run_research_pipeline_v2(
             inputs, configuration, code_revision=code_revision
         )
-

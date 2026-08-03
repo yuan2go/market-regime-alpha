@@ -53,10 +53,11 @@ def test_research_input_rejects_observations_available_after_decision_time(
             )
 
 
-def test_research_evidence_kind_has_no_live_fixture_alias() -> None:
+def test_research_evidence_kind_has_no_live_or_formal_authority_alias() -> None:
     assert {item.value for item in ResearchEvidenceKind} == {
         "SYNTHETIC_FIXTURE",
         "HISTORICAL_IMMUTABLE_ARCHIVE",
+        "OPERATIONAL_EXPLORATORY_ARCHIVE",
     }
 
 

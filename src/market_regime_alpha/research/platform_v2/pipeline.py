@@ -27,7 +27,10 @@ from market_regime_alpha.research.platform_v2.artifact import (
 from market_regime_alpha.research.platform_v2.configs import (
     ResearchPipelineConfig,
 )
-from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundle
+from market_regime_alpha.research.platform_v2.inputs import (
+    ResearchInputBundleAny,
+    ResearchInputBundleV2,
+)
 from market_regime_alpha.research.theme_rotation.contracts import RotationState
 from market_regime_alpha.research.theme_rotation.model import (
     evaluate_theme_rotation_v0,
@@ -35,7 +38,7 @@ from market_regime_alpha.research.theme_rotation.model import (
 
 
 def run_research_pipeline_v2(
-    inputs: ResearchInputBundle,
+    inputs: ResearchInputBundleAny,
     config: ResearchPipelineConfig,
     *,
     code_revision: str,
@@ -155,6 +158,11 @@ def run_research_pipeline_v2(
         reason_codes=reasons,
         limitations=limitations,
     )
+    research_input_ids = [inputs.input_bundle_id]
+    research_input_hashes = [inputs.content_hash]
+    if isinstance(inputs, ResearchInputBundleV2):
+        research_input_ids.append(inputs.composite_manifest_id)
+        research_input_hashes.append(inputs.composite_manifest_hash)
     envelope = ArtifactEnvelope.create(
         artifact_type="RESEARCH_LAYER_ARTIFACT",
         artifact_payload=semantic_payload,
@@ -166,8 +174,8 @@ def run_research_pipeline_v2(
         configuration_hash=config.configuration_hash,
         source_manifest_id=inputs.source_manifest.source_manifest_id,
         source_manifest_hash=inputs.source_manifest.content_hash,
-        input_artifact_ids=(inputs.input_bundle_id, *component_ids),
-        input_content_hashes=(inputs.content_hash, *component_hashes),
+        input_artifact_ids=(*research_input_ids, *component_ids),
+        input_content_hashes=(*research_input_hashes, *component_hashes),
         model_id=None,
         model_version=None,
         data_eligibility=DataEligibility.EXPLORATORY,
@@ -188,4 +196,3 @@ def run_research_pipeline_v2(
         reason_codes=reasons,
         limitations=limitations,
     )
-

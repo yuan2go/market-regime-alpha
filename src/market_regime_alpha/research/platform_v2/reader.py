@@ -27,7 +27,9 @@ from market_regime_alpha.research.platform_v2.artifact import (
 from market_regime_alpha.research.platform_v2.configs import (
     ResearchPipelineConfig,
 )
-from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundle
+from market_regime_alpha.research.platform_v2.inputs import (
+    research_input_bundle_from_canonical_dict,
+)
 from market_regime_alpha.research.theme_rotation.contracts import (
     ThemeRotationSnapshot,
 )
@@ -70,7 +72,7 @@ def load_verified_research_layer_artifact(
         envelope=ArtifactEnvelope.from_canonical_dict(
             _object(manifest["envelope"])
         ),
-        inputs=ResearchInputBundle.from_canonical_dict(
+        inputs=research_input_bundle_from_canonical_dict(
             _read_object(root / "input_bundle.json")
         ),
         configuration=ResearchPipelineConfig.from_canonical_dict(
@@ -161,4 +163,3 @@ def _array(value: object) -> list[object]:
 
 def _file_hash(path: Path) -> str:
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
-
