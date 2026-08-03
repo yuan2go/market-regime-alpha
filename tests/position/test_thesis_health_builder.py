@@ -617,6 +617,38 @@ def test_capital_single_scope_typed_rule_invalidates_its_explicit_entry(
     assert observation.observed_health_state is ThesisHealth.INVALIDATED
 
 
+@pytest.mark.parametrize("payload_key", ("themes", "symbols"))
+def test_capital_both_scope_does_not_trigger_when_only_one_entry_matches(
+    payload_key: str,
+) -> None:
+    fixture = make_h5_fixture()
+    payload = fixture.capital.to_canonical_dict()
+    payload[payload_key][0]["capital_evolution_state"] = (
+        CapitalEvolutionState.COLLAPSE.value
+    )
+    capital = _rebind(
+        fixture.capital,
+        CapitalEvolutionSnapshot.from_canonical_dict,
+        payload_changes={"themes": payload["themes"], "symbols": payload["symbols"]},
+    )
+    theme, capital, candidate, signal, path = _cascade_theme_capital_candidate(
+        fixture, capital=capital
+    )
+
+    observation = ThesisHealthObservationBuilder().build(
+        _bundle(
+            fixture,
+            theme_rotation=theme,
+            capital_evolution=capital,
+            candidate_set=candidate,
+            signal_snapshot=signal,
+            path_forecast=path,
+        )
+    )
+    assert "capital-stop" not in observation.triggered_condition_ids
+    assert observation.observed_health_state is ThesisHealth.WEAKENING
+
+
 def test_signal_typed_rule_invalidates() -> None:
     fixture = make_h5_fixture()
     signal = _rebind(
