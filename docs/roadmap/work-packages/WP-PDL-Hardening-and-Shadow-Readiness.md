@@ -3,11 +3,11 @@
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered implementation work package for hardening the delivered Phase 0–7 lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-01
+> **Last Updated:** 2026-08-03
 > **Supersedes:** None
 > **Superseded By:** None
-> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** Baseline `a7ce0b444e77506a85e1c1c7b240c22c8421580d`; each phase requires its own commit-bound delivery evidence
+> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
+> **Code Evidence:** H4 checkpoint `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -22,19 +22,17 @@ semantics.
 
 ## 2. Current code facts
 
-The baseline already provides durable Opportunity/Thesis, Portfolio/Risk and
-Manual Execution SQLite repositories; Fill-derived Position projection;
-Holding/Exit models; an immutable LifecycleReview package; Signal/Path
-Artifacts; and an Operational Research Bridge.
+The current checkpoint provides durable Opportunity/Thesis, complete-account
+Portfolio/Risk, H4 reducing-risk and Manual Execution SQLite repositories;
+Fill-derived Position projection; Holding/Exit models; an immutable
+LifecycleReview package; Signal/Path Artifacts; and an Operational Research
+Bridge.
 
 The baseline gaps are:
 
-- allocation-local rather than account-complete Portfolio/Risk;
-- incomplete Thesis-to-Outcome authority binding;
-- no Fill-derived A-share sellable-quantity authority;
-- no dedicated reducing-risk gate;
 - caller-authored Thesis support booleans;
 - no composite operational manifest or operational evidence kind;
+- no reducing-decision-to-ManualTrade execution bridge;
 - no durable assessment state;
 - no recoverable Shadow operation;
 - no complete Signal incremental-value and Path calibration infrastructure.
@@ -240,7 +238,31 @@ migration. All evidence remains synthetic/manual.
 Stop reducing-gate commands. Existing EXIT/REDUCE assessments remain evidence,
 not orders.
 
+### Implementation evidence
+
+Delivered at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc` with SQLite persistence,
+canonical restoration, command/decision append-only triggers, semantic
+idempotency, explicit Position/Observation freshness, public exports and a
+decision-only CLI. H4 does not create ManualTrade, Fill or Broker Order.
+
 ## 11. H5 — ThesisHealthObservationBuilder
+
+### Implementation contract
+
+| Concern | Contract |
+|---|---|
+| Business goal | Replace operator-authored health booleans with deterministic health derived from verified lifecycle evidence. |
+| Input Artifacts | Active TradingThesis, Signal, PathForecast, Market/Theme/Capital observations, price/invalidation evidence and versioned health configuration. |
+| Output Artifact | Content-addressed `ThesisHealthObservationV2` with support, invalidation, missingness and evidence references. |
+| State machine | `HEALTHY → WEAKENING → INVALIDATED`; any state may become `DATA_INSUFFICIENT`; no automatic trade action. |
+| Idempotency key | Thesis ID/version + decision time + exact input/config hashes. |
+| Persistence tables | `thesis_health_observations` and `thesis_health_commands`, both append-only; latest state is a rebuildable projection. |
+| Transaction boundary | Resolve command, validate all Readers/times/scope, insert observation and command atomically. |
+| Failure recovery | Replay from immutable inputs; conflicting key/hash fails; partial write rolls back; corrupt projection rebuilds from events. |
+| Audit evidence | Source IDs/hashes, configuration ID, decision time, derived reason codes and builder revision. |
+| Tests | Hash/time/symbol/theme mismatch, stale Signal, missing Capital, invalidation derivation, replay/restart, tamper and rollback. |
+| Completion condition | No new H5 caller can submit free-form health state; focused/full gates and commit-bound delivery pass. |
+| Dependencies | H4 green baseline; feeds H6/H7 and never bypasses Risk. |
 
 ### Deliverables
 
@@ -262,6 +284,23 @@ readers for compatibility; do not accept old caller booleans in the new path.
 
 ## 12. H6 — Composite operational evidence manifest
 
+### Implementation contract
+
+| Concern | Contract |
+|---|---|
+| Business goal | Represent runtime-composed evidence honestly without labelling it `HISTORICAL_IMMUTABLE_ARCHIVE`. |
+| Input Artifacts | Daily SourceManifest/archive, supplemental Theme/ETF/Capital manifests, H5 health requirements and per-field authority references. |
+| Output Artifact | `CompositeOperationalInputManifest` plus exact Reader/index and `OPERATIONAL_EXPLORATORY_ARCHIVE` evidence kind. |
+| State machine | `ASSEMBLING → VERIFIED | DATA_INSUFFICIENT | CONFLICTED`; verified does not promote authority. |
+| Idempotency key | Decision time + ordered component manifest IDs/hashes + composition policy ID. |
+| Persistence tables | `composite_operational_manifests`, `composite_component_refs`, `composite_commands`; immutable artifact files remain primary evidence. |
+| Transaction boundary | Validate all component Readers and field ceilings, then atomically record manifest/index/command publication metadata. |
+| Failure recovery | Original component Artifacts remain independent; retry composition by key; orphan staging is verified or discarded without mutating sources. |
+| Audit evidence | Both original manifests, per-field source/availability/finality, policy identity, ceiling and complete missingness report. |
+| Tests | Source/time/hash conflict, missing coverage, eligibility inflation, replay, exact file set, tamper, crash before/after publish. |
+| Completion condition | Operational bridge consumes the composite type and never misclassifies runtime composition as historical/formal PIT. |
+| Dependencies | H5 input needs and current bridge contracts; feeds H4.5/H7/H8. |
+
 ### Deliverables
 
 - `CompositeOperationalInputManifest` with Daily and supplemental identities,
@@ -281,7 +320,60 @@ readers for compatibility; do not accept old caller booleans in the new path.
 Stop V2 bridge publication. Original Daily and supplemental Artifacts remain
 independently readable and unchanged.
 
+## 12A. H4.5 — Risk-Reducing Decision to Manual Execution Bridge
+
+H4.5 is design-only here and is not required for H4 completion. It must be
+completed before or as the first dependency-coherent slice of H7.
+
+### Implementation contract
+
+| Concern | Contract |
+|---|---|
+| Business goal | Allow an authenticated operator to turn a still-valid permitted reducing decision into a manual trade intent without creating broker authority. |
+| Input Artifacts | `PERMITTED_FOR_MANUAL_CONFIRMATION` RiskReducingDecision, its original evidence, latest PositionSnapshot, fresh execution observation and authenticated confirmer. |
+| Output Artifact | ManualTrade V2 intent plus append-only `RiskReductionConfirmation` linking `risk_reducing_decision_id`; no Fill is created. |
+| State machine | `AWAITING_CONFIRMATION → CONFIRMED_INTENT | EXPIRED | POSITION_CHANGED | BLOCKED_ON_RECHECK | CANCELLED`; execution/Fills remain separate. |
+| Idempotency key | Risk-reducing decision ID + latest Position version/hash + operator intent nonce. |
+| Persistence tables | Migration introduces route-separated ManualTrade V2 references and confirmation events/commands; existing OPEN/ADD rows migrate as `INCREASING` and keep complete-account Risk references. |
+| Transaction boundary | Lock command, reload decision, verify permission/expiry, rebuild latest sellability, require exact Position version, then atomically write confirmation and ManualTrade intent. |
+| Failure recovery | Any Position/available-quantity change invalidates reuse and requires a new H4 decision; transaction rolls back on either write; restart resolves the command ledger. |
+| Audit evidence | `risk_reducing_decision_id`, confirmed by/at/reason, prior/latest Position IDs/hashes, recheck observation/config and resulting ManualTrade ID. |
+| Tests | Expired decision, non-permitted state, stale/current Position mismatch, T+1 change, duplicate/conflict, rollback, restart, OPEN/ADD route separation and authentication. |
+| Completion condition | A permitted decision can create one traceable manual intent only after recheck; it cannot create Fill/order; all schema compatibility and migration tests pass. |
+| Dependencies | H4 complete; H6 evidence available. Must precede or be part of H7. |
+
+### Fill and partial-execution policy
+
+ManualTrade proceeds to the existing append-only Fill ledger only through a
+separate human recording step. Fill then rebuilds PositionSnapshot. A partial
+fill, cancellation or changed Position closes the old confirmation scope; any
+residual REDUCE/EXIT requires a new H4 decision. An EXIT may never be treated
+as complete until effective Fill reduces the actual Position to zero.
+
+### Authority separation
+
+The migration must enforce exactly one route authority: OPEN/ADD references an
+approved complete-account Risk decision; REDUCE/EXIT references a permitted
+risk-reducing decision and its recheck. Neither route calls a Broker adapter.
+
 ## 13. H7 — Durable Holding, Exit and exception state
+
+### Implementation contract
+
+| Concern | Contract |
+|---|---|
+| Business goal | Give Holding/Reduce/Exit assessments a durable, restart-safe lifecycle instead of one-shot review output. |
+| Input Artifacts | Active Thesis/Position, H5 health, H6 composite evidence, H4/H4.5 decision/manual-intent references and Holding/Exit configuration. |
+| Output Artifact | Immutable Holding/Reduce/Exit assessment, schedule, exception/acknowledgement events and latest projection. |
+| State machine | `SCHEDULED → DUE → ASSESSED → NO_ACTION | REDUCE_PENDING | EXIT_PENDING | BLOCKED | DATA_INSUFFICIENT → ACKNOWLEDGED/SUPERSEDED`; `NO_ACTION ≠ HOLD`. |
+| Idempotency key | Position book/version + assessment due time + evidence/config hashes. |
+| Persistence tables | Assessment events, schedules, action intents, exceptions, acknowledgements, command ledger and rebuildable latest-state projection. |
+| Transaction boundary | CAS current projection and atomically append assessment/event/command; H4.5 manual intent remains its own transaction boundary. |
+| Failure recovery | Resume due work from receipts; rebuild projection from events; stale CAS retries with fresh Position; preserve blocked/exception history. |
+| Audit evidence | Every transition's actor/time/reason, Position/Thesis/evidence/config hashes, linked H4/H4.5 IDs and acknowledgement. |
+| Tests | Duplicate/concurrent commands, restart/rebuild, stale Position/Thesis, T+1/suspension/limits, blocked exit, ack, tamper, migration up/down. |
+| Completion condition | Durable lifecycle survives restart and every reduce/exit transition has traceable evidence without broker mutation. |
+| Dependencies | H5, H6 and completed H4.5 bridge; feeds H8. |
 
 ### Deliverables
 
@@ -303,6 +395,23 @@ Stop writes, retain event history read-only and rebuild projections. Down
 migration is disposable/test-only after export.
 
 ## 14. H8 — Shadow Operations
+
+### Implementation contract
+
+| Concern | Contract |
+|---|---|
+| Business goal | Run the complete research/decision/position lifecycle on schedule with reproducible receipts, simulated/manual outcomes and operator-visible failures. |
+| Input Artifacts | Frozen daily/provider data, governed model definitions, H5/H6 evidence, H7 queues, manual/synthetic Fill sources and Shadow configuration. |
+| Output Artifact | ShadowRun journal, stage receipts, frozen decisions, next-day outcomes, position/exit simulation, daily report, metrics and alerts. |
+| State machine | `SCHEDULED → ACQUIRING → EVIDENCE_FROZEN → DECIDED → OUTCOME_PENDING → REVIEWED`; each stage can be `RETRYABLE`, `DATA_BLOCKED`, `FAILED` or `ACK_REQUIRED`. |
+| Idempotency key | Trading session + run profile + code/config revision; each stage also binds input receipt hashes. |
+| Persistence tables | `shadow_runs`, stage receipts, retry/deadline records, acknowledgements, alerts, report index and correlation IDs. |
+| Transaction boundary | One journal transaction per stage/receipt; immutable file publication uses staging plus verified receipt, never a cross-store fiction. |
+| Failure recovery | Lease/fencing or single-owner discipline, bounded retry, orphan receipt recovery, resume from last verified stage and manual reconciliation queue. |
+| Audit evidence | Scheduler trigger, stage inputs/outputs/hashes, attempts, latency, structured failure, operator acknowledgement, outcome and report. |
+| Tests | Duplicate scheduling, crash at each stage, retry/deadline, data freeze, deterministic replay, next-day outcome, position/exit simulation, alerts and no Broker mutation. |
+| Completion condition | Engineering admission criteria pass and a separate sustained-run evidence period is collected; code completion alone is not Shadow operations evidence. |
+| Dependencies | H4–H7, runtime governance integration and controlled provider windows; produces samples for H9. |
 
 ### Deliverables
 
@@ -334,6 +443,23 @@ Pause scheduling, retain receipts/events/reports, rebuild projections and run
 manual reconciliation. No DailyRun or Artifact deletion is allowed.
 
 ## 15. H9 — Model-validation infrastructure
+
+### Implementation contract
+
+| Concern | Contract |
+|---|---|
+| Business goal | Establish formal, leakage-controlled evidence for incremental value, calibration, costs, capacity, risk and failure conditions. |
+| Input Artifacts | Qualified PIT Universe/theme mapping, adjusted/delisting-aware prices, frozen model/config definitions, H8 run/outcome sample, benchmarks and cost policy. |
+| Output Artifact | Frozen validation protocol, dataset partitions, walk-forward runs, trade/path metrics, stability/failure report and immutable negative results. |
+| State machine | `DRAFT → FROZEN → TRAINING → VALIDATING → OOS_LOCKED → EVALUATED → ACCEPTED | REJECTED | INCONCLUSIVE`; access is budgeted and append-only. |
+| Idempotency key | Protocol ID/version + dataset manifest hash + split/walk-forward identity + code revision. |
+| Persistence tables | Validation protocols, dataset manifests, access ledger, run receipts, metric bundles, comparison/decision records; large data remains immutable artifacts. |
+| Transaction boundary | Freeze protocol before data access; atomically record each access/run receipt and result identity; promotion is a separate governed transaction. |
+| Failure recovery | Resume deterministic folds, preserve all partial/negative results, reject post-freeze mutation and require new protocol identity for semantic change. |
+| Audit evidence | PIT lineage, adjustment/delisting rules, train/validation/OOS dates, access history, costs/slippage/T+1/limits/capacity, benchmark and all metrics. |
+| Tests | Synthetic leakage traps, delisting/adjustment, purge/embargo, walk-forward, costs/slippage, limit non-fill, T+1, capacity/risk, MFE/MAE, hit/return/drawdown and stability. |
+| Completion condition | Qualified locked OOS runs meet a predeclared protocol or are honestly rejected/inconclusive; infrastructure completion alone does not establish Alpha. |
+| Dependencies | Qualified data and H8 artifacts; follows H5–H8 and cannot grant trading authority. |
 
 ### Deliverables
 

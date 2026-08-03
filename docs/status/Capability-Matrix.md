@@ -3,16 +3,16 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Canonical implementation-status matrix  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-01  
+> **Last Updated:** 2026-08-03
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md  
-> **Code Evidence:** `main@e183fdac285786ed448c835e65c99dc67189c2b9`  
+> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
+> **Code Evidence:** `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`
 > **Status Rule:** `IMPLEMENTED` describes code mechanics. `VERIFIED_CURRENT_HEAD` requires observed checks on the exact current commit. Historical checkpoint PASS records are not current-HEAD verification.
 
 | Capability | Status | Code evidence | Verification evidence | Runtime/evidence ceiling | Primary blocker | Next action |
 |---|---|---|---|---|---|---|
-| Core identity and semantic time | IMPLEMENTED | `core/identity.py`, `core/time.py`, `core/status.py` | Historical unit/static gates | Engineering contracts only | Current HEAD full gate absent | Preserve and include in current CI |
+| Core identity and semantic time | IMPLEMENTED_AND_VERIFIED_CURRENT_HEAD | `core/identity.py`, `core/time.py`, `core/status.py` | Full current-checkpoint gate: 1297 passed | Engineering contracts only | No trusted producer identity | Preserve in CI |
 | Artifact canonicalization and envelope | IMPLEMENTED_AND_HISTORICALLY_VERIFIED | `evidence/**` | Reader, checksum and tamper tests on prior checkpoints | Content integrity, not source authenticity | No signatures/trusted runtime identity | Add signed artifact/operator identity for production |
 | SourceManifest and data quality | IMPLEMENTED_EXPLORATORY | `data/source_manifest.py`, `data/daily_quality.py` | Historical quality and missingness tests | Public-source exploratory authority | Qualified availability/PIT evidence absent | Establish controlled provider evidence |
 | Trading calendar and PIT contracts | IMPLEMENTED_CONTRACTS | `data/trading_calendar.py`, `universe/**` | Historical calendar/PIT contract tests | Formal provider PIT not established | Qualified provider inventory | Validate against formal historical source |
@@ -25,7 +25,7 @@
 | B1 Candidate baseline | IMPLEMENTED_AND_HISTORICALLY_VERIFIED | `candidates/composite_baseline.py`, Prediction adapters | Prior equivalence and replay tests | Baseline rank, not probability | Formal OOS/model winner absent | Preserve frozen baseline and evaluate formally |
 | Daily Runtime Journal | IMPLEMENTED_SQLITE | `application/daily_loop/**` | Prior restart/idempotency tests | Single-machine recoverability | No distributed leases/Saga | Integrate into ShadowRun control plane |
 | Exploratory Daily Loop | IMPLEMENTED_EXPLORATORY | `application/daily_loop/runner.py`, daily CLI | Prior single/ten-session replay evidence | Smoke pool and exploratory providers | Real 14:55 successful archive absent | Run controlled daily shadow schedule |
-| Daily Decision Artifact | IMPLEMENTED | `daily_decision/artifact.py`, Readers | Prior exact-file/checksum/replay tests | Research decision artifact only | Current HEAD full gate absent | Include in exact-commit CI |
+| Daily Decision Artifact | IMPLEMENTED | `daily_decision/artifact.py`, Readers | Prior exact-file/checksum/replay tests plus current full regression | Research decision artifact only | Qualified operating evidence absent | Preserve in exact-commit CI |
 | Candidate Recommendation | IMPLEMENTED_PRESENTATION_ONLY | `daily_decision/recommendation.py` | Prior projection tests | Not trading authority | No validated Entry Model | Keep separate from Entry and orders |
 | Entry plumbing | IMPLEMENTED_NON_ENTRY | `daily_decision/entry.py` | Gate tests on prior checkpoints | Emits `REJECT` or `WAIT_CONFIRMATION`, never `ENTER` | Entry model not validated | Define and validate independent Entry protocol |
 | Outcome settlement and DailyReview | IMPLEMENTED_EXPLORATORY | `daily_decision/outcome*.py` | Prior settlement/replay tests | MR1 next-session 10:30 research outcome | Qualified runtime sample absent | Accumulate immutable real shadow outcomes |
@@ -45,7 +45,7 @@
 | H1 complete-account Portfolio/Risk | IMPLEMENTED_SQLITE_EXPLORATORY | `portfolio/account_authority.py`, `sqlite_account_authority.py`, migration 005 | Prior H1 focused/full records | Synthetic/manual account evidence | Validated limits and external account authority | Use H3 position-authoritative entry for new work |
 | H2 Thesis-to-Outcome trace | IMPLEMENTED_SQLITE_EXPLORATORY | `execution/position_book.py`, traceability repositories, `evaluation/traceability.py`, migration 006 | Prior H2 focused/full records | Manual Fill trace, not broker truth | Multi-sleeve and external reconciliation absent | Preserve book identity and add reconciliation |
 | H3 A-share T+1 Position authority | IMPLEMENTED_FILL_CALENDAR_DERIVED | `position/authority.py`, position-authoritative risk service | Prior H3 focused/full records | Human Fill plus synthetic/typed calendar/status | Qualified statement/status evidence absent | Integrate real account/status reconciliation |
-| H4 increasing/reducing risk separation | PARTIAL_BROKEN_CURRENT_MAIN | `portfolio/risk_routes.py`, migration 007, H4 test file | No current passing evidence; static missing imports/modules | Domain gate exists, durable application route incomplete | Missing `sqlite_risk_routes.py`, Repository, Service, exports | Complete integration and rerun full gate |
+| H4 increasing/reducing risk separation | IMPLEMENTED_AND_VERIFIED | `portfolio/risk_routes.py`, `sqlite_risk_routes.py`, migration 007, decision-only CLI | 22 focused; 84 related-context; 1297 full; Ruff/mypy/build PASS at `b91e57d` | Decision/persistence/manual-confirmation assessment only; no order or Fill | H4.5 execution bridge intentionally absent | Design H4.5 before/within H7 |
 | Manual execution ledger | IMPLEMENTED_SQLITE_MANUAL_ONLY | `execution/manual.py`, `sqlite_repository.py`, migration 004 | Prior append-only/correction/restart tests | Human-recorded evidence only | Authentication and broker reconciliation | Add authenticated recording and statement matching |
 | Fill append-only authority | IMPLEMENTED_LOCAL | `manual_fills`, SQL triggers | Prior mutation/correction tests | Immutable local ledger, not broker Fill | External source authority absent | Add external receipt and reconciliation evidence |
 | Position projection | IMPLEMENTED_FILL_DERIVED | `position/authority.py` | Prior FIFO/correction/replay tests | Projection of recorded Fill | External statement reconciliation absent | Add reconciliation state machine and operator workflow |
@@ -53,8 +53,9 @@
 | TradeOutcome and attribution | IMPLEMENTED_DIAGNOSTIC | `evaluation/**` | Prior outcome/trace/review tests | Diagnostic, not causal Alpha proof | Qualified closed-trade sample absent | Accumulate shadow sample under frozen protocol |
 | Rolling scorecard | IMPLEMENTED_DIAGNOSTIC | `evaluation` scorecard/review | Prior deterministic tests | Cannot auto-promote models | No approved evaluation sample | Keep promotion separated and governed |
 | Legacy Dividend-T strategy | LEGACY_OPERATIONAL_DEMO | `dividend_t/**` | Legacy tests and local behavior | Separate authority model | Mixed responsibilities and mutable inputs | Do not promote into canonical lifecycle |
-| Legacy FastAPI Dashboard | LEGACY_ONLY | `web/dividend_t_app.py` | No production security evidence | Can use static fallback; not Reader-backed | Auth and canonical read model absent | Replace with QuantDesk over verified artifacts |
+| Legacy FastAPI Dashboard | LEGACY_ONLY | `web/dividend_t_app.py` | Read-only audit at `b91e57d` | Can use static fallback; not canonical Reader-backed | Auth and canonical read model absent | Replace with QuantDesk over verified artifacts |
 | APScheduler jobs | LEGACY_ONLY | `dividend_t/scheduler.py` | Minimal factory behavior | No durable job receipts/recovery | H8 ShadowRun absent | Build recoverable scheduler/control plane |
+| Paper Broker | LEGACY_NON_AUTHORITATIVE | `dividend_t/brokers.py` | Read-only audit: returns accepted response only | Does not update canonical account, Fill or Position authority | No execution reconciliation | Keep isolated from H4/canonical lifecycle |
 | QMT/PTrade adapters | PLACEHOLDER_SAFE_FAIL | `dividend_t/brokers.py` | Explicit unavailable behavior | Refuses live account/order operations | Vendor runtime and separate authorization | Defer until sustained shadow evidence |
 | Authentication and RBAC | NOT_IMPLEMENTED_PRODUCTION | No confirmed canonical owner | None | `actor` is a string, not authenticated identity | Role/permission model absent | Design operator, approver and reconciliation roles |
 | Metrics, tracing and alerts | NOT_IMPLEMENTED_PRODUCTION | Reason codes/artifacts only | None | No operational observability stack | H8 absent | Add stage metrics, trace IDs and alerts |
@@ -66,12 +67,14 @@
 ## Current-head verification summary
 
 ```text
-CURRENT_HEAD = e183fdac285786ed448c835e65c99dc67189c2b9
-HISTORICAL_CHECKPOINT_GATES = AVAILABLE
-CURRENT_HEAD_GITHUB_ACTIONS = NOT_OBSERVED
-CURRENT_HEAD_COMMIT_STATUS = NOT_OBSERVED
-CURRENT_HEAD_INDEPENDENT_FULL_TEST = NOT_RUN_IN_AUDIT_ENVIRONMENT
-CURRENT_HEAD_STATIC_COLLECTION_BLOCKER = H4_MISSING_IMPORTS_AND_MODULE
+CURRENT_CHECKPOINT = b91e57d7ca52864a56b5e592bb4496b546b7b6fc
+FOCUSED_H4 = 22 passed, 0 skipped, 0 failed
+H4_RELATED_CONTEXTS = 84 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1297 passed, 0 skipped, 0 failed
+RUFF = PASS
+MYPY_FORMAL_SCOPE = PASS, 256 source files
+PACKAGE_BUILD = PASS
+REMOTE_GITHUB_ACTIONS_FOR_BRANCH = NOT_YET_OBSERVED
 ```
 
-The first engineering priority is to restore a green current baseline. No later capability may use historical checkpoint test counts as evidence for current HEAD.
+H4 is a verified engineering capability only. The matrix still does not establish Shadow readiness, production readiness, formal PIT/OOS Alpha or trading authority.

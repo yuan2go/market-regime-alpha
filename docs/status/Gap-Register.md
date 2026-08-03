@@ -3,22 +3,19 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Ordered gap and dependency register  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-01  
+> **Last Updated:** 2026-08-03
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md  
-> **Code Evidence:** `main@e183fdac285786ed448c835e65c99dc67189c2b9`  
+> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
+> **Code Evidence:** `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
-| H4 current-main integration failure | P0-BLOCKING | `portfolio/risk_routes.py`, migration 007 and H4 tests exist, but `portfolio/sqlite_risk_routes.py`, `SQLiteRiskRouteRepository`, `RiskRouteApplicationService`, package exports and application integration are absent; the test module imports missing symbols/modules | Complete H4 Repository/Application/CLI integration | Focused H4 tests collect and pass; migration up/down isolation passes; full current-HEAD gate passes |
-| Current HEAD verification | P0-BLOCKING | Historical Phase/H1–H3 PASS records exist, but no observed GitHub Actions/status for `e183fdac`; independent full test could not run in the audit environment | H4 repair and reproducible build environment | Exact commit has recorded pytest, Ruff, mypy, docs, migration and package-build results |
 | Reproducible dependency set | P0 | Dependencies use lower bounds and no confirmed lockfile is present | Select one package workflow | Clean Python 3.12 environment installs from a committed lock and reproduces the full gate |
-| Status-document authority drift | P0 | Previous `Current-State` referenced `a7ce0b4`; H4 code existed while Gap Register still described only an unimplemented gap | Current-state update and future automation | Status, matrix and gaps reference the same commit and fail CI when stale |
-| CI baseline | P0 | No observed current commit checks | Reproducible environment | Pull requests require package build, pytest, Ruff, mypy, docs links and migration smoke |
+| CI enforcement | P1 | Workflow now covers Python 3.12 install, docs, pytest, Ruff, configured mypy and package build on push/PR; no remote branch result or required-check policy was observed in this delivery | Push branch and maintain repository settings | Draft PR checks pass and protected branches require the complete workflow |
 
 ## 2. Pre-Shadow hardening gaps
 
@@ -26,6 +23,7 @@
 |---|---|---|---|---|
 | H5 Artifact-derived Thesis health | P1 | Holding/Exit callers can provide signal/theme/capital support state instead of deriving it from verified source artifacts | Green H4 baseline and explicit health configuration | Builder accepts only verified artifact references/config, derives health deterministically and reproduces the same identity on replay |
 | H6 composite operational evidence | P1 | Operational bridge combines a Daily SourceManifest with supplemental evidence but records historical evidence kind and flat lineage; no composite owner exposes both source authorities cleanly | H5 input requirements and current bridge contracts | Composite manifest/index preserves both original manifests, per-field authority and DecisionTime without eligibility inflation |
+| H4.5 reducing-decision execution bridge | P1 | H4 persists a permitted decision but intentionally does not create ManualTrade or Fill | H4, H6 and explicit execution authorization design | ManualTrade references a fresh permitted decision, rechecks latest sellability/position version, records authenticated confirmation and preserves partial/cancel/redecision history without broker authority |
 | H7 durable Holding/Exit operations | P1 | Holding/Exit assessments are computed in one-shot review flows; no append-only schedule, blocked state, acknowledgement or durable projection | H5 health builder and H6 evidence | Repository supports CAS, idempotency, restart, rebuild, due/blocked/acknowledged state and migration isolation |
 | H8 recoverable ShadowRun | P1 | Daily research, operational research, Signal/Path, Decision, Risk, Fill and Review are separate CLIs; no whole-lifecycle run owner exists | H4–H7 | ShadowRun has stage receipts, retries, resume, deadlines, operator acknowledgement, metrics, alerts and deterministic replay |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
@@ -51,6 +49,7 @@
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Real Entry Model | P1 | Canonical Entry emits only `REJECT` or `WAIT_CONFIRMATION`; `ENTER` is intentionally absent | Qualified Candidate/Signal/path evidence and validation protocol | Independent Entry model has frozen inputs, thresholds, target, cost assumptions, calibration and OOS result |
+| Entry authority namespace convergence | P1 | Canonical `daily_decision` Entry cannot emit `ENTER`, while older `daily_research.EntryState` still defines an ENTER-capable contract | Reader/producer inventory and compatibility decision | Legacy ENTER-capable artifacts are explicitly historical/isolated or migrated; no runtime can confuse them with canonical Entry authority |
 | Market Regime validation | P1 | Deterministic weighted gate with explicit thresholds | Qualified historical observations | Walk-forward comparison proves usefulness for exposure/gating versus simpler controls |
 | Theme lifecycle semantics | P1 | Theme Rotation V0 is direct per-day classification | PIT history and transition protocol | Versioned state machine includes persistence, duration, hysteresis and validated decay behavior |
 | Capital Evolution validation | P1 | Observable-proxy inference exists | Theme/ETF/symbol historical observations | Ablation and incremental-value tests show what the inferred score contributes beyond price/volume baselines |
@@ -86,6 +85,7 @@ The following are not open implementation gaps, although their operating/model e
 - H1 complete-account Portfolio/Risk;
 - H2 Thesis-scoped authority trace;
 - H3 Fill/calendar-derived T+1 Position;
+- H4 reducing-risk domain, SQLite persistence, idempotency, strict restoration and decision-only CLI;
 - append-only manual Fill ledger;
 - exploratory Holding/Exit, TradeOutcome and rolling diagnostics.
 
@@ -94,10 +94,10 @@ Delivered mechanics must not be upgraded to production, Alpha or trading-authori
 ## 7. Required implementation order
 
 ```text
-P0 H4 repair
-→ current-head full gate and lockfile/CI
+P0 lockfile and remote CI enforcement
 → H5 Artifact-derived Thesis health
 → H6 composite operational evidence
+→ H4.5 reducing-decision/manual-execution bridge
 → H7 durable Holding/Exit
 → H8 recoverable ShadowRun
 → qualified 14:55/Universe/Theme/Capital/account evidence
@@ -107,4 +107,4 @@ P0 H4 repair
 → separately approved broker architecture
 ```
 
-Do not start production UI or live broker integration while the current main branch is not green and the ShadowRun/evidence/validation layers remain incomplete.
+Do not start production UI or live broker integration while the ShadowRun/evidence/validation layers remain incomplete. H4 completion does not authorize order creation.

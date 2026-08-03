@@ -1,14 +1,20 @@
 # Current Main Code Audit — 2026-08-01
 
-> **Status:** CURRENT_STATUS
+> **Status:** HISTORICAL
 > **Authority:** Code-first audit of current `main`; implementation facts override older design/status prose  
 > **Owner:** Market Regime Alpha maintainers  
 > **Audited Revision:** `e183fdac285786ed448c835e65c99dc67189c2b9`  
 > **Audit Date:** 2026-08-01  
-> **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md, Production-Decision-Lifecycle-Delivery.md, Production-Lifecycle-Hardening-Delivery.md  
+> **Last Updated:** 2026-08-03
+> **Superseded By:** H4-Risk-Route-Delivery.md
+> **Related Documents:** H4-Risk-Route-Delivery.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md, Production-Decision-Lifecycle-Delivery.md, Production-Lifecycle-Hardening-Delivery.md
 > **Evidence Boundary:** Repository code, SQL, tests and connected Git metadata were inspected. The audit environment could not clone the repository because `github.com` DNS resolution failed, so current-HEAD tests were not independently executed.
 
 ## 1. Executive finding
+
+### 2026-08-03 delivery addendum
+
+This audit remains the exact historical record for `e183fdac`. Its H4 collection-blocker finding was reproduced, then repaired at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`. The current delivery evidence is `H4-Risk-Route-Delivery.md`; do not carry this document's broken-H4 or unverified-gate status forward to later commits.
 
 The repository has evolved from a collection of A-share research strategies into a modular research and manual decision-support operating system.
 
@@ -204,7 +210,7 @@ It correctly handles:
 
 The hardened complete-account Risk path enumerates OPEN PositionBooks and builds Risk input from these projections instead of accepting arbitrary caller sellable quantity.
 
-### 4.8 H4 current-main defect
+### 4.8 Historical H4 current-main defect
 
 Commit `e183fdac` added:
 
@@ -230,7 +236,7 @@ missing: portfolio/__init__.py exports
 missing: application/trading_lifecycle H4 export/integration
 ```
 
-The H4 test imports all of those missing symbols/modules. This is a static collection blocker and means current `main` cannot be described as passing.
+The H4 test imports all of those missing symbols/modules. This was a static collection blocker on the audited revision. It is fixed by the later H4 delivery checkpoint.
 
 Correct status:
 
@@ -392,4 +398,4 @@ H5 Artifact-derived Thesis health
 
 The repository’s architecture is materially stronger than a typical personal quant codebase. Its primary asset is the explicit, reconstructible authority chain rather than any single trading formula.
 
-The immediate correct action is not to add another model, dashboard or broker adapter. It is to restore a green exact-commit baseline by completing H4, then build the durable Shadow and validation layers required to convert good engineering mechanics into credible operating evidence.
+The immediate action identified by this audit—restore a green exact-commit baseline by completing H4—was completed at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`. The remaining direction is the H4.5/H5–H9 durable Shadow and validation sequence; no later result changes this audit's historical conclusion that formal Alpha, Shadow operations and trading authority were absent.
