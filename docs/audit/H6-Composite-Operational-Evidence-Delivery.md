@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../superpowers/specs/2026-08-04-h6-composite-operational-evidence-design.md, ../superpowers/plans/2026-08-04-h6-composite-operational-evidence.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md
-> **Code Evidence:** Starting main `e2cb9add258056815d15462bc83dfc64f43ddb8e`; design checkpoint `0c910983c5a3ec02781bb45e24f0678464fbc6e0`; implementation checkpoint `f88aa33c8e12ce155abfb9bade6c77773dd78c41`; hardened checkpoint `654e02556080d1476b399ee5145989be743f47a0`.
+> **Code Evidence:** Starting main `e2cb9add258056815d15462bc83dfc64f43ddb8e`; design checkpoint `0c910983c5a3ec02781bb45e24f0678464fbc6e0`; implementation checkpoint `f88aa33c8e12ce155abfb9bade6c77773dd78c41`; hardened checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`.
 
 ## 1. Delivered boundary
 
@@ -185,7 +185,7 @@ DOCUMENT_LINKS = PASS
 GIT_DIFF_CHECK = PASS
 ```
 
-Hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`:
+Hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`:
 
 ```text
 H6_FOCUSED = 67 passed, 0 skipped, 0 failed

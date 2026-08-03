@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Gap-Register.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** H6 hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`
+> **Code Evidence:** H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Status Rule:** `IMPLEMENTED` describes code mechanics. `VERIFIED_IMPLEMENTATION_CHECKPOINT` requires observed checks on the cited code commit. Historical checkpoint PASS records do not verify later code changes.
 
 | Capability | Status | Code evidence | Verification evidence | Runtime/evidence ceiling | Primary blocker | Next action |
@@ -69,7 +69,7 @@
 ## Implementation-checkpoint verification summary
 
 ```text
-IMPLEMENTATION_CHECKPOINT = 654e02556080d1476b399ee5145989be743f47a0
+IMPLEMENTATION_CHECKPOINT = 654e025b97c5d9553d7614b4b5be0898272aacbc
 FOCUSED_H6 = 67 passed, 0 skipped, 0 failed
 H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
 H5_FOCUSED_REGRESSION = 101 passed, 0 skipped, 0 failed

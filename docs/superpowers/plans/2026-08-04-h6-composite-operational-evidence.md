@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../specs/2026-08-04-h6-composite-operational-evidence-design.md, ../../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** Plan starts from `feat/h6-composite-operational-evidence@e2cb9add258056815d15462bc83dfc64f43ddb8e`; hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`.
+> **Code Evidence:** Plan starts from `feat/h6-composite-operational-evidence@e2cb9add258056815d15462bc83dfc64f43ddb8e`; hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

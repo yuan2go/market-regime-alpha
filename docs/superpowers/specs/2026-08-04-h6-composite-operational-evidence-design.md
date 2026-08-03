@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../../architecture/10-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../../status/Current-State.md
-> **Code Evidence:** Design starts from merged PR #31 at `origin/main@e2cb9add258056815d15462bc83dfc64f43ddb8e`; hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`.
+> **Code Evidence:** Design starts from merged PR #31 at `origin/main@e2cb9add258056815d15462bc83dfc64f43ddb8e`; hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`.
 
 ## 1. Goal and bounded context
 

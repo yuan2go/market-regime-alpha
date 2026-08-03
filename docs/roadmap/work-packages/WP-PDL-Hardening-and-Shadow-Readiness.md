@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H6-Composite-Operational-Evidence-Delivery.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** H6 hardened checkpoint `654e02556080d1476b399ee5145989be743f47a0`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
+> **Code Evidence:** H6 hardened checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -311,7 +311,7 @@ path.
 
 ### Implementation evidence
 
-Delivered and review-hardened at `654e02556080d1476b399ee5145989be743f47a0` with
+Delivered and review-hardened at `654e025b97c5d9553d7614b4b5be0898272aacbc` with
 content-addressed policy and terminal manifest, typed component/field authority,
 exact three-file package, file-first crash recovery, migration 009,
 append-only SQLite idempotency/replay, independent `ResearchInputBundleV2`,

@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** H6 hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Code Evidence:** H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -226,7 +226,7 @@ The H5 private replay bundle is not an H6 CompositeOperationalInputManifest and 
 ### 3.11 H6 composite operational evidence
 
 H6 is **IMPLEMENTED_AND_VERIFIED** at
-`654e02556080d1476b399ee5145989be743f47a0`:
+`654e025b97c5d9553d7614b4b5be0898272aacbc`:
 
 - `CompositeOperationalCompositionPolicy` content-identifies explicit required
   component roles, field authorities, DecisionTime/coverage/conflict policy and
@@ -322,7 +322,7 @@ Repository delivery records report passing focused and full gates for earlier se
 ### 6.2 Current checkpoint evidence
 
 The local Python 3.12 verification on H6 hardened implementation checkpoint
-`654e02556080d1476b399ee5145989be743f47a0` observed:
+`654e025b97c5d9553d7614b4b5be0898272aacbc` observed:
 
 ```text
 FOCUSED_H6 = 67 passed, 0 skipped, 0 failed
