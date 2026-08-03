@@ -105,6 +105,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Production Lifecycle Hardening and Shadow Readiness Plan](superpowers/plans/2026-08-01-production-lifecycle-hardening-shadow-readiness.md)
 - [H4 Reducing-Risk Decision Route Design](superpowers/specs/2026-08-03-h4-reducing-risk-decision-route-design.md)
 - [H4 Reducing-Risk Decision Route Implementation Plan](superpowers/plans/2026-08-03-h4-reducing-risk-decision-route.md)
+- [H5 Artifact-Derived Thesis Health Design](superpowers/specs/2026-08-04-h5-artifact-derived-thesis-health-design.md)
+- [H5 Artifact-Derived Thesis Health Implementation Plan](superpowers/plans/2026-08-04-h5-artifact-derived-thesis-health.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
