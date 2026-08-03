@@ -110,3 +110,16 @@ def test_application_service_rejects_incomplete_rule_set_before_persistence(tmp_
             input_bundle=invalid_bundle,
             idempotency_key="incomplete-rules",
         )
+
+
+def test_application_service_requires_explicit_latest_prior_after_first_observation(
+    tmp_path,
+) -> None:
+    service = ThesisHealthApplicationService(
+        SQLiteThesisHealthRepository(tmp_path / "health.sqlite3")
+    )
+    bundle = _bundle(make_h5_fixture())
+    service.assess(input_bundle=bundle, idempotency_key="first-health")
+
+    with pytest.raises(ValueError, match="omits the latest prior"):
+        service.assess(input_bundle=bundle, idempotency_key="missing-prior")

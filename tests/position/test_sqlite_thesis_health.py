@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 import json
 import sqlite3
 
@@ -183,6 +184,77 @@ def test_repository_rejects_forked_prior(tmp_path) -> None:
         )
 
 
+def test_latest_observation_follows_successor_chain_across_timezone_offsets(
+    tmp_path,
+) -> None:
+    repository, _, prior = _stored(tmp_path)
+    fixture = make_h5_fixture()
+    current_bundle = _bundle(
+        fixture,
+        prior_observation=prior,
+        assessed_at=(prior.assessed_at + timedelta(minutes=11)).astimezone(
+            timezone.utc
+        ),
+    )
+    current = ThesisHealthObservationBuilder().build(current_bundle)
+    repository.save_observation(
+        current,
+        input_bundle=current_bundle,
+        idempotency_key="timezone-current",
+        command_hash=_command_hash("timezone-current"),
+    )
+
+    assert repository.get_latest_observation(prior.thesis_id) == current
+
+    successor_bundle = _bundle(
+        fixture,
+        prior_observation=current,
+        assessed_at=current.assessed_at + timedelta(minutes=1),
+    )
+    successor = ThesisHealthObservationBuilder().build(successor_bundle)
+    assert repository.save_observation(
+        successor,
+        input_bundle=successor_bundle,
+        idempotency_key="timezone-successor",
+        command_hash=_command_hash("timezone-successor"),
+    ) == successor
+
+
+def test_repository_recursively_revalidates_stored_prior_observation(tmp_path) -> None:
+    repository, _, prior = _stored(tmp_path)
+    fixture = make_h5_fixture()
+    from datetime import timedelta
+
+    current_bundle = _bundle(
+        fixture,
+        prior_observation=prior,
+        assessed_at=prior.assessed_at + timedelta(minutes=1),
+    )
+    current = ThesisHealthObservationBuilder().build(current_bundle)
+    repository.save_observation(
+        current,
+        input_bundle=current_bundle,
+        idempotency_key="recursive-prior",
+        command_hash=_command_hash("recursive-prior"),
+    )
+    with sqlite3.connect(repository.path) as connection:
+        connection.execute("DROP TRIGGER thesis_health_observations_no_update")
+        payload = json.loads(
+            connection.execute(
+                "SELECT observation_json FROM thesis_health_observations WHERE observation_id = ?",
+                (str(prior.observation_id),),
+            ).fetchone()[0]
+        )
+        payload["reason"] = "tampered stored prior"
+        connection.execute(
+            "UPDATE thesis_health_observations SET observation_json = ? WHERE observation_id = ?",
+            (json.dumps(payload), str(prior.observation_id)),
+        )
+
+    with pytest.raises(ValueError):
+        repository.get_observation(current.observation_id)
+
+
 def test_down_migration_is_isolated(tmp_path) -> None:
     repository = SQLiteThesisHealthRepository(tmp_path / "thesis-health.sqlite3")
     with sqlite3.connect(repository.path) as connection:
@@ -236,5 +308,5 @@ def test_repository_rejects_same_name_tables_with_weak_schema(tmp_path) -> None:
             """
         )
 
-    with pytest.raises(ValueError, match="check constraint mismatch"):
+    with pytest.raises(ValueError, match="schema mismatch"):
         SQLiteThesisHealthRepository(database)

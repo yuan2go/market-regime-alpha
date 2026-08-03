@@ -13,18 +13,34 @@ from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence import ArtifactEnvelope
 import market_regime_alpha.execution  # noqa: F401  # existing package initialization order
 from market_regime_alpha.position import (
+    CapitalEvolutionStateInRule,
+    CapitalRuleScope,
     ManualInvalidationEvidence,
+    PriceAboveRule,
+    SignalStateInRule,
     ThesisHealth,
     ThesisHealthInputBundle,
     ThesisHealthObservationBuilder,
     ThesisHealthSupportState,
+    ThesisInvalidationRuleSet,
+    ThemeRotationStateInRule,
+    TradePermissionInRule,
 )
-from market_regime_alpha.research.capital_evolution.contracts import CapitalEvolutionSnapshot
-from market_regime_alpha.research.market_regime.contracts import MarketRegimeSnapshot
-from market_regime_alpha.research.theme_rotation.contracts import ThemeRotationSnapshot
+from market_regime_alpha.research.capital_evolution.contracts import (
+    CapitalEvolutionSnapshot,
+    CapitalEvolutionState,
+)
+from market_regime_alpha.research.market_regime.contracts import (
+    MarketRegimeSnapshot,
+    TradePermission,
+)
+from market_regime_alpha.research.theme_rotation.contracts import (
+    RotationState,
+    ThemeRotationSnapshot,
+)
 from market_regime_alpha.forecasting import PathForecast
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
-from market_regime_alpha.signals import SignalSnapshot
+from market_regime_alpha.signals import SignalSnapshot, SignalState
 
 from tests.position.thesis_health_fixtures import (
     ASSESSED_AT,
@@ -162,6 +178,22 @@ def _cascade_theme_capital_candidate(
     )
     signal, path = _cascade_signal(fixture, signal)
     return current_theme, current_capital, candidate, signal, path
+
+
+def _rule_set_with(
+    fixture: H5Fixture,
+    *,
+    condition_id: str,
+    replacement: object,
+) -> ThesisInvalidationRuleSet:
+    return ThesisInvalidationRuleSet.create(
+        thesis_id=fixture.thesis.thesis_id,
+        thesis_version=fixture.thesis.version,
+        rules=tuple(
+            replacement if item.condition_id == condition_id else item
+            for item in fixture.rule_set.rules
+        ),
+    )
 
 
 def test_input_bundle_is_content_addressed_and_uses_actual_types() -> None:
@@ -397,6 +429,168 @@ def test_extreme_risk_typed_rule_invalidates() -> None:
         )
     )
     assert observation.triggered_condition_ids == ("market-stop",)
+    assert observation.observed_health_state is ThesisHealth.INVALIDATED
+
+
+def test_trade_permission_typed_rule_invalidates() -> None:
+    fixture = make_h5_fixture()
+    market = _rebind(
+        fixture.market,
+        MarketRegimeSnapshot.from_canonical_dict,
+        payload_changes={"trade_permission": "PROHIBIT"},
+    )
+    candidate = _rebind(
+        fixture.candidate,
+        CandidateSet.from_canonical_dict,
+        inputs=(
+            (market.envelope.artifact_id, market.envelope.content_hash),
+            (fixture.theme.envelope.artifact_id, fixture.theme.envelope.content_hash),
+            (fixture.capital.envelope.artifact_id, fixture.capital.envelope.content_hash),
+        ),
+    )
+    signal = _rebind(
+        fixture.signal,
+        SignalSnapshot.from_canonical_dict,
+        inputs=((candidate.envelope.artifact_id, candidate.envelope.content_hash),),
+    )
+    signal, path = _cascade_signal(fixture, signal)
+    rule_set = _rule_set_with(
+        fixture,
+        condition_id="market-stop",
+        replacement=TradePermissionInRule(
+            "market-stop", (TradePermission.PROHIBIT,)
+        ),
+    )
+
+    observation = ThesisHealthObservationBuilder().build(
+        _bundle(
+            fixture,
+            market_regime=market,
+            candidate_set=candidate,
+            signal_snapshot=signal,
+            path_forecast=path,
+            rule_set=rule_set,
+        )
+    )
+    assert observation.triggered_condition_ids == ("market-stop",)
+    assert observation.observed_health_state is ThesisHealth.INVALIDATED
+
+
+def test_price_above_typed_rule_invalidates() -> None:
+    fixture = make_h5_fixture()
+    rule_set = _rule_set_with(
+        fixture,
+        condition_id="price-stop",
+        replacement=PriceAboveRule("price-stop", 10.0),
+    )
+
+    observation = ThesisHealthObservationBuilder().build(
+        _bundle(fixture, rule_set=rule_set)
+    )
+    assert observation.triggered_condition_ids == ("price-stop",)
+    assert observation.observed_health_state is ThesisHealth.INVALIDATED
+
+
+def test_theme_typed_rule_invalidates() -> None:
+    fixture = make_h5_fixture()
+    theme_payload = fixture.theme.to_canonical_dict()["themes"][0]
+    theme_payload["rotation_state"] = RotationState.FAILED.value
+    theme = _rebind(
+        fixture.theme,
+        ThemeRotationSnapshot.from_canonical_dict,
+        payload_changes={"themes": [theme_payload]},
+    )
+    theme, capital, candidate, signal, path = _cascade_theme_capital_candidate(
+        fixture, theme=theme
+    )
+    rule_set = _rule_set_with(
+        fixture,
+        condition_id="theme-stop",
+        replacement=ThemeRotationStateInRule(
+            "theme-stop", (RotationState.FAILED,)
+        ),
+    )
+
+    observation = ThesisHealthObservationBuilder().build(
+        _bundle(
+            fixture,
+            theme_rotation=theme,
+            capital_evolution=capital,
+            candidate_set=candidate,
+            signal_snapshot=signal,
+            path_forecast=path,
+            rule_set=rule_set,
+        )
+    )
+    assert observation.triggered_condition_ids == ("theme-stop",)
+    assert observation.observed_health_state is ThesisHealth.INVALIDATED
+
+
+def test_capital_both_scope_typed_rule_requires_and_invalidates_both_entries() -> None:
+    fixture = make_h5_fixture()
+    payload = fixture.capital.to_canonical_dict()
+    payload["themes"][0]["capital_evolution_state"] = (
+        CapitalEvolutionState.COLLAPSE.value
+    )
+    payload["symbols"][0]["capital_evolution_state"] = (
+        CapitalEvolutionState.COLLAPSE.value
+    )
+    capital = _rebind(
+        fixture.capital,
+        CapitalEvolutionSnapshot.from_canonical_dict,
+        payload_changes={"themes": payload["themes"], "symbols": payload["symbols"]},
+    )
+    theme, capital, candidate, signal, path = _cascade_theme_capital_candidate(
+        fixture, capital=capital
+    )
+    rule_set = _rule_set_with(
+        fixture,
+        condition_id="capital-stop",
+        replacement=CapitalEvolutionStateInRule(
+            "capital-stop",
+            CapitalRuleScope.BOTH,
+            (CapitalEvolutionState.COLLAPSE,),
+        ),
+    )
+
+    observation = ThesisHealthObservationBuilder().build(
+        _bundle(
+            fixture,
+            theme_rotation=theme,
+            capital_evolution=capital,
+            candidate_set=candidate,
+            signal_snapshot=signal,
+            path_forecast=path,
+            rule_set=rule_set,
+        )
+    )
+    assert observation.triggered_condition_ids == ("capital-stop",)
+    assert observation.observed_health_state is ThesisHealth.INVALIDATED
+
+
+def test_signal_typed_rule_invalidates() -> None:
+    fixture = make_h5_fixture()
+    signal = _rebind(
+        fixture.signal,
+        SignalSnapshot.from_canonical_dict,
+        payload_changes={"signal_state": SignalState.INACTIVE.value},
+    )
+    signal, path = _cascade_signal(fixture, signal)
+    rule_set = _rule_set_with(
+        fixture,
+        condition_id="signal-stop",
+        replacement=SignalStateInRule("signal-stop", (SignalState.INACTIVE,)),
+    )
+
+    observation = ThesisHealthObservationBuilder().build(
+        _bundle(
+            fixture,
+            signal_snapshot=signal,
+            path_forecast=path,
+            rule_set=rule_set,
+        )
+    )
+    assert observation.triggered_condition_ids == ("signal-stop",)
     assert observation.observed_health_state is ThesisHealth.INVALIDATED
 
 

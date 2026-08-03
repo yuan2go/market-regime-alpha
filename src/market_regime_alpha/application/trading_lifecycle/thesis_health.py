@@ -65,6 +65,14 @@ class ThesisHealthApplicationService:
         )
         if replay is not None:
             return replay
+        latest = self._repository.get_latest_observation(bundle.thesis.thesis_id)
+        prior = bundle.prior_observation
+        if latest is None and prior is not None:
+            raise ValueError("prior Thesis health Observation is not stored")
+        if latest is not None and prior is None:
+            raise ValueError("Thesis health command omits the latest prior Observation")
+        if latest is not None and prior != latest:
+            raise ValueError("Thesis health command does not bind latest prior Observation")
         observation = ThesisHealthObservationBuilder().build(bundle)
         return self._repository.save_observation(
             observation,

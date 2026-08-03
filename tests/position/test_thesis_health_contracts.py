@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -199,3 +200,13 @@ def test_effective_state_cannot_be_data_insufficient() -> None:
             observed=ThesisHealth.DATA_INSUFFICIENT,
             effective=ThesisHealth.DATA_INSUFFICIENT,
         )
+
+
+@pytest.mark.parametrize("invalid", (False, 0.5))
+def test_health_artifact_versions_have_closed_integer_domain(
+    invalid: object,
+) -> None:
+    with pytest.raises(ValueError, match="integer"):
+        replace(_manual(), thesis_version=invalid)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="integer"):
+        replace(_observation(), thesis_version=invalid)  # type: ignore[arg-type]

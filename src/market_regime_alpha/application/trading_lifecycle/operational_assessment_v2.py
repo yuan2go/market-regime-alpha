@@ -17,7 +17,11 @@ from market_regime_alpha.position.assessment import (
     ResolvedThesisHealthContext,
     ThesisHealth,
 )
-from market_regime_alpha.position.authority import PositionSnapshot, PositionState
+from market_regime_alpha.position.authority import (
+    T_PLUS_ONE_POSITION_SNAPSHOT_SCHEMA,
+    PositionSnapshot,
+    PositionState,
+)
 from market_regime_alpha.position.thesis_health import ThesisHealthObservationV2
 
 
@@ -68,12 +72,25 @@ class OperationalPositionAssessmentServiceV2:
             raise ValueError("V2 health Observation Thesis scope mismatch")
         if assessed_at.tzinfo is None or assessed_at.utcoffset() is None:
             raise ValueError("assessment time must be timezone-aware")
-        if observation.assessed_at > assessed_at:
-            raise ValueError("assessment cannot consume future V2 health evidence")
+        if observation.assessed_at != assessed_at:
+            raise ValueError(
+                "V2 operational assessment time must equal health assessed_at; "
+                "stale or future health evidence cannot be reused"
+            )
         if observation.market_price is None:
             raise ValueError(
                 "V2 Holding/Exit assessment requires established market price"
             )
+        if position.schema_version != T_PLUS_ONE_POSITION_SNAPSHOT_SCHEMA:
+            raise ValueError(
+                "V2 operational assessment requires a T+1 authoritative PositionSnapshot"
+            )
+        if (
+            position.thesis_id != thesis.thesis_id
+            or position.opportunity_id != thesis.opportunity_id
+            or position.symbol != thesis.symbol
+        ):
+            raise ValueError("V2 operational assessment Position trace mismatch")
         health = observation.effective_health_state
         reasons = set(observation.reason_codes)
         reasons.update(observation.missing_reason_codes)
@@ -84,6 +101,7 @@ class OperationalPositionAssessmentServiceV2:
             health = ThesisHealth.DATA_INSUFFICIENT
             reasons.add("POSITION_RECONCILIATION_REQUIRED")
         context = ResolvedThesisHealthContext(
+            symbol=observation.symbol,
             health=health,
             market_price=observation.market_price,
             evidence=DecisionEvidenceReference(
@@ -93,6 +111,8 @@ class OperationalPositionAssessmentServiceV2:
                 status="VERIFIED_EXPLORATORY",
             ),
             reason_codes=tuple(sorted(reasons)),
+            observed_at=observation.assessed_at,
+            availability_time=observation.assessed_at,
         )
         holding = HoldingAssessmentModel().assess_resolved(
             thesis,

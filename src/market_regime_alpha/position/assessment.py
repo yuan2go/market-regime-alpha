@@ -551,14 +551,23 @@ class ThesisHealthEvaluator:
 class ResolvedThesisHealthContext:
     """Internal seam shared by legacy V1 and strict V2 assessment paths."""
 
+    symbol: str
     health: ThesisHealth
     market_price: float
     evidence: DecisionEvidenceReference
     reason_codes: tuple[str, ...]
+    observed_at: datetime
+    availability_time: datetime
 
     def __post_init__(self) -> None:
+        _text("resolved health symbol", self.symbol)
         if not isfinite(self.market_price) or self.market_price <= 0.0:
             raise ValueError("resolved health market price must be positive")
+        for value in (self.observed_at, self.availability_time):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("resolved health times must be timezone-aware")
+        if self.availability_time < self.observed_at:
+            raise ValueError("resolved health availability cannot precede observation")
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("resolved health reason codes must be sorted and unique")
 
@@ -583,10 +592,13 @@ class HoldingAssessmentModel:
             thesis, position, observation, assessed_at=assessed_at
         )
         context = ResolvedThesisHealthContext(
+            symbol=observation.symbol,
             health=health,
             market_price=observation.market_price,
             evidence=observation.evidence,
             reason_codes=tuple(sorted(set(health_reasons))),
+            observed_at=observation.observed_at,
+            availability_time=observation.availability_time,
         )
         return self.assess_resolved(
             thesis,
@@ -686,10 +698,13 @@ class ExitAssessmentModel:
             thesis, position, observation, assessed_at=assessed_at
         )
         context = ResolvedThesisHealthContext(
+            symbol=observation.symbol,
             health=health,
             market_price=observation.market_price,
             evidence=observation.evidence,
             reason_codes=tuple(sorted(set(health_reasons))),
+            observed_at=observation.observed_at,
+            availability_time=observation.availability_time,
         )
         return self.assess_resolved(
             thesis,
@@ -854,12 +869,12 @@ def _validate_resolved_inputs(
         raise ValueError("assessment time must be timezone-aware")
     if position.state is PositionState.CLOSED:
         raise ValueError("closed Position cannot receive Holding/Exit assessment")
-    if thesis.symbol != position.symbol:
-        raise ValueError("Thesis and Position symbol mismatch")
-    if position.as_of > assessed_at:
-        raise ValueError("assessment cannot consume future Position")
     if not isinstance(context, ResolvedThesisHealthContext):
         raise TypeError("health_context must be resolved")
+    if not (thesis.symbol == position.symbol == context.symbol):
+        raise ValueError("Thesis, Position and resolved health symbol mismatch")
+    if position.as_of > assessed_at or context.availability_time > assessed_at:
+        raise ValueError("assessment cannot consume future Position or health evidence")
 
 
 def _assessment_common(value: HoldingAssessment | ExitAssessment) -> None:

@@ -118,6 +118,11 @@ class ManualInvalidationEvidence:
     def __post_init__(self) -> None:
         if self.schema_version != MANUAL_INVALIDATION_EVIDENCE_SCHEMA:
             raise ValueError("unsupported Manual invalidation evidence schema")
+        object.__setattr__(
+            self,
+            "thesis_version",
+            _integer(self.thesis_version, "thesis_version"),
+        )
         if self.thesis_version < 0:
             raise ValueError("Manual evidence Thesis version cannot be negative")
         _condition_id(self.condition_id)
@@ -319,6 +324,11 @@ class ThesisHealthObservationV2:
     def __post_init__(self) -> None:
         if self.schema_version != THESIS_HEALTH_OBSERVATION_V2_SCHEMA:
             raise ValueError("unsupported ThesisHealthObservationV2 schema")
+        object.__setattr__(
+            self,
+            "thesis_version",
+            _integer(self.thesis_version, "thesis_version"),
+        )
         if self.thesis_version < 0:
             raise ValueError("Observation Thesis version cannot be negative")
         for label, text_value in (
@@ -767,6 +777,11 @@ class ThesisInvalidationRuleSet:
     def __post_init__(self) -> None:
         if self.schema_version != THESIS_INVALIDATION_RULE_SET_SCHEMA:
             raise ValueError("unsupported Thesis invalidation rule-set schema")
+        object.__setattr__(
+            self,
+            "thesis_version",
+            _integer(self.thesis_version, "thesis_version"),
+        )
         if self.thesis_version < 0:
             raise ValueError("rule-set Thesis version cannot be negative")
         condition_ids = tuple(item.condition_id for item in self.rules)
@@ -934,7 +949,15 @@ class ThesisHealthRuleConfiguration:
         _validate_mapping("capital_state_mapping", self.capital_state_mapping, CapitalEvolutionState)
         object.__setattr__(self, "minimum_signal_score", _bounded("minimum_signal_score", self.minimum_signal_score, -1.0, 1.0))
         object.__setattr__(self, "minimum_signal_confidence", _bounded("minimum_signal_confidence", self.minimum_signal_confidence, 0.0, 1.0))
-        if isinstance(self.minimum_path_usable_sample_count, bool) or self.minimum_path_usable_sample_count <= 0:
+        object.__setattr__(
+            self,
+            "minimum_path_usable_sample_count",
+            _integer(
+                self.minimum_path_usable_sample_count,
+                "minimum_path_usable_sample_count",
+            ),
+        )
+        if self.minimum_path_usable_sample_count <= 0:
             raise ValueError("minimum_path_usable_sample_count must be a positive integer")
         object.__setattr__(self, "minimum_path_expected_mfe", _bounded("minimum_path_expected_mfe", self.minimum_path_expected_mfe, 0.0, 1.0))
         object.__setattr__(self, "minimum_path_expected_mae", _bounded("minimum_path_expected_mae", self.minimum_path_expected_mae, -1.0, 0.0))
@@ -1049,6 +1072,9 @@ class ThesisHealthInputBundle:
     reason: str
     replay_boundary: str = "H5_PRIVATE_REPLAY_BUNDLE"
     composite_authority: str = "NOT_COMPOSITE_OPERATIONAL_INPUT_MANIFEST"
+    h6_authority: str = "NOT_H6_AUTHORITY"
+    source_artifact_authority: str = "DOES_NOT_REPLACE_SOURCE_ARTIFACTS"
+    data_authority: str = "DOES_NOT_INFLATE_DATA_ELIGIBILITY_OR_PIT_STATUS"
     formal_pit: str = "FORMAL_PIT_NOT_ESTABLISHED"
 
     def __post_init__(self) -> None:
@@ -1085,6 +1111,11 @@ class ThesisHealthInputBundle:
             self.replay_boundary != "H5_PRIVATE_REPLAY_BUNDLE"
             or self.composite_authority
             != "NOT_COMPOSITE_OPERATIONAL_INPUT_MANIFEST"
+            or self.h6_authority != "NOT_H6_AUTHORITY"
+            or self.source_artifact_authority
+            != "DOES_NOT_REPLACE_SOURCE_ARTIFACTS"
+            or self.data_authority
+            != "DOES_NOT_INFLATE_DATA_ELIGIBILITY_OR_PIT_STATUS"
             or self.formal_pit != "FORMAL_PIT_NOT_ESTABLISHED"
         ):
             raise ValueError("H5 replay bundle authority cannot be inflated")
@@ -1155,6 +1186,9 @@ class ThesisHealthInputBundle:
             "reason": values["reason"],
             "replay_boundary": "H5_PRIVATE_REPLAY_BUNDLE",
             "composite_authority": "NOT_COMPOSITE_OPERATIONAL_INPUT_MANIFEST",
+            "h6_authority": "NOT_H6_AUTHORITY",
+            "source_artifact_authority": "DOES_NOT_REPLACE_SOURCE_ARTIFACTS",
+            "data_authority": "DOES_NOT_INFLATE_DATA_ELIGIBILITY_OR_PIT_STATUS",
             "formal_pit": "FORMAL_PIT_NOT_ESTABLISHED",
         }
 
@@ -1181,6 +1215,9 @@ class ThesisHealthInputBundle:
             *_INPUT_BUNDLE_VALUE_FIELDS,
             "replay_boundary",
             "composite_authority",
+            "h6_authority",
+            "source_artifact_authority",
+            "data_authority",
             "formal_pit",
         }
         _fields(payload, expected, "Thesis health input bundle")
@@ -1214,6 +1251,9 @@ class ThesisHealthInputBundle:
             reason=str(payload["reason"]),
             replay_boundary=str(payload["replay_boundary"]),
             composite_authority=str(payload["composite_authority"]),
+            h6_authority=str(payload["h6_authority"]),
+            source_artifact_authority=str(payload["source_artifact_authority"]),
+            data_authority=str(payload["data_authority"]),
             formal_pit=str(payload["formal_pit"]),
         )
         return bundle
@@ -1819,6 +1859,10 @@ class ThesisHealthRepository(Protocol):
     def get_observation(
         self, observation_id: ArtifactId
     ) -> ThesisHealthObservationV2: ...
+
+    def get_latest_observation(
+        self, thesis_id: ThesisId
+    ) -> ThesisHealthObservationV2 | None: ...
 
 
 _AGE_FIELDS = (

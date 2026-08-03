@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,17 +11,78 @@ import market_regime_alpha.execution  # noqa: F401  # existing package initializ
 from market_regime_alpha.dividend_t.brokers import PaperBrokerAdapter
 from market_regime_alpha.portfolio import RiskRouteApplicationService
 from scripts.build_thesis_health import main
+import scripts.build_thesis_health as build_thesis_health
 
-from tests.position.test_thesis_health_builder import _bundle
 from tests.position.thesis_health_fixtures import make_h5_fixture
 
 
+def _write_document(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def _write_request(path: Path, *, idempotency_key: str) -> None:
+    fixture = make_h5_fixture()
+    _write_document(path.parent / "thesis.json", fixture.thesis.to_canonical_dict())
+    _write_document(
+        path.parent / "opportunity.json", fixture.opportunity.to_canonical_dict()
+    )
+    _write_document(path.parent / "price.json", fixture.price.to_canonical_dict())
+    _write_document(
+        path.parent / "configuration.json",
+        fixture.configuration.to_canonical_dict(),
+    )
+    _write_document(path.parent / "rules.json", fixture.rule_set.to_canonical_dict())
     payload = {
-        "input_bundle": _bundle(make_h5_fixture()).to_canonical_dict(),
+        "thesis_path": "thesis.json",
+        "opportunity_path": "opportunity.json",
+        "research_package_path": "research-package",
+        "signal_package_path": "signal-package",
+        "path_forecast_package_path": "path-package",
+        "price_snapshot_path": "price.json",
+        "configuration_path": "configuration.json",
+        "rule_set_path": "rules.json",
+        "manual_evidence_paths": [],
+        "prior_observation_id": None,
+        "prior_observation_hash": None,
+        "assessed_at": fixture.price.decision_time.isoformat(),
+        "actor": "reviewer-a",
+        "reason": "strict verified package CLI test",
         "idempotency_key": idempotency_key,
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _install_verified_package_readers(monkeypatch) -> None:
+    fixture = make_h5_fixture()
+    research = SimpleNamespace(
+        market_regime=fixture.market,
+        theme_rotation=fixture.theme,
+        capital_evolution=fixture.capital,
+        candidate_set=fixture.candidate,
+    )
+    signal = SimpleNamespace(
+        candidate_set=fixture.candidate,
+        snapshots=(fixture.signal,),
+    )
+    path = SimpleNamespace(
+        signal_snapshot=fixture.signal,
+        forecast=fixture.path,
+    )
+    monkeypatch.setattr(
+        build_thesis_health,
+        "load_verified_research_layer_artifact",
+        lambda _path: SimpleNamespace(artifact=research),
+    )
+    monkeypatch.setattr(
+        build_thesis_health,
+        "load_verified_signal_run",
+        lambda _path: SimpleNamespace(artifact=signal),
+    )
+    monkeypatch.setattr(
+        build_thesis_health,
+        "load_verified_path_forecast",
+        lambda _path: SimpleNamespace(artifact=path),
+    )
 
 
 def _invoke(database: Path, request: Path, capsys) -> dict[str, object]:
@@ -34,6 +96,7 @@ def test_cli_persists_and_replays_v2_observation_without_trade_authority(
     database = tmp_path / "health.sqlite3"
     request = tmp_path / "health.json"
     _write_request(request, idempotency_key="cli-health-replay")
+    _install_verified_package_readers(monkeypatch)
     monkeypatch.setattr(
         PaperBrokerAdapter,
         "place_order",
@@ -106,11 +169,9 @@ def test_cli_rejects_v1_health_observation_as_operational_input(tmp_path) -> Non
     request.write_text(
         json.dumps(
             {
-                "input_bundle": {
-                    "signal_support": True,
-                    "theme_support": True,
-                    "capital_support": True,
-                },
+                "signal_support": True,
+                "theme_support": True,
+                "capital_support": True,
                 "idempotency_key": "no-v1",
             }
         ),

@@ -8,7 +8,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Iterator
 
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import ArtifactId, ThesisId
 from market_regime_alpha.evidence.canonical import require_sha256
 from market_regime_alpha.position.thesis_health import (
     ThesisHealthInputBundle,
@@ -23,35 +23,80 @@ _MIGRATION_ROOT = Path(__file__).resolve().parent / "migrations"
 THESIS_HEALTH_UP_MIGRATION = _MIGRATION_ROOT / "008_thesis_health_up.sql"
 THESIS_HEALTH_DOWN_MIGRATION = _MIGRATION_ROOT / "008_thesis_health_down.sql"
 
-_REQUIRED_COLUMNS = {
+_REQUIRED_TABLE_INFO = {
     "thesis_health_observations": (
-        "observation_id",
-        "thesis_id",
-        "thesis_version",
-        "observed_health_state",
-        "effective_health_state",
-        "content_hash",
-        "input_bundle_id",
-        "input_bundle_hash",
-        "configuration_id",
-        "configuration_hash",
-        "rule_set_id",
-        "rule_set_hash",
-        "prior_observation_id",
-        "prior_observation_hash",
-        "observation_json",
-        "input_bundle_json",
-        "configuration_json",
-        "rule_set_json",
-        "prior_observation_json",
-        "assessed_at",
+        ("observation_id", "TEXT", 0, 1),
+        ("thesis_id", "TEXT", 1, 0),
+        ("thesis_version", "INTEGER", 1, 0),
+        ("observed_health_state", "TEXT", 1, 0),
+        ("effective_health_state", "TEXT", 0, 0),
+        ("content_hash", "TEXT", 1, 0),
+        ("input_bundle_id", "TEXT", 1, 0),
+        ("input_bundle_hash", "TEXT", 1, 0),
+        ("configuration_id", "TEXT", 1, 0),
+        ("configuration_hash", "TEXT", 1, 0),
+        ("rule_set_id", "TEXT", 1, 0),
+        ("rule_set_hash", "TEXT", 1, 0),
+        ("prior_observation_id", "TEXT", 0, 0),
+        ("prior_observation_hash", "TEXT", 0, 0),
+        ("observation_json", "TEXT", 1, 0),
+        ("input_bundle_json", "TEXT", 1, 0),
+        ("configuration_json", "TEXT", 1, 0),
+        ("rule_set_json", "TEXT", 1, 0),
+        ("prior_observation_json", "TEXT", 0, 0),
+        ("assessed_at", "TEXT", 1, 0),
     ),
     "thesis_health_commands": (
-        "idempotency_key",
-        "command_hash",
-        "observation_id",
-        "created_at",
+        ("idempotency_key", "TEXT", 0, 1),
+        ("command_hash", "TEXT", 1, 0),
+        ("observation_id", "TEXT", 1, 0),
+        ("created_at", "TEXT", 1, 0),
     ),
+}
+
+_REQUIRED_UNIQUE_COLUMNS = {
+    "thesis_health_observations": {
+        ("content_hash",),
+        ("input_bundle_id",),
+        ("input_bundle_hash",),
+        ("prior_observation_id",),
+        ("thesis_id", "assessed_at"),
+    },
+    "thesis_health_commands": set(),
+}
+
+_REQUIRED_FOREIGN_KEYS = {
+    "thesis_health_observations": {
+        (
+            "thesis_health_observations",
+            "prior_observation_id",
+            "observation_id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE",
+        )
+    },
+    "thesis_health_commands": {
+        (
+            "thesis_health_observations",
+            "observation_id",
+            "observation_id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE",
+        )
+    },
+}
+
+_REQUIRED_CHECKS = {
+    "thesis_health_observations": {
+        "check(thesis_version>=0)",
+        "check(observed_health_statein('healthy','weakening','invalidated','data_insufficient'))",
+        "check(effective_health_statein('healthy','weakening','invalidated'))",
+        "check((prior_observation_idisnull)=(prior_observation_hashisnull))",
+        "check((prior_observation_idisnull)=(prior_observation_jsonisnull))",
+    },
+    "thesis_health_commands": set(),
 }
 
 _TRIGGERS = {
@@ -153,7 +198,11 @@ class SQLiteThesisHealthRepository:
                         _row_values(observation, input_bundle),
                     )
                 else:
-                    stored, stored_bundle = _restore_row(connection, existing)
+                    stored, stored_bundle = _restore_row(
+                        connection,
+                        existing,
+                        ancestry=frozenset({observation.observation_id}),
+                    )
                     if stored != observation or stored_bundle != input_bundle:
                         raise ValueError("Thesis health Observation identity conflict")
                 connection.execute(
@@ -194,6 +243,17 @@ class SQLiteThesisHealthRepository:
         with self._connect() as connection:
             return _load_observation(connection, observation_id)
 
+    def get_latest_observation(
+        self, thesis_id: ThesisId
+    ) -> ThesisHealthObservationV2 | None:
+        with self._connect() as connection:
+            row = _chain_tip(connection, thesis_id)
+            if row is None:
+                return None
+            return _load_observation(
+                connection, ArtifactId(str(row["observation_id"]))
+            )
+
 
 def _resolve_command(
     connection: sqlite3.Connection,
@@ -215,19 +275,29 @@ def _resolve_command(
 def _load_observation(
     connection: sqlite3.Connection,
     observation_id: ArtifactId,
+    *,
+    ancestry: frozenset[ArtifactId] = frozenset(),
 ) -> ThesisHealthObservationV2:
+    if observation_id in ancestry:
+        raise ValueError("Thesis health prior Observation cycle detected")
     row = connection.execute(
         "SELECT * FROM thesis_health_observations WHERE observation_id = ?",
         (str(observation_id),),
     ).fetchone()
     if row is None:
         raise KeyError(f"unknown ThesisHealthObservationV2: {observation_id}")
-    return _restore_row(connection, row)[0]
+    return _restore_row(
+        connection,
+        row,
+        ancestry=ancestry | {observation_id},
+    )[0]
 
 
 def _restore_row(
     connection: sqlite3.Connection,
     row: sqlite3.Row,
+    *,
+    ancestry: frozenset[ArtifactId],
 ) -> tuple[ThesisHealthObservationV2, ThesisHealthInputBundle]:
     observation = ThesisHealthObservationV2.from_canonical_dict(
         _object_json(str(row["observation_json"]))
@@ -290,11 +360,12 @@ def _restore_row(
     ):
         raise ValueError("Thesis health replay references are invalid")
     if prior is not None:
-        stored_prior = connection.execute(
-            "SELECT content_hash FROM thesis_health_observations WHERE observation_id = ?",
-            (str(prior.observation_id),),
-        ).fetchone()
-        if stored_prior is None or stored_prior["content_hash"] != prior.content_hash:
+        stored_prior = _load_observation(
+            connection,
+            prior.observation_id,
+            ancestry=ancestry,
+        )
+        if stored_prior != prior:
             raise ValueError("Thesis health prior Observation reference is invalid")
     expected = ThesisHealthObservationBuilder().build(bundle)
     if expected != observation:
@@ -306,13 +377,7 @@ def _validate_latest_prior(
     connection: sqlite3.Connection,
     observation: ThesisHealthObservationV2,
 ) -> None:
-    latest = connection.execute(
-        """
-        SELECT observation_id, content_hash FROM thesis_health_observations
-        WHERE thesis_id = ? ORDER BY assessed_at DESC, observation_id DESC LIMIT 1
-        """,
-        (str(observation.thesis_id),),
-    ).fetchone()
+    latest = _chain_tip(connection, observation.thesis_id)
     expected = (
         str(observation.prior_observation_id)
         if observation.prior_observation_id is not None
@@ -326,6 +391,28 @@ def _validate_latest_prior(
         raise ValueError("Thesis health command does not bind latest prior Observation")
     if observation.prior_observation_hash != latest["content_hash"]:
         raise ValueError("latest prior Observation hash mismatch")
+
+
+def _chain_tip(
+    connection: sqlite3.Connection,
+    thesis_id: ThesisId,
+) -> sqlite3.Row | None:
+    rows = connection.execute(
+        """
+        SELECT parent.observation_id, parent.content_hash
+        FROM thesis_health_observations AS parent
+        WHERE parent.thesis_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM thesis_health_observations AS child
+              WHERE child.prior_observation_id = parent.observation_id
+          )
+        """,
+        (str(thesis_id),),
+    ).fetchall()
+    if len(rows) > 1:
+        raise ValueError("Thesis health Observation chain has multiple tips")
+    return rows[0] if rows else None
 
 
 def _row_values(
@@ -367,24 +454,71 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if migration is None:
         raise ValueError("Thesis health migration 008 is not applied")
-    for table, required_columns in _REQUIRED_COLUMNS.items():
-        actual_columns = tuple(
-            str(row["name"])
+    for table, required_info in _REQUIRED_TABLE_INFO.items():
+        actual_info = tuple(
+            (
+                str(row["name"]),
+                str(row["type"]).upper(),
+                int(row["notnull"]),
+                int(row["pk"]),
+            )
             for row in connection.execute(f"PRAGMA table_info({table})")
         )
-        if actual_columns != required_columns:
+        if actual_info != required_info:
             raise ValueError(f"Thesis health table schema mismatch: {table}")
-    table_sql = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'thesis_health_observations'"
+        indexes = tuple(connection.execute(f"PRAGMA index_list({table})"))
+        unique_columns = {
+            tuple(
+                str(column["name"])
+                for column in connection.execute(
+                    f"PRAGMA index_info('{index['name']}')"
+                )
+            )
+            for index in indexes
+            if int(index["unique"]) == 1
+            and str(index["origin"]) == "u"
+        }
+        if unique_columns != _REQUIRED_UNIQUE_COLUMNS[table]:
+            raise ValueError(f"Thesis health unique constraint mismatch: {table}")
+        foreign_keys = {
+            (
+                str(item["table"]),
+                str(item["from"]),
+                str(item["to"]),
+                str(item["on_update"]),
+                str(item["on_delete"]),
+                str(item["match"]),
+            )
+            for item in connection.execute(f"PRAGMA foreign_key_list({table})")
+        }
+        if foreign_keys != _REQUIRED_FOREIGN_KEYS[table]:
+            raise ValueError(f"Thesis health foreign key mismatch: {table}")
+        table_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        compact = (
+            _compact_sql(str(table_sql["sql"]))
+            if table_sql is not None
+            else ""
+        )
+        if any(check not in compact for check in _REQUIRED_CHECKS[table]):
+            raise ValueError(f"Thesis health check constraint mismatch: {table}")
+    root_index = connection.execute(
+        """
+        SELECT sql FROM sqlite_master
+        WHERE type = 'index' AND name = 'thesis_health_one_root_per_thesis'
+        """
     ).fetchone()
-    compact = _compact_sql(str(table_sql["sql"])) if table_sql is not None else ""
-    for check in (
-        "check(thesis_version>=0)",
-        "check(observed_health_statein('healthy','weakening','invalidated','data_insufficient'))",
-        "unique(thesis_id,assessed_at)",
+    expected_root = """
+        CREATE UNIQUE INDEX thesis_health_one_root_per_thesis
+        ON thesis_health_observations(thesis_id)
+        WHERE prior_observation_id IS NULL
+    """
+    if root_index is None or _compact_sql(str(root_index["sql"])) != _compact_sql(
+        expected_root
     ):
-        if check not in compact:
-            raise ValueError("Thesis health check constraint mismatch")
+        raise ValueError("Thesis health root uniqueness index mismatch")
     triggers = {
         str(row["name"]): str(row["sql"])
         for row in connection.execute(

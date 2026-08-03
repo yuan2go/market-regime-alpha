@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS thesis_health_observations (
     configuration_hash TEXT NOT NULL,
     rule_set_id TEXT NOT NULL,
     rule_set_hash TEXT NOT NULL,
-    prior_observation_id TEXT,
+    prior_observation_id TEXT UNIQUE,
     prior_observation_hash TEXT,
     observation_json TEXT NOT NULL,
     input_bundle_json TEXT NOT NULL,
@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS thesis_health_commands (
     FOREIGN KEY (observation_id)
         REFERENCES thesis_health_observations(observation_id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS thesis_health_one_root_per_thesis
+ON thesis_health_observations(thesis_id)
+WHERE prior_observation_id IS NULL;
 
 CREATE TRIGGER IF NOT EXISTS thesis_health_observations_no_update
 BEFORE UPDATE ON thesis_health_observations

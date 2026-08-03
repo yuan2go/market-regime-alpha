@@ -341,6 +341,26 @@ def test_configuration_identity_and_hash_tamper_are_rejected() -> None:
     with pytest.raises(ValueError, match="identity"):
         ThesisHealthRuleConfiguration.from_canonical_dict(payload)
 
+
+@pytest.mark.parametrize("invalid", (True, 1.5))
+def test_canonical_integer_fields_reject_bool_and_fractional_values(
+    invalid: object,
+) -> None:
+    thesis = _thesis()
+    rule_set = ThesisInvalidationRuleSet.create(
+        thesis_id=thesis.thesis_id,
+        thesis_version=thesis.version,
+        rules=_rules(thesis),
+    )
+    with pytest.raises(ValueError, match="integer"):
+        replace(rule_set, thesis_version=invalid)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="integer"):
+        replace(
+            _configuration(),
+            minimum_path_usable_sample_count=invalid,  # type: ignore[arg-type]
+        )
+
     payload = _configuration().to_canonical_dict()
     payload["configuration_id"] = "thesis-health-config-forged"
     with pytest.raises(ValueError, match="identity"):
