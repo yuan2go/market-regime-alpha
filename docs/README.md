@@ -103,6 +103,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Production Decision Lifecycle Approved Design](superpowers/specs/2026-08-01-production-decision-lifecycle-design.md)
 - [Production Decision Lifecycle Implementation Plan](superpowers/plans/2026-08-01-production-decision-lifecycle.md)
 - [Production Lifecycle Hardening and Shadow Readiness Plan](superpowers/plans/2026-08-01-production-lifecycle-hardening-shadow-readiness.md)
+- [H4 Reducing-Risk Decision Route Design](superpowers/specs/2026-08-03-h4-reducing-risk-decision-route-design.md)
+- [H4 Reducing-Risk Decision Route Implementation Plan](superpowers/plans/2026-08-03-h4-reducing-risk-decision-route.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
@@ -122,6 +124,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 ### Audit and archive
 
 - [Claude Code Engineering Program Update — 2026-08-01](audit/Claude-Code-Engineering-Program-Update-2026-08-01.md)
+- [Current Main Code Audit — 2026-08-01](audit/Current-Main-Code-Audit-2026-08-01.md)
+- [H4 Risk Route Delivery](audit/H4-Risk-Route-Delivery.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)

@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-01  
+> **Last Updated:** 2026-08-03
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md  
-> **Code Evidence:** `main@e183fdac285786ed448c835e65c99dc67189c2b9`  
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
+> **Code Evidence:** `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -29,7 +29,7 @@ Data and Evidence
 
 The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable SQLite journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability.
 
-However, current `main` is **not a green verified baseline**. Commit `e183fdac` introduced the H4 reducing-risk domain model, migration and tests without the Repository/Application Service/package-export files required by those tests. The current H4 test module therefore references missing imports and a missing `portfolio.sqlite_risk_routes` module. Until that integration is completed and the full gate is rerun, current HEAD must not be described as passing.
+The H4 implementation checkpoint is a green verified engineering baseline. It completes the reducing-risk Repository, Application Service, strict restoration, idempotency, append-only command/decision persistence and a decision-only CLI. This restores current-main engineering integrity; it does not create a ManualTrade, Fill, Broker Order or trading authority.
 
 ## 2. Current stage
 
@@ -42,8 +42,8 @@ PRODUCTION_DECISION_LIFECYCLE_PHASES_0_TO_7_ENGINEERING_COMPLETE_ON_PRIOR_CHECKP
 H1_COMPLETE_ACCOUNT_PORTFOLIO_RISK_IMPLEMENTED_SQLITE
 H2_THESIS_TO_OUTCOME_TRACE_IMPLEMENTED_SQLITE
 H3_FILL_CALENDAR_DERIVED_T_PLUS_ONE_IMPLEMENTED
-H4_REDUCING_RISK_ROUTE_PARTIAL_BROKEN_ON_CURRENT_MAIN
-CURRENT_HEAD_FULL_GATE_NOT_ESTABLISHED
+H4_REDUCING_RISK_ROUTE_IMPLEMENTED_AND_VERIFIED
+H4_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -177,26 +177,21 @@ The source remains human-recorded Fill evidence and synthetic/test calendar/stat
 
 ### 3.9 H4 increasing versus reducing risk
 
-Current code contains a substantial H4 domain implementation in `portfolio/risk_routes.py`:
+H4 is **IMPLEMENTED_AND_VERIFIED** at `3672067549e1b72a8bfd390f8320e2a7c55c599e`:
 
 - `RiskChangeKind` separates OPEN/ADD from REDUCE/EXIT;
 - increasing-risk references require an approved complete-account RiskDecision;
 - reducing-risk decisions require a Thesis-scoped H3 Position;
 - target/order quantities cannot increase or overstate the position;
-- A-share sellable quantity, suspension, price-limit state, observation timing and liquidity participation are checked;
+- A-share sellable quantity, suspension, price-limit state, position/observation freshness and liquidity participation are checked;
 - output is `PERMITTED_FOR_MANUAL_CONFIRMATION`, `BLOCKED` or `DATA_INSUFFICIENT`;
-- migration 007 defines append-only reducing decisions and idempotency commands.
+- migration 007 defines append-only reducing decisions and idempotency commands, with repeat-safe initialization and validation of columns, constraints, foreign keys and trigger semantics;
+- `SQLiteRiskRouteRepository` restores all canonical evidence and reruns the Gate before returning a decision;
+- `RiskRouteApplicationService` validates the command, performs semantic replay and atomically persists the immutable evidence bundle;
+- public package exports and `application/trading_lifecycle` expose the stable H4 route;
+- `scripts/assess_risk_reduction.py` emits `DECISION_ONLY`, `NO_ORDER_CREATED` and `TRADING_AUTHORITY_NOT_GRANTED`.
 
-Current H4 status is nevertheless **PARTIAL_BROKEN_ON_CURRENT_MAIN** because:
-
-- `portfolio/sqlite_risk_routes.py` is absent;
-- `SQLiteRiskRouteRepository` is absent;
-- `RiskRouteApplicationService` is absent;
-- H4 types and services are not exported by `portfolio/__init__.py`;
-- `application/trading_lifecycle` does not expose the H4 route;
-- `tests/portfolio/test_risk_route_separation.py` imports those missing symbols/modules.
-
-H4 must not be marked delivered until these pieces exist and the current full test gate passes.
+The CLI is an assessment/persistence entry point only. Connecting a permitted decision to ManualTrade/Fill is the separate H4.5 work package and is not part of H4.
 
 ### 3.10 Manual execution, Position and review
 
@@ -254,19 +249,21 @@ The existing APScheduler factory belongs to the Legacy Dividend-T context and do
 
 Repository delivery records report passing focused and full gates for earlier semantic checkpoints, including Phase 0–7 and H1–H3. Those records are useful commit-bound evidence.
 
-### 6.2 Current HEAD evidence
+### 6.2 Current checkpoint evidence
 
-Current `main@e183fdac` has no observed GitHub Actions workflow run or commit status in the connected repository view. Independent clone/test execution was not available in the audit environment because the runtime could not resolve `github.com`.
-
-Static inspection of current HEAD found the H4 missing-import/module defect described above. Therefore:
+The local Python 3.12 verification on implementation checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e` observed:
 
 ```text
-CURRENT_HEAD_TEST_PASS = NOT_ESTABLISHED
-CURRENT_HEAD_BUILD_HEALTH = NOT_ESTABLISHED
-CURRENT_HEAD_HAS_STATIC_COLLECTION_BLOCKER = TRUE
+FOCUSED_H4 = 22 passed, 0 skipped, 0 failed
+H4_RELATED_CONTEXTS = 92 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1305 passed, 0 skipped, 0 failed
+RUFF = PASS
+MYPY_FORMAL_SCOPE = PASS, 256 source files
+PACKAGE_BUILD = PASS, sdist and wheel
+DOCUMENT_AUTHORITY_AND_LINKS = PASS
 ```
 
-Historical PASS records must not be copied forward as current HEAD verification.
+The CI workflow now runs docs validation, pytest, Ruff, the configured mypy scope and `python -m build` on Python 3.12 for push and pull requests. A remote GitHub Actions result for this branch is not yet evidence in this local delivery record.
 
 ## 7. Not implemented as production authority
 
@@ -276,7 +273,7 @@ Historical PASS records must not be copied forward as current HEAD verification.
 - validated Signal, PathForecast, Portfolio, Risk, Holding or Exit parameters;
 - formal PIT and formal OOS Alpha evidence;
 - sustained real 14:55 Shadow runs;
-- H4 durable application integration on current main;
+- H4.5 reducing-decision-to-manual-execution bridge;
 - Artifact-derived Thesis-health observations;
 - composite operational evidence manifest;
 - durable Holding/Exit schedules and acknowledgement state;
@@ -297,20 +294,19 @@ Research outputs may support manual decisions. No current component may:
 - automatically promote a model;
 - describe exploratory thresholds as validated parameters;
 - describe CandidateSet or Signal as an Entry;
-- describe current H4 as delivered before its integration and full gate are complete.
+- treat a permitted H4 decision as an order, Fill or execution confirmation.
 
 ## 9. Immediate required sequence
 
 ```text
-P0 restore a green current main
-  1. complete H4 Repository/Application/exports/CLI integration
-  2. run focused H4 tests
-  3. run full pytest, Ruff, mypy, docs and package-build gates
-  4. attach commit-bound results
+P0 engineering baseline restored
+  H4 Repository/Application/exports/CLI integration complete
+  → exact-commit pytest, Ruff, mypy, docs and package-build gates complete
 
 P1 complete pre-Shadow mechanics
   H5 Artifact-derived Thesis Health
   → H6 Composite Evidence Manifest
+  → H4.5 Risk-Reducing Decision to Manual Execution Bridge
   → H7 Durable Holding/Exit Operations
   → H8 Recoverable ShadowRun
   → H9 Validation Infrastructure
@@ -335,4 +331,4 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with strong evidence and manual-lifecycle engineering, but without formal Alpha, production operations or trading authority. Current main additionally requires an H4 integration repair before it can be treated as a green engineering baseline.**
+> **A pre-Shadow research decision platform with a verified H4 engineering baseline and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**

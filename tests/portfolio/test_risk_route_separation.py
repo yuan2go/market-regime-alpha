@@ -35,8 +35,10 @@ from market_regime_alpha.portfolio import (
     ReducingExecutionObservation,
     RiskChangeKind,
     RiskReducingGateConfiguration,
+    RiskReducingExecutionGate,
     RiskReducingDecisionState,
     RiskRouteApplicationService,
+    SQLiteCompleteAccountPortfolioRiskRepository,
     SQLiteRiskRouteRepository,
 )
 from market_regime_alpha.portfolio.sqlite_risk_routes import (
@@ -45,7 +47,6 @@ from market_regime_alpha.portfolio.sqlite_risk_routes import (
 from market_regime_alpha.position import (
     PositionProjector,
     PositionSnapshot,
-    PositionState,
     SymbolTradingSessionStatus,
     SymbolTradingState,
 )
@@ -54,6 +55,7 @@ from market_regime_alpha.position import (
 TZ = ZoneInfo("Asia/Shanghai")
 FRIDAY = date(2026, 7, 17)
 MONDAY = date(2026, 7, 20)
+TUESDAY = date(2026, 7, 21)
 NOW = datetime(2026, 7, 20, 14, 55, tzinfo=TZ)
 
 
@@ -72,7 +74,8 @@ def _calendar():
         calendar_version="synthetic-risk-route-v1",
         timezone_name="Asia/Shanghai",
         sessions=tuple(
-            TradingSession(day, _at(day, 15)) for day in (FRIDAY, MONDAY)
+            TradingSession(day, _at(day, 15))
+            for day in (FRIDAY, MONDAY, TUESDAY)
         ),
     )
 
@@ -159,6 +162,7 @@ def _position(
     status: SymbolTradingState = SymbolTradingState.TRADABLE,
     same_session: bool = False,
     reconciliation: bool = False,
+    as_of: datetime = NOW,
 ) -> PositionSnapshot:
     book = _book()
     buy = _trade(book, TradeSide.BUY, 100, 1)
@@ -180,14 +184,15 @@ def _position(
         fills=fills,
         calendar=_calendar(),
         symbol_session_statuses=(_status(status),),
-        as_of=NOW,
+        as_of=as_of,
     )
 
 
 def _configuration() -> RiskReducingGateConfiguration:
     return RiskReducingGateConfiguration.create(
-        profile_id="test_risk_reducing_gate_v1",
+        profile_id="test_risk_reducing_gate_v2",
         maximum_position_age_seconds=60.0,
+        maximum_observation_age_seconds=120.0,
         maximum_liquidity_participation=0.1,
     )
 
@@ -196,16 +201,23 @@ def _observation(
     state: ExecutionConstraintState = ExecutionConstraintState.EXECUTABLE,
     *,
     average_daily_volume: int = 10_000,
+    symbol: str = "000001.SZ",
+    session_date: date = MONDAY,
+    availability_time: datetime | None = None,
 ) -> ReducingExecutionObservation:
     return ReducingExecutionObservation.create(
-        symbol="000001.SZ",
-        session_date=MONDAY,
+        symbol=symbol,
+        session_date=session_date,
         state=state,
         reference_price=10.0,
         average_daily_volume=average_daily_volume,
         source_artifact_id=ArtifactId("execution-constraint-source"),
         source_artifact_hash=_sha("b"),
-        availability_time=NOW - timedelta(minutes=1),
+        availability_time=(
+            availability_time
+            if availability_time is not None
+            else NOW - timedelta(minutes=1)
+        ),
         reason_code=f"SYNTHETIC_{state.value}",
     )
 
@@ -234,6 +246,224 @@ def test_valid_exit_does_not_depend_on_increasing_risk_service(tmp_path) -> None
 
     assert decision.state is RiskReducingDecisionState.PERMITTED_FOR_MANUAL_CONFIRMATION
     assert decision.reason_codes == ("STRICT_RISK_REDUCTION_PERMITTED",)
+
+
+def test_valid_reduce_is_permitted_for_manual_confirmation(tmp_path) -> None:
+    service, _ = _service(tmp_path)
+
+    decision = service.assess_reducing(
+        action=RiskChangeKind.REDUCE,
+        position=_position(),
+        target_quantity=80,
+        order_quantity=20,
+        execution_observation=_observation(),
+        configuration=_configuration(),
+        actor="risk-reduction-operator",
+        reason="strict manual reduction",
+        assessed_at=NOW + timedelta(seconds=1),
+        idempotency_key="valid-reduce",
+    )
+
+    assert decision.state is RiskReducingDecisionState.PERMITTED_FOR_MANUAL_CONFIRMATION
+    assert decision.target_quantity == 80
+    assert decision.order_quantity == 20
+
+
+@pytest.mark.parametrize("action", (RiskChangeKind.OPEN, RiskChangeKind.ADD))
+def test_increasing_actions_are_rejected_before_the_reducing_gate(
+    tmp_path, action: RiskChangeKind
+) -> None:
+    service, _ = _service(tmp_path)
+
+    with pytest.raises(ValueError, match="increasing Risk"):
+        service.assess_reducing(
+            action=action,
+            position=_position(),
+            target_quantity=120,
+            order_quantity=20,
+            execution_observation=_observation(),
+            configuration=_configuration(),
+            actor="risk-reduction-operator",
+            reason="bypass attempt",
+            assessed_at=NOW + timedelta(seconds=1),
+            idempotency_key=f"reject-{action.value.lower()}",
+        )
+
+
+@pytest.mark.parametrize("action", (RiskChangeKind.OPEN, RiskChangeKind.ADD))
+def test_increasing_actions_are_rejected_by_the_reducing_gate(
+    action: RiskChangeKind,
+) -> None:
+    with pytest.raises(ValueError, match="increasing Risk"):
+        RiskReducingExecutionGate().assess(
+            action=action,
+            position=_position(),
+            target_quantity=120,
+            order_quantity=20,
+            execution_observation=_observation(),
+            configuration=_configuration(),
+            actor="risk-reduction-operator",
+            reason="direct gate bypass attempt",
+            assessed_at=NOW + timedelta(seconds=1),
+        )
+
+
+def test_application_service_rejects_idempotency_key_semantic_conflict(
+    tmp_path,
+) -> None:
+    service, _ = _service(tmp_path)
+    arguments = {
+        "action": RiskChangeKind.REDUCE,
+        "position": _position(),
+        "target_quantity": 80,
+        "order_quantity": 20,
+        "execution_observation": _observation(),
+        "configuration": _configuration(),
+        "actor": "risk-reduction-operator",
+        "reason": "original reducing command",
+        "assessed_at": NOW + timedelta(seconds=1),
+        "idempotency_key": "application-conflict",
+    }
+    service.assess_reducing(**arguments)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="idempotency key reused"):
+        service.assess_reducing(
+            **{**arguments, "reason": "different command semantics"}  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("target_quantity", "order_quantity"),
+    ((80.5, 19.5), (True, 99)),
+)
+def test_application_service_rejects_non_integer_order_quantities(
+    tmp_path,
+    target_quantity: object,
+    order_quantity: object,
+) -> None:
+    service, _ = _service(tmp_path)
+
+    with pytest.raises(ValueError, match="must be an integer"):
+        service.assess_reducing(
+            action=RiskChangeKind.REDUCE,
+            position=_position(),
+            target_quantity=target_quantity,  # type: ignore[arg-type]
+            order_quantity=order_quantity,  # type: ignore[arg-type]
+            execution_observation=_observation(),
+            configuration=_configuration(),
+            actor="risk-reduction-operator",
+            reason="illegal quantity type",
+            assessed_at=NOW + timedelta(seconds=1),
+            idempotency_key="illegal-quantity-type",
+        )
+
+
+@pytest.mark.parametrize(
+    ("position", "observation", "reason_code"),
+    (
+        (
+            _position(as_of=NOW - timedelta(minutes=2)),
+            _observation(),
+            "POSITION_SNAPSHOT_STALE",
+        ),
+        (
+            _position(),
+            _observation(availability_time=NOW - timedelta(minutes=3)),
+            "EXECUTION_OBSERVATION_STALE",
+        ),
+        (
+            _position(),
+            _observation(availability_time=NOW + timedelta(seconds=2)),
+            "EXECUTION_OBSERVATION_UNAVAILABLE",
+        ),
+        (
+            _position(),
+            _observation(symbol="000002.SZ"),
+            "EXECUTION_OBSERVATION_SCOPE_MISMATCH",
+        ),
+        (
+            _position(),
+            _observation(session_date=FRIDAY),
+            "EXECUTION_OBSERVATION_SCOPE_MISMATCH",
+        ),
+    ),
+)
+def test_stale_future_or_scope_mismatched_evidence_is_never_permitted(
+    tmp_path,
+    position: PositionSnapshot,
+    observation: ReducingExecutionObservation,
+    reason_code: str,
+) -> None:
+    service, _ = _service(tmp_path)
+
+    decision = service.assess_reducing(
+        action=RiskChangeKind.EXIT,
+        position=position,
+        target_quantity=0,
+        order_quantity=100,
+        execution_observation=observation,
+        configuration=_configuration(),
+        actor="risk-reduction-operator",
+        reason="freshness and scope fixture",
+        assessed_at=NOW + timedelta(seconds=1),
+        idempotency_key=f"insufficient-{reason_code}",
+    )
+
+    assert decision.state is RiskReducingDecisionState.DATA_INSUFFICIENT
+    assert reason_code in decision.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("action", "position", "target", "order", "reason_code"),
+    (
+        (
+            RiskChangeKind.REDUCE,
+            _position(same_session=True),
+            80,
+            20,
+            "T_PLUS_ONE_NOT_SELLABLE",
+        ),
+        (
+            RiskChangeKind.REDUCE,
+            _position(),
+            100,
+            0,
+            "REDUCE_REQUIRES_STRICTLY_LOWER_TARGET",
+        ),
+        (
+            RiskChangeKind.EXIT,
+            _position(),
+            80,
+            20,
+            "EXIT_REQUIRES_ZERO_TARGET",
+        ),
+    ),
+)
+def test_reducing_quantity_boundaries_are_blocked(
+    tmp_path,
+    action: RiskChangeKind,
+    position: PositionSnapshot,
+    target: int,
+    order: int,
+    reason_code: str,
+) -> None:
+    service, _ = _service(tmp_path)
+
+    decision = service.assess_reducing(
+        action=action,
+        position=position,
+        target_quantity=target,
+        order_quantity=order,
+        execution_observation=_observation(),
+        configuration=_configuration(),
+        actor="risk-reduction-operator",
+        reason="quantity boundary fixture",
+        assessed_at=NOW + timedelta(seconds=1),
+        idempotency_key=f"quantity-{reason_code}",
+    )
+
+    assert decision.state is RiskReducingDecisionState.BLOCKED
+    assert reason_code in decision.reason_codes
 
 
 @pytest.mark.parametrize(
@@ -335,6 +565,7 @@ def test_liquidity_idempotency_restart_audit_and_migration(tmp_path) -> None:
     assert first.reason == "manual audited reduction"
     assert restarted.get_reducing_decision(first.decision_id) == first
 
+    SQLiteCompleteAccountPortfolioRiskRepository(repository.path)
     with sqlite3.connect(repository.path) as connection:
         connection.executescript(
             RISK_ROUTE_DOWN_MIGRATION.read_text(encoding="utf-8")

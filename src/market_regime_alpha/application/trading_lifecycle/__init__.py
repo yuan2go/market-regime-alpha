@@ -27,6 +27,7 @@ from market_regime_alpha.application.trading_lifecycle.review import (
     replay_lifecycle_review,
     run_lifecycle_review_input,
 )
+from market_regime_alpha.portfolio.risk_routes import RiskRouteApplicationService
 
 __all__ = [
     "CompleteAccountPortfolioRiskApplicationService",
@@ -36,6 +37,7 @@ __all__ = [
     "ManualExecutionApplicationService",
     "PortfolioRiskApplicationService",
     "PositionAuthoritativePortfolioRiskApplicationService",
+    "RiskRouteApplicationService",
     "TraceableManualExecutionApplicationService",
     "VerifiedLifecycleReview",
     "load_verified_lifecycle_review",
