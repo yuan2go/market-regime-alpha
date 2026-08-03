@@ -201,6 +201,55 @@ def test_repository_rejects_same_decision_id_with_different_content(
         )
 
 
+def test_repository_rejects_same_name_tables_with_weakened_constraints(
+    tmp_path,
+) -> None:
+    database = tmp_path / "weak-schema.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE risk_reducing_decisions (
+                decision_id TEXT, position_snapshot_id TEXT,
+                position_book_id TEXT, thesis_id TEXT, action TEXT,
+                state TEXT, content_hash TEXT, position_json TEXT,
+                observation_json TEXT, configuration_json TEXT,
+                decision_json TEXT, assessed_at TEXT
+            );
+            CREATE TABLE risk_reducing_commands (
+                idempotency_key TEXT, command_hash TEXT,
+                decision_id TEXT, created_at TEXT
+            );
+            CREATE TRIGGER risk_reducing_decisions_no_update
+            BEFORE UPDATE ON risk_reducing_decisions BEGIN SELECT 1; END;
+            CREATE TRIGGER risk_reducing_decisions_no_delete
+            BEFORE DELETE ON risk_reducing_decisions BEGIN SELECT 1; END;
+            CREATE TRIGGER risk_reducing_commands_no_update
+            BEFORE UPDATE ON risk_reducing_commands BEGIN SELECT 1; END;
+            CREATE TRIGGER risk_reducing_commands_no_delete
+            BEFORE DELETE ON risk_reducing_commands BEGIN SELECT 1; END;
+            """
+        )
+
+    with pytest.raises(ValueError, match="table schema mismatch"):
+        SQLiteRiskRouteRepository(database)
+
+
+def test_repository_rejects_spoofed_append_only_trigger(tmp_path) -> None:
+    database = tmp_path / "spoofed-trigger.sqlite3"
+    SQLiteRiskRouteRepository(database)
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            DROP TRIGGER risk_reducing_decisions_no_update;
+            CREATE TRIGGER risk_reducing_decisions_no_update
+            BEFORE UPDATE ON risk_reducing_decisions BEGIN SELECT 1; END;
+            """
+        )
+
+    with pytest.raises(ValueError, match="append-only trigger mismatch"):
+        SQLiteRiskRouteRepository(database)
+
+
 def _stored_decision(tmp_path):
     repository = SQLiteRiskRouteRepository(tmp_path / "risk-routes.sqlite3")
     position, observation, configuration, decision = make_decision()

@@ -74,6 +74,16 @@ class RiskReducingGateConfiguration:
         if self.schema_version != RISK_REDUCING_GATE_CONFIG_SCHEMA:
             raise ValueError("unsupported Risk reducing configuration")
         _text("profile_id", self.profile_id)
+        for field_name in (
+            "maximum_position_age_seconds",
+            "maximum_observation_age_seconds",
+            "maximum_liquidity_participation",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _number(field_name, getattr(self, field_name)),
+            )
         if (
             not isfinite(self.maximum_position_age_seconds)
             or self.maximum_position_age_seconds <= 0.0
@@ -120,12 +130,21 @@ class RiskReducingGateConfiguration:
         maximum_observation_age_seconds: float,
         maximum_liquidity_participation: float,
     ) -> RiskReducingGateConfiguration:
+        position_age = _number(
+            "maximum_position_age_seconds", maximum_position_age_seconds
+        )
+        observation_age = _number(
+            "maximum_observation_age_seconds", maximum_observation_age_seconds
+        )
+        participation = _number(
+            "maximum_liquidity_participation", maximum_liquidity_participation
+        )
         semantic = {
             "schema_version": RISK_REDUCING_GATE_CONFIG_SCHEMA,
             "profile_id": profile_id,
-            "maximum_position_age_seconds": maximum_position_age_seconds,
-            "maximum_observation_age_seconds": maximum_observation_age_seconds,
-            "maximum_liquidity_participation": maximum_liquidity_participation,
+            "maximum_position_age_seconds": position_age,
+            "maximum_observation_age_seconds": observation_age,
+            "maximum_liquidity_participation": participation,
         }
         digest = canonical_hash(semantic)
         return cls(
@@ -133,9 +152,9 @@ class RiskReducingGateConfiguration:
             configuration_id=_content_id("risk-reducing-config", digest),
             configuration_hash=digest,
             profile_id=profile_id,
-            maximum_position_age_seconds=maximum_position_age_seconds,
-            maximum_observation_age_seconds=maximum_observation_age_seconds,
-            maximum_liquidity_participation=maximum_liquidity_participation,
+            maximum_position_age_seconds=position_age,
+            maximum_observation_age_seconds=observation_age,
+            maximum_liquidity_participation=participation,
         )
 
     @classmethod
@@ -160,14 +179,17 @@ class RiskReducingGateConfiguration:
             configuration_id=ArtifactId(str(payload["configuration_id"])),
             configuration_hash=str(payload["configuration_hash"]),
             profile_id=str(payload["profile_id"]),
-            maximum_position_age_seconds=float(
-                payload["maximum_position_age_seconds"]
+            maximum_position_age_seconds=_number(
+                "maximum_position_age_seconds",
+                payload["maximum_position_age_seconds"],
             ),
-            maximum_observation_age_seconds=float(
-                payload["maximum_observation_age_seconds"]
+            maximum_observation_age_seconds=_number(
+                "maximum_observation_age_seconds",
+                payload["maximum_observation_age_seconds"],
             ),
-            maximum_liquidity_participation=float(
-                payload["maximum_liquidity_participation"]
+            maximum_liquidity_participation=_number(
+                "maximum_liquidity_participation",
+                payload["maximum_liquidity_participation"],
             ),
         )
 
@@ -192,6 +214,11 @@ class ReducingExecutionObservation:
             raise ValueError("unsupported reducing execution observation")
         _text("symbol", self.symbol)
         _text("reason_code", self.reason_code)
+        object.__setattr__(
+            self,
+            "reference_price",
+            _number("reference_price", self.reference_price),
+        )
         _integer("average_daily_volume", self.average_daily_volume)
         if (
             not isfinite(self.reference_price)
@@ -245,12 +272,13 @@ class ReducingExecutionObservation:
         availability_time: datetime,
         reason_code: str,
     ) -> ReducingExecutionObservation:
+        normalized_price = _number("reference_price", reference_price)
         semantic = {
             "schema_version": REDUCING_EXECUTION_OBSERVATION_SCHEMA,
             "symbol": symbol,
             "session_date": session_date.isoformat(),
             "state": state.value,
-            "reference_price": reference_price,
+            "reference_price": normalized_price,
             "average_daily_volume": average_daily_volume,
             "source_artifact_id": str(source_artifact_id),
             "source_artifact_hash": source_artifact_hash,
@@ -265,7 +293,7 @@ class ReducingExecutionObservation:
             symbol=symbol,
             session_date=session_date,
             state=state,
-            reference_price=reference_price,
+            reference_price=normalized_price,
             average_daily_volume=average_daily_volume,
             source_artifact_id=source_artifact_id,
             source_artifact_hash=source_artifact_hash,
@@ -302,7 +330,7 @@ class ReducingExecutionObservation:
             symbol=str(payload["symbol"]),
             session_date=date.fromisoformat(str(payload["session_date"])),
             state=ExecutionConstraintState(str(payload["state"])),
-            reference_price=float(payload["reference_price"]),
+            reference_price=_number("reference_price", payload["reference_price"]),
             average_daily_volume=_integer(
                 "average_daily_volume", payload["average_daily_volume"]
             ),
@@ -789,8 +817,8 @@ def _content_id(prefix: str, digest: str) -> ArtifactId:
     return ArtifactId(f"{prefix}-{digest.split(':', 1)[1][:24]}")
 
 
-def _text(label: str, value: str) -> None:
-    if not value or value != value.strip():
+def _text(label: str, value: object) -> None:
+    if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{label} must be a non-empty trimmed string")
 
 
@@ -798,6 +826,12 @@ def _integer(label: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{label} must be an integer")
     return value
+
+
+def _number(label: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be numeric")
+    return float(value)
 
 
 def _fields(

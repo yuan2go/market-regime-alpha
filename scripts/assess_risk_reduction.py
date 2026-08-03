@@ -61,6 +61,12 @@ def _integer(value: object, *, name: str) -> int:
     return value
 
 
+def _string(value: object, *, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    return value
+
+
 def _assess(database: Path, request: dict[str, Any]) -> dict[str, object]:
     position = PositionSnapshot.from_canonical_dict(
         _object(request["position_snapshot"], name="position_snapshot")
@@ -74,7 +80,7 @@ def _assess(database: Path, request: dict[str, Any]) -> dict[str, object]:
     decision = RiskRouteApplicationService(
         SQLiteRiskRouteRepository(database)
     ).assess_reducing(
-        action=RiskChangeKind(str(request["action"])),
+        action=RiskChangeKind(_string(request["action"], name="action")),
         position=position,
         target_quantity=_integer(
             request["target_quantity"], name="target_quantity"
@@ -82,10 +88,14 @@ def _assess(database: Path, request: dict[str, Any]) -> dict[str, object]:
         order_quantity=_integer(request["order_quantity"], name="order_quantity"),
         execution_observation=observation,
         configuration=configuration,
-        actor=str(request["actor"]),
-        reason=str(request["reason"]),
-        assessed_at=datetime.fromisoformat(str(request["assessed_at"])),
-        idempotency_key=str(request["idempotency_key"]),
+        actor=_string(request["actor"], name="actor"),
+        reason=_string(request["reason"], name="reason"),
+        assessed_at=datetime.fromisoformat(
+            _string(request["assessed_at"], name="assessed_at")
+        ),
+        idempotency_key=_string(
+            request["idempotency_key"], name="idempotency_key"
+        ),
     )
     return {
         "mode": "DECISION_ONLY",

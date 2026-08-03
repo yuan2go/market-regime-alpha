@@ -136,3 +136,35 @@ def test_cli_reports_non_permitted_decisions_with_explicit_reasons(
     assert result["manual_confirmation_required"] is False
     assert result["execution_boundary"] == "NO_ORDER_CREATED"
     assert result["trading_authority"] == "TRADING_AUTHORITY_NOT_GRANTED"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("action", 1),
+        ("actor", True),
+        ("reason", 123),
+        ("assessed_at", False),
+        ("idempotency_key", 456),
+    ),
+)
+def test_cli_rejects_non_string_command_and_audit_fields(
+    tmp_path,
+    field: str,
+    value: object,
+) -> None:
+    request = tmp_path / f"invalid-{field}.json"
+    _write_request(request, idempotency_key="strict-string-input")
+    payload = json.loads(request.read_text(encoding="utf-8"))
+    payload[field] = value
+    request.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"{field} must be a string"):
+        main(
+            [
+                "--database",
+                str(tmp_path / "invalid.sqlite3"),
+                "--request",
+                str(request),
+            ]
+        )

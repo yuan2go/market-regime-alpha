@@ -23,33 +23,81 @@ _MIGRATION_ROOT = Path(__file__).resolve().parent / "migrations"
 RISK_ROUTE_UP_MIGRATION = _MIGRATION_ROOT / "007_risk_routes_up.sql"
 RISK_ROUTE_DOWN_MIGRATION = _MIGRATION_ROOT / "007_risk_routes_down.sql"
 
-_REQUIRED_COLUMNS = {
-    "risk_reducing_decisions": {
-        "decision_id",
-        "position_snapshot_id",
-        "position_book_id",
-        "thesis_id",
-        "action",
-        "state",
-        "content_hash",
-        "position_json",
-        "observation_json",
-        "configuration_json",
-        "decision_json",
-        "assessed_at",
-    },
+_REQUIRED_TABLE_INFO = {
+    "risk_reducing_decisions": (
+        ("decision_id", "TEXT", 0, 1),
+        ("position_snapshot_id", "TEXT", 1, 0),
+        ("position_book_id", "TEXT", 1, 0),
+        ("thesis_id", "TEXT", 1, 0),
+        ("action", "TEXT", 1, 0),
+        ("state", "TEXT", 1, 0),
+        ("content_hash", "TEXT", 1, 0),
+        ("position_json", "TEXT", 1, 0),
+        ("observation_json", "TEXT", 1, 0),
+        ("configuration_json", "TEXT", 1, 0),
+        ("decision_json", "TEXT", 1, 0),
+        ("assessed_at", "TEXT", 1, 0),
+    ),
+    "risk_reducing_commands": (
+        ("idempotency_key", "TEXT", 0, 1),
+        ("command_hash", "TEXT", 1, 0),
+        ("decision_id", "TEXT", 1, 0),
+        ("created_at", "TEXT", 1, 0),
+    ),
+}
+_REQUIRED_UNIQUE_COLUMNS = {
+    "risk_reducing_decisions": {("content_hash",)},
+    "risk_reducing_commands": set(),
+}
+_REQUIRED_FOREIGN_KEYS = {
+    "risk_reducing_decisions": set(),
     "risk_reducing_commands": {
-        "idempotency_key",
-        "command_hash",
-        "decision_id",
-        "created_at",
+        (
+            "risk_reducing_decisions",
+            "decision_id",
+            "decision_id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE",
+        )
     },
 }
-_REQUIRED_TRIGGERS = {
-    "risk_reducing_decisions_no_update",
-    "risk_reducing_decisions_no_delete",
-    "risk_reducing_commands_no_update",
-    "risk_reducing_commands_no_delete",
+_REQUIRED_TABLE_CHECKS = {
+    "risk_reducing_decisions": {
+        "check(actionin('reduce','exit'))",
+        "check(statein('permitted_for_manual_confirmation','blocked','data_insufficient'))",
+    },
+    "risk_reducing_commands": set(),
+}
+_REQUIRED_TRIGGER_SQL = {
+    "risk_reducing_decisions_no_update": """
+        CREATE TRIGGER risk_reducing_decisions_no_update
+        BEFORE UPDATE ON risk_reducing_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'risk reducing decisions are append-only');
+        END
+    """,
+    "risk_reducing_decisions_no_delete": """
+        CREATE TRIGGER risk_reducing_decisions_no_delete
+        BEFORE DELETE ON risk_reducing_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'risk reducing decisions are append-only');
+        END
+    """,
+    "risk_reducing_commands_no_update": """
+        CREATE TRIGGER risk_reducing_commands_no_update
+        BEFORE UPDATE ON risk_reducing_commands
+        BEGIN
+            SELECT RAISE(ABORT, 'risk reducing commands are append-only');
+        END
+    """,
+    "risk_reducing_commands_no_delete": """
+        CREATE TRIGGER risk_reducing_commands_no_delete
+        BEFORE DELETE ON risk_reducing_commands
+        BEGIN
+            SELECT RAISE(ABORT, 'risk reducing commands are append-only');
+        END
+    """,
 }
 
 
@@ -282,25 +330,71 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if migration is None:
         raise ValueError("risk-route migration 007 is not applied")
-    for table, required in _REQUIRED_COLUMNS.items():
-        actual = {
-            str(row["name"])
+    for table, required in _REQUIRED_TABLE_INFO.items():
+        actual = tuple(
+            (
+                str(row["name"]),
+                str(row["type"]).upper(),
+                int(row["notnull"]),
+                int(row["pk"]),
+            )
             for row in connection.execute(f"PRAGMA table_info({table})")
-        }
+        )
         if actual != required:
             raise ValueError(f"risk-route table schema mismatch: {table}")
+        unique_columns = {
+            tuple(
+                str(column["name"])
+                for column in connection.execute(
+                    f"PRAGMA index_info('{index['name']}')"
+                )
+            )
+            for index in connection.execute(f"PRAGMA index_list({table})")
+            if int(index["unique"]) == 1 and str(index["origin"]) == "u"
+        }
+        if unique_columns != _REQUIRED_UNIQUE_COLUMNS[table]:
+            raise ValueError(f"risk-route unique constraint mismatch: {table}")
+        foreign_keys = {
+            (
+                str(row["table"]),
+                str(row["from"]),
+                str(row["to"]),
+                str(row["on_update"]),
+                str(row["on_delete"]),
+                str(row["match"]),
+            )
+            for row in connection.execute(f"PRAGMA foreign_key_list({table})")
+        }
+        if foreign_keys != _REQUIRED_FOREIGN_KEYS[table]:
+            raise ValueError(f"risk-route foreign key mismatch: {table}")
+        table_row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        if table_row is None:
+            raise ValueError(f"risk-route table schema mismatch: {table}")
+        compact_table_sql = _compact_sql(str(table_row["sql"]))
+        if any(
+            item not in compact_table_sql
+            for item in _REQUIRED_TABLE_CHECKS[table]
+        ):
+            raise ValueError(f"risk-route check constraint mismatch: {table}")
     triggers = {
-        str(row["name"])
+        str(row["name"]): str(row["sql"])
         for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
         )
     }
-    if not _REQUIRED_TRIGGERS.issubset(triggers):
-        raise ValueError("risk-route append-only triggers are missing")
+    for name, expected_sql in _REQUIRED_TRIGGER_SQL.items():
+        actual_sql = triggers.get(name)
+        if actual_sql is None:
+            raise ValueError("risk-route append-only triggers are missing")
+        if _compact_sql(actual_sql) != _compact_sql(expected_sql):
+            raise ValueError(f"risk-route append-only trigger mismatch: {name}")
 
 
-def _key(value: str) -> None:
-    if not value or value != value.strip():
+def _key(value: object) -> None:
+    if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError("idempotency key must be a non-empty trimmed string")
 
 
@@ -319,3 +413,7 @@ def _object_json(value: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("risk-route repository JSON must be an object")
     return payload
+
+
+def _compact_sql(value: str) -> str:
+    return "".join(value.lower().split())
