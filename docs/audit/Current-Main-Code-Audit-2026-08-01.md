@@ -1,6 +1,6 @@
 # Current Main Code Audit — 2026-08-01
 
-> **Status:** CURRENT_AUDIT  
+> **Status:** CURRENT_STATUS
 > **Authority:** Code-first audit of current `main`; implementation facts override older design/status prose  
 > **Owner:** Market Regime Alpha maintainers  
 > **Audited Revision:** `e183fdac285786ed448c835e65c99dc67189c2b9`  
