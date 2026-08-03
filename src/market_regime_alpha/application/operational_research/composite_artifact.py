@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Any
@@ -25,6 +26,9 @@ COMPOSITE_OPERATIONAL_ARTIFACT_FILES = (
     "SHA256SUMS.json",
     "artifact.json",
     "manifest.json",
+)
+_H6_STAGING_DIRECTORY = re.compile(
+    r"^\.composite-operational-[0-9a-f]{24}\.staging-[A-Za-z0-9._-]+$"
 )
 
 
@@ -100,11 +104,7 @@ def cleanup_orphan_composite_staging(root: Path) -> tuple[Path, ...]:
         return ()
     removed: list[Path] = []
     for entry in sorted(root.iterdir(), key=lambda item: item.name):
-        if (
-            entry.is_dir()
-            and entry.name.startswith(".composite-operational-")
-            and ".staging-" in entry.name
-        ):
+        if entry.is_dir() and _H6_STAGING_DIRECTORY.fullmatch(entry.name):
             shutil.rmtree(entry)
             removed.append(entry)
     return tuple(removed)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -52,7 +52,9 @@ def _policy() -> CompositeOperationalCompositionPolicy:
     )
 
 
-def _components() -> tuple[CompositeOperationalComponentReference, ...]:
+def _components(
+    now: datetime = NOW,
+) -> tuple[CompositeOperationalComponentReference, ...]:
     source = CompositeOperationalComponentReference(
         role=CompositeOperationalComponentRole.DAILY_SOURCE_MANIFEST,
         scope_key="PRIMARY",
@@ -60,7 +62,7 @@ def _components() -> tuple[CompositeOperationalComponentReference, ...]:
         content_hash=HASH_A,
         source_manifest_id=ArtifactId("source-manifest-daily"),
         source_manifest_hash=HASH_A,
-        availability_time=AvailabilityTime(NOW),
+        availability_time=AvailabilityTime(now),
         data_eligibility=DataEligibility.EXPLORATORY,
     )
     price = CompositeOperationalComponentReference(
@@ -70,7 +72,7 @@ def _components() -> tuple[CompositeOperationalComponentReference, ...]:
         content_hash=HASH_B,
         source_manifest_id=ArtifactId("source-manifest-daily"),
         source_manifest_hash=HASH_A,
-        availability_time=AvailabilityTime(NOW),
+        availability_time=AvailabilityTime(now),
         data_eligibility=DataEligibility.EXPLORATORY,
     )
     return tuple(sorted((source, price), key=lambda item: item.sort_key))
@@ -90,11 +92,11 @@ def _fields() -> tuple[CompositeOperationalFieldAuthorityReference, ...]:
     )
 
 
-def _manifest() -> CompositeOperationalInputManifest:
+def _manifest(now: datetime = NOW) -> CompositeOperationalInputManifest:
     return CompositeOperationalInputManifest.create(
         status=CompositeOperationalCompositionStatus.VERIFIED,
-        decision_time=DecisionTime(NOW),
-        created_at=NOW,
+        decision_time=DecisionTime(now),
+        created_at=now,
         composition_policy=_policy(),
         daily_artifact_id=ArtifactId("daily-decision-artifact"),
         daily_artifact_hash=HASH_C,
@@ -104,7 +106,7 @@ def _manifest() -> CompositeOperationalInputManifest:
         supplemental_bundle_hash=HASH_C,
         supplemental_source_manifest_id=ArtifactId("source-manifest-supplemental"),
         supplemental_source_manifest_hash=HASH_B,
-        component_references=_components(),
+        component_references=_components(now),
         field_authority_references=_fields(),
         missing_evidence=(),
         source_conflicts=(),
@@ -135,6 +137,23 @@ def test_policy_and_manifest_are_content_addressed_round_trips() -> None:
     assert manifest.formal_pit == "FORMAL_PIT_NOT_ESTABLISHED"
     assert manifest.formal_oos_alpha == "FORMAL_OOS_ALPHA_NOT_ESTABLISHED"
     assert manifest.trading_authority == "TRADING_AUTHORITY_NOT_GRANTED"
+
+
+def test_manifest_identity_normalizes_equivalent_instants_to_utc_seconds() -> None:
+    utc = _manifest(NOW.replace(microsecond=123456))
+    same_instant = _manifest(
+        (NOW + timedelta(hours=8))
+        .replace(tzinfo=timezone(timedelta(hours=8)), microsecond=987654)
+    )
+
+    assert utc.manifest_id == same_instant.manifest_id
+    assert utc.content_hash == same_instant.content_hash
+    assert utc.to_canonical_dict()["decision_time"] == "2026-08-04T10:35:00Z"
+    assert utc.to_canonical_dict()["created_at"] == "2026-08-04T10:35:00Z"
+    assert (
+        utc.to_canonical_dict()["component_references"][0]["availability_time"]
+        == "2026-08-04T10:35:00Z"
+    )
 
 
 def test_policy_rejects_hidden_authority_or_duplicate_requirements() -> None:

@@ -28,7 +28,11 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.daily_decision.reader_registry import (
     load_verified_daily_decision_artifact,
 )
-from market_regime_alpha.evidence.canonical import require_sha256, require_text
+from market_regime_alpha.evidence.canonical import (
+    canonical_datetime,
+    require_sha256,
+    require_text,
+)
 
 
 _MIGRATION_ROOT = Path(__file__).resolve().parent / "migrations"
@@ -236,7 +240,7 @@ class SQLiteCompositeOperationalRepository:
                                 composite=verified,
                             )
                         ),
-                        verified.manifest.created_at.isoformat(),
+                        canonical_datetime(verified.manifest.created_at),
                     ),
                 )
                 stored = _load_manifest(
@@ -307,8 +311,8 @@ def _insert_manifest(
             str(manifest.manifest_id),
             manifest.content_hash,
             manifest.status.value,
-            manifest.decision_time.isoformat(),
-            manifest.created_at.isoformat(),
+            canonical_datetime(manifest.decision_time.value),
+            canonical_datetime(manifest.created_at),
             str(policy.policy_id),
             policy.policy_hash,
             policy.builder_revision,
@@ -336,7 +340,7 @@ def _insert_manifest(
                 item.content_hash,
                 str(item.source_manifest_id),
                 item.source_manifest_hash,
-                item.availability_time.isoformat(),
+                canonical_datetime(item.availability_time.value),
                 item.data_eligibility.value,
             )
             for item in manifest.component_references
@@ -409,7 +413,7 @@ def _resolve_command(
     if (
         expected_hash != row["command_hash"]
         or _object_json(str(row["command_json"])) != expected_projection
-        or row["created_at"] != composite.manifest.created_at.isoformat()
+        or row["created_at"] != canonical_datetime(composite.manifest.created_at)
     ):
         raise ValueError("composite operational command projection mismatch")
     return composite
@@ -448,8 +452,8 @@ def _restore_row(
         row["manifest_id"] == str(manifest.manifest_id)
         and row["content_hash"] == manifest.content_hash
         and row["status"] == manifest.status.value
-        and row["decision_time"] == manifest.decision_time.isoformat()
-        and row["created_at"] == manifest.created_at.isoformat()
+        and row["decision_time"] == canonical_datetime(manifest.decision_time.value)
+        and row["created_at"] == canonical_datetime(manifest.created_at)
         and row["policy_id"] == str(policy.policy_id)
         and row["policy_hash"] == policy.policy_hash
         and row["builder_revision"] == policy.builder_revision
@@ -472,7 +476,7 @@ def _restore_row(
             item.content_hash,
             str(item.source_manifest_id),
             item.source_manifest_hash,
-            item.availability_time.isoformat(),
+            canonical_datetime(item.availability_time.value),
             item.data_eligibility.value,
         )
         for item in manifest.component_references

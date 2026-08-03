@@ -156,5 +156,14 @@ def test_staging_failure_is_cleaned_and_orphan_cleanup_is_h6_scoped(
     orphan.mkdir()
     unrelated = root / ".unrelated-staging"
     unrelated.mkdir()
+    invalid_id = root / ".composite-operational-not-a-digest.staging-orphan"
+    invalid_id.mkdir()
+    embedded_marker = (
+        root
+        / ".composite-operational-0123456789abcdef01234567.backup.staging-orphan"
+    )
+    embedded_marker.mkdir()
     assert cleanup_orphan_composite_staging(root) == (orphan,)
     assert unrelated.is_dir()
+    assert invalid_id.is_dir()
+    assert embedded_marker.is_dir()

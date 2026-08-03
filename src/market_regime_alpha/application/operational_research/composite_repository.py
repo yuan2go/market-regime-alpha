@@ -16,7 +16,7 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.daily_decision.reader import (
     VerifiedPhaseDDailyDecisionArtifact,
 )
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash
 
 
 class CompositeOperationalRepository(Protocol):
@@ -80,7 +80,7 @@ def composite_operational_command_hash(
             ),
             "composition_policy_hash": composite.composition_policy.policy_hash,
             "builder_revision": composite.composition_policy.builder_revision,
-            "created_at": manifest.created_at.isoformat(),
+            "created_at": canonical_datetime(manifest.created_at),
             "manifest_id": str(manifest.manifest_id),
             "manifest_hash": manifest.content_hash,
             "composite_package_checksums_hash": composite.checksums_hash,

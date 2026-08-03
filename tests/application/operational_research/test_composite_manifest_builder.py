@@ -132,6 +132,8 @@ def _build(
     fixture: DailyDecisionFixture,
     *,
     supplemental_override: object | None = None,
+    daily_override: PhaseDDailyDecisionBundle | None = None,
+    policy_override: CompositeOperationalCompositionPolicy | None = None,
 ):
     supplemental = (
         supplemental_override
@@ -141,7 +143,7 @@ def _build(
     daily = load_verified_daily_decision_artifact(
         publish_phase_d_daily_decision_artifact(
             root=tmp_path / "daily",
-            bundle=_daily_bundle(fixture),
+            bundle=daily_override or _daily_bundle(fixture),
         )
     )
     supplemental_verified = load_verified_supplemental_research_evidence(
@@ -153,7 +155,7 @@ def _build(
     return CompositeOperationalManifestBuilder().build(
         daily=daily,
         supplemental=supplemental_verified,
-        composition_policy=_policy(),
+        composition_policy=policy_override or _policy(),
         created_at=daily.bundle.source_manifest.decision_time.value
         + timedelta(minutes=10),
     )
@@ -201,6 +203,39 @@ def test_missing_supplemental_evidence_is_auditable_but_cannot_verify(
         is CompositeOperationalCompositionStatus.DATA_INSUFFICIENT
     )
     assert "MAPPING_NOT_AVAILABLE" in manifest.missing_evidence
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "theme_observations",
+        "capital_observations",
+        "symbol_observations",
+        "theme_memberships",
+        "etf_theme_mappings",
+        "etf_observations",
+    ],
+)
+def test_empty_required_collection_is_missing_not_conflicted(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+    field_name: str,
+) -> None:
+    supplemental = _supplemental(daily_decision_fixture)
+    incomplete = replace(supplemental, **{field_name: ()})
+
+    manifest = _build(
+        tmp_path,
+        daily_decision_fixture,
+        supplemental_override=incomplete,
+    )
+
+    assert (
+        manifest.status
+        is CompositeOperationalCompositionStatus.DATA_INSUFFICIENT
+    )
+    assert manifest.missing_evidence
+    assert not manifest.source_conflicts
 
 
 @pytest.mark.parametrize(
@@ -378,3 +413,244 @@ def test_daily_and_supplemental_decision_time_mismatch_is_conflicted(
     assert "DAILY_SUPPLEMENTAL_DECISION_TIME_CONFLICT" in (
         manifest.source_conflicts
     )
+
+
+def test_container_availability_is_derived_from_verified_evidence(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    supplemental = _supplemental(daily_decision_fixture)
+    manifest = _build(
+        tmp_path,
+        daily_decision_fixture,
+        supplemental_override=supplemental,
+    )
+    by_role = {
+        item.role: item for item in manifest.component_references
+        if item.role in {
+            CompositeOperationalComponentRole.DAILY_SOURCE_MANIFEST,
+            CompositeOperationalComponentRole.DAILY_DECISION_ARTIFACT,
+            CompositeOperationalComponentRole.SUPPLEMENTAL_SOURCE_MANIFEST,
+            CompositeOperationalComponentRole.SUPPLEMENTAL_EVIDENCE_BUNDLE,
+        }
+    }
+    expected_daily = max(
+        item.retrieved_at.value
+        for item in daily_decision_fixture.source_manifest.source_artifacts
+    )
+    expected_supplemental = max(
+        item.available_at.value
+        for values in (
+            (supplemental.market_observation,),
+            supplemental.theme_observations,
+            supplemental.capital_observations,
+            supplemental.symbol_observations,
+            supplemental.theme_memberships,
+            supplemental.etf_theme_mappings,
+            supplemental.etf_observations,
+            supplemental.stock_daily_bars,
+        )
+        for item in values
+    )
+
+    assert by_role[
+        CompositeOperationalComponentRole.DAILY_SOURCE_MANIFEST
+    ].availability_time.value == expected_daily
+    assert by_role[
+        CompositeOperationalComponentRole.DAILY_DECISION_ARTIFACT
+    ].availability_time.value == expected_daily
+    assert by_role[
+        CompositeOperationalComponentRole.SUPPLEMENTAL_SOURCE_MANIFEST
+    ].availability_time.value == expected_supplemental
+    assert by_role[
+        CompositeOperationalComponentRole.SUPPLEMENTAL_EVIDENCE_BUNDLE
+    ].availability_time.value == expected_supplemental
+
+
+def test_unknown_membership_theme_is_conflicted(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    supplemental = _supplemental(daily_decision_fixture)
+    conflicted = replace(
+        supplemental,
+        theme_memberships=(
+            replace(
+                supplemental.theme_memberships[0],
+                primary_theme_id="unknown-theme",
+            ),
+            *supplemental.theme_memberships[1:],
+        ),
+    )
+
+    manifest = _build(
+        tmp_path,
+        daily_decision_fixture,
+        supplemental_override=conflicted,
+    )
+
+    assert manifest.status is CompositeOperationalCompositionStatus.CONFLICTED
+    assert "THEME_MEMBERSHIP_UNKNOWN_THEME_CONFLICT" in manifest.source_conflicts
+
+
+def test_policy_required_role_and_field_absence_is_data_insufficient(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    base = _policy()
+    strict = CompositeOperationalCompositionPolicy.create(
+        profile_id=base.profile_id,
+        required_component_roles=(
+            *base.required_component_roles,
+            CompositeOperationalComponentRole.STOCK_DAILY_BAR,
+        ),
+        required_field_authorities=(
+            *base.required_field_authorities,
+            CompositeOperationalFieldAuthorityRequirement(
+                field_group=CompositeOperationalFieldGroup.STOCK_DAILY_BAR,
+                component_role=(
+                    CompositeOperationalComponentRole.STOCK_DAILY_BAR
+                ),
+            ),
+        ),
+        allowed_data_eligibility=base.allowed_data_eligibility,
+        decision_time_policy=base.decision_time_policy,
+        source_conflict_policy=base.source_conflict_policy,
+        coverage_policy=base.coverage_policy,
+        builder_revision=base.builder_revision,
+    )
+
+    manifest = _build(
+        tmp_path,
+        daily_decision_fixture,
+        policy_override=strict,
+    )
+
+    assert (
+        manifest.status
+        is CompositeOperationalCompositionStatus.DATA_INSUFFICIENT
+    )
+    assert "REQUIRED_COMPONENT_ROLE_MISSING:STOCK_DAILY_BAR" in (
+        manifest.missing_evidence
+    )
+    assert (
+        "REQUIRED_FIELD_AUTHORITY_MISSING:STOCK_DAILY_BAR:STOCK_DAILY_BAR"
+        in manifest.missing_evidence
+    )
+
+
+def test_future_source_availability_is_conflicted(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    supplemental = _supplemental(daily_decision_fixture)
+    future_source = replace(
+        supplemental.source_manifest.source_artifacts[0],
+        retrieved_at=replace(
+            supplemental.source_manifest.source_artifacts[0].retrieved_at,
+            value=supplemental.decision_time.value + timedelta(seconds=1),
+        ),
+    )
+    future_manifest = replace(
+        supplemental.source_manifest,
+        source_artifacts=(
+            future_source,
+            *supplemental.source_manifest.source_artifacts[1:],
+        ),
+    )
+
+    manifest = _build(
+        tmp_path,
+        daily_decision_fixture,
+        supplemental_override=replace(
+            supplemental,
+            source_manifest=future_manifest,
+        ),
+    )
+
+    assert manifest.status is CompositeOperationalCompositionStatus.CONFLICTED
+    assert any(
+        item.startswith("COMPONENT_AVAILABLE_AFTER_DECISION_TIME")
+        for item in manifest.source_conflicts
+    )
+
+
+def test_cross_authority_artifact_id_with_different_hash_is_conflicted(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    supplemental = _supplemental(daily_decision_fixture)
+    daily_price_id = daily_decision_fixture.decision_snapshot.decision_snapshot_id
+    market_source_id = supplemental.market_observation.source_artifact_id
+    source_artifacts = tuple(
+        replace(item, artifact_id=daily_price_id)
+        if item.artifact_id == market_source_id
+        else item
+        for item in supplemental.source_manifest.source_artifacts
+    )
+    conflicting_manifest = replace(
+        supplemental.source_manifest,
+        source_artifacts=source_artifacts,
+    )
+    conflicting = replace(
+        supplemental,
+        source_manifest=conflicting_manifest,
+        market_observation=replace(
+            supplemental.market_observation,
+            source_artifact_id=daily_price_id,
+        ),
+    )
+
+    manifest = _build(
+        tmp_path,
+        daily_decision_fixture,
+        supplemental_override=conflicting,
+    )
+
+    assert manifest.status is CompositeOperationalCompositionStatus.CONFLICTED
+    assert f"ARTIFACT_HASH_CONFLICT:{daily_price_id}" in manifest.source_conflicts
+
+
+def test_prediction_run_population_mismatch_is_conflicted(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    daily = _daily_bundle(daily_decision_fixture)
+    assert len(daily.prediction_runs) >= 2
+    run = daily.prediction_runs[1]
+    if run.predictions:
+        changed_run = replace(
+            run,
+            predictions=(
+                replace(run.predictions[0], symbol="999999.SH"),
+                *run.predictions[1:],
+            ),
+        )
+    else:
+        changed_run = replace(
+            run,
+            rejections=tuple(
+                sorted(
+                    (
+                        replace(run.rejections[0], symbol="999999.SH"),
+                        *run.rejections[1:],
+                    ),
+                    key=lambda item: item.symbol,
+                )
+            ),
+        )
+    mismatched_daily = replace(
+        daily,
+        prediction_runs=(daily.prediction_runs[0], changed_run),
+        recommendations=(),
+        entry_assessments=(),
+    )
+
+    manifest = _build(
+        tmp_path,
+        daily_decision_fixture,
+        daily_override=mismatched_daily,
+    )
+
+    assert manifest.status is CompositeOperationalCompositionStatus.CONFLICTED
+    assert "PREDICTION_RUN_POPULATION_CONFLICT" in manifest.source_conflicts

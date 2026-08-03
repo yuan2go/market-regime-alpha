@@ -104,6 +104,35 @@ def test_v1_round_trip_remains_exact_while_v2_is_independent(
     ) == inputs
 
 
+def test_v1_cannot_represent_operational_exploratory_evidence(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    _, legacy, _ = _v2_inputs(tmp_path, daily_decision_fixture)
+
+    with pytest.raises(ValueError, match="ResearchInputBundleV2"):
+        ResearchInputBundle(
+            evidence_kind=(
+                ResearchEvidenceKind.OPERATIONAL_EXPLORATORY_ARCHIVE
+            ),
+            source_manifest=legacy.source_manifest,
+            universe_snapshot=legacy.universe_snapshot,
+            eligibility_snapshot=legacy.eligibility_snapshot,
+            decision_price_snapshot=legacy.decision_price_snapshot,
+            market_observation=legacy.market_observation,
+            theme_observations=legacy.theme_observations,
+            symbol_observations=legacy.symbol_observations,
+            theme_memberships=legacy.theme_memberships,
+            etf_observations=legacy.etf_observations,
+            stock_daily_bars=legacy.stock_daily_bars,
+            prediction_runs=legacy.prediction_runs,
+            input_artifact_ids=legacy.input_artifact_ids,
+            input_content_hashes=legacy.input_content_hashes,
+            created_at=legacy.created_at,
+            data_eligibility=legacy.data_eligibility,
+        )
+
+
 def test_v2_binds_composite_and_keeps_daily_primary_source_manifest(
     tmp_path: Path,
     daily_decision_fixture: DailyDecisionFixture,

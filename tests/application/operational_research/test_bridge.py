@@ -482,9 +482,36 @@ def test_operational_research_cli_runs_and_replays(
         )
     ) == 0
     run_result = json.loads(capsys.readouterr().out)
+    assert run_result["formal_pit"] == "FORMAL_PIT_NOT_ESTABLISHED"
+    assert run_result["formal_oos_alpha"] == "FORMAL_OOS_ALPHA_NOT_ESTABLISHED"
+    assert run_result["trading_authority"] == "TRADING_AUTHORITY_NOT_GRANTED"
     artifact_path = output_root / run_result["artifact_id"]
     assert operational_research_main(
         ("replay", "--artifact", str(artifact_path))
     ) == 0
     replay_result = json.loads(capsys.readouterr().out)
     assert replay_result == run_result
+
+
+def test_operational_research_cli_has_no_direct_v1_run_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        operational_research_main(
+            (
+                "run",
+                "--daily-artifact",
+                str(tmp_path / "daily"),
+                "--supplemental-artifact",
+                str(tmp_path / "supplemental"),
+                "--research-config",
+                str(tmp_path / "config.json"),
+                "--output-root",
+                str(tmp_path / "research"),
+                "--code-revision",
+                "h6-cli-boundary-test",
+            )
+        )
+
+    assert "--composite-package" in capsys.readouterr().err

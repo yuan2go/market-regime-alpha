@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from market_regime_alpha.application.operational_research.supplemental_artifact import (
+        VerifiedSupplementalResearchEvidence,
+    )
+    from market_regime_alpha.daily_decision.reader import (
+        VerifiedPhaseDDailyDecisionArtifact,
+    )
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import AvailabilityTime, DecisionTime
@@ -15,7 +23,9 @@ from market_regime_alpha.daily_decision.serialization import (
     universe_snapshot_to_dict,
 )
 from market_regime_alpha.evidence.canonical import (
+    canonical_datetime,
     canonical_hash,
+    normalize_canonical_datetime,
     require_sha256,
     require_text,
 )
@@ -348,6 +358,13 @@ class CompositeOperationalComponentReference:
         require_sha256("source_manifest_hash", self.source_manifest_hash)
         if not isinstance(self.availability_time, AvailabilityTime):
             raise TypeError("availability_time must be AvailabilityTime")
+        object.__setattr__(
+            self,
+            "availability_time",
+            AvailabilityTime(
+                normalize_canonical_datetime(self.availability_time.value)
+            ),
+        )
         if self.data_eligibility is not DataEligibility.EXPLORATORY:
             raise ValueError("component authority cannot exceed EXPLORATORY")
 
@@ -363,7 +380,9 @@ class CompositeOperationalComponentReference:
             "content_hash": self.content_hash,
             "source_manifest_id": str(self.source_manifest_id),
             "source_manifest_hash": self.source_manifest_hash,
-            "availability_time": self.availability_time.isoformat(),
+            "availability_time": canonical_datetime(
+                self.availability_time.value
+            ),
             "data_eligibility": self.data_eligibility.value,
         }
 
@@ -496,6 +515,16 @@ class CompositeOperationalInputManifest:
         if not isinstance(self.decision_time, DecisionTime):
             raise TypeError("decision_time must be DecisionTime")
         _aware("created_at", self.created_at)
+        object.__setattr__(
+            self,
+            "decision_time",
+            DecisionTime(normalize_canonical_datetime(self.decision_time.value)),
+        )
+        object.__setattr__(
+            self,
+            "created_at",
+            normalize_canonical_datetime(self.created_at),
+        )
         if self.created_at < self.decision_time.value:
             raise ValueError("composite manifest cannot predate DecisionTime")
         require_text("builder_revision", self.builder_revision)
@@ -692,8 +721,8 @@ class CompositeOperationalInputManifest:
         return {
             "schema_version": COMPOSITE_OPERATIONAL_INPUT_MANIFEST_SCHEMA,
             "status": values["status"].value,
-            "decision_time": values["decision_time"].isoformat(),
-            "created_at": values["created_at"].isoformat(),
+            "decision_time": canonical_datetime(values["decision_time"].value),
+            "created_at": canonical_datetime(values["created_at"]),
             "composition_policy_id": str(values["composition_policy_id"]),
             "composition_policy_hash": values["composition_policy_hash"],
             "builder_revision": values["builder_revision"],
@@ -878,8 +907,8 @@ class CompositeOperationalManifestBuilder:
     def build(
         self,
         *,
-        daily: object,
-        supplemental: object,
+        daily: VerifiedPhaseDDailyDecisionArtifact,
+        supplemental: VerifiedSupplementalResearchEvidence,
         composition_policy: CompositeOperationalCompositionPolicy,
         created_at: datetime,
     ) -> CompositeOperationalInputManifest:
@@ -977,12 +1006,16 @@ class CompositeOperationalManifestBuilder:
         membership_symbols = {
             item.symbol for item in supplemental_bundle.theme_memberships
         }
-        if populations and membership_symbols != population:
+        if populations and membership_symbols and membership_symbols != population:
             conflicts.add("PREDICTION_THEME_MEMBERSHIP_COVERAGE_CONFLICT")
         symbol_observation_symbols = {
             item.symbol for item in supplemental_bundle.symbol_observations
         }
-        if populations and symbol_observation_symbols != population:
+        if (
+            populations
+            and symbol_observation_symbols
+            and symbol_observation_symbols != population
+        ):
             conflicts.add("PREDICTION_SYMBOL_OBSERVATION_COVERAGE_CONFLICT")
 
         theme_ids = {
@@ -991,14 +1024,16 @@ class CompositeOperationalManifestBuilder:
         capital_theme_ids = {
             item.theme_id for item in supplemental_bundle.capital_observations
         }
-        if theme_ids != capital_theme_ids:
+        if theme_ids and capital_theme_ids and theme_ids != capital_theme_ids:
             conflicts.add("THEME_CAPITAL_COVERAGE_CONFLICT")
         membership_theme_ids = {
             theme_id
             for item in supplemental_bundle.theme_memberships
             for theme_id in (item.primary_theme_id, *item.supporting_theme_ids)
         }
-        if not membership_theme_ids.issubset(theme_ids):
+        if theme_ids and membership_theme_ids and not membership_theme_ids.issubset(
+            theme_ids
+        ):
             conflicts.add("THEME_MEMBERSHIP_UNKNOWN_THEME_CONFLICT")
         expected_etf_pairs = {
             (etf_id, item.theme_id)
@@ -1013,9 +1048,9 @@ class CompositeOperationalManifestBuilder:
             (item.etf_id, item.theme_id)
             for item in supplemental_bundle.etf_observations
         }
-        if mapping_pairs != expected_etf_pairs:
+        if expected_etf_pairs and mapping_pairs and mapping_pairs != expected_etf_pairs:
             conflicts.add("THEME_ETF_MAPPING_COVERAGE_CONFLICT")
-        if observation_pairs != mapping_pairs:
+        if mapping_pairs and observation_pairs and observation_pairs != mapping_pairs:
             conflicts.add("ETF_MAPPING_OBSERVATION_COVERAGE_CONFLICT")
 
         components: list[CompositeOperationalComponentReference] = []
@@ -1071,6 +1106,33 @@ class CompositeOperationalManifestBuilder:
 
         daily_manifest = daily_bundle.source_manifest
         supplemental_manifest = supplemental_bundle.source_manifest
+        daily_authority_available_at = max(
+            item.retrieved_at.value for item in daily_manifest.source_artifacts
+        )
+        supplemental_authority_available_at = max(
+            (
+                item.retrieved_at.value
+                for item in supplemental_manifest.source_artifacts
+            ),
+            default=supplemental_bundle.market_observation.available_at.value,
+        )
+        supplemental_authority_available_at = max(
+            supplemental_authority_available_at,
+            supplemental_bundle.market_observation.available_at.value,
+            *(
+                item.available_at.value
+                for values in (
+                    supplemental_bundle.theme_observations,
+                    supplemental_bundle.capital_observations,
+                    supplemental_bundle.symbol_observations,
+                    supplemental_bundle.theme_memberships,
+                    supplemental_bundle.etf_theme_mappings,
+                    supplemental_bundle.etf_observations,
+                    supplemental_bundle.stock_daily_bars,
+                )
+                for item in values
+            ),
+        )
         daily_source = add_component(
             role=CompositeOperationalComponentRole.DAILY_SOURCE_MANIFEST,
             scope_key="PRIMARY",
@@ -1078,7 +1140,7 @@ class CompositeOperationalManifestBuilder:
             content_hash=daily_manifest.content_hash,
             source_manifest_id=daily_manifest.source_manifest_id,
             source_manifest_hash=daily_manifest.content_hash,
-            available_at=decision_time.value,
+            available_at=daily_authority_available_at,
         )
         add_component(
             role=CompositeOperationalComponentRole.DAILY_DECISION_ARTIFACT,
@@ -1087,7 +1149,7 @@ class CompositeOperationalManifestBuilder:
             content_hash=daily_bundle.content_hash,
             source_manifest_id=daily_manifest.source_manifest_id,
             source_manifest_hash=daily_manifest.content_hash,
-            available_at=decision_time.value,
+            available_at=daily_authority_available_at,
         )
         for field_group in (
             CompositeOperationalFieldGroup.TRADING_STATUS,
@@ -1155,7 +1217,7 @@ class CompositeOperationalManifestBuilder:
             content_hash=supplemental_manifest.content_hash,
             source_manifest_id=supplemental_manifest.source_manifest_id,
             source_manifest_hash=supplemental_manifest.content_hash,
-            available_at=supplemental_bundle.decision_time.value,
+            available_at=supplemental_authority_available_at,
         )
         del supplemental_source
         add_component(
@@ -1165,7 +1227,7 @@ class CompositeOperationalManifestBuilder:
             content_hash=supplemental_bundle.content_hash,
             source_manifest_id=supplemental_manifest.source_manifest_id,
             source_manifest_hash=supplemental_manifest.content_hash,
-            available_at=supplemental_bundle.decision_time.value,
+            available_at=supplemental_authority_available_at,
         )
         supplemental_hashes = {
             item.artifact_id: item.content_hash

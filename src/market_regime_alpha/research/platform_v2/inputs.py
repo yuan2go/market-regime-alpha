@@ -640,6 +640,14 @@ class ResearchInputBundle:
     def __post_init__(self) -> None:
         if not isinstance(self.evidence_kind, ResearchEvidenceKind):
             raise TypeError("evidence_kind must be ResearchEvidenceKind")
+        if (
+            type(self) is ResearchInputBundle
+            and self.evidence_kind
+            is ResearchEvidenceKind.OPERATIONAL_EXPLORATORY_ARCHIVE
+        ):
+            raise ValueError(
+                "operational exploratory evidence requires ResearchInputBundleV2"
+            )
         decision = self.source_manifest.decision_time
         if (
             self.universe_snapshot.as_of.value > decision.value
