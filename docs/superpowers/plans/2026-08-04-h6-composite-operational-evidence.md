@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../specs/2026-08-04-h6-composite-operational-evidence-design.md, ../../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** Plan starts from `feat/h6-composite-operational-evidence@e2cb9add258056815d15462bc83dfc64f43ddb8e`; implementation evidence will be bound to later checkpoints.
+> **Code Evidence:** Plan starts from `feat/h6-composite-operational-evidence@e2cb9add258056815d15462bc83dfc64f43ddb8e`; hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -116,8 +116,10 @@
 - Adds `ResearchEvidenceKind.OPERATIONAL_EXPLORATORY_ARCHIVE`,
   `ResearchInputView`, `ResearchInputBundleV2` and schema-dispatch
   `research_input_bundle_from_canonical_dict()`.
-- V2 construction is exposed through
-  `build_operational_research_input_v2(verified_manifest, daily, supplemental)`.
+- V2 operational construction is exposed through
+  `adapt_verified_composite_operational_inputs(composite, daily, supplemental)`;
+  it reloads verified inputs and replays the Builder before constructing V2
+  directly, without creating an intermediate V1 bundle.
 
 - [ ] Prove existing V1 canonical fixture and Reader hashes are unchanged.
 - [ ] Write failing V2 round-trip and status-gate tests; implement V2 with

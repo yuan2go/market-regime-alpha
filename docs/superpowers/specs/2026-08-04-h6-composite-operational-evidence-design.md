@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../../architecture/10-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../../status/Current-State.md
-> **Code Evidence:** Design starts from merged PR #31 at `origin/main@e2cb9add258056815d15462bc83dfc64f43ddb8e`.
+> **Code Evidence:** Design starts from merged PR #31 at `origin/main@e2cb9add258056815d15462bc83dfc64f43ddb8e`; hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`.
 
 ## 1. Goal and bounded context
 
@@ -148,6 +148,12 @@ SourceManifest ID/hash, availability time and `EXPLORATORY` eligibility.
 `(role, scope_key)` is unique. Reusing one artifact ID with a different hash is
 a conflict; using the same original source for multiple typed scopes with the
 same hash is allowed.
+
+H6 canonical timestamps normalize to whole-second UTC RFC3339 with a `Z`
+suffix before identity calculation. A container reference uses the maximum
+explicit retrieval/availability time of its verified underlying authority set;
+it does not invent availability from DecisionTime and does not claim the later
+package-publication time was known at DecisionTime.
 
 `CompositeOperationalFieldGroup` separates Daily authority:
 
@@ -324,10 +330,11 @@ lineage contains the Composite Manifest ID/hash and all required source
 references.
 
 `ArtifactEnvelope.source_manifest_id/hash` continues to mean the Daily primary
-SourceManifest. Platform Market/Theme/Capital/Candidate envelopes bind V2 via
-the V2 input bundle ID/hash; the Research Layer envelope additionally binds
-the Composite Manifest ID/hash directly. H5 therefore sees a consistent
-primary SourceManifest while H6 composition remains fully provable.
+SourceManifest. Platform Market/Theme/Capital/Candidate envelopes include the
+Composite Manifest ID/hash directly through V2 input lineage. The Research
+Layer envelope binds both the V2 bundle ID/hash and Composite Manifest ID/hash.
+H5 therefore sees a consistent primary SourceManifest while H6 composition
+remains fully provable.
 
 `ResearchInputView` exposes common read-only model fields. Platform models do
 not fork. Reader schema dispatch restores V1 with the existing Reader and V2
@@ -338,18 +345,22 @@ operational evidence.
 ## 13. Operational application and CLI
 
 `CompositeOperationalEvidenceApplicationService` loads both verified source
-packages, canonicalizes policy, calculates the command hash, resolves replay,
-builds and publishes the terminal manifest package, then persists the index.
-It runs no research model.
+packages, canonicalizes policy, builds and publishes the terminal package,
+then calculates the package-bound command hash and persists or replays the
+index. This ordering is deliberate: the command binds all three package
+checksum identities. It runs no research model.
 
 `scripts/build_composite_operational_manifest.py` requires Daily package,
 Supplemental package, policy, database, package root, explicit created time and
 idempotency key. It outputs manifest ID/hash, terminal status, reason/missing/
 conflict codes and the authority ceiling.
 
-`scripts/run_operational_research.py run` requires `--composite-package` and
-loads only a `VERIFIED` composite package. It builds V2, runs the existing
-Platform runner and prints the H6 identity plus unchanged authority limits.
+`scripts/run_operational_research.py run` requires `--composite-package` plus
+the original Daily and Supplemental package paths needed to materialize model
+inputs. It verifies all three packages, proves that the Composite Manifest
+binds the exact sources, replays the Builder, requires `VERIFIED`, constructs
+V2 directly, runs the existing Platform runner and prints the H6 identity plus
+unchanged authority limits.
 The old direct adapter remains importable for historical compatibility tests
 but is named and documented as legacy and is not reachable from the new CLI.
 

@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
+> **Code Evidence:** H6 hardened implementation checkpoint `654e02556080d1476b399ee5145989be743f47a0`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -29,7 +29,13 @@ Data and Evidence
 
 The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable SQLite journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability.
 
-The H5 implementation checkpoint extends the green H4 baseline with artifact-derived Thesis Health. It adds typed invalidation rules, strict current-evidence validation, a content-addressed V2 Observation, append-only SQLite replay, a verified-package-path V2 CLI and a thin Holding/Exit adapter over H3 T+1 Position authority. It does not transition a Thesis, call H4, create a ManualTrade/Fill/Broker Order or grant trading authority.
+The H6 implementation checkpoint extends the green H4/H5 baseline with an
+explicit Composite Operational Evidence authority. It binds verified Daily and
+Supplemental packages through a content-addressed policy, immutable terminal
+manifest, append-only SQLite replay index and `ResearchInputBundleV2` labelled
+`OPERATIONAL_EXPLORATORY_ARCHIVE`. It does not promote exploratory evidence,
+run a new model, transition a Thesis, call H4, create a ManualTrade/Fill/Broker
+Order or grant trading authority.
 
 ## 2. Current stage
 
@@ -47,10 +53,15 @@ H4_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
 H5_ARTIFACT_DERIVED_THESIS_HEALTH_IMPLEMENTED_AND_VERIFIED
 H5_V2_OPERATIONAL_ASSESSMENT_ADAPTER_IMPLEMENTED
 H5_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
+H6_COMPOSITE_OPERATIONAL_EVIDENCE_IMPLEMENTED_AND_VERIFIED
+H6_RESEARCH_INPUT_BUNDLE_V2_IMPLEMENTED
+H6_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
 TRADING_AUTHORITY_NOT_GRANTED
+REAL_BROKER_AUTHORITY_NOT_IMPLEMENTED
+PRODUCTION_READINESS_NOT_ESTABLISHED
 ```
 
 ## 3. Implemented capabilities
@@ -212,7 +223,47 @@ H5 is **IMPLEMENTED_AND_VERIFIED** at `831edd6b2ae044d3bd1f3abcec97a30e47082071`
 
 The H5 private replay bundle is not an H6 CompositeOperationalInputManifest and does not promote DataEligibility, PIT status or source authority. Manual invalidation actor strings are not authenticated production identities. V1 Readers and historical LifecycleReview inputs remain readable, but no new V2 operational path accepts V1 support booleans.
 
-### 3.11 Manual execution, Position and review
+### 3.11 H6 composite operational evidence
+
+H6 is **IMPLEMENTED_AND_VERIFIED** at
+`654e02556080d1476b399ee5145989be743f47a0`:
+
+- `CompositeOperationalCompositionPolicy` content-identifies explicit required
+  component roles, field authorities, DecisionTime/coverage/conflict policy and
+  the builder revision;
+- `CompositeOperationalInputManifest` binds both verified packages, both
+  SourceManifests, typed component/field authority references, missingness,
+  conflicts and a fixed exploratory/non-PIT/non-OOS/non-trading ceiling;
+- canonical H6 timestamps normalize to whole-second UTC `Z`; container
+  availability is derived from explicit underlying retrieval/availability
+  evidence rather than invented from DecisionTime;
+- only immutable terminal `VERIFIED`, `DATA_INSUFFICIENT` and `CONFLICTED`
+  manifests are publishable; only `VERIFIED` can enter Platform V2;
+- exact three-file package publication detects checksum, semantic, policy and
+  identity tamper and uses verified staging plus atomic rename;
+- migration 009 and `SQLiteCompositeOperationalRepository` add append-only
+  manifest/component/field/command indexes, semantic idempotency, full
+  projection validation, original-package loading and Builder replay;
+- `CompositeOperationalEvidenceApplicationService` implements the explicit
+  file-first/SQLite-second transaction boundary and restart repair without
+  claiming cross-storage atomicity;
+- `ResearchInputBundleV2` uses
+  `OPERATIONAL_EXPLORATORY_ARCHIVE`, preserves Daily as primary
+  `source_manifest`, binds the Composite Manifest directly in all Platform V2
+  component lineage and preserves V1 Reader/hash semantics;
+- `scripts/build_composite_operational_manifest.py` builds/indexes terminal
+  evidence only; the operational research CLI requires the H6 package and
+  replays the Builder against the original Daily/Supplemental packages before
+  running existing research models;
+- cross-stage testing proves H6 Research output can feed Signal, PathForecast
+  and H5 V2 health without turning the H5 private replay bundle into H6
+  authority.
+
+H6 is an authority-composition and lineage capability. It does not establish a
+qualified Supplemental producer, formal PIT/OOS evidence, a sustained
+operational run or any execution authority.
+
+### 3.12 Manual execution, Position and review
 
 Implemented on prior verified checkpoints:
 
@@ -270,23 +321,30 @@ Repository delivery records report passing focused and full gates for earlier se
 
 ### 6.2 Current checkpoint evidence
 
-The local Python 3.12 verification on H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071` observed:
+The local Python 3.12 verification on H6 hardened implementation checkpoint
+`654e02556080d1476b399ee5145989be743f47a0` observed:
 
 ```text
-FOCUSED_H5 = 99 passed, 0 skipped, 0 failed
-POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
-APPLICATION_CONTEXT = 62 passed, 0 skipped, 0 failed
-DECISION_CONTEXT = 8 passed, 0 skipped, 0 failed
-PORTFOLIO_CONTEXT = 55 passed, 0 skipped, 0 failed
+FOCUSED_H6 = 67 passed, 0 skipped, 0 failed
 H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1398 passed, 0 skipped, 0 failed
+H5_FOCUSED_REGRESSION = 101 passed, 0 skipped, 0 failed
+RESEARCH_CONTEXT = 396 passed, 0 skipped, 0 failed
+PLATFORM_CONTEXT = 23 passed, 0 skipped, 0 failed
+POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
+APPLICATION_CONTEXT = 114 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1459 passed, 0 skipped, 0 failed, 8 subtests passed
 RUFF = PASS
-MYPY_FORMAL_SCOPE = PASS, 258 source files
+MYPY_FORMAL_SCOPE = PASS, 263 source files
 PACKAGE_BUILD = PASS, sdist and wheel
 DOCUMENT_AUTHORITY_AND_LINKS = PASS
+GIT_DIFF_CHECK = PASS
 ```
 
-The CI workflow runs docs validation, pytest, Ruff, the configured mypy scope and `python -m build` on Python 3.12 for push and pull requests. Both the push and Draft PR `quality` jobs passed remotely for branch checkpoint `dfd7a0b274bc1e661a5bebb04afab9e4494ea284` in Actions runs `30841390540` and `30841416197`. Required-check branch-protection policy was not inspected.
+The full run emitted six existing pandas fragmentation warnings and no failures.
+The CI workflow runs docs validation, pytest, Ruff, configured mypy and
+`python -m build` on Python 3.12 for push and pull requests. Remote H6 CI is not
+claimed until the Draft PR jobs complete; required-check branch protection was
+not inspected.
 
 ## 7. Not implemented as production authority
 
@@ -297,7 +355,7 @@ The CI workflow runs docs validation, pytest, Ruff, the configured mypy scope an
 - formal PIT and formal OOS Alpha evidence;
 - sustained real 14:55 Shadow runs;
 - H4.5 reducing-decision-to-manual-execution bridge;
-- composite operational evidence manifest;
+- qualified real Composite Operational Evidence packages and producer identity;
 - durable Holding/Exit schedules and acknowledgement state;
 - recoverable ShadowRun queues, receipts, metrics, tracing and alerts;
 - production authentication, authorization and operator signatures;
@@ -327,7 +385,7 @@ P0 engineering baseline restored
 
 P1 complete pre-Shadow mechanics
   H5 Artifact-derived Thesis Health complete
-  → H6 Composite Evidence Manifest
+  → H6 Composite Evidence Manifest complete
   → H4.5 Risk-Reducing Decision to Manual Execution Bridge
   → H7 Durable Holding/Exit Operations
   → H8 Recoverable ShadowRun
@@ -353,4 +411,4 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with verified H4 and H5 engineering checkpoints and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+> **A pre-Shadow research decision platform with verified H4, H5 and H6 engineering checkpoints and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**

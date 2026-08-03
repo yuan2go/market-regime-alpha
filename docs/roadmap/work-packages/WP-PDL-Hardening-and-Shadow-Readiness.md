@@ -3,11 +3,11 @@
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered implementation work package for hardening the delivered Phase 0–7 lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-03
+> **Last Updated:** 2026-08-04
 > **Supersedes:** None
 > **Superseded By:** None
-> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** H5 hardened checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
+> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H6-Composite-Operational-Evidence-Delivery.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
+> **Code Evidence:** H6 hardened checkpoint `654e02556080d1476b399ee5145989be743f47a0`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -28,10 +28,10 @@ Fill-derived Position projection; Holding/Exit models; an immutable
 LifecycleReview package; Signal/Path Artifacts; and an Operational Research
 Bridge.
 
-The baseline gaps are:
+The remaining gaps after H5/H6 delivery are:
 
-- caller-authored Thesis support booleans;
-- no composite operational manifest or operational evidence kind;
+- H5 Decision aggregate input is not yet loaded from repository authority;
+- no qualified real Composite Operational Evidence producer/run sample;
 - no reducing-decision-to-ManualTrade execution bridge;
 - no durable assessment state;
 - no recoverable Shadow operation;
@@ -297,17 +297,28 @@ path.
 | Concern | Contract |
 |---|---|
 | Business goal | Represent runtime-composed evidence honestly without labelling it `HISTORICAL_IMMUTABLE_ARCHIVE`. |
-| Input Artifacts | Daily SourceManifest/archive, supplemental Theme/ETF/Capital manifests, H5 health requirements and per-field authority references. |
+| Input Artifacts | Verified Phase D Daily Decision package, verified Supplemental Research Evidence package and explicit composition policy. |
 | Output Artifact | `CompositeOperationalInputManifest` plus exact Reader/index and `OPERATIONAL_EXPLORATORY_ARCHIVE` evidence kind. |
 | State machine | `ASSEMBLING → VERIFIED | DATA_INSUFFICIENT | CONFLICTED`; verified does not promote authority. |
 | Idempotency key | Decision time + ordered component manifest IDs/hashes + composition policy ID. |
-| Persistence tables | `composite_operational_manifests`, `composite_component_refs`, `composite_commands`; immutable artifact files remain primary evidence. |
-| Transaction boundary | Validate all component Readers and field ceilings, then atomically record manifest/index/command publication metadata. |
+| Persistence tables | `composite_operational_manifests`, `composite_operational_components`, `composite_operational_field_authorities`, `composite_operational_commands`; immutable artifact files remain primary evidence. |
+| Transaction boundary | Validate and atomically publish the file package first, then use `BEGIN IMMEDIATE` for manifest/component/field/command indexes; no cross-storage atomicity claim. |
 | Failure recovery | Original component Artifacts remain independent; retry composition by key; orphan staging is verified or discarded without mutating sources. |
 | Audit evidence | Both original manifests, per-field source/availability/finality, policy identity, ceiling and complete missingness report. |
 | Tests | Source/time/hash conflict, missing coverage, eligibility inflation, replay, exact file set, tamper, crash before/after publish. |
 | Completion condition | Operational bridge consumes the composite type and never misclassifies runtime composition as historical/formal PIT. |
 | Dependencies | H5 input needs and current bridge contracts; feeds H4.5/H7/H8. |
+
+### Implementation evidence
+
+Delivered and review-hardened at `654e02556080d1476b399ee5145989be743f47a0` with
+content-addressed policy and terminal manifest, typed component/field authority,
+exact three-file package, file-first crash recovery, migration 009,
+append-only SQLite idempotency/replay, independent `ResearchInputBundleV2`,
+`OPERATIONAL_EXPLORATORY_ARCHIVE`, strict V2 operational CLI/Runner, V1 Reader
+compatibility and H6→Platform V2→H5 integration. The V2 route reloads original
+packages and replays the Builder before research. It preserves Daily as the
+primary SourceManifest and never promotes PIT/OOS/trading authority.
 
 ### Deliverables
 

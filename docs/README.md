@@ -131,6 +131,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Current Main Code Audit — 2026-08-01](audit/Current-Main-Code-Audit-2026-08-01.md)
 - [H4 Risk Route Delivery](audit/H4-Risk-Route-Delivery.md)
 - [H5 Thesis Health Delivery](audit/H5-Thesis-Health-Delivery.md)
+- [H6 Composite Operational Evidence Delivery](audit/H6-Composite-Operational-Evidence-Delivery.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)
