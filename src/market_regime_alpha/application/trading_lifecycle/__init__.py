@@ -28,6 +28,13 @@ from market_regime_alpha.application.trading_lifecycle.review import (
     run_lifecycle_review_input,
 )
 from market_regime_alpha.portfolio.risk_routes import RiskRouteApplicationService
+from market_regime_alpha.application.trading_lifecycle.thesis_health import (
+    ThesisHealthApplicationService,
+)
+from market_regime_alpha.application.trading_lifecycle.operational_assessment_v2 import (
+    OperationalPositionAssessmentServiceV2,
+    OperationalPositionAssessmentV2,
+)
 
 __all__ = [
     "CompleteAccountPortfolioRiskApplicationService",
@@ -37,8 +44,11 @@ __all__ = [
     "ManualExecutionApplicationService",
     "PortfolioRiskApplicationService",
     "PositionAuthoritativePortfolioRiskApplicationService",
+    "OperationalPositionAssessmentServiceV2",
+    "OperationalPositionAssessmentV2",
     "RiskRouteApplicationService",
     "TraceableManualExecutionApplicationService",
+    "ThesisHealthApplicationService",
     "VerifiedLifecycleReview",
     "load_verified_lifecycle_review",
     "publish_lifecycle_review",

@@ -547,6 +547,22 @@ class ThesisHealthEvaluator:
         return ThesisHealth.HEALTHY, ("THESIS_SUPPORT_CONFIRMED",)
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedThesisHealthContext:
+    """Internal seam shared by legacy V1 and strict V2 assessment paths."""
+
+    health: ThesisHealth
+    market_price: float
+    evidence: DecisionEvidenceReference
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isfinite(self.market_price) or self.market_price <= 0.0:
+            raise ValueError("resolved health market price must be positive")
+        if self.reason_codes != tuple(sorted(set(self.reason_codes))):
+            raise ValueError("resolved health reason codes must be sorted and unique")
+
+
 class HoldingAssessmentModel:
     """Holding role; it cannot emit REDUCE or EXIT."""
 
@@ -566,7 +582,41 @@ class HoldingAssessmentModel:
         health, health_reasons = ThesisHealthEvaluator().evaluate(
             thesis, position, observation, assessed_at=assessed_at
         )
-        unrealized = _unrealized_return(position, observation.market_price)
+        context = ResolvedThesisHealthContext(
+            health=health,
+            market_price=observation.market_price,
+            evidence=observation.evidence,
+            reason_codes=tuple(sorted(set(health_reasons))),
+        )
+        return self.assess_resolved(
+            thesis,
+            position,
+            context,
+            configuration,
+            assessed_at=assessed_at,
+            actor=actor,
+            reason=reason,
+            add_portfolio=add_portfolio,
+            add_risk=add_risk,
+        )
+
+    def assess_resolved(
+        self,
+        thesis: TradingThesis,
+        position: PositionSnapshot,
+        health_context: ResolvedThesisHealthContext,
+        configuration: PositionLifecycleConfig,
+        *,
+        assessed_at: datetime,
+        actor: str,
+        reason: str,
+        add_portfolio: PortfolioDecision | None = None,
+        add_risk: RiskDecision | None = None,
+    ) -> HoldingAssessment:
+        _validate_resolved_inputs(thesis, position, health_context, assessed_at)
+        health = health_context.health
+        health_reasons = health_context.reason_codes
+        unrealized = _unrealized_return(position, health_context.market_price)
         portfolio_id: PortfolioDecisionId | None = None
         risk_id: RiskDecisionId | None = None
         if health is ThesisHealth.DATA_INSUFFICIENT:
@@ -601,7 +651,7 @@ class HoldingAssessmentModel:
             thesis=thesis,
             position=position,
             configuration=configuration,
-            observation=observation,
+            evidence=health_context.evidence,
             health=health,
             action=action,
             unrealized=unrealized,
@@ -635,7 +685,37 @@ class ExitAssessmentModel:
         health, health_reasons = ThesisHealthEvaluator().evaluate(
             thesis, position, observation, assessed_at=assessed_at
         )
-        unrealized = _unrealized_return(position, observation.market_price)
+        context = ResolvedThesisHealthContext(
+            health=health,
+            market_price=observation.market_price,
+            evidence=observation.evidence,
+            reason_codes=tuple(sorted(set(health_reasons))),
+        )
+        return self.assess_resolved(
+            thesis,
+            position,
+            context,
+            configuration,
+            assessed_at=assessed_at,
+            actor=actor,
+            reason=reason,
+        )
+
+    def assess_resolved(
+        self,
+        thesis: TradingThesis,
+        position: PositionSnapshot,
+        health_context: ResolvedThesisHealthContext,
+        configuration: PositionLifecycleConfig,
+        *,
+        assessed_at: datetime,
+        actor: str,
+        reason: str,
+    ) -> ExitAssessment:
+        _validate_resolved_inputs(thesis, position, health_context, assessed_at)
+        health = health_context.health
+        health_reasons = health_context.reason_codes
+        unrealized = _unrealized_return(position, health_context.market_price)
         if health is ThesisHealth.DATA_INSUFFICIENT:
             action = PositionLifecycleAction.DATA_INSUFFICIENT
             reasons = health_reasons
@@ -669,7 +749,7 @@ class ExitAssessmentModel:
             "position_version": position.version,
             "configuration_id": str(configuration.configuration_id),
             "configuration_hash": configuration.configuration_hash,
-            "evidence": observation.evidence.to_canonical_dict(),
+            "evidence": health_context.evidence.to_canonical_dict(),
             "thesis_health": health.value,
             "action": action.value,
             "unrealized_return": unrealized,
@@ -689,7 +769,7 @@ class ExitAssessmentModel:
             position_version=position.version,
             configuration_id=configuration.configuration_id,
             configuration_hash=configuration.configuration_hash,
-            evidence=observation.evidence,
+            evidence=health_context.evidence,
             thesis_health=health,
             action=action,
             unrealized_return=unrealized,
@@ -764,6 +844,24 @@ def _validate_inputs(
         raise ValueError("assessment cannot consume future Position or evidence")
 
 
+def _validate_resolved_inputs(
+    thesis: TradingThesis,
+    position: PositionSnapshot,
+    context: ResolvedThesisHealthContext,
+    assessed_at: datetime,
+) -> None:
+    if assessed_at.tzinfo is None or assessed_at.utcoffset() is None:
+        raise ValueError("assessment time must be timezone-aware")
+    if position.state is PositionState.CLOSED:
+        raise ValueError("closed Position cannot receive Holding/Exit assessment")
+    if thesis.symbol != position.symbol:
+        raise ValueError("Thesis and Position symbol mismatch")
+    if position.as_of > assessed_at:
+        raise ValueError("assessment cannot consume future Position")
+    if not isinstance(context, ResolvedThesisHealthContext):
+        raise TypeError("health_context must be resolved")
+
+
 def _assessment_common(value: HoldingAssessment | ExitAssessment) -> None:
     if value.assessed_at.tzinfo is None or value.assessed_at.utcoffset() is None:
         raise ValueError("assessment timestamp must be timezone-aware")
@@ -787,7 +885,7 @@ def _holding_semantic(
     thesis: TradingThesis,
     position: PositionSnapshot,
     configuration: PositionLifecycleConfig,
-    observation: ThesisHealthObservation,
+    evidence: DecisionEvidenceReference,
     health: ThesisHealth,
     action: PositionLifecycleAction,
     unrealized: float,
@@ -806,7 +904,7 @@ def _holding_semantic(
         "position_version": position.version,
         "configuration_id": str(configuration.configuration_id),
         "configuration_hash": configuration.configuration_hash,
-        "evidence": observation.evidence.to_canonical_dict(),
+        "evidence": evidence.to_canonical_dict(),
         "thesis_health": health.value,
         "action": action.value,
         "unrealized_return": unrealized,

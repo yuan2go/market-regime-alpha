@@ -42,6 +42,7 @@ market_regime_alpha = [
     "platform/migrations/*.sql",
     "decision/migrations/*.sql",
     "portfolio/migrations/*.sql",
+    "position/migrations/*.sql",
     "execution/migrations/*.sql",
 ]
 
