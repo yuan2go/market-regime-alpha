@@ -286,7 +286,7 @@ PACKAGE_BUILD = PASS, sdist and wheel
 DOCUMENT_AUTHORITY_AND_LINKS = PASS
 ```
 
-The CI workflow now runs docs validation, pytest, Ruff, the configured mypy scope and `python -m build` on Python 3.12 for push and pull requests. A remote GitHub Actions result for this branch is not yet evidence in this local delivery record.
+The CI workflow runs docs validation, pytest, Ruff, the configured mypy scope and `python -m build` on Python 3.12 for push and pull requests. Both the push and Draft PR `quality` jobs passed remotely for branch checkpoint `dfd7a0b274bc1e661a5bebb04afab9e4494ea284` in Actions runs `30841390540` and `30841416197`. Required-check branch-protection policy was not inspected.
 
 ## 7. Not implemented as production authority
 

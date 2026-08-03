@@ -15,7 +15,7 @@
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Reproducible dependency set | P0 | Dependencies use lower bounds and no confirmed lockfile is present | Select one package workflow | Clean Python 3.12 environment installs from a committed lock and reproduces the full gate |
-| CI enforcement | P1 | Workflow now covers Python 3.12 install, docs, pytest, Ruff, configured mypy and package build on push/PR; no remote branch result or required-check policy was observed in this delivery | Push branch and maintain repository settings | Draft PR checks pass and protected branches require the complete workflow |
+| CI enforcement | P1 | Workflow covers Python 3.12 install, docs, pytest, Ruff, configured mypy and package build on push/PR; both remote branch and Draft PR jobs passed at `dfd7a0b`, while required-check policy was not inspected | Repository settings authority | Protected branches require the complete workflow and preserve passing push/PR checks |
 
 ## 2. Pre-Shadow hardening gaps
 
