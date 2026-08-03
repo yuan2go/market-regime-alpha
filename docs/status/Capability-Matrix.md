@@ -7,12 +7,12 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Gap-Register.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** H5 implementation checkpoint `89c06908a66fc1744802d7511c992a407f4c5c93`
+> **Code Evidence:** H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`
 > **Status Rule:** `IMPLEMENTED` describes code mechanics. `VERIFIED_IMPLEMENTATION_CHECKPOINT` requires observed checks on the cited code commit. Historical checkpoint PASS records do not verify later code changes.
 
 | Capability | Status | Code evidence | Verification evidence | Runtime/evidence ceiling | Primary blocker | Next action |
 |---|---|---|---|---|---|---|
-| Core identity and semantic time | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `core/identity.py`, `core/time.py`, `core/status.py` | Full H5 implementation-checkpoint gate: 1371 passed | Engineering contracts only | No trusted producer identity | Preserve in CI |
+| Core identity and semantic time | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `core/identity.py`, `core/time.py`, `core/status.py` | Full H5 implementation-checkpoint gate: 1398 passed | Engineering contracts only | No trusted producer identity | Preserve in CI |
 | Artifact canonicalization and envelope | IMPLEMENTED_AND_HISTORICALLY_VERIFIED | `evidence/**` | Reader, checksum and tamper tests on prior checkpoints | Content integrity, not source authenticity | No signatures/trusted runtime identity | Add signed artifact/operator identity for production |
 | SourceManifest and data quality | IMPLEMENTED_EXPLORATORY | `data/source_manifest.py`, `data/daily_quality.py` | Historical quality and missingness tests | Public-source exploratory authority | Qualified availability/PIT evidence absent | Establish controlled provider evidence |
 | Trading calendar and PIT contracts | IMPLEMENTED_CONTRACTS | `data/trading_calendar.py`, `universe/**` | Historical calendar/PIT contract tests | Formal provider PIT not established | Qualified provider inventory | Validate against formal historical source |
@@ -46,11 +46,11 @@
 | H2 Thesis-to-Outcome trace | IMPLEMENTED_SQLITE_EXPLORATORY | `execution/position_book.py`, traceability repositories, `evaluation/traceability.py`, migration 006 | Prior H2 focused/full records | Manual Fill trace, not broker truth | Multi-sleeve and external reconciliation absent | Preserve book identity and add reconciliation |
 | H3 A-share T+1 Position authority | IMPLEMENTED_FILL_CALENDAR_DERIVED | `position/authority.py`, position-authoritative risk service | Prior H3 focused/full records | Human Fill plus synthetic/typed calendar/status | Qualified statement/status evidence absent | Integrate real account/status reconciliation |
 | H4 increasing/reducing risk separation | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `portfolio/risk_routes.py`, `sqlite_risk_routes.py`, migration 007, decision-only CLI | 22 focused; 92 related-context; 1305 full; Ruff/mypy/build PASS at `3672067` | Decision/persistence/manual-confirmation assessment only; no order or Fill | H4.5 execution bridge intentionally absent | Design H4.5 before/within H7 |
-| H5 artifact-derived Thesis Health | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `position/thesis_health.py`, `sqlite_thesis_health.py`, migration 008, H5 Application Service/CLI | 74 focused; 88 H5/Position; 1371 full; Ruff/mypy/build/docs PASS at `89c0690` | Deterministic exploratory health evidence only; private replay bundle is not H6 authority | H6 composite evidence, authenticated Manual evidence and durable H7 lifecycle absent | Implement H6 next; preserve H5 authority ceiling |
+| H5 artifact-derived Thesis Health | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `position/thesis_health.py`, `sqlite_thesis_health.py`, migration 008, H5 Application Service/CLI | 99 focused; 91 Position; 1398 full; Ruff/mypy/build/docs PASS at `831edd6` | Deterministic exploratory health evidence only; private replay bundle is not H6 authority | H6 composite evidence, authenticated Manual evidence and durable H7 lifecycle absent | Implement H6 next; preserve H5 authority ceiling |
 | Manual execution ledger | IMPLEMENTED_SQLITE_MANUAL_ONLY | `execution/manual.py`, `sqlite_repository.py`, migration 004 | Prior append-only/correction/restart tests | Human-recorded evidence only | Authentication and broker reconciliation | Add authenticated recording and statement matching |
 | Fill append-only authority | IMPLEMENTED_LOCAL | `manual_fills`, SQL triggers | Prior mutation/correction tests | Immutable local ledger, not broker Fill | External source authority absent | Add external receipt and reconciliation evidence |
 | Position projection | IMPLEMENTED_FILL_DERIVED | `position/authority.py` | Prior FIFO/correction/replay tests | Projection of recorded Fill | External statement reconciliation absent | Add reconciliation state machine and operator workflow |
-| Holding and Exit models | IMPLEMENTED_EXPLORATORY_ONE_SHOT_WITH_V2_ADAPTER | `position/assessment.py`, `operational_assessment_v2.py` | V1 compatibility and strict V2 adapter tests at `89c0690` | Assessment only; configurations unvalidated; no trade action or durable schedule | H4.5/H7 absent | Persist operations in H7 without bypassing H4 |
+| Holding and Exit models | IMPLEMENTED_EXPLORATORY_ONE_SHOT_WITH_V2_ADAPTER | `position/assessment.py`, `operational_assessment_v2.py` | V1 compatibility, T+1 Position authority and strict V2 adapter tests at `831edd6` | Assessment only; configurations unvalidated; no trade action or durable schedule | H4.5/H7 absent | Persist operations in H7 without bypassing H4 |
 | TradeOutcome and attribution | IMPLEMENTED_DIAGNOSTIC | `evaluation/**` | Prior outcome/trace/review tests | Diagnostic, not causal Alpha proof | Qualified closed-trade sample absent | Accumulate shadow sample under frozen protocol |
 | Rolling scorecard | IMPLEMENTED_DIAGNOSTIC | `evaluation` scorecard/review | Prior deterministic tests | Cannot auto-promote models | No approved evaluation sample | Keep promotion separated and governed |
 | Legacy Dividend-T strategy | LEGACY_OPERATIONAL_DEMO | `dividend_t/**` | Legacy tests and local behavior | Separate authority model | Mixed responsibilities and mutable inputs | Do not promote into canonical lifecycle |
@@ -68,11 +68,11 @@
 ## Implementation-checkpoint verification summary
 
 ```text
-IMPLEMENTATION_CHECKPOINT = 89c06908a66fc1744802d7511c992a407f4c5c93
-FOCUSED_H5 = 74 passed, 0 skipped, 0 failed
-H5_AND_POSITION_CONTEXT = 88 passed, 0 skipped, 0 failed
+IMPLEMENTATION_CHECKPOINT = 831edd6b2ae044d3bd1f3abcec97a30e47082071
+FOCUSED_H5 = 99 passed, 0 skipped, 0 failed
+POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
 H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1371 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1398 passed, 0 skipped, 0 failed
 RUFF = PASS
 MYPY_FORMAL_SCOPE = PASS, 258 source files
 PACKAGE_BUILD = PASS

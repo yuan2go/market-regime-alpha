@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** H5 checkpoint `89c06908a66fc1744802d7511c992a407f4c5c93`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
+> **Code Evidence:** H5 hardened checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -266,7 +266,7 @@ decision-only CLI. H4 does not create ManualTrade, Fill or Broker Order.
 
 ### Implementation evidence
 
-Delivered at `89c06908a66fc1744802d7511c992a407f4c5c93` with typed rules, explicit configuration, strict canonical/current-evidence validation, content-addressed V2 Observation, migration 008, append-only SQLite command/observation persistence, Builder replay, semantic idempotency, V2-only CLI and a thin Holding/Exit adapter. The adapter consumes derived effective health directly and does not construct a V1 support-boolean Observation.
+Delivered and hardened at `831edd6b2ae044d3bd1f3abcec97a30e47082071` with typed rules, explicit configuration, strict canonical/current-evidence validation, content-addressed V2 Observation, migration 008, append-only SQLite command/observation persistence, recursive Builder replay, command-row tamper validation, semantic idempotency, verified package-path CLI and a thin Holding/Exit adapter. The Application Service constructs the replay bundle from actual domain inputs; the adapter consumes derived effective health directly, requires a Thesis-scoped T+1 PositionSnapshot and does not construct a V1 support-boolean Observation.
 
 The H5 private replay bundle is not H6 authority. H5 does not transition a Thesis, call H4, create ManualTrade/Fill/order, or change the historical LifecycleReview package schema.
 

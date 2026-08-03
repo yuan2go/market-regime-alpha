@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** H5 implementation checkpoint `89c06908a66fc1744802d7511c992a407f4c5c93`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Code Evidence:** H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -29,7 +29,7 @@ Data and Evidence
 
 The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable SQLite journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability.
 
-The H5 implementation checkpoint extends the green H4 baseline with artifact-derived Thesis Health. It adds typed invalidation rules, strict current-evidence validation, a content-addressed V2 Observation, append-only SQLite replay, a V2-only CLI and a thin Holding/Exit adapter. It does not transition a Thesis, call H4, create a ManualTrade/Fill/Broker Order or grant trading authority.
+The H5 implementation checkpoint extends the green H4 baseline with artifact-derived Thesis Health. It adds typed invalidation rules, strict current-evidence validation, a content-addressed V2 Observation, append-only SQLite replay, a verified-package-path V2 CLI and a thin Holding/Exit adapter over H3 T+1 Position authority. It does not transition a Thesis, call H4, create a ManualTrade/Fill/Broker Order or grant trading authority.
 
 ## 2. Current stage
 
@@ -198,7 +198,7 @@ The CLI is an assessment/persistence entry point only. Connecting a permitted de
 
 ### 3.10 H5 artifact-derived Thesis Health
 
-H5 is **IMPLEMENTED_AND_VERIFIED** at `89c06908a66fc1744802d7511c992a407f4c5c93`:
+H5 is **IMPLEMENTED_AND_VERIFIED** at `831edd6b2ae044d3bd1f3abcec97a30e47082071`:
 
 - `ThesisInvalidationRuleSet` binds every existing Thesis invalidation condition exactly once to a typed, versioned rule; descriptions and condition names are never parsed;
 - `ThesisHealthRuleConfiguration` content-identifies every freshness threshold, component-state mapping and exploratory Path rule;
@@ -206,9 +206,9 @@ H5 is **IMPLEMENTED_AND_VERIFIED** at `89c06908a66fc1744802d7511c992a407f4c5c93`
 - the Builder verifies canonical identities, SourceManifest lineage, Candidate→research, Signal→Candidate, Path→Signal, symbol/theme scope, creation-versus-current evidence and explicit price/research skew;
 - `ThesisHealthObservationV2` records observed, prior-effective and effective state. `INVALIDATED` is terminal; `DATA_INSUFFICIENT` does not advance effective state; `WEAKENING` cannot recover automatically;
 - migration 008 and `SQLiteThesisHealthRepository` use `BEGIN IMMEDIATE`, command hash/idempotency, append-only triggers, canonical restoration, prior-chain validation and Builder recomputation;
-- `ThesisHealthApplicationService` accepts only typed V2 input and persists the derived Observation atomically;
-- `scripts/build_thesis_health.py` rejects V1 support booleans and emits `OBSERVATION_ONLY`, `NO_TRADE_ACTION_CREATED` and `TRADING_AUTHORITY_NOT_GRANTED`;
-- `OperationalPositionAssessmentServiceV2` consumes the derived effective health directly and reuses the existing Holding/Exit decision core without constructing a fake V1 Observation.
+- `ThesisHealthApplicationService` accepts actual typed domain inputs, loads the explicitly bound prior Observation, constructs the private bundle internally and persists the derived Observation atomically;
+- `scripts/build_thesis_health.py` reads verified Research/Signal/Path packages, rejects V1 support booleans and emits `OBSERVATION_ONLY`, `NO_TRADE_ACTION_CREATED` and `TRADING_AUTHORITY_NOT_GRANTED`;
+- `OperationalPositionAssessmentServiceV2` consumes the derived effective health and a Thesis-scoped H3 T+1 PositionSnapshot directly, reusing the existing Holding/Exit decision core without constructing a fake V1 Observation.
 
 The H5 private replay bundle is not an H6 CompositeOperationalInputManifest and does not promote DataEligibility, PIT status or source authority. Manual invalidation actor strings are not authenticated production identities. V1 Readers and historical LifecycleReview inputs remain readable, but no new V2 operational path accepts V1 support booleans.
 
@@ -270,16 +270,16 @@ Repository delivery records report passing focused and full gates for earlier se
 
 ### 6.2 Current checkpoint evidence
 
-The local Python 3.12 verification on H5 implementation checkpoint `89c06908a66fc1744802d7511c992a407f4c5c93` observed:
+The local Python 3.12 verification on H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071` observed:
 
 ```text
-FOCUSED_H5 = 74 passed, 0 skipped, 0 failed
-H5_AND_POSITION_CONTEXT = 88 passed, 0 skipped, 0 failed
-APPLICATION_CONTEXT = 55 passed, 0 skipped, 0 failed
+FOCUSED_H5 = 99 passed, 0 skipped, 0 failed
+POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
+APPLICATION_CONTEXT = 62 passed, 0 skipped, 0 failed
 DECISION_CONTEXT = 8 passed, 0 skipped, 0 failed
 PORTFOLIO_CONTEXT = 55 passed, 0 skipped, 0 failed
 H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1371 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1398 passed, 0 skipped, 0 failed
 RUFF = PASS
 MYPY_FORMAL_SCOPE = PASS, 258 source files
 PACKAGE_BUILD = PASS, sdist and wheel

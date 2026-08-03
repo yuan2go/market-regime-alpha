@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../superpowers/specs/2026-08-04-h5-artifact-derived-thesis-health-design.md, ../superpowers/plans/2026-08-04-h5-artifact-derived-thesis-health.md
-> **Code Evidence:** implementation checkpoint `89c06908a66fc1744802d7511c992a407f4c5c93`; branch started from `main@df5c731da018819d9710f2d2f1ecffb4995fa082`
+> **Code Evidence:** hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; branch started from `main@df5c731da018819d9710f2d2f1ecffb4995fa082`
 
 ## 1. Delivery conclusion
 
@@ -89,6 +89,7 @@ Migration 008 creates append-only `thesis_health_observations` and `thesis_healt
 
 - opens `BEGIN IMMEDIATE` and rolls back observation plus command on failure;
 - implements idempotency key plus semantic command hash replay and conflict rejection;
+- reconstructs each command's stored input bundle, recomputes its semantic hash and validates the Observation/created-at projection;
 - rejects branching from anything except the latest stored prior Observation;
 - restores Observation, input bundle, configuration, rule set and prior Observation canonically;
 - validates every projection column and prior identity/hash;
@@ -100,7 +101,7 @@ The stored `ThesisHealthInputBundle` is an H5-private replay bundle. It is not a
 
 ## 7. Operational boundary
 
-`scripts/build_thesis_health.py` produces and persists one Observation. It outputs component states, source IDs/hashes and explicit boundaries:
+`scripts/build_thesis_health.py` uses the existing exact-file/checksum Readers for Platform V2 Research, Signal and PathForecast packages, plus strict canonical Readers for Thesis, Opportunity, price, configuration, rule set and Manual evidence. It selects the unique Thesis-symbol Signal/Path chain and produces and persists one Observation. It outputs component states, source IDs/hashes and explicit boundaries:
 
 ```text
 OBSERVATION_ONLY
@@ -108,20 +109,20 @@ NO_TRADE_ACTION_CREATED
 TRADING_AUTHORITY_NOT_GRANTED
 ```
 
-`OperationalPositionAssessmentServiceV2` produces only `HoldingAssessment` and `ExitAssessment`. It reuses the shared model decision core, does not call H4 and does not create a Thesis transition, ManualTrade, Fill, order or Broker interaction. Historical `ExitAssessment.requires_portfolio_risk` wording remains an H4.5/H7 gap.
+`OperationalPositionAssessmentServiceV2` requires a Thesis/Opportunity-scoped H3 T+1 PositionSnapshot and produces only `HoldingAssessment` and `ExitAssessment`. It reuses the shared model decision core, does not call H4 and does not create a Thesis transition, ManualTrade, Fill, order or Broker interaction. Historical `ExitAssessment.requires_portfolio_risk` wording remains an H4.5/H7 gap.
 
 ## 8. Verification evidence
 
-Local Python 3.12 verification at `89c06908a66fc1744802d7511c992a407f4c5c93`:
+Local Python 3.12 verification at `831edd6b2ae044d3bd1f3abcec97a30e47082071`:
 
 ```text
-FOCUSED_H5 = 74 passed, 0 skipped, 0 failed
-H5_AND_POSITION_CONTEXT = 88 passed, 0 skipped, 0 failed
-APPLICATION_CONTEXT = 55 passed, 0 skipped, 0 failed
+FOCUSED_H5 = 99 passed, 0 skipped, 0 failed
+POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
+APPLICATION_CONTEXT = 62 passed, 0 skipped, 0 failed
 DECISION_CONTEXT = 8 passed, 0 skipped, 0 failed
 PORTFOLIO_CONTEXT = 55 passed, 0 skipped, 0 failed
 H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1371 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1398 passed, 0 skipped, 0 failed
 RUFF = PASS
 MYPY_FORMAL_SCOPE = PASS, 258 source files
 PACKAGE_BUILD = PASS, sdist and wheel
@@ -135,7 +136,7 @@ The full test run emitted six pre-existing pandas fragmentation performance warn
 
 - H6 owns cross-source Composite Operational Evidence.
 - H4.5 owns fresh RiskReducingDecision-to-manual-intent confirmation.
-- H7 owns durable Holding/Exit scheduling, H3 T+1 projection integration and acknowledgement/state persistence.
+- H7 owns durable Holding/Exit scheduling, historical LifecycleReview migration to H3 T+1 authority and acknowledgement/state persistence.
 - H8 owns sustained Shadow operation and run evidence.
 - H9 owns formal PIT/OOS validation.
 - DailyLoop still constructs a local in-memory `ModelRegistry`.
