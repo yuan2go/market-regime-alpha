@@ -8,14 +8,17 @@ import pytest
 from market_regime_alpha.core.identity import ThesisId
 import market_regime_alpha.execution  # noqa: F401  # existing package initialization order
 from market_regime_alpha.application.trading_lifecycle import (
+    ManualExecutionApplicationService,
     OperationalPositionAssessmentServiceV2,
 )
+from market_regime_alpha.dividend_t.brokers import PaperBrokerAdapter
 from market_regime_alpha.position import (
     PositionLifecycleAction,
     ThesisHealth,
     ThesisHealthEvaluator,
     ThesisHealthObservationBuilder,
 )
+from market_regime_alpha.portfolio import RiskRouteApplicationService
 from market_regime_alpha.forecasting import PathForecast
 from market_regime_alpha.signals import SignalSnapshot
 
@@ -269,3 +272,52 @@ def test_v2_adapter_uses_preserved_effective_state_during_current_insufficiency(
     )
     assert result.holding_assessment.thesis_health is ThesisHealth.WEAKENING
     assert result.exit_assessment.thesis_health is ThesisHealth.WEAKENING
+
+
+def test_v2_adapter_rejects_canonical_tamper_and_creates_no_execution(
+    monkeypatch,
+) -> None:
+    fixture, position = _authoritative_scope()
+    observation = ThesisHealthObservationBuilder().build(_bundle(fixture))
+    tampered = ThesisHealthObservationBuilder().build(_bundle(fixture))
+    object.__setattr__(tampered, "content_hash", "sha256:" + "0" * 64)
+    service = OperationalPositionAssessmentServiceV2()
+
+    with pytest.raises(ValueError, match="identity mismatch"):
+        service.assess(
+            thesis=fixture.thesis,
+            position=position,
+            health_observation=tampered,
+            configuration=_config(),
+            assessed_at=tampered.assessed_at,
+            actor="reviewer-a",
+            reason="tampered V2 evidence rejected",
+        )
+
+    monkeypatch.setattr(
+        RiskRouteApplicationService,
+        "assess_reducing",
+        lambda *_args, **_kwargs: pytest.fail("V2 adapter must not call H4"),
+    )
+    monkeypatch.setattr(
+        ManualExecutionApplicationService,
+        "create_trade",
+        lambda *_args, **_kwargs: pytest.fail(
+            "V2 adapter must not create ManualTrade"
+        ),
+    )
+    monkeypatch.setattr(
+        PaperBrokerAdapter,
+        "place_order",
+        lambda *_args, **_kwargs: pytest.fail("V2 adapter must not call Broker"),
+    )
+    result = service.assess(
+        thesis=fixture.thesis,
+        position=position,
+        health_observation=observation,
+        configuration=_config(),
+        assessed_at=observation.assessed_at,
+        actor="reviewer-a",
+        reason="assessment-only authority check",
+    )
+    assert result.mode == "ASSESSMENT_ONLY"

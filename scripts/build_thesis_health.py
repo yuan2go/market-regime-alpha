@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
@@ -16,12 +17,12 @@ from market_regime_alpha.application.trading_lifecycle import (
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.daily_decision import DecisionPriceSnapshot
 from market_regime_alpha.decision import TradingOpportunity, TradingThesis
+from market_regime_alpha.forecasting import PathForecast
 from market_regime_alpha.forecasting.artifact import (
     load_verified_path_forecast,
 )
 from market_regime_alpha.position import (
     ManualInvalidationEvidence,
-    ThesisHealthInputBundle,
     ThesisHealthRuleConfiguration,
     ThesisInvalidationRuleSet,
 )
@@ -31,6 +32,11 @@ from market_regime_alpha.position.sqlite_thesis_health import (
 from market_regime_alpha.research.platform_v2.reader import (
     load_verified_research_layer_artifact,
 )
+from market_regime_alpha.research.candidate_discovery import CandidateSet
+from market_regime_alpha.research.capital_evolution import CapitalEvolutionSnapshot
+from market_regime_alpha.research.market_regime import MarketRegimeSnapshot
+from market_regime_alpha.research.theme_rotation import ThemeRotationSnapshot
+from market_regime_alpha.signals import SignalSnapshot
 from market_regime_alpha.signals.artifact import load_verified_signal_run
 
 
@@ -51,6 +57,27 @@ _REQUEST_FIELDS = {
     "reason",
     "idempotency_key",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedInputs:
+    thesis: TradingThesis
+    opportunity: TradingOpportunity
+    market_regime: MarketRegimeSnapshot
+    theme_rotation: ThemeRotationSnapshot
+    capital_evolution: CapitalEvolutionSnapshot
+    candidate_set: CandidateSet
+    signal_snapshot: SignalSnapshot
+    path_forecast: PathForecast
+    price_snapshot: DecisionPriceSnapshot
+    configuration: ThesisHealthRuleConfiguration
+    rule_set: ThesisInvalidationRuleSet
+    manual_evidence: tuple[ManualInvalidationEvidence, ...]
+    expected_prior_observation_id: ArtifactId | None
+    expected_prior_observation_hash: str | None
+    assessed_at: datetime
+    actor: str
+    reason: str
 
 
 def _object(value: object, *, name: str) -> dict[str, Any]:
@@ -112,12 +139,11 @@ def _manual_paths(value: object, *, base: Path) -> tuple[Path, ...]:
     return paths
 
 
-def _load_bundle(
-    repository: SQLiteThesisHealthRepository,
+def _load_inputs(
     request: dict[str, Any],
     *,
     base: Path,
-) -> ThesisHealthInputBundle:
+) -> _LoadedInputs:
     thesis = TradingThesis.from_canonical_dict(
         _document(_request_path(request, "thesis_path", base=base), name="Thesis")
     )
@@ -179,14 +205,7 @@ def _load_bundle(
     )
     if (prior_id is None) != (prior_hash is None):
         raise ValueError("prior Observation ID and hash must be supplied together")
-    prior = (
-        repository.get_observation(ArtifactId(prior_id))
-        if prior_id is not None
-        else None
-    )
-    if prior is not None and prior.content_hash != prior_hash:
-        raise ValueError("prior Observation hash mismatch")
-    return ThesisHealthInputBundle.create(
+    return _LoadedInputs(
         thesis=thesis,
         opportunity=opportunity,
         market_regime=research.market_regime,
@@ -199,7 +218,10 @@ def _load_bundle(
         configuration=configuration,
         rule_set=rule_set,
         manual_evidence=manual_evidence,
-        prior_observation=prior,
+        expected_prior_observation_id=(
+            ArtifactId(prior_id) if prior_id is not None else None
+        ),
+        expected_prior_observation_hash=prior_hash,
         assessed_at=datetime.fromisoformat(
             _string(request["assessed_at"], name="assessed_at")
         ),
@@ -215,11 +237,27 @@ def _assess(
     base: Path,
 ) -> dict[str, object]:
     repository = SQLiteThesisHealthRepository(database)
-    bundle = _load_bundle(repository, request, base=base)
+    inputs = _load_inputs(request, base=base)
     observation = ThesisHealthApplicationService(
         repository
     ).assess(
-        input_bundle=bundle,
+        thesis=inputs.thesis,
+        opportunity=inputs.opportunity,
+        market_regime=inputs.market_regime,
+        theme_rotation=inputs.theme_rotation,
+        capital_evolution=inputs.capital_evolution,
+        candidate_set=inputs.candidate_set,
+        signal_snapshot=inputs.signal_snapshot,
+        path_forecast=inputs.path_forecast,
+        price_snapshot=inputs.price_snapshot,
+        configuration=inputs.configuration,
+        rule_set=inputs.rule_set,
+        manual_evidence=inputs.manual_evidence,
+        expected_prior_observation_id=inputs.expected_prior_observation_id,
+        expected_prior_observation_hash=inputs.expected_prior_observation_hash,
+        assessed_at=inputs.assessed_at,
+        actor=inputs.actor,
+        reason=inputs.reason,
         idempotency_key=_string(
             request["idempotency_key"], name="idempotency_key"
         ),

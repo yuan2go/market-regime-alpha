@@ -9,6 +9,7 @@ import pytest
 from market_regime_alpha.evidence.canonical import canonical_hash
 import market_regime_alpha.execution  # noqa: F401  # existing package initialization order
 from market_regime_alpha.position import ThesisHealthObservationBuilder
+from market_regime_alpha.position.thesis_health import thesis_health_command_hash
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
     THESIS_HEALTH_DOWN_MIGRATION,
@@ -18,8 +19,12 @@ from tests.position.test_thesis_health_builder import _bundle
 from tests.position.thesis_health_fixtures import make_h5_fixture
 
 
-def _command_hash(label: str) -> str:
-    return canonical_hash({"command": label})
+def _command_hash(bundle) -> str:
+    return thesis_health_command_hash(bundle)
+
+
+def _different_command_hash(label: str) -> str:
+    return canonical_hash({"different-command": label})
 
 
 def _stored(tmp_path):
@@ -30,18 +35,18 @@ def _stored(tmp_path):
         observation,
         input_bundle=bundle,
         idempotency_key="stored-health",
-        command_hash=_command_hash("stored-health"),
+        command_hash=_command_hash(bundle),
     )
     return repository, bundle, stored
 
 
 def test_repository_saves_reads_replays_and_restarts(tmp_path) -> None:
-    repository, _, observation = _stored(tmp_path)
+    repository, bundle, observation = _stored(tmp_path)
 
     assert repository.get_observation(observation.observation_id) == observation
     assert repository.resolve_command(
         idempotency_key="stored-health",
-        command_hash=_command_hash("stored-health"),
+        command_hash=_command_hash(bundle),
     ) == observation
     restarted = SQLiteThesisHealthRepository(repository.path)
     assert restarted.get_observation(observation.observation_id) == observation
@@ -53,7 +58,7 @@ def test_repository_rejects_idempotency_semantic_conflict(tmp_path) -> None:
     with pytest.raises(ValueError, match="idempotency key reused"):
         repository.resolve_command(
             idempotency_key="stored-health",
-            command_hash=_command_hash("different-health"),
+            command_hash=_different_command_hash("different-health"),
         )
 
 
@@ -121,7 +126,7 @@ def test_repository_transaction_rolls_back_on_command_failure(tmp_path) -> None:
             observation,
             input_bundle=bundle,
             idempotency_key="rollback-health",
-            command_hash=_command_hash("rollback-health"),
+            command_hash=_command_hash(bundle),
         )
 
     with sqlite3.connect(repository.path) as connection:
@@ -166,7 +171,7 @@ def test_repository_rejects_forked_prior(tmp_path) -> None:
         current,
         input_bundle=current_bundle,
         idempotency_key="second-health",
-        command_hash=_command_hash("second-health"),
+        command_hash=_command_hash(current_bundle),
     )
 
     fork_bundle = _bundle(
@@ -180,7 +185,7 @@ def test_repository_rejects_forked_prior(tmp_path) -> None:
             fork,
             input_bundle=fork_bundle,
             idempotency_key="forked-health",
-            command_hash=_command_hash("forked-health"),
+            command_hash=_command_hash(fork_bundle),
         )
 
 
@@ -201,7 +206,7 @@ def test_latest_observation_follows_successor_chain_across_timezone_offsets(
         current,
         input_bundle=current_bundle,
         idempotency_key="timezone-current",
-        command_hash=_command_hash("timezone-current"),
+        command_hash=_command_hash(current_bundle),
     )
 
     assert repository.get_latest_observation(prior.thesis_id) == current
@@ -216,7 +221,7 @@ def test_latest_observation_follows_successor_chain_across_timezone_offsets(
         successor,
         input_bundle=successor_bundle,
         idempotency_key="timezone-successor",
-        command_hash=_command_hash("timezone-successor"),
+        command_hash=_command_hash(successor_bundle),
     ) == successor
 
 
@@ -235,7 +240,7 @@ def test_repository_recursively_revalidates_stored_prior_observation(tmp_path) -
         current,
         input_bundle=current_bundle,
         idempotency_key="recursive-prior",
-        command_hash=_command_hash("recursive-prior"),
+        command_hash=_command_hash(current_bundle),
     )
     with sqlite3.connect(repository.path) as connection:
         connection.execute("DROP TRIGGER thesis_health_observations_no_update")
@@ -253,6 +258,48 @@ def test_repository_recursively_revalidates_stored_prior_observation(tmp_path) -
 
     with pytest.raises(ValueError):
         repository.get_observation(current.observation_id)
+
+
+@pytest.mark.parametrize("tamper", ("observation_id", "created_at"))
+def test_repository_rejects_tampered_command_projection(tmp_path, tamper: str) -> None:
+    repository, prior_bundle, prior = _stored(tmp_path)
+    fixture = make_h5_fixture()
+    current_bundle = _bundle(
+        fixture,
+        prior_observation=prior,
+        assessed_at=prior.assessed_at + timedelta(minutes=1),
+    )
+    current = ThesisHealthObservationBuilder().build(current_bundle)
+    repository.save_observation(
+        current,
+        input_bundle=current_bundle,
+        idempotency_key="command-successor",
+        command_hash=_command_hash(current_bundle),
+    )
+    with sqlite3.connect(repository.path) as connection:
+        connection.execute("DROP TRIGGER thesis_health_commands_no_update")
+        if tamper == "observation_id":
+            connection.execute(
+                """
+                UPDATE thesis_health_commands SET observation_id = ?
+                WHERE idempotency_key = 'stored-health'
+                """,
+                (str(current.observation_id),),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE thesis_health_commands SET created_at = ?
+                WHERE idempotency_key = 'stored-health'
+                """,
+                (current.assessed_at.isoformat(),),
+            )
+
+    with pytest.raises(ValueError, match="command projection mismatch"):
+        repository.resolve_command(
+            idempotency_key="stored-health",
+            command_hash=_command_hash(prior_bundle),
+        )
 
 
 def test_down_migration_is_isolated(tmp_path) -> None:

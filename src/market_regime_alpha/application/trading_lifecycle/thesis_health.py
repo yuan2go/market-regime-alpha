@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
-from market_regime_alpha.evidence.canonical import canonical_hash
+from datetime import datetime
+
+from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.daily_decision import DecisionPriceSnapshot
+from market_regime_alpha.decision import TradingOpportunity, TradingThesis
+from market_regime_alpha.forecasting import PathForecast
 from market_regime_alpha.position.thesis_health import (
+    ManualInvalidationEvidence,
     ThesisHealthInputBundle,
     ThesisHealthObservationBuilder,
     ThesisHealthObservationV2,
     ThesisHealthRepository,
+    ThesisHealthRuleConfiguration,
+    ThesisInvalidationRuleSet,
+    thesis_health_command_hash,
 )
+from market_regime_alpha.research.candidate_discovery import CandidateSet
+from market_regime_alpha.research.capital_evolution import CapitalEvolutionSnapshot
+from market_regime_alpha.research.market_regime import MarketRegimeSnapshot
+from market_regime_alpha.research.theme_rotation import ThemeRotationSnapshot
+from market_regime_alpha.signals import SignalSnapshot
 
 
 class ThesisHealthApplicationService:
@@ -20,13 +34,58 @@ class ThesisHealthApplicationService:
     def assess(
         self,
         *,
-        input_bundle: ThesisHealthInputBundle,
+        thesis: TradingThesis,
+        opportunity: TradingOpportunity,
+        market_regime: MarketRegimeSnapshot,
+        theme_rotation: ThemeRotationSnapshot,
+        capital_evolution: CapitalEvolutionSnapshot,
+        candidate_set: CandidateSet,
+        signal_snapshot: SignalSnapshot,
+        path_forecast: PathForecast,
+        price_snapshot: DecisionPriceSnapshot,
+        configuration: ThesisHealthRuleConfiguration,
+        rule_set: ThesisInvalidationRuleSet,
+        manual_evidence: tuple[ManualInvalidationEvidence, ...],
+        expected_prior_observation_id: ArtifactId | None,
+        expected_prior_observation_hash: str | None,
+        assessed_at: datetime,
+        actor: str,
+        reason: str,
         idempotency_key: str,
     ) -> ThesisHealthObservationV2:
-        if not isinstance(input_bundle, ThesisHealthInputBundle):
-            raise TypeError("input_bundle must be a ThesisHealthInputBundle")
-        bundle = ThesisHealthInputBundle.from_canonical_dict(
-            input_bundle.to_canonical_dict()
+        if (expected_prior_observation_id is None) != (
+            expected_prior_observation_hash is None
+        ):
+            raise ValueError(
+                "expected prior Observation ID and hash must be supplied together"
+            )
+        prior = (
+            self._repository.get_observation(expected_prior_observation_id)
+            if expected_prior_observation_id is not None
+            else None
+        )
+        if (
+            prior is not None
+            and prior.content_hash != expected_prior_observation_hash
+        ):
+            raise ValueError("expected prior Observation hash mismatch")
+        bundle = ThesisHealthInputBundle.create(
+            thesis=thesis,
+            opportunity=opportunity,
+            market_regime=market_regime,
+            theme_rotation=theme_rotation,
+            capital_evolution=capital_evolution,
+            candidate_set=candidate_set,
+            signal_snapshot=signal_snapshot,
+            path_forecast=path_forecast,
+            price_snapshot=price_snapshot,
+            configuration=configuration,
+            rule_set=rule_set,
+            manual_evidence=manual_evidence,
+            prior_observation=prior,
+            assessed_at=assessed_at,
+            actor=actor,
+            reason=reason,
         )
         try:
             bundle.rule_set.validate_for(bundle.thesis)
@@ -34,31 +93,10 @@ class ThesisHealthApplicationService:
             raise ValueError(
                 "THESIS_INVALIDATION_RULESET_NOT_ESTABLISHED"
             ) from error
-        command_hash = canonical_hash(
-            {
-                "command_schema": "build-thesis-health-v2-command-v1",
-                "input_bundle_id": str(bundle.input_bundle_id),
-                "input_bundle_hash": bundle.content_hash,
-                "thesis_id": str(bundle.thesis.thesis_id),
-                "thesis_version": bundle.thesis.version,
-                "assessed_at": bundle.assessed_at.isoformat(),
-                "configuration_id": str(bundle.configuration.configuration_id),
-                "configuration_hash": bundle.configuration.configuration_hash,
-                "rule_set_id": str(bundle.rule_set.rule_set_id),
-                "rule_set_hash": bundle.rule_set.rule_set_hash,
-                "builder_revision": bundle.configuration.builder_revision,
-                "prior_observation_id": (
-                    str(bundle.prior_observation.observation_id)
-                    if bundle.prior_observation is not None
-                    else None
-                ),
-                "prior_observation_hash": (
-                    bundle.prior_observation.content_hash
-                    if bundle.prior_observation is not None
-                    else None
-                ),
-            }
+        bundle = ThesisHealthInputBundle.from_canonical_dict(
+            bundle.to_canonical_dict()
         )
+        command_hash = thesis_health_command_hash(bundle)
         replay = self._repository.resolve_command(
             idempotency_key=idempotency_key,
             command_hash=command_hash,

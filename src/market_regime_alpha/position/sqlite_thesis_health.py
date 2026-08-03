@@ -16,6 +16,7 @@ from market_regime_alpha.position.thesis_health import (
     ThesisHealthObservationV2,
     ThesisHealthRuleConfiguration,
     ThesisInvalidationRuleSet,
+    thesis_health_command_hash,
 )
 
 
@@ -162,6 +163,8 @@ class SQLiteThesisHealthRepository:
     ) -> ThesisHealthObservationV2:
         _key(idempotency_key)
         require_sha256("command_hash", command_hash)
+        if command_hash != thesis_health_command_hash(input_bundle):
+            raise ValueError("Thesis health command hash does not match input bundle")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -262,14 +265,33 @@ def _resolve_command(
     command_hash: str,
 ) -> ThesisHealthObservationV2 | None:
     row = connection.execute(
-        "SELECT command_hash, observation_id FROM thesis_health_commands WHERE idempotency_key = ?",
+        """
+        SELECT command_hash, observation_id, created_at
+        FROM thesis_health_commands WHERE idempotency_key = ?
+        """,
         (idempotency_key,),
     ).fetchone()
     if row is None:
         return None
     if row["command_hash"] != command_hash:
         raise ValueError("idempotency key reused for different Thesis health command")
-    return _load_observation(connection, ArtifactId(str(row["observation_id"])))
+    observation_row = connection.execute(
+        "SELECT * FROM thesis_health_observations WHERE observation_id = ?",
+        (str(row["observation_id"]),),
+    ).fetchone()
+    if observation_row is None:
+        raise ValueError("Thesis health command references a missing Observation")
+    observation, bundle = _restore_row(
+        connection,
+        observation_row,
+        ancestry=frozenset({ArtifactId(str(row["observation_id"]))}),
+    )
+    if (
+        thesis_health_command_hash(bundle) != row["command_hash"]
+        or row["created_at"] != observation.assessed_at.isoformat()
+    ):
+        raise ValueError("Thesis health command projection mismatch")
+    return observation
 
 
 def _load_observation(

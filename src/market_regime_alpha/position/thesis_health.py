@@ -1865,6 +1865,37 @@ class ThesisHealthRepository(Protocol):
     ) -> ThesisHealthObservationV2 | None: ...
 
 
+def thesis_health_command_hash(bundle: ThesisHealthInputBundle) -> str:
+    """Bind one operational command to every replay-affecting H5 input."""
+    if not isinstance(bundle, ThesisHealthInputBundle):
+        raise TypeError("bundle must be a ThesisHealthInputBundle")
+    return canonical_hash(
+        {
+            "command_schema": "build-thesis-health-v2-command-v1",
+            "input_bundle_id": str(bundle.input_bundle_id),
+            "input_bundle_hash": bundle.content_hash,
+            "thesis_id": str(bundle.thesis.thesis_id),
+            "thesis_version": bundle.thesis.version,
+            "assessed_at": bundle.assessed_at.isoformat(),
+            "configuration_id": str(bundle.configuration.configuration_id),
+            "configuration_hash": bundle.configuration.configuration_hash,
+            "rule_set_id": str(bundle.rule_set.rule_set_id),
+            "rule_set_hash": bundle.rule_set.rule_set_hash,
+            "builder_revision": bundle.configuration.builder_revision,
+            "prior_observation_id": (
+                str(bundle.prior_observation.observation_id)
+                if bundle.prior_observation is not None
+                else None
+            ),
+            "prior_observation_hash": (
+                bundle.prior_observation.content_hash
+                if bundle.prior_observation is not None
+                else None
+            ),
+        }
+    )
+
+
 _AGE_FIELDS = (
     "maximum_market_age_seconds",
     "maximum_theme_age_seconds",
