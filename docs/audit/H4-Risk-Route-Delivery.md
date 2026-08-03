@@ -28,7 +28,7 @@ The first three items were H4 implementation blockers. Items four and five were 
 
 Diagnostic commands also found pre-existing scope differences:
 
-- bare `pytest -q` produced 15 import/collection errors because the shell entry point did not receive the repository's `pythonpath`; formal CI uses `python -m pytest`;
+- bare `pytest -q` produced 16 import/collection errors because the shell entry point did not receive the repository's `pythonpath`; formal CI uses `python -m pytest`;
 - `mypy src` reported 44 Legacy/full-range errors in 9 files, while the repository's configured CI target passed. No H4 error remains outside the formal target.
 
 ## 2. Delivered H4 boundary
