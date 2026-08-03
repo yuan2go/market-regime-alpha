@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../specs/2026-08-03-h4-reducing-risk-decision-route-design.md, ../../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** Plan starts from `fix/h4-risk-route-baseline@f16a61e`; implementation evidence requires later tests and commits.
+> **Code Evidence:** Plan starts from `fix/h4-risk-route-baseline@f16a61e`; implementation and local gate evidence is bound to `3672067549e1b72a8bfd390f8320e2a7c55c599e`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -40,7 +40,7 @@
 - Consumes: `PositionSnapshot`, `ReducingExecutionObservation`, explicit `assessed_at`.
 - Produces: v2 `RiskReducingGateConfiguration`, stronger `RiskReducingExecutionGate`, stable H4 public imports.
 
-- [ ] **Step 1: Export the existing public domain types and run the original red test**
+- [x] **Step 1: Export the existing public domain types and run the original red test**
 
 Add imports and `__all__` entries for:
 
@@ -60,7 +60,7 @@ Run: `python -m pytest -q tests/portfolio/test_risk_route_separation.py`
 
 Expected: collection advances to the missing `RiskRouteApplicationService` or `sqlite_risk_routes` import.
 
-- [ ] **Step 2: Add failing fixed-time tests for explicit Observation freshness**
+- [x] **Step 2: Add failing fixed-time tests for explicit Observation freshness**
 
 Add tests that construct configurations with both thresholds:
 
@@ -80,7 +80,7 @@ Run: `python -m pytest -q tests/portfolio/test_risk_route_separation.py -k 'fres
 
 Expected: FAIL because the new configuration field and stale reason do not exist.
 
-- [ ] **Step 3: Upgrade the configuration and Gate semantics**
+- [x] **Step 3: Upgrade the configuration and Gate semantics**
 
 Implement the explicit schema and checks:
 
@@ -119,7 +119,7 @@ Expected: freshness and quantity tests pass; collection may still fail on missin
 - Consumes: the four-object Position/Observation/Configuration/Decision bundle plus idempotency key and command hash.
 - Produces: atomic save, command resolution and canonical/recomputed reads.
 
-- [ ] **Step 1: Write failing repository interface tests**
+- [x] **Step 1: Write failing repository interface tests**
 
 Tests call these exact protocol operations:
 
@@ -151,7 +151,7 @@ Run: `python -m pytest -q tests/portfolio/test_sqlite_risk_routes.py`
 
 Expected: FAIL because the adapter and protocol are missing.
 
-- [ ] **Step 2: Implement initialization and schema verification**
+- [x] **Step 2: Implement initialization and schema verification**
 
 Create constants and the connection boundary:
 
@@ -176,7 +176,7 @@ Run: `python -m pytest -q tests/portfolio/test_sqlite_risk_routes.py -k 'migrati
 
 Expected: migration tests and basic save/read tests advance to unimplemented persistence behavior.
 
-- [ ] **Step 3: Implement atomic insert and idempotency resolution**
+- [x] **Step 3: Implement atomic insert and idempotency resolution**
 
 Use one explicit transaction:
 
@@ -225,7 +225,7 @@ Expected: save/replay pass; tamper tests remain red until reconstruction is impl
 - Consumes: persisted canonical payloads and projection columns.
 - Produces: a decision only when its entire evidence bundle reconstructs and recomputes exactly.
 
-- [ ] **Step 1: Add failing tamper and transaction tests**
+- [x] **Step 1: Add failing tamper and transaction tests**
 
 Drop the no-update trigger only inside disposable test databases, then alter
 each of `decision_json`, row `content_hash` and `configuration_json` and assert
@@ -237,7 +237,7 @@ Run: `python -m pytest -q tests/portfolio/test_sqlite_risk_routes.py -k 'tamper 
 
 Expected: FAIL until strict restoration and transaction rollback are complete.
 
-- [ ] **Step 2: Implement strict JSON reconstruction and row checks**
+- [x] **Step 2: Implement strict JSON reconstruction and row checks**
 
 Restore with canonical readers:
 
@@ -258,7 +258,7 @@ Compare row ID/action/state/content hash/assessed time, then require the
 Decision's Position, Observation and Configuration references/hashes to match
 the three restored inputs.
 
-- [ ] **Step 3: Recompute the Gate result on every read**
+- [x] **Step 3: Recompute the Gate result on every read**
 
 ```python
 expected = RiskReducingExecutionGate().assess(
@@ -292,7 +292,7 @@ Expected: all Repository, tamper, rollback, migration and trigger tests pass.
 - Consumes: one explicit reducing command.
 - Produces: the repository-restored immutable `RiskReducingDecision`.
 
-- [ ] **Step 1: Add failing Application Service tests**
+- [x] **Step 1: Add failing Application Service tests**
 
 Cover legal REDUCE/EXIT, OPEN/ADD rejection, freshness, symbol/session mismatch,
 quantity rules, T+1, suspension, price limit, unknown execution state and
@@ -302,7 +302,7 @@ Run: `python -m pytest -q tests/portfolio/test_risk_route_separation.py`
 
 Expected: FAIL because `RiskRouteApplicationService` is missing.
 
-- [ ] **Step 2: Implement deterministic command orchestration**
+- [x] **Step 2: Implement deterministic command orchestration**
 
 ```python
 class RiskRouteApplicationService:
@@ -384,7 +384,7 @@ The method immediately rejects OPEN/ADD, canonical-round-trips every evidence
 object, computes `canonical_hash` over the full command, resolves replay,
 invokes the Gate, saves the full bundle and returns the restored result.
 
-- [ ] **Step 3: Export only the stable public surface**
+- [x] **Step 3: Export only the stable public surface**
 
 Export the nine requested H4 symbols from `portfolio.__init__` and export
 `RiskRouteApplicationService` from `application.trading_lifecycle.__init__`.
@@ -402,17 +402,17 @@ Expected: all H4 domain, service and repository tests pass.
 - Create: `tests/scripts/test_assess_risk_reduction.py`
 
 **Interfaces:**
-- Consumes: `--database PATH` and `--input PATH` containing a canonical command object.
+- Consumes: `--database PATH` and `--request PATH` containing a canonical command object.
 - Produces: one JSON decision-only response on stdout and one durable H4 decision in SQLite.
 
-- [ ] **Step 1: Add failing CLI tests**
+- [x] **Step 1: Add failing CLI tests**
 
 Use a command document with exact fields:
 
 ```json
 {
   "action": "EXIT",
-  "position": {},
+  "position_snapshot": {},
   "target_quantity": 0,
   "order_quantity": 100,
   "execution_observation": {},
@@ -432,7 +432,7 @@ Run: `python -m pytest -q tests/scripts/test_assess_risk_reduction.py`
 
 Expected: FAIL because the CLI does not exist.
 
-- [ ] **Step 2: Implement strict parsing and output**
+- [x] **Step 2: Implement strict parsing and output**
 
 The script reconstructs all inputs through domain readers, calls the service,
 and prints sorted JSON containing:
@@ -444,7 +444,7 @@ and prints sorted JSON containing:
     "state": decision.state.value,
     "reason_codes": list(decision.reason_codes),
     "position_snapshot_id": str(decision.position_snapshot_id),
-    "observation_id": str(decision.observation_id),
+    "execution_observation_id": str(decision.observation_id),
     "configuration_id": str(decision.configuration_id),
     "manual_confirmation_required": decision.state is RiskReducingDecisionState.PERMITTED_FOR_MANUAL_CONFIRMATION,
     "order_created": False,
@@ -471,7 +471,7 @@ Expected: all CLI tests pass.
 - Consumes: editable `.[dev]` install on Python 3.12.
 - Produces: package sdist/wheel validation in every push and pull request.
 
-- [ ] **Step 1: Add the build frontend to the dev extra**
+- [x] **Step 1: Add the build frontend to the dev extra**
 
 ```toml
 dev = [
@@ -482,7 +482,7 @@ dev = [
 ]
 ```
 
-- [ ] **Step 2: Add the minimal CI build step**
+- [x] **Step 2: Add the minimal CI build step**
 
 ```yaml
       - name: Build package
@@ -491,7 +491,7 @@ dev = [
 
 No publishing, cache, matrix, deployment or broker job is added.
 
-- [ ] **Step 3: Run focused bounded-context regression**
+- [x] **Step 3: Run focused bounded-context regression**
 
 Run:
 
@@ -519,27 +519,27 @@ Expected: every command passes.
 - Consumes: exact code/test evidence and read-only adjacent-module findings.
 - Produces: current H4 status, H4.5 work package and dependency-ordered H5–H9 plan.
 
-- [ ] **Step 1: Verify adjacent facts without changing those modules**
+- [x] **Step 1: Verify adjacent facts without changing those modules**
 
 Use `rg` and direct reads to record whether DailyLoop constructs in-memory
 `ModelRegistry`, Entry remains REJECT/WAIT_CONFIRMATION-only, Legacy Web bypasses
 canonical Readers, Paper Broker only accepts locally, and QMT/PTrade reject.
 
-- [ ] **Step 2: Record H4.5 as design-only**
+- [x] **Step 2: Record H4.5 as design-only**
 
 Document the new ManualTrade schema/reference, permitted/unexpired validation,
 latest Position recheck, confirmer audit, ManualTrade→Fill→Position trace,
 partial/cancel/re-decision behavior, migration needs and route permissions.
 State that H4 does not depend on H4.5 and H4.5 precedes or belongs within H7.
 
-- [ ] **Step 3: Update H4 and H5–H9 status without inflating authority**
+- [x] **Step 3: Update H4 and H5–H9 status without inflating authority**
 
 Mark H4 implemented and locally verified only after the full gate passes.
 Retain formal PIT/OOS, Entry, Shadow, production and broker non-claims. Describe
 H5→H9 business goal, artifacts, states, idempotency, tables, transaction,
 recovery, audit, tests, completion and dependencies.
 
-- [ ] **Step 4: Validate documentation**
+- [x] **Step 4: Validate documentation**
 
 Run:
 
@@ -559,7 +559,7 @@ Expected: all pass.
 - Consumes: completed working tree.
 - Produces: one reviewable H4 implementation commit and Draft PR.
 
-- [ ] **Step 1: Run the formal full gate**
+- [x] **Step 1: Run the formal full gate**
 
 ```bash
 python scripts/check_docs_links.py
@@ -573,12 +573,12 @@ python -m build
 
 Record passed/skipped/failed counts, mypy checked-file count and build artifacts.
 
-- [ ] **Step 2: Run diagnostic out-of-scope commands**
+- [x] **Step 2: Run diagnostic out-of-scope commands**
 
 Run `pytest -q` and `mypy src`. Record exact pre-existing path/Legacy failures
 separately and fix only H4-introduced diagnostics.
 
-- [ ] **Step 3: Review the complete diff**
+- [x] **Step 3: Review the complete diff**
 
 Run `git diff --check`, inspect staged and unstaged changes, verify no debug
 markers/secrets/personal paths, and perform Standards/Spec review against the

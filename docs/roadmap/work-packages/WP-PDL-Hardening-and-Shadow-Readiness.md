@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** H4 checkpoint `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`; each later phase requires its own commit-bound delivery evidence
+> **Code Evidence:** H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -240,7 +240,7 @@ not orders.
 
 ### Implementation evidence
 
-Delivered at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc` with SQLite persistence,
+Delivered and review-hardened at `3672067549e1b72a8bfd390f8320e2a7c55c599e` with SQLite persistence,
 canonical restoration, command/decision append-only triggers, semantic
 idempotency, explicit Position/Observation freshness, public exports and a
 decision-only CLI. H4 does not create ManualTrade, Fill or Broker Order.

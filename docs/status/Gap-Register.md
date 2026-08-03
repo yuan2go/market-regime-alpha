@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`
+> **Code Evidence:** `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps

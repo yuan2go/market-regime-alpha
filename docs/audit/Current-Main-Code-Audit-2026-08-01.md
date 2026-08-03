@@ -14,7 +14,7 @@
 
 ### 2026-08-03 delivery addendum
 
-This audit remains the exact historical record for `e183fdac`. Its H4 collection-blocker finding was reproduced, then repaired at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`. The current delivery evidence is `H4-Risk-Route-Delivery.md`; do not carry this document's broken-H4 or unverified-gate status forward to later commits.
+This audit remains the exact historical record for `e183fdac`. Its H4 collection-blocker finding was reproduced, then repaired and review-hardened at `3672067549e1b72a8bfd390f8320e2a7c55c599e`. The current delivery evidence is `H4-Risk-Route-Delivery.md`; do not carry this document's broken-H4 or unverified-gate status forward to later commits.
 
 The repository has evolved from a collection of A-share research strategies into a modular research and manual decision-support operating system.
 
@@ -398,4 +398,4 @@ H5 Artifact-derived Thesis health
 
 The repository’s architecture is materially stronger than a typical personal quant codebase. Its primary asset is the explicit, reconstructible authority chain rather than any single trading formula.
 
-The immediate action identified by this audit—restore a green exact-commit baseline by completing H4—was completed at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`. The remaining direction is the H4.5/H5–H9 durable Shadow and validation sequence; no later result changes this audit's historical conclusion that formal Alpha, Shadow operations and trading authority were absent.
+The immediate action identified by this audit—restore a green exact-commit baseline by completing H4—was completed and review-hardened at `3672067549e1b72a8bfd390f8320e2a7c55c599e`. The remaining direction is the H4.5/H5–H9 durable Shadow and validation sequence; no later result changes this audit's historical conclusion that formal Alpha, Shadow operations and trading authority were absent.

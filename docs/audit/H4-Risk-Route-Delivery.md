@@ -7,7 +7,7 @@
 > **Supersedes:** H4 findings in Current-Main-Code-Audit-2026-08-01.md
 > **Superseded By:** None
 > **Related Documents:** Current-Main-Code-Audit-2026-08-01.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md
-> **Code Evidence:** `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`
+> **Code Evidence:** `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Evidence Boundary:** Local Python 3.12 code, SQLite, tests and build were observed. No remote GitHub Actions result, sustained Shadow evidence, broker execution or formal Alpha result is claimed.
 
 ## 1. Baseline and reproduced failure
@@ -51,11 +51,12 @@ It includes:
 - a version-2 Gate configuration with explicit position and observation age limits;
 - strict REDUCE/EXIT quantities and OPEN/ADD rejection;
 - immutable, content-addressed decisions;
-- SQLite migration initialization/validation;
+- SQLite migration initialization plus structural validation of columns, primary/unique constraints, foreign keys, CHECK semantics and append-only trigger SQL;
 - atomic decision/evidence/command persistence;
 - command idempotency and semantic-conflict rejection;
 - append-only decision and command triggers;
 - canonical reconstruction, cross-reference checking and Gate replay on read;
+- numeric canonicalization before configuration/observation identity calculation and strict CLI command/audit-field types;
 - a human-facing assessment CLI that persists a decision and reports evidence references.
 
 It excludes:
@@ -195,8 +196,8 @@ Observed on the implementation checkpoint:
 | Command/scope | Result |
 |---|---|
 | Focused `test_risk_route_separation.py` | PASS — 22 passed, 0 skipped, 0 failed |
-| Portfolio/Position/Execution plus H4 CLI | PASS — 84 passed, 0 skipped, 0 failed |
-| Full `python -m pytest -q` with JUnit result capture | PASS — 1297 passed, 0 skipped, 0 failed |
+| Portfolio/Position/Execution plus H4 CLI | PASS — 92 passed, 0 skipped, 0 failed |
+| Full `python -m pytest -q` with JUnit result capture | PASS — 1305 passed, 0 skipped, 0 failed |
 | `python -m ruff check .` | PASS |
 | `python -m mypy` | PASS — 256 source files |
 | `python -m build` | PASS — sdist and wheel |

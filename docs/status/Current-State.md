@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`
+> **Code Evidence:** `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -43,7 +43,7 @@ H1_COMPLETE_ACCOUNT_PORTFOLIO_RISK_IMPLEMENTED_SQLITE
 H2_THESIS_TO_OUTCOME_TRACE_IMPLEMENTED_SQLITE
 H3_FILL_CALENDAR_DERIVED_T_PLUS_ONE_IMPLEMENTED
 H4_REDUCING_RISK_ROUTE_IMPLEMENTED_AND_VERIFIED
-CURRENT_HEAD_ENGINEERING_GATE_VERIFIED
+H4_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -177,7 +177,7 @@ The source remains human-recorded Fill evidence and synthetic/test calendar/stat
 
 ### 3.9 H4 increasing versus reducing risk
 
-H4 is **IMPLEMENTED_AND_VERIFIED** at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`:
+H4 is **IMPLEMENTED_AND_VERIFIED** at `3672067549e1b72a8bfd390f8320e2a7c55c599e`:
 
 - `RiskChangeKind` separates OPEN/ADD from REDUCE/EXIT;
 - increasing-risk references require an approved complete-account RiskDecision;
@@ -185,7 +185,7 @@ H4 is **IMPLEMENTED_AND_VERIFIED** at `b91e57d7ca52864a56b5e592bb4496b546b7b6fc`
 - target/order quantities cannot increase or overstate the position;
 - A-share sellable quantity, suspension, price-limit state, position/observation freshness and liquidity participation are checked;
 - output is `PERMITTED_FOR_MANUAL_CONFIRMATION`, `BLOCKED` or `DATA_INSUFFICIENT`;
-- migration 007 defines append-only reducing decisions and idempotency commands, with repeat-safe initialization and schema validation;
+- migration 007 defines append-only reducing decisions and idempotency commands, with repeat-safe initialization and validation of columns, constraints, foreign keys and trigger semantics;
 - `SQLiteRiskRouteRepository` restores all canonical evidence and reruns the Gate before returning a decision;
 - `RiskRouteApplicationService` validates the command, performs semantic replay and atomically persists the immutable evidence bundle;
 - public package exports and `application/trading_lifecycle` expose the stable H4 route;
@@ -251,12 +251,12 @@ Repository delivery records report passing focused and full gates for earlier se
 
 ### 6.2 Current checkpoint evidence
 
-The local Python 3.12 verification on `b91e57d7ca52864a56b5e592bb4496b546b7b6fc` observed:
+The local Python 3.12 verification on implementation checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e` observed:
 
 ```text
 FOCUSED_H4 = 22 passed, 0 skipped, 0 failed
-H4_RELATED_CONTEXTS = 84 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1297 passed, 0 skipped, 0 failed
+H4_RELATED_CONTEXTS = 92 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1305 passed, 0 skipped, 0 failed
 RUFF = PASS
 MYPY_FORMAL_SCOPE = PASS, 256 source files
 PACKAGE_BUILD = PASS, sdist and wheel
