@@ -38,6 +38,7 @@ from market_regime_alpha.portfolio import (
 from market_regime_alpha.portfolio.sqlite_account_authority import (
     COMPLETE_ACCOUNT_RISK_DOWN_MIGRATION,
 )
+from market_regime_alpha.portfolio.risk_routes import RiskIncreasingDecision
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -405,6 +406,27 @@ def test_empty_account_idempotency_and_sqlite_restart(tmp_path) -> None:
 
     assert duplicate == first
     assert first[1].state is RiskDecisionState.APPROVED
+    delta = first[0].post_trade.proposed_deltas[0]
+    increasing = RiskIncreasingDecision.create(
+        portfolio=first[0],
+        risk=first[1],
+        delta=delta,
+        created_at=NOW + timedelta(seconds=2),
+    )
+    assert increasing.risk_decision_id == first[1].risk_decision_id
+
+    class RejectedRisk:
+        state = RiskDecisionState.REJECTED
+
+    with pytest.raises(
+        ValueError, match="increasing risk requires approved complete-account Risk"
+    ):
+        RiskIncreasingDecision.create(
+            portfolio=first[0],
+            risk=RejectedRisk(),  # type: ignore[arg-type]
+            delta=delta,
+            created_at=NOW + timedelta(seconds=2),
+        )
     assert restarted.get_account_snapshot(str(account.snapshot_id)) == account
     assert (
         restarted.get_complete_account_portfolio(first[0].decision_id)

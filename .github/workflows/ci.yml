@@ -23,3 +23,5 @@ jobs:
         run: python -m ruff check .
       - name: Run mypy
         run: python -m mypy
+      - name: Build distribution artifacts
+        run: python -m build

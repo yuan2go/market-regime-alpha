@@ -43,6 +43,16 @@ from market_regime_alpha.portfolio.repositories import (
     CompleteAccountPortfolioRiskRepository,
     PortfolioDecisionRepository,
 )
+from market_regime_alpha.portfolio.risk_routes import (
+    ExecutionConstraintState,
+    ReducingExecutionObservation,
+    RiskChangeKind,
+    RiskReducingDecision,
+    RiskReducingDecisionState,
+    RiskReducingExecutionGate,
+    RiskReducingGateConfiguration,
+    RiskRouteApplicationService,
+)
 from market_regime_alpha.portfolio.services import (
     IndependentRiskService,
     PortfolioConstructionService,
@@ -52,6 +62,9 @@ from market_regime_alpha.portfolio.sqlite_repository import (
 )
 from market_regime_alpha.portfolio.sqlite_account_authority import (
     SQLiteCompleteAccountPortfolioRiskRepository,
+)
+from market_regime_alpha.portfolio.sqlite_risk_routes import (
+    SQLiteRiskRouteRepository,
 )
 
 __all__ = [
@@ -72,6 +85,7 @@ __all__ = [
     "CompleteAccountRiskDecision",
     "CompleteAccountRiskService",
     "CurrentPositionInput",
+    "ExecutionConstraintState",
     "IndependentRiskService",
     "PortfolioAccountSnapshot",
     "PortfolioConstraint",
@@ -85,14 +99,22 @@ __all__ = [
     "PositionRiskValuationInput",
     "PositionPlan",
     "PositionPlanState",
+    "ReducingExecutionObservation",
     "RiskBudget",
+    "RiskChangeKind",
     "RiskDecision",
     "RiskDecisionState",
+    "RiskReducingDecision",
+    "RiskReducingDecisionState",
+    "RiskReducingExecutionGate",
+    "RiskReducingGateConfiguration",
+    "RiskRouteApplicationService",
     "PostTradePortfolioSnapshot",
     "PostTradePosition",
     "ProposedTradeDelta",
     "SQLiteCompleteAccountPortfolioRiskRepository",
     "SQLitePortfolioDecisionRepository",
+    "SQLiteRiskRouteRepository",
     "TargetPosition",
     "ThesisAllocationRequest",
 ]

@@ -42,5 +42,17 @@ BEGIN
     SELECT RAISE(ABORT, 'risk reducing decisions are append-only');
 END;
 
+CREATE TRIGGER IF NOT EXISTS risk_reducing_commands_no_update
+BEFORE UPDATE ON risk_reducing_commands
+BEGIN
+    SELECT RAISE(ABORT, 'risk reducing commands are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS risk_reducing_commands_no_delete
+BEFORE DELETE ON risk_reducing_commands
+BEGIN
+    SELECT RAISE(ABORT, 'risk reducing commands are append-only');
+END;
+
 INSERT OR IGNORE INTO pdl_schema_migrations(version, applied_at)
 VALUES (7, CURRENT_TIMESTAMP);

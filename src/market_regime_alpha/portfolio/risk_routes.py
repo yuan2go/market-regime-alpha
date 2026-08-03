@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from math import isfinite
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from market_regime_alpha.core.identity import (
     ArtifactId,
@@ -30,8 +30,11 @@ from market_regime_alpha.position.authority import (
     PositionState,
 )
 
+if TYPE_CHECKING:
+    from market_regime_alpha.portfolio.repositories import RiskRouteRepository
 
-RISK_REDUCING_GATE_CONFIG_SCHEMA = "risk-reducing-gate-configuration-v1"
+
+RISK_REDUCING_GATE_CONFIG_SCHEMA = "risk-reducing-gate-configuration-v2"
 REDUCING_EXECUTION_OBSERVATION_SCHEMA = "reducing-execution-observation-v1"
 RISK_REDUCING_DECISION_SCHEMA = "risk-reducing-decision-v1"
 RISK_INCREASING_DECISION_SCHEMA = "risk-increasing-decision-reference-v1"
@@ -64,6 +67,7 @@ class RiskReducingGateConfiguration:
     configuration_hash: str
     profile_id: str
     maximum_position_age_seconds: float
+    maximum_observation_age_seconds: float
     maximum_liquidity_participation: float
 
     def __post_init__(self) -> None:
@@ -73,6 +77,8 @@ class RiskReducingGateConfiguration:
         if (
             not isfinite(self.maximum_position_age_seconds)
             or self.maximum_position_age_seconds <= 0.0
+            or not isfinite(self.maximum_observation_age_seconds)
+            or self.maximum_observation_age_seconds <= 0.0
             or not isfinite(self.maximum_liquidity_participation)
             or not 0.0 < self.maximum_liquidity_participation <= 1.0
         ):
@@ -90,6 +96,9 @@ class RiskReducingGateConfiguration:
             "schema_version": self.schema_version,
             "profile_id": self.profile_id,
             "maximum_position_age_seconds": self.maximum_position_age_seconds,
+            "maximum_observation_age_seconds": (
+                self.maximum_observation_age_seconds
+            ),
             "maximum_liquidity_participation": (
                 self.maximum_liquidity_participation
             ),
@@ -108,12 +117,14 @@ class RiskReducingGateConfiguration:
         *,
         profile_id: str,
         maximum_position_age_seconds: float,
+        maximum_observation_age_seconds: float,
         maximum_liquidity_participation: float,
     ) -> RiskReducingGateConfiguration:
         semantic = {
             "schema_version": RISK_REDUCING_GATE_CONFIG_SCHEMA,
             "profile_id": profile_id,
             "maximum_position_age_seconds": maximum_position_age_seconds,
+            "maximum_observation_age_seconds": maximum_observation_age_seconds,
             "maximum_liquidity_participation": maximum_liquidity_participation,
         }
         digest = canonical_hash(semantic)
@@ -123,6 +134,7 @@ class RiskReducingGateConfiguration:
             configuration_hash=digest,
             profile_id=profile_id,
             maximum_position_age_seconds=maximum_position_age_seconds,
+            maximum_observation_age_seconds=maximum_observation_age_seconds,
             maximum_liquidity_participation=maximum_liquidity_participation,
         )
 
@@ -138,6 +150,7 @@ class RiskReducingGateConfiguration:
                 "configuration_hash",
                 "profile_id",
                 "maximum_position_age_seconds",
+                "maximum_observation_age_seconds",
                 "maximum_liquidity_participation",
             },
             "RiskReducingGateConfiguration",
@@ -149,6 +162,9 @@ class RiskReducingGateConfiguration:
             profile_id=str(payload["profile_id"]),
             maximum_position_age_seconds=float(
                 payload["maximum_position_age_seconds"]
+            ),
+            maximum_observation_age_seconds=float(
+                payload["maximum_observation_age_seconds"]
             ),
             maximum_liquidity_participation=float(
                 payload["maximum_liquidity_participation"]
@@ -176,6 +192,7 @@ class ReducingExecutionObservation:
             raise ValueError("unsupported reducing execution observation")
         _text("symbol", self.symbol)
         _text("reason_code", self.reason_code)
+        _integer("average_daily_volume", self.average_daily_volume)
         if (
             not isfinite(self.reference_price)
             or self.reference_price <= 0.0
@@ -286,7 +303,9 @@ class ReducingExecutionObservation:
             session_date=date.fromisoformat(str(payload["session_date"])),
             state=ExecutionConstraintState(str(payload["state"])),
             reference_price=float(payload["reference_price"]),
-            average_daily_volume=int(payload["average_daily_volume"]),
+            average_daily_volume=_integer(
+                "average_daily_volume", payload["average_daily_volume"]
+            ),
             source_artifact_id=ArtifactId(str(payload["source_artifact_id"])),
             source_artifact_hash=str(payload["source_artifact_hash"]),
             availability_time=datetime.fromisoformat(
@@ -329,6 +348,14 @@ class RiskReducingDecision:
             raise ValueError("RiskReducingDecision action must reduce risk")
         for label, value in (("symbol", self.symbol), ("actor", self.actor), ("reason", self.reason)):
             _text(label, value)
+        for quantity_label, quantity_value in (
+            ("current_quantity", self.current_quantity),
+            ("available_quantity", self.available_quantity),
+            ("target_quantity", self.target_quantity),
+            ("order_quantity", self.order_quantity),
+            ("position_snapshot_version", self.position_snapshot_version),
+        ):
+            _integer(quantity_label, quantity_value)
         if min(
             self.current_quantity,
             self.available_quantity,
@@ -427,14 +454,22 @@ class RiskReducingDecision:
                 str(payload["position_snapshot_id"])
             ),
             position_snapshot_hash=str(payload["position_snapshot_hash"]),
-            position_snapshot_version=int(payload["position_snapshot_version"]),
+            position_snapshot_version=_integer(
+                "position_snapshot_version", payload["position_snapshot_version"]
+            ),
             position_book_id=PositionBookId(str(payload["position_book_id"])),
             thesis_id=ThesisId(str(payload["thesis_id"])),
             symbol=str(payload["symbol"]),
-            current_quantity=int(payload["current_quantity"]),
-            available_quantity=int(payload["available_quantity"]),
-            target_quantity=int(payload["target_quantity"]),
-            order_quantity=int(payload["order_quantity"]),
+            current_quantity=_integer(
+                "current_quantity", payload["current_quantity"]
+            ),
+            available_quantity=_integer(
+                "available_quantity", payload["available_quantity"]
+            ),
+            target_quantity=_integer(
+                "target_quantity", payload["target_quantity"]
+            ),
+            order_quantity=_integer("order_quantity", payload["order_quantity"]),
             observation_id=ArtifactId(str(payload["observation_id"])),
             observation_hash=str(payload["observation_hash"]),
             configuration_id=ArtifactId(str(payload["configuration_id"])),
@@ -546,6 +581,10 @@ class RiskReducingExecutionGate:
     ) -> RiskReducingDecision:
         if action not in {RiskChangeKind.REDUCE, RiskChangeKind.EXIT}:
             raise ValueError("increasing Risk cannot use RiskReducingExecutionGate")
+        _integer("target_quantity", target_quantity)
+        _integer("order_quantity", order_quantity)
+        if assessed_at.tzinfo is None:
+            raise ValueError("Risk reducing assessment time must be aware")
         _text("actor", actor)
         _text("reason", reason)
         if execution_observation is None:
@@ -576,14 +615,14 @@ class RiskReducingExecutionGate:
             reasons.add("REDUCING_ORDER_QUANTITY_MISMATCH")
         if action is RiskChangeKind.EXIT and target_quantity != 0:
             reasons.add("EXIT_REQUIRES_ZERO_TARGET")
-        if action is RiskChangeKind.REDUCE and not 0 < target_quantity < current:
-            reasons.add("REDUCE_REQUIRES_STRICTLY_LOWER_POSITIVE_TARGET")
+        if action is RiskChangeKind.REDUCE and not 0 <= target_quantity < current:
+            reasons.add("REDUCE_REQUIRES_STRICTLY_LOWER_TARGET")
         if order_quantity <= 0:
             reasons.add("REDUCING_ORDER_QUANTITY_MUST_BE_POSITIVE")
         if order_quantity > available:
             reasons.add("T_PLUS_ONE_NOT_SELLABLE")
         if position.sellability_state is PositionSellabilityState.SUSPENDED:
-            reasons.add("EXIT_BLOCKED_BY_MARKET_CONSTRAINT")
+            reasons.add(f"{action.value}_BLOCKED_BY_MARKET_CONSTRAINT")
         elif position.sellability_state is PositionSellabilityState.DATA_INSUFFICIENT:
             insufficient.add("EXECUTION_STATE_UNKNOWN")
         if (
@@ -593,11 +632,15 @@ class RiskReducingExecutionGate:
             insufficient.add("EXECUTION_OBSERVATION_SCOPE_MISMATCH")
         if execution_observation.availability_time > assessed_at:
             insufficient.add("EXECUTION_OBSERVATION_UNAVAILABLE")
+        elif (
+            assessed_at - execution_observation.availability_time
+        ).total_seconds() > configuration.maximum_observation_age_seconds:
+            insufficient.add("EXECUTION_OBSERVATION_STALE")
         if execution_observation.state in {
             ExecutionConstraintState.SUSPENDED,
             ExecutionConstraintState.PRICE_LIMIT_BLOCKED,
         }:
-            reasons.add("EXIT_BLOCKED_BY_MARKET_CONSTRAINT")
+            reasons.add(f"{action.value}_BLOCKED_BY_MARKET_CONSTRAINT")
         elif execution_observation.state is ExecutionConstraintState.UNKNOWN:
             insufficient.add("EXECUTION_STATE_UNKNOWN")
         participation = order_quantity / execution_observation.average_daily_volume
@@ -664,6 +707,84 @@ class RiskReducingExecutionGate:
         )
 
 
+class RiskRouteApplicationService:
+    """Persist a reducing-risk decision without creating execution authority."""
+
+    def __init__(self, repository: RiskRouteRepository) -> None:
+        self._repository = repository
+        self._gate = RiskReducingExecutionGate()
+
+    def assess_reducing(
+        self,
+        *,
+        action: RiskChangeKind,
+        position: PositionSnapshot,
+        target_quantity: int,
+        order_quantity: int,
+        execution_observation: ReducingExecutionObservation,
+        configuration: RiskReducingGateConfiguration,
+        actor: str,
+        reason: str,
+        assessed_at: datetime,
+        idempotency_key: str,
+    ) -> RiskReducingDecision:
+        if action not in {RiskChangeKind.REDUCE, RiskChangeKind.EXIT}:
+            raise ValueError("increasing Risk cannot use the reducing service")
+        _integer("target_quantity", target_quantity)
+        _integer("order_quantity", order_quantity)
+        if assessed_at.tzinfo is None:
+            raise ValueError("Risk reducing assessment time must be aware")
+        _text("idempotency_key", idempotency_key)
+        restored_position = PositionSnapshot.from_canonical_dict(
+            position.to_canonical_dict()
+        )
+        restored_observation = ReducingExecutionObservation.from_canonical_dict(
+            execution_observation.to_canonical_dict()
+        )
+        restored_configuration = RiskReducingGateConfiguration.from_canonical_dict(
+            configuration.to_canonical_dict()
+        )
+        command_hash = canonical_hash(
+            {
+                "command": "ASSESS_RISK_REDUCTION",
+                "action": action.value,
+                "position": restored_position.to_canonical_dict(),
+                "target_quantity": target_quantity,
+                "order_quantity": order_quantity,
+                "execution_observation": restored_observation.to_canonical_dict(),
+                "configuration": restored_configuration.to_canonical_dict(),
+                "actor": actor,
+                "reason": reason,
+                "assessed_at": assessed_at.isoformat(),
+            }
+        )
+        replay = self._repository.resolve_reducing_command(
+            idempotency_key=idempotency_key,
+            command_hash=command_hash,
+        )
+        if replay is not None:
+            return replay
+        decision = self._gate.assess(
+            action=action,
+            position=restored_position,
+            target_quantity=target_quantity,
+            order_quantity=order_quantity,
+            execution_observation=restored_observation,
+            configuration=restored_configuration,
+            actor=actor,
+            reason=reason,
+            assessed_at=assessed_at,
+        )
+        return self._repository.save_reducing_decision(
+            decision,
+            position=restored_position,
+            execution_observation=restored_observation,
+            configuration=restored_configuration,
+            idempotency_key=idempotency_key,
+            command_hash=command_hash,
+        )
+
+
 def _content_id(prefix: str, digest: str) -> ArtifactId:
     return ArtifactId(f"{prefix}-{digest.split(':', 1)[1][:24]}")
 
@@ -671,6 +792,12 @@ def _content_id(prefix: str, digest: str) -> ArtifactId:
 def _text(label: str, value: str) -> None:
     if not value or value != value.strip():
         raise ValueError(f"{label} must be a non-empty trimmed string")
+
+
+def _integer(label: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
 
 
 def _fields(
