@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-03
+> **Last Updated:** 2026-08-04
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
+> **Code Evidence:** H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -29,7 +29,7 @@ Data and Evidence
 
 The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable SQLite journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability.
 
-The H4 implementation checkpoint is a green verified engineering baseline. It completes the reducing-risk Repository, Application Service, strict restoration, idempotency, append-only command/decision persistence and a decision-only CLI. This restores current-main engineering integrity; it does not create a ManualTrade, Fill, Broker Order or trading authority.
+The H5 implementation checkpoint extends the green H4 baseline with artifact-derived Thesis Health. It adds typed invalidation rules, strict current-evidence validation, a content-addressed V2 Observation, append-only SQLite replay, a verified-package-path V2 CLI and a thin Holding/Exit adapter over H3 T+1 Position authority. It does not transition a Thesis, call H4, create a ManualTrade/Fill/Broker Order or grant trading authority.
 
 ## 2. Current stage
 
@@ -44,6 +44,9 @@ H2_THESIS_TO_OUTCOME_TRACE_IMPLEMENTED_SQLITE
 H3_FILL_CALENDAR_DERIVED_T_PLUS_ONE_IMPLEMENTED
 H4_REDUCING_RISK_ROUTE_IMPLEMENTED_AND_VERIFIED
 H4_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
+H5_ARTIFACT_DERIVED_THESIS_HEALTH_IMPLEMENTED_AND_VERIFIED
+H5_V2_OPERATIONAL_ASSESSMENT_ADAPTER_IMPLEMENTED
+H5_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -193,7 +196,23 @@ H4 is **IMPLEMENTED_AND_VERIFIED** at `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 
 The CLI is an assessment/persistence entry point only. Connecting a permitted decision to ManualTrade/Fill is the separate H4.5 work package and is not part of H4.
 
-### 3.10 Manual execution, Position and review
+### 3.10 H5 artifact-derived Thesis Health
+
+H5 is **IMPLEMENTED_AND_VERIFIED** at `831edd6b2ae044d3bd1f3abcec97a30e47082071`:
+
+- `ThesisInvalidationRuleSet` binds every existing Thesis invalidation condition exactly once to a typed, versioned rule; descriptions and condition names are never parsed;
+- `ThesisHealthRuleConfiguration` content-identifies every freshness threshold, component-state mapping and exploratory Path rule;
+- `ThesisHealthInputBundle` stores the exact current Market/Theme/Capital/Candidate/Signal/Path/price evidence, configuration, rule set, optional Manual evidence and explicit prior V2 Observation for private replay;
+- the Builder verifies canonical identities, SourceManifest lineage, Candidate→research, Signal→Candidate, Path→Signal, symbol/theme scope, creation-versus-current evidence and explicit price/research skew;
+- `ThesisHealthObservationV2` records observed, prior-effective and effective state. `INVALIDATED` is terminal; `DATA_INSUFFICIENT` does not advance effective state; `WEAKENING` cannot recover automatically;
+- migration 008 and `SQLiteThesisHealthRepository` use `BEGIN IMMEDIATE`, command hash/idempotency, append-only triggers, canonical restoration, prior-chain validation and Builder recomputation;
+- `ThesisHealthApplicationService` accepts actual typed domain inputs, loads the explicitly bound prior Observation, constructs the private bundle internally and persists the derived Observation atomically;
+- `scripts/build_thesis_health.py` reads verified Research/Signal/Path packages, rejects V1 support booleans and emits `OBSERVATION_ONLY`, `NO_TRADE_ACTION_CREATED` and `TRADING_AUTHORITY_NOT_GRANTED`;
+- `OperationalPositionAssessmentServiceV2` consumes the derived effective health and a Thesis-scoped H3 T+1 PositionSnapshot directly, reusing the existing Holding/Exit decision core without constructing a fake V1 Observation.
+
+The H5 private replay bundle is not an H6 CompositeOperationalInputManifest and does not promote DataEligibility, PIT status or source authority. Manual invalidation actor strings are not authenticated production identities. V1 Readers and historical LifecycleReview inputs remain readable, but no new V2 operational path accepts V1 support booleans.
+
+### 3.11 Manual execution, Position and review
 
 Implemented on prior verified checkpoints:
 
@@ -251,19 +270,23 @@ Repository delivery records report passing focused and full gates for earlier se
 
 ### 6.2 Current checkpoint evidence
 
-The local Python 3.12 verification on implementation checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e` observed:
+The local Python 3.12 verification on H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071` observed:
 
 ```text
-FOCUSED_H4 = 22 passed, 0 skipped, 0 failed
-H4_RELATED_CONTEXTS = 92 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1305 passed, 0 skipped, 0 failed
+FOCUSED_H5 = 99 passed, 0 skipped, 0 failed
+POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
+APPLICATION_CONTEXT = 62 passed, 0 skipped, 0 failed
+DECISION_CONTEXT = 8 passed, 0 skipped, 0 failed
+PORTFOLIO_CONTEXT = 55 passed, 0 skipped, 0 failed
+H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1398 passed, 0 skipped, 0 failed
 RUFF = PASS
-MYPY_FORMAL_SCOPE = PASS, 256 source files
+MYPY_FORMAL_SCOPE = PASS, 258 source files
 PACKAGE_BUILD = PASS, sdist and wheel
 DOCUMENT_AUTHORITY_AND_LINKS = PASS
 ```
 
-The CI workflow now runs docs validation, pytest, Ruff, the configured mypy scope and `python -m build` on Python 3.12 for push and pull requests. A remote GitHub Actions result for this branch is not yet evidence in this local delivery record.
+The CI workflow runs docs validation, pytest, Ruff, the configured mypy scope and `python -m build` on Python 3.12 for push and pull requests. Both the push and Draft PR `quality` jobs passed remotely for branch checkpoint `dfd7a0b274bc1e661a5bebb04afab9e4494ea284` in Actions runs `30841390540` and `30841416197`. Required-check branch-protection policy was not inspected.
 
 ## 7. Not implemented as production authority
 
@@ -274,7 +297,6 @@ The CI workflow now runs docs validation, pytest, Ruff, the configured mypy scop
 - formal PIT and formal OOS Alpha evidence;
 - sustained real 14:55 Shadow runs;
 - H4.5 reducing-decision-to-manual-execution bridge;
-- Artifact-derived Thesis-health observations;
 - composite operational evidence manifest;
 - durable Holding/Exit schedules and acknowledgement state;
 - recoverable ShadowRun queues, receipts, metrics, tracing and alerts;
@@ -304,7 +326,7 @@ P0 engineering baseline restored
   → exact-commit pytest, Ruff, mypy, docs and package-build gates complete
 
 P1 complete pre-Shadow mechanics
-  H5 Artifact-derived Thesis Health
+  H5 Artifact-derived Thesis Health complete
   → H6 Composite Evidence Manifest
   → H4.5 Risk-Reducing Decision to Manual Execution Bridge
   → H7 Durable Holding/Exit Operations
@@ -331,4 +353,4 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with a verified H4 engineering baseline and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+> **A pre-Shadow research decision platform with verified H4 and H5 engineering checkpoints and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**

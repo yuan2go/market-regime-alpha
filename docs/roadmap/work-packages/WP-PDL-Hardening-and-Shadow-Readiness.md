@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-03
 > **Supersedes:** None
 > **Superseded By:** None
-> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
+> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
+> **Code Evidence:** H5 hardened checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -254,7 +254,7 @@ decision-only CLI. H4 does not create ManualTrade, Fill or Broker Order.
 | Business goal | Replace operator-authored health booleans with deterministic health derived from verified lifecycle evidence. |
 | Input Artifacts | Active TradingThesis, Signal, PathForecast, Market/Theme/Capital observations, price/invalidation evidence and versioned health configuration. |
 | Output Artifact | Content-addressed `ThesisHealthObservationV2` with support, invalidation, missingness and evidence references. |
-| State machine | `HEALTHY → WEAKENING → INVALIDATED`; any state may become `DATA_INSUFFICIENT`; no automatic trade action. |
+| State machine | Observed priority is `INVALIDATED > DATA_INSUFFICIENT > WEAKENING > HEALTHY`; effective state is monotonic `HEALTHY → WEAKENING → INVALIDATED`, while observed `DATA_INSUFFICIENT` preserves prior effective state and a first insufficient observation establishes no effective state. |
 | Idempotency key | Thesis ID/version + decision time + exact input/config hashes. |
 | Persistence tables | `thesis_health_observations` and `thesis_health_commands`, both append-only; latest state is a rebuildable projection. |
 | Transaction boundary | Resolve command, validate all Readers/times/scope, insert observation and command atomically. |
@@ -263,6 +263,12 @@ decision-only CLI. H4 does not create ManualTrade, Fill or Broker Order.
 | Tests | Hash/time/symbol/theme mismatch, stale Signal, missing Capital, invalidation derivation, replay/restart, tamper and rollback. |
 | Completion condition | No new H5 caller can submit free-form health state; focused/full gates and commit-bound delivery pass. |
 | Dependencies | H4 green baseline; feeds H6/H7 and never bypasses Risk. |
+
+### Implementation evidence
+
+Delivered and hardened at `831edd6b2ae044d3bd1f3abcec97a30e47082071` with typed rules, explicit configuration, strict canonical/current-evidence validation, content-addressed V2 Observation, migration 008, append-only SQLite command/observation persistence, recursive Builder replay, command-row tamper validation, semantic idempotency, verified package-path CLI and a thin Holding/Exit adapter. The Application Service constructs the replay bundle from actual domain inputs; the adapter consumes derived effective health directly, requires a Thesis-scoped T+1 PositionSnapshot and does not construct a V1 support-boolean Observation.
+
+The H5 private replay bundle is not H6 authority. H5 does not transition a Thesis, call H4, create ManualTrade/Fill/order, or change the historical LifecycleReview package schema.
 
 ### Deliverables
 
@@ -279,8 +285,10 @@ decision-only CLI. H4 does not create ManualTrade, Fill or Broker Order.
 
 ### Rollback
 
-Disable assessment commands that require V2 observations. Keep old V1 package
-readers for compatibility; do not accept old caller booleans in the new path.
+Disable assessment commands that require V2 observations and stop new migration
+008 writes. Existing append-only observations remain readable. Keep old V1
+package readers for compatibility; do not accept old caller booleans in the new
+path.
 
 ## 12. H6 — Composite operational evidence manifest
 
