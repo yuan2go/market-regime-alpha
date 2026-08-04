@@ -438,6 +438,19 @@ def test_cli_unknown_resume_and_repository_integrity_have_distinct_exit_codes(
     unknown = json.loads(capsys.readouterr().out)
     assert unknown["reason_codes"] == ["LIFECYCLE_RESUME_REJECTED"]
 
+    assert lifecycle_main(
+        [
+            "--replay-run-id",
+            "lifecycle-run-unknown",
+            "--database",
+            str(database),
+        ]
+    ) == EXIT_RESUME_REJECTED
+    unknown_replay = json.loads(capsys.readouterr().out)
+    assert unknown_replay["reason_codes"] == [
+        "LIFECYCLE_REPLAY_SOURCE_NOT_FOUND"
+    ]
+
     malformed = tmp_path / "malformed.sqlite3"
     with sqlite3.connect(malformed) as connection:
         connection.execute("CREATE TABLE lifecycle_runs(run_id TEXT PRIMARY KEY)")

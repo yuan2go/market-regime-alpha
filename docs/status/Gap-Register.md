@@ -32,7 +32,7 @@
 | H4_V2_REDUCE_REQUIRES_POSITIVE_REMAINDER | P2 | H4 V1 still permits `REDUCE target_quantity=0`; H4.5 preserves replay but rejects confirmation with `ACTION_SEMANTICS_CONFLICT` and `REQUIRES_NEW_EXIT_DECISION` | Explicit H4 V2 schema/semantic migration | H4 V2 enforces `0 < target_quantity < current_quantity` for REDUCE and `target_quantity=0` for EXIT while V1 replay remains immutable |
 | H4.5 operator authentication | P1 | Confirmation policy and attempts explicitly emit `OPERATOR_AUTHENTICATION_NOT_ESTABLISHED`; actor is audit text only | Authentication/RBAC design | Confirmation binds an authenticated principal/role and verifiable audit identity without rewriting historical attempts |
 | Manual invalidation authentication | P1 | H5 ManualInvalidationEvidence binds actor/reason/time and content identity but actor authentication is not established | Authentication/RBAC design | Evidence carries authenticated principal/role and verifiable audit identity without changing historical V1/V2 content |
-| H8 sustained Shadow operations | P1 | The development branch has a single-run Lifecycle owner, migration-011 stage receipts, retry/resume and deterministic read-only replay; it has no scheduler/control plane, lease owner, deadlines, operator acknowledgement, metrics, alerts or sustained run evidence | Canonical runtime plus H7 | A scheduled Shadow operation proves consecutive runs, operator deadlines/acknowledgements, metrics/alerts, recovery drills and replay without changing authority ceilings |
+| H8 sustained Shadow operations | P1 | The development branch has a single-run Lifecycle owner, migration-011 stage receipts, retry/resume and source-bound durable replay; it has no scheduler/control plane, lease owner, deadlines, operator acknowledgement, metrics, alerts or sustained run evidence | Canonical runtime plus H7 | A scheduled Shadow operation proves consecutive runs, operator deadlines/acknowledgements, metrics/alerts, recovery drills and replay without changing authority ceilings |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
 | PostgreSQL repository parity | P1 | Lifecycle persistence is SQLite local/test authority | Stable Repository protocols and contract suite | PostgreSQL adapters pass the same concurrency, idempotency, reconstruction and migration contract tests |
@@ -112,8 +112,9 @@ The following are not open implementation gaps, although their operating/model e
 - H5 typed invalidation rules, verified current-evidence Builder, V2 Observation, migration 008, SQLite replay, V2-only CLI and thin operational assessment adapter;
 - H6 typed composition policy/manifest, exact immutable package, migration 009, append-only SQLite replay index, V2-only operational research route and H5 integration;
 - canonical 16-stage Runner, migration-011 Lifecycle Runtime Journal,
-  idempotent/recoverable stage receipts and read-only replay on the development
-  branch, with the local repository-wide engineering gate passed;
+  idempotent/recoverable stage receipts and source-bound durable replay with
+  pure model recomputation and read-only ManualTrade verification on the
+  development branch, with the local repository-wide engineering gate passed;
 - canonical-to-Legacy import enforcement, role-specific migration Protocols,
   differential comparison/report replay and the Decimal simple-moving-average
   example on the development branch;

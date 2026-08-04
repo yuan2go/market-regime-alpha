@@ -121,16 +121,26 @@ python -m market_regime_alpha.cli.replay_canonical_lifecycle \
   --database ... --run-id ...
 ```
 
-Replay invokes neither the Runner nor execution services. It reads the journal
-twice, requires a stable report hash, and reports pure/Reader-verifiable
-subjects as `STABLE`, repository-only unavailable subjects as
-`NOT_COMPARABLE`, or tamper/failure as `FAILED`.
+Replay invokes neither the canonical business Runner nor execution services.
+`run_durable_lifecycle_replay()` binds the exact source run, command and history
+hash in a separate `REPLAY` LifecycleRun. It recomputes Platform Research,
+Signal and PathForecast through their existing pure replay functions, reloads
+mutating/read-only outputs instead of invoking their mutation, journals replay
+Attempts/Stages/Receipts, and publishes a content-addressed report. Receipt
+fingerprints exclude only the replay run identity, so their inputs, outputs,
+models, configuration, reasons and result remain comparable across runs.
+Repository objects without an injected Reader are explicit `NOT_COMPARABLE`;
+H4.5 ManualTrade is reloaded through the explicitly bound authority database.
+Tamper or recomputation mismatch is `FAILED` and never mutates the source run.
 
 The unified CLI emits one structured JSON object containing run/status/stage,
-receipt, blocker/failure and safety fields. Stable exit codes distinguish
-success (`0`), runtime failure (`1`), command validation (`2`), idempotency
-conflict (`3`), journal failure (`4`), replay not-comparable (`5`) and replay
-failure (`6`). It separates `manual_trade_observed` from
+per-stage output references, retry state, ManualTrade reference,
+blocker/failure and safety fields. Stable exit codes are valid lifecycle or
+replay evidence including `NOT_COMPARABLE` (`0`), command/input validation
+(`2`), idempotency conflict (`3`), unknown or unsafe resume/source (`4`),
+recoverable stage or replay-verification failure (`5`) and
+repository/migration/integrity failure (`6`). It separates
+`manual_trade_observed` from
 `MANUAL_TRADE_CREATED=false`; observing an existing H4.5 trade is not creation
 by the Runner.
 

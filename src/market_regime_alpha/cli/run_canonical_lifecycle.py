@@ -156,7 +156,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except LifecycleIdempotencyConflict as exc:
         print_error("IDEMPOTENCY_KEY_CONFLICT", exc, args=args)
         return EXIT_IDEMPOTENCY_CONFLICT
-    except (LifecycleRunNotFound, LifecycleUnsafeResume) as exc:
+    except LifecycleRunNotFound as exc:
+        reason_code = (
+            "LIFECYCLE_REPLAY_SOURCE_NOT_FOUND"
+            if getattr(args, "replay_run_id", None) is not None
+            else "LIFECYCLE_RESUME_REJECTED"
+        )
+        print_error(reason_code, exc, args=args)
+        return EXIT_RESUME_REJECTED
+    except LifecycleUnsafeResume as exc:
         print_error("LIFECYCLE_RESUME_REJECTED", exc, args=args)
         return EXIT_RESUME_REJECTED
     except LifecycleStageExecutionError as exc:
@@ -235,7 +243,7 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
     )
     if not stable:
         raise CLIValidationError(
-            "read-only replay report changed between identical reads"
+            "durable replay report changed between identical reads"
         )
     print(
         json.dumps(

@@ -1,4 +1,4 @@
-"""Read-only deterministic replay verification for an existing lifecycle run."""
+"""Create or resume a durable deterministic verification run for a source run."""
 
 from __future__ import annotations
 
@@ -48,8 +48,9 @@ class _StructuredArgumentParser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     parser = _StructuredArgumentParser(
         description=(
-            "Verify one existing lifecycle journal and replay only registered pure "
-            "Artifacts. The Runner and all execution services remain disabled."
+            "Create or resume a source-bound REPLAY journal, recompute registered "
+            "pure Artifacts, and verify read-only domain references. The canonical "
+            "Runner and all execution services remain disabled."
         )
     )
     parser.add_argument("--database", type=Path, required=True)
@@ -98,7 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             == second.report.to_canonical_dict()
         )
         if not hash_stable:
-            raise ValueError("read-only replay report changed between identical reads")
+            raise ValueError("durable replay report changed between identical reads")
     except LifecycleIdempotencyConflict as exc:
         return _print_error(
             exit_code=EXIT_IDEMPOTENCY_CONFLICT,
