@@ -9,6 +9,7 @@ import pytest
 from market_regime_alpha.cli.create_manual_trade_from_risk_decision import (
     EXIT_DOMAIN_REJECTION,
     EXIT_IDEMPOTENCY_CONFLICT,
+    EXIT_REPOSITORY_ERROR,
     EXIT_SUCCESS,
     EXIT_VALIDATION_ERROR,
     build_parser,
@@ -192,6 +193,30 @@ def test_module_cli_validation_error_has_stable_exit_and_safety_payload(
     assert payload["attempt_id"] is None
     assert payload["state"] == "DATA_INSUFFICIENT"
     assert payload["reason_codes"] == ["COMMAND_VALIDATION_FAILED"]
+
+
+def test_module_cli_repository_error_has_distinct_stable_exit_and_safety_payload(
+    tmp_path, daily_decision_fixture, capsys, monkeypatch
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+
+    def unavailable_repository(_path: Path) -> object:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(
+        "market_regime_alpha.cli.create_manual_trade_from_risk_decision."
+        "SQLiteRiskReductionManualIntentRepository",
+        unavailable_repository,
+    )
+
+    assert main(_arguments(tmp_path, fixture)) == EXIT_REPOSITORY_ERROR
+
+    payload = json.loads(capsys.readouterr().out)
+    _safety_declarations(payload)
+    assert payload["attempt_id"] is None
+    assert payload["state"] == "DATA_INSUFFICIENT"
+    assert payload["manual_trade_id"] is None
+    assert payload["reason_codes"] == ["H4_5_REPOSITORY_ERROR"]
 
 
 def test_module_cli_idempotency_conflict_has_distinct_stable_exit(

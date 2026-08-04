@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 import json
 from math import isfinite
 from pathlib import Path
+import sqlite3
 import sys
 from typing import Any, NoReturn, Sequence
 
@@ -34,6 +35,7 @@ EXIT_SUCCESS = 0
 EXIT_DOMAIN_REJECTION = 1
 EXIT_VALIDATION_ERROR = 2
 EXIT_IDEMPOTENCY_CONFLICT = 3
+EXIT_REPOSITORY_ERROR = 4
 
 
 class _CLIValidationError(ValueError):
@@ -162,6 +164,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             observation=observation,
         )
         return EXIT_VALIDATION_ERROR
+    except sqlite3.Error as error:
+        _print_rejection(
+            error=error,
+            reason_code="H4_5_REPOSITORY_ERROR",
+            args=args,
+            observation=observation,
+        )
+        return EXIT_REPOSITORY_ERROR
     except (OSError, TypeError, ValueError) as error:
         _print_rejection(
             error=error,
