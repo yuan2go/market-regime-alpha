@@ -510,6 +510,30 @@ python -m build = PASS, sdist and wheel built
 These are local engineering checks, not remote CI, sustained Shadow evidence,
 formal model validation, Broker authority or production admission.
 
+### 6.4 Canonical Feature Spine verification
+
+At implementation checkpoint `14058a5` and docs/gate checkpoint `1e861a7`, the
+frozen Python 3.12 environment observed:
+
+```text
+FROZEN_UV_SYNC_DEFAULT_DEV_POSTGRES = PASS
+FEATURE_FOCUSED = 490 passed, 0 skipped, 0 failed
+H4_H5_REGRESSION = 143 passed, 0 skipped, 0 failed
+FULL_PYTEST = 2045 passed, 0 skipped, 0 failed
+RUFF = PASS
+MYPY_FORMAL_SCOPE = PASS, 319 source files
+PACKAGE_BUILD = PASS, sdist and wheel
+DOCUMENT_AUTHORITY_AND_LINKS = PASS
+DOCS_TESTS = 8 passed, 0 skipped, 0 failed
+GIT_DIFF_CHECK = PASS
+```
+
+The full run retained six existing pandas fragmentation warnings. The 100-symbol
+offline performance fixture measured an 18.875838-second cold Feature run and a
+4.493092-second cached verification; this is engineering performance evidence,
+not Alpha or production admission. Remote CI is not claimed until pushed checks
+complete.
+
 ## 7. Not implemented as production authority
 
 - qualified operational Theme/Capital/PIT mapping evidence;
