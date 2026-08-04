@@ -27,6 +27,7 @@ from market_regime_alpha.application.canonical_lifecycle.sqlite_composition impo
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunType,
+    LifecycleStageName,
 )
 from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
     CanonicalLifecycleInputManifest,
@@ -64,15 +65,9 @@ from tests.execution.risk_reduction_confirmation_support import ConfirmationFixt
 def _write_restartable_manifest(tmp_path: Path) -> tuple[Path, StageFixture]:
     fixture = _stage_fixture(tmp_path / "evidence")
     configurations = {
-        str(fixture.research_configuration.configuration_id): (
-            fixture.research_configuration.to_canonical_dict()
-        ),
-        str(fixture.signal_configuration.configuration_id): (
-            fixture.signal_configuration.to_canonical_dict()
-        ),
-        str(fixture.forecast_configuration.configuration_id): (
-            fixture.forecast_configuration.to_canonical_dict()
-        ),
+        str(fixture.research_configuration.configuration_id): (fixture.research_configuration.to_canonical_dict()),
+        str(fixture.signal_configuration.configuration_id): (fixture.signal_configuration.to_canonical_dict()),
+        str(fixture.forecast_configuration.configuration_id): (fixture.forecast_configuration.to_canonical_dict()),
     }
     references = []
     for reference in fixture.configuration_references:
@@ -83,9 +78,7 @@ def _write_restartable_manifest(tmp_path: Path) -> tuple[Path, StageFixture]:
             encoding="utf-8",
         )
         references.append(replace(reference, locator=str(path)))
-    configuration_references = tuple(
-        sorted(references, key=lambda item: item.sort_key)
-    )
+    configuration_references = tuple(sorted(references, key=lambda item: item.sort_key))
     fixture = replace(
         fixture,
         configuration_references=configuration_references,
@@ -132,9 +125,7 @@ def _new_run_args(
     ]
 
 
-def test_cli_runs_real_readers_models_then_stops_at_entry_validation(
-    tmp_path: Path, capsys
-) -> None:
+def test_cli_without_feature_authorities_fails_closed_instead_of_producing_v1(tmp_path: Path, capsys) -> None:
     manifest, fixture = _write_restartable_manifest(tmp_path)
     database = tmp_path / "runtime.sqlite3"
     output = tmp_path / "runtime"
@@ -144,58 +135,57 @@ def test_cli_runs_real_readers_models_then_stops_at_entry_validation(
         database=database,
         output=output,
     )
-    assert lifecycle_main(args) == EXIT_SUCCESS
+    assert lifecycle_main(args) == EXIT_STAGE_FAILED
     first = json.loads(capsys.readouterr().out)
-    assert first["status"] == "BLOCKED_BY_MODEL_VALIDATION"
+    assert first["status"] == "FAILED"
     assert first["completed_stages"] == [
         "VERIFY_COMPOSITE_EVIDENCE",
         "PLATFORM_RESEARCH",
-        "SIGNAL",
-        "PATH_FORECAST",
     ]
-    assert first["stage_statuses"]["ENTRY_ASSESSMENT"] == "BLOCKED"
-    assert first["retry_state"] == "NOT_REQUIRED"
+    assert first["stage_statuses"]["SIGNAL"] == "FAILED"
+    assert "SIGNAL_MODEL_CONFIGURATION_UNAVAILABLE" in first["error"]
+    assert "canonical Signal requires command-bound FEATURE_SET" in first["error"]
+    assert first["retry_state"] == "AVAILABLE"
     assert first["manual_trade_reference"] is None
-    assert first["stage_output_references"]["PLATFORM_RESEARCH"][0][
-        "object_type"
-    ] == "PLATFORM_RESEARCH_ARTIFACT"
-    assert first["stage_output_references"]["ENTRY_ASSESSMENT"] == []
+    assert {item["object_type"] for item in first["stage_output_references"]["PLATFORM_RESEARCH"]} == {
+        "CANDIDATE_SET",
+        "PLATFORM_RESEARCH_ARTIFACT",
+    }
+    assert first["stage_output_references"]["SIGNAL"] == []
     assert first["MANUAL_CONFIRMATION_REQUIRED"] is False
     assert first["MANUAL_TRADE_CREATED"] is False
     assert first["NO_ORDER_CREATED"] is True
     assert first["BROKER_NOT_INVOKED"] is True
     assert first["NO_FILL_CREATED"] is True
     with sqlite3.connect(database) as connection:
-        attempt_count = connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts"
-        ).fetchone()[0]
+        attempt_count = connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone()[0]
 
-    assert lifecycle_main(args) == EXIT_SUCCESS
+    assert lifecycle_main(args) == EXIT_STAGE_FAILED
     replayed = json.loads(capsys.readouterr().out)
     assert replayed["run_id"] == first["run_id"]
     assert replayed["command_hash"] == first["command_hash"]
     assert replayed["attempted_stages"] == []
     with sqlite3.connect(database) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts"
-        ).fetchone()[0] == attempt_count
+        assert connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone()[0] == attempt_count
 
-    assert lifecycle_main(
-        [
-            "--resume-run-id",
-            first["run_id"],
-            "--database",
-            str(database),
-        ]
-    ) == EXIT_SUCCESS
+    assert (
+        lifecycle_main(
+            [
+                "--resume-run-id",
+                first["run_id"],
+                "--database",
+                str(database),
+            ]
+        )
+        == EXIT_STAGE_FAILED
+    )
     resumed = json.loads(capsys.readouterr().out)
     assert resumed["run_id"] == first["run_id"]
-    assert resumed["attempted_stages"] == []
+    assert resumed["status"] == "FAILED"
+    assert resumed["current_stage"] == "SIGNAL"
 
 
-def test_cli_failed_stage_can_resume_without_repeating_settled_stages(
-    tmp_path: Path, capsys
-) -> None:
+def test_cli_failed_stage_can_resume_without_repeating_settled_stages(tmp_path: Path, capsys) -> None:
     manifest_path, fixture = _invalid_artifact_manifest(tmp_path)
     database = tmp_path / "runtime.sqlite3"
     output = tmp_path / "runtime"
@@ -216,43 +206,43 @@ def test_cli_failed_stage_can_resume_without_repeating_settled_stages(
     assert first["stage_output_references"]["VERIFY_COMPOSITE_EVIDENCE"] == []
     assert first["MANUAL_CONFIRMATION_REQUIRED"] is False
     with sqlite3.connect(database) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts"
-        ).fetchone() == (1,)
+        assert connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone() == (1,)
 
-    assert lifecycle_main(
-        [
-            "--resume-run-id",
-            first["run_id"],
-            "--database",
-            str(database),
-        ]
-    ) == EXIT_STAGE_FAILED
+    assert (
+        lifecycle_main(
+            [
+                "--resume-run-id",
+                first["run_id"],
+                "--database",
+                str(database),
+            ]
+        )
+        == EXIT_STAGE_FAILED
+    )
     second = json.loads(capsys.readouterr().out)
     assert second["run_id"] == first["run_id"]
     assert second["completed_stages"] == []
     with sqlite3.connect(database) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts"
-        ).fetchone() == (2,)
+        assert connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone() == (2,)
 
 
-def test_cli_rejects_configuration_locator_and_content_tamper_before_journal_write(
-    tmp_path: Path, capsys
-) -> None:
+def test_cli_rejects_configuration_locator_and_content_tamper_before_journal_write(tmp_path: Path, capsys) -> None:
     manifest_path, fixture = _write_restartable_manifest(tmp_path)
     manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     config_path = Path(manifest_payload["configuration_references"][0]["locator"])
     config_path.write_text("{}", encoding="utf-8")
     database = tmp_path / "runtime.sqlite3"
-    assert lifecycle_main(
-        _new_run_args(
-            manifest=manifest_path,
-            fixture=fixture,
-            database=database,
-            output=tmp_path / "runtime",
+    assert (
+        lifecycle_main(
+            _new_run_args(
+                manifest=manifest_path,
+                fixture=fixture,
+                database=database,
+                output=tmp_path / "runtime",
+            )
         )
-    ) == EXIT_VALIDATION_ERROR
+        == EXIT_VALIDATION_ERROR
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "REJECTED"
     assert payload["retry_state"] is None
@@ -262,9 +252,7 @@ def test_cli_rejects_configuration_locator_and_content_tamper_before_journal_wri
     assert not database.exists()
 
 
-def test_replay_cli_is_current_time_independent_and_never_invokes_runner(
-    tmp_path: Path, capsys
-) -> None:
+def test_replay_cli_is_current_time_independent_and_never_invokes_runner(tmp_path: Path, capsys) -> None:
     manifest, fixture = _write_restartable_manifest(tmp_path)
     database = tmp_path / "runtime.sqlite3"
     args = _new_run_args(
@@ -274,6 +262,7 @@ def test_replay_cli_is_current_time_independent_and_never_invokes_runner(
         output=tmp_path / "runtime",
         idempotency_key="cli-replay-1",
     )
+    args.extend(["--stop-after-stage", "PLATFORM_RESEARCH"])
     assert lifecycle_main(args) == EXIT_SUCCESS
     run = json.loads(capsys.readouterr().out)
     with sqlite3.connect(database) as connection:
@@ -303,18 +292,19 @@ def test_replay_cli_is_current_time_independent_and_never_invokes_runner(
     assert payload["MANUAL_TRADE_CREATED"] is False
     assert payload["BROKER_NOT_INVOKED"] is True
     with sqlite3.connect(database) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
-            (run["run_id"],),
-        ).fetchone()[0] == source_attempts_before
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
+                (run["run_id"],),
+            ).fetchone()[0]
+            == source_attempts_before
+        )
         assert connection.execute(
             "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
             (payload["replay_run_id"],),
-        ).fetchone()[0] == 5
+        ).fetchone()[0] == len(LifecycleStageName)
 
-    assert replay_main(
-        ["--database", str(database), "--run-id", run["run_id"]]
-    ) == EXIT_STABLE
+    assert replay_main(["--database", str(database), "--run-id", run["run_id"]]) == EXIT_STABLE
     standalone = json.loads(capsys.readouterr().out)
     assert standalone["report_hash"] == payload["report_hash"]
     assert standalone["replay_run_id"] == payload["replay_run_id"]
@@ -353,25 +343,26 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
         repository=repository,
         command=command,
         manifest=None,
-        configurations=RuntimeConfigurationReader().read_all(
-            command.configuration_references
-        ),
+        configurations=RuntimeConfigurationReader().read_all(command.configuration_references),
         clock=lambda: as_of + timedelta(seconds=1),
     )
     initial = runner.run(command)
     assert initial.run.status.value == "WAITING_FOR_MANUAL_CONFIRMATION"
 
     before = _authority_row_counts(confirmation_fixture.repository.path)
-    assert lifecycle_main(
-        [
-            "--resume-run-id",
-            str(command.run_id),
-            "--database",
-            str(journal_path),
-            "--authority-database",
-            str(confirmation_fixture.repository.path),
-        ]
-    ) == EXIT_SUCCESS
+    assert (
+        lifecycle_main(
+            [
+                "--resume-run-id",
+                str(command.run_id),
+                "--database",
+                str(journal_path),
+                "--authority-database",
+                str(confirmation_fixture.repository.path),
+            ]
+        )
+        == EXIT_SUCCESS
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "WAITING_FOR_MANUAL_CONFIRMATION"
     assert payload["MANUAL_CONFIRMATION_REQUIRED"] is True
@@ -382,15 +373,10 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
     assert _authority_row_counts(confirmation_fixture.repository.path) == before
 
     policy_reference = next(
-        reference
-        for reference in references
-        if reference.object_type
-        is LifecycleObjectType.RISK_REDUCTION_CONFIRMATION_POLICY
+        reference for reference in references if reference.object_type is LifecycleObjectType.RISK_REDUCTION_CONFIRMATION_POLICY
     )
     assert policy_reference.locator is not None
-    policy = RiskReductionConfirmationPolicy.from_canonical_dict(
-        json.loads(Path(policy_reference.locator).read_text(encoding="utf-8"))
-    )
+    policy = RiskReductionConfirmationPolicy.from_canonical_dict(json.loads(Path(policy_reference.locator).read_text(encoding="utf-8")))
     confirmation = confirmation_fixture.repository.confirm_risk_reduction(
         replace(
             confirmation_fixture.command,
@@ -399,70 +385,74 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
         )
     )
     assert confirmation.manual_trade is not None
-    assert lifecycle_main(
-        [
-            "--resume-run-id",
-            str(command.run_id),
-            "--database",
-            str(journal_path),
-            "--authority-database",
-            str(confirmation_fixture.repository.path),
-        ]
-    ) == EXIT_SUCCESS
+    assert (
+        lifecycle_main(
+            [
+                "--resume-run-id",
+                str(command.run_id),
+                "--database",
+                str(journal_path),
+                "--authority-database",
+                str(confirmation_fixture.repository.path),
+            ]
+        )
+        == EXIT_SUCCESS
+    )
     observed = json.loads(capsys.readouterr().out)
     assert observed["status"] == "WAITING_FOR_FILL"
     assert observed["manual_trade_observed"] is True
     assert observed["MANUAL_TRADE_CREATED"] is False
-    assert observed["manual_trade_reference"]["object_id"] == str(
-        confirmation.manual_trade.manual_trade_id
-    )
-    assert observed["stage_output_references"]["MANUAL_TRADE"] == [
-        observed["manual_trade_reference"]
-    ]
+    assert observed["manual_trade_reference"]["object_id"] == str(confirmation.manual_trade.manual_trade_id)
+    assert observed["stage_output_references"]["MANUAL_TRADE"] == [observed["manual_trade_reference"]]
 
 
-def test_cli_unknown_resume_and_repository_integrity_have_distinct_exit_codes(
-    tmp_path: Path, capsys
-) -> None:
+def test_cli_unknown_resume_and_repository_integrity_have_distinct_exit_codes(tmp_path: Path, capsys) -> None:
     database = tmp_path / "runtime.sqlite3"
     SQLiteLifecycleRunRepository(database)
 
-    assert lifecycle_main(
-        [
-            "--resume-run-id",
-            "lifecycle-run-unknown",
-            "--database",
-            str(database),
-        ]
-    ) == EXIT_RESUME_REJECTED
+    assert (
+        lifecycle_main(
+            [
+                "--resume-run-id",
+                "lifecycle-run-unknown",
+                "--database",
+                str(database),
+            ]
+        )
+        == EXIT_RESUME_REJECTED
+    )
     unknown = json.loads(capsys.readouterr().out)
     assert unknown["reason_codes"] == ["LIFECYCLE_RESUME_REJECTED"]
 
-    assert lifecycle_main(
-        [
-            "--replay-run-id",
-            "lifecycle-run-unknown",
-            "--database",
-            str(database),
-        ]
-    ) == EXIT_RESUME_REJECTED
+    assert (
+        lifecycle_main(
+            [
+                "--replay-run-id",
+                "lifecycle-run-unknown",
+                "--database",
+                str(database),
+            ]
+        )
+        == EXIT_RESUME_REJECTED
+    )
     unknown_replay = json.loads(capsys.readouterr().out)
-    assert unknown_replay["reason_codes"] == [
-        "LIFECYCLE_REPLAY_SOURCE_NOT_FOUND"
-    ]
+    assert unknown_replay["reason_codes"] == ["LIFECYCLE_REPLAY_SOURCE_NOT_FOUND"]
 
     malformed = tmp_path / "malformed.sqlite3"
     with sqlite3.connect(malformed) as connection:
         connection.execute("CREATE TABLE lifecycle_runs(run_id TEXT PRIMARY KEY)")
 
-    assert lifecycle_main(
-        [
-            "--resume-run-id",
-            "lifecycle-run-unknown",
-            "--database",
-            str(malformed),
-        ]
-    ) == EXIT_REPOSITORY_ERROR
+    assert (
+        lifecycle_main(
+            [
+                "--resume-run-id",
+                "lifecycle-run-unknown",
+                "--database",
+                str(malformed),
+            ]
+        )
+        == EXIT_REPOSITORY_ERROR
+    )
     integrity = json.loads(capsys.readouterr().out)
     assert integrity["reason_codes"] == ["LIFECYCLE_REPOSITORY_ERROR"]
 
@@ -470,12 +460,8 @@ def test_cli_unknown_resume_and_repository_integrity_have_distinct_exit_codes(
 def _authority_row_counts(path: Path) -> tuple[int, int, int]:
     with sqlite3.connect(path) as connection:
         return (
-            connection.execute(
-                "SELECT COUNT(*) FROM risk_reduction_confirmation_attempts"
-            ).fetchone()[0],
-            connection.execute(
-                "SELECT COUNT(*) FROM manual_trade_records"
-            ).fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM risk_reduction_confirmation_attempts").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM manual_trade_records").fetchone()[0],
             connection.execute("SELECT COUNT(*) FROM manual_fills").fetchone()[0],
         )
 
@@ -490,9 +476,7 @@ def _invalid_artifact_manifest(tmp_path: Path) -> tuple[Path, StageFixture]:
                     object_type=LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST,
                     object_id=LifecycleObjectId("invalid-composite"),
                     content_hash="sha256:" + "1" * 64,
-                    reader_kind=(
-                        LifecycleReaderKind.COMPOSITE_OPERATIONAL_ARTIFACT_READER
-                    ),
+                    reader_kind=(LifecycleReaderKind.COMPOSITE_OPERATIONAL_ARTIFACT_READER),
                     locator=str(tmp_path / "missing-composite"),
                     available_at=available_at,
                 ),

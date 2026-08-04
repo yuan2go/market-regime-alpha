@@ -23,6 +23,7 @@ from market_regime_alpha.cli._feature_output import (
 from market_regime_alpha.features import (
     FeatureConfigurationInvalidError,
     FeatureComputationFailedError,
+    FeatureMaterializationExecutionMode,
     FeatureMaterializationRunner,
     FeatureMaterializationStatus,
 )
@@ -45,7 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--idempotency-key", required=True)
     parser.add_argument("--code-revision", required=True)
     parser.add_argument("--max-workers", type=int, default=1)
-    parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--execution-mode",
+        choices=[item.value for item in FeatureMaterializationExecutionMode],
+        default=FeatureMaterializationExecutionMode.START_NEW.value,
+    )
     return parser
 
 
@@ -71,7 +76,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             code_revision=str(args.code_revision),
             output_root=args.output_dir.resolve(),
             idempotency_key=str(args.idempotency_key),
-            resume=bool(args.resume),
+            execution_mode=FeatureMaterializationExecutionMode(
+                str(args.execution_mode)
+            ),
         )
     except (FileNotFoundError, PermissionError, OSError) as exc:
         emit_error(status="IO_ERROR", reason_code="FEATURE_IO_ERROR", error=exc)

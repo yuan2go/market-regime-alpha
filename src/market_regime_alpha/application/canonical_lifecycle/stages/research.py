@@ -216,6 +216,15 @@ class PlatformResearchStageHandler:
             locator=verified.root,
             available_at=artifact.envelope.created_at,
         )
+        candidate_set = artifact.candidate_set
+        candidate_output = output_reference(
+            object_type=LifecycleObjectType.CANDIDATE_SET,
+            object_id=candidate_set.envelope.artifact_id,
+            content_hash=candidate_set.envelope.content_hash,
+            reader_kind=LifecycleReaderKind.CANDIDATE_SET_READER,
+            locator=verified.root,
+            available_at=candidate_set.envelope.created_at,
+        )
         model_versions = tuple(
             sorted(
                 (
@@ -233,7 +242,7 @@ class PlatformResearchStageHandler:
             stage_status=LifecycleStageStatus.COMPLETED,
             run_status=LifecycleRunStatus.RUNNING,
             input_references=inputs,
-            output_references=(output,),
+            output_references=ordered_references((candidate_output, output)),
             model_versions=model_versions,
             configuration_hashes=(self._configuration.configuration_hash,),
             reason_codes=tuple(

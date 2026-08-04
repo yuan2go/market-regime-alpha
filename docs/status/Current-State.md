@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
 > **Code Evidence:** Canonical Feature Spine implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
@@ -64,6 +64,15 @@ non-empty Feature values when evidence exists. PathForecast still has no
 qualified sample provider and Entry remains safely blocked. These are research
 mechanics, not validated predictive ability.
 
+WP-SIG-01A converges new Signal production on a Decimal-only V3 authority. It
+materializes the full controlled Universe before Candidate selection, projects a
+reference-only Candidate Feature View, evaluates daily freshness by trading
+session and intraday freshness by session plus elapsed time, and binds all
+policies/calendar/configuration in Signal lineage. It also adds an immutable
+Tencent raw-minute archive, explicit LOTS-to-SHARES conversion, recoverable
+Feature runs and V2 selective physical encodings without changing logical
+Artifact hashes. Signal V1/V2 remain historical compatibility authorities only.
+
 ## 2. Current stage
 
 ```text
@@ -97,6 +106,12 @@ CANONICAL_MARKET_DATA_AUTHORITY_IMPLEMENTED_ON_FEATURE_BRANCH
 TECHNICAL_FEATURE_SPINE_IMPLEMENTED_ON_FEATURE_BRANCH
 FEATURE_BUNDLE_AND_REPLAY_IMPLEMENTED_ON_FEATURE_BRANCH
 CANONICAL_SIGNAL_FEATURE_INPUTS_IMPLEMENTED_ON_FEATURE_BRANCH
+UNIVERSE_FEATURE_HANDOFF_AND_CANDIDATE_VIEW_IMPLEMENTED_ON_FEATURE_BRANCH
+CANONICAL_DECIMAL_SIGNAL_V3_IMPLEMENTED_ON_FEATURE_BRANCH
+TRADING_SESSION_SIGNAL_FRESHNESS_IMPLEMENTED_ON_FEATURE_BRANCH
+IMMUTABLE_TENCENT_MINUTE_ARCHIVE_IMPLEMENTED_EXPLORATORY
+FEATURE_MATERIALIZATION_RUN_AUTHORITY_IMPLEMENTED_SQLITE
+FEATURE_AND_MARKET_DATA_ENCODING_V2_IMPLEMENTED_ON_FEATURE_BRANCH
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
@@ -414,6 +429,32 @@ All configurations remain `MODEL_ASSUMPTION`, `NOT_EMPIRICALLY_VALIDATED` and
 `RESEARCH_ONLY`. VWAP requires real minute amount/volume and has no daily
 fallback. Signal non-emptiness does not calibrate PathForecast or open Entry.
 
+### 3.16 WP-SIG-01A authority convergence
+
+Implemented on the WP-SIG-01A branch:
+
+- full-Universe Feature materialization followed by Candidate subset projection;
+- `CandidateFeatureView` binding Bundle, CandidateSet, Dataset, SourceManifest,
+  DecisionTime and selected Feature references without copying Feature payloads;
+- explicit all/declared/minimum factor policies, with the canonical five-factor
+  model requiring all Factors and preserving precise missingness;
+- Trading-Calendar-bound daily session lag and intraday same-session/elapsed
+  freshness lineage;
+- Decimal-only `CanonicalSignalModelV2` and `SignalRunArtifactV3`, while V1/V2
+  Readers and replay remain immutable historical compatibility paths;
+- V3-only canonical Signal stage and runtime configuration Readers; absent
+  authority blocks instead of producing an empty-factor V1 artifact;
+- exact-byte Tencent source/attempt archives, strict cumulative-counter
+  handling, explicit volume conversion and versioned 1m→5m resampling;
+- SQLite Run/Task/Attempt/Receipt/Event recovery for Feature materialization;
+- V2 Market Data/Feature physical encoding and selective Readers with logical
+  hash equality across V1/V2;
+- durable replay that recomputes Dataset-derived Features, Candidate View,
+  freshness and Decimal Signal before comparing receipts.
+
+These mechanics remain exploratory. Path samples are unavailable, Entry is
+blocked, and no Opportunity, ManualTrade, Fill, order or Broker action is added.
+
 ## 4. Persistence, transactions and consistency
 
 Implemented SQLite repositories generally use:
@@ -534,6 +575,18 @@ offline performance fixture measured a 29.502912-second cold Feature run and an
 not Alpha or production admission. Remote CI is not claimed until pushed checks
 complete.
 
+### 6.5 WP-SIG-01A branch verification
+
+The pre-commit branch passed the 44 Market Data, 78 Feature, 21 Signal, 353
+Canonical Lifecycle and five Architecture focused collections plus all 2082
+tests. Ruff, mypy over 328 source files, package build, frozen dependency sync,
+documentation authority/links and diff hygiene passed. The same-fixture
+100-symbol benchmark reduced package bytes by 85.8937% and selective-read time
+by 99.7085%, with identical Feature Bundle and Signal Artifact hashes. Exact
+measurements and the retained evidence ceiling are recorded in
+`../audit/WP-SIG-01A-Delivery.md`. Remote CI is reported externally after push;
+this status does not pre-claim it.
+
 ## 7. Not implemented as production authority
 
 - qualified operational Theme/Capital/PIT mapping evidence;
@@ -576,8 +629,9 @@ P0 engineering baseline restored
 Canonical Feature input preparation
   frozen uv environment
   → Canonical Market Data Dataset
-  → Feature materialization and Bundle
-  → Signal V2 with per-factor lineage
+  → Universe Feature materialization and Bundle
+  → Candidate Feature View
+  → Decimal Signal V3 with policy/calendar lineage
   → Path remains uncalibrated and Entry remains blocked
 
 P1 complete pre-Shadow mechanics

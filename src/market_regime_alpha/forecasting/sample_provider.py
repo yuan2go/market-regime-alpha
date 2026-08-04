@@ -13,6 +13,10 @@ from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.evidence.canonical import require_unique_text
 from market_regime_alpha.forecasting.path import PathForecastConfig, PathForecastSample
 from market_regime_alpha.signals.contracts import SignalSnapshot
+from market_regime_alpha.signals.decimal_model import CanonicalSignalSnapshotV3
+
+
+SignalSnapshotAuthority = SignalSnapshot | CanonicalSignalSnapshotV3
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +45,7 @@ class PathForecastSampleProvider(Protocol):
     def load_samples(
         self,
         *,
-        signal_snapshot: SignalSnapshot,
+        signal_snapshot: SignalSnapshotAuthority,
         configuration: PathForecastConfig,
         decision_time: DecisionTime,
     ) -> PathForecastSampleBatch: ...
@@ -53,7 +57,7 @@ class UnavailablePathForecastSampleProvider:
     def load_samples(
         self,
         *,
-        signal_snapshot: SignalSnapshot,
+        signal_snapshot: SignalSnapshotAuthority,
         configuration: PathForecastConfig,
         decision_time: DecisionTime,
     ) -> PathForecastSampleBatch:

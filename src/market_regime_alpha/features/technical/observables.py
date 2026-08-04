@@ -33,6 +33,7 @@ from market_regime_alpha.features.technical.catalog import (
     VWAP_TEXT_OUTPUTS,
 )
 from market_regime_alpha.market_data import CanonicalMarketBar, Timeframe, TradingStatus
+from market_regime_alpha.market_data.contracts import VolumeUnit
 from market_regime_alpha.market_data.contracts import require_utc_second
 
 
@@ -804,6 +805,14 @@ def _compute_vwap(
             output_ids,
             "FIELD_UNAVAILABLE_AMOUNT",
         )
+    if any(item.volume_unit is not VolumeUnit.SHARES for item in session_bars):
+        return _all_missing(
+            VWAP_FEATURE_ID,
+            session_bars,
+            configuration,
+            output_ids,
+            "VOLUME_UNIT_NOT_CANONICAL_SHARES",
+        )
     cumulative_volume = sum((item.volume for item in session_bars), Decimal("0"))
     if cumulative_volume == 0:
         return _all_missing(
@@ -816,6 +825,14 @@ def _compute_vwap(
     cumulative_amount = sum(
         (item.amount for item in session_bars if item.amount is not None), Decimal("0")
     )
+    if cumulative_amount == 0:
+        return _all_missing(
+            VWAP_FEATURE_ID,
+            session_bars,
+            configuration,
+            output_ids,
+            "ZERO_CUMULATIVE_AMOUNT",
+        )
     vwap = cumulative_amount / cumulative_volume
     values: list[TechnicalFeatureValue] = [
         _available("session_vwap", _q(vwap, scale), session_bars),

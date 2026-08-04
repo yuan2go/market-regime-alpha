@@ -35,8 +35,10 @@ from market_regime_alpha.market_data import (
     TradingStatus,
     VolumeUnit,
     load_verified_market_data_dataset,
+    migrate_market_data_package_v1_to_v2,
     normalize_public_history_stage,
     publish_market_data_dataset,
+    read_market_data_selection_v2,
     replay_market_data_dataset,
 )
 
@@ -200,10 +202,41 @@ def test_dataset_publish_read_select_and_replay(tmp_path: Path) -> None:
     assert publish_market_data_dataset(root=tmp_path, artifact=artifact) == package
 
 
+def test_json_v1_migrates_to_columnar_v2_with_identical_logical_hash(
+    tmp_path: Path,
+) -> None:
+    artifact = _dataset()
+    v1 = publish_market_data_dataset(
+        root=tmp_path / "v1",
+        artifact=artifact,
+        encoding_version="market-data-package-json-v1",
+    )
+    loaded_v1 = load_verified_market_data_dataset(v1)
+    v2 = migrate_market_data_package_v1_to_v2(
+        source_path=v1, target_root=tmp_path / "v2"
+    )
+    loaded_v2 = load_verified_market_data_dataset(v2)
+    selection = read_market_data_selection_v2(
+        v2, symbols=("600000.SH",), timeframes=(Timeframe.DAILY,)
+    )
+
+    assert not (v1 / "encoding.json").exists()
+    assert loaded_v1.artifact.content_hash == loaded_v2.artifact.content_hash
+    assert loaded_v1.artifact.dataset_id == loaded_v2.artifact.dataset_id
+    assert loaded_v1.bars == loaded_v2.bars
+    assert selection.dataset_hash == artifact.content_hash
+    assert {item.symbol for item in selection.bars} == {"600000.SH"}
+    assert all(item.timeframe is Timeframe.DAILY for item in selection.bars)
+    with pytest.raises(ValueError, match="must use JSON V1"):
+        migrate_market_data_package_v1_to_v2(
+            source_path=v2, target_root=tmp_path / "v3"
+        )
+
+
 def test_dataset_reader_detects_missing_or_tampered_partition(tmp_path: Path) -> None:
     artifact = _dataset()
     package = publish_market_data_dataset(root=tmp_path, artifact=artifact)
-    partition = package / artifact.partitions[0].relative_path
+    partition = next(package.glob("partitions/*/*/*.parquet"))
     original = partition.read_bytes()
 
     partition.write_bytes(original + b" ")

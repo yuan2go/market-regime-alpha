@@ -48,6 +48,32 @@ def publish_market_data_dataset(
     root: Path,
     artifact: MarketDataDatasetArtifact,
     failure_injector: FailureInjector | None = None,
+    encoding_version: str = "market-data-package-encoding-v2",
+) -> Path:
+    if encoding_version == "market-data-package-encoding-v2":
+        from market_regime_alpha.market_data.encoding_v2 import (
+            publish_market_data_dataset_v2,
+        )
+
+        return publish_market_data_dataset_v2(
+            root=root,
+            artifact=artifact,
+            failure_injector=failure_injector,
+        )
+    if encoding_version != "market-data-package-json-v1":
+        raise ValueError("unsupported Market Data physical encoding")
+    return _publish_market_data_dataset_json_v1(
+        root=root,
+        artifact=artifact,
+        failure_injector=failure_injector,
+    )
+
+
+def _publish_market_data_dataset_json_v1(
+    *,
+    root: Path,
+    artifact: MarketDataDatasetArtifact,
+    failure_injector: FailureInjector | None = None,
 ) -> Path:
     artifact.verify_identity()
     root.mkdir(parents=True, exist_ok=True)
@@ -97,7 +123,16 @@ def load_verified_market_data_dataset(
     symbols: tuple[str, ...] | None = None,
     timeframes: tuple[Timeframe, ...] | None = None,
 ) -> VerifiedMarketDataDataset:
-    verified = _load_verified_market_data_dataset(path, enforce_directory_identity=True)
+    if (path / "encoding.json").is_file():
+        from market_regime_alpha.market_data.encoding_v2 import (
+            load_verified_market_data_dataset_v2,
+        )
+
+        verified = load_verified_market_data_dataset_v2(path)
+    else:
+        verified = _load_verified_market_data_dataset(
+            path, enforce_directory_identity=True
+        )
     selected_symbols = set(symbols) if symbols is not None else None
     selected_timeframes = set(timeframes) if timeframes is not None else None
     selected = tuple(
@@ -132,6 +167,29 @@ def replay_market_data_dataset(path: Path) -> VerifiedMarketDataDataset:
     if replayed.to_canonical_dict() != original.to_canonical_dict():
         raise ValueError("Market Data Dataset replay differs from stored Artifact")
     return verified
+
+
+def migrate_market_data_package_v1_to_v2(
+    *, source_path: Path, target_root: Path
+) -> Path:
+    """Re-encode one verified JSON V1 package without changing logical identity."""
+
+    if (source_path / "encoding.json").exists():
+        raise ValueError("Market Data migration source must use JSON V1 encoding")
+    verified = _load_verified_market_data_dataset(
+        source_path, enforce_directory_identity=True
+    )
+    from market_regime_alpha.market_data.encoding_v2 import (
+        publish_market_data_dataset_v2,
+    )
+
+    migrated = publish_market_data_dataset_v2(
+        root=target_root, artifact=verified.artifact
+    )
+    reloaded = load_verified_market_data_dataset(migrated)
+    if reloaded.artifact.to_canonical_dict() != verified.artifact.to_canonical_dict():
+        raise ValueError("Market Data V1 to V2 migration changed logical identity")
+    return migrated
 
 
 def _load_verified_market_data_dataset(

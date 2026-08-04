@@ -21,17 +21,19 @@ from tests.features.test_materialization_runner_v2 import _verified_dataset
 
 def _inputs(tmp_path: Path, *, daily_count: int = 70) -> tuple[Path, Path]:
     dataset = _verified_dataset(tmp_path, daily_count=daily_count)
-    feature_set = canonical_technical_feature_set(
-        effective_from=dataset.artifact.decision_time
-    )
+    feature_set = canonical_technical_feature_set(effective_from=dataset.artifact.decision_time)
     config = tmp_path / "feature-set.json"
-    config.write_text(
-        canonical_json(feature_set.to_canonical_dict()), encoding="utf-8"
-    )
+    config.write_text(canonical_json(feature_set.to_canonical_dict()), encoding="utf-8")
     return dataset.root, config
 
 
-def _materialize_args(dataset: Path, config: Path, output: Path) -> list[str]:
+def _materialize_args(
+    dataset: Path,
+    config: Path,
+    output: Path,
+    *,
+    execution_mode: str = "START_NEW",
+) -> list[str]:
     return [
         "--market-data-manifest",
         str(dataset),
@@ -49,13 +51,12 @@ def _materialize_args(dataset: Path, config: Path, output: Path) -> list[str]:
         "cli-feature-run-1",
         "--code-revision",
         "test-revision",
-        "--resume",
+        "--execution-mode",
+        execution_mode,
     ]
 
 
-def test_materialize_and_replay_cli_are_structured_and_side_effect_free(
-    tmp_path: Path, capsys
-) -> None:
+def test_materialize_and_replay_cli_are_structured_and_side_effect_free(tmp_path: Path, capsys) -> None:
     dataset, config = _inputs(tmp_path)
     output = tmp_path / "output"
 
@@ -68,7 +69,14 @@ def test_materialize_and_replay_cli_are_structured_and_side_effect_free(
     assert first["NO_FILL_CREATED"] is True
     assert first["TRADING_AUTHORITY_NOT_GRANTED"] is True
 
-    status = materialize_main(_materialize_args(dataset, config, output))
+    status = materialize_main(
+        _materialize_args(
+            dataset,
+            config,
+            output,
+            execution_mode="RETURN_IF_COMPLETE",
+        )
+    )
     second = json.loads(capsys.readouterr().out)
     assert status == 0
     assert second["feature_bundle_id"] == first["feature_bundle_id"]
@@ -92,9 +100,7 @@ def test_materialize_and_replay_cli_are_structured_and_side_effect_free(
     assert replay["feature_bundle_hash"] == first["feature_bundle_hash"]
 
 
-def test_legacy_comparison_cli_publishes_evidence_without_signal_authority(
-    tmp_path: Path, capsys
-) -> None:
+def test_legacy_comparison_cli_publishes_evidence_without_signal_authority(tmp_path: Path, capsys) -> None:
     dataset, config = _inputs(tmp_path)
     status = compare_main(
         [
@@ -124,18 +130,14 @@ def test_materialize_cli_rejects_tampered_dataset(tmp_path: Path, capsys) -> Non
     artifact = dataset / "artifact.json"
     artifact.write_bytes(artifact.read_bytes() + b" ")
 
-    status = materialize_main(
-        _materialize_args(dataset, config, tmp_path / "output")
-    )
+    status = materialize_main(_materialize_args(dataset, config, tmp_path / "output"))
     payload = json.loads(capsys.readouterr().out)
     assert status == 3
     assert payload["status"] == "REJECTED"
     assert payload["NO_ORDER_CREATED"] is True
 
 
-def test_replay_cli_classifies_semantic_divergence_as_canonical_regression(
-    tmp_path: Path, capsys, monkeypatch
-) -> None:
+def test_replay_cli_classifies_semantic_divergence_as_canonical_regression(tmp_path: Path, capsys, monkeypatch) -> None:
     def diverged(**_kwargs):
         raise FeatureReplayDivergenceError("semantic mismatch")
 
@@ -162,13 +164,9 @@ def test_replay_cli_classifies_semantic_divergence_as_canonical_regression(
     assert payload["reason_codes"] == ["FEATURE_REPLAY_DIVERGED"]
 
 
-def test_materialize_cli_distinguishes_blocked_evidence_and_computation_failure(
-    tmp_path: Path, capsys, monkeypatch
-) -> None:
+def test_materialize_cli_distinguishes_blocked_evidence_and_computation_failure(tmp_path: Path, capsys, monkeypatch) -> None:
     dataset, config = _inputs(tmp_path / "blocked", daily_count=5)
-    status = materialize_main(
-        _materialize_args(dataset, config, tmp_path / "blocked-output")
-    )
+    status = materialize_main(_materialize_args(dataset, config, tmp_path / "blocked-output"))
     blocked = json.loads(capsys.readouterr().out)
     assert status == 4
     assert blocked["status"] == FeatureMaterializationStatus.BLOCKED_REQUIRED_FEATURE.value
@@ -181,9 +179,7 @@ def test_materialize_cli_distinguishes_blocked_evidence_and_computation_failure(
         failed,
     )
     dataset, config = _inputs(tmp_path / "failed")
-    status = materialize_main(
-        _materialize_args(dataset, config, tmp_path / "failed-output")
-    )
+    status = materialize_main(_materialize_args(dataset, config, tmp_path / "failed-output"))
     failure = json.loads(capsys.readouterr().out)
     assert status == 5
     assert failure["status"] == "COMPUTATION_FAILED"

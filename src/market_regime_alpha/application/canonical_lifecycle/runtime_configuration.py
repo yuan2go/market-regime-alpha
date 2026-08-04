@@ -34,13 +34,23 @@ from market_regime_alpha.signals.engine import SignalModelConfig
 from market_regime_alpha.signals.input_assembly import (
     SignalInputMappingConfiguration,
 )
+from market_regime_alpha.signals.decimal_model import SignalModelConfigurationV2
+from market_regime_alpha.signals.input_v3 import SignalInputMappingConfigurationV2
+from market_regime_alpha.signals.policies import (
+    SignalFactorFreshnessPolicy,
+    SignalFactorRequirementPolicy,
+)
 
 
 RuntimeConfiguration: TypeAlias = (
     ResearchPipelineConfig
     | FeatureSetConfiguration
     | SignalInputMappingConfiguration
+    | SignalInputMappingConfigurationV2
     | SignalModelConfig
+    | SignalModelConfigurationV2
+    | SignalFactorRequirementPolicy
+    | SignalFactorFreshnessPolicy
     | PathForecastConfig
     | CompleteAccountRiskConfiguration
     | RiskReducingGateConfiguration
@@ -186,11 +196,19 @@ class RuntimeConfigurationReader:
         if kind is LifecycleConfigurationKind.RESEARCH_PIPELINE:
             return ResearchPipelineConfig.from_canonical_dict(payload)
         if kind is LifecycleConfigurationKind.SIGNAL_MODEL:
+            if payload.get("schema_version") == "signal-model-configuration-v2":
+                return SignalModelConfigurationV2.from_canonical_dict(payload)
             return SignalModelConfig.from_canonical_dict(dict(payload))
         if kind is LifecycleConfigurationKind.FEATURE_SET:
             return FeatureSetConfiguration.from_canonical_dict(payload)
         if kind is LifecycleConfigurationKind.SIGNAL_INPUT_MAPPING:
+            if payload.get("schema_version") == "signal-input-mapping-configuration-v2":
+                return SignalInputMappingConfigurationV2.from_canonical_dict(payload)
             return SignalInputMappingConfiguration.from_canonical_dict(payload)
+        if kind is LifecycleConfigurationKind.SIGNAL_FACTOR_REQUIREMENT:
+            return SignalFactorRequirementPolicy.from_canonical_dict(payload)
+        if kind is LifecycleConfigurationKind.SIGNAL_FACTOR_FRESHNESS:
+            return SignalFactorFreshnessPolicy.from_canonical_dict(payload)
         if kind is LifecycleConfigurationKind.PATH_FORECAST:
             return PathForecastConfig.from_canonical_dict(dict(payload))
         if kind is LifecycleConfigurationKind.COMPLETE_ACCOUNT_RISK:
@@ -221,6 +239,12 @@ def _configuration_binding(
             configuration.schema_version,
             configuration.configuration_hash,
         )
+    if isinstance(configuration, SignalModelConfigurationV2):
+        return (
+            configuration.configuration_id,
+            configuration.configuration_version,
+            configuration.configuration_hash,
+        )
     if isinstance(configuration, FeatureSetConfiguration):
         return (
             configuration.feature_set_id,
@@ -232,6 +256,24 @@ def _configuration_binding(
             configuration.configuration_id,
             configuration.configuration_version,
             configuration.configuration_hash,
+        )
+    if isinstance(configuration, SignalInputMappingConfigurationV2):
+        return (
+            configuration.configuration_id,
+            configuration.configuration_version,
+            configuration.configuration_hash,
+        )
+    if isinstance(configuration, SignalFactorRequirementPolicy):
+        return (
+            configuration.policy_id,
+            configuration.policy_version,
+            configuration.policy_hash,
+        )
+    if isinstance(configuration, SignalFactorFreshnessPolicy):
+        return (
+            configuration.policy_id,
+            configuration.policy_version,
+            configuration.policy_hash,
         )
     if isinstance(configuration, PathForecastConfig):
         return (

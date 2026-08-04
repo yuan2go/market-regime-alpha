@@ -20,6 +20,7 @@ from market_regime_alpha.forecasting.contracts import (
     ReturnQuantile,
 )
 from market_regime_alpha.signals.contracts import SignalSnapshot
+from market_regime_alpha.signals.decimal_model import CanonicalSignalSnapshotV3
 from market_regime_alpha.strategies.entry.contracts import (
     EntryBarrierSpec,
     EntryPathObservationStatus,
@@ -31,6 +32,7 @@ from market_regime_alpha.strategies.entry.contracts import (
 
 PATH_FORECAST_CONFIG_SCHEMA = "path-forecast-config-v1"
 PATH_FORECAST_SAMPLE_SCHEMA = "path-forecast-sample-v1"
+SignalSnapshotAuthority = SignalSnapshot | CanonicalSignalSnapshotV3
 
 
 def _require_text(label: str, value: str) -> None:
@@ -314,7 +316,7 @@ class PathForecastSample:
 @dataclass(frozen=True, slots=True)
 class PathForecastArtifact:
     forecast: PathForecast
-    signal_snapshot: SignalSnapshot
+    signal_snapshot: SignalSnapshotAuthority
     configuration: PathForecastConfig
     samples: tuple[PathForecastSample, ...]
 
@@ -351,9 +353,15 @@ class PathForecastArtifact:
             or not isinstance(samples, list)
         ):
             raise ValueError("PathForecastArtifact fields mismatch")
+        signal_schema = signal.get("schema_version")
+        restored_signal: SignalSnapshotAuthority = (
+            CanonicalSignalSnapshotV3.from_canonical_dict(signal)
+            if signal_schema == "canonical-signal-snapshot-v3"
+            else SignalSnapshot.from_canonical_dict(signal)
+        )
         return cls(
             forecast=PathForecast.from_canonical_dict(forecast),
-            signal_snapshot=SignalSnapshot.from_canonical_dict(signal),
+            signal_snapshot=restored_signal,
             configuration=PathForecastConfig.from_canonical_dict(config),
             samples=tuple(PathForecastSample.from_canonical_dict(_object(item)) for item in samples),
         )
@@ -361,7 +369,7 @@ class PathForecastArtifact:
 
 def build_path_forecast(
     *,
-    signal_snapshot: SignalSnapshot,
+    signal_snapshot: SignalSnapshotAuthority,
     configuration: PathForecastConfig,
     samples: tuple[PathForecastSample, ...],
     decision_time: DecisionTime,

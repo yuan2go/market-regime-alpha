@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -20,9 +20,19 @@ from market_regime_alpha.features.materialization_v2 import (
     load_verified_feature_bundle_v2,
     load_verified_feature_artifact_v2,
     load_verified_feature_replay_report,
+    migrate_feature_bundle_encoding_v1_to_v2,
+    publish_feature_artifact_v2,
     publish_feature_bundle_v2,
     publish_feature_replay_report,
     replay_feature_bundle_v2,
+)
+from market_regime_alpha.features.encoding_v2 import read_feature_values_v2
+from market_regime_alpha.features.materialization_run import (
+    FeatureMaterializationExecutionMode,
+    FeatureMaterializationRunStatus,
+    FeatureMaterializationTaskSpec,
+    FeatureMaterializationTaskStatus,
+    SQLiteFeatureMaterializationRunRepository,
 )
 from market_regime_alpha.features.spine import (
     FeatureConfiguration,
@@ -191,6 +201,9 @@ def _run(
     idempotency_key: str = "feature-run-1",
     code_revision: str = "revision-1",
     feature_set: FeatureSetConfiguration | None = None,
+    execution_mode: FeatureMaterializationExecutionMode = (
+        FeatureMaterializationExecutionMode.START_NEW
+    ),
 ):
     dataset = _verified_dataset(
         tmp_path,
@@ -210,7 +223,7 @@ def _run(
         code_revision=code_revision,
         output_root=tmp_path / "features",
         idempotency_key=idempotency_key,
-        resume=True,
+        execution_mode=execution_mode,
     )
     return dataset, feature_set, receipt
 
@@ -373,11 +386,18 @@ def test_same_idempotency_replays_and_semantic_conflict_is_rejected(
     tmp_path: Path,
 ) -> None:
     _, _, first = _run(tmp_path)
-    _, _, replayed = _run(tmp_path)
+    _, _, replayed = _run(
+        tmp_path,
+        execution_mode=FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE,
+    )
 
     assert replayed == first
     with pytest.raises(ValueError, match="idempotency key semantic conflict"):
-        _run(tmp_path, code_revision="different-revision")
+        _run(
+            tmp_path,
+            code_revision="different-revision",
+            execution_mode=FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE,
+        )
 
 
 def test_feature_artifact_and_bundle_tamper_are_detected(tmp_path: Path) -> None:
@@ -388,21 +408,76 @@ def test_feature_artifact_and_bundle_tamper_are_detected(tmp_path: Path) -> None
         artifact_root=tmp_path / "features" / "feature-artifacts",
     )
     artifact_package = verified.artifacts[0].root
-    artifact_json = artifact_package / "artifact.json"
-    payload = json.loads(artifact_json.read_text(encoding="utf-8"))
-    payload["symbol"] = "000001.SZ"
-    artifact_json.write_text(json.dumps(payload), encoding="utf-8")
+    artifact_payload = artifact_package / "artifact.json.zlib"
+    artifact_payload.write_bytes(artifact_payload.read_bytes() + b"tampered")
 
     with pytest.raises(ValueError, match="checksum mismatch"):
         load_verified_feature_artifact_v2(artifact_package)
 
-    checksums = bundle_path / "SHA256SUMS.json"
-    checksums.write_bytes(checksums.read_bytes() + b" ")
-    with pytest.raises(ValueError, match="checksum index"):
+    values = bundle_path / "values.parquet"
+    values.write_bytes(values.read_bytes() + b"tampered")
+    with pytest.raises(ValueError, match="checksum mismatch"):
         load_verified_feature_bundle_v2(
             bundle_path,
             artifact_root=tmp_path / "features" / "feature-artifacts",
         )
+
+
+def test_feature_json_v1_migrates_to_columnar_v2_and_selects_without_hash_change(
+    tmp_path: Path,
+) -> None:
+    _, _, receipt = _run(tmp_path / "source")
+    source = load_verified_feature_bundle_v2(
+        tmp_path / "source" / "features" / receipt.bundle_locator,
+        artifact_root=tmp_path / "source" / "features" / "feature-artifacts",
+    )
+    v1_artifacts = tmp_path / "v1-artifacts"
+    for item in source.artifacts:
+        publish_feature_artifact_v2(
+            root=v1_artifacts,
+            artifact=item.artifact,
+            encoding_version="feature-artifact-package-json-v1",
+        )
+    v1_bundle = publish_feature_bundle_v2(
+        root=tmp_path / "v1-bundles",
+        artifact_root=v1_artifacts,
+        bundle=source.artifact,
+        encoding_version="feature-bundle-package-json-v1",
+    )
+    loaded_v1 = load_verified_feature_bundle_v2(
+        v1_bundle, artifact_root=v1_artifacts
+    )
+    v2_artifacts = tmp_path / "v2-artifacts"
+    v2_bundle = migrate_feature_bundle_encoding_v1_to_v2(
+        source_bundle_path=v1_bundle,
+        source_artifact_root=v1_artifacts,
+        target_bundle_root=tmp_path / "v2-bundles",
+        target_artifact_root=v2_artifacts,
+    )
+    loaded_v2 = load_verified_feature_bundle_v2(
+        v2_bundle, artifact_root=v2_artifacts
+    )
+    first = source.artifacts[0].artifact
+    first_output = first.values[0].output_id
+    selection = read_feature_values_v2(
+        v2_bundle,
+        symbols=(first.symbol,),
+        feature_ids=(first.feature_id,),
+        output_ids=(first_output,),
+        timeframes=(first.timeframe,),
+    )
+
+    assert loaded_v1.artifact.content_hash == loaded_v2.artifact.content_hash
+    assert loaded_v1.artifact.bundle_id == loaded_v2.artifact.bundle_id
+    assert tuple(item.artifact.content_hash for item in loaded_v1.artifacts) == tuple(
+        item.artifact.content_hash for item in loaded_v2.artifacts
+    )
+    assert len(selection.rows) == 1
+    assert selection.rows[0]["symbol"] == first.symbol
+    assert selection.rows[0]["output_id"] == first_output
+    (v2_bundle / "unexpected.tmp").write_text("extra", encoding="utf-8")
+    with pytest.raises(ValueError, match="exact file set mismatch"):
+        read_feature_values_v2(v2_bundle)
 
 
 def test_bundle_reconstructs_coverage_from_loaded_feature_artifacts(
@@ -508,29 +583,36 @@ def test_orphan_command_staging_file_does_not_block_retry(tmp_path: Path) -> Non
     assert orphan.exists()
 
 
-def test_concurrent_same_command_returns_one_identical_receipt(tmp_path: Path) -> None:
+def test_concurrent_start_new_has_one_winner_and_one_explicit_conflict(
+    tmp_path: Path,
+) -> None:
     dataset = _verified_dataset(tmp_path)
     feature_set = canonical_technical_feature_set(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
     )
 
     def run() -> object:
-        return FeatureMaterializationRunner(max_workers=1).run(
-            verified_dataset=dataset,
-            feature_set=feature_set,
-            decision_time=DECISION_TIME,
-            created_at=CREATED_AT,
-            selected_symbols=("600000.SH",),
-            code_revision="revision-1",
-            output_root=tmp_path / "features",
-            idempotency_key="concurrent-command",
-            resume=True,
-        )
+        try:
+            return FeatureMaterializationRunner(max_workers=1).run(
+                verified_dataset=dataset,
+                feature_set=feature_set,
+                decision_time=DECISION_TIME,
+                created_at=CREATED_AT,
+                selected_symbols=("600000.SH",),
+                code_revision="revision-1",
+                output_root=tmp_path / "features",
+                idempotency_key="concurrent-command",
+                execution_mode=FeatureMaterializationExecutionMode.START_NEW,
+            )
+        except ValueError as exc:
+            return str(exc)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         first, second = tuple(executor.map(lambda _: run(), range(2)))
 
-    assert first == second
+    results = (first, second)
+    assert sum(not isinstance(item, str) for item in results) == 1
+    assert any(item == "Feature materialization run already exists" for item in results)
 
 
 def test_arithmetic_failure_is_not_mislabeled_as_missing_data(
@@ -558,7 +640,123 @@ def test_arithmetic_failure_is_not_mislabeled_as_missing_data(
             code_revision="revision-1",
             output_root=tmp_path / "features",
             idempotency_key="failure",
-            resume=True,
+            execution_mode=FeatureMaterializationExecutionMode.START_NEW,
+        )
+
+
+def test_failed_materialization_resumes_exact_tasks_without_republishing_completed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from market_regime_alpha.features import materialization_v2 as module
+
+    original = module.compute_technical_feature
+    calls = 0
+
+    def fail_once(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ArithmeticError("first task interrupted")
+        return original(**kwargs)
+
+    monkeypatch.setattr(module, "compute_technical_feature", fail_once)
+    with pytest.raises(FeatureComputationFailedError, match="computation failed"):
+        _run(tmp_path, idempotency_key="resumable-failure")
+    monkeypatch.setattr(module, "compute_technical_feature", original)
+
+    _, _, receipt = _run(
+        tmp_path,
+        idempotency_key="resumable-failure",
+        execution_mode=FeatureMaterializationExecutionMode.RESUME_EXISTING,
+    )
+    assert receipt.status in {
+        FeatureMaterializationStatus.COMPLETE,
+        FeatureMaterializationStatus.PARTIAL_COVERAGE,
+    }
+    repository = SQLiteFeatureMaterializationRunRepository(
+        tmp_path / "features" / "materialization-run.sqlite3"
+    )
+    snapshot = repository.snapshot(1)
+    assert snapshot.status is FeatureMaterializationRunStatus.COMPLETE
+    assert all(
+        status is FeatureMaterializationTaskStatus.COMPLETE
+        for _, status, _, _ in snapshot.tasks
+    )
+    assert any(event_type == "RUN_RESUMED" for _, event_type, _, _ in snapshot.events)
+    assert any(event_type == "TASK_FAILED" for _, event_type, _, _ in snapshot.events)
+
+
+def test_materialization_repository_claim_cas_stale_recovery_and_history(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "run.sqlite3"
+    repository = SQLiteFeatureMaterializationRunRepository(path)
+    tasks = (
+        FeatureMaterializationTaskSpec(
+            symbol="600000.SH", feature_id="feature-a", timeframe=Timeframe.DAILY
+        ),
+        FeatureMaterializationTaskSpec(
+            symbol="600001.SH", feature_id="feature-a", timeframe=Timeframe.DAILY
+        ),
+    )
+    snapshot = repository.prepare(
+        idempotency_key="repository-cas",
+        command_hash=SOURCE_HASH,
+        tasks=tasks,
+        mode=FeatureMaterializationExecutionMode.START_NEW,
+    )
+    first = repository.claim_next(run_id=snapshot.run_id)
+    second = repository.claim_next(run_id=snapshot.run_id)
+    assert first is not None and second is not None
+    assert first.task_key != second.task_key
+    assert repository.claim_next(run_id=snapshot.run_id) is None
+    repository.complete_task(
+        first, artifact_id="artifact-a", artifact_hash=MANIFEST_HASH
+    )
+    with pytest.raises(ValueError, match="stale.*writer"):
+        repository.complete_task(
+            first, artifact_id="artifact-a", artifact_hash=MANIFEST_HASH
+        )
+
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE feature_materialization_task SET claimed_at = ? "
+            "WHERE run_id = ? AND task_key = ?",
+            ("2000-01-01T00:00:00+00:00", snapshot.run_id, second.task_key),
+        )
+    recovered = repository.claim_next(
+        run_id=snapshot.run_id, stale_after=timedelta(seconds=1)
+    )
+    assert recovered is not None
+    assert recovered.task_key == second.task_key
+    assert recovered.claim_token != second.claim_token
+    assert recovered.attempt_number == 2
+    with pytest.raises(ValueError, match="stale.*writer"):
+        repository.fail_task(second, error_message="stale writer")
+    repository.complete_task(
+        recovered, artifact_id="artifact-b", artifact_hash=MANIFEST_HASH
+    )
+    rebuilt = SQLiteFeatureMaterializationRunRepository(path).snapshot(snapshot.run_id)
+    assert all(
+        status is FeatureMaterializationTaskStatus.COMPLETE
+        for _, status, _, _ in rebuilt.tasks
+    )
+    event_types = tuple(item[1] for item in rebuilt.events)
+    assert event_types.count("TASK_CLAIMED") == 3
+    assert "STALE_CLAIM_RECOVERED" in event_types
+    with pytest.raises(ValueError, match="already exists"):
+        repository.prepare(
+            idempotency_key="repository-cas",
+            command_hash=SOURCE_HASH,
+            tasks=tasks,
+            mode=FeatureMaterializationExecutionMode.START_NEW,
+        )
+    with pytest.raises(ValueError, match="semantic conflict"):
+        repository.prepare(
+            idempotency_key="repository-cas",
+            command_hash=MANIFEST_HASH,
+            tasks=tasks,
+            mode=FeatureMaterializationExecutionMode.RESUME_EXISTING,
         )
 
 

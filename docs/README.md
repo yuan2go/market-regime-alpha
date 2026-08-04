@@ -20,7 +20,7 @@ Use this order to determine what the project **should** do:
 ```text
 1. Latest explicit user decision that has not been superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–12 and architecture/domains/**
+3. docs/architecture/00–14 and architecture/domains/**
 4. docs/research/Current-Research-Program.md and focused current research programs
 5. docs/specs/** and docs/roadmap/work-packages/**
 6. HISTORICAL/SUPERSEDED material for context only
@@ -75,6 +75,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Production Lifecycle Hardening and Shadow Operations](architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md)
 - [Canonical Runtime and Legacy Model Migration](architecture/12-Canonical-Runtime-and-Legacy-Migration.md)
 - [Canonical Market Data and Feature Spine](architecture/13-Canonical-Market-Data-and-Feature-Spine.md)
+- [Canonical Signal Authority and Operational Feature Handoff](architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
 
 ### Current research
@@ -142,6 +143,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [H5 Thesis Health Delivery](audit/H5-Thesis-Health-Delivery.md)
 - [H6 Composite Operational Evidence Delivery](audit/H6-Composite-Operational-Evidence-Delivery.md)
 - [Canonical Feature Spine Delivery](audit/Canonical-Feature-Spine-Delivery.md)
+- [WP-SIG-01A Delivery](audit/WP-SIG-01A-Delivery.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)
