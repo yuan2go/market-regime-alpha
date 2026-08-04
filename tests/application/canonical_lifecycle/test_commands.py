@@ -59,6 +59,7 @@ def _command(
     as_of_time: datetime = AS_OF,
     idempotency_key: str = "request-1",
     input_hash: str = _hash("a"),
+    inputs: tuple[LifecycleObjectReference, ...] | None = None,
     configurations: tuple[LifecycleConfigurationReference, ...] | None = None,
     models: tuple[LifecycleModelVersionReference, ...] | None = None,
     stop_after_stage: LifecycleStageName | None = None,
@@ -81,7 +82,9 @@ def _command(
         idempotency_key=idempotency_key,
         input_manifest_id=ArtifactId("input-manifest-1"),
         input_content_hash=input_hash,
-        continuation_references=(),
+        input_references=(
+            _canonical_input_references() if inputs is None else inputs
+        ),
         configuration_references=(
             (_configuration(),) if configurations is None else configurations
         ),
@@ -170,6 +173,28 @@ def _risk_references() -> tuple[LifecycleObjectReference, ...]:
     )
 
 
+def _canonical_input_references() -> tuple[LifecycleObjectReference, ...]:
+    return tuple(
+        sorted(
+            (
+                _risk_reference(
+                    LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST,
+                    LifecycleReaderKind.COMPOSITE_OPERATIONAL_ARTIFACT_READER,
+                    "d",
+                    locator="artifacts/composite-1",
+                ),
+                _risk_reference(
+                    LifecycleObjectType.SOURCE_MANIFEST,
+                    LifecycleReaderKind.SOURCE_MANIFEST_READER,
+                    "e",
+                    locator="artifacts/source-manifest-1.json",
+                ),
+            ),
+            key=lambda item: item.sort_key,
+        )
+    )
+
+
 def _risk_command(
     references: tuple[LifecycleObjectReference, ...] | None = None,
 ) -> CanonicalLifecycleCommand:
@@ -180,7 +205,7 @@ def _risk_command(
         idempotency_key="risk-request-1",
         input_manifest_id=None,
         input_content_hash=None,
-        continuation_references=(
+        input_references=(
             _risk_references() if references is None else references
         ),
         configuration_references=(_configuration(),),
@@ -225,6 +250,14 @@ def test_semantic_fields_each_change_command_hash() -> None:
         _command(run_type=LifecycleRunType.REPLAY),
         _command(as_of_time=AS_OF + timedelta(days=1)),
         _command(input_hash=_hash("9")),
+        _command(
+            inputs=tuple(
+                replace(item, content_hash=_hash("f"))
+                if item.object_type is LifecycleObjectType.SOURCE_MANIFEST
+                else item
+                for item in _canonical_input_references()
+            )
+        ),
         _command(configurations=(_configuration("8"),)),
         _command(models=(_model("7"),)),
     )
@@ -294,7 +327,7 @@ def test_resume_identity_checks_the_persisted_run() -> None:
 
 def test_risk_continuation_names_all_durable_prerequisites() -> None:
     command = _risk_command()
-    assert {item.object_type for item in command.continuation_references} == {
+    assert {item.object_type for item in command.input_references} == {
         LifecycleObjectType.RISK_REDUCING_DECISION,
         LifecycleObjectType.POSITION_BOOK,
         LifecycleObjectType.OPERATIONAL_EXIT_DIRECTIVE,
@@ -307,7 +340,7 @@ def test_risk_continuation_names_all_durable_prerequisites() -> None:
     }
     assert all(
         item.locator is None
-        for item in command.continuation_references
+        for item in command.input_references
         if item.reader_kind
         in {
             LifecycleReaderKind.RISK_REDUCTION_REPOSITORY,
@@ -341,6 +374,27 @@ def test_risk_continuation_rejects_two_references_of_one_type() -> None:
     ambiguous = tuple(sorted((*references, duplicate), key=lambda item: item.sort_key))
     with pytest.raises(ValueError, match="exactly one"):
         _risk_command(ambiguous)
+
+
+def test_full_lifecycle_requires_recoverable_composite_and_source_inputs() -> None:
+    inputs = _canonical_input_references()
+    with pytest.raises(ValueError, match="exactly one composite root"):
+        _command(
+            inputs=tuple(
+                item
+                for item in inputs
+                if item.object_type
+                is not LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST
+            )
+        )
+    with pytest.raises(ValueError, match="at least one source manifest"):
+        _command(
+            inputs=tuple(
+                item
+                for item in inputs
+                if item.object_type is not LifecycleObjectType.SOURCE_MANIFEST
+            )
+        )
 
 
 def test_command_rejects_naive_fractional_and_non_utc_as_of() -> None:

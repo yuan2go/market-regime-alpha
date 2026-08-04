@@ -66,7 +66,7 @@ class CanonicalLifecycleCommand:
     idempotency_key: str
     input_manifest_id: ArtifactId | None
     input_content_hash: str | None
-    continuation_references: tuple[LifecycleObjectReference, ...]
+    input_references: tuple[LifecycleObjectReference, ...]
     configuration_references: tuple[LifecycleConfigurationReference, ...]
     model_references: tuple[LifecycleModelVersionReference, ...]
     stop_after_stage: LifecycleStageName | None
@@ -91,10 +91,10 @@ class CanonicalLifecycleCommand:
             raise ValueError("input manifest identity and hash must be paired")
         if self.input_content_hash is not None:
             require_sha256("input_content_hash", self.input_content_hash)
-        validate_lifecycle_object_references(
-            "continuation_references", self.continuation_references
-        )
-        for reference in self.continuation_references:
+        if not self.input_references:
+            raise ValueError("input_references must not be empty")
+        validate_lifecycle_object_references("input_references", self.input_references)
+        for reference in self.input_references:
             validate_lifecycle_reader_binding(reference)
             validate_lifecycle_locator_policy(reference)
             if reference.available_at > self.as_of_time:
@@ -102,7 +102,7 @@ class CanonicalLifecycleCommand:
         if self.run_type is LifecycleRunType.RISK_REDUCTION_CONTINUATION:
             if self.input_manifest_id is not None:
                 raise ValueError("risk continuation uses explicit prerequisite references")
-            present_types = {item.object_type for item in self.continuation_references}
+            present_types = {item.object_type for item in self.input_references}
             missing = _RISK_CONTINUATION_REQUIRED_TYPES - present_types
             if missing:
                 names = ", ".join(sorted(item.value for item in missing))
@@ -110,7 +110,7 @@ class CanonicalLifecycleCommand:
             counts = {
                 object_type: sum(
                     item.object_type is object_type
-                    for item in self.continuation_references
+                    for item in self.input_references
                 )
                 for object_type in present_types
             }
@@ -125,9 +125,20 @@ class CanonicalLifecycleCommand:
         else:
             if self.input_manifest_id is None:
                 raise ValueError(f"{self.run_type.value} requires an input manifest")
-            if self.continuation_references:
+            root_count = sum(
+                item.object_type is LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST
+                for item in self.input_references
+            )
+            if root_count != 1:
                 raise ValueError(
-                    f"{self.run_type.value} cannot carry risk continuation references"
+                    f"{self.run_type.value} requires exactly one composite root"
+                )
+            if not any(
+                item.object_type is LifecycleObjectType.SOURCE_MANIFEST
+                for item in self.input_references
+            ):
+                raise ValueError(
+                    f"{self.run_type.value} requires at least one source manifest"
                 )
         configuration_hash = configuration_manifest_hash(
             self.configuration_references
@@ -188,8 +199,8 @@ class CanonicalLifecycleCommand:
                 str(self.input_manifest_id) if self.input_manifest_id else None
             ),
             "input_content_hash": self.input_content_hash,
-            "continuation_references": [
-                item.to_canonical_dict() for item in self.continuation_references
+            "input_references": [
+                item.to_canonical_dict() for item in self.input_references
             ],
             "configuration_references": [
                 item.to_canonical_dict() for item in self.configuration_references
@@ -243,7 +254,7 @@ class CanonicalLifecycleCommand:
         expected = {
             "schema_version", "run_type", "decision_date", "as_of_time",
             "idempotency_key", "input_manifest_id", "input_content_hash",
-            "continuation_references", "configuration_references",
+            "input_references", "configuration_references",
             "configuration_manifest_hash", "model_references",
             "model_version_manifest_hash", "stop_after_stage", "output_directory",
             "resume_run_id", "resume_command_hash", "command_hash", "run_id",
@@ -264,9 +275,9 @@ class CanonicalLifecycleCommand:
                 ArtifactId(input_manifest_id) if input_manifest_id else None
             ),
             input_content_hash=_optional_text(payload, "input_content_hash"),
-            continuation_references=tuple(
+            input_references=tuple(
                 LifecycleObjectReference.from_canonical_dict(item)
-                for item in _object_array(payload, "continuation_references")
+                for item in _object_array(payload, "input_references")
             ),
             configuration_references=tuple(
                 LifecycleConfigurationReference.from_canonical_dict(item)
