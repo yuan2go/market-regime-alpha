@@ -74,6 +74,7 @@ from market_regime_alpha.decision.sqlite_repository import (
     SQLiteDecisionLifecycleRepository,
 )
 from market_regime_alpha.forecasting.path import PathForecastConfig
+from market_regime_alpha.features.spine import FeatureSetConfiguration
 from market_regime_alpha.portfolio.sqlite_account_authority import (
     SQLiteCompleteAccountPortfolioRiskRepository,
 )
@@ -85,6 +86,9 @@ from market_regime_alpha.position.sqlite_thesis_health import (
 )
 from market_regime_alpha.research.platform_v2.configs import ResearchPipelineConfig
 from market_regime_alpha.signals.engine import SignalModelConfig
+from market_regime_alpha.signals.input_assembly import (
+    SignalInputMappingConfiguration,
+)
 
 
 Clock = Callable[[], datetime]
@@ -125,6 +129,12 @@ def _build_handlers(
     signal_configuration = configurations.get(
         LifecycleConfigurationKind.SIGNAL_MODEL
     )
+    signal_input_mapping = configurations.get(
+        LifecycleConfigurationKind.SIGNAL_INPUT_MAPPING
+    )
+    feature_set_configuration = configurations.get(
+        LifecycleConfigurationKind.FEATURE_SET
+    )
     forecast_configuration = configurations.get(
         LifecycleConfigurationKind.PATH_FORECAST
     )
@@ -158,6 +168,18 @@ def _build_handlers(
         handlers[LifecycleStageName.SIGNAL] = SignalStageHandler(
             configuration=signal_configuration,
             output_root=output_root / "signals",
+            mapping_configuration=(
+                signal_input_mapping
+                if isinstance(
+                    signal_input_mapping, SignalInputMappingConfiguration
+                )
+                else None
+            ),
+            feature_set_configuration=(
+                feature_set_configuration
+                if isinstance(feature_set_configuration, FeatureSetConfiguration)
+                else None
+            ),
         )
     else:
         handlers[LifecycleStageName.SIGNAL] = _unavailable(

@@ -19,6 +19,7 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.forecasting.path import PathForecastConfig
+from market_regime_alpha.features.spine import FeatureSetConfiguration
 from market_regime_alpha.portfolio.account_authority import (
     CompleteAccountRiskConfiguration,
 )
@@ -30,10 +31,15 @@ from market_regime_alpha.portfolio.risk_routes import (
 )
 from market_regime_alpha.research.platform_v2.configs import ResearchPipelineConfig
 from market_regime_alpha.signals.engine import SignalModelConfig
+from market_regime_alpha.signals.input_assembly import (
+    SignalInputMappingConfiguration,
+)
 
 
 RuntimeConfiguration: TypeAlias = (
     ResearchPipelineConfig
+    | FeatureSetConfiguration
+    | SignalInputMappingConfiguration
     | SignalModelConfig
     | PathForecastConfig
     | CompleteAccountRiskConfiguration
@@ -181,6 +187,10 @@ class RuntimeConfigurationReader:
             return ResearchPipelineConfig.from_canonical_dict(payload)
         if kind is LifecycleConfigurationKind.SIGNAL_MODEL:
             return SignalModelConfig.from_canonical_dict(dict(payload))
+        if kind is LifecycleConfigurationKind.FEATURE_SET:
+            return FeatureSetConfiguration.from_canonical_dict(payload)
+        if kind is LifecycleConfigurationKind.SIGNAL_INPUT_MAPPING:
+            return SignalInputMappingConfiguration.from_canonical_dict(payload)
         if kind is LifecycleConfigurationKind.PATH_FORECAST:
             return PathForecastConfig.from_canonical_dict(dict(payload))
         if kind is LifecycleConfigurationKind.COMPLETE_ACCOUNT_RISK:
@@ -209,6 +219,18 @@ def _configuration_binding(
         return (
             configuration.configuration_id,
             configuration.schema_version,
+            configuration.configuration_hash,
+        )
+    if isinstance(configuration, FeatureSetConfiguration):
+        return (
+            configuration.feature_set_id,
+            configuration.feature_set_version,
+            configuration.content_hash,
+        )
+    if isinstance(configuration, SignalInputMappingConfiguration):
+        return (
+            configuration.configuration_id,
+            configuration.configuration_version,
             configuration.configuration_hash,
         )
     if isinstance(configuration, PathForecastConfig):

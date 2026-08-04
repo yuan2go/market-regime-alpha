@@ -3,11 +3,11 @@
 > **Status:** CURRENT_ARCHITECTURE  
 > **Authority:** Canonical bounded-context design for Feature and Factor  
 > **Owner:** Feature and Factor domain  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** ../01-Domain-Boundaries.md, ../../specs/README.md, ../../roadmap/work-packages/README.md  
-> **Code Evidence:** path:src/market_regime_alpha/features/**
+> **Related Documents:** ../01-Domain-Boundaries.md, ../13-Canonical-Market-Data-and-Feature-Spine.md, ../../specs/README.md, ../../roadmap/work-packages/README.md
+> **Code Evidence:** `src/market_regime_alpha/features/**`, `src/market_regime_alpha/market_data/**`, `src/market_regime_alpha/signals/input_assembly.py`
 
 ## Responsibility
 
@@ -17,7 +17,8 @@ Own versioned feature definitions, materialization, lineage, availability and ap
 
 - `FeatureDefinition`
 - `FeatureMaterialization`
-- `FeatureSetDefinition`
+- `FeatureSetConfiguration`
+- `FeatureBundleArtifact`
 - `ObservableDefinition`
 
 Only this domain may create or supersede these authoritative entities.
@@ -51,16 +52,17 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 
 ## Input contracts
 
-- normalized PIT artifacts
+- verified `MarketDataDatasetArtifact`
 - observable definitions
 - feature parameters
 - availability policy
 
 ## Output contracts
 
-- FeatureMaterialization
-- FeatureMatrix
-- lineage manifest
+- `FeatureArtifactV2`
+- `FeatureBundleArtifact`
+- `FeatureMaterializationReceipt`
+- per-value missingness and source-Bar lineage
 
 ## Upstream domains
 
@@ -82,6 +84,9 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 - No future data enters decision-time values.
 - Correlated transforms are not independent evidence by default.
 - Feature state distinguishes implemented from empirically approved.
+- Feature output cannot contain trading actions or execution authority.
+- Exact timeframe is required; no implicit resampling or daily/minute fallback.
+- Partial coverage remains partial and cannot be promoted by imputation.
 
 ## Failure modes
 
@@ -92,15 +97,22 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 | `3` | duplicate information family | Fail closed; emit domain error/event and preserve input evidence. |
 | `4` | parameter/version mismatch | Fail closed; emit domain error/event and preserve input evidence. |
 
-## Current code mapping
+## Current implementation
 
-- `src/market_regime_alpha/features/**`
+- versioned Definition, Configuration and Feature Set contracts;
+- deterministic Decimal Price Action, MA/EMA, MACD, Volume/Amount, real-minute
+  VWAP and Overheat/Extension observables;
+- immutable Feature Artifact/Bundle publication, selective verified Readers,
+  bounded-parallel materialization, idempotency and recomputation replay;
+- explicit Signal V2 factor mapping and per-factor lineage/missingness.
 
 ## Missing implementation
 
 - persistent Feature registry
 - theory/observable approval workflow
-- broader approved feature catalog
+- empirically approved Feature catalog
+- Force Ratio, Chan and Tuishen observable migrations
+- qualified operational Market Data producer
 
 ## Transaction and persistence boundary
 

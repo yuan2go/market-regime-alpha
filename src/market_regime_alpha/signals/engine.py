@@ -456,18 +456,64 @@ def _build_snapshot(
     created_at: datetime,
     code_revision: str,
 ) -> SignalSnapshot:
+    return build_signal_snapshot_from_metrics(
+        candidate_set=candidate_set,
+        configuration=configuration,
+        symbol=observation.symbol,
+        price_action_return=observation.price_action_return,
+        volume_ratio=observation.volume_ratio,
+        trend_return=observation.trend_return,
+        price_vs_vwap_return=observation.price_vs_vwap_return,
+        overheat_return=observation.overheat_return,
+        reason_codes=observation.reason_codes,
+        source_artifact_pairs=(
+            (observation.source_artifact_id, observation.source_content_hash),
+        ),
+        decision_time=decision_time,
+        created_at=created_at,
+        code_revision=code_revision,
+    )
+
+
+def build_signal_snapshot_from_metrics(
+    *,
+    candidate_set: CandidateSet,
+    configuration: SignalModelConfig,
+    symbol: str,
+    price_action_return: float | None,
+    volume_ratio: float | None,
+    trend_return: float | None,
+    price_vs_vwap_return: float | None,
+    overheat_return: float | None,
+    reason_codes: tuple[str, ...],
+    source_artifact_pairs: tuple[tuple[ArtifactId, str], ...],
+    decision_time: DecisionTime,
+    created_at: datetime,
+    code_revision: str,
+) -> SignalSnapshot:
+    """Apply the single V1 five-factor decision rule to resolved typed inputs."""
+
+    if not source_artifact_pairs:
+        raise ValueError("Signal metrics require source Artifact lineage")
+    source_hashes: dict[ArtifactId, str] = {}
+    for source_id, source_hash in source_artifact_pairs:
+        require_sha256("Signal source content hash", source_hash)
+        existing = source_hashes.get(source_id)
+        if existing is not None and existing != source_hash:
+            raise ValueError("Signal source Artifact hash conflict")
+        source_hashes[source_id] = source_hash
     metrics = (
-        _confirm_min(observation.price_action_return, configuration.price_action_min_return),
-        _confirm_min(observation.volume_ratio, configuration.volume_confirmation_min_ratio),
-        _confirm_min(observation.trend_return, configuration.trend_confirmation_min_return),
-        _confirm_min(observation.price_vs_vwap_return, configuration.vwap_min_relative_return),
+        _confirm_min(price_action_return, configuration.price_action_min_return),
+        _confirm_min(volume_ratio, configuration.volume_confirmation_min_ratio),
+        _confirm_min(trend_return, configuration.trend_confirmation_min_return),
+        _confirm_min(price_vs_vwap_return, configuration.vwap_min_relative_return),
     )
     overheat = (
         ConfirmationState.UNKNOWN
-        if observation.overheat_return is None
+        if overheat_return is None
         else (
             ConfirmationState.CONTRADICTED
-            if observation.overheat_return >= configuration.overheat_max_return
+            if overheat_return >= configuration.overheat_max_return
             else ConfirmationState.CONFIRMED
         )
     )
@@ -477,7 +523,7 @@ def _build_snapshot(
     if len(known) != len(all_states):
         signal_state = SignalState.DATA_INSUFFICIENT
         score = None
-        reasons = tuple(sorted({*observation.reason_codes, "SIGNAL_METRIC_MISSING"}))
+        reasons = tuple(sorted({*reason_codes, "SIGNAL_METRIC_MISSING"}))
     elif overheat is ConfirmationState.CONTRADICTED:
         signal_state = SignalState.INACTIVE
         score = _score(all_states)
@@ -491,7 +537,7 @@ def _build_snapshot(
         score = _score(all_states)
         reasons = ("MINIMUM_CONFIRMATIONS_NOT_MET",)
     payload = {
-        "symbol": observation.symbol,
+        "symbol": symbol,
         "signal_family": configuration.signal_family.value,
         "signal_state": signal_state.value,
         "price_action_state": metrics[0].value,
@@ -514,13 +560,10 @@ def _build_snapshot(
         configuration_hash=configuration.configuration_hash,
         source_manifest_id=candidate_set.envelope.source_manifest_id,
         source_manifest_hash=candidate_set.envelope.source_manifest_hash,
-        input_artifact_ids=(
-            candidate_set.envelope.artifact_id,
-            observation.source_artifact_id,
-        ),
+        input_artifact_ids=(candidate_set.envelope.artifact_id, *source_hashes),
         input_content_hashes=(
             candidate_set.envelope.content_hash,
-            observation.source_content_hash,
+            *source_hashes.values(),
         ),
         model_id=configuration.model_id,
         model_version=configuration.model_version,
@@ -532,7 +575,7 @@ def _build_snapshot(
     )
     return SignalSnapshot(
         envelope=envelope,
-        symbol=observation.symbol,
+        symbol=symbol,
         signal_family=configuration.signal_family,
         signal_state=signal_state,
         price_action_state=metrics[0],

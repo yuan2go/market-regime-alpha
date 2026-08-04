@@ -6,15 +6,15 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
-> **Code Evidence:** Canonical runtime/migration development branch implementation with the local repository-wide engineering gate passed; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Related Documents:** Current-State.md, Capability-Matrix.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
+> **Code Evidence:** Canonical Feature Spine checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
-| Reproducible dependency set | P0 | Dependencies use lower bounds and no confirmed lockfile is present | Select one package workflow | Clean Python 3.12 environment installs from a committed lock and reproduces the full gate |
+| Reproducible dependency set | DELIVERED_FEATURE_BRANCH | `uv.lock` covers default, dev and postgres dependency groups; setuptools remains the build backend | Final frozen-sync gate and remote CI | `uv sync --frozen --extra dev --extra postgres` and all frozen-environment gates remain green |
 | CI enforcement | P1 | Workflow covers Python 3.12 install, docs, pytest, Ruff, configured mypy and package build on push/PR; both remote branch and Draft PR jobs passed at `dfd7a0b`, while required-check policy was not inspected | Repository settings authority | Protected branches require the complete workflow and preserve passing push/PR checks |
 
 ## 2. Pre-Shadow hardening gaps
@@ -35,6 +35,7 @@
 | H8 sustained Shadow operations | P1 | The development branch has a single-run Lifecycle owner, migration-011 stage receipts, one-snapshot history reads, retry/resume and captured-source durable replay; it has no scheduler/control plane, lease owner, deadlines, operator acknowledgement, metrics, alerts or sustained run evidence | Canonical runtime plus H7 | A scheduled Shadow operation proves consecutive runs, operator deadlines/acknowledgements, metrics/alerts, recovery drills and replay without changing authority ceilings |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
+| Feature package storage efficiency | P2 | 100-symbol, seven-definition offline benchmark produced 131,843,243 bytes; deterministic JSON packages duplicate source references for audit clarity | Stable schema plus format migration design | Versioned selective/columnar encoding materially reduces storage and read latency without Decimal/time/hash/Reader drift |
 | PostgreSQL repository parity | P1 | Lifecycle persistence is SQLite local/test authority | Stable Repository protocols and contract suite | PostgreSQL adapters pass the same concurrency, idempotency, reconstruction and migration contract tests |
 
 ## 3. Data and operational evidence gaps
@@ -64,14 +65,11 @@
 | PathForecast calibration | P1 | MFE/MAE, barriers and quantiles exist without validated profile or event probability | H9 and qualified samples | Horizon/barrier profile is selected only from training data and evaluated on locked OOS |
 | Risk parameter validation | P1 | Risk constraints are explicit engineering fixtures | Shadow account/position/outcome sample | Limits are approved through a versioned protocol with sensitivity and incident review |
 | Holding/Exit parameter validation | P1 | Actions and contracts exist with synthetic profiles | H5/H7/H8 and closed shadow trades | Frozen configurations are evaluated by regime/theme/liquidity slices without causal overclaim |
-| WP-MIG-01 Technical Observable Migration | P1 | Isolation, contracts, differential harness and one Decimal simple-moving-average example exist; the Legacy model families are not migrated | Qualified normalized datasets and model-specific comparison policies | MACD, broader Moving Average, Volume Structure, Force Ratio, Chan Features and Tuishen Volume-Price Features each have a pure canonical Feature, isolated adapter, explicit differences, verified Artifact/Reader and replay evidence |
+| WP-MIG-01B Remaining Technical Observable Migration | P1 | MA/EMA, MACD and comparable Volume structure are now canonical observables with isolated Legacy differential evidence | Qualified normalized datasets and model-specific policies | Force Ratio, Chan Features and Tuishen Volume-Price Features each have pure canonical Features, isolated adapters, explicit differences, verified Readers and replay evidence |
 | Formal PIT/OOS Alpha | P0-RESEARCH | No model has current formal winning evidence | Qualified data, H9 and locked protocol | Formal study publishes immutable protocol, access history, results and negative outcomes; no data reuse violation |
 
 WP-MIG-01 must remain observable-first. Its explicit backlog is:
 
-- MACD;
-- Moving Average beyond the delivered simple example;
-- Volume Structure;
 - Force Ratio;
 - Chan Features;
 - Tuishen Volume-Price Features.
@@ -117,8 +115,9 @@ The following are not open implementation gaps, although their operating/model e
   ManualTrade verification on the development branch, with the local
   repository-wide engineering gate passed;
 - canonical-to-Legacy import enforcement, role-specific migration Protocols,
-  differential comparison/report replay and the Decimal simple-moving-average
-  example on the development branch;
+  seven technical-observable definitions, per-family differential evidence,
+  FeatureBundle/Signal recomputation replay and architecture guards on the
+  Feature Spine branch;
 - append-only manual Fill ledger;
 - exploratory Holding/Exit, TradeOutcome and rolling diagnostics.
 
@@ -127,7 +126,7 @@ Delivered mechanics must not be upgraded to production, Alpha or trading-authori
 ## 7. Required implementation order
 
 ```text
-P0 lockfile and remote CI enforcement
+Frozen dependency/CI mechanics delivered; enforce required remote checks
 → H7 durable Holding/Exit
 → qualified H6 operational package production
 → H8 sustained Shadow operations and control plane

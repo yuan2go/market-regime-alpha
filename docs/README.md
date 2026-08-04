@@ -74,6 +74,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Production Decision Lifecycle](architecture/10-Production-Decision-Lifecycle.md)
 - [Production Lifecycle Hardening and Shadow Operations](architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md)
 - [Canonical Runtime and Legacy Model Migration](architecture/12-Canonical-Runtime-and-Legacy-Migration.md)
+- [Canonical Market Data and Feature Spine](architecture/13-Canonical-Market-Data-and-Feature-Spine.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
 
 ### Current research
@@ -114,6 +115,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [H4.5 Risk-Reduction Manual Intent Implementation Plan](superpowers/plans/2026-08-04-h4-5-risk-reduction-manual-intent.md)
 - [Canonical Runtime and Legacy Model Migration Infrastructure Design](superpowers/specs/2026-08-04-canonical-runtime-and-legacy-migration-design.md)
 - [Canonical Runtime and Legacy Model Migration Implementation Plan](superpowers/plans/2026-08-04-canonical-runtime-and-legacy-migration.md)
+- [Canonical Feature Spine and Signal Inputs Design](superpowers/specs/2026-08-04-canonical-feature-spine-and-signal-inputs-design.md)
+- [Canonical Feature Spine and Signal Inputs Implementation Plan](superpowers/plans/2026-08-04-canonical-feature-spine-and-signal-inputs.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
@@ -138,6 +141,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [H4 Risk Route Delivery](audit/H4-Risk-Route-Delivery.md)
 - [H5 Thesis Health Delivery](audit/H5-Thesis-Health-Delivery.md)
 - [H6 Composite Operational Evidence Delivery](audit/H6-Composite-Operational-Evidence-Delivery.md)
+- [Canonical Feature Spine Delivery](audit/Canonical-Feature-Spine-Delivery.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)

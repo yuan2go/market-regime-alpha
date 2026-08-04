@@ -1,14 +1,10 @@
-"""Signal, path-forecast, and fail-closed Entry lifecycle adapters.
-
-H6 currently contains candidate research and symbol capital proxies, but no
-five-factor Signal observations or historical PathForecast samples.  These
-adapters deliberately materialize that absence through the existing models'
-``DATA_INSUFFICIENT`` states instead of substituting unrelated H6 fields.
-"""
+"""Signal, path-forecast, and fail-closed Entry lifecycle adapters."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import TypeAlias
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleConfigurationKind,
@@ -53,6 +49,20 @@ from market_regime_alpha.forecasting.path import (
     PathForecastConfig,
     build_path_forecast,
 )
+from market_regime_alpha.forecasting.sample_provider import (
+    PathForecastSampleBatch,
+    PathForecastSampleProvider,
+    UnavailablePathForecastSampleProvider,
+)
+from market_regime_alpha.features.materialization_v2 import (
+    VerifiedFeatureBundleV2,
+    load_verified_feature_bundle_v2,
+)
+from market_regime_alpha.features.spine import FeatureSetConfiguration
+from market_regime_alpha.market_data import (
+    VerifiedMarketDataDataset,
+    load_verified_market_data_dataset,
+)
 from market_regime_alpha.research.platform_v2.reader import (
     VerifiedResearchLayerArtifact,
 )
@@ -72,14 +82,29 @@ from market_regime_alpha.signals.engine import (
     SignalRunArtifact,
     run_signal_model,
 )
+from market_regime_alpha.signals.input_assembly import (
+    SignalInputAssembler,
+    SignalInputMappingConfiguration,
+)
+from market_regime_alpha.signals.v2 import (
+    SignalRunArtifactV2,
+    VerifiedSignalRunArtifactV2,
+    load_verified_signal_run_v2,
+    publish_signal_run_v2,
+    run_signal_model_v2,
+)
 
 
 _H6_SIGNAL_LIMITATION = "H6_SIGNAL_FACTOR_INPUTS_NOT_AVAILABLE"
 _H6_PATH_LIMITATION = "H6_PATH_FORECAST_SAMPLES_NOT_AVAILABLE"
+_VerifiedSignalRun: TypeAlias = (
+    VerifiedSignalRunArtifact | VerifiedSignalRunArtifactV2
+)
+_SignalRun: TypeAlias = SignalRunArtifact | SignalRunArtifactV2
 
 
 class SignalStageHandler:
-    """Run and publish the existing Signal model with explicit H6 missingness."""
+    """Run V2 from a Feature Bundle, retaining only an explicit V1 fallback."""
 
     stage_name = LifecycleStageName.SIGNAL
     mutation_kind = StageMutationKind.IDEMPOTENT_MUTATION
@@ -89,6 +114,8 @@ class SignalStageHandler:
         *,
         configuration: SignalModelConfig,
         output_root: Path,
+        mapping_configuration: SignalInputMappingConfiguration | None = None,
+        feature_set_configuration: FeatureSetConfiguration | None = None,
     ) -> None:
         if not isinstance(configuration, SignalModelConfig):
             raise TypeError("configuration must be a SignalModelConfig")
@@ -96,28 +123,56 @@ class SignalStageHandler:
             raise TypeError("output_root must be a Path")
         self._configuration = configuration
         self._output_root = output_root.resolve()
+        if mapping_configuration is not None and not isinstance(
+            mapping_configuration, SignalInputMappingConfiguration
+        ):
+            raise TypeError(
+                "mapping_configuration must be a SignalInputMappingConfiguration"
+            )
+        self._mapping_configuration = mapping_configuration
+        if feature_set_configuration is not None and not isinstance(
+            feature_set_configuration, FeatureSetConfiguration
+        ):
+            raise TypeError(
+                "feature_set_configuration must be a FeatureSetConfiguration"
+            )
+        self._feature_set_configuration = feature_set_configuration
 
     def recover(self, context: LifecycleStageContext) -> StageExecutionResult | None:
         research_reference, research = _load_research(context)
         self._validate_command_bindings(context)
-        expected = self._compute(context, research)
+        feature_reference, feature_bundle, dataset_reference, dataset = (
+            self._optional_feature_inputs(context)
+        )
+        expected = self._compute(context, research, feature_bundle, dataset)
         path = self._output_root / str(expected.artifact_id)
         if not path.exists():
             return None
-        verified = load_verified_signal_run(path)
+        verified = _load_signal_package(path)
         if verified.artifact != expected:
             raise ValueError("recovered Signal Artifact semantic mismatch")
-        return self._result(research_reference, verified)
+        return self._result(
+            research_reference, feature_reference, dataset_reference, verified
+        )
 
     def execute(self, context: LifecycleStageContext) -> StageExecutionResult:
         research_reference, research = _load_research(context)
         self._validate_command_bindings(context)
-        artifact = self._compute(context, research)
-        path = publish_signal_run(root=self._output_root, artifact=artifact)
-        verified = load_verified_signal_run(path)
+        feature_reference, feature_bundle, dataset_reference, dataset = (
+            self._optional_feature_inputs(context)
+        )
+        artifact = self._compute(context, research, feature_bundle, dataset)
+        path = (
+            publish_signal_run_v2(root=self._output_root, artifact=artifact)
+            if isinstance(artifact, SignalRunArtifactV2)
+            else publish_signal_run(root=self._output_root, artifact=artifact)
+        )
+        verified = _load_signal_package(path)
         if verified.artifact != artifact:
             raise ValueError("published Signal Artifact semantic mismatch")
-        return self._result(research_reference, verified)
+        return self._result(
+            research_reference, feature_reference, dataset_reference, verified
+        )
 
     def _validate_command_bindings(self, context: LifecycleStageContext) -> None:
         require_configuration_binding(
@@ -131,12 +186,67 @@ class SignalStageHandler:
             model_id=self._configuration.model_id,
             model_version=self._configuration.model_version,
         )
+        if self._mapping_configuration is not None:
+            require_configuration_binding(
+                context.run,
+                self._mapping_configuration,
+                configuration_kind=LifecycleConfigurationKind.SIGNAL_INPUT_MAPPING,
+                configuration_version=(
+                    self._mapping_configuration.configuration_version
+                ),
+            )
+        if self._feature_set_configuration is not None:
+            require_configuration_binding(
+                context.run,
+                self._feature_set_configuration,
+                configuration_kind=LifecycleConfigurationKind.FEATURE_SET,
+                configuration_version=(
+                    self._feature_set_configuration.feature_set_version
+                ),
+            )
 
     def _compute(
         self,
         context: LifecycleStageContext,
         research: VerifiedResearchLayerArtifact,
-    ) -> SignalRunArtifact:
+        feature_bundle: VerifiedFeatureBundleV2 | None,
+        verified_dataset: VerifiedMarketDataDataset | None,
+    ) -> _SignalRun:
+        if feature_bundle is not None:
+            if verified_dataset is None:
+                raise ValueError("Feature-derived Signal requires Market Data Dataset")
+            if self._mapping_configuration is None or (
+                self._feature_set_configuration is None
+            ):
+                raise ValueError(
+                    "Feature-derived Signal requires FEATURE_SET and "
+                    "SIGNAL_INPUT_MAPPING configurations"
+                )
+            if feature_bundle.artifact.feature_set != self._feature_set_configuration:
+                raise ValueError("Feature Bundle does not match command Feature Set")
+            v2_observations = SignalInputAssembler().assemble(
+                candidate_set=research.artifact.candidate_set,
+                feature_bundle=feature_bundle,
+                verified_dataset=verified_dataset,
+                configuration=self._mapping_configuration,
+                decision_time=research.artifact.envelope.decision_time,
+            )
+            return run_signal_model_v2(
+                candidate_set=research.artifact.candidate_set,
+                feature_bundle=feature_bundle,
+                mapping_configuration=self._mapping_configuration,
+                signal_configuration=self._configuration,
+                observations=v2_observations,
+                decision_time=research.artifact.envelope.decision_time,
+                created_at=research.artifact.envelope.created_at,
+                code_revision=lifecycle_code_revision(context.run),
+            )
+        if self._mapping_configuration is not None:
+            raise ValueError(
+                "SIGNAL_INPUT_MAPPING cannot run without one FEATURE_BUNDLE input"
+            )
+        if self._feature_set_configuration is not None:
+            raise ValueError("FEATURE_SET cannot run without one FEATURE_BUNDLE input")
         artifact = research.artifact
         lineage = dict(
             zip(
@@ -181,7 +291,9 @@ class SignalStageHandler:
     def _result(
         self,
         research_reference: LifecycleObjectReference,
-        verified: VerifiedSignalRunArtifact,
+        feature_reference: LifecycleObjectReference | None,
+        dataset_reference: LifecycleObjectReference | None,
+        verified: _VerifiedSignalRun,
     ) -> StageExecutionResult:
         artifact = verified.artifact
         output = output_reference(
@@ -196,31 +308,90 @@ class SignalStageHandler:
             "SIGNAL_ARTIFACT_VERIFIED",
             *(reason_code for snapshot in artifact.snapshots for reason_code in snapshot.reason_codes),
         }
-        if any(item.signal_state is SignalState.DATA_INSUFFICIENT for item in artifact.snapshots):
-            reasons.update({_H6_SIGNAL_LIMITATION, "SIGNAL_DATA_INSUFFICIENT"})
+        is_v2 = isinstance(artifact, SignalRunArtifactV2)
+        if any(
+            item.signal_state is SignalState.DATA_INSUFFICIENT
+            for item in artifact.snapshots
+        ):
+            reasons.add("SIGNAL_DATA_INSUFFICIENT")
+            if not is_v2:
+                reasons.add(_H6_SIGNAL_LIMITATION)
         if not artifact.snapshots:
             reasons.update(
                 {
-                    _H6_SIGNAL_LIMITATION,
                     "NO_SELECTED_SIGNAL_SNAPSHOTS",
                     "SIGNAL_DATA_INSUFFICIENT",
                 }
             )
+            if not is_v2:
+                reasons.add(_H6_SIGNAL_LIMITATION)
+        inputs: tuple[LifecycleObjectReference, ...]
+        if feature_reference is None:
+            inputs = (research_reference,)
+        else:
+            if dataset_reference is None:
+                raise ValueError("Feature-derived Signal result lacks Dataset input")
+            inputs = ordered_references(
+                (research_reference, feature_reference, dataset_reference)
+            )
+        configuration_hashes = {self._configuration.configuration_hash}
+        model_versions = {
+            (str(self._configuration.model_id), self._configuration.model_version)
+        }
+        if isinstance(artifact, SignalRunArtifactV2):
+            configuration_hashes.add(
+                artifact.mapping_configuration.configuration_hash
+            )
+            assert self._feature_set_configuration is not None
+            configuration_hashes.add(self._feature_set_configuration.content_hash)
         return StageExecutionResult(
             stage_status=LifecycleStageStatus.COMPLETED,
             run_status=LifecycleRunStatus.RUNNING,
-            input_references=(research_reference,),
+            input_references=inputs,
             output_references=(output,),
-            model_versions=(
-                (
-                    str(self._configuration.model_id),
-                    self._configuration.model_version,
-                ),
-            ),
-            configuration_hashes=(self._configuration.configuration_hash,),
+            model_versions=tuple(sorted(model_versions)),
+            configuration_hashes=tuple(sorted(configuration_hashes)),
             reason_codes=tuple(sorted(reasons)),
             blocker_reason=None,
         )
+
+    def _optional_feature_inputs(
+        self, context: LifecycleStageContext
+    ) -> tuple[
+        LifecycleObjectReference | None,
+        VerifiedFeatureBundleV2 | None,
+        LifecycleObjectReference | None,
+        VerifiedMarketDataDataset | None,
+    ]:
+        references = references_for_type(context, LifecycleObjectType.FEATURE_BUNDLE)
+        if not references:
+            return None, None, None, None
+        if len(references) != 1:
+            raise ValueError("lifecycle Signal stage requires one FEATURE_BUNDLE")
+        reference = references[0]
+        package = reference_path(reference)
+        artifact_root = package.parent.parent / "feature-artifacts"
+        verified = load_verified_feature_bundle_v2(
+            package, artifact_root=artifact_root
+        )
+        if (
+            str(verified.artifact.bundle_id) != str(reference.object_id)
+            or verified.artifact.content_hash != reference.content_hash
+        ):
+            raise ValueError("Feature Bundle lifecycle reference mismatch")
+        dataset_references = references_for_type(
+            context, LifecycleObjectType.MARKET_DATA_DATASET
+        )
+        if len(dataset_references) != 1:
+            raise ValueError("Feature-derived Signal requires one MARKET_DATA_DATASET")
+        dataset_reference = dataset_references[0]
+        dataset = load_verified_market_data_dataset(reference_path(dataset_reference))
+        if (
+            str(dataset.artifact.dataset_id) != str(dataset_reference.object_id)
+            or dataset.artifact.content_hash != dataset_reference.content_hash
+        ):
+            raise ValueError("Market Data Dataset lifecycle reference mismatch")
+        return reference, verified, dataset_reference, dataset
 
 
 class PathForecastStageHandler:
@@ -234,6 +405,7 @@ class PathForecastStageHandler:
         *,
         configuration: PathForecastConfig,
         output_root: Path,
+        sample_provider: PathForecastSampleProvider | None = None,
     ) -> None:
         if not isinstance(configuration, PathForecastConfig):
             raise TypeError("configuration must be a PathForecastConfig")
@@ -241,11 +413,17 @@ class PathForecastStageHandler:
             raise TypeError("output_root must be a Path")
         self._configuration = configuration
         self._output_root = output_root.resolve()
+        self._sample_provider = (
+            sample_provider
+            if sample_provider is not None
+            else UnavailablePathForecastSampleProvider()
+        )
 
     def recover(self, context: LifecycleStageContext) -> StageExecutionResult | None:
         signal_reference, signal = _load_signal(context)
         self._validate_command_bindings(context)
-        expected = self._compute(context, signal)
+        computed = self._compute(context, signal)
+        expected = tuple(item[0] for item in computed)
         verified: list[VerifiedPathForecastArtifact] = []
         for artifact in expected:
             path = self._output_root / str(artifact.artifact_id)
@@ -255,12 +433,17 @@ class PathForecastStageHandler:
             if restored.artifact != artifact:
                 raise ValueError("recovered PathForecast semantic mismatch")
             verified.append(restored)
-        return self._result(signal_reference, tuple(verified))
+        return self._result(
+            signal_reference,
+            tuple(verified),
+            tuple(item[1] for item in computed),
+        )
 
     def execute(self, context: LifecycleStageContext) -> StageExecutionResult:
         signal_reference, signal = _load_signal(context)
         self._validate_command_bindings(context)
-        artifacts = self._compute(context, signal)
+        computed = self._compute(context, signal)
+        artifacts = tuple(item[0] for item in computed)
         verified: list[VerifiedPathForecastArtifact] = []
         for artifact in artifacts:
             path = publish_path_forecast(root=self._output_root, artifact=artifact)
@@ -268,7 +451,11 @@ class PathForecastStageHandler:
             if restored.artifact != artifact:
                 raise ValueError("published PathForecast semantic mismatch")
             verified.append(restored)
-        return self._result(signal_reference, tuple(verified))
+        return self._result(
+            signal_reference,
+            tuple(verified),
+            tuple(item[1] for item in computed),
+        )
 
     def _validate_command_bindings(self, context: LifecycleStageContext) -> None:
         require_configuration_binding(
@@ -286,25 +473,36 @@ class PathForecastStageHandler:
     def _compute(
         self,
         context: LifecycleStageContext,
-        signal: VerifiedSignalRunArtifact,
-    ) -> tuple[PathForecastArtifact, ...]:
+        signal: _VerifiedSignalRun,
+    ) -> tuple[tuple[PathForecastArtifact, PathForecastSampleBatch], ...]:
         artifact = signal.artifact
         return tuple(
-            build_path_forecast(
-                signal_snapshot=snapshot,
-                configuration=self._configuration,
-                samples=(),
-                decision_time=artifact.envelope.decision_time,
-                created_at=artifact.envelope.created_at,
-                code_revision=lifecycle_code_revision(context.run),
+            (
+                build_path_forecast(
+                    signal_snapshot=snapshot,
+                    configuration=self._configuration,
+                    samples=batch.samples,
+                    decision_time=artifact.envelope.decision_time,
+                    created_at=artifact.envelope.created_at,
+                    code_revision=lifecycle_code_revision(context.run),
+                ),
+                batch,
             )
             for snapshot in artifact.snapshots
+            for batch in (
+                self._sample_provider.load_samples(
+                    signal_snapshot=snapshot,
+                    configuration=self._configuration,
+                    decision_time=artifact.envelope.decision_time,
+                ),
+            )
         )
 
     def _result(
         self,
         signal_reference: LifecycleObjectReference,
         verified: tuple[VerifiedPathForecastArtifact, ...],
+        sample_batches: tuple[PathForecastSampleBatch, ...],
     ) -> StageExecutionResult:
         outputs = ordered_references(
             tuple(
@@ -322,6 +520,8 @@ class PathForecastStageHandler:
         reasons = {
             "PATH_FORECAST_STAGE_COMPLETED",
             *(reason_code for item in verified for reason_code in item.artifact.forecast.reason_codes),
+            *(reason for batch in sample_batches for reason in batch.reason_codes),
+            *(limitation for batch in sample_batches for limitation in batch.limitations),
         }
         if not verified:
             reasons.update(
@@ -435,12 +635,25 @@ def _load_research(
 
 def _load_signal(
     context: LifecycleStageContext,
-) -> tuple[LifecycleObjectReference, VerifiedSignalRunArtifact]:
+) -> tuple[LifecycleObjectReference, _VerifiedSignalRun]:
     reference = require_single_reference(context, LifecycleObjectType.SIGNAL_ARTIFACT)
-    verified = load_verified_signal_run(reference_path(reference))
+    verified = _load_signal_package(reference_path(reference))
     if str(verified.artifact.artifact_id) != str(reference.object_id) or verified.artifact.envelope.content_hash != reference.content_hash:
         raise ValueError("Signal Artifact reference mismatch")
     return reference, verified
+
+
+def _load_signal_package(path: Path) -> _VerifiedSignalRun:
+    manifest_path = path / "manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("cannot inspect Signal Artifact package schema") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Signal Artifact manifest must be an object")
+    if payload.get("schema_version") == "signal-run-package-v2":
+        return load_verified_signal_run_v2(path)
+    return load_verified_signal_run(path)
 
 
 def _load_forecast(
