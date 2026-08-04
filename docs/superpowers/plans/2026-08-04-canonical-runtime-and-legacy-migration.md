@@ -130,6 +130,7 @@ The architecture test parses imports and treats only these roots as Legacy-compa
 ```python
 ALLOWED_DIRECT_IMPORT_PREFIXES = (
     "market_regime_alpha.migration.legacy",
+    "market_regime_alpha.legacy",
     "market_regime_alpha.dividend_t",
     "market_regime_alpha.web.dividend_t_app",
 )

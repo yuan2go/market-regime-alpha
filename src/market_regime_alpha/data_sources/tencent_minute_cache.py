@@ -14,7 +14,7 @@ from market_regime_alpha.data_sources.a_share_bars import (
     normalize_ts_code,
     to_tencent_code,
 )
-from market_regime_alpha.dividend_t.storage import DEFAULT_RESEARCH_DIR
+from market_regime_alpha.data_sources.storage_paths import DEFAULT_RESEARCH_DIR
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
