@@ -35,6 +35,10 @@ from market_regime_alpha.universe.contracts import (
     TradingEligibilityStatus,
     UniverseMembershipRecord,
 )
+from tests.daily_decision.conftest import daily_decision_fixture
+
+
+__all__ = ["daily_decision_fixture", "research_input_bundle"]
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")

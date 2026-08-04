@@ -22,11 +22,11 @@ from market_regime_alpha.research.market_regime.contracts import (
 from market_regime_alpha.research.platform_v2.configs import (
     MarketRegimeModelConfig,
 )
-from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundle
+from market_regime_alpha.research.platform_v2.inputs import ResearchInputView
 
 
 def evaluate_market_regime_v0(
-    inputs: ResearchInputBundle,
+    inputs: ResearchInputView,
     config: MarketRegimeModelConfig,
     *,
     code_revision: str,
@@ -185,7 +185,7 @@ class _MarketValues:
 
 
 def _snapshot(
-    inputs: ResearchInputBundle,
+    inputs: ResearchInputView,
     config: MarketRegimeModelConfig,
     code_revision: str,
     values: _MarketValues,
@@ -262,7 +262,7 @@ def _snapshot(
 
 
 def _observed_metrics(
-    inputs: ResearchInputBundle,
+    inputs: ResearchInputView,
 ) -> tuple[tuple[str, float], ...]:
     item = inputs.market_observation
     if item is None:

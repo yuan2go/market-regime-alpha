@@ -20,8 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser(
-        "run", help="combine verified Daily and supplemental evidence"
+        "run", help="run from a verified H6 composite evidence package"
     )
+    run.add_argument("--composite-package", type=Path, required=True)
     run.add_argument("--daily-artifact", type=Path, required=True)
     run.add_argument("--supplemental-artifact", type=Path, required=True)
     run.add_argument("--research-config", type=Path, required=True)
@@ -39,6 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     runner = OperationalResearchRunner()
     if args.command == "run":
         verified = runner.run(
+            composite_artifact_path=args.composite_package,
             daily_artifact_path=args.daily_artifact,
             supplemental_artifact_path=args.supplemental_artifact,
             configuration=ResearchPipelineConfig.from_canonical_dict(
@@ -51,6 +53,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         verified = runner.replay(args.artifact)
     else:
         raise AssertionError("unreachable operational research command")
+    inputs = verified.artifact.inputs
+    composite_id = (
+        str(inputs.composite_manifest_id)
+        if hasattr(inputs, "composite_manifest_id")
+        else None
+    )
     print(
         json.dumps(
             {
@@ -60,9 +68,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "data_eligibility": (
                     verified.artifact.envelope.data_eligibility.value
                 ),
-                "formal_pit": "NOT_ESTABLISHED",
-                "formal_oos_alpha": "NOT_ESTABLISHED",
-                "trading_authority": "NOT_GRANTED",
+                "evidence_kind": inputs.evidence_kind.value,
+                "composite_manifest_id": composite_id,
+                "formal_pit": "FORMAL_PIT_NOT_ESTABLISHED",
+                "formal_oos_alpha": "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+                "trading_authority": "TRADING_AUTHORITY_NOT_GRANTED",
             },
             ensure_ascii=False,
             sort_keys=True,

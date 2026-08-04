@@ -6,13 +6,13 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** H5 hardened implementation checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`
+> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
+> **Code Evidence:** H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Status Rule:** `IMPLEMENTED` describes code mechanics. `VERIFIED_IMPLEMENTATION_CHECKPOINT` requires observed checks on the cited code commit. Historical checkpoint PASS records do not verify later code changes.
 
 | Capability | Status | Code evidence | Verification evidence | Runtime/evidence ceiling | Primary blocker | Next action |
 |---|---|---|---|---|---|---|
-| Core identity and semantic time | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `core/identity.py`, `core/time.py`, `core/status.py` | Full H5 implementation-checkpoint gate: 1398 passed | Engineering contracts only | No trusted producer identity | Preserve in CI |
+| Core identity and semantic time | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `core/identity.py`, `core/time.py`, `core/status.py` | Full H6 hardened-checkpoint gate: 1459 passed | Engineering contracts only | No trusted producer identity | Preserve in CI |
 | Artifact canonicalization and envelope | IMPLEMENTED_AND_HISTORICALLY_VERIFIED | `evidence/**` | Reader, checksum and tamper tests on prior checkpoints | Content integrity, not source authenticity | No signatures/trusted runtime identity | Add signed artifact/operator identity for production |
 | SourceManifest and data quality | IMPLEMENTED_EXPLORATORY | `data/source_manifest.py`, `data/daily_quality.py` | Historical quality and missingness tests | Public-source exploratory authority | Qualified availability/PIT evidence absent | Establish controlled provider evidence |
 | Trading calendar and PIT contracts | IMPLEMENTED_CONTRACTS | `data/trading_calendar.py`, `universe/**` | Historical calendar/PIT contract tests | Formal provider PIT not established | Qualified provider inventory | Validate against formal historical source |
@@ -33,8 +33,9 @@
 | Theme Rotation V0 | IMPLEMENTED_EXPLORATORY | `research/theme_rotation/**` | Deterministic fixture tests | Direct daily classification, not validated lifecycle state | PIT theme mappings/history absent | Add lifecycle/hysteresis research and validation |
 | Capital Evolution V0 | IMPLEMENTED_INFERRED_EXPLORATORY | `research/capital_evolution/**` | Deterministic fixture tests | Observable-proxy inference, not hidden intent fact | Qualified Theme/ETF/capital evidence absent | Build historical proxy evidence and ablations |
 | Candidate Discovery V2 | IMPLEMENTED_EXPLORATORY | `research/candidate_discovery/**` | Gate/rank/reconciliation tests on prior checkpoints | CandidateSet is not Recommendation | Qualified Theme/Capital inputs | Evaluate incremental value over B0/B1 |
-| Research Layer Artifact and replay | IMPLEMENTED_EXPLORATORY | `research/platform_v2/**`, `application/research_layer/**` | Prior exact-file/Reader/replay tests | Fixture/archive research authority | Current operating input bundle unavailable | Run from qualified operational evidence |
-| Operational Research Bridge | IMPLEMENTED_FAIL_CLOSED | `application/operational_research/**` | Prior lineage/missingness/idempotency tests | Requires complete Daily and supplemental artifacts | No qualified supplemental producer | Implement H6 composite evidence and producers |
+| Research Layer Artifact and replay | IMPLEMENTED_EXPLORATORY_V1_V2 | `research/platform_v2/**`, `application/research_layer/**` | V1/V2 Reader, exact-file, lineage and replay tests at `654e025` | Fixture/archive and composite exploratory authority | Qualified operating packages unavailable | Run from qualified operational evidence |
+| Operational Research Bridge | IMPLEMENTED_H6_VERIFIED_ONLY | `application/operational_research/bridge.py`, operational CLI | H6 V2 route, Builder replay and V1 compatibility tests at `654e025` | Requires verified Composite plus original packages | No qualified supplemental producer | Produce controlled real packages; do not restore direct V1 operational publication |
+| H6 composite operational evidence | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | H6 policy/manifest/package/repository/service, migration 009 and CLI | 67 focused; 1459 full; Ruff/mypy/build/docs PASS at `654e025` | Content-addressed exploratory composition index; not formal PIT/OOS or source authentication | Qualified producers, signatures and sustained operations absent | Feed H4.5/H7 from verified H6 references; retain authority ceiling |
 | Signal Engine V1 | IMPLEMENTED_EXPLORATORY | `signals/**` | Prior factor/time/checksum/replay tests | Confirmation score, not Entry | Parameters not validated | Add incremental-value and OOS validation |
 | Multi-horizon PathForecast | IMPLEMENTED_UNCALIBRATED | `forecasting/**`, `strategies/entry/**` | Prior path/ambiguity/quantile tests | No calibrated probability | Qualified historical path sample absent | Implement H9 validation/calibration infrastructure |
 | Model Registry domain | IMPLEMENTED | `platform/model_registry.py` | Historical domain tests | In-memory validator available | DailyLoop creates local registry | Route runtime through governed repository |
@@ -46,7 +47,7 @@
 | H2 Thesis-to-Outcome trace | IMPLEMENTED_SQLITE_EXPLORATORY | `execution/position_book.py`, traceability repositories, `evaluation/traceability.py`, migration 006 | Prior H2 focused/full records | Manual Fill trace, not broker truth | Multi-sleeve and external reconciliation absent | Preserve book identity and add reconciliation |
 | H3 A-share T+1 Position authority | IMPLEMENTED_FILL_CALENDAR_DERIVED | `position/authority.py`, position-authoritative risk service | Prior H3 focused/full records | Human Fill plus synthetic/typed calendar/status | Qualified statement/status evidence absent | Integrate real account/status reconciliation |
 | H4 increasing/reducing risk separation | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `portfolio/risk_routes.py`, `sqlite_risk_routes.py`, migration 007, decision-only CLI | 22 focused; 92 related-context; 1305 full; Ruff/mypy/build PASS at `3672067` | Decision/persistence/manual-confirmation assessment only; no order or Fill | H4.5 execution bridge intentionally absent | Design H4.5 before/within H7 |
-| H5 artifact-derived Thesis Health | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `position/thesis_health.py`, `sqlite_thesis_health.py`, migration 008, H5 Application Service/CLI | 99 focused; 91 Position; 1398 full; Ruff/mypy/build/docs PASS at `831edd6` | Deterministic exploratory health evidence only; private replay bundle is not H6 authority | H6 composite evidence, authenticated Manual evidence and durable H7 lifecycle absent | Implement H6 next; preserve H5 authority ceiling |
+| H5 artifact-derived Thesis Health | IMPLEMENTED_AND_VERIFIED_IMPLEMENTATION_CHECKPOINT | `position/thesis_health.py`, `sqlite_thesis_health.py`, migration 008, H5 Application Service/CLI | 99 focused at H5; 101 focused H6 regression; cross-stage H6 integration at `654e025` | Deterministic exploratory health evidence only; private replay bundle is not H6 authority | Authenticated Manual evidence, Decision repository input and durable H7 lifecycle absent | Consume verified H6 lineage in H7; preserve H5 authority ceiling |
 | Manual execution ledger | IMPLEMENTED_SQLITE_MANUAL_ONLY | `execution/manual.py`, `sqlite_repository.py`, migration 004 | Prior append-only/correction/restart tests | Human-recorded evidence only | Authentication and broker reconciliation | Add authenticated recording and statement matching |
 | Fill append-only authority | IMPLEMENTED_LOCAL | `manual_fills`, SQL triggers | Prior mutation/correction tests | Immutable local ledger, not broker Fill | External source authority absent | Add external receipt and reconciliation evidence |
 | Position projection | IMPLEMENTED_FILL_DERIVED | `position/authority.py` | Prior FIFO/correction/replay tests | Projection of recorded Fill | External statement reconciliation absent | Add reconciliation state machine and operator workflow |
@@ -68,15 +69,16 @@
 ## Implementation-checkpoint verification summary
 
 ```text
-IMPLEMENTATION_CHECKPOINT = 831edd6b2ae044d3bd1f3abcec97a30e47082071
-FOCUSED_H5 = 99 passed, 0 skipped, 0 failed
-POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
+IMPLEMENTATION_CHECKPOINT = 654e025b97c5d9553d7614b4b5be0898272aacbc
+FOCUSED_H6 = 67 passed, 0 skipped, 0 failed
 H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1398 passed, 0 skipped, 0 failed
+H5_FOCUSED_REGRESSION = 101 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1459 passed, 0 skipped, 0 failed, 8 subtests passed
 RUFF = PASS
-MYPY_FORMAL_SCOPE = PASS, 258 source files
+MYPY_FORMAL_SCOPE = PASS, 263 source files
 PACKAGE_BUILD = PASS
-REMOTE_GITHUB_ACTIONS_FOR_BRANCH = PASS_AT_DFD7A0B_PUSH_AND_DRAFT_PR
+DOCUMENT_LINKS_AND_DIFF_CHECK = PASS
+REMOTE_GITHUB_ACTIONS_FOR_H6 = NOT_YET_CLAIMED
 ```
 
-H4 and H5 are verified engineering capabilities only. The matrix still does not establish Shadow readiness, production readiness, formal PIT/OOS Alpha or trading authority.
+H4, H5 and H6 are verified engineering capabilities only. The matrix still does not establish Shadow readiness, production readiness, formal PIT/OOS Alpha or trading authority.

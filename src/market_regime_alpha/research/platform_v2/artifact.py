@@ -23,7 +23,7 @@ from market_regime_alpha.research.market_regime.contracts import (
 from market_regime_alpha.research.platform_v2.configs import (
     ResearchPipelineConfig,
 )
-from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundle
+from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundleAny
 from market_regime_alpha.research.theme_rotation.contracts import (
     ThemeRotationSnapshot,
 )
@@ -52,7 +52,7 @@ class ResearchLayerStatus(str, Enum):
 @dataclass(frozen=True, slots=True)
 class ResearchLayerArtifact:
     envelope: ArtifactEnvelope
-    inputs: ResearchInputBundle
+    inputs: ResearchInputBundleAny
     configuration: ResearchPipelineConfig
     market_regime: MarketRegimeSnapshot
     theme_rotation: ThemeRotationSnapshot
@@ -276,4 +276,3 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def _file_hash(path: Path) -> str:
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
-
