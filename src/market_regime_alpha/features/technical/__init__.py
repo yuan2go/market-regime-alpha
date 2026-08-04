@@ -12,6 +12,7 @@ from .observables import (
     TechnicalFeatureComputation,
     TechnicalFeatureValue,
     compute_technical_feature,
+    missing_technical_feature_computation,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "TechnicalFeatureValue",
     "canonical_technical_feature_set",
     "compute_technical_feature",
+    "missing_technical_feature_computation",
 ]

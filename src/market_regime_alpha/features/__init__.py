@@ -39,17 +39,31 @@ from market_regime_alpha.features.spine import (
     TimeframePolicy,
     ValueType,
 )
+from market_regime_alpha.features.materialization_v2 import (
+    FeatureBundleState,
+    FeatureMaterializationRunner,
+    FeatureMaterializationStatus,
+    load_verified_feature_artifact_v2,
+    load_verified_feature_bundle_v2,
+    replay_feature_bundle_v2,
+)
 
 __all__ = [
     "FeatureConfiguration",
+    "FeatureBundleState",
     "FeatureDefinitionV2",
     "FeatureOutputDefinition",
     "FeatureParameter",
     "FeatureParameterType",
+    "FeatureMaterializationRunner",
+    "FeatureMaterializationStatus",
     "FeatureSetConfiguration",
     "FeatureValidationStatus",
     "MissingnessPolicy",
     "RequiredFeatureCoveragePolicy",
     "TimeframePolicy",
     "ValueType",
+    "load_verified_feature_artifact_v2",
+    "load_verified_feature_bundle_v2",
+    "replay_feature_bundle_v2",
 ]

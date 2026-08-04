@@ -94,6 +94,49 @@ class TechnicalFeatureComputation:
             raise ValueError("limitations must be unique and sorted")
 
 
+def missing_technical_feature_computation(
+    *,
+    feature_id: str,
+    symbol: str,
+    timeframe: Timeframe,
+    available_at: datetime,
+    configuration: FeatureConfiguration,
+    output_ids: tuple[str, ...],
+    reason_code: str,
+) -> TechnicalFeatureComputation:
+    """Build an auditable no-data result without fabricating a market bar."""
+
+    configuration.verify_identity()
+    require_utc_second("available_at", available_at)
+    values = tuple(
+        TechnicalFeatureValue(
+            output_id=output_id,
+            state=FeatureValueState.MISSING,
+            value=None,
+            available_at=available_at,
+            source_bar_ids=(),
+            source_bar_hashes=(),
+            missing_reason_codes=(reason_code,),
+        )
+        for output_id in sorted(output_ids)
+    )
+    return TechnicalFeatureComputation(
+        feature_id=feature_id,
+        symbol=symbol,
+        timeframe=timeframe,
+        available_at=available_at,
+        configuration_id=configuration.configuration_id,
+        configuration_hash=configuration.configuration_hash,
+        values=values,
+        limitations=(
+            "MODEL_ASSUMPTION",
+            "NOT_EMPIRICALLY_VALIDATED",
+            "RESEARCH_ONLY",
+            "TRADING_AUTHORITY_NOT_GRANTED",
+        ),
+    )
+
+
 def compute_technical_feature(
     *,
     feature_id: str,
@@ -232,7 +275,14 @@ def _compute_moving_average(
         return unsupported
     parameters = _parameters(
         configuration,
-        {"ema_periods", "ema_seed", "output_scale", "rounding", "sma_periods"},
+        {
+            "ema_periods",
+            "ema_seed",
+            "output_scale",
+            "rounding",
+            "selected_timeframe",
+            "sma_periods",
+        },
     )
     if parameters["ema_seed"] != "FIRST_OBSERVATION_RECURSIVE":
         raise ValueError("unsupported EMA initialization policy")
@@ -371,6 +421,7 @@ def _compute_macd(
             "histogram_multiplier",
             "output_scale",
             "rounding",
+            "selected_timeframe",
             "signal_period",
             "slow_period",
             "warmup_observations",
@@ -478,6 +529,7 @@ def _compute_volume(
             "ratio_denominator",
             "ratio_windows",
             "rounding",
+            "selected_timeframe",
         },
     )
     if parameters["ratio_denominator"] != "PRIOR_COMPLETED_SESSIONS_EXCLUDING_CURRENT":
@@ -638,7 +690,8 @@ def _compute_vwap(
     if unsupported is not None:
         return unsupported
     parameters = _parameters(
-        configuration, {"output_scale", "rounding", "session_policy"}
+        configuration,
+        {"output_scale", "rounding", "selected_timeframe", "session_policy"},
     )
     if parameters["session_policy"] != "A_SHARE_REGULAR_SESSION_OBSERVED_BARS_ONLY":
         raise ValueError("unsupported VWAP session policy")
@@ -752,6 +805,7 @@ def _compute_overheat(
             "range_window",
             "rolling_high_window",
             "rounding",
+            "selected_timeframe",
             "short_return_window",
             "volume_window",
         },
@@ -885,6 +939,15 @@ def _unsupported_or_suspended(
     if bars[-1].timeframe not in supported:
         return _all_missing(
             feature_id, bars, configuration, output_ids, "TIMEFRAME_UNSUPPORTED"
+        )
+    configured_timeframe = configuration.parameter_map().get("selected_timeframe")
+    if configured_timeframe != bars[-1].timeframe.value:
+        return _all_missing(
+            feature_id,
+            bars,
+            configuration,
+            output_ids,
+            "TIMEFRAME_CONFIGURATION_MISMATCH",
         )
     if bars[-1].trading_status is TradingStatus.SUSPENDED:
         return _all_missing(

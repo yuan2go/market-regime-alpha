@@ -190,6 +190,7 @@ def canonical_technical_feature_set(
                 _integer_list("return_windows", "1,3,5,10"),
                 _integer("output_scale", 12),
                 _text("rounding", "ROUND_HALF_EVEN"),
+                _text("selected_timeframe", Timeframe.DAILY.value),
             ),
         ),
         _configuration(
@@ -200,6 +201,7 @@ def canonical_technical_feature_set(
                 _integer_list("ema_periods", "5,10,12,20,26,60"),
                 _integer("output_scale", 12),
                 _text("rounding", "ROUND_HALF_EVEN"),
+                _text("selected_timeframe", Timeframe.DAILY.value),
                 _integer_list("sma_periods", "5,10,20,60"),
             ),
         ),
@@ -213,6 +215,7 @@ def canonical_technical_feature_set(
                 _decimal("histogram_multiplier", "2"),
                 _integer("output_scale", 12),
                 _text("rounding", "ROUND_HALF_EVEN"),
+                _text("selected_timeframe", Timeframe.DAILY.value),
                 _integer("signal_period", 9),
                 _integer("slow_period", 26),
                 _integer("warmup_observations", 34),
@@ -228,6 +231,7 @@ def canonical_technical_feature_set(
                 _integer_list("ratio_windows", "5,10,20"),
                 _text("ratio_denominator", "PRIOR_COMPLETED_SESSIONS_EXCLUDING_CURRENT"),
                 _text("rounding", "ROUND_HALF_EVEN"),
+                _text("selected_timeframe", Timeframe.DAILY.value),
             ),
         ),
         _configuration(
@@ -236,6 +240,7 @@ def canonical_technical_feature_set(
             parameters=(
                 _integer("output_scale", 12),
                 _text("rounding", "ROUND_HALF_EVEN"),
+                _text("selected_timeframe", Timeframe.MINUTE_5.value),
                 _text("session_policy", "A_SHARE_REGULAR_SESSION_OBSERVED_BARS_ONLY"),
             ),
         ),
@@ -247,6 +252,7 @@ def canonical_technical_feature_set(
                 _integer("range_window", 5),
                 _integer("rolling_high_window", 20),
                 _text("rounding", "ROUND_HALF_EVEN"),
+                _text("selected_timeframe", Timeframe.DAILY.value),
                 _integer("short_return_window", 3),
                 _integer("volume_window", 5),
             ),

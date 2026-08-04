@@ -28,3 +28,4 @@ def test_setuptools_remains_the_build_backend() -> None:
     assert 'build-backend = "setuptools.build_meta"' in project
     assert 'postgres = [' in project
     assert 'dev = [' in project
+    assert 'pythonpath = ["src", "."]' in project
