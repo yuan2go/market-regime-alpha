@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
 import json
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.core.identity import ArtifactId, DatasetId
@@ -97,6 +98,52 @@ class TradingCalendarArtifact:
 
     def to_canonical_dict(self) -> dict[str, object]:
         return {"artifact_id": str(self.artifact_id), **self.semantic_payload()}
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> TradingCalendarArtifact:
+        expected = {
+            "artifact_id",
+            "schema_version",
+            "source_dataset_id",
+            "market",
+            "calendar_version",
+            "timezone_name",
+            "sessions",
+        }
+        if set(payload) != expected:
+            raise ValueError("TradingCalendarArtifact fields mismatch")
+        if payload["schema_version"] != "trading-calendar-artifact-v1":
+            raise ValueError("unsupported TradingCalendarArtifact schema")
+        raw_sessions = payload["sessions"]
+        if not isinstance(raw_sessions, list):
+            raise ValueError("TradingCalendarArtifact sessions must be an array")
+        sessions: list[TradingSession] = []
+        for item in raw_sessions:
+            if not isinstance(item, dict) or set(item) != {
+                "trade_date",
+                "session_close",
+            }:
+                raise ValueError("TradingCalendarArtifact session fields mismatch")
+            sessions.append(
+                TradingSession(
+                    trade_date=date.fromisoformat(str(item["trade_date"])),
+                    session_close=datetime.fromisoformat(
+                        str(item["session_close"])
+                    ),
+                )
+            )
+        restored = build_trading_calendar_artifact(
+            source_dataset_id=DatasetId(str(payload["source_dataset_id"])),
+            market=str(payload["market"]),
+            calendar_version=str(payload["calendar_version"]),
+            timezone_name=str(payload["timezone_name"]),
+            sessions=tuple(sessions),
+        )
+        if restored.artifact_id != ArtifactId(str(payload["artifact_id"])):
+            raise ValueError("TradingCalendarArtifact identity mismatch")
+        return restored
 
     def resolve_next_session_date(self, decision_time: DecisionTime) -> date:
         """Return the first explicit trading session strictly after the local decision date."""

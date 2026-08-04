@@ -13,11 +13,12 @@ from market_regime_alpha.decision.thesis import TradingThesis
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.manual import (
-    TRACEABLE_MANUAL_TRADE_SCHEMA,
+    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     ExecutionDeviation,
     Fill,
     ManualOrderState,
     ManualTradeRecord,
+    ManualTradeAuthorityRoute,
     TradeSide,
 )
 from market_regime_alpha.execution.position_book import PositionBook
@@ -89,7 +90,7 @@ class TraceableManualExecutionApplicationService:
         }
         digest = canonical_hash(semantic).split(":", 1)[1]
         record = ManualTradeRecord(
-            schema_version=TRACEABLE_MANUAL_TRADE_SCHEMA,
+            schema_version=ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
             manual_trade_id=ManualTradeId(f"manual-trade-trace-{digest[:24]}"),
             risk_decision_id=risk_decision.risk_decision_id,
             risk_decision_hash=canonical_hash(risk_decision.to_canonical_dict()),
@@ -119,6 +120,7 @@ class TraceableManualExecutionApplicationService:
             opportunity_id=opportunity.opportunity_id,
             post_trade_snapshot_id=portfolio_decision.post_trade.snapshot_id,
             post_trade_snapshot_hash=portfolio_decision.post_trade.content_hash,
+            authority_route=ManualTradeAuthorityRoute.INCREASING,
         )
         return self._repository.create_traceable_trade(
             record,

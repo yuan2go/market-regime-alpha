@@ -147,6 +147,7 @@ class SQLiteManualExecutionRepository:
                     connection.commit()
                     return record, stored_fill
                 current = _load_trade(connection, fill.manual_trade_id)
+                self._validate_loaded_trade(connection, current)
                 if fill.account_id != current.account_id or fill.symbol != current.symbol:
                     raise ValueError("Fill scope does not match ManualTradeRecord")
                 if fill.side is not current.side:
@@ -262,6 +263,7 @@ class SQLiteManualExecutionRepository:
                     connection.commit()
                     return result
                 current = _load_trade(connection, record.manual_trade_id)
+                self._validate_loaded_trade(connection, current)
                 if current.version != expected_version:
                     raise ExecutionVersionConflictError("manual trade CAS conflict")
                 validate_manual_trade_transition(current, record)
@@ -301,6 +303,11 @@ class SQLiteManualExecutionRepository:
                 Fill.from_canonical_dict(_object_json(str(item["fill_json"])))
                 for item in rows
             )
+
+    def _validate_loaded_trade(
+        self, connection: sqlite3.Connection, record: ManualTradeRecord
+    ) -> None:
+        """Subclass hook for route-specific immutable binding validation."""
 
 
 def _validate_authority(
@@ -382,7 +389,45 @@ def _load_trade(
         stored = ManualTradeRecord.from_canonical_dict(
             _object_json(str(row["aggregate_json"]))
         )
-        if stored != result or row["state"] != result.state.value:
+        projected_route = (
+            result.authority_route.value
+            if result.authority_route is not None
+            else "INCREASING"
+        )
+        route_projection_valid = True
+        if "authority_route" in row.keys():
+            route_projection_valid = (
+                row["authority_route"] == projected_route
+                and row["risk_decision_id"]
+                == (
+                    str(result.risk_decision_id)
+                    if result.risk_decision_id is not None
+                    else None
+                )
+                and row["risk_reducing_decision_id"]
+                == (
+                    str(result.risk_reducing_decision_id)
+                    if result.risk_reducing_decision_id is not None
+                    else None
+                )
+                and row["risk_reduction_confirmation_id"]
+                == (
+                    str(result.risk_reduction_confirmation_id)
+                    if result.risk_reduction_confirmation_id is not None
+                    else None
+                )
+            )
+        if (
+            stored != result
+            or row["manual_trade_id"] != str(result.manual_trade_id)
+            or row["account_id"] != result.account_id
+            or row["symbol"] != result.symbol
+            or row["side"] != result.side.value
+            or row["state"] != result.state.value
+            or int(row["filled_quantity"]) != result.filled_quantity
+            or int(row["version"]) != result.version
+            or not route_projection_valid
+        ):
             raise ValueError("ManualTradeRecord projection is not reconstructible")
     return result
 

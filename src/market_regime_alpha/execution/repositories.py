@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from market_regime_alpha.core.identity import ManualTradeId, PositionBookId
+from market_regime_alpha.core.identity import ArtifactId, ManualTradeId, PositionBookId
 from market_regime_alpha.decision.opportunity import TradingOpportunity
 from market_regime_alpha.decision.thesis import TradingThesis
 from market_regime_alpha.execution.manual import Fill, ManualTradeRecord
 from market_regime_alpha.execution.position_book import PositionBook
+from market_regime_alpha.execution.risk_reduction import (
+    OperationalExitDirectiveV2,
+    RiskReductionConfirmationAttempt,
+    RiskReductionConfirmationCommand,
+    RiskReductionConfirmationResult,
+)
 from market_regime_alpha.portfolio.account_authority import (
     CompleteAccountPortfolioDecision,
     CompleteAccountRiskDecision,
@@ -19,6 +25,7 @@ from market_regime_alpha.portfolio.lifecycle import (
     RiskDecision,
     TargetPosition,
 )
+from market_regime_alpha.position.assessment import ExitAssessment
 
 
 class ManualExecutionRepository(Protocol):
@@ -89,3 +96,27 @@ class TraceableManualExecutionRepository(ManualExecutionRepository, Protocol):
         expected_version: int,
         idempotency_key: str,
     ) -> PositionBook: ...
+
+
+class RiskReductionManualIntentRepository(
+    TraceableManualExecutionRepository, Protocol
+):
+    def save_operational_exit_directive(
+        self,
+        directive: OperationalExitDirectiveV2,
+        *,
+        exit_assessment: ExitAssessment,
+        risk_reducing_decision_id: ArtifactId,
+    ) -> OperationalExitDirectiveV2: ...
+
+    def get_operational_exit_directive(
+        self, directive_id: ArtifactId
+    ) -> OperationalExitDirectiveV2: ...
+
+    def get_confirmation_attempt(
+        self, attempt_id: ArtifactId
+    ) -> RiskReductionConfirmationAttempt: ...
+
+    def confirm_risk_reduction(
+        self, command: RiskReductionConfirmationCommand
+    ) -> RiskReductionConfirmationResult: ...

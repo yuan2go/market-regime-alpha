@@ -11,15 +11,21 @@ from market_regime_alpha.decision.opportunity import OpportunityState, TradingOp
 from market_regime_alpha.decision.thesis import ThesisState, TradingThesis
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.manual import (
+    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     TRACEABLE_MANUAL_TRADE_SCHEMA,
     Fill,
     ManualOrderState,
+    ManualTradeAuthorityRoute,
     ManualTradeRecord,
     TradeSide,
 )
 from market_regime_alpha.execution.position_book import (
     PositionBook,
     PositionBookState,
+)
+from market_regime_alpha.execution.risk_reduction import (
+    RiskReductionConfirmationAttempt,
+    RiskReductionConfirmationState,
 )
 from market_regime_alpha.execution.sqlite_repository import (
     ExecutionVersionConflictError,
@@ -48,6 +54,12 @@ EXECUTION_TRACEABILITY_UP_MIGRATION = (
 EXECUTION_TRACEABILITY_DOWN_MIGRATION = (
     _MIGRATION_ROOT / "006_execution_traceability_down.sql"
 )
+RISK_REDUCTION_MANUAL_INTENT_UP_MIGRATION = (
+    _MIGRATION_ROOT / "010_risk_reduction_manual_intent_up.sql"
+)
+RISK_REDUCTION_MANUAL_INTENT_DOWN_MIGRATION = (
+    _MIGRATION_ROOT / "010_risk_reduction_manual_intent_down.sql"
+)
 
 
 class SQLiteTraceableManualExecutionRepository(SQLiteManualExecutionRepository):
@@ -59,6 +71,15 @@ class SQLiteTraceableManualExecutionRepository(SQLiteManualExecutionRepository):
             connection.executescript(
                 EXECUTION_TRACEABILITY_UP_MIGRATION.read_text(encoding="utf-8")
             )
+            applied = connection.execute(
+                "SELECT 1 FROM pdl_schema_migrations WHERE version = 10"
+            ).fetchone()
+            if applied is None:
+                connection.executescript(
+                    RISK_REDUCTION_MANUAL_INTENT_UP_MIGRATION.read_text(
+                        encoding="utf-8"
+                    )
+                )
 
     def create_traceable_trade(
         self,
@@ -180,9 +201,22 @@ class SQLiteTraceableManualExecutionRepository(SQLiteManualExecutionRepository):
     def get_trade(self, trade_id: ManualTradeId) -> ManualTradeRecord:
         with self._connect() as connection:
             record = _load_trade(connection, trade_id)
-            if record.schema_version == TRACEABLE_MANUAL_TRADE_SCHEMA:
-                _validate_stored_binding(connection, record)
+            self._validate_loaded_trade(connection, record)
             return record
+
+    def _validate_loaded_trade(
+        self, connection: sqlite3.Connection, record: ManualTradeRecord
+    ) -> None:
+        if record.schema_version == TRACEABLE_MANUAL_TRADE_SCHEMA or (
+            record.schema_version == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA
+            and record.authority_route is ManualTradeAuthorityRoute.INCREASING
+        ):
+            _validate_stored_binding(connection, record)
+        elif (
+            record.schema_version == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA
+            and record.authority_route is ManualTradeAuthorityRoute.REDUCING
+        ):
+            _validate_reducing_stored_binding(connection, record)
 
     def trades_for_book(
         self, book_id: PositionBookId
@@ -190,8 +224,15 @@ class SQLiteTraceableManualExecutionRepository(SQLiteManualExecutionRepository):
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT record.aggregate_json
-                FROM traceable_manual_trade_bindings AS binding
+                WITH bindings AS (
+                    SELECT manual_trade_id, position_book_id, created_at
+                    FROM traceable_manual_trade_bindings
+                    UNION ALL
+                    SELECT manual_trade_id, position_book_id, created_at
+                    FROM risk_reducing_manual_trade_bindings
+                )
+                SELECT record.manual_trade_id
+                FROM bindings AS binding
                 JOIN manual_trade_records AS record
                   ON record.manual_trade_id = binding.manual_trade_id
                 WHERE binding.position_book_id = ?
@@ -200,21 +241,29 @@ class SQLiteTraceableManualExecutionRepository(SQLiteManualExecutionRepository):
                 (str(book_id),),
             ).fetchall()
             records = tuple(
-                ManualTradeRecord.from_canonical_dict(
-                    _object_json(str(row["aggregate_json"]))
+                _load_trade(
+                    connection,
+                    ManualTradeId(str(row["manual_trade_id"])),
                 )
                 for row in rows
             )
             for record in records:
-                _validate_stored_binding(connection, record)
+                self._validate_loaded_trade(connection, record)
             return records
 
     def fills_for_book(self, book_id: PositionBookId) -> tuple[Fill, ...]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
+                WITH bindings AS (
+                    SELECT manual_trade_id, position_book_id
+                    FROM traceable_manual_trade_bindings
+                    UNION ALL
+                    SELECT manual_trade_id, position_book_id
+                    FROM risk_reducing_manual_trade_bindings
+                )
                 SELECT fill.fill_json
-                FROM traceable_manual_trade_bindings AS binding
+                FROM bindings AS binding
                 JOIN manual_fills AS fill
                   ON fill.manual_trade_id = binding.manual_trade_id
                 WHERE binding.position_book_id = ?
@@ -510,3 +559,54 @@ def _validate_stored_binding(
         or row["target_delta_hash"] != record.target_position_hash
     ):
         raise ValueError("ManualTradeRecord immutable trace index mismatch")
+
+
+def _validate_reducing_stored_binding(
+    connection: sqlite3.Connection, record: ManualTradeRecord
+) -> None:
+    row = connection.execute(
+        "SELECT * FROM risk_reducing_manual_trade_bindings WHERE manual_trade_id = ?",
+        (str(record.manual_trade_id),),
+    ).fetchone()
+    attempt_row = connection.execute(
+        """
+        SELECT attempt_json FROM risk_reduction_confirmation_attempts
+        WHERE attempt_id = ?
+        """,
+        (str(record.risk_reduction_confirmation_id),),
+    ).fetchone()
+    attempt = (
+        RiskReductionConfirmationAttempt.from_canonical_dict(
+            _object_json(str(attempt_row["attempt_json"]))
+        )
+        if attempt_row is not None
+        else None
+    )
+    if row is None or attempt is None or (
+        row["position_book_id"] != str(record.position_book_id)
+        or row["opportunity_id"] != str(record.opportunity_id)
+        or row["thesis_id"] != str(record.thesis_id)
+        or row["symbol"] != record.symbol
+        or row["risk_reducing_decision_id"]
+        != str(record.risk_reducing_decision_id)
+        or row["risk_reducing_decision_hash"]
+        != record.risk_reducing_decision_hash
+        or row["confirmation_attempt_id"]
+        != str(record.risk_reduction_confirmation_id)
+        or row["confirmation_attempt_hash"]
+        != record.risk_reduction_confirmation_hash
+        or row["source_position_snapshot_id"]
+        != str(record.source_position_snapshot_id)
+        or row["source_position_snapshot_hash"]
+        != record.source_position_snapshot_hash
+        or int(row["source_position_snapshot_version"])
+        != record.source_position_snapshot_version
+        or int(row["target_quantity"]) != record.target_quantity
+        or int(row["order_quantity"]) != record.order_quantity
+        or attempt.state is not RiskReductionConfirmationState.CONFIRMED_INTENT
+        or attempt.manual_trade_id != record.manual_trade_id
+        or attempt.risk_reducing_decision_id
+        != record.risk_reducing_decision_id
+        or attempt.content_hash != record.risk_reduction_confirmation_hash
+    ):
+        raise ValueError("ManualTradeRecord immutable reducing trace index mismatch")

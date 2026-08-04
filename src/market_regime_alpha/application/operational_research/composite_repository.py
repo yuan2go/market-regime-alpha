@@ -28,6 +28,10 @@ class CompositeOperationalRepository(Protocol):
         self, manifest_id: ArtifactId
     ) -> VerifiedCompositeOperationalManifest: ...
 
+    def get_source_package_paths(
+        self, manifest_id: ArtifactId
+    ) -> tuple[Path, Path]: ...
+
     def save_manifest(
         self,
         composite: VerifiedCompositeOperationalManifest,

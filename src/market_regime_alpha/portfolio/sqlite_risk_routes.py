@@ -15,6 +15,7 @@ from market_regime_alpha.portfolio.risk_routes import (
     RiskReducingDecision,
     RiskReducingExecutionGate,
     RiskReducingGateConfiguration,
+    VerifiedRiskReducingDecisionBundle,
 )
 from market_regime_alpha.position.authority import PositionSnapshot
 
@@ -225,6 +226,24 @@ class SQLiteRiskRouteRepository:
     ) -> RiskReducingDecision:
         with self._connect() as connection:
             return _load_reducing_decision(connection, decision_id)
+
+    def get_verified_reducing_decision_bundle(
+        self, decision_id: ArtifactId
+    ) -> VerifiedRiskReducingDecisionBundle:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM risk_reducing_decisions WHERE decision_id = ?",
+                (str(decision_id),),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown RiskReducingDecision: {decision_id}")
+            position, observation, configuration, decision = _restore_bundle(row)
+            return VerifiedRiskReducingDecisionBundle(
+                position=position,
+                execution_observation=observation,
+                configuration=configuration,
+                decision=decision,
+            )
 
 
 def _resolve_command(

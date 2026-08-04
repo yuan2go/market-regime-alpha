@@ -1840,6 +1840,15 @@ class ThesisHealthObservationBuilder:
         return reasons
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedThesisHealthBundle:
+    """Public H5 replay result with current-chain authority recorded."""
+
+    observation: ThesisHealthObservationV2
+    input_bundle: ThesisHealthInputBundle
+    is_latest: bool
+
+
 class ThesisHealthRepository(Protocol):
     """Persistence boundary for immutable, replayable H5 observations."""
 
@@ -1863,6 +1872,10 @@ class ThesisHealthRepository(Protocol):
     def get_latest_observation(
         self, thesis_id: ThesisId
     ) -> ThesisHealthObservationV2 | None: ...
+
+    def get_verified_thesis_health_bundle(
+        self, observation_id: ArtifactId
+    ) -> VerifiedThesisHealthBundle: ...
 
 
 def thesis_health_command_hash(bundle: ThesisHealthInputBundle) -> str:

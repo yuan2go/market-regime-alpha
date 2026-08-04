@@ -34,6 +34,13 @@ def test_repository_saves_reads_replays_and_restarts(tmp_path) -> None:
 
     assert stored == decision
     assert repository.get_reducing_decision(decision.decision_id) == decision
+    verified = repository.get_verified_reducing_decision_bundle(
+        decision.decision_id
+    )
+    assert verified.position == position
+    assert verified.execution_observation == observation
+    assert verified.configuration == configuration
+    assert verified.decision == decision
     assert (
         repository.resolve_reducing_command(
             idempotency_key="repository-save-replay",

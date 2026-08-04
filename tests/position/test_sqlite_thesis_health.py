@@ -44,6 +44,12 @@ def test_repository_saves_reads_replays_and_restarts(tmp_path) -> None:
     repository, bundle, observation = _stored(tmp_path)
 
     assert repository.get_observation(observation.observation_id) == observation
+    verified = repository.get_verified_thesis_health_bundle(
+        observation.observation_id
+    )
+    assert verified.observation == observation
+    assert verified.input_bundle == bundle
+    assert verified.is_latest
     assert repository.resolve_command(
         idempotency_key="stored-health",
         command_hash=_command_hash(bundle),

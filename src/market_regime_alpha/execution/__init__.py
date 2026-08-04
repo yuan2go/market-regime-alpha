@@ -6,12 +6,15 @@ from market_regime_alpha.execution.manual import (
     Fill,
     FillKind,
     ManualOrderState,
+    ManualTradeAuthorityRoute,
     ManualTradeRecord,
+    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     TradeSide,
 )
 from market_regime_alpha.execution.position_book import PositionBook, PositionBookState
 from market_regime_alpha.execution.repositories import (
     ManualExecutionRepository,
+    RiskReductionManualIntentRepository,
     TraceableManualExecutionRepository,
 )
 from market_regime_alpha.execution.sqlite_repository import (
@@ -20,6 +23,9 @@ from market_regime_alpha.execution.sqlite_repository import (
 )
 from market_regime_alpha.execution.sqlite_traceability import (
     SQLiteTraceableManualExecutionRepository,
+)
+from market_regime_alpha.execution.sqlite_risk_reduction import (
+    SQLiteRiskReductionManualIntentRepository,
 )
 
 __all__ = [
@@ -30,11 +36,15 @@ __all__ = [
     "FillKind",
     "ManualExecutionRepository",
     "ManualOrderState",
+    "ManualTradeAuthorityRoute",
     "ManualTradeRecord",
     "PositionBook",
     "PositionBookState",
+    "RiskReductionManualIntentRepository",
     "SQLiteManualExecutionRepository",
+    "SQLiteRiskReductionManualIntentRepository",
     "SQLiteTraceableManualExecutionRepository",
     "TraceableManualExecutionRepository",
     "TradeSide",
+    "ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA",
 ]
