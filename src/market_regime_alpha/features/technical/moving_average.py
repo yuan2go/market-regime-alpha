@@ -422,10 +422,10 @@ class SimpleMovingAverageComputer:
                 value = None
                 missing_reason = "WINDOW_NOT_READY"
             else:
-                window_sum = sum(
-                    (item.close for item in relevant), start=Decimal("0")
-                )
                 with localcontext(Context(prec=34, rounding=ROUND_HALF_EVEN)):
+                    window_sum = sum(
+                        (item.close for item in relevant), start=Decimal("0")
+                    )
                     value = window_sum / Decimal(configuration.window)
                 missing_reason = None
             observations.append(

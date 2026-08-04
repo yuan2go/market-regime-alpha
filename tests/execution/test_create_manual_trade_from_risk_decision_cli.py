@@ -255,3 +255,39 @@ def test_module_cli_parser_rejects_non_finite_or_non_positive_price(
     _safety_declarations(payload)
     assert payload["reason_codes"] == ["COMMAND_VALIDATION_FAILED"]
     assert "finite positive decimal" in payload["error"]
+
+
+def test_module_cli_rejects_adjacent_decimal_prices_that_collapse_to_one_float(
+    tmp_path, daily_decision_fixture, capsys
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    adjacent_prices = (
+        "10.0000000000000001",
+        "10.0000000000000002",
+    )
+    assert float(adjacent_prices[0]) == float(adjacent_prices[1])
+    with sqlite3.connect(fixture.repository.path) as connection:
+        trade_count_before = connection.execute(
+            "SELECT COUNT(*) FROM manual_trade_records"
+        ).fetchone()[0]
+
+    for index, price in enumerate(adjacent_prices):
+        arguments = _arguments(tmp_path, fixture)
+        arguments = _replace_argument(arguments, "--expected-price-lower", price)
+        arguments = _replace_argument(arguments, "--expected-price-upper", price)
+        arguments = _replace_argument(
+            arguments,
+            "--idempotency-key",
+            f"lossless-price-{index}",
+        )
+
+        assert main(arguments) == EXIT_VALIDATION_ERROR
+        payload = json.loads(capsys.readouterr().out)
+        _safety_declarations(payload)
+        assert payload["reason_codes"] == ["COMMAND_VALIDATION_FAILED"]
+        assert "losslessly" in payload["error"]
+
+    with sqlite3.connect(fixture.repository.path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM manual_trade_records"
+        ).fetchone()[0] == trade_count_before

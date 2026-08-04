@@ -37,12 +37,17 @@ from market_regime_alpha.cli.replay_canonical_lifecycle import (
     main as replay_main,
 )
 from market_regime_alpha.cli.run_canonical_lifecycle import (
-    EXIT_RUNTIME_FAILED,
+    EXIT_REPOSITORY_ERROR,
+    EXIT_RESUME_REJECTED,
+    EXIT_STAGE_FAILED,
     EXIT_SUCCESS,
     EXIT_VALIDATION_ERROR,
     main as lifecycle_main,
 )
 from market_regime_alpha.evidence.canonical import canonical_datetime
+from market_regime_alpha.execution.risk_reduction import (
+    RiskReductionConfirmationPolicy,
+)
 from tests.application.canonical_lifecycle.test_research_stages import (
     StageFixture,
     _stage_fixture,
@@ -149,6 +154,12 @@ def test_cli_runs_real_readers_models_then_stops_at_entry_validation(
         "PATH_FORECAST",
     ]
     assert first["stage_statuses"]["ENTRY_ASSESSMENT"] == "BLOCKED"
+    assert first["retry_state"] == "NOT_REQUIRED"
+    assert first["manual_trade_reference"] is None
+    assert first["stage_output_references"]["PLATFORM_RESEARCH"][0][
+        "object_type"
+    ] == "PLATFORM_RESEARCH_ARTIFACT"
+    assert first["stage_output_references"]["ENTRY_ASSESSMENT"] == []
     assert first["MANUAL_CONFIRMATION_REQUIRED"] is False
     assert first["MANUAL_TRADE_CREATED"] is False
     assert first["NO_ORDER_CREATED"] is True
@@ -195,11 +206,14 @@ def test_cli_failed_stage_can_resume_without_repeating_settled_stages(
         output=output,
         idempotency_key="cli-failure-1",
     )
-    assert lifecycle_main(args) == EXIT_RUNTIME_FAILED
+    assert lifecycle_main(args) == EXIT_STAGE_FAILED
     first = json.loads(capsys.readouterr().out)
     assert first["status"] == "FAILED"
     assert first["current_stage"] == "VERIFY_COMPOSITE_EVIDENCE"
     assert first["completed_stages"] == []
+    assert first["retry_state"] == "AVAILABLE"
+    assert first["manual_trade_reference"] is None
+    assert first["stage_output_references"]["VERIFY_COMPOSITE_EVIDENCE"] == []
     assert first["MANUAL_CONFIRMATION_REQUIRED"] is False
     with sqlite3.connect(database) as connection:
         assert connection.execute(
@@ -213,7 +227,7 @@ def test_cli_failed_stage_can_resume_without_repeating_settled_stages(
             "--database",
             str(database),
         ]
-    ) == EXIT_RUNTIME_FAILED
+    ) == EXIT_STAGE_FAILED
     second = json.loads(capsys.readouterr().out)
     assert second["run_id"] == first["run_id"]
     assert second["completed_stages"] == []
@@ -241,6 +255,9 @@ def test_cli_rejects_configuration_locator_and_content_tamper_before_journal_wri
     ) == EXIT_VALIDATION_ERROR
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "REJECTED"
+    assert payload["retry_state"] is None
+    assert payload["manual_trade_reference"] is None
+    assert payload["stage_output_references"] == {}
     assert payload["BROKER_NOT_INVOKED"] is True
     assert not database.exists()
 
@@ -353,6 +370,78 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
     assert payload["BROKER_NOT_INVOKED"] is True
     assert payload["NO_FILL_CREATED"] is True
     assert _authority_row_counts(confirmation_fixture.repository.path) == before
+
+    policy_reference = next(
+        reference
+        for reference in references
+        if reference.object_type
+        is LifecycleObjectType.RISK_REDUCTION_CONFIRMATION_POLICY
+    )
+    assert policy_reference.locator is not None
+    policy = RiskReductionConfirmationPolicy.from_canonical_dict(
+        json.loads(Path(policy_reference.locator).read_text(encoding="utf-8"))
+    )
+    confirmation = confirmation_fixture.repository.confirm_risk_reduction(
+        replace(
+            confirmation_fixture.command,
+            confirmation_policy=policy,
+            idempotency_key="cli-risk-resume-confirmation",
+        )
+    )
+    assert confirmation.manual_trade is not None
+    assert lifecycle_main(
+        [
+            "--resume-run-id",
+            str(command.run_id),
+            "--database",
+            str(journal_path),
+            "--authority-database",
+            str(confirmation_fixture.repository.path),
+        ]
+    ) == EXIT_SUCCESS
+    observed = json.loads(capsys.readouterr().out)
+    assert observed["status"] == "WAITING_FOR_FILL"
+    assert observed["manual_trade_observed"] is True
+    assert observed["MANUAL_TRADE_CREATED"] is False
+    assert observed["manual_trade_reference"]["object_id"] == str(
+        confirmation.manual_trade.manual_trade_id
+    )
+    assert observed["stage_output_references"]["MANUAL_TRADE"] == [
+        observed["manual_trade_reference"]
+    ]
+
+
+def test_cli_unknown_resume_and_repository_integrity_have_distinct_exit_codes(
+    tmp_path: Path, capsys
+) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    SQLiteLifecycleRunRepository(database)
+
+    assert lifecycle_main(
+        [
+            "--resume-run-id",
+            "lifecycle-run-unknown",
+            "--database",
+            str(database),
+        ]
+    ) == EXIT_RESUME_REJECTED
+    unknown = json.loads(capsys.readouterr().out)
+    assert unknown["reason_codes"] == ["LIFECYCLE_RESUME_REJECTED"]
+
+    malformed = tmp_path / "malformed.sqlite3"
+    with sqlite3.connect(malformed) as connection:
+        connection.execute("CREATE TABLE lifecycle_runs(run_id TEXT PRIMARY KEY)")
+
+    assert lifecycle_main(
+        [
+            "--resume-run-id",
+            "lifecycle-run-unknown",
+            "--database",
+            str(malformed),
+        ]
+    ) == EXIT_REPOSITORY_ERROR
+    integrity = json.loads(capsys.readouterr().out)
+    assert integrity["reason_codes"] == ["LIFECYCLE_REPOSITORY_ERROR"]
 
 
 def _authority_row_counts(path: Path) -> tuple[int, int, int]:

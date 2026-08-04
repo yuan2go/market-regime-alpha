@@ -203,7 +203,11 @@ def test_decimal_result_does_not_depend_on_the_process_decimal_context() -> None
         replace(bar, close=close)
         for bar, close in zip(
             _bars(),
-            (Decimal("10"), Decimal("10"), Decimal("11")),
+            (
+                Decimal("1.23456"),
+                Decimal("2.34567"),
+                Decimal("3.45678"),
+            ),
             strict=True,
         )
     )
@@ -219,9 +223,7 @@ def test_decimal_result_does_not_depend_on_the_process_decimal_context() -> None
         )
 
     assert low_process_precision == high_process_precision
-    assert low_process_precision.score == Decimal(
-        "10.33333333333333333333333333333333"
-    )
+    assert low_process_precision.score == Decimal("2.34567")
 
 def test_moving_average_contracts_are_immutable() -> None:
     with pytest.raises(FrozenInstanceError):

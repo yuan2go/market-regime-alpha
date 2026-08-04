@@ -6,6 +6,7 @@ import argparse
 from datetime import date, datetime, timezone
 import json
 from pathlib import Path
+import sqlite3
 import sys
 from typing import NoReturn, Sequence, cast
 
@@ -23,6 +24,8 @@ from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleIdempotencyConflict,
     LifecycleRepositoryError,
+    LifecycleRunNotFound,
+    LifecycleUnsafeResume,
 )
 from market_regime_alpha.application.canonical_lifecycle.replay import (
     LifecycleReplayStatus,
@@ -56,15 +59,20 @@ from market_regime_alpha.cli._canonical_lifecycle_output import (
 
 
 EXIT_SUCCESS = 0
-EXIT_RUNTIME_FAILED = 1
 EXIT_VALIDATION_ERROR = 2
 EXIT_IDEMPOTENCY_CONFLICT = 3
-EXIT_JOURNAL_ERROR = 4
+EXIT_RESUME_REJECTED = 4
+EXIT_STAGE_FAILED = 5
+EXIT_REPOSITORY_ERROR = 6
 EXIT_REPLAY_NOT_COMPARABLE = 5
 EXIT_REPLAY_FAILED = 6
 
 
 class CLIValidationError(ValueError):
+    pass
+
+
+class CLIResumeRejected(CLIValidationError):
     pass
 
 
@@ -139,29 +147,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                 stop_after_stage=stop_after,
                 output_directory=output_directory,
             )
+    except CLIResumeRejected as exc:
+        print_error("LIFECYCLE_RESUME_REJECTED", exc, args=args)
+        return EXIT_RESUME_REJECTED
     except CLIValidationError as exc:
         print_error("COMMAND_VALIDATION_FAILED", exc, args=args)
         return EXIT_VALIDATION_ERROR
     except LifecycleIdempotencyConflict as exc:
         print_error("IDEMPOTENCY_KEY_CONFLICT", exc, args=args)
         return EXIT_IDEMPOTENCY_CONFLICT
+    except (LifecycleRunNotFound, LifecycleUnsafeResume) as exc:
+        print_error("LIFECYCLE_RESUME_REJECTED", exc, args=args)
+        return EXIT_RESUME_REJECTED
     except LifecycleStageExecutionError as exc:
         repository = repository_from_args(args)
         if repository is None:
             print_error("LIFECYCLE_STAGE_FAILED", exc, args=args)
         else:
             print_history_failure(repository, exc)
-        return EXIT_RUNTIME_FAILED
-    except LifecycleRepositoryError as exc:
-        print_error("LIFECYCLE_JOURNAL_ERROR", exc, args=args)
-        return EXIT_JOURNAL_ERROR
+        return EXIT_STAGE_FAILED
+    except (LifecycleRepositoryError, sqlite3.Error) as exc:
+        print_error("LIFECYCLE_REPOSITORY_ERROR", exc, args=args)
+        return EXIT_REPOSITORY_ERROR
     except (OSError, TypeError, ValueError) as exc:
         print_error("COMMAND_VALIDATION_FAILED", exc, args=args)
         return EXIT_VALIDATION_ERROR
 
     print(json.dumps(result_payload(result), ensure_ascii=True, sort_keys=True))
     return (
-        EXIT_RUNTIME_FAILED
+        EXIT_STAGE_FAILED
         if result.run.status is LifecycleRunStatus.FAILED
         else EXIT_SUCCESS
     )
@@ -187,7 +201,7 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
         )
     if not database.is_file():
         raise CLIValidationError("replay requires an existing lifecycle database")
-    repository = SQLiteLifecycleRunRepository(database)
+    repository = _repository(database)
     run_id = LifecycleRunId(str(args.replay_run_id))
     first = verify_lifecycle_replay(repository=repository, run_id=run_id)
     second = verify_lifecycle_replay(repository=repository, run_id=run_id)
@@ -274,7 +288,7 @@ def _start(
             else None
         ),
     )
-    repository = SQLiteLifecycleRunRepository(database)
+    repository = _repository(database)
     runner = build_sqlite_lifecycle_runner(
         repository=repository,
         command=command,
@@ -303,8 +317,8 @@ def _resume(
             + ", ".join(f"--{name.replace('_', '-')}" for name in forbidden)
         )
     if not database.is_file():
-        raise CLIValidationError("resume requires an existing lifecycle database")
-    repository = SQLiteLifecycleRunRepository(database)
+        raise CLIResumeRejected("resume requires an existing lifecycle database")
+    repository = _repository(database)
     run_id = LifecycleRunId(str(args.resume_run_id))
     command = repository.get_command(run_id)
     requested_authority = (
@@ -316,27 +330,32 @@ def _resume(
         requested_authority is not None
         and requested_authority != command.authority_database_locator
     ):
-        raise CLIValidationError(
+        raise CLIResumeRejected(
             "resume authority database must match the stored command binding"
         )
     if (
         command.authority_database_locator is not None
         and not command.authority_database_locator.is_file()
     ):
-        raise CLIValidationError(
+        raise CLIResumeRejected(
             "stored authority database binding is no longer available"
         )
     if (
         requested_output_directory is not None
         and requested_output_directory != command.output_directory
     ):
-        raise CLIValidationError(
+        raise CLIResumeRejected(
             "resume output directory must match the stored command"
         )
-    manifest = _restore_command_manifest(command)
-    configurations = RuntimeConfigurationReader().read_all(
-        command.configuration_references
-    )
+    try:
+        manifest = _restore_command_manifest(command)
+        configurations = RuntimeConfigurationReader().read_all(
+            command.configuration_references
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise CLIResumeRejected(
+            "stored resume inputs no longer reconstruct the original command"
+        ) from exc
     runner = build_sqlite_lifecycle_runner(
         repository=repository,
         command=command,
@@ -382,6 +401,17 @@ def _date(value: str) -> date:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _repository(database: Path) -> SQLiteLifecycleRunRepository:
+    try:
+        return SQLiteLifecycleRunRepository(database)
+    except LifecycleRepositoryError:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise LifecycleRepositoryError(
+            "lifecycle repository could not be opened or migrated"
+        ) from exc
 
 
 if __name__ == "__main__":

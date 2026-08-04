@@ -11,6 +11,12 @@ from typing import Any
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleRepositoryError,
 )
+from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleObjectReference,
+    LifecycleObjectType,
+    LifecycleRun,
+    LifecycleStage,
+)
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     LifecycleRunResult,
     LifecycleStageExecutionError,
@@ -36,23 +42,8 @@ def safety_declarations() -> dict[str, bool]:
 
 
 def result_payload(result: LifecycleRunResult) -> dict[str, Any]:
-    manual_trade_observed = any(
-        reference.object_type.value == "MANUAL_TRADE"
-        for stage in result.stages
-        for reference in stage.output_references
-    )
     return {
-        "run_id": str(result.run.run_id),
-        "run_type": result.run.run_type.value,
-        "command_hash": result.run.command_hash,
-        "status": result.run.status.value,
-        "current_stage": (
-            result.run.current_stage.value if result.run.current_stage else None
-        ),
-        "completed_stages": [item.value for item in result.run.completed_stages],
-        "stage_statuses": {
-            item.stage_name.value: item.stage_status.value for item in result.stages
-        },
+        **_run_projection_payload(result.run, result.stages),
         "receipt_ids": [str(item.receipt_id) for item in result.receipts],
         "receipt_hashes": [item.receipt_hash for item in result.receipts],
         "attempted_stages": [item.value for item in result.attempted_stages],
@@ -62,9 +53,6 @@ def result_payload(result: LifecycleRunResult) -> dict[str, Any]:
             if result.stopped_after_stage is not None
             else None
         ),
-        "blocker_reason": result.run.blocker_reason,
-        "failure_reason": result.run.failure_reason,
-        "manual_trade_observed": manual_trade_observed,
         "MANUAL_CONFIRMATION_REQUIRED": (
             result.run.status is LifecycleRunStatus.WAITING_FOR_MANUAL_CONFIRMATION
         ),
@@ -89,16 +77,7 @@ def print_history_failure(
         print_error("LIFECYCLE_STAGE_FAILED", exc, args=None)
         return
     payload = {
-        "run_id": str(history.run.run_id),
-        "run_type": history.run.run_type.value,
-        "command_hash": history.run.command_hash,
-        "status": history.run.status.value,
-        "current_stage": (
-            history.run.current_stage.value if history.run.current_stage else None
-        ),
-        "completed_stages": [item.value for item in history.run.completed_stages],
-        "blocker_reason": history.run.blocker_reason,
-        "failure_reason": history.run.failure_reason,
+        **_run_projection_payload(history.run, history.stages),
         "error": str(exc),
         "reason_codes": ["LIFECYCLE_STAGE_FAILED"],
         "MANUAL_CONFIRMATION_REQUIRED": (
@@ -125,8 +104,13 @@ def print_error(
                 "status": "REJECTED",
                 "current_stage": None,
                 "completed_stages": [],
+                "retry_state": None,
+                "stage_statuses": {},
+                "stage_output_references": {},
                 "blocker_reason": str(exc),
                 "failure_reason": None,
+                "manual_trade_observed": False,
+                "manual_trade_reference": None,
                 "error": str(exc),
                 "reason_codes": [reason_code],
                 "MANUAL_CONFIRMATION_REQUIRED": False,
@@ -137,6 +121,56 @@ def print_error(
             sort_keys=True,
         )
     )
+
+
+def _run_projection_payload(
+    run: LifecycleRun,
+    stages: tuple[LifecycleStage, ...],
+) -> dict[str, Any]:
+    manual_trade_reference = _manual_trade_reference(stages)
+    return {
+        "run_id": str(run.run_id),
+        "run_type": run.run_type.value,
+        "command_hash": run.command_hash,
+        "status": run.status.value,
+        "current_stage": run.current_stage.value if run.current_stage else None,
+        "completed_stages": [item.value for item in run.completed_stages],
+        "retry_state": run.retry_state.value,
+        "stage_statuses": {
+            stage.stage_name.value: stage.stage_status.value for stage in stages
+        },
+        "stage_output_references": {
+            stage.stage_name.value: [
+                reference.to_canonical_dict()
+                for reference in stage.output_references
+            ]
+            for stage in stages
+        },
+        "blocker_reason": run.blocker_reason,
+        "failure_reason": run.failure_reason,
+        "manual_trade_observed": manual_trade_reference is not None,
+        "manual_trade_reference": (
+            manual_trade_reference.to_canonical_dict()
+            if manual_trade_reference is not None
+            else None
+        ),
+    }
+
+
+def _manual_trade_reference(
+    stages: tuple[LifecycleStage, ...],
+) -> LifecycleObjectReference | None:
+    references: dict[tuple[str, str], LifecycleObjectReference] = {}
+    for stage in stages:
+        for reference in stage.output_references:
+            if reference.object_type is LifecycleObjectType.MANUAL_TRADE:
+                references.setdefault(
+                    (str(reference.object_id), reference.content_hash),
+                    reference,
+                )
+    if len(references) > 1:
+        raise ValueError("lifecycle output contains conflicting ManualTrade references")
+    return next(iter(references.values()), None)
 
 
 def repository_from_args(
@@ -156,5 +190,11 @@ def repository_from_args(
     )
     try:
         return SQLiteLifecycleRunRepository(database)
-    except (OSError, sqlite3.Error, TypeError, ValueError):
+    except (
+        LifecycleRepositoryError,
+        OSError,
+        sqlite3.Error,
+        TypeError,
+        ValueError,
+    ):
         return None

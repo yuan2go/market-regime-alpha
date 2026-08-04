@@ -307,6 +307,11 @@ def _h4_5_compatible_price_float(value: Decimal) -> float:
     converted = float(value)
     if not isfinite(converted) or converted <= 0.0:
         raise ValueError("expected price is outside the H4.5 compatibility range")
+    if Decimal(str(converted)) != value:
+        raise ValueError(
+            "expected price cannot be represented losslessly by the merged "
+            "H4.5 float compatibility contract"
+        )
     return converted
 
 
