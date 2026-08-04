@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleConfigurationKind,
     LifecycleConfigurationReference,
     LifecycleModelVersionReference,
     LifecycleObjectId,
@@ -126,15 +127,19 @@ def require_configuration_binding(
     run: LifecycleRun,
     configuration: _IdentifiedConfiguration,
     *,
+    configuration_kind: LifecycleConfigurationKind,
     configuration_version: str,
 ) -> LifecycleConfigurationReference:
     """Bind an injected immutable configuration to the persisted command."""
 
     require_text("configuration_version", configuration_version)
+    if not isinstance(configuration_kind, LifecycleConfigurationKind):
+        raise TypeError("configuration_kind must be a LifecycleConfigurationKind")
     matches = tuple(
         reference
         for reference in run.configuration_references
-        if reference.configuration_id == configuration.configuration_id
+        if reference.configuration_kind is configuration_kind
+        and reference.configuration_id == configuration.configuration_id
     )
     if len(matches) != 1:
         raise ValueError("command does not bind the injected configuration identity")

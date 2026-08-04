@@ -11,6 +11,7 @@ from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
 )
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleConfigurationKind,
     LifecycleConfigurationReference,
     LifecycleObjectId,
     LifecycleObjectReference,
@@ -108,17 +109,21 @@ def _command(
         idempotency_key=idempotency_key,
         input_manifest_id=ArtifactId("lifecycle-input-1"),
         input_content_hash=_hash(3),
+        input_manifest_locator=Path("artifacts/lifecycle-input-1.json"),
         input_references=_canonical_inputs(),
         configuration_references=(
             LifecycleConfigurationReference(
+                configuration_kind=LifecycleConfigurationKind.GENERIC,
                 configuration_id=ArtifactId("runner-config"),
                 configuration_version="1",
                 content_hash=_hash(4),
+                locator="configurations/runner-config.json",
             ),
         ),
         model_references=(),
         stop_after_stage=stop_after_stage,
         output_directory=Path("artifacts/lifecycle-tests"),
+        authority_database_locator=None,
     )
 
 
@@ -191,11 +196,13 @@ def _risk_command() -> CanonicalLifecycleCommand:
         idempotency_key="runner-risk-command",
         input_manifest_id=None,
         input_content_hash=None,
+        input_manifest_locator=None,
         input_references=_risk_inputs(),
         configuration_references=(),
         model_references=(),
         stop_after_stage=LifecycleStageName.RISK_REDUCTION,
         output_directory=Path("artifacts/lifecycle-tests"),
+        authority_database_locator=None,
     )
 
 

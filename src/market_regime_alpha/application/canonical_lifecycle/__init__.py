@@ -7,6 +7,7 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleAttempt,
     LifecycleAttemptId,
     LifecycleAttemptResult,
+    LifecycleConfigurationKind,
     LifecycleConfigurationReference,
     LifecycleEvent,
     LifecycleEventId,
@@ -26,6 +27,19 @@ from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
     CanonicalLifecycleInputManifest,
     CanonicalLifecycleInputManifestReader,
     LifecycleAuthorityCeiling,
+)
+from market_regime_alpha.application.canonical_lifecycle.runtime_configuration import (
+    LoadedRuntimeConfiguration,
+    RuntimeConfigurationError,
+    RuntimeConfigurationReader,
+    RuntimeConfigurationSet,
+)
+from market_regime_alpha.application.canonical_lifecycle.replay import (
+    LifecycleReplayCheck,
+    LifecycleReplayReport,
+    LifecycleReplayStatus,
+    ReplayCheckStatus,
+    verify_lifecycle_replay,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LIFECYCLE_STAGE_ORDER,
@@ -50,6 +64,7 @@ __all__ = [
     "LifecycleAttemptId",
     "LifecycleAttemptResult",
     "LifecycleAuthorityCeiling",
+    "LifecycleConfigurationKind",
     "LifecycleConfigurationReference",
     "LifecycleEvent",
     "LifecycleEventId",
@@ -60,6 +75,9 @@ __all__ = [
     "LifecycleObjectType",
     "LifecycleReaderKind",
     "LifecycleRetryState",
+    "LifecycleReplayCheck",
+    "LifecycleReplayReport",
+    "LifecycleReplayStatus",
     "LifecycleRun",
     "LifecycleRunId",
     "LifecycleRunStatus",
@@ -67,8 +85,14 @@ __all__ = [
     "LifecycleStage",
     "LifecycleStageName",
     "LifecycleStageStatus",
+    "LoadedRuntimeConfiguration",
+    "RuntimeConfigurationError",
+    "RuntimeConfigurationReader",
+    "RuntimeConfigurationSet",
+    "ReplayCheckStatus",
     "StageReceipt",
     "validate_lifecycle_run_transition",
     "validate_lifecycle_stage_progression",
     "validate_lifecycle_stage_transition",
+    "verify_lifecycle_replay",
 ]

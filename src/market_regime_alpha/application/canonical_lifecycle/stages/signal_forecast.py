@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleConfigurationKind,
     LifecycleObjectReference,
     LifecycleObjectType,
     LifecycleReaderKind,
@@ -122,6 +123,7 @@ class SignalStageHandler:
         require_configuration_binding(
             context.run,
             self._configuration,
+            configuration_kind=LifecycleConfigurationKind.SIGNAL_MODEL,
             configuration_version=self._configuration.schema_version,
         )
         require_model_binding(
@@ -272,6 +274,7 @@ class PathForecastStageHandler:
         require_configuration_binding(
             context.run,
             self._configuration,
+            configuration_kind=LifecycleConfigurationKind.PATH_FORECAST,
             configuration_version=self._configuration.schema_version,
         )
         require_model_binding(

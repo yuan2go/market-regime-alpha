@@ -7,6 +7,7 @@ import json
 import pytest
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleConfigurationKind,
     LifecycleConfigurationReference,
     LifecycleModelVersionReference,
     LifecycleObjectId,
@@ -84,9 +85,11 @@ def _inputs() -> tuple[LifecycleObjectReference, ...]:
 
 def _configuration() -> LifecycleConfigurationReference:
     return LifecycleConfigurationReference(
+        configuration_kind=LifecycleConfigurationKind.GENERIC,
         configuration_id=ArtifactId("research-configuration-1"),
         configuration_version="1.0.0",
         content_hash=_hash("e"),
+        locator="configurations/research-configuration-1.json",
     )
 
 

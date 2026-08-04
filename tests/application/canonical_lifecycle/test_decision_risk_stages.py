@@ -718,6 +718,7 @@ def test_runner_journals_risk_continuation_receipt_and_exact_inputs(
         model_references=(),
         stop_after_stage=None,
         output_directory=tmp_path / "outputs",
+        authority_database_locator=confirmation_fixture.repository.path,
     )
     risk_handler = _risk_handler(confirmation_fixture)
     handlers = tuple(
@@ -782,14 +783,18 @@ def _risk_configuration_references(
         sorted(
             (
                 LifecycleConfigurationReference(
-                    configuration_kind=LifecycleConfigurationKind.GENERIC,
+                    configuration_kind=(
+                        LifecycleConfigurationKind.RISK_REDUCING_GATE
+                    ),
                     configuration_id=bundle.configuration.configuration_id,
                     configuration_version=bundle.configuration.schema_version,
                     content_hash=bundle.configuration.configuration_hash,
                     locator=str(gate_path.resolve()),
                 ),
                 LifecycleConfigurationReference(
-                    configuration_kind=LifecycleConfigurationKind.GENERIC,
+                    configuration_kind=(
+                        LifecycleConfigurationKind.RISK_REDUCTION_CONFIRMATION_POLICY
+                    ),
                     configuration_id=policy.policy_id,
                     configuration_version=policy.schema_version,
                     content_hash=policy.policy_hash,

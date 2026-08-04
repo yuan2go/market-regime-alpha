@@ -10,6 +10,7 @@ from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
 )
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleConfigurationKind,
     LifecycleConfigurationReference,
     LifecycleModelVersionReference,
     LifecycleObjectId,
@@ -39,9 +40,11 @@ def _hash(char: str) -> str:
 
 def _configuration(char: str = "b") -> LifecycleConfigurationReference:
     return LifecycleConfigurationReference(
+        configuration_kind=LifecycleConfigurationKind.GENERIC,
         configuration_id=ArtifactId(f"configuration-{char}"),
         configuration_version="1.0.0",
         content_hash=_hash(char),
+        locator=f"configurations/configuration-{char}.json",
     )
 
 
@@ -64,6 +67,7 @@ def _command(
     models: tuple[LifecycleModelVersionReference, ...] | None = None,
     stop_after_stage: LifecycleStageName | None = None,
     output_directory: Path = Path("artifacts/lifecycle"),
+    authority_database_locator: Path | None = None,
     resume_run_id: object = None,
     resume_command_hash: str | None = None,
 ) -> CanonicalLifecycleCommand:
@@ -82,6 +86,7 @@ def _command(
         idempotency_key=idempotency_key,
         input_manifest_id=ArtifactId("input-manifest-1"),
         input_content_hash=input_hash,
+        input_manifest_locator=Path("artifacts/input-manifest-1.json"),
         input_references=(
             _canonical_input_references() if inputs is None else inputs
         ),
@@ -91,6 +96,7 @@ def _command(
         model_references=(_model(),) if models is None else models,
         stop_after_stage=stop_after_stage,
         output_directory=output_directory,
+        authority_database_locator=authority_database_locator,
         resume_run_id=resume_run_id,
         resume_command_hash=resume_command_hash,
     )
@@ -205,6 +211,7 @@ def _risk_command(
         idempotency_key="risk-request-1",
         input_manifest_id=None,
         input_content_hash=None,
+        input_manifest_locator=None,
         input_references=(
             _risk_references() if references is None else references
         ),
@@ -212,6 +219,7 @@ def _risk_command(
         model_references=(),
         stop_after_stage=None,
         output_directory=Path("artifacts/lifecycle"),
+        authority_database_locator=None,
     )
 
 
@@ -260,6 +268,7 @@ def test_semantic_fields_each_change_command_hash() -> None:
         ),
         _command(configurations=(_configuration("8"),)),
         _command(models=(_model("7"),)),
+        _command(authority_database_locator=Path("authority/domain.sqlite3")),
     )
     assert all(item.command_hash != original.command_hash for item in variants)
 

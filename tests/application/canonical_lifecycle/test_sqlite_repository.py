@@ -61,11 +61,13 @@ def _command(
         idempotency_key=idempotency_key,
         input_manifest_id=ArtifactId("composite-input-1"),
         input_content_hash=input_hash,
+        input_manifest_locator=tmp_path / "input-manifest.json",
         input_references=_input_references(),
         configuration_references=(),
         model_references=(),
         stop_after_stage=None,
         output_directory=output_directory or tmp_path / "artifacts",
+        authority_database_locator=None,
     )
 
 

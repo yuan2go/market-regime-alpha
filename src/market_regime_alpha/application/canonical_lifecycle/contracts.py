@@ -113,6 +113,18 @@ class LifecycleReaderKind(str, Enum):
     MODEL_COMPARISON_REPORT_READER = "MODEL_COMPARISON_REPORT_READER"
 
 
+class LifecycleConfigurationKind(str, Enum):
+    """Typed restart boundary for executable lifecycle configuration files."""
+
+    RESEARCH_PIPELINE = "RESEARCH_PIPELINE"
+    SIGNAL_MODEL = "SIGNAL_MODEL"
+    PATH_FORECAST = "PATH_FORECAST"
+    COMPLETE_ACCOUNT_RISK = "COMPLETE_ACCOUNT_RISK"
+    RISK_REDUCING_GATE = "RISK_REDUCING_GATE"
+    RISK_REDUCTION_CONFIRMATION_POLICY = "RISK_REDUCTION_CONFIRMATION_POLICY"
+    GENERIC = "GENERIC"
+
+
 class LifecycleRetryState(str, Enum):
     NOT_REQUIRED = "NOT_REQUIRED"
     AVAILABLE = "AVAILABLE"
@@ -300,25 +312,38 @@ class LifecycleObjectReference:
 
 @dataclass(frozen=True, slots=True)
 class LifecycleConfigurationReference:
+    configuration_kind: LifecycleConfigurationKind
     configuration_id: ArtifactId
     configuration_version: str
     content_hash: str
+    locator: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.configuration_kind, LifecycleConfigurationKind):
+            raise TypeError("configuration_kind must be a LifecycleConfigurationKind")
         if not isinstance(self.configuration_id, ArtifactId):
             raise TypeError("configuration_id must be an ArtifactId")
         require_text("configuration_version", self.configuration_version)
         require_sha256("configuration content_hash", self.content_hash)
+        require_text("configuration locator", self.locator)
+        if "://" in self.locator or "\x00" in self.locator:
+            raise ValueError("configuration locator must be a controlled local locator")
 
     @property
-    def sort_key(self) -> tuple[str, str]:
-        return str(self.configuration_id), self.configuration_version
+    def sort_key(self) -> tuple[str, str, str]:
+        return (
+            self.configuration_kind.value,
+            str(self.configuration_id),
+            self.configuration_version,
+        )
 
     def to_canonical_dict(self) -> dict[str, str]:
         return {
+            "configuration_kind": self.configuration_kind.value,
             "configuration_id": str(self.configuration_id),
             "configuration_version": self.configuration_version,
             "content_hash": self.content_hash,
+            "locator": self.locator,
         }
 
     @classmethod
@@ -327,13 +352,23 @@ class LifecycleConfigurationReference:
     ) -> LifecycleConfigurationReference:
         _expect_fields(
             payload,
-            {"configuration_id", "configuration_version", "content_hash"},
+            {
+                "configuration_kind",
+                "configuration_id",
+                "configuration_version",
+                "content_hash",
+                "locator",
+            },
             "LifecycleConfigurationReference",
         )
         return cls(
+            configuration_kind=LifecycleConfigurationKind(
+                _text(payload, "configuration_kind")
+            ),
             configuration_id=ArtifactId(_text(payload, "configuration_id")),
             configuration_version=_text(payload, "configuration_version"),
             content_hash=_text(payload, "content_hash"),
+            locator=_text(payload, "locator"),
         )
 
 

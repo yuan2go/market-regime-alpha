@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleConfigurationKind,
     LifecycleObjectReference,
     LifecycleObjectType,
     LifecycleReaderKind,
@@ -127,6 +128,7 @@ class PlatformResearchStageHandler:
         require_configuration_binding(
             context.run,
             self._configuration,
+            configuration_kind=LifecycleConfigurationKind.RESEARCH_PIPELINE,
             configuration_version=ResearchPipelineConfig.SCHEMA_VERSION,
         )
         for configuration in (

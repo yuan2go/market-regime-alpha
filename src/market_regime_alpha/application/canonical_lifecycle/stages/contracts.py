@@ -236,8 +236,11 @@ class LifecycleStageContext:
 class LifecycleStageHandler(Protocol):
     """One recoverable adapter around an existing Reader or domain service."""
 
-    stage_name: LifecycleStageName
-    mutation_kind: StageMutationKind
+    @property
+    def stage_name(self) -> LifecycleStageName: ...
+
+    @property
+    def mutation_kind(self) -> StageMutationKind: ...
 
     def recover(
         self, context: LifecycleStageContext

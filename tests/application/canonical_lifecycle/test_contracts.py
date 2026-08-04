@@ -9,6 +9,7 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleAttempt,
     LifecycleAttemptId,
     LifecycleAttemptResult,
+    LifecycleConfigurationKind,
     LifecycleConfigurationReference,
     LifecycleEvent,
     LifecycleEventId,
@@ -56,9 +57,11 @@ def _reference() -> LifecycleObjectReference:
 
 def _configuration() -> LifecycleConfigurationReference:
     return LifecycleConfigurationReference(
+        configuration_kind=LifecycleConfigurationKind.GENERIC,
         configuration_id=ArtifactId("configuration-1"),
         configuration_version="1.0.0",
         content_hash=HASH_B,
+        locator="configurations/configuration-1.json",
     )
 
 

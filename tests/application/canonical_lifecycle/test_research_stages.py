@@ -10,6 +10,7 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleAttempt,
     LifecycleAttemptId,
     LifecycleAttemptResult,
+    LifecycleConfigurationKind,
     LifecycleConfigurationReference,
     LifecycleModelVersionReference,
     LifecycleObjectId,
@@ -172,10 +173,17 @@ def _configuration_reference(configuration: object, version: str) -> LifecycleCo
     configuration_hash = getattr(configuration, "configuration_hash")
     assert isinstance(configuration_id, ArtifactId)
     assert isinstance(configuration_hash, str)
+    kind = {
+        ResearchPipelineConfig: LifecycleConfigurationKind.RESEARCH_PIPELINE,
+        SignalModelConfig: LifecycleConfigurationKind.SIGNAL_MODEL,
+        PathForecastConfig: LifecycleConfigurationKind.PATH_FORECAST,
+    }[type(configuration)]
     return LifecycleConfigurationReference(
+        configuration_kind=kind,
         configuration_id=configuration_id,
         configuration_version=version,
         content_hash=configuration_hash,
+        locator=f"configurations/{configuration_id}.json",
     )
 
 
