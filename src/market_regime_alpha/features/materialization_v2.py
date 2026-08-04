@@ -24,6 +24,19 @@ from market_regime_alpha.features.spine import (
     FeatureDefinitionV2,
     FeatureSetConfiguration,
 )
+from market_regime_alpha.features.materialization_run import (
+    FeatureMaterializationExecutionMode,
+    FeatureMaterializationTaskSpec,
+    SQLiteFeatureMaterializationRunRepository,
+)
+from market_regime_alpha.features.encoding_v2 import (
+    FEATURE_ARTIFACT_ENCODING_V2,
+    FEATURE_BUNDLE_ENCODING_V2,
+    load_feature_artifact_encoding_v2,
+    load_feature_bundle_artifacts_v2,
+    publish_feature_artifact_encoding_v2,
+    publish_feature_bundle_encoding_v2,
+)
 from market_regime_alpha.features.technical.observables import (
     compute_technical_feature,
     missing_technical_feature_computation,
@@ -99,6 +112,26 @@ def publish_feature_artifact_v2(
     root: Path,
     artifact: FeatureArtifactV2,
     failure_injector: FailureInjector | None = None,
+    encoding_version: str = FEATURE_ARTIFACT_ENCODING_V2,
+) -> Path:
+    if encoding_version == FEATURE_ARTIFACT_ENCODING_V2:
+        if failure_injector is not None:
+            raise ValueError("Feature Artifact Encoding V2 has no artifact-level injector")
+        return publish_feature_artifact_encoding_v2(root=root, artifact=artifact)
+    if encoding_version != "feature-artifact-package-json-v1":
+        raise ValueError("unsupported Feature Artifact physical encoding")
+    return _publish_feature_artifact_json_v1(
+        root=root,
+        artifact=artifact,
+        failure_injector=failure_injector,
+    )
+
+
+def _publish_feature_artifact_json_v1(
+    *,
+    root: Path,
+    artifact: FeatureArtifactV2,
+    failure_injector: FailureInjector | None = None,
 ) -> Path:
     artifact.verify_identity()
     root.mkdir(parents=True, exist_ok=True)
@@ -147,6 +180,13 @@ def publish_feature_artifact_v2(
 
 
 def load_verified_feature_artifact_v2(path: Path) -> VerifiedFeatureArtifactV2:
+    if (path / "encoding.json").is_file():
+        verified = load_feature_artifact_encoding_v2(path)
+        return VerifiedFeatureArtifactV2(
+            root=verified.root,
+            artifact=verified.artifact,
+            checksums_hash=verified.physical_checksums_hash,
+        )
     return _load_verified_feature_artifact_v2(path, enforce_directory_identity=True)
 
 
@@ -186,6 +226,37 @@ def _load_verified_feature_artifact_v2(
 
 
 def publish_feature_bundle_v2(
+    *,
+    root: Path,
+    artifact_root: Path,
+    bundle: FeatureBundleArtifact,
+    failure_injector: FailureInjector | None = None,
+    encoding_version: str = FEATURE_BUNDLE_ENCODING_V2,
+) -> Path:
+    if encoding_version == FEATURE_BUNDLE_ENCODING_V2:
+        artifacts = tuple(
+            load_verified_feature_artifact_v2(
+                artifact_root / str(reference.artifact_id)
+            ).artifact
+            for reference in bundle.feature_artifact_references
+        )
+        return publish_feature_bundle_encoding_v2(
+            root=root,
+            bundle=bundle,
+            artifacts=artifacts,
+            failure_injector=failure_injector,
+        )
+    if encoding_version != "feature-bundle-package-json-v1":
+        raise ValueError("unsupported Feature Bundle physical encoding")
+    return _publish_feature_bundle_json_v1(
+        root=root,
+        artifact_root=artifact_root,
+        bundle=bundle,
+        failure_injector=failure_injector,
+    )
+
+
+def _publish_feature_bundle_json_v1(
     *,
     root: Path,
     artifact_root: Path,
@@ -248,6 +319,31 @@ def publish_feature_bundle_v2(
 def load_verified_feature_bundle_v2(
     path: Path, *, artifact_root: Path
 ) -> VerifiedFeatureBundleV2:
+    if (path / "encoding.json").is_file():
+        bundle, artifacts, checksums_hash = load_feature_bundle_artifacts_v2(path)
+        missing = tuple(
+            artifact
+            for artifact in artifacts
+            if not (artifact_root / str(artifact.artifact_id)).is_dir()
+        )
+        if missing:
+            raise ValueError("referenced Feature Artifact is missing")
+        verified_artifacts = tuple(
+            VerifiedFeatureArtifactV2(
+                root=artifact_root / str(artifact.artifact_id),
+                artifact=artifact,
+                checksums_hash=load_verified_feature_artifact_v2(
+                    artifact_root / str(artifact.artifact_id)
+                ).checksums_hash,
+            )
+            for artifact in artifacts
+        )
+        return VerifiedFeatureBundleV2(
+            root=path.resolve(),
+            artifact=bundle,
+            artifacts=verified_artifacts,
+            checksums_hash=checksums_hash,
+        )
     return _load_verified_feature_bundle_v2(
         path,
         artifact_root=artifact_root,
@@ -315,16 +411,28 @@ class FeatureMaterializationRunner:
         code_revision: str,
         output_root: Path,
         idempotency_key: str,
-        resume: bool,
+        execution_mode: FeatureMaterializationExecutionMode,
+        artifact_encoding_version: str = FEATURE_ARTIFACT_ENCODING_V2,
+        bundle_encoding_version: str = FEATURE_BUNDLE_ENCODING_V2,
     ) -> FeatureMaterializationReceipt:
         if not isinstance(decision_time, datetime) or not isinstance(created_at, datetime):
             raise TypeError("decision_time and created_at must be datetime")
         require_utc_second("decision_time", decision_time)
         require_utc_second("created_at", created_at)
-        if not isinstance(resume, bool):
-            raise TypeError("resume must be boolean")
+        if not isinstance(execution_mode, FeatureMaterializationExecutionMode):
+            raise TypeError("execution_mode must be FeatureMaterializationExecutionMode")
         require_text("code_revision", code_revision)
         require_text("idempotency_key", idempotency_key)
+        if artifact_encoding_version not in {
+            FEATURE_ARTIFACT_ENCODING_V2,
+            "feature-artifact-package-json-v1",
+        }:
+            raise ValueError("unsupported Feature Artifact physical encoding")
+        if bundle_encoding_version not in {
+            FEATURE_BUNDLE_ENCODING_V2,
+            "feature-bundle-package-json-v1",
+        }:
+            raise ValueError("unsupported Feature Bundle physical encoding")
         feature_set.verify_identity()
         dataset = verified_dataset.artifact
         dataset.verify_identity()
@@ -346,25 +454,84 @@ class FeatureMaterializationRunner:
                 "created_at": created_at.isoformat(),
                 "selected_symbols": list(selected_symbols),
                 "code_revision": code_revision,
+                "artifact_encoding_version": artifact_encoding_version,
+                "bundle_encoding_version": bundle_encoding_version,
             }
         )
-        command_path = _command_path(output_root, idempotency_key)
-        if command_path.exists():
-            return _load_materialization_receipt(
-                command_path=command_path,
-                command_hash=command_hash,
-                output_root=output_root,
-            )
-        artifacts = self._compute_artifacts(
-            verified_dataset=verified_dataset,
+        task_specs = self._task_specs(
             feature_set=feature_set,
-            decision_time=decision_time,
-            created_at=created_at,
             selected_symbols=selected_symbols,
         )
+        repository = SQLiteFeatureMaterializationRunRepository(
+            output_root / "materialization-run.sqlite3"
+        )
+        snapshot = repository.prepare(
+            idempotency_key=idempotency_key,
+            command_hash=command_hash,
+            tasks=task_specs,
+            mode=execution_mode,
+        )
+        if execution_mode is FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE:
+            if snapshot.receipt is None:
+                raise ValueError("completed Feature materialization run has no Receipt")
+            _verify_materialization_receipt_package(
+                receipt=snapshot.receipt,
+                output_root=output_root,
+            )
+            return snapshot.receipt
         artifact_root = output_root / "feature-artifacts"
-        for artifact in artifacts:
-            publish_feature_artifact_v2(root=artifact_root, artifact=artifact)
+        while True:
+            claims = tuple(
+                claim
+                for _ in range(self._max_workers)
+                if (claim := repository.claim_next(run_id=snapshot.run_id)) is not None
+            )
+            if not claims:
+                break
+            outstanding = list(claims)
+            try:
+                computed = self._compute_artifacts(
+                    verified_dataset=verified_dataset,
+                    feature_set=feature_set,
+                    decision_time=decision_time,
+                    created_at=created_at,
+                    selected_symbols=selected_symbols,
+                    task_scope=tuple(
+                        (item.symbol, item.feature_id) for item in claims
+                    ),
+                )
+                by_scope = {
+                    (item.symbol, item.feature_id): item for item in computed
+                }
+                for claim in claims:
+                    artifact = by_scope[(claim.symbol, claim.feature_id)]
+                    if artifact.timeframe is not claim.timeframe:
+                        raise ValueError("materialization task timeframe changed")
+                    publish_feature_artifact_v2(
+                        root=artifact_root,
+                        artifact=artifact,
+                        encoding_version=artifact_encoding_version,
+                    )
+                    repository.complete_task(
+                        claim,
+                        artifact_id=str(artifact.artifact_id),
+                        artifact_hash=artifact.content_hash,
+                    )
+                    outstanding.remove(claim)
+            except Exception as exc:
+                for claim in outstanding:
+                    repository.fail_task(claim, error_message=f"{type(exc).__name__}:{exc}")
+                raise
+        artifacts = tuple(
+            load_verified_feature_artifact_v2(artifact_root / artifact_id).artifact
+            for artifact_id, artifact_hash in repository.completed_artifacts(snapshot.run_id)
+            if _verified_artifact_hash(
+                artifact_root / artifact_id,
+                expected_hash=artifact_hash,
+            )
+        )
+        if len(artifacts) != len(task_specs):
+            raise ValueError("Feature materialization durable task projection is incomplete")
         bundle = FeatureBundleArtifact.create(
             dataset=dataset,
             feature_set=feature_set,
@@ -377,33 +544,43 @@ class FeatureMaterializationRunner:
             root=output_root / "feature-bundles",
             artifact_root=artifact_root,
             bundle=bundle,
+            encoding_version=bundle_encoding_version,
         )
         receipt = FeatureMaterializationReceipt.create(
             command_hash=command_hash,
             bundle=bundle,
         )
-        try:
-            _write_command(
-                path=command_path,
-                payload={
-                    "schema_version": "feature-materialization-command-index-v1",
-                    "idempotency_key_hash": canonical_hash(
-                        {"idempotency_key": idempotency_key}
-                    ),
-                    "command_hash": command_hash,
-                    "receipt": receipt.to_canonical_dict(),
-                },
-            )
-        except FileExistsError:
-            concurrent = _load_materialization_receipt(
-                command_path=command_path,
-                command_hash=command_hash,
-                output_root=output_root,
-            )
-            if concurrent != receipt:
-                raise ValueError("concurrent materialization receipt mismatch")
-            return concurrent
+        repository.finalize(run_id=snapshot.run_id, receipt=receipt)
         return receipt
+
+    @staticmethod
+    def _task_specs(
+        *,
+        feature_set: FeatureSetConfiguration,
+        selected_symbols: tuple[str, ...],
+    ) -> tuple[FeatureMaterializationTaskSpec, ...]:
+        specifications: list[FeatureMaterializationTaskSpec] = []
+        for symbol in selected_symbols:
+            for configuration in feature_set.configurations:
+                raw_timeframe = configuration.parameter_map().get("selected_timeframe")
+                if raw_timeframe is None:
+                    raise FeatureConfigurationInvalidError(
+                        f"invalid configuration for {configuration.feature_id}"
+                    )
+                try:
+                    timeframe = Timeframe(raw_timeframe)
+                except ValueError as exc:
+                    raise FeatureConfigurationInvalidError(
+                        f"invalid configuration for {configuration.feature_id}"
+                    ) from exc
+                specifications.append(
+                    FeatureMaterializationTaskSpec(
+                        symbol=symbol,
+                        feature_id=configuration.feature_id,
+                        timeframe=timeframe,
+                    )
+                )
+        return tuple(sorted(specifications, key=lambda item: item.task_key))
 
     def _compute_artifacts(
         self,
@@ -413,6 +590,7 @@ class FeatureMaterializationRunner:
         decision_time: datetime,
         created_at: datetime,
         selected_symbols: tuple[str, ...],
+        task_scope: tuple[tuple[str, str], ...] | None = None,
     ) -> tuple[FeatureArtifactV2, ...]:
         definitions = {item.feature_id: item for item in feature_set.definitions}
         configurations = {
@@ -428,11 +606,20 @@ class FeatureMaterializationRunner:
         bars_by_scope = {
             key: tuple(values) for key, values in grouped.items()
         }
-        tasks = tuple(
-            (symbol, feature_id)
-            for symbol in selected_symbols
-            for feature_id in sorted(definitions)
+        tasks = (
+            tuple(
+                (symbol, feature_id)
+                for symbol in selected_symbols
+                for feature_id in sorted(definitions)
+            )
+            if task_scope is None
+            else tuple(task_scope)
         )
+        if len(tasks) != len(set(tasks)) or any(
+            symbol not in selected_symbols or feature_id not in definitions
+            for symbol, feature_id in tasks
+        ):
+            raise ValueError("Feature materialization task scope is invalid")
 
         def compute(task: tuple[str, str]) -> FeatureArtifactV2:
             symbol, feature_id = task
@@ -515,6 +702,42 @@ def replay_feature_bundle_v2(
     if report_root is not None:
         publish_feature_replay_report(root=report_root, report=report)
     return report
+
+
+def migrate_feature_bundle_encoding_v1_to_v2(
+    *,
+    source_bundle_path: Path,
+    source_artifact_root: Path,
+    target_bundle_root: Path,
+    target_artifact_root: Path,
+) -> Path:
+    """Re-encode verified JSON V1 Feature packages without semantic mutation."""
+
+    if (source_bundle_path / "encoding.json").exists():
+        raise ValueError("Feature migration source must use JSON V1 encoding")
+    verified = _load_verified_feature_bundle_v2(
+        source_bundle_path,
+        artifact_root=source_artifact_root,
+        enforce_directory_identity=True,
+    )
+    for item in verified.artifacts:
+        publish_feature_artifact_v2(
+            root=target_artifact_root,
+            artifact=item.artifact,
+            encoding_version=FEATURE_ARTIFACT_ENCODING_V2,
+        )
+    migrated = publish_feature_bundle_v2(
+        root=target_bundle_root,
+        artifact_root=target_artifact_root,
+        bundle=verified.artifact,
+        encoding_version=FEATURE_BUNDLE_ENCODING_V2,
+    )
+    reloaded = load_verified_feature_bundle_v2(
+        migrated, artifact_root=target_artifact_root
+    )
+    if reloaded.artifact.to_canonical_dict() != verified.artifact.to_canonical_dict():
+        raise ValueError("Feature V1 to V2 migration changed logical identity")
+    return migrated
 
 
 def recompute_feature_bundle_v2(
@@ -663,6 +886,28 @@ def _verify_reference(*, verified: Any, reference: Any) -> None:
         raise ValueError("Feature Bundle reference projection mismatch")
 
 
+def _verified_artifact_hash(path: Path, *, expected_hash: str) -> bool:
+    verified = load_verified_feature_artifact_v2(path)
+    if verified.artifact.content_hash != expected_hash:
+        raise ValueError("Feature materialization task Artifact hash mismatch")
+    return True
+
+
+def _verify_materialization_receipt_package(
+    *, receipt: FeatureMaterializationReceipt, output_root: Path
+) -> None:
+    receipt.verify_identity()
+    verified = load_verified_feature_bundle_v2(
+        output_root / receipt.bundle_locator,
+        artifact_root=output_root / "feature-artifacts",
+    )
+    if (
+        verified.artifact.bundle_id != receipt.bundle_id
+        or verified.artifact.content_hash != receipt.bundle_hash
+    ):
+        raise ValueError("Feature materialization Receipt Bundle mismatch")
+
+
 def _command_path(output_root: Path, idempotency_key: str) -> Path:
     key_hash = canonical_hash({"idempotency_key": idempotency_key}).split(":", 1)[1]
     return output_root / "materialization-commands" / f"{key_hash}.json"
@@ -775,6 +1020,7 @@ __all__ = [
     "load_verified_feature_artifact_v2",
     "load_verified_feature_bundle_v2",
     "load_verified_feature_replay_report",
+    "migrate_feature_bundle_encoding_v1_to_v2",
     "publish_feature_artifact_v2",
     "publish_feature_bundle_v2",
     "publish_feature_replay_report",

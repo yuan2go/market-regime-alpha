@@ -285,6 +285,85 @@ def test_zero_volume_vwap_is_missing_not_close_fallback() -> None:
     assert values["session_vwap"].missing_reason_codes == ("ZERO_CUMULATIVE_VOLUME",)
 
 
+def _with_volume_unit(
+    bar: CanonicalMarketBar, unit: VolumeUnit
+) -> CanonicalMarketBar:
+    return CanonicalMarketBar.create(
+        symbol=bar.symbol,
+        exchange=bar.exchange,
+        asset_type=bar.asset_type,
+        timeframe=bar.timeframe,
+        market_date=bar.market_date,
+        event_start=bar.event_start,
+        event_end=bar.event_end,
+        available_at=bar.available_at,
+        open=bar.open,
+        high=bar.high,
+        low=bar.low,
+        close=bar.close,
+        previous_close=bar.previous_close,
+        volume=bar.volume,
+        volume_unit=unit,
+        amount=bar.amount,
+        turnover_rate=bar.turnover_rate,
+        adjustment_mode=bar.adjustment_mode,
+        adjustment_factor=bar.adjustment_factor,
+        adjustment_factor_id=bar.adjustment_factor_id,
+        adjustment_factor_hash=bar.adjustment_factor_hash,
+        trading_status=bar.trading_status,
+        price_limit_state=bar.price_limit_state,
+        source_artifact_id=bar.source_artifact_id,
+        source_content_hash=bar.source_content_hash,
+    )
+
+
+def test_vwap_rejects_lots_and_mixed_volume_units() -> None:
+    shares = _minute_bars()
+    all_lots = tuple(_with_volume_unit(item, VolumeUnit.LOTS) for item in shares)
+    mixed = (shares[0], _with_volume_unit(shares[1], VolumeUnit.LOTS), shares[2])
+
+    for bars in (all_lots, mixed):
+        values = _values(VWAP_FEATURE_ID, bars)
+        assert all(item.state is FeatureValueState.MISSING for item in values.values())
+        assert all(
+            item.missing_reason_codes == ("VOLUME_UNIT_NOT_CANONICAL_SHARES",)
+            for item in values.values()
+        )
+
+
+def test_vwap_zero_amount_with_positive_volume_is_explicitly_missing() -> None:
+    bar = _minute_bars()[0]
+    zero_amount = CanonicalMarketBar.create(
+        symbol=bar.symbol,
+        exchange=bar.exchange,
+        asset_type=bar.asset_type,
+        timeframe=bar.timeframe,
+        market_date=bar.market_date,
+        event_start=bar.event_start,
+        event_end=bar.event_end,
+        available_at=bar.available_at,
+        open=bar.open,
+        high=bar.high,
+        low=bar.low,
+        close=bar.close,
+        previous_close=bar.previous_close,
+        volume=bar.volume,
+        volume_unit=bar.volume_unit,
+        amount=Decimal("0"),
+        turnover_rate=None,
+        adjustment_mode=bar.adjustment_mode,
+        adjustment_factor=bar.adjustment_factor,
+        trading_status=bar.trading_status,
+        price_limit_state=bar.price_limit_state,
+        source_artifact_id=bar.source_artifact_id,
+        source_content_hash=bar.source_content_hash,
+    )
+    values = _values(VWAP_FEATURE_ID, (zero_amount,))
+    assert values["session_vwap"].missing_reason_codes == (
+        "ZERO_CUMULATIVE_AMOUNT",
+    )
+
+
 def test_overheat_is_observable_only_and_decimal_context_independent() -> None:
     bars = _daily_bars(25)
     original_precision = getcontext().prec

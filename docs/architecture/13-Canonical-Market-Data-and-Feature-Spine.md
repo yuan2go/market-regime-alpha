@@ -5,7 +5,7 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-04
 > **Supersedes:** None
-> **Superseded By:** None
+> **Superseded By:** 14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md for Signal production, freshness, Feature execution and physical encoding
 > **Related Documents:** 04-Data-and-Time-Semantics.md, 09-Platform-Architecture-V2.md, 12-Canonical-Runtime-and-Legacy-Migration.md, decisions/ADR-005-Feature-Materialization-Precedes-Lifecycle-V1.md
 > **Code Evidence:** implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; `market_data/**`, `features/{spine,materialization_v2,v2_contracts}.py`, `features/technical/**`, `signals/{input_assembly,v2}.py`, `application/canonical_lifecycle/stages/signal_forecast.py`
 
@@ -179,9 +179,10 @@ The assembler receives the verified Market Data Dataset itself and reconstructs
 the Bundle's Dataset, adjustment-policy and SourceManifest projection instead
 of trusting self-declared Bundle fields.
 
-The minimum factor count is currently one so the Canonical Signal can consume a
-real non-empty factor while explaining the others. This is a model assumption,
-not evidence that the Signal predicts returns.
+This V2 mapping and its minimum-factor behavior are retained only for historical
+V2 replay. New canonical production uses the all-factor requirement and
+session-aware freshness policies defined in
+14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md.
 
 ## 7. Lifecycle and Forecast safety
 

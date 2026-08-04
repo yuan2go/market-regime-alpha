@@ -50,8 +50,9 @@ from market_regime_alpha.application.canonical_lifecycle.stages.research import 
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.signal_forecast import (
     EntryAssessmentStageHandler,
+    HistoricalCompatibilitySignalStageHandler,
+    HistoricalSignalProductionContext,
     PathForecastStageHandler,
-    SignalStageHandler,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LIFECYCLE_STAGE_ORDER,
@@ -185,13 +186,8 @@ def test_verified_h6_chain_is_durable_replayable_and_clock_independent(
     assert len(history.attempts) == 5
     assert len(history.receipts) == 5
     assert len(history.events) == len(history.event_payloads)
-    assert all(
-        json.loads(payload)["run_id"] == str(result.run.run_id)
-        for payload in history.event_payloads
-    )
-    assert {
-        item.stage_name: item.output_hashes for item in history.receipts[:4]
-    } == _settled_output_hashes(history)
+    assert all(json.loads(payload)["run_id"] == str(result.run.run_id) for payload in history.event_payloads)
+    assert {item.stage_name: item.output_hashes for item in history.receipts[:4]} == _settled_output_hashes(history)
     entry_receipt = history.receipts[-1]
     assert entry_receipt.stage_name is LifecycleStageName.ENTRY_ASSESSMENT
     assert "ENTRY_MODEL_EMPIRICALLY_VALIDATED_FALSE" in entry_receipt.reason_codes
@@ -205,14 +201,15 @@ def test_verified_h6_chain_is_durable_replayable_and_clock_independent(
         run_id=result.run.run_id,
     )
     assert replay.status is LifecycleReplayStatus.STABLE
-    assert verify_lifecycle_replay(
-        repository=first_repository,
-        run_id=result.run.run_id,
-    ) == replay
-
-    second_repository = SQLiteLifecycleRunRepository(
-        tmp_path / "second-journal.sqlite3"
+    assert (
+        verify_lifecycle_replay(
+            repository=first_repository,
+            run_id=result.run.run_id,
+        )
+        == replay
     )
+
+    second_repository = SQLiteLifecycleRunRepository(tmp_path / "second-journal.sqlite3")
     second = _canonical_runner(
         fixture,
         repository=second_repository,
@@ -229,9 +226,7 @@ def test_verified_h6_chain_is_durable_replayable_and_clock_independent(
     )
 
     assert second_result.run.status is LifecycleRunStatus.BLOCKED_BY_MODEL_VALIDATION
-    assert _settled_output_hashes(
-        second_repository.history(second_result.run.run_id)
-    ) == _settled_output_hashes(history)
+    assert _settled_output_hashes(second_repository.history(second_result.run.run_id)) == _settled_output_hashes(history)
 
 
 def test_risk_continuation_requires_external_h45_then_observes_one_manual_trade(
@@ -254,9 +249,7 @@ def test_risk_continuation_requires_external_h45_then_observes_one_manual_trade(
         repository=journal,
         as_of=as_of,
     )
-    confirmation_command = _confirmation_command_for_references(
-        authority, references
-    )
+    confirmation_command = _confirmation_command_for_references(authority, references)
     before = _execution_counts(authority.repository)
 
     waiting = runner.run(command)
@@ -279,9 +272,7 @@ def test_risk_continuation_requires_external_h45_then_observes_one_manual_trade(
         before[1] + 1,
         before[2],
     )
-    assert (
-        authority.repository.confirm_risk_reduction(confirmation_command) == confirmed
-    )
+    assert authority.repository.confirm_risk_reduction(confirmation_command) == confirmed
     assert _execution_counts(authority.repository) == after_confirmation
 
     resumed = runner.resume(command.run_id)
@@ -294,19 +285,14 @@ def test_risk_continuation_requires_external_h45_then_observes_one_manual_trade(
     )
     assert _execution_counts(authority.repository) == after_confirmation
     manual_trade = next(
-        reference
-        for reference in resumed.stages[10].output_references
-        if reference.object_type is LifecycleObjectType.MANUAL_TRADE
+        reference for reference in resumed.stages[10].output_references if reference.object_type is LifecycleObjectType.MANUAL_TRADE
     )
     assert str(manual_trade.object_id) == str(confirmed.manual_trade.manual_trade_id)
     assert "EXISTING_MANUAL_TRADE_VERIFIED" in resumed.receipts[-1].reason_codes
     assert "NO_FILL_CREATED" in resumed.receipts[-1].reason_codes
     assert "NO_ORDER_CREATED" in resumed.receipts[-1].reason_codes
     assert "BROKER_NOT_INVOKED" in resumed.receipts[-1].reason_codes
-    assert not any(
-        "broker" in table.lower() or "order" in table.lower()
-        for table in _table_names(authority.repository.path)
-    )
+    assert not any("broker" in table.lower() or "order" in table.lower() for table in _table_names(authority.repository.path))
 
     replayed_resume = runner.run(command)
     assert replayed_resume.run == resumed.run
@@ -344,9 +330,7 @@ def test_manual_confirmation_rejects_policy_not_bound_by_continuation(
 
     assert captured.value.stage_name is LifecycleStageName.MANUAL_CONFIRMATION
     assert captured.value.exception_type == "ValueError"
-    assert captured.value.exception_message == (
-        "H4.5 confirmation policy does not match the command-bound policy"
-    )
+    assert captured.value.exception_message == ("H4.5 confirmation policy does not match the command-bound policy")
     failed = journal.history(command.run_id)
     assert failed.run.status is LifecycleRunStatus.FAILED
     assert failed.stages[9].stage_status is LifecycleStageStatus.FAILED
@@ -390,9 +374,7 @@ def test_manual_trade_commit_survives_crash_before_lifecycle_receipt(
     assert waiting.run.status is LifecycleRunStatus.WAITING_FOR_MANUAL_CONFIRMATION
     assert risk.recover_calls == 1
     counts_before_confirmation = _execution_counts(authority.repository)
-    confirmation_result = authority.repository.confirm_risk_reduction(
-        _confirmation_command_for_references(authority, references)
-    )
+    confirmation_result = authority.repository.confirm_risk_reduction(_confirmation_command_for_references(authority, references))
     assert confirmation_result.manual_trade is not None
     committed_trade_id = confirmation_result.manual_trade.manual_trade_id
     committed_counts = _execution_counts(authority.repository)
@@ -407,10 +389,7 @@ def test_manual_trade_commit_survives_crash_before_lifecycle_receipt(
     assert after_crash.run.status is LifecycleRunStatus.FAILED
     assert after_crash.stages[9].stage_status is LifecycleStageStatus.FAILED
     assert after_crash.stages[9].attempt_count == 1
-    assert not any(
-        receipt.stage_name is LifecycleStageName.MANUAL_CONFIRMATION
-        for receipt in after_crash.receipts
-    )
+    assert not any(receipt.stage_name is LifecycleStageName.MANUAL_CONFIRMATION for receipt in after_crash.receipts)
     assert _execution_counts(authority.repository) == committed_counts
 
     durable_repository = SQLiteLifecycleRunRepository(journal_path)
@@ -427,24 +406,15 @@ def test_manual_trade_commit_survives_crash_before_lifecycle_receipt(
     assert risk.recover_calls == 1
     assert confirmation.recover_calls == 2
     assert manual_trade.recover_calls == 1
-    confirmation_receipts = tuple(
-        receipt
-        for receipt in resumed.receipts
-        if receipt.stage_name is LifecycleStageName.MANUAL_CONFIRMATION
-    )
+    confirmation_receipts = tuple(receipt for receipt in resumed.receipts if receipt.stage_name is LifecycleStageName.MANUAL_CONFIRMATION)
     assert len(confirmation_receipts) == 1
     manual_trade_reference = next(
-        reference
-        for reference in resumed.stages[10].output_references
-        if reference.object_type is LifecycleObjectType.MANUAL_TRADE
+        reference for reference in resumed.stages[10].output_references if reference.object_type is LifecycleObjectType.MANUAL_TRADE
     )
     assert str(manual_trade_reference.object_id) == str(committed_trade_id)
     assert _execution_counts(authority.repository) == committed_counts
     assert committed_counts[2] == counts_before_confirmation[2]
-    assert not any(
-        "broker" in table.lower() or "order" in table.lower()
-        for table in _table_names(authority.repository.path)
-    )
+    assert not any("broker" in table.lower() or "order" in table.lower() for table in _table_names(authority.repository.path))
 
 
 def test_delivery_failure_after_real_research_receipt_resumes_at_signal(
@@ -452,9 +422,7 @@ def test_delivery_failure_after_real_research_receipt_resumes_at_signal(
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path)
     repository = SQLiteLifecycleRunRepository(tmp_path / "recovery-journal.sqlite3")
-    handlers = list(
-        _canonical_handlers(fixture, output_root=tmp_path / "recovery-runtime")
-    )
+    handlers = list(_canonical_handlers(fixture, output_root=tmp_path / "recovery-runtime"))
     evidence = _CountingHandler(handlers[0])
     research = _CountingHandler(handlers[1])
     handlers[0] = evidence
@@ -505,10 +473,7 @@ def test_delivery_failure_after_real_research_receipt_resumes_at_signal(
     recovered = repository.history(command.run_id)
     assert recovered.stages[0].attempt_count == 1
     assert recovered.stages[1].attempt_count == 1
-    assert sum(
-        receipt.stage_name is LifecycleStageName.PLATFORM_RESEARCH
-        for receipt in recovered.receipts
-    ) == 1
+    assert sum(receipt.stage_name is LifecycleStageName.PLATFORM_RESEARCH for receipt in recovered.receipts) == 1
 
 
 def _canonical_fixture(tmp_path: Path) -> tuple[StageFixture, Path]:
@@ -522,15 +487,9 @@ def _canonical_fixture(tmp_path: Path) -> tuple[StageFixture, Path]:
     }
     references = []
     for reference in fixture.configuration_references:
-        configuration = next(
-            item
-            for item in configurations.values()
-            if getattr(item, "configuration_id") == reference.configuration_id
-        )
+        configuration = next(item for item in configurations.values() if getattr(item, "configuration_id") == reference.configuration_id)
         path = config_root / f"{reference.configuration_id}.json"
-        path.write_text(
-            canonical_json(configuration.to_canonical_dict()), encoding="utf-8"
-        )
+        path.write_text(canonical_json(configuration.to_canonical_dict()), encoding="utf-8")
         references.append(replace(reference, locator=str(path.resolve())))
     fixture = replace(fixture, configuration_references=tuple(references))
     manifest = CanonicalLifecycleInputManifest.create(
@@ -574,18 +533,15 @@ def _canonical_command(
     )
 
 
-def _canonical_handlers(
-    fixture: StageFixture, *, output_root: Path
-) -> tuple[LifecycleStageHandler, ...]:
+def _canonical_handlers(fixture: StageFixture, *, output_root: Path) -> tuple[LifecycleStageHandler, ...]:
     configured: dict[LifecycleStageName, LifecycleStageHandler] = {
-        LifecycleStageName.VERIFY_COMPOSITE_EVIDENCE: (
-            VerifiedCompositeEvidenceStageHandler()
-        ),
+        LifecycleStageName.VERIFY_COMPOSITE_EVIDENCE: (VerifiedCompositeEvidenceStageHandler()),
         LifecycleStageName.PLATFORM_RESEARCH: PlatformResearchStageHandler(
             configuration=fixture.research_configuration,
             output_root=output_root / "research",
         ),
-        LifecycleStageName.SIGNAL: SignalStageHandler(
+        LifecycleStageName.SIGNAL: HistoricalCompatibilitySignalStageHandler(
+            production_context=HistoricalSignalProductionContext.HISTORICAL_COMPATIBILITY_TEST,
             configuration=fixture.signal_configuration,
             output_root=output_root / "signal",
         ),
@@ -593,14 +549,9 @@ def _canonical_handlers(
             configuration=fixture.forecast_configuration,
             output_root=output_root / "forecast",
         ),
-        LifecycleStageName.ENTRY_ASSESSMENT: EntryAssessmentStageHandler(
-            authority_ceiling=LifecycleAuthorityCeiling()
-        ),
+        LifecycleStageName.ENTRY_ASSESSMENT: EntryAssessmentStageHandler(authority_ceiling=LifecycleAuthorityCeiling()),
     }
-    return tuple(
-        configured.get(stage_name, _NeverCalledHandler(stage_name))
-        for stage_name in LIFECYCLE_STAGE_ORDER
-    )
+    return tuple(configured.get(stage_name, _NeverCalledHandler(stage_name)) for stage_name in LIFECYCLE_STAGE_ORDER)
 
 
 def _canonical_runner(
@@ -622,15 +573,10 @@ def _confirmation_command_for_references(
     references: tuple[LifecycleObjectReference, ...],
 ) -> RiskReductionConfirmationCommand:
     policy_reference = next(
-        reference
-        for reference in references
-        if reference.object_type
-        is LifecycleObjectType.RISK_REDUCTION_CONFIRMATION_POLICY
+        reference for reference in references if reference.object_type is LifecycleObjectType.RISK_REDUCTION_CONFIRMATION_POLICY
     )
     assert policy_reference.locator is not None
-    policy = RiskReductionConfirmationPolicy.from_canonical_dict(
-        json.loads(Path(policy_reference.locator).read_text(encoding="utf-8"))
-    )
+    policy = RiskReductionConfirmationPolicy.from_canonical_dict(json.loads(Path(policy_reference.locator).read_text(encoding="utf-8")))
     assert str(policy_reference.object_id) == str(policy.policy_id)
     assert policy_reference.content_hash == policy.policy_hash
     return replace(
@@ -657,9 +603,7 @@ def _risk_command(
         input_content_hash=None,
         input_manifest_locator=None,
         input_references=references,
-        configuration_references=_risk_configuration_references(
-            authority, references, root
-        ),
+        configuration_references=_risk_configuration_references(authority, references, root),
         model_references=(),
         stop_after_stage=None,
         output_directory=root / "risk-output",
@@ -696,11 +640,7 @@ def _risk_handlers(
 
 
 def _settled_output_hashes(history) -> dict[LifecycleStageName, tuple[str, ...]]:
-    return {
-        receipt.stage_name: receipt.output_hashes
-        for receipt in history.receipts
-        if receipt.stage_name in LIFECYCLE_STAGE_ORDER[:4]
-    }
+    return {receipt.stage_name: receipt.output_hashes for receipt in history.receipts if receipt.stage_name in LIFECYCLE_STAGE_ORDER[:4]}
 
 
 def _execution_counts(
@@ -719,9 +659,4 @@ def _execution_counts(
 
 def _table_names(path: Path) -> tuple[str, ...]:
     with sqlite3.connect(path) as connection:
-        return tuple(
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-            )
-        )
+        return tuple(str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"))

@@ -69,6 +69,12 @@ from market_regime_alpha.signals.v2 import (
     load_verified_signal_run_v2,
     replay_signal_run_v2,
 )
+from market_regime_alpha.signals.candidate_view import load_candidate_feature_view
+from market_regime_alpha.signals.v3 import (
+    load_verified_signal_run_v3,
+    replay_signal_run_v3,
+)
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 
 
 class ReplayCheckStatus(str, Enum):
@@ -112,10 +118,7 @@ class LifecycleReplayCheck:
         if self.status in {
             ReplayCheckStatus.REPLAY_STABLE,
             ReplayCheckStatus.VERIFIED_READ_ONLY,
-        } and (
-            self.expected_hash is None
-            or self.observed_hash != self.expected_hash
-        ):
+        } and (self.expected_hash is None or self.observed_hash != self.expected_hash):
             raise ValueError("successful replay check must match the expected hash")
 
     def to_canonical_dict(self) -> dict[str, str | None]:
@@ -144,9 +147,7 @@ class LifecycleReplayReport:
         require_sha256("journal_hash", self.journal_hash)
         if not isinstance(self.status, LifecycleReplayStatus):
             raise TypeError("status must be a LifecycleReplayStatus")
-        if not isinstance(self.checks, tuple) or any(
-            not isinstance(item, LifecycleReplayCheck) for item in self.checks
-        ):
+        if not isinstance(self.checks, tuple) or any(not isinstance(item, LifecycleReplayCheck) for item in self.checks):
             raise TypeError("checks must contain LifecycleReplayCheck values")
         if self.checks != tuple(sorted(self.checks, key=lambda item: item.subject)):
             raise ValueError("replay checks must be sorted by subject")
@@ -207,9 +208,7 @@ class LifecycleReplayReport:
         return {**self.semantic_payload(), "report_hash": self.report_hash}
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> LifecycleReplayReport:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleReplayReport:
         expected = {
             "schema_version",
             "run_id",
@@ -240,12 +239,8 @@ class LifecycleReplayReport:
                 LifecycleReplayCheck(
                     subject=_mapping_text(raw_check, "subject"),
                     status=ReplayCheckStatus(_mapping_text(raw_check, "status")),
-                    expected_hash=_mapping_optional_text(
-                        raw_check, "expected_hash"
-                    ),
-                    observed_hash=_mapping_optional_text(
-                        raw_check, "observed_hash"
-                    ),
+                    expected_hash=_mapping_optional_text(raw_check, "expected_hash"),
+                    observed_hash=_mapping_optional_text(raw_check, "observed_hash"),
                     detail=_mapping_text(raw_check, "detail"),
                 )
             )
@@ -275,16 +270,11 @@ def verify_lifecycle_replay(
     if command.input_manifest_locator is not None:
         checks.append(_verify_input_manifest(command))
     for configuration_reference in command.configuration_references:
-        subject = (
-            f"CONFIGURATION:{configuration_reference.configuration_kind.value}:"
-            f"{configuration_reference.configuration_id}"
-        )
+        subject = f"CONFIGURATION:{configuration_reference.configuration_kind.value}:{configuration_reference.configuration_id}"
         try:
             RuntimeConfigurationReader().read(configuration_reference)
         except RuntimeConfigurationError as exc:
-            checks.append(
-                _failed_check(subject, configuration_reference.content_hash, exc)
-            )
+            checks.append(_failed_check(subject, configuration_reference.content_hash, exc))
         else:
             checks.append(
                 LifecycleReplayCheck(
@@ -300,17 +290,16 @@ def verify_lifecycle_replay(
     for object_reference in command.input_references:
         references[object_reference.sort_key] = object_reference
     for stage in history.stages:
+        for object_reference in stage.input_references:
+            prior = references.setdefault(object_reference.sort_key, object_reference)
+            if prior != object_reference:
+                raise ValueError("journal contains conflicting replay references")
         for object_reference in stage.output_references:
-            prior = references.setdefault(
-                object_reference.sort_key, object_reference
-            )
+            prior = references.setdefault(object_reference.sort_key, object_reference)
             if prior != object_reference:
                 raise ValueError("journal contains conflicting replay references")
     all_references = tuple(references.values())
-    checks.extend(
-        verify_replay_reference(reference, all_references=all_references)
-        for reference in all_references
-    )
+    checks.extend(verify_replay_reference(reference, all_references=all_references) for reference in all_references)
 
     journal_hash = canonical_hash(
         {
@@ -380,9 +369,7 @@ def verify_replay_reference(
                 detail="MANUAL_TRADE_AUTHORITY_DATABASE_NOT_BOUND",
             )
         try:
-            trade = SQLiteRiskReductionManualIntentRepository(
-                authority_database_locator
-            ).get_trade(ManualTradeId(str(reference.object_id)))
+            trade = SQLiteRiskReductionManualIntentRepository(authority_database_locator).get_trade(ManualTradeId(str(reference.object_id)))
             observed_hash = canonical_hash(trade.to_canonical_dict())
             if observed_hash != reference.content_hash:
                 raise ValueError("ManualTrade content hash mismatch")
@@ -407,10 +394,7 @@ def verify_replay_reference(
     if contextual is not None:
         try:
             object_id, observed_hash, status, detail = contextual()
-            if (
-                object_id != str(reference.object_id)
-                or observed_hash != reference.content_hash
-            ):
+            if object_id != str(reference.object_id) or observed_hash != reference.content_hash:
                 raise ValueError("replayed Artifact identity or content hash mismatch")
         except (OSError, KeyError, TypeError, ValueError) as exc:
             return _failed_check(subject, reference.content_hash, exc)
@@ -502,6 +486,15 @@ def _research(path: Path) -> _VerifiedReference:
 
 
 def _signal(path: Path) -> _VerifiedReference:
+    schema = _package_schema(path)
+    if schema == "signal-run-package-v3":
+        v3_value = load_verified_signal_run_v3(path).artifact
+        return (
+            str(v3_value.artifact_id),
+            v3_value.envelope.content_hash,
+            ReplayCheckStatus.VERIFIED_READ_ONLY,
+            "SIGNAL_V3_VERIFIED_REQUIRES_CONTEXTUAL_RECOMPUTATION",
+        )
     value = replay_signal_run(path).artifact
     return (
         str(value.artifact_id),
@@ -551,9 +544,38 @@ def _comparison(path: Path) -> _VerifiedReference:
     )
 
 
-_REFERENCE_VERIFIERS: dict[
-    LifecycleObjectType, Callable[[Path], _VerifiedReference]
-] = {
+def _candidate_feature_view(path: Path) -> _VerifiedReference:
+    value = load_candidate_feature_view(path)
+    return (
+        str(value.view_id),
+        value.content_hash,
+        ReplayCheckStatus.VERIFIED_READ_ONLY,
+        "CANDIDATE_FEATURE_VIEW_REFERENCE_PROJECTION_VERIFIED",
+    )
+
+
+def _candidate_set(path: Path) -> _VerifiedReference:
+    value = replay_research_layer(load_verified_research_artifact(path)).artifact
+    candidate_set = value.candidate_set
+    return (
+        str(candidate_set.envelope.artifact_id),
+        candidate_set.envelope.content_hash,
+        ReplayCheckStatus.REPLAY_STABLE,
+        "CANDIDATE_SET_REBUILT_FROM_PLATFORM_RESEARCH",
+    )
+
+
+def _trading_calendar_reference(path: Path) -> _VerifiedReference:
+    value = _read_trading_calendar(path)
+    return (
+        str(value.artifact_id),
+        value.content_hash,
+        ReplayCheckStatus.VERIFIED_READ_ONLY,
+        "TRADING_CALENDAR_CONTENT_ADDRESS_VERIFIED",
+    )
+
+
+_REFERENCE_VERIFIERS: dict[LifecycleObjectType, Callable[[Path], _VerifiedReference]] = {
     LifecycleObjectType.MARKET_DATA_DATASET: _market_data,
     LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST: _composite,
     LifecycleObjectType.SOURCE_MANIFEST: _source,
@@ -564,6 +586,9 @@ _REFERENCE_VERIFIERS: dict[
     LifecycleObjectType.PATH_FORECAST_ARTIFACT: _forecast,
     LifecycleObjectType.FEATURE_ARTIFACT: _feature,
     LifecycleObjectType.MODEL_COMPARISON_REPORT: _comparison,
+    LifecycleObjectType.CANDIDATE_FEATURE_VIEW: _candidate_feature_view,
+    LifecycleObjectType.CANDIDATE_SET: _candidate_set,
+    LifecycleObjectType.TRADING_CALENDAR_ARTIFACT: _trading_calendar_reference,
 }
 
 
@@ -579,6 +604,10 @@ def _contextual_replay(
         _package_schema(Path(reference.locator)) == "signal-run-package-v2"
     ):
         return lambda: _signal_v2(reference, all_references)
+    if reference.object_type is LifecycleObjectType.SIGNAL_ARTIFACT and (
+        _package_schema(Path(reference.locator)) == "signal-run-package-v3"
+    ):
+        return lambda: _signal_v3(reference, all_references)
     return None
 
 
@@ -589,9 +618,7 @@ def _feature_bundle(
     assert reference.locator is not None
     bundle_path = Path(reference.locator)
     artifact_root = bundle_path.parent.parent / "feature-artifacts"
-    bundle = load_verified_feature_bundle_v2(
-        bundle_path, artifact_root=artifact_root
-    )
+    bundle = load_verified_feature_bundle_v2(bundle_path, artifact_root=artifact_root)
     dataset_reference = _matching_reference(
         all_references,
         object_type=LifecycleObjectType.MARKET_DATA_DATASET,
@@ -630,9 +657,7 @@ def _signal_v2(
     )
     assert bundle_reference.locator is not None
     bundle_path = Path(bundle_reference.locator)
-    stored_bundle = load_verified_feature_bundle_v2(
-        bundle_path, artifact_root=bundle_path.parent.parent / "feature-artifacts"
-    )
+    stored_bundle = load_verified_feature_bundle_v2(bundle_path, artifact_root=bundle_path.parent.parent / "feature-artifacts")
     dataset_reference = _matching_reference(
         all_references,
         object_type=LifecycleObjectType.MARKET_DATA_DATASET,
@@ -659,6 +684,68 @@ def _signal_v2(
     )
 
 
+def _signal_v3(
+    reference: LifecycleObjectReference,
+    all_references: tuple[LifecycleObjectReference, ...],
+) -> _VerifiedReference:
+    assert reference.locator is not None
+    signal_path = Path(reference.locator)
+    signal = load_verified_signal_run_v3(signal_path)
+    bundle_reference = _matching_reference(
+        all_references,
+        object_type=LifecycleObjectType.FEATURE_BUNDLE,
+        object_id=str(signal.artifact.feature_bundle_id),
+        content_hash=signal.artifact.feature_bundle_hash,
+    )
+    assert bundle_reference.locator is not None
+    bundle_path = Path(bundle_reference.locator)
+    stored_bundle = load_verified_feature_bundle_v2(
+        bundle_path,
+        artifact_root=bundle_path.parent.parent / "feature-artifacts",
+    )
+    dataset_reference = _matching_reference(
+        all_references,
+        object_type=LifecycleObjectType.MARKET_DATA_DATASET,
+        object_id=str(signal.artifact.market_data_dataset_id),
+        content_hash=signal.artifact.market_data_dataset_hash,
+    )
+    assert dataset_reference.locator is not None
+    dataset = load_verified_market_data_dataset(Path(dataset_reference.locator))
+    _, recomputed_bundle = recompute_feature_bundle_v2(
+        bundle_path=bundle_path,
+        artifact_root=bundle_path.parent.parent / "feature-artifacts",
+        verified_dataset=dataset,
+    )
+    if recomputed_bundle.artifact != stored_bundle.artifact:
+        raise ValueError("Signal V3 replay Feature Bundle mismatch")
+    calendar_reference = _matching_reference(
+        all_references,
+        object_type=LifecycleObjectType.TRADING_CALENDAR_ARTIFACT,
+        object_id=str(signal.artifact.trading_calendar.artifact_id),
+        content_hash=signal.artifact.trading_calendar.content_hash,
+    )
+    assert calendar_reference.locator is not None
+    calendar = _read_trading_calendar(Path(calendar_reference.locator))
+    replayed = replay_signal_run_v3(
+        signal_path,
+        feature_bundle=recomputed_bundle,
+        verified_dataset=dataset,
+        trading_calendar=calendar,
+    ).artifact
+    return (
+        str(replayed.artifact_id),
+        replayed.envelope.content_hash,
+        ReplayCheckStatus.REPLAY_STABLE,
+        "SIGNAL_V3_FULL_FEATURE_FRESHNESS_RECOMPUTATION_STABLE",
+    )
+
+
+def _read_trading_calendar(path: Path) -> TradingCalendarArtifact:
+    target = path / "artifact.json" if path.is_dir() else path
+    payload = _read_json_object(target)
+    return TradingCalendarArtifact.from_canonical_dict(payload)
+
+
 def _matching_reference(
     references: tuple[LifecycleObjectReference, ...],
     *,
@@ -669,14 +756,10 @@ def _matching_reference(
     matches = tuple(
         item
         for item in references
-        if item.object_type is object_type
-        and str(item.object_id) == object_id
-        and item.content_hash == content_hash
+        if item.object_type is object_type and str(item.object_id) == object_id and item.content_hash == content_hash
     )
     if len(matches) != 1:
-        raise ValueError(
-            f"pure replay requires one matching {object_type.value} reference"
-        )
+        raise ValueError(f"pure replay requires one matching {object_type.value} reference")
     return matches[0]
 
 
@@ -710,9 +793,7 @@ def _failed_check(
     )
 
 
-def _report_status(
-    checks: tuple[LifecycleReplayCheck, ...]
-) -> LifecycleReplayStatus:
+def _report_status(checks: tuple[LifecycleReplayCheck, ...]) -> LifecycleReplayStatus:
     if any(item.status is ReplayCheckStatus.FAILED for item in checks):
         return LifecycleReplayStatus.FAILED
     if any(item.status is ReplayCheckStatus.NOT_COMPARABLE for item in checks):
@@ -739,9 +820,7 @@ def receipt_semantic_fingerprint(receipt: StageReceipt) -> str:
     )
 
 
-def publish_lifecycle_replay_report(
-    *, root: Path, report: LifecycleReplayReport
-) -> Path:
+def publish_lifecycle_replay_report(*, root: Path, report: LifecycleReplayReport) -> Path:
     """Publish one immutable content-addressed replay report."""
 
     if not isinstance(root, Path):
@@ -775,9 +854,7 @@ def _mapping_text(payload: Mapping[str, Any], key: str) -> str:
     return value
 
 
-def _mapping_optional_text(
-    payload: Mapping[str, Any], key: str
-) -> str | None:
+def _mapping_optional_text(payload: Mapping[str, Any], key: str) -> str | None:
     value = payload.get(key)
     if value is None:
         return None

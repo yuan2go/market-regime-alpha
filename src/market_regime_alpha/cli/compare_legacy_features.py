@@ -19,6 +19,7 @@ from market_regime_alpha.cli._feature_output import (
     read_canonical_object,
 )
 from market_regime_alpha.features import (
+    FeatureMaterializationExecutionMode,
     FeatureMaterializationRunner,
     load_verified_feature_bundle_v2,
 )
@@ -80,7 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"legacy-comparison:{dataset.artifact.dataset_id}:"
                 f"{feature_set.feature_set_id}"
             ),
-            resume=True,
+            execution_mode=FeatureMaterializationExecutionMode.START_NEW,
         )
         bundle = load_verified_feature_bundle_v2(
             output_root / receipt.bundle_locator,

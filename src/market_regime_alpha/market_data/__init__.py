@@ -17,6 +17,7 @@ from market_regime_alpha.market_data.contracts import (
 from market_regime_alpha.market_data.artifacts import (
     VerifiedMarketDataDataset,
     load_verified_market_data_dataset,
+    migrate_market_data_package_v1_to_v2,
     publish_market_data_dataset,
     replay_market_data_dataset,
 )
@@ -30,6 +31,13 @@ from market_regime_alpha.market_data.dataset import (
 from market_regime_alpha.market_data.normalization import (
     normalize_public_history_stage,
 )
+from market_regime_alpha.market_data.encoding_v2 import (
+    MARKET_DATA_PACKAGE_ENCODING_V2,
+    MarketDataSelectionV2,
+    load_verified_market_data_dataset_v2,
+    publish_market_data_dataset_v2,
+    read_market_data_selection_v2,
+)
 
 __all__ = [
     "AdjustmentFactorEvidence",
@@ -42,6 +50,8 @@ __all__ = [
     "MarketDataCoverage",
     "MarketDataDatasetArtifact",
     "MarketDataPartition",
+    "MarketDataSelectionV2",
+    "MARKET_DATA_PACKAGE_ENCODING_V2",
     "PriceAdjustmentPolicy",
     "PriceLimitState",
     "Timeframe",
@@ -49,7 +59,11 @@ __all__ = [
     "VerifiedMarketDataDataset",
     "VolumeUnit",
     "load_verified_market_data_dataset",
+    "migrate_market_data_package_v1_to_v2",
+    "load_verified_market_data_dataset_v2",
     "normalize_public_history_stage",
     "publish_market_data_dataset",
+    "publish_market_data_dataset_v2",
+    "read_market_data_selection_v2",
     "replay_market_data_dataset",
 ]

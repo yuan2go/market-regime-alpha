@@ -46,6 +46,7 @@ market_regime_alpha = [
     "execution/migrations/*.sql",
     "application/operational_research/migrations/*.sql",
     "application/canonical_lifecycle/migrations/*.sql",
+    "features/migrations/*.sql",
 ]
 
 [tool.pytest.ini_options]

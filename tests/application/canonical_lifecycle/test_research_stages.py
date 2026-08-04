@@ -36,8 +36,9 @@ from market_regime_alpha.application.canonical_lifecycle.stages.research import 
     PlatformResearchStageHandler,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.signal_forecast import (
+    HistoricalCompatibilitySignalStageHandler,
+    HistoricalSignalProductionContext,
     PathForecastStageHandler,
-    SignalStageHandler,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LIFECYCLE_STAGE_ORDER,
@@ -412,7 +413,8 @@ def _execute_through_forecast(
     research_context = _context(fixture, LifecycleStageName.PLATFORM_RESEARCH, tuple(results))
     results.append(research.execute(research_context))
 
-    signal = SignalStageHandler(
+    signal = HistoricalCompatibilitySignalStageHandler(
+        production_context=HistoricalSignalProductionContext.HISTORICAL_COMPATIBILITY_TEST,
         configuration=fixture.signal_configuration,
         output_root=tmp_path / "runtime" / "signal",
     )
@@ -433,11 +435,11 @@ def test_real_h6_research_signal_forecast_chain_is_verified_and_fail_closed(
 ) -> None:
     _, results = _execute_through_forecast(tmp_path)
 
-    assert sum(
-        item.object_type is LifecycleObjectType.SOURCE_MANIFEST
-        for item in results[0].input_references
-    ) == 2
-    research = load_verified_research_artifact(Path(results[1].output_references[0].locator or ""))
+    assert sum(item.object_type is LifecycleObjectType.SOURCE_MANIFEST for item in results[0].input_references) == 2
+    research_reference = next(
+        item for item in results[1].output_references if item.object_type is LifecycleObjectType.PLATFORM_RESEARCH_ARTIFACT
+    )
+    research = load_verified_research_artifact(Path(research_reference.locator or ""))
     signal = load_verified_signal_run(Path(results[2].output_references[0].locator or ""))
     forecasts = tuple(load_verified_path_forecast(Path(item.locator or "")) for item in results[3].output_references)
 
@@ -484,7 +486,8 @@ def test_research_signal_and_forecast_recover_exact_published_outputs(
             configuration=fixture.research_configuration,
             output_root=tmp_path / "runtime" / "research",
         ),
-        SignalStageHandler(
+        HistoricalCompatibilitySignalStageHandler(
+            production_context=HistoricalSignalProductionContext.HISTORICAL_COMPATIBILITY_TEST,
             configuration=fixture.signal_configuration,
             output_root=tmp_path / "runtime" / "signal",
         ),

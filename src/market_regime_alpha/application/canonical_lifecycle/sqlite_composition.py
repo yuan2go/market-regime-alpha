@@ -85,9 +85,13 @@ from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
 )
 from market_regime_alpha.research.platform_v2.configs import ResearchPipelineConfig
-from market_regime_alpha.signals.engine import SignalModelConfig
-from market_regime_alpha.signals.input_assembly import (
-    SignalInputMappingConfiguration,
+from market_regime_alpha.signals.decimal_model import SignalModelConfigurationV2
+from market_regime_alpha.signals.input_v3 import (
+    SignalInputMappingConfigurationV2,
+)
+from market_regime_alpha.signals.policies import (
+    SignalFactorFreshnessPolicy,
+    SignalFactorRequirementPolicy,
 )
 
 
@@ -135,6 +139,12 @@ def _build_handlers(
     feature_set_configuration = configurations.get(
         LifecycleConfigurationKind.FEATURE_SET
     )
+    signal_requirement_policy = configurations.get(
+        LifecycleConfigurationKind.SIGNAL_FACTOR_REQUIREMENT
+    )
+    signal_freshness_policy = configurations.get(
+        LifecycleConfigurationKind.SIGNAL_FACTOR_FRESHNESS
+    )
     forecast_configuration = configurations.get(
         LifecycleConfigurationKind.PATH_FORECAST
     )
@@ -164,28 +174,30 @@ def _build_handlers(
             "RESEARCH_PIPELINE_CONFIGURATION_UNAVAILABLE",
             "no command-bound RESEARCH_PIPELINE configuration was supplied",
         )
-    if isinstance(signal_configuration, SignalModelConfig):
+    if (
+        isinstance(signal_configuration, SignalModelConfigurationV2)
+        and isinstance(signal_input_mapping, SignalInputMappingConfigurationV2)
+        and isinstance(feature_set_configuration, FeatureSetConfiguration)
+        and isinstance(signal_requirement_policy, SignalFactorRequirementPolicy)
+        and isinstance(signal_freshness_policy, SignalFactorFreshnessPolicy)
+    ):
         handlers[LifecycleStageName.SIGNAL] = SignalStageHandler(
             configuration=signal_configuration,
             output_root=output_root / "signals",
-            mapping_configuration=(
-                signal_input_mapping
-                if isinstance(
-                    signal_input_mapping, SignalInputMappingConfiguration
-                )
-                else None
-            ),
-            feature_set_configuration=(
-                feature_set_configuration
-                if isinstance(feature_set_configuration, FeatureSetConfiguration)
-                else None
-            ),
+            mapping_configuration=signal_input_mapping,
+            feature_set_configuration=feature_set_configuration,
+            requirement_policy=signal_requirement_policy,
+            freshness_policy=signal_freshness_policy,
         )
     else:
         handlers[LifecycleStageName.SIGNAL] = _unavailable(
             LifecycleStageName.SIGNAL,
             "SIGNAL_MODEL_CONFIGURATION_UNAVAILABLE",
-            "no command-bound SIGNAL_MODEL configuration was supplied",
+            (
+                "canonical Signal requires command-bound FEATURE_SET, "
+                "SIGNAL_INPUT_MAPPING, SIGNAL_FACTOR_REQUIREMENT, "
+                "SIGNAL_FACTOR_FRESHNESS and Decimal SIGNAL_MODEL configurations"
+            ),
         )
     if isinstance(forecast_configuration, PathForecastConfig):
         handlers[LifecycleStageName.PATH_FORECAST] = PathForecastStageHandler(

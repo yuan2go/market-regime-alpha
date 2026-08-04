@@ -44,6 +44,8 @@ class LifecycleObjectId(StableId):
 class LifecycleObjectType(str, Enum):
     MARKET_DATA_DATASET = "MARKET_DATA_DATASET"
     FEATURE_BUNDLE = "FEATURE_BUNDLE"
+    CANDIDATE_SET = "CANDIDATE_SET"
+    CANDIDATE_FEATURE_VIEW = "CANDIDATE_FEATURE_VIEW"
     COMPOSITE_OPERATIONAL_MANIFEST = "COMPOSITE_OPERATIONAL_MANIFEST"
     SOURCE_MANIFEST = "SOURCE_MANIFEST"
     DAILY_DECISION_ARTIFACT = "DAILY_DECISION_ARTIFACT"
@@ -78,32 +80,22 @@ class LifecycleObjectType(str, Enum):
 class LifecycleReaderKind(str, Enum):
     MARKET_DATA_DATASET_READER = "MARKET_DATA_DATASET_READER"
     FEATURE_BUNDLE_READER = "FEATURE_BUNDLE_READER"
-    COMPOSITE_OPERATIONAL_ARTIFACT_READER = (
-        "COMPOSITE_OPERATIONAL_ARTIFACT_READER"
-    )
+    CANDIDATE_SET_READER = "CANDIDATE_SET_READER"
+    CANDIDATE_FEATURE_VIEW_READER = "CANDIDATE_FEATURE_VIEW_READER"
+    COMPOSITE_OPERATIONAL_ARTIFACT_READER = "COMPOSITE_OPERATIONAL_ARTIFACT_READER"
     SOURCE_MANIFEST_READER = "SOURCE_MANIFEST_READER"
     DAILY_DECISION_ARTIFACT_READER = "DAILY_DECISION_ARTIFACT_READER"
-    SUPPLEMENTAL_RESEARCH_EVIDENCE_READER = (
-        "SUPPLEMENTAL_RESEARCH_EVIDENCE_READER"
-    )
+    SUPPLEMENTAL_RESEARCH_EVIDENCE_READER = "SUPPLEMENTAL_RESEARCH_EVIDENCE_READER"
     PLATFORM_RESEARCH_ARTIFACT_READER = "PLATFORM_RESEARCH_ARTIFACT_READER"
     SIGNAL_ARTIFACT_READER = "SIGNAL_ARTIFACT_READER"
     PATH_FORECAST_ARTIFACT_READER = "PATH_FORECAST_ARTIFACT_READER"
     DECISION_LIFECYCLE_REPOSITORY = "DECISION_LIFECYCLE_REPOSITORY"
     PORTFOLIO_RISK_REPOSITORY = "PORTFOLIO_RISK_REPOSITORY"
     RISK_REDUCTION_REPOSITORY = "RISK_REDUCTION_REPOSITORY"
-    OPERATIONAL_EXIT_DIRECTIVE_REPOSITORY = (
-        "OPERATIONAL_EXIT_DIRECTIVE_REPOSITORY"
-    )
-    REDUCING_EXECUTION_OBSERVATION_READER = (
-        "REDUCING_EXECUTION_OBSERVATION_READER"
-    )
-    SYMBOL_TRADING_SESSION_STATUS_READER = (
-        "SYMBOL_TRADING_SESSION_STATUS_READER"
-    )
-    RISK_REDUCTION_CONFIRMATION_POLICY_READER = (
-        "RISK_REDUCTION_CONFIRMATION_POLICY_READER"
-    )
+    OPERATIONAL_EXIT_DIRECTIVE_REPOSITORY = "OPERATIONAL_EXIT_DIRECTIVE_REPOSITORY"
+    REDUCING_EXECUTION_OBSERVATION_READER = "REDUCING_EXECUTION_OBSERVATION_READER"
+    SYMBOL_TRADING_SESSION_STATUS_READER = "SYMBOL_TRADING_SESSION_STATUS_READER"
+    RISK_REDUCTION_CONFIRMATION_POLICY_READER = "RISK_REDUCTION_CONFIRMATION_POLICY_READER"
     MANUAL_TRADE_REPOSITORY = "MANUAL_TRADE_REPOSITORY"
     MANUAL_FILL_LEDGER = "MANUAL_FILL_LEDGER"
     POSITION_SNAPSHOT_REPOSITORY = "POSITION_SNAPSHOT_REPOSITORY"
@@ -124,6 +116,8 @@ class LifecycleConfigurationKind(str, Enum):
     SIGNAL_MODEL = "SIGNAL_MODEL"
     FEATURE_SET = "FEATURE_SET"
     SIGNAL_INPUT_MAPPING = "SIGNAL_INPUT_MAPPING"
+    SIGNAL_FACTOR_REQUIREMENT = "SIGNAL_FACTOR_REQUIREMENT"
+    SIGNAL_FACTOR_FRESHNESS = "SIGNAL_FACTOR_FRESHNESS"
     PATH_FORECAST = "PATH_FORECAST"
     COMPLETE_ACCOUNT_RISK = "COMPLETE_ACCOUNT_RISK"
     RISK_REDUCING_GATE = "RISK_REDUCING_GATE"
@@ -213,9 +207,7 @@ def _require_sorted_text(label: str, values: tuple[str, ...]) -> None:
         raise ValueError(f"{label} must be sorted")
 
 
-def _expect_fields(
-    payload: Mapping[str, Any], expected: set[str], label: str
-) -> None:
+def _expect_fields(payload: Mapping[str, Any], expected: set[str], label: str) -> None:
     if set(payload) != expected:
         raise ValueError(f"{label} fields mismatch")
 
@@ -291,9 +283,7 @@ class LifecycleObjectReference:
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> LifecycleObjectReference:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleObjectReference:
         _expect_fields(
             payload,
             {
@@ -353,9 +343,7 @@ class LifecycleConfigurationReference:
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> LifecycleConfigurationReference:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleConfigurationReference:
         _expect_fields(
             payload,
             {
@@ -368,9 +356,7 @@ class LifecycleConfigurationReference:
             "LifecycleConfigurationReference",
         )
         return cls(
-            configuration_kind=LifecycleConfigurationKind(
-                _text(payload, "configuration_kind")
-            ),
+            configuration_kind=LifecycleConfigurationKind(_text(payload, "configuration_kind")),
             configuration_id=ArtifactId(_text(payload, "configuration_id")),
             configuration_version=_text(payload, "configuration_version"),
             content_hash=_text(payload, "content_hash"),
@@ -402,9 +388,7 @@ class LifecycleModelVersionReference:
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> LifecycleModelVersionReference:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleModelVersionReference:
         _expect_fields(
             payload,
             {"model_id", "model_version", "content_hash"},
@@ -417,12 +401,8 @@ class LifecycleModelVersionReference:
         )
 
 
-def validate_lifecycle_object_references(
-    label: str, values: tuple[LifecycleObjectReference, ...]
-) -> None:
-    if not isinstance(values, tuple) or any(
-        not isinstance(item, LifecycleObjectReference) for item in values
-    ):
+def validate_lifecycle_object_references(label: str, values: tuple[LifecycleObjectReference, ...]) -> None:
+    if not isinstance(values, tuple) or any(not isinstance(item, LifecycleObjectReference) for item in values):
         raise TypeError(f"{label} must contain LifecycleObjectReference values")
     if values != tuple(sorted(values, key=lambda item: item.sort_key)):
         raise ValueError(f"{label} must be sorted")
@@ -439,9 +419,7 @@ def validate_lifecycle_object_references(
             raise ValueError(f"{label} maps one hash to different object IDs")
 
 
-_ReferenceT = TypeVar(
-    "_ReferenceT", LifecycleConfigurationReference, LifecycleModelVersionReference
-)
+_ReferenceT = TypeVar("_ReferenceT", LifecycleConfigurationReference, LifecycleModelVersionReference)
 
 
 def _validate_version_references(label: str, values: tuple[_ReferenceT, ...]) -> None:
@@ -528,38 +506,26 @@ class LifecycleRun:
         require_utc_second("as_of_time", self.as_of_time)
         if not isinstance(self.status, LifecycleRunStatus):
             raise TypeError("status must be a LifecycleRunStatus")
-        if self.current_stage is not None and not isinstance(
-            self.current_stage, LifecycleStageName
-        ):
+        if self.current_stage is not None and not isinstance(self.current_stage, LifecycleStageName):
             raise TypeError("current_stage must be a LifecycleStageName or None")
         if (self.input_manifest_id is None) != (self.input_content_hash is None):
             raise ValueError("input manifest identity and hash must be paired")
         if self.input_content_hash is not None:
             require_sha256("input_content_hash", self.input_content_hash)
-        if not isinstance(self.completed_stages, tuple) or any(
-            not isinstance(item, LifecycleStageName) for item in self.completed_stages
-        ):
+        if not isinstance(self.completed_stages, tuple) or any(not isinstance(item, LifecycleStageName) for item in self.completed_stages):
             raise TypeError("completed_stages must contain LifecycleStageName values")
         if len(set(self.completed_stages)) != len(self.completed_stages):
             raise ValueError("completed_stages must be unique")
         order = {stage: index for index, stage in enumerate(LIFECYCLE_STAGE_ORDER)}
-        if self.completed_stages != tuple(
-            sorted(self.completed_stages, key=order.__getitem__)
-        ):
+        if self.completed_stages != tuple(sorted(self.completed_stages, key=order.__getitem__)):
             raise ValueError("completed_stages must follow lifecycle order")
-        _validate_version_references(
-            "configuration references", self.configuration_references
-        )
+        _validate_version_references("configuration references", self.configuration_references)
         require_sha256("configuration_manifest_hash", self.configuration_manifest_hash)
-        if self.configuration_manifest_hash != configuration_manifest_hash(
-            self.configuration_references
-        ):
+        if self.configuration_manifest_hash != configuration_manifest_hash(self.configuration_references):
             raise ValueError("configuration manifest hash mismatch")
         _validate_version_references("model references", self.model_references)
         require_sha256("model_version_manifest_hash", self.model_version_manifest_hash)
-        if self.model_version_manifest_hash != model_version_manifest_hash(
-            self.model_references
-        ):
+        if self.model_version_manifest_hash != model_version_manifest_hash(self.model_references):
             raise ValueError("model version manifest hash mismatch")
         if not isinstance(self.retry_state, LifecycleRetryState):
             raise TypeError("retry_state must be a LifecycleRetryState")
@@ -571,13 +537,9 @@ class LifecycleRun:
             raise ValueError("retry_state does not match run status")
         _require_optional_text("failure_reason", self.failure_reason)
         _require_optional_text("blocker_reason", self.blocker_reason)
-        if (self.status is LifecycleRunStatus.FAILED) != (
-            self.failure_reason is not None
-        ):
+        if (self.status is LifecycleRunStatus.FAILED) != (self.failure_reason is not None):
             raise ValueError("failure_reason is required only for FAILED runs")
-        if (self.status in WAITING_LIFECYCLE_RUN_STATUSES) != (
-            self.blocker_reason is not None
-        ):
+        if (self.status in WAITING_LIFECYCLE_RUN_STATUSES) != (self.blocker_reason is not None):
             raise ValueError("blocker_reason must match a waiting or blocked run")
         require_utc_second("created_at", self.created_at)
         require_utc_second("updated_at", self.updated_at)
@@ -597,16 +559,11 @@ class LifecycleRun:
         _require_non_negative("claim_token", self.claim_token)
         if (self.source_run_id is None) != (self.source_command_hash is None):
             raise ValueError("source run identity and command hash must be paired")
-        if self.source_run_id is not None and not isinstance(
-            self.source_run_id, LifecycleRunId
-        ):
+        if self.source_run_id is not None and not isinstance(self.source_run_id, LifecycleRunId):
             raise TypeError("source_run_id must be a LifecycleRunId or None")
         if self.source_command_hash is not None:
             require_sha256("source_command_hash", self.source_command_hash)
-        if (
-            self.schema_version == self.SCHEMA_VERSION
-            and self.run_type is LifecycleRunType.REPLAY
-        ):
+        if self.schema_version == self.SCHEMA_VERSION and self.run_type is LifecycleRunType.REPLAY:
             if self.source_run_id is None:
                 raise ValueError("REPLAY run requires source run identity")
             if self.source_run_id == self.run_id:
@@ -631,38 +588,26 @@ class LifecycleRun:
             "as_of_time": canonical_datetime(self.as_of_time),
             "status": self.status.value,
             "current_stage": self.current_stage.value if self.current_stage else None,
-            "input_manifest_id": (
-                str(self.input_manifest_id) if self.input_manifest_id else None
-            ),
+            "input_manifest_id": (str(self.input_manifest_id) if self.input_manifest_id else None),
             "input_content_hash": self.input_content_hash,
             "completed_stages": [item.value for item in self.completed_stages],
-            "configuration_references": [
-                item.to_canonical_dict() for item in self.configuration_references
-            ],
+            "configuration_references": [item.to_canonical_dict() for item in self.configuration_references],
             "configuration_manifest_hash": self.configuration_manifest_hash,
-            "model_references": [
-                item.to_canonical_dict() for item in self.model_references
-            ],
+            "model_references": [item.to_canonical_dict() for item in self.model_references],
             "model_version_manifest_hash": self.model_version_manifest_hash,
             "retry_state": self.retry_state.value,
             "failure_reason": self.failure_reason,
             "blocker_reason": self.blocker_reason,
             "created_at": canonical_datetime(self.created_at),
             "updated_at": canonical_datetime(self.updated_at),
-            "completed_at": (
-                canonical_datetime(self.completed_at) if self.completed_at else None
-            ),
+            "completed_at": (canonical_datetime(self.completed_at) if self.completed_at else None),
             "version": self.version,
             "claim_token": self.claim_token,
         }
         if self.schema_version == self.SCHEMA_VERSION:
             payload.update(
                 {
-                    "source_run_id": (
-                        str(self.source_run_id)
-                        if self.source_run_id is not None
-                        else None
-                    ),
+                    "source_run_id": (str(self.source_run_id) if self.source_run_id is not None else None),
                     "source_command_hash": self.source_command_hash,
                     "source_history_hash": self.source_history_hash,
                     "replay_report_hash": self.replay_report_hash,
@@ -673,13 +618,30 @@ class LifecycleRun:
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleRun:
         base_expected = {
-            "schema_version", "run_id", "idempotency_key", "command_hash",
-            "run_type", "decision_date", "as_of_time", "status", "current_stage",
-            "input_manifest_id", "input_content_hash", "completed_stages",
-            "configuration_references", "configuration_manifest_hash",
-            "model_references", "model_version_manifest_hash", "retry_state",
-            "failure_reason", "blocker_reason", "created_at", "updated_at",
-            "completed_at", "version", "claim_token",
+            "schema_version",
+            "run_id",
+            "idempotency_key",
+            "command_hash",
+            "run_type",
+            "decision_date",
+            "as_of_time",
+            "status",
+            "current_stage",
+            "input_manifest_id",
+            "input_content_hash",
+            "completed_stages",
+            "configuration_references",
+            "configuration_manifest_hash",
+            "model_references",
+            "model_version_manifest_hash",
+            "retry_state",
+            "failure_reason",
+            "blocker_reason",
+            "created_at",
+            "updated_at",
+            "completed_at",
+            "version",
+            "claim_token",
         }
         schema_version = payload.get("schema_version")
         if schema_version == cls.SCHEMA_VERSION:
@@ -708,18 +670,13 @@ class LifecycleRun:
             current_stage=(LifecycleStageName(current_stage) if current_stage else None),
             input_manifest_id=ArtifactId(manifest_id) if manifest_id else None,
             input_content_hash=_optional_text_value(payload, "input_content_hash"),
-            completed_stages=tuple(
-                LifecycleStageName(item)
-                for item in _string_tuple(payload, "completed_stages")
-            ),
+            completed_stages=tuple(LifecycleStageName(item) for item in _string_tuple(payload, "completed_stages")),
             configuration_references=tuple(
-                LifecycleConfigurationReference.from_canonical_dict(item)
-                for item in _mapping_array(payload, "configuration_references")
+                LifecycleConfigurationReference.from_canonical_dict(item) for item in _mapping_array(payload, "configuration_references")
             ),
             configuration_manifest_hash=_text(payload, "configuration_manifest_hash"),
             model_references=tuple(
-                LifecycleModelVersionReference.from_canonical_dict(item)
-                for item in _mapping_array(payload, "model_references")
+                LifecycleModelVersionReference.from_canonical_dict(item) for item in _mapping_array(payload, "model_references")
             ),
             model_version_manifest_hash=_text(payload, "model_version_manifest_hash"),
             retry_state=LifecycleRetryState(_text(payload, "retry_state")),
@@ -727,38 +684,17 @@ class LifecycleRun:
             blocker_reason=_optional_text_value(payload, "blocker_reason"),
             created_at=parse_utc_second("created_at", payload["created_at"]),
             updated_at=parse_utc_second("updated_at", payload["updated_at"]),
-            completed_at=(
-                parse_utc_second("completed_at", completed_at)
-                if completed_at is not None
-                else None
-            ),
+            completed_at=(parse_utc_second("completed_at", completed_at) if completed_at is not None else None),
             version=_positive_int(payload, "version"),
             claim_token=_non_negative_int(payload, "claim_token"),
             source_run_id=(
                 LifecycleRunId(source_run_id)
-                if (
-                    schema_version == cls.SCHEMA_VERSION
-                    and (source_run_id := _optional_text_value(
-                        payload, "source_run_id"
-                    ))
-                )
+                if (schema_version == cls.SCHEMA_VERSION and (source_run_id := _optional_text_value(payload, "source_run_id")))
                 else None
             ),
-            source_command_hash=(
-                _optional_text_value(payload, "source_command_hash")
-                if schema_version == cls.SCHEMA_VERSION
-                else None
-            ),
-            source_history_hash=(
-                _optional_text_value(payload, "source_history_hash")
-                if schema_version == cls.SCHEMA_VERSION
-                else None
-            ),
-            replay_report_hash=(
-                _optional_text_value(payload, "replay_report_hash")
-                if schema_version == cls.SCHEMA_VERSION
-                else None
-            ),
+            source_command_hash=(_optional_text_value(payload, "source_command_hash") if schema_version == cls.SCHEMA_VERSION else None),
+            source_history_hash=(_optional_text_value(payload, "source_history_hash") if schema_version == cls.SCHEMA_VERSION else None),
+            replay_report_hash=(_optional_text_value(payload, "replay_report_hash") if schema_version == cls.SCHEMA_VERSION else None),
             schema_version=str(schema_version),
         )
 
@@ -817,9 +753,7 @@ class LifecycleStage:
         elif self.stage_status is not LifecycleStageStatus.PENDING:
             if self.completed_at is None:
                 raise ValueError("settled stage projection requires completed_at")
-        if (self.stage_status is LifecycleStageStatus.FAILED) != (
-            self.failure_reason is not None
-        ):
+        if (self.stage_status is LifecycleStageStatus.FAILED) != (self.failure_reason is not None):
             raise ValueError("failure_reason is required only for FAILED stages")
         reasoned = self.stage_status in {
             LifecycleStageStatus.WAITING,
@@ -853,9 +787,20 @@ class LifecycleStage:
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleStage:
         _expect_fields(
             payload,
-            {"schema_version", "run_id", "stage_name", "stage_status", "attempt_count",
-             "input_references", "output_references", "started_at", "completed_at",
-             "failure_reason", "blocker_reason", "version"},
+            {
+                "schema_version",
+                "run_id",
+                "stage_name",
+                "stage_status",
+                "attempt_count",
+                "input_references",
+                "output_references",
+                "started_at",
+                "completed_at",
+                "failure_reason",
+                "blocker_reason",
+                "version",
+            },
             "LifecycleStage",
         )
         if payload["schema_version"] != cls.SCHEMA_VERSION:
@@ -868,12 +813,10 @@ class LifecycleStage:
             stage_status=LifecycleStageStatus(_text(payload, "stage_status")),
             attempt_count=_non_negative_int(payload, "attempt_count"),
             input_references=tuple(
-                LifecycleObjectReference.from_canonical_dict(item)
-                for item in _mapping_array(payload, "input_references")
+                LifecycleObjectReference.from_canonical_dict(item) for item in _mapping_array(payload, "input_references")
             ),
             output_references=tuple(
-                LifecycleObjectReference.from_canonical_dict(item)
-                for item in _mapping_array(payload, "output_references")
+                LifecycleObjectReference.from_canonical_dict(item) for item in _mapping_array(payload, "output_references")
             ),
             started_at=parse_utc_second("started_at", started_at) if started_at else None,
             completed_at=(parse_utc_second("completed_at", completed_at) if completed_at else None),
@@ -923,9 +866,7 @@ class LifecycleAttempt:
         else:
             if self.completed_at is None:
                 raise ValueError("settled attempt requires completed_at")
-        if (self.result is LifecycleAttemptResult.FAILED) != (
-            self.exception_type is not None
-        ):
+        if (self.result is LifecycleAttemptResult.FAILED) != (self.exception_type is not None):
             raise ValueError("only FAILED attempts carry an exception")
         _require_positive("claim_token", self.claim_token)
 
@@ -948,9 +889,19 @@ class LifecycleAttempt:
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleAttempt:
         _expect_fields(
             payload,
-            {"schema_version", "attempt_id", "run_id", "stage_name", "attempt_number",
-             "started_at", "completed_at", "result", "exception_type",
-             "exception_message", "claim_token"},
+            {
+                "schema_version",
+                "attempt_id",
+                "run_id",
+                "stage_name",
+                "attempt_number",
+                "started_at",
+                "completed_at",
+                "result",
+                "exception_type",
+                "exception_message",
+                "claim_token",
+            },
             "LifecycleAttempt",
         )
         if payload["schema_version"] != cls.SCHEMA_VERSION:
@@ -1012,9 +963,7 @@ class StageReceipt:
         require_utc_second("created_at", self.created_at)
         require_sha256("receipt_hash", self.receipt_hash)
         expected_hash = canonical_hash(self.semantic_payload())
-        expected_id = ArtifactId(
-            f"lifecycle-receipt-{expected_hash.split(':', 1)[1][:24]}"
-        )
+        expected_id = ArtifactId(f"lifecycle-receipt-{expected_hash.split(':', 1)[1][:24]}")
         if self.receipt_hash != expected_hash or self.receipt_id != expected_id:
             raise ValueError("StageReceipt semantic identity mismatch")
 
@@ -1045,9 +994,7 @@ class StageReceipt:
         )
         digest = canonical_hash(semantic)
         return cls(
-            receipt_id=ArtifactId(
-                f"lifecycle-receipt-{digest.split(':', 1)[1][:24]}"
-            ),
+            receipt_id=ArtifactId(f"lifecycle-receipt-{digest.split(':', 1)[1][:24]}"),
             run_id=run_id,
             stage_name=stage_name,
             attempt_number=attempt_number,
@@ -1100,9 +1047,21 @@ class StageReceipt:
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StageReceipt:
         _expect_fields(
             payload,
-            {"schema_version", "receipt_id", "run_id", "stage_name", "attempt_number",
-             "input_hashes", "output_hashes", "model_versions", "configuration_hashes",
-             "reason_codes", "stage_result", "created_at", "receipt_hash"},
+            {
+                "schema_version",
+                "receipt_id",
+                "run_id",
+                "stage_name",
+                "attempt_number",
+                "input_hashes",
+                "output_hashes",
+                "model_versions",
+                "configuration_hashes",
+                "reason_codes",
+                "stage_result",
+                "created_at",
+                "receipt_hash",
+            },
             "StageReceipt",
         )
         if payload["schema_version"] != cls.SCHEMA_VERSION:
@@ -1149,21 +1108,13 @@ class LifecycleEvent:
         _require_positive("sequence_number", self.sequence_number)
         if not isinstance(self.event_type, LifecycleEventType):
             raise TypeError("event_type must be a LifecycleEventType")
-        if self.from_status is not None and not isinstance(
-            self.from_status, LifecycleRunStatus
-        ):
+        if self.from_status is not None and not isinstance(self.from_status, LifecycleRunStatus):
             raise TypeError("from_status must be a LifecycleRunStatus or None")
-        if self.to_status is not None and not isinstance(
-            self.to_status, LifecycleRunStatus
-        ):
+        if self.to_status is not None and not isinstance(self.to_status, LifecycleRunStatus):
             raise TypeError("to_status must be a LifecycleRunStatus or None")
-        if self.stage_name is not None and not isinstance(
-            self.stage_name, LifecycleStageName
-        ):
+        if self.stage_name is not None and not isinstance(self.stage_name, LifecycleStageName):
             raise TypeError("stage_name must be a LifecycleStageName or None")
-        if self.attempt_id is not None and not isinstance(
-            self.attempt_id, LifecycleAttemptId
-        ):
+        if self.attempt_id is not None and not isinstance(self.attempt_id, LifecycleAttemptId):
             raise TypeError("attempt_id must be a LifecycleAttemptId or None")
         if self.receipt_id is not None and not isinstance(self.receipt_id, ArtifactId):
             raise TypeError("receipt_id must be an ArtifactId or None")
@@ -1177,17 +1128,25 @@ class LifecycleEvent:
         elif self.event_type is LifecycleEventType.RUN_STATUS_CHANGED:
             if self.from_status is None or self.to_status is None:
                 raise ValueError("RUN_STATUS_CHANGED requires both run statuses")
-        elif self.event_type in {
-            LifecycleEventType.STAGE_STATUS_CHANGED,
-            LifecycleEventType.ATTEMPT_STARTED,
-            LifecycleEventType.ATTEMPT_FINISHED,
-            LifecycleEventType.RECEIPT_RECORDED,
-        } and self.stage_name is None:
+        elif (
+            self.event_type
+            in {
+                LifecycleEventType.STAGE_STATUS_CHANGED,
+                LifecycleEventType.ATTEMPT_STARTED,
+                LifecycleEventType.ATTEMPT_FINISHED,
+                LifecycleEventType.RECEIPT_RECORDED,
+            }
+            and self.stage_name is None
+        ):
             raise ValueError("stage journal event requires stage_name")
-        if self.event_type in {
-            LifecycleEventType.ATTEMPT_STARTED,
-            LifecycleEventType.ATTEMPT_FINISHED,
-        } and self.attempt_id is None:
+        if (
+            self.event_type
+            in {
+                LifecycleEventType.ATTEMPT_STARTED,
+                LifecycleEventType.ATTEMPT_FINISHED,
+            }
+            and self.attempt_id is None
+        ):
             raise ValueError("attempt event requires attempt_id")
         if self.event_type is LifecycleEventType.RECEIPT_RECORDED and self.receipt_id is None:
             raise ValueError("receipt event requires receipt_id")
@@ -1214,9 +1173,22 @@ class LifecycleEvent:
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleEvent:
         _expect_fields(
             payload,
-            {"schema_version", "event_id", "run_id", "sequence_number", "event_type",
-             "from_status", "to_status", "stage_name", "attempt_id", "receipt_id",
-             "reason_codes", "payload_hash", "created_at", "claim_token"},
+            {
+                "schema_version",
+                "event_id",
+                "run_id",
+                "sequence_number",
+                "event_type",
+                "from_status",
+                "to_status",
+                "stage_name",
+                "attempt_id",
+                "receipt_id",
+                "reason_codes",
+                "payload_hash",
+                "created_at",
+                "claim_token",
+            },
             "LifecycleEvent",
         )
         if payload["schema_version"] != cls.SCHEMA_VERSION:
@@ -1255,9 +1227,7 @@ def _parse_date(value: object, label: str) -> date:
     return parsed
 
 
-def _mapping_array(
-    payload: Mapping[str, Any], key: str
-) -> tuple[Mapping[str, Any], ...]:
+def _mapping_array(payload: Mapping[str, Any], key: str) -> tuple[Mapping[str, Any], ...]:
     value = payload[key]
     if not isinstance(value, list) or any(not isinstance(item, Mapping) for item in value):
         raise ValueError(f"{key} must be an array of objects")
