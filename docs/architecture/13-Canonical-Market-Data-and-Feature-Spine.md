@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** 04-Data-and-Time-Semantics.md, 09-Platform-Architecture-V2.md, 12-Canonical-Runtime-and-Legacy-Migration.md, decisions/ADR-005-Feature-Materialization-Precedes-Lifecycle-V1.md
-> **Code Evidence:** implementation/gate checkpoint `72c8ed940d8b9d43788d6f2898ab081dc98bdc10`; `market_data/**`, `features/{spine,materialization_v2,v2_contracts}.py`, `features/technical/**`, `signals/{input_assembly,v2}.py`, `application/canonical_lifecycle/stages/signal_forecast.py`
+> **Code Evidence:** implementation/gate checkpoint `4f099068491c216cf059f2ba6553037872a411ec`; `market_data/**`, `features/{spine,materialization_v2,v2_contracts}.py`, `features/technical/**`, `signals/{input_assembly,v2}.py`, `application/canonical_lifecycle/stages/signal_forecast.py`
 
 ## 1. Boundary and authority
 
@@ -199,7 +199,7 @@ Fill, order or Broker call is created.
 
 ## 8. Performance evidence and limitations
 
-Offline benchmark at implementation/gate checkpoint `72c8ed9`:
+Offline benchmark retained at implementation/gate checkpoint `4f09906`:
 
 | Metric | Observed value |
 |---|---:|

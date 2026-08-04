@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md
-> **Code Evidence:** starting `main@9ccc751c237b060ab13a86602993d08753d5c634`; implementation/gate checkpoint `72c8ed940d8b9d43788d6f2898ab081dc98bdc10`
+> **Code Evidence:** starting `main@9ccc751c237b060ab13a86602993d08753d5c634`; implementation/gate checkpoint `4f099068491c216cf059f2ba6553037872a411ec`
 
 ## 1. Delivery boundary
 
@@ -100,13 +100,13 @@ uv sync --frozen --extra dev --extra postgres
   PASS
 
 focused Feature/Market/Signal/Migration/Forecast/Lifecycle/Architecture
-  503 passed, 0 skipped, 0 failed
+  504 passed, 0 skipped, 0 failed
 
 H4/H5 focused regression
   143 passed, 0 skipped, 0 failed
 
 uv run pytest -q
-  2058 passed, 0 skipped, 0 failed
+  2059 passed, 0 skipped, 0 failed
   6 pre-existing pandas PerformanceWarnings
 
 uv run ruff check .
