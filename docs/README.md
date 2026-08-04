@@ -20,7 +20,7 @@ Use this order to determine what the project **should** do:
 ```text
 1. Latest explicit user decision that has not been superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–11 and architecture/domains/**
+3. docs/architecture/00–12 and architecture/domains/**
 4. docs/research/Current-Research-Program.md and focused current research programs
 5. docs/specs/** and docs/roadmap/work-packages/**
 6. HISTORICAL/SUPERSEDED material for context only
@@ -73,6 +73,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Platform Architecture V2](architecture/09-Platform-Architecture-V2.md)
 - [Production Decision Lifecycle](architecture/10-Production-Decision-Lifecycle.md)
 - [Production Lifecycle Hardening and Shadow Operations](architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md)
+- [Canonical Runtime and Legacy Model Migration](architecture/12-Canonical-Runtime-and-Legacy-Migration.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
 
 ### Current research
