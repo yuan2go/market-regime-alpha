@@ -17,6 +17,7 @@ from market_regime_alpha.application.trading_lifecycle.traceable_execution impor
 )
 from market_regime_alpha.application.trading_lifecycle.risk_reduction_confirmation import (
     RiskReductionConfirmationApplicationService,
+    RiskReductionConfirmationIdempotencyConflict,
 )
 from market_regime_alpha.application.trading_lifecycle.position_authoritative_risk import (
     PositionAuthoritativePortfolioRiskApplicationService,
@@ -51,6 +52,7 @@ __all__ = [
     "OperationalPositionAssessmentV2",
     "RiskRouteApplicationService",
     "RiskReductionConfirmationApplicationService",
+    "RiskReductionConfirmationIdempotencyConflict",
     "TraceableManualExecutionApplicationService",
     "ThesisHealthApplicationService",
     "VerifiedLifecycleReview",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
+import json
 import sqlite3
 
 import pytest
@@ -26,12 +27,17 @@ from market_regime_alpha.execution.risk_reduction import (
     RiskReductionConfirmationState,
 )
 from market_regime_alpha.application.trading_lifecycle.risk_reduction_lineage import (
+    build_operational_exit_directive_v2,
     validate_h5_h6_operational_lineage,
 )
 from market_regime_alpha.portfolio.risk_routes import (
     ExecutionConstraintState,
     ReducingExecutionObservation,
     RiskChangeKind,
+    RiskReducingExecutionGate,
+)
+from market_regime_alpha.portfolio.sqlite_risk_routes import (
+    SQLiteRiskRouteRepository,
 )
 from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
     SQLiteRiskReductionManualIntentRepository,
@@ -42,6 +48,7 @@ from market_regime_alpha.position.authority import (
     SymbolTradingSessionStatus,
     SymbolTradingState,
 )
+from market_regime_alpha.position.assessment import ExitAssessment
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
 )
@@ -114,6 +121,134 @@ def test_fresh_later_confirmation_preserves_identical_position_authority(
     assert canonical_hash(result.current_position.to_canonical_dict()) == (
         result.attempt.source_position_snapshot_hash
     )
+
+
+def test_superseded_same_scope_decision_persists_rejection_and_latest_can_confirm(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    risk_repository = SQLiteRiskRouteRepository(fixture.repository.path)
+    original_bundle = risk_repository.get_verified_reducing_decision_bundle(
+        fixture.decision_id
+    )
+    original_decision = original_bundle.decision
+    successor_assessed_at = original_decision.assessed_at + timedelta(seconds=1)
+    successor = RiskReducingExecutionGate().assess(
+        action=original_decision.action,
+        position=original_bundle.position,
+        target_quantity=original_decision.target_quantity,
+        order_quantity=original_decision.order_quantity,
+        execution_observation=original_bundle.execution_observation,
+        configuration=original_bundle.configuration,
+        actor="risk-operator",
+        reason="newer same-scope H4 exit",
+        assessed_at=successor_assessed_at,
+    )
+    risk_repository.save_reducing_decision(
+        successor,
+        position=original_bundle.position,
+        execution_observation=original_bundle.execution_observation,
+        configuration=original_bundle.configuration,
+        idempotency_key="h4-5-successor-risk",
+        command_hash=canonical_hash(
+            {
+                "command": "h4-5-successor-risk",
+                "decision": successor.content_hash,
+            }
+        ),
+    )
+    with sqlite3.connect(fixture.repository.path) as connection:
+        assessment_payload = json.loads(
+            connection.execute(
+                """
+                SELECT exit_assessment_json FROM operational_exit_directives
+                WHERE directive_id = ?
+                """,
+                (str(fixture.directive.directive_id),),
+            ).fetchone()[0]
+        )
+        fills_before = connection.execute(
+            "SELECT COUNT(*) FROM manual_fills"
+        ).fetchone()[0]
+    successor_bundle = risk_repository.get_verified_reducing_decision_bundle(
+        successor.decision_id
+    )
+    health_bundle = SQLiteThesisHealthRepository(
+        fixture.repository.path
+    ).get_verified_thesis_health_bundle(
+        fixture.command.thesis_health_observation_id
+    )
+    composite = SQLiteCompositeOperationalRepository(
+        fixture.repository.path
+    ).get_manifest(fixture.command.composite_manifest_id)
+    successor_directive = build_operational_exit_directive_v2(
+        exit_assessment=ExitAssessment.from_canonical_dict(assessment_payload),
+        risk_bundle=successor_bundle,
+        health_bundle=health_bundle,
+        composite=composite,
+        created_at=successor_assessed_at,
+    )
+    fixture.repository.save_operational_exit_directive(
+        successor_directive,
+        exit_assessment=ExitAssessment.from_canonical_dict(assessment_payload),
+        risk_reducing_decision_id=successor.decision_id,
+    )
+    confirmation_time = successor_assessed_at + timedelta(seconds=1)
+    superseded_command = replace(
+        fixture.command,
+        confirmed_at=confirmation_time,
+        idempotency_key="h4-5-confirm-superseded",
+    )
+
+    rejected = fixture.repository.confirm_risk_reduction(superseded_command)
+
+    assert (
+        rejected.attempt.state
+        is RiskReductionConfirmationState.BLOCKED_ON_RECHECK
+    )
+    assert rejected.attempt.reason_codes == (
+        "RISK_REDUCING_DECISION_SUPERSEDED",
+    )
+    assert rejected.manual_trade is None
+    assert fixture.repository.get_confirmation_attempt(
+        rejected.attempt.attempt_id
+    ) == rejected.attempt
+    assert (
+        risk_repository.get_reducing_decision(original_decision.decision_id)
+        == original_decision
+    )
+    assert fixture.repository.confirm_risk_reduction(superseded_command) == rejected
+    latest_command = replace(
+        fixture.command,
+        risk_reducing_decision_id=successor.decision_id,
+        risk_reducing_decision_hash=successor.content_hash,
+        exit_directive_id=successor_directive.directive_id,
+        exit_directive_hash=successor_directive.content_hash,
+        confirmed_at=confirmation_time,
+        idempotency_key="h4-5-confirm-successor",
+    )
+
+    confirmed = fixture.repository.confirm_risk_reduction(latest_command)
+
+    assert confirmed.manual_trade is not None
+    assert confirmed.attempt.state is RiskReductionConfirmationState.CONFIRMED_INTENT
+    with sqlite3.connect(fixture.repository.path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM manual_fills"
+        ).fetchone()[0] == fills_before
+        assert connection.execute(
+            """
+            SELECT COUNT(*) FROM manual_trade_records
+            WHERE authority_route = 'REDUCING'
+            """
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            """
+            SELECT COUNT(*) FROM risk_reduction_confirmation_attempts
+            WHERE risk_reducing_decision_id = ?
+            """,
+            (str(original_decision.decision_id),),
+        ).fetchone()[0] == 1
 
 
 def test_legal_reduce_creates_sell_intent_with_positive_remainder(

@@ -53,6 +53,7 @@ from market_regime_alpha.execution.sqlite_traceability import (
 )
 from market_regime_alpha.portfolio.risk_routes import (
     RiskChangeKind,
+    RiskReducingDecision,
     RiskReducingDecisionState,
     RiskReducingExecutionGate,
     VerifiedRiskReducingDecisionBundle,
@@ -74,6 +75,9 @@ from market_regime_alpha.position.thesis_health import (
 from market_regime_alpha.application.trading_lifecycle.risk_reduction_lineage import (
     build_operational_exit_directive_v2,
     validate_h5_h6_operational_lineage,
+)
+from market_regime_alpha.application.trading_lifecycle.risk_reduction_confirmation import (
+    RiskReductionConfirmationIdempotencyConflict,
 )
 
 
@@ -251,6 +255,10 @@ class SQLiteRiskReductionManualIntentRepository(
                     and directive_row["risk_reducing_decision_id"]
                     == str(decision.decision_id)
                 )
+                decision_is_latest_same_scope = _is_latest_same_scope_decision(
+                    connection,
+                    decision,
+                )
 
                 book = self.get_position_book(decision.position_book_id)
                 trades = self.trades_for_book(book.position_book_id)
@@ -318,6 +326,9 @@ class SQLiteRiskReductionManualIntentRepository(
                     composite=composite,
                     decision_reference_matches=decision_reference_matches,
                     directive_reference_matches=directive_reference_matches,
+                    decision_is_latest_same_scope=(
+                        decision_is_latest_same_scope
+                    ),
                 )
                 if failure is not None:
                     state, reason_codes = failure
@@ -401,6 +412,7 @@ class SQLiteRiskReductionManualIntentRepository(
         composite: VerifiedCompositeOperationalManifest,
         decision_reference_matches: bool,
         directive_reference_matches: bool,
+        decision_is_latest_same_scope: bool,
     ) -> tuple[RiskReductionConfirmationState, tuple[str, ...]] | None:
         decision = risk_bundle.decision
         source = risk_bundle.position
@@ -415,6 +427,11 @@ class SQLiteRiskReductionManualIntentRepository(
             return (
                 RiskReductionConfirmationState.DATA_INSUFFICIENT,
                 ("OPERATIONAL_EXIT_DIRECTIVE_REFERENCE_MISMATCH",),
+            )
+        if not decision_is_latest_same_scope:
+            return (
+                RiskReductionConfirmationState.BLOCKED_ON_RECHECK,
+                ("RISK_REDUCING_DECISION_SUPERSEDED",),
             )
         if decision.state is RiskReducingDecisionState.DATA_INSUFFICIENT:
             return (
@@ -869,7 +886,9 @@ def _resolve_confirmation_command(
     if row is None:
         return None
     if row["command_hash"] != command.command_hash:
-        raise ValueError("idempotency key reused for different H4.5 command")
+        raise RiskReductionConfirmationIdempotencyConflict(
+            "idempotency key reused for different H4.5 command"
+        )
     attempt, current_position = _load_attempt(
         connection, ArtifactId(str(row["attempt_id"]))
     )
@@ -888,6 +907,45 @@ def _resolve_confirmation_command(
             else attempt.state.value
         ),
     )
+
+
+def _is_latest_same_scope_decision(
+    connection: sqlite3.Connection,
+    decision: RiskReducingDecision,
+) -> bool:
+    """Resolve same-book, same-Thesis, same-symbol supersession deterministically."""
+
+    rows = connection.execute(
+        """
+        SELECT decision_id, position_book_id, thesis_id, decision_json,
+               assessed_at AS created_at
+        FROM risk_reducing_decisions
+        WHERE position_book_id = ? AND thesis_id = ?
+        ORDER BY created_at, decision_id
+        """,
+        (str(decision.position_book_id), str(decision.thesis_id)),
+    ).fetchall()
+    same_scope: list[RiskReducingDecision] = []
+    for row in rows:
+        candidate = RiskReducingDecision.from_canonical_dict(
+            _object_json(str(row["decision_json"]))
+        )
+        if (
+            row["decision_id"] != str(candidate.decision_id)
+            or row["position_book_id"] != str(candidate.position_book_id)
+            or row["thesis_id"] != str(candidate.thesis_id)
+            or row["created_at"] != candidate.assessed_at.isoformat()
+        ):
+            raise ValueError("risk-reducing decision scope projection is invalid")
+        if candidate.symbol == decision.symbol:
+            same_scope.append(candidate)
+    if not any(item.decision_id == decision.decision_id for item in same_scope):
+        raise ValueError("risk-reducing decision is missing from its durable scope")
+    latest = max(
+        same_scope,
+        key=lambda item: (item.assessed_at, str(item.decision_id)),
+    )
+    return latest.decision_id == decision.decision_id
 
 
 def _load_directive(
