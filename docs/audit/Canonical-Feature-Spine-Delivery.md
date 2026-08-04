@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md
-> **Code Evidence:** starting `main@9ccc751c237b060ab13a86602993d08753d5c634`; implementation/gate checkpoint `4f099068491c216cf059f2ba6553037872a411ec`
+> **Code Evidence:** starting `main@9ccc751c237b060ab13a86602993d08753d5c634`; implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`
 
 ## 1. Delivery boundary
 

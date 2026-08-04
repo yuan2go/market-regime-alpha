@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Gap-Register.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
-> **Code Evidence:** Canonical Feature Spine implementation/gate checkpoint `4f099068491c216cf059f2ba6553037872a411ec`; canonical runtime merge baseline `9ccc751`; H4.5 checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Code Evidence:** Canonical Feature Spine implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Status Rule:** `IMPLEMENTED` describes code mechanics. `VERIFIED_IMPLEMENTATION_CHECKPOINT` requires observed checks on the cited code commit. Historical checkpoint PASS records do not verify later code changes.
 
 | Capability | Status | Code evidence | Verification evidence | Runtime/evidence ceiling | Primary blocker | Next action |

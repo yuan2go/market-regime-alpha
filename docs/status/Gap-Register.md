@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
-> **Code Evidence:** Canonical Feature Spine checkpoint `4f099068491c216cf059f2ba6553037872a411ec`; canonical runtime merge baseline `9ccc751`; H4.5 checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Code Evidence:** Canonical Feature Spine checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps

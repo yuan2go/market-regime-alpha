@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** 04-Data-and-Time-Semantics.md, 09-Platform-Architecture-V2.md, 12-Canonical-Runtime-and-Legacy-Migration.md, decisions/ADR-005-Feature-Materialization-Precedes-Lifecycle-V1.md
-> **Code Evidence:** implementation/gate checkpoint `4f099068491c216cf059f2ba6553037872a411ec`; `market_data/**`, `features/{spine,materialization_v2,v2_contracts}.py`, `features/technical/**`, `signals/{input_assembly,v2}.py`, `application/canonical_lifecycle/stages/signal_forecast.py`
+> **Code Evidence:** implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; `market_data/**`, `features/{spine,materialization_v2,v2_contracts}.py`, `features/technical/**`, `signals/{input_assembly,v2}.py`, `application/canonical_lifecycle/stages/signal_forecast.py`
 
 ## 1. Boundary and authority
 
