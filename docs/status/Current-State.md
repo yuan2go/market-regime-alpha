@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** Canonical runtime development branch `src/market_regime_alpha/application/canonical_lifecycle/**`, migration 011, migration contracts/adapters/comparison and their focused tests; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
+> **Code Evidence:** Canonical Feature Spine implementation checkpoint `14058a5`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -56,12 +56,13 @@ scoped H4 continuation verifies existing risk authorities and then waits for
 external H4.5 human confirmation, an existing ManualTrade and a separately
 human-recorded Fill.
 
-The same branch establishes an enforced canonical-to-Legacy import boundary,
-four role-specific migration Protocols, a policy-driven differential harness,
-and one Decimal simple-moving-average Feature/Legacy-adapter/replay example.
-These are migration mechanics, not evidence that MACD, the broader moving
-average family, Volume Structure, Force Ratio, Chan or Tuishen models have been
-migrated or validated.
+The Canonical Feature Spine branch adds a content-addressed Market Data
+authority, versioned Feature Set, six Decimal technical-observable families,
+deterministic materialization/Bundle/replay, per-family Legacy differential
+evidence and five-factor Signal assembly. Canonical Signal now consumes actual
+non-empty Feature values when evidence exists. PathForecast still has no
+qualified sample provider and Entry remains safely blocked. These are research
+mechanics, not validated predictive ability.
 
 ## 2. Current stage
 
@@ -91,6 +92,12 @@ CANONICAL_LEGACY_IMPORT_BOUNDARY_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
 ROLE_SPECIFIC_MODEL_MIGRATION_CONTRACTS_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
 SIMPLE_MOVING_AVERAGE_MIGRATION_EXAMPLE_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
 CANONICAL_RUNTIME_BRANCH_LOCAL_ENGINEERING_GATE_VERIFIED
+UV_FROZEN_DEPENDENCY_LOCK_IMPLEMENTED_ON_FEATURE_BRANCH
+CANONICAL_MARKET_DATA_AUTHORITY_IMPLEMENTED_ON_FEATURE_BRANCH
+TECHNICAL_FEATURE_SPINE_IMPLEMENTED_ON_FEATURE_BRANCH
+FEATURE_BUNDLE_AND_REPLAY_IMPLEMENTED_ON_FEATURE_BRANCH
+CANONICAL_SIGNAL_FEATURE_INPUTS_IMPLEMENTED_ON_FEATURE_BRANCH
+ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -384,26 +391,28 @@ recording remain external manual actions. Opportunity approval inputs,
 complete-account Portfolio/Risk inputs and durable H7 assessment authorities
 must be explicitly persisted; they are never synthesized to advance a run.
 
-### 3.15 Legacy model migration infrastructure
+### 3.15 Canonical market data, Feature and Signal spine
 
-Implemented on the canonical-runtime development branch:
+Implemented on the Canonical Feature Spine branch:
 
-- an AST architecture test that prevents canonical modules from importing
-  `market_regime_alpha.dividend_t` directly;
-- isolated `migration.legacy` normalization/adapters that may call Legacy but
-  cannot write canonical Repositories or create trade lifecycle objects;
-- independent `FeatureComputer`, `ResearchModel`, `SignalModel` and
-  `DecisionModel` contracts, with Signal and Decision semantics capped below
-  execution;
-- `ModelComparisonReport` and differential classification for exact,
-  field-tolerated, expected semantic, Legacy-defect, canonical-regression,
-  insufficient-data and non-comparable outcomes;
-- a content-addressed Decimal simple-moving-average Feature Artifact, exact
-  Legacy pandas adapter, verified Reader and deterministic replay test.
+- immutable Decimal OHLCV/amount Bars, explicit timeframes, PIT-safe adjustment
+  policies and partitioned Market Data Dataset packages;
+- versioned Feature definitions/configurations/Feature Set and explicit
+  required/optional missingness;
+- Price Action, SMA/EMA, MACD, Volume/Amount, real-minute VWAP and
+  Overheat/Extension observable families;
+- deterministic bounded-parallel Feature materialization, immutable Bundle,
+  crash-safe receipt/report publication and true Dataset-to-Bundle replay;
+- real Legacy MA/EMA/MACD/volume adapters isolated under `migration.legacy`,
+  per-family comparison policy and fail-on-canonical-regression evidence;
+- content-addressed five-factor mapping, per-factor value/source/freshness/
+  missingness and Signal V2 replay through Feature reassembly;
+- unchanged 16-stage graph, Signal receipt binding to FeatureBundle, durable
+  Journal replay and explicit H9 Path sample-provider boundary.
 
-This example remains `RESEARCH_ONLY`, `UNVALIDATED` and
-`NO_TRADING_AUTHORITY`. It does not convert a technical observable into a buy
-or sell action.
+All configurations remain `MODEL_ASSUMPTION`, `NOT_EMPIRICALLY_VALIDATED` and
+`RESEARCH_ONLY`. VWAP requires real minute amount/volume and has no daily
+fallback. Signal non-emptiness does not calibrate PathForecast or open Entry.
 
 ## 4. Persistence, transactions and consistency
 
@@ -539,6 +548,13 @@ Research outputs may support manual decisions. No current component may:
 P0 engineering baseline restored
   H4 Repository/Application/exports/CLI integration complete
   → exact-commit pytest, Ruff, mypy, docs and package-build gates complete
+
+Canonical Feature input preparation
+  frozen uv environment
+  → Canonical Market Data Dataset
+  → Feature materialization and Bundle
+  → Signal V2 with per-factor lineage
+  → Path remains uncalibrated and Entry remains blocked
 
 P1 complete pre-Shadow mechanics
   H5 Artifact-derived Thesis Health complete
