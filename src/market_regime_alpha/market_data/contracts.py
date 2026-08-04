@@ -123,6 +123,28 @@ def require_decimal(
         raise ValueError(f"{label} must be non-negative")
 
 
+def canonical_decimal(value: Decimal, *, label: str = "canonical decimal") -> str:
+    """Return the one context-independent fixed-point representation."""
+
+    require_decimal(label, value)
+    if value == 0:
+        return "0"
+    rendered = format(value, "f")
+    return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+
+def parse_canonical_decimal(label: str, value: object) -> Decimal:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a canonical decimal string")
+    try:
+        parsed = Decimal(value)
+    except Exception as exc:
+        raise ValueError(f"{label} must be a canonical decimal string") from exc
+    if not parsed.is_finite() or canonical_decimal(parsed) != value:
+        raise ValueError(f"{label} must be a canonical decimal string")
+    return parsed
+
+
 def require_canonical_symbol(symbol: str, exchange: Exchange) -> None:
     if (
         not isinstance(symbol, str)
@@ -138,12 +160,7 @@ def require_canonical_symbol(symbol: str, exchange: Exchange) -> None:
 def _optional_decimal(value: object, label: str) -> Decimal | None:
     if value is None:
         return None
-    if not isinstance(value, str):
-        raise ValueError(f"{label} must be a canonical decimal string or null")
-    try:
-        return Decimal(value)
-    except Exception as exc:
-        raise ValueError(f"{label} must be a canonical decimal string") from exc
+    return parse_canonical_decimal(label, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,25 +349,31 @@ class CanonicalMarketBar:
             "event_start": canonical_datetime(values["event_start"]),
             "event_end": canonical_datetime(values["event_end"]),
             "available_at": canonical_datetime(values["available_at"]),
-            "open": str(values["open"]),
-            "high": str(values["high"]),
-            "low": str(values["low"]),
-            "close": str(values["close"]),
+            "open": canonical_decimal(values["open"], label="open"),
+            "high": canonical_decimal(values["high"], label="high"),
+            "low": canonical_decimal(values["low"], label="low"),
+            "close": canonical_decimal(values["close"], label="close"),
             "previous_close": (
-                str(values["previous_close"])
+                canonical_decimal(values["previous_close"], label="previous_close")
                 if values["previous_close"] is not None
                 else None
             ),
-            "volume": str(values["volume"]),
+            "volume": canonical_decimal(values["volume"], label="volume"),
             "volume_unit": values["volume_unit"].value,
-            "amount": str(values["amount"]) if values["amount"] is not None else None,
+            "amount": (
+                canonical_decimal(values["amount"], label="amount")
+                if values["amount"] is not None
+                else None
+            ),
             "turnover_rate": (
-                str(values["turnover_rate"])
+                canonical_decimal(values["turnover_rate"], label="turnover_rate")
                 if values["turnover_rate"] is not None
                 else None
             ),
             "adjustment_mode": values["adjustment_mode"].value,
-            "adjustment_factor": str(values["adjustment_factor"]),
+            "adjustment_factor": canonical_decimal(
+                values["adjustment_factor"], label="adjustment_factor"
+            ),
             "adjustment_factor_id": (
                 str(values["adjustment_factor_id"])
                 if values["adjustment_factor_id"] is not None
@@ -454,17 +477,19 @@ class CanonicalMarketBar:
             event_start=parse_utc_second("event_start", payload["event_start"]),
             event_end=parse_utc_second("event_end", payload["event_end"]),
             available_at=parse_utc_second("available_at", payload["available_at"]),
-            open=Decimal(str(payload["open"])),
-            high=Decimal(str(payload["high"])),
-            low=Decimal(str(payload["low"])),
-            close=Decimal(str(payload["close"])),
+            open=parse_canonical_decimal("open", payload["open"]),
+            high=parse_canonical_decimal("high", payload["high"]),
+            low=parse_canonical_decimal("low", payload["low"]),
+            close=parse_canonical_decimal("close", payload["close"]),
             previous_close=_optional_decimal(payload["previous_close"], "previous_close"),
-            volume=Decimal(str(payload["volume"])),
+            volume=parse_canonical_decimal("volume", payload["volume"]),
             volume_unit=VolumeUnit(str(payload["volume_unit"])),
             amount=_optional_decimal(payload["amount"], "amount"),
             turnover_rate=_optional_decimal(payload["turnover_rate"], "turnover_rate"),
             adjustment_mode=AdjustmentMode(str(payload["adjustment_mode"])),
-            adjustment_factor=Decimal(str(payload["adjustment_factor"])),
+            adjustment_factor=parse_canonical_decimal(
+                "adjustment_factor", payload["adjustment_factor"]
+            ),
             adjustment_factor_id=(
                 ArtifactId(str(factor_id)) if factor_id is not None else None
             ),

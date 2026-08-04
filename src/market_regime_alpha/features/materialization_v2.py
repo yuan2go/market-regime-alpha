@@ -82,6 +82,14 @@ class VerifiedFeatureBundleV2:
 FailureInjector = Callable[[str], None]
 
 
+class FeatureReplayDivergenceError(ValueError):
+    """Recomputation differs from the immutable original Feature Bundle."""
+
+
+class FeatureConfigurationInvalidError(ValueError):
+    """A content-addressed Feature configuration has no executable semantics."""
+
+
 def publish_feature_artifact_v2(
     *,
     root: Path,
@@ -253,6 +261,9 @@ def _load_verified_feature_bundle_v2(
         verified = load_verified_feature_artifact_v2(package)
         _verify_reference(verified=verified, reference=reference)
         artifacts.append(verified)
+    bundle.verify_materialized_projection(
+        tuple(item.artifact for item in artifacts)
+    )
     return VerifiedFeatureBundleV2(
         root=root,
         artifact=bundle,
@@ -411,15 +422,8 @@ class FeatureMaterializationRunner:
                 raise ValueError("configured timeframe is unsupported by definition")
             input_bars = bars_by_scope.get((symbol, timeframe), ())
             output_ids = tuple(item.output_id for item in definition.output_schema)
-            computation = (
-                compute_technical_feature(
-                    feature_id=feature_id,
-                    bars=input_bars,
-                    configuration=configuration,
-                    decision_time=decision_time,
-                )
-                if input_bars
-                else missing_technical_feature_computation(
+            if not input_bars:
+                computation = missing_technical_feature_computation(
                     feature_id=feature_id,
                     symbol=symbol,
                     timeframe=timeframe,
@@ -428,7 +432,28 @@ class FeatureMaterializationRunner:
                     output_ids=output_ids,
                     reason_code="DATA_UNAVAILABLE_TIMEFRAME",
                 )
-            )
+            else:
+                try:
+                    computation = compute_technical_feature(
+                        feature_id=feature_id,
+                        bars=input_bars,
+                        configuration=configuration,
+                        decision_time=decision_time,
+                    )
+                except ValueError as exc:
+                    raise FeatureConfigurationInvalidError(
+                        f"invalid configuration for {feature_id}"
+                    ) from exc
+                except ArithmeticError:
+                    computation = missing_technical_feature_computation(
+                        feature_id=feature_id,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        available_at=max(item.available_at for item in input_bars),
+                        configuration=configuration,
+                        output_ids=output_ids,
+                        reason_code="COMPUTATION_FAILED",
+                    )
             return FeatureArtifactV2.create(
                 definition=definition,
                 configuration=configuration,
@@ -459,6 +484,24 @@ def replay_feature_bundle_v2(
     verified_dataset: VerifiedMarketDataDataset,
     report_root: Path | None = None,
 ) -> FeatureBundleReplayReport:
+    report, _ = recompute_feature_bundle_v2(
+        bundle_path=bundle_path,
+        artifact_root=artifact_root,
+        verified_dataset=verified_dataset,
+    )
+    if report_root is not None:
+        publish_feature_replay_report(root=report_root, report=report)
+    return report
+
+
+def recompute_feature_bundle_v2(
+    *,
+    bundle_path: Path,
+    artifact_root: Path,
+    verified_dataset: VerifiedMarketDataDataset,
+) -> tuple[FeatureBundleReplayReport, VerifiedFeatureBundleV2]:
+    """Recompute both artifacts and Bundle for downstream semantic replay."""
+
     verified = load_verified_feature_bundle_v2(
         bundle_path,
         artifact_root=artifact_root,
@@ -495,10 +538,27 @@ def replay_feature_bundle_v2(
         replayed_artifact_hashes=replayed_hashes,
     )
     if not report.semantic_match:
-        raise ValueError("Feature Bundle replay semantic mismatch")
-    if report_root is not None:
-        publish_feature_replay_report(root=report_root, report=report)
-    return report
+        raise FeatureReplayDivergenceError("Feature Bundle replay semantic mismatch")
+    recomputed_artifacts = tuple(
+        VerifiedFeatureArtifactV2(
+            root=original_verified.root,
+            artifact=recomputed,
+            checksums_hash=original_verified.checksums_hash,
+        )
+        for original_verified, recomputed in zip(
+            verified.artifacts, replayed_artifacts, strict=True
+        )
+    )
+    recomputed_bundle = VerifiedFeatureBundleV2(
+        root=verified.root,
+        artifact=replayed_bundle,
+        artifacts=recomputed_artifacts,
+        checksums_hash=verified.checksums_hash,
+    )
+    recomputed_bundle.artifact.verify_materialized_projection(
+        tuple(item.artifact for item in recomputed_bundle.artifacts)
+    )
+    return report, recomputed_bundle
 
 
 def publish_feature_replay_report(
@@ -589,10 +649,22 @@ def _write_command(*, path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise FileExistsError("Feature materialization command already exists")
-    temporary = path.with_name(f".{path.name}.tmp")
-    _write_json(temporary, payload)
-    os.replace(temporary, path)
-    _fsync_directory(path.parent)
+    prefix = f".{path.name}.tmp-"
+    for stale in path.parent.glob(f"{prefix}*"):
+        if stale.is_file() and stale.name.startswith(prefix):
+            stale.unlink()
+    descriptor, raw_temporary = tempfile.mkstemp(prefix=prefix, dir=path.parent)
+    temporary = Path(raw_temporary)
+    try:
+        encoded = (canonical_json(payload) + "\n").encode("utf-8")
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _require_exact_files(root: Path, expected: set[str], label: str) -> None:
@@ -655,6 +727,8 @@ __all__ = [
     "FeatureBundleState",
     "FeatureMaterializationRunner",
     "FeatureMaterializationStatus",
+    "FeatureConfigurationInvalidError",
+    "FeatureReplayDivergenceError",
     "VerifiedFeatureArtifactV2",
     "VerifiedFeatureBundleV2",
     "load_verified_feature_artifact_v2",
@@ -663,5 +737,6 @@ __all__ = [
     "publish_feature_artifact_v2",
     "publish_feature_bundle_v2",
     "publish_feature_replay_report",
+    "recompute_feature_bundle_v2",
     "replay_feature_bundle_v2",
 ]

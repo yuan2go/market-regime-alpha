@@ -7,8 +7,9 @@ from decimal import Decimal
 from typing import Mapping
 from zoneinfo import ZoneInfo
 
-from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.source_manifest import SourceManifest
+from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite.stage_artifact import (
     PublicSourceAcquisitionStage,
     VerifiedPublicSourceStageArtifact,
@@ -43,12 +44,21 @@ def normalize_public_history_stage(
     decision_time: datetime,
     created_at: datetime,
     expected_symbols: tuple[str, ...],
-    source_manifest_id: ArtifactId,
-    source_manifest_hash: str,
+    source_manifest: SourceManifest,
     asset_types: Mapping[str, AssetType],
 ) -> MarketDataDatasetArtifact:
     if verified.stage is not PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN:
         raise ValueError("only verified frozen history can produce a Market Data Dataset")
+    if not isinstance(source_manifest, SourceManifest):
+        raise TypeError("source_manifest must be a verified SourceManifest")
+    if source_manifest.decision_time != DecisionTime(decision_time):
+        raise ValueError("SourceManifest DecisionTime mismatch")
+    archived_references = tuple(
+        sorted((item.reference for item in verified.batch.raw_payloads), key=str)
+    )
+    manifest_references = tuple(sorted(source_manifest.source_artifacts, key=str))
+    if manifest_references != archived_references:
+        raise ValueError("SourceManifest source scope mismatch")
     expected_symbols = tuple(sorted(expected_symbols))
     if tuple(sorted(asset_types)) != expected_symbols:
         raise ValueError("asset type authority must exactly cover expected symbols")
@@ -134,7 +144,9 @@ def normalize_public_history_stage(
             factors=(),
             limitations=(),
         ),
-        source_manifest_references=((source_manifest_id, source_manifest_hash),),
+        source_manifest_references=(
+            (source_manifest.source_manifest_id, source_manifest.content_hash),
+        ),
         data_eligibility=DataEligibility.EXPLORATORY,
         formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
         limitations=limitations,

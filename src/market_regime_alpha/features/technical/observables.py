@@ -170,7 +170,7 @@ def compute_technical_feature(
     except KeyError as exc:
         raise ValueError(f"unsupported technical feature: {feature_id}") from exc
     with localcontext() as context:
-        context.prec = 50
+        context.prec = 34
         context.rounding = ROUND_HALF_EVEN
         return computer(ordered, configuration, decision_time)
 
@@ -206,7 +206,15 @@ def _compute_price_action(
                 )
             )
     decision_date = decision_time.astimezone(_SHANGHAI).date()
-    if latest.market_date != decision_date:
+    if latest.timeframe is Timeframe.DAILY:
+        values.append(
+            _missing(
+                "intraday_return_to_decision_time",
+                (latest,),
+                "INTRADAY_REQUIRES_MINUTE_DATA",
+            )
+        )
+    elif latest.market_date != decision_date:
         values.append(
             _missing(
                 "intraday_return_to_decision_time",
@@ -508,6 +516,7 @@ def _compute_volume(
     del decision_time
     output_ids = (
         *VOLUME_DECIMAL_OUTPUTS,
+        "turnover_persistence",
         "volume_persistence",
         *VOLUME_TEXT_OUTPUTS,
     )
@@ -619,6 +628,47 @@ def _compute_volume(
         values.append(
             _available("price_volume_direction_agreement", agreement, bars[-2:])
         )
+    if len(bars) < 2 or bars[-1].amount is None or bars[-2].amount is None:
+        values.extend(
+            (
+                _missing("amount_expansion", bars[-2:], "FIELD_UNAVAILABLE_AMOUNT"),
+                _missing("amount_contraction", bars[-2:], "FIELD_UNAVAILABLE_AMOUNT"),
+            )
+        )
+    elif bars[-2].amount == 0:
+        values.extend(
+            (
+                _missing("amount_expansion", bars[-2:], "ZERO_PRIOR_AMOUNT"),
+                _missing("amount_contraction", bars[-2:], "ZERO_PRIOR_AMOUNT"),
+            )
+        )
+    else:
+        amount_change = bars[-1].amount / bars[-2].amount - Decimal("1")
+        values.append(
+            _available(
+                "amount_expansion",
+                _q(max(amount_change, Decimal("0")), scale),
+                bars[-2:],
+            )
+        )
+        if bars[-1].amount == 0:
+            values.append(
+                _missing("amount_contraction", bars[-2:], "ZERO_CURRENT_AMOUNT")
+            )
+        else:
+            values.append(
+                _available(
+                    "amount_contraction",
+                    _q(
+                        max(
+                            bars[-2].amount / bars[-1].amount - Decimal("1"),
+                            Decimal("0"),
+                        ),
+                        scale,
+                    ),
+                    bars[-2:],
+                )
+            )
     volume_ratio_20 = next(item for item in values if item.output_id == "volume_ratio_20")
     if len(bars) < 21 or volume_ratio_20.value is None:
         values.append(_missing("breakout_volume_confirmation", bars, "WINDOW_NOT_READY"))
@@ -661,6 +711,22 @@ def _compute_volume(
                 "turnover_expansion",
                 _q(bars[-1].turnover_rate / bars[-2].turnover_rate - Decimal("1"), scale),
                 bars[-2:],
+            )
+        )
+    if len(bars) < 2 or bars[-1].turnover_rate is None or bars[-2].turnover_rate is None:
+        values.append(
+            _missing(
+                "turnover_persistence", bars[-2:], "FIELD_UNAVAILABLE_TURNOVER_RATE"
+            )
+        )
+    else:
+        values.append(
+            _available(
+                "turnover_persistence",
+                _decimal_field_persistence(
+                    bars, getter=lambda item: item.turnover_rate
+                ),
+                bars,
             )
         )
     values.append(_available("volume_persistence", _volume_persistence(bars), bars))
@@ -1171,6 +1237,30 @@ def _volume_persistence(bars: tuple[CanonicalMarketBar, ...]) -> int:
     count = 1
     for index in range(len(bars) - 2, 0, -1):
         difference = bars[index].volume - bars[index - 1].volume
+        if difference == 0 or (difference > 0) != (direction > 0):
+            break
+        count += 1
+    return direction * count
+
+
+def _decimal_field_persistence(
+    bars: tuple[CanonicalMarketBar, ...],
+    *,
+    getter: Callable[[CanonicalMarketBar], Decimal | None],
+) -> int:
+    latest = getter(bars[-1])
+    previous = getter(bars[-2])
+    assert latest is not None and previous is not None
+    if latest == previous:
+        return 0
+    direction = 1 if latest > previous else -1
+    count = 1
+    for index in range(len(bars) - 2, 0, -1):
+        current = getter(bars[index])
+        prior = getter(bars[index - 1])
+        if current is None or prior is None:
+            break
+        difference = current - prior
         if difference == 0 or (difference > 0) != (direction > 0):
             break
         count += 1

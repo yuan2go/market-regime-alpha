@@ -69,6 +69,26 @@ def test_market_bar_is_content_addressed_and_round_trips() -> None:
     assert isinstance(bar.volume, Decimal)
 
 
+def test_market_bar_decimal_identity_is_canonical_and_reader_is_strict() -> None:
+    canonical = _raw_bar(open=Decimal("10.0"), close=Decimal("10.5000"))
+    equivalent = _raw_bar(open=Decimal("10.00"), close=Decimal("10.5"))
+
+    assert canonical.bar_id == equivalent.bar_id
+    assert canonical.content_hash == equivalent.content_hash
+    assert canonical.to_canonical_dict()["open"] == "10"
+    assert canonical.to_canonical_dict()["close"] == "10.5"
+
+    payload = canonical.to_canonical_dict()
+    payload["open"] = "10.00"
+    with pytest.raises(ValueError, match="canonical decimal"):
+        CanonicalMarketBar.from_canonical_dict(payload)
+
+    payload = canonical.to_canonical_dict()
+    payload["open"] = 10
+    with pytest.raises(ValueError, match="canonical decimal"):
+        CanonicalMarketBar.from_canonical_dict(payload)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -141,6 +161,22 @@ def test_adjustment_factor_and_policy_are_content_addressed() -> None:
     assert AdjustmentFactorEvidence.from_canonical_dict(
         factor.to_canonical_dict()
     ) == factor
+
+    equivalent = AdjustmentFactorEvidence.create(
+        symbol="600000.SH",
+        exchange=Exchange.SH,
+        effective_date=date(2026, 8, 1),
+        available_at=datetime(2026, 8, 2, 10, 0, tzinfo=UTC),
+        factor=Decimal("1.0250"),
+        source_artifact_id=ArtifactId("adjustment-source-1"),
+        source_content_hash="sha256:" + "2" * 64,
+    )
+    assert equivalent.factor_id == factor.factor_id
+
+    payload = factor.to_canonical_dict()
+    payload["factor"] = "1.0250"
+    with pytest.raises(ValueError, match="canonical decimal"):
+        AdjustmentFactorEvidence.from_canonical_dict(payload)
     assert PriceAdjustmentPolicy.from_canonical_dict(
         policy.to_canonical_dict()
     ) == policy

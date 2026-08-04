@@ -8,13 +8,17 @@ from typing import NoReturn, Sequence
 
 from market_regime_alpha.cli._feature_output import (
     EXIT_ARGUMENT_ERROR,
+    EXIT_CANONICAL_REGRESSION,
     EXIT_INPUT_TAMPERED,
     EXIT_IO_ERROR,
     EXIT_SUCCESS,
     emit,
     emit_error,
 )
-from market_regime_alpha.features import replay_feature_bundle_v2
+from market_regime_alpha.features import (
+    FeatureReplayDivergenceError,
+    replay_feature_bundle_v2,
+)
 from market_regime_alpha.market_data import load_verified_market_data_dataset
 
 
@@ -47,6 +51,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (FileNotFoundError, PermissionError, OSError) as exc:
         emit_error(status="IO_ERROR", reason_code="FEATURE_REPLAY_IO_ERROR", error=exc)
         return EXIT_IO_ERROR
+    except FeatureReplayDivergenceError as exc:
+        emit_error(
+            status="CANONICAL_REGRESSION",
+            reason_code="FEATURE_REPLAY_DIVERGED",
+            error=exc,
+        )
+        return EXIT_CANONICAL_REGRESSION
     except ValueError as exc:
         emit_error(status="REJECTED", reason_code="FEATURE_REPLAY_REJECTED", error=exc)
         return EXIT_INPUT_TAMPERED

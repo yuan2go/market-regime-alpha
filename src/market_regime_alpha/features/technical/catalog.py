@@ -75,6 +75,8 @@ MACD_TEXT_OUTPUTS = (
     "zero_axis_state",
 )
 VOLUME_DECIMAL_OUTPUTS = (
+    "amount_contraction",
+    "amount_expansion",
     "amount_percentile_20",
     "amount_ratio_10",
     "amount_ratio_20",
@@ -151,6 +153,7 @@ def canonical_technical_feature_set(
             minimum_history=21,
             outputs=(
                 *_outputs(VOLUME_DECIMAL_OUTPUTS, ValueType.DECIMAL),
+                FeatureOutputDefinition("turnover_persistence", ValueType.INTEGER),
                 FeatureOutputDefinition("volume_persistence", ValueType.INTEGER),
                 *_outputs(VOLUME_TEXT_OUTPUTS, ValueType.TEXT),
             ),

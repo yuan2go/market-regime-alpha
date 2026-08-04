@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.features.materialization_v2 import (
+    FeatureBundleState,
     load_verified_feature_bundle_v2,
 )
 from market_regime_alpha.research.candidate_discovery.contracts import (
@@ -42,6 +44,7 @@ from market_regime_alpha.signals.v2 import (
     replay_signal_run_v2,
     run_signal_model_v2,
 )
+from market_regime_alpha.market_data import AdjustmentMode
 from tests.features.test_materialization_runner_v2 import (
     CREATED_AT,
     DECISION_TIME,
@@ -53,7 +56,12 @@ UTC = timezone.utc
 HASH = "sha256:" + "9" * 64
 
 
-def _candidate_set(*, symbol: str = "600000.SH") -> CandidateSet:
+def _candidate_set(
+    *,
+    symbol: str = "600000.SH",
+    source_manifest_id: ArtifactId = ArtifactId("source-manifest"),
+    source_manifest_hash: str = HASH,
+) -> CandidateSet:
     decision = DecisionTime(DECISION_TIME)
     record = CandidateRecord(
         symbol=symbol,
@@ -86,8 +94,8 @@ def _candidate_set(*, symbol: str = "600000.SH") -> CandidateSet:
         code_revision="test-revision",
         configuration_id=ArtifactId("candidate-config"),
         configuration_hash=canonical_hash({"candidate": "fixture"}),
-        source_manifest_id=ArtifactId("source-manifest"),
-        source_manifest_hash=HASH,
+        source_manifest_id=source_manifest_id,
+        source_manifest_hash=source_manifest_hash,
         input_artifact_ids=(),
         input_content_hashes=(),
         model_id=ModelId("candidate-model"),
@@ -128,8 +136,12 @@ def _signal_config() -> SignalModelConfig:
     )
 
 
-def _bundle(tmp_path: Path, *, include_minutes: bool = True):
-    _, _, receipt = run_features(tmp_path, include_minutes=include_minutes)
+def _bundle(
+    tmp_path: Path, *, include_minutes: bool = True, daily_count: int = 70
+):
+    _, _, receipt = run_features(
+        tmp_path, include_minutes=include_minutes, daily_count=daily_count
+    )
     return load_verified_feature_bundle_v2(
         tmp_path / "features" / receipt.bundle_locator,
         artifact_root=tmp_path / "features" / "feature-artifacts",
@@ -152,6 +164,8 @@ def test_mapping_and_v2_observation_are_content_addressed(tmp_path: Path) -> Non
     ) == mapping
     assert len(observations) == 1
     observation = observations[0]
+    assert observation.candidate_set_id == _candidate_set().envelope.artifact_id
+    assert observation.candidate_set_hash == _candidate_set().envelope.content_hash
     assert SignalObservationV2.from_canonical_dict(
         observation.to_canonical_dict()
     ) == observation
@@ -208,6 +222,55 @@ def test_observation_identity_tamper_and_candidate_scope_mismatch_fail_closed(
             configuration=canonical_signal_input_mapping(
                 effective_from=datetime(2026, 1, 1, tzinfo=UTC)
             ),
+            decision_time=DecisionTime(DECISION_TIME),
+        )
+
+
+def test_signal_assembly_rejects_lineage_blocked_and_back_adjusted_bundles(
+    tmp_path: Path,
+) -> None:
+    mapping = canonical_signal_input_mapping(
+        effective_from=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    bundle = _bundle(tmp_path / "normal")
+    with pytest.raises(ValueError, match="source lineage mismatch"):
+        SignalInputAssembler().assemble(
+            candidate_set=_candidate_set(
+                source_manifest_id=ArtifactId("other-source-manifest")
+            ),
+            feature_bundle=bundle,
+            configuration=mapping,
+            decision_time=DecisionTime(DECISION_TIME),
+        )
+
+    blocked = _bundle(tmp_path / "blocked", daily_count=5)
+    assert blocked.artifact.state is FeatureBundleState.BLOCKED_REQUIRED_FEATURE
+    with pytest.raises(ValueError, match="blocked Feature Bundle"):
+        SignalInputAssembler().assemble(
+            candidate_set=_candidate_set(),
+            feature_bundle=blocked,
+            configuration=mapping,
+            decision_time=DecisionTime(DECISION_TIME),
+        )
+
+    adjusted_artifact = replace(
+        bundle.artifact,
+        adjustment_mode=AdjustmentMode.RESEARCH_BACK_ADJUSTED,
+    )
+    adjusted_hash = canonical_hash(adjusted_artifact.semantic_payload())
+    adjusted_artifact = replace(
+        adjusted_artifact,
+        content_hash=adjusted_hash,
+        bundle_id=ArtifactId(
+            f"feature-bundle-{adjusted_hash.split(':', 1)[1][:24]}"
+        ),
+    )
+    adjusted_bundle = replace(bundle, artifact=adjusted_artifact)
+    with pytest.raises(ValueError, match="research-back-adjusted"):
+        SignalInputAssembler().assemble(
+            candidate_set=_candidate_set(),
+            feature_bundle=adjusted_bundle,
+            configuration=mapping,
             decision_time=DecisionTime(DECISION_TIME),
         )
 

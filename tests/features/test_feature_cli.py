@@ -9,6 +9,7 @@ from market_regime_alpha.cli.replay_feature_bundle import main as replay_main
 from market_regime_alpha.evidence.canonical import canonical_json
 from market_regime_alpha.features.materialization_v2 import (
     FeatureMaterializationStatus,
+    FeatureReplayDivergenceError,
 )
 from market_regime_alpha.features.technical.catalog import (
     MOVING_AVERAGE_FEATURE_ID,
@@ -129,3 +130,32 @@ def test_materialize_cli_rejects_tampered_dataset(tmp_path: Path, capsys) -> Non
     assert status == 3
     assert payload["status"] == "REJECTED"
     assert payload["NO_ORDER_CREATED"] is True
+
+
+def test_replay_cli_classifies_semantic_divergence_as_canonical_regression(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    def diverged(**_kwargs):
+        raise FeatureReplayDivergenceError("semantic mismatch")
+
+    monkeypatch.setattr(
+        "market_regime_alpha.cli.replay_feature_bundle.replay_feature_bundle_v2",
+        diverged,
+    )
+    dataset, _ = _inputs(tmp_path)
+
+    status = replay_main(
+        [
+            "--market-data-manifest",
+            str(dataset),
+            "--feature-bundle",
+            str(tmp_path / "bundle"),
+            "--feature-artifact-root",
+            str(tmp_path / "artifacts"),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert status == 6
+    assert payload["status"] == "CANONICAL_REGRESSION"
+    assert payload["reason_codes"] == ["FEATURE_REPLAY_DIVERGED"]

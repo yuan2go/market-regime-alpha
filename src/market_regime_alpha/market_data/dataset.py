@@ -542,6 +542,14 @@ class MarketDataDatasetArtifact:
         raw_coverage = payload["coverage"]
         if not isinstance(raw_coverage, dict):
             raise ValueError("coverage must be an object")
+        coverage = MarketDataCoverage.from_canonical_dict(raw_coverage)
+        reconstructed_coverage = _build_coverage(
+            bars=tuple(bar for partition in partitions for bar in partition.bars),
+            expected_symbols=coverage.expected_symbols,
+            expected_timeframes=coverage.expected_timeframes,
+        )
+        if coverage != reconstructed_coverage:
+            raise ValueError("Market Data Dataset coverage projection mismatch")
         raw_limitations = payload["limitations"]
         if not isinstance(raw_limitations, list) or any(
             not isinstance(item, str) for item in raw_limitations
@@ -564,7 +572,7 @@ class MarketDataDatasetArtifact:
             ),
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
             formal_pit_status=FormalPitStatus(str(payload["formal_pit_status"])),
-            coverage=MarketDataCoverage.from_canonical_dict(raw_coverage),
+            coverage=coverage,
             limitations=tuple(raw_limitations),
         )
         result.verify_identity()

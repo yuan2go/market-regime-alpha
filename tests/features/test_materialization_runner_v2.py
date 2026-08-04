@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import json
@@ -9,6 +10,7 @@ import pytest
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.features.materialization_v2 import (
     FeatureBundleState,
     FeatureMaterializationRunner,
@@ -19,6 +21,10 @@ from market_regime_alpha.features.materialization_v2 import (
     publish_feature_bundle_v2,
     publish_feature_replay_report,
     replay_feature_bundle_v2,
+)
+from market_regime_alpha.features.spine import (
+    FeatureSetConfiguration,
+    RequiredFeatureCoveragePolicy,
 )
 from market_regime_alpha.features.technical.catalog import (
     VWAP_FEATURE_ID,
@@ -46,7 +52,7 @@ UTC = timezone.utc
 DECISION_TIME = datetime(2026, 8, 4, 2, 30, tzinfo=UTC)
 CREATED_AT = datetime(2026, 8, 4, 3, 0, tzinfo=UTC)
 SOURCE_HASH = "sha256:" + "1" * 64
-MANIFEST_HASH = "sha256:" + "2" * 64
+MANIFEST_HASH = "sha256:" + "9" * 64
 
 
 def _daily_bars(count: int = 70) -> tuple[CanonicalMarketBar, ...]:
@@ -153,7 +159,7 @@ def _verified_dataset(
             factors=(),
             limitations=(),
         ),
-        source_manifest_references=((ArtifactId("source-manifest-1"), MANIFEST_HASH),),
+        source_manifest_references=((ArtifactId("source-manifest"), MANIFEST_HASH),),
         data_eligibility=DataEligibility.EXPLORATORY,
         formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
         limitations=("FORMAL_PIT_NOT_ESTABLISHED",),
@@ -170,13 +176,14 @@ def _run(
     max_workers: int = 1,
     idempotency_key: str = "feature-run-1",
     code_revision: str = "revision-1",
+    feature_set: FeatureSetConfiguration | None = None,
 ):
     dataset = _verified_dataset(
         tmp_path,
         include_minutes=include_minutes,
         daily_count=daily_count,
     )
-    feature_set = canonical_technical_feature_set(
+    feature_set = feature_set or canonical_technical_feature_set(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
     )
     receipt = FeatureMaterializationRunner(max_workers=max_workers).run(
@@ -244,9 +251,34 @@ def test_required_family_without_warmup_blocks_complete_status(tmp_path: Path) -
         artifact_root=tmp_path / "features" / "feature-artifacts",
     )
 
-    assert receipt.status is FeatureMaterializationStatus.PARTIAL_COVERAGE
+    assert receipt.status is FeatureMaterializationStatus.BLOCKED_REQUIRED_FEATURE
     assert verified.artifact.state is FeatureBundleState.BLOCKED_REQUIRED_FEATURE
     assert verified.artifact.required_feature_status == "BLOCKED"
+
+
+def test_allow_partial_policy_enforces_minimum_required_family_coverage(
+    tmp_path: Path,
+) -> None:
+    base = canonical_technical_feature_set(
+        effective_from=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    policy = FeatureSetConfiguration.create(
+        feature_set_version="allow-partial-threshold-test-v1",
+        definitions=base.definitions,
+        configurations=base.configurations,
+        required_feature_ids=base.required_feature_ids,
+        optional_feature_ids=base.optional_feature_ids,
+        timeframe_policy=base.timeframe_policy,
+        coverage_policy=RequiredFeatureCoveragePolicy.ALLOW_PARTIAL,
+        minimum_required_coverage=Decimal("0.9"),
+        missingness_policy=base.missingness_policy,
+        validation_status=base.validation_status,
+        limitations=base.limitations,
+    )
+
+    _, _, receipt = _run(tmp_path, daily_count=5, feature_set=policy)
+
+    assert receipt.status is FeatureMaterializationStatus.BLOCKED_REQUIRED_FEATURE
 
 
 def test_serial_parallel_and_restart_replay_are_hash_identical(tmp_path: Path) -> None:
@@ -340,6 +372,39 @@ def test_feature_artifact_and_bundle_tamper_are_detected(tmp_path: Path) -> None
             bundle_path,
             artifact_root=tmp_path / "features" / "feature-artifacts",
         )
+
+
+def test_bundle_reconstructs_coverage_from_loaded_feature_artifacts(
+    tmp_path: Path,
+) -> None:
+    _, _, receipt = _run(tmp_path)
+    verified = load_verified_feature_bundle_v2(
+        tmp_path / "features" / receipt.bundle_locator,
+        artifact_root=tmp_path / "features" / "feature-artifacts",
+    )
+    coverage = replace(
+        verified.artifact.coverage,
+        available_value_count=verified.artifact.coverage.available_value_count + 1,
+    )
+    tampered = replace(verified.artifact, coverage=coverage)
+
+    with pytest.raises(ValueError, match="materialized projection mismatch"):
+        tampered.verify_materialized_projection(
+            tuple(item.artifact for item in verified.artifacts)
+        )
+
+
+def test_orphan_command_staging_file_does_not_block_retry(tmp_path: Path) -> None:
+    key_hash = canonical_hash({"idempotency_key": "feature-run-1"}).split(":", 1)[1]
+    command_root = tmp_path / "features" / "materialization-commands"
+    command_root.mkdir(parents=True)
+    orphan = command_root / f".{key_hash}.json.tmp-orphan"
+    orphan.write_text("interrupted", encoding="utf-8")
+
+    _, _, receipt = _run(tmp_path)
+
+    assert receipt.bundle_hash.startswith("sha256:")
+    assert not orphan.exists()
 
 
 def test_feature_bundle_detects_missing_referenced_artifact(tmp_path: Path) -> None:

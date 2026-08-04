@@ -18,7 +18,10 @@ from market_regime_alpha.evidence.canonical import (
     require_text,
     require_unique_text,
 )
-from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
+from market_regime_alpha.features.materialization_v2 import (
+    FeatureBundleState,
+    VerifiedFeatureBundleV2,
+)
 from market_regime_alpha.features.spine import FeatureValidationStatus
 from market_regime_alpha.features.technical.catalog import (
     CAPITAL_VOLUME_FEATURE_ID,
@@ -28,7 +31,7 @@ from market_regime_alpha.features.technical.catalog import (
     VWAP_FEATURE_ID,
 )
 from market_regime_alpha.features.technical.observables import FeatureValueState
-from market_regime_alpha.market_data import Timeframe
+from market_regime_alpha.market_data import AdjustmentMode, Timeframe
 from market_regime_alpha.market_data.contracts import (
     parse_utc_second,
     require_utc_second,
@@ -347,6 +350,8 @@ class SignalObservationV2:
     content_hash: str
     symbol: str
     decision_time: datetime
+    candidate_set_id: ArtifactId
+    candidate_set_hash: str
     feature_bundle_id: ArtifactId
     feature_bundle_hash: str
     mapping_configuration_id: ArtifactId
@@ -361,6 +366,7 @@ class SignalObservationV2:
         require_sha256("content_hash", self.content_hash)
         require_text("symbol", self.symbol)
         require_utc_second("decision_time", self.decision_time)
+        require_sha256("candidate_set_hash", self.candidate_set_hash)
         require_sha256("feature_bundle_hash", self.feature_bundle_hash)
         require_sha256("mapping_configuration_hash", self.mapping_configuration_hash)
         factor_names = tuple(item.factor_name.value for item in self.factors)
@@ -381,6 +387,8 @@ class SignalObservationV2:
         *,
         symbol: str,
         decision_time: datetime,
+        candidate_set_id: ArtifactId,
+        candidate_set_hash: str,
         feature_bundle_id: ArtifactId,
         feature_bundle_hash: str,
         mapping_configuration: SignalInputMappingConfiguration,
@@ -399,6 +407,8 @@ class SignalObservationV2:
         payload = _observation_payload(
             symbol=symbol,
             decision_time=decision_time,
+            candidate_set_id=candidate_set_id,
+            candidate_set_hash=candidate_set_hash,
             feature_bundle_id=feature_bundle_id,
             feature_bundle_hash=feature_bundle_hash,
             mapping_configuration_id=mapping_configuration.configuration_id,
@@ -416,6 +426,8 @@ class SignalObservationV2:
             content_hash=content_hash,
             symbol=symbol,
             decision_time=decision_time,
+            candidate_set_id=candidate_set_id,
+            candidate_set_hash=candidate_set_hash,
             feature_bundle_id=feature_bundle_id,
             feature_bundle_hash=feature_bundle_hash,
             mapping_configuration_id=mapping_configuration.configuration_id,
@@ -431,6 +443,8 @@ class SignalObservationV2:
         return _observation_payload(
             symbol=self.symbol,
             decision_time=self.decision_time,
+            candidate_set_id=self.candidate_set_id,
+            candidate_set_hash=self.candidate_set_hash,
             feature_bundle_id=self.feature_bundle_id,
             feature_bundle_hash=self.feature_bundle_hash,
             mapping_configuration_id=self.mapping_configuration_id,
@@ -466,6 +480,8 @@ class SignalObservationV2:
             "content_hash",
             "symbol",
             "decision_time",
+            "candidate_set_id",
+            "candidate_set_hash",
             "feature_bundle_id",
             "feature_bundle_hash",
             "mapping_configuration_id",
@@ -483,6 +499,8 @@ class SignalObservationV2:
             content_hash=str(payload["content_hash"]),
             symbol=str(payload["symbol"]),
             decision_time=parse_utc_second("decision_time", payload["decision_time"]),
+            candidate_set_id=ArtifactId(str(payload["candidate_set_id"])),
+            candidate_set_hash=str(payload["candidate_set_hash"]),
             feature_bundle_id=ArtifactId(str(payload["feature_bundle_id"])),
             feature_bundle_hash=str(payload["feature_bundle_hash"]),
             mapping_configuration_id=ArtifactId(
@@ -520,6 +538,18 @@ class SignalInputAssembler:
         selected_symbols = tuple(sorted(item.symbol for item in candidate_set.selected))
         if selected_symbols != feature_bundle.artifact.symbols:
             raise ValueError("Candidate symbols must exactly match Feature Bundle symbols")
+        if feature_bundle.artifact.state is FeatureBundleState.BLOCKED_REQUIRED_FEATURE:
+            raise ValueError("blocked Feature Bundle cannot enter Signal assembly")
+        if feature_bundle.artifact.adjustment_mode is AdjustmentMode.RESEARCH_BACK_ADJUSTED:
+            raise ValueError(
+                "research-back-adjusted Feature Bundle cannot enter DecisionTime Signal"
+            )
+        candidate_source = (
+            candidate_set.envelope.source_manifest_id,
+            candidate_set.envelope.source_manifest_hash,
+        )
+        if candidate_source not in feature_bundle.artifact.source_manifest_references:
+            raise ValueError("CandidateSet and Feature Bundle source lineage mismatch")
         if (
             feature_bundle.artifact.data_eligibility
             not in configuration.allowed_data_eligibility
@@ -528,6 +558,7 @@ class SignalInputAssembler:
         observations = tuple(
             self._assemble_symbol(
                 symbol=symbol,
+                candidate_set=candidate_set,
                 feature_bundle=feature_bundle,
                 configuration=configuration,
                 decision_time=decision_time.value.astimezone(timezone.utc),
@@ -540,6 +571,7 @@ class SignalInputAssembler:
         self,
         *,
         symbol: str,
+        candidate_set: CandidateSet,
         feature_bundle: VerifiedFeatureBundleV2,
         configuration: SignalInputMappingConfiguration,
         decision_time: datetime,
@@ -607,6 +639,8 @@ class SignalInputAssembler:
         return SignalObservationV2.create(
             symbol=symbol,
             decision_time=decision_time,
+            candidate_set_id=candidate_set.envelope.artifact_id,
+            candidate_set_hash=candidate_set.envelope.content_hash,
             feature_bundle_id=feature_bundle.artifact.bundle_id,
             feature_bundle_hash=feature_bundle.artifact.content_hash,
             mapping_configuration=configuration,
@@ -701,6 +735,8 @@ def _observation_payload(
     *,
     symbol: str,
     decision_time: datetime,
+    candidate_set_id: ArtifactId,
+    candidate_set_hash: str,
     feature_bundle_id: ArtifactId,
     feature_bundle_hash: str,
     mapping_configuration_id: ArtifactId,
@@ -713,6 +749,8 @@ def _observation_payload(
         "schema_version": SIGNAL_OBSERVATION_V2_SCHEMA,
         "symbol": symbol,
         "decision_time": canonical_datetime(decision_time),
+        "candidate_set_id": str(candidate_set_id),
+        "candidate_set_hash": candidate_set_hash,
         "feature_bundle_id": str(feature_bundle_id),
         "feature_bundle_hash": feature_bundle_hash,
         "mapping_configuration_id": str(mapping_configuration_id),

@@ -23,6 +23,7 @@ from market_regime_alpha.features.spine import (
     FeatureDefinitionV2,
     FeatureSetConfiguration,
     FeatureValidationStatus,
+    RequiredFeatureCoveragePolicy,
     ValueType,
 )
 from market_regime_alpha.features.technical.observables import (
@@ -32,6 +33,7 @@ from market_regime_alpha.features.technical.observables import (
     TechnicalFeatureValue,
 )
 from market_regime_alpha.market_data import (
+    AdjustmentMode,
     CanonicalMarketBar,
     FormalPitStatus,
     MarketDataDatasetArtifact,
@@ -64,6 +66,7 @@ class FeatureBundleState(str, Enum):
 class FeatureMaterializationStatus(str, Enum):
     COMPLETE = "COMPLETE"
     PARTIAL_COVERAGE = "PARTIAL_COVERAGE"
+    BLOCKED_REQUIRED_FEATURE = "BLOCKED_REQUIRED_FEATURE"
 
 
 class _VerifiedDatasetMembership:
@@ -572,6 +575,10 @@ class FeatureBundleArtifact:
     content_hash: str
     dataset_id: DatasetId
     dataset_hash: str
+    adjustment_mode: AdjustmentMode
+    adjustment_policy_id: ArtifactId
+    adjustment_policy_hash: str
+    source_manifest_references: tuple[tuple[ArtifactId, str], ...]
     feature_set: FeatureSetConfiguration
     decision_time: datetime
     created_at: datetime
@@ -605,6 +612,19 @@ class FeatureBundleArtifact:
             raise ValueError("unsupported Feature Bundle schema")
         require_sha256("content_hash", self.content_hash)
         require_sha256("dataset_hash", self.dataset_hash)
+        require_sha256("adjustment_policy_hash", self.adjustment_policy_hash)
+        source_references = tuple(
+            (str(item_id), item_hash)
+            for item_id, item_hash in self.source_manifest_references
+        )
+        if not source_references or source_references != tuple(
+            sorted(set(source_references))
+        ):
+            raise ValueError(
+                "Feature Bundle source manifest references must be non-empty and sorted"
+            )
+        for _, item_hash in self.source_manifest_references:
+            require_sha256("source_manifest_hash", item_hash)
         self.feature_set.verify_identity()
         require_utc_second("decision_time", self.decision_time)
         require_utc_second("created_at", self.created_at)
@@ -673,45 +693,15 @@ class FeatureBundleArtifact:
             for item in ordered_artifacts
         ):
             raise ValueError("Feature Bundle artifact dataset scope mismatch")
-        references = tuple(FeatureArtifactReferenceV2.from_artifact(item) for item in ordered_artifacts)
-        available_count = sum(
-            value.state is FeatureValueState.AVAILABLE
-            for item in ordered_artifacts
-            for value in item.values
-        )
-        missing_values = tuple(
-            value
-            for item in ordered_artifacts
-            for value in item.values
-            if value.state is FeatureValueState.MISSING
-        )
-        reason_counts: dict[str, int] = {}
-        for value in missing_values:
-            for reason in value.missing_reason_codes:
-                reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        coverage = FeatureBundleCoverage(
-            artifact_count=len(ordered_artifacts),
-            available_value_count=available_count,
-            missing_value_count=len(missing_values),
-            missing_reason_counts=tuple(sorted(reason_counts.items())),
-        )
-        required_pairs = {
-            (feature_id, symbol)
-            for feature_id in feature_set.required_feature_ids
-            for symbol in selected_symbols
-        }
-        blocked = any(
-            item.state is FeatureArtifactState.DATA_INSUFFICIENT
-            for item in ordered_artifacts
-            if (item.feature_id, item.symbol) in required_pairs
-        )
-        required_status = "BLOCKED" if blocked else "COMPLETE"
-        state = (
-            FeatureBundleState.BLOCKED_REQUIRED_FEATURE
-            if blocked
-            else FeatureBundleState.PARTIAL_COVERAGE
-            if missing_values
-            else FeatureBundleState.COMPLETE
+        (
+            references,
+            coverage,
+            required_status,
+            state,
+        ) = _derive_bundle_projection(
+            feature_set=feature_set,
+            artifacts=ordered_artifacts,
+            selected_symbols=selected_symbols,
         )
         limitations = tuple(
             sorted(
@@ -727,6 +717,10 @@ class FeatureBundleArtifact:
         semantic = _feature_bundle_payload(
             dataset_id=dataset.dataset_id,
             dataset_hash=dataset.content_hash,
+            adjustment_mode=dataset.adjustment_policy.mode,
+            adjustment_policy_id=dataset.adjustment_policy.policy_id,
+            adjustment_policy_hash=dataset.adjustment_policy.policy_hash,
+            source_manifest_references=dataset.source_manifest_references,
             feature_set=feature_set,
             decision_time=dataset.decision_time,
             created_at=created_at,
@@ -750,6 +744,10 @@ class FeatureBundleArtifact:
             content_hash=content_hash,
             dataset_id=dataset.dataset_id,
             dataset_hash=dataset.content_hash,
+            adjustment_mode=dataset.adjustment_policy.mode,
+            adjustment_policy_id=dataset.adjustment_policy.policy_id,
+            adjustment_policy_hash=dataset.adjustment_policy.policy_hash,
+            source_manifest_references=dataset.source_manifest_references,
             feature_set=feature_set,
             decision_time=dataset.decision_time,
             created_at=created_at,
@@ -773,6 +771,10 @@ class FeatureBundleArtifact:
         return _feature_bundle_payload(
             dataset_id=self.dataset_id,
             dataset_hash=self.dataset_hash,
+            adjustment_mode=self.adjustment_mode,
+            adjustment_policy_id=self.adjustment_policy_id,
+            adjustment_policy_hash=self.adjustment_policy_hash,
+            source_manifest_references=self.source_manifest_references,
             feature_set=self.feature_set,
             decision_time=self.decision_time,
             created_at=self.created_at,
@@ -796,6 +798,32 @@ class FeatureBundleArtifact:
         if str(self.bundle_id) != expected_id:
             raise ValueError("Feature Bundle identity mismatch")
 
+    def verify_materialized_projection(
+        self, artifacts: tuple[FeatureArtifactV2, ...]
+    ) -> None:
+        ordered = tuple(
+            sorted(
+                artifacts,
+                key=lambda item: (item.feature_id, item.symbol, item.timeframe.value),
+            )
+        )
+        references, coverage, required_status, state = _derive_bundle_projection(
+            feature_set=self.feature_set,
+            artifacts=ordered,
+            selected_symbols=self.symbols,
+        )
+        if (
+            references != self.feature_artifact_references
+            or coverage != self.coverage
+            or required_status != self.required_feature_status
+            or state is not self.state
+            or tuple(
+                sorted({item.timeframe for item in ordered}, key=lambda item: item.value)
+            )
+            != self.timeframes
+        ):
+            raise ValueError("Feature Bundle materialized projection mismatch")
+
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "bundle_id": str(self.bundle_id),
@@ -816,6 +844,10 @@ class FeatureBundleArtifact:
             "content_hash",
             "dataset_id",
             "dataset_hash",
+            "adjustment_mode",
+            "adjustment_policy_id",
+            "adjustment_policy_hash",
+            "source_manifest_references",
             "feature_set_id",
             "feature_set_hash",
             "decision_time",
@@ -850,6 +882,13 @@ class FeatureBundleArtifact:
             content_hash=str(payload["content_hash"]),
             dataset_id=DatasetId(str(payload["dataset_id"])),
             dataset_hash=str(payload["dataset_hash"]),
+            adjustment_mode=AdjustmentMode(str(payload["adjustment_mode"])),
+            adjustment_policy_id=ArtifactId(str(payload["adjustment_policy_id"])),
+            adjustment_policy_hash=str(payload["adjustment_policy_hash"]),
+            source_manifest_references=_artifact_hash_references(
+                payload["source_manifest_references"],
+                "source_manifest_references",
+            ),
             feature_set=feature_set,
             decision_time=parse_utc_second("decision_time", payload["decision_time"]),
             created_at=parse_utc_second("created_at", payload["created_at"]),
@@ -935,6 +974,8 @@ class FeatureMaterializationReceipt:
         status = (
             FeatureMaterializationStatus.COMPLETE
             if bundle.state is FeatureBundleState.COMPLETE
+            else FeatureMaterializationStatus.BLOCKED_REQUIRED_FEATURE
+            if bundle.state is FeatureBundleState.BLOCKED_REQUIRED_FEATURE
             else FeatureMaterializationStatus.PARTIAL_COVERAGE
         )
         semantic = _receipt_payload(
@@ -1272,6 +1313,10 @@ def _feature_bundle_payload(
     *,
     dataset_id: DatasetId,
     dataset_hash: str,
+    adjustment_mode: AdjustmentMode,
+    adjustment_policy_id: ArtifactId,
+    adjustment_policy_hash: str,
+    source_manifest_references: tuple[tuple[ArtifactId, str], ...],
     feature_set: FeatureSetConfiguration,
     decision_time: datetime,
     created_at: datetime,
@@ -1290,6 +1335,13 @@ def _feature_bundle_payload(
         "schema_version": FEATURE_BUNDLE_V1_SCHEMA,
         "dataset_id": str(dataset_id),
         "dataset_hash": dataset_hash,
+        "adjustment_mode": adjustment_mode.value,
+        "adjustment_policy_id": str(adjustment_policy_id),
+        "adjustment_policy_hash": adjustment_policy_hash,
+        "source_manifest_references": [
+            {"artifact_id": str(item_id), "content_hash": item_hash}
+            for item_id, item_hash in source_manifest_references
+        ],
         "feature_set_id": str(feature_set.feature_set_id),
         "feature_set_hash": feature_set.content_hash,
         "decision_time": canonical_datetime(decision_time),
@@ -1305,6 +1357,73 @@ def _feature_bundle_payload(
         "formal_pit_status": formal_pit_status.value,
         "limitations": list(limitations),
     }
+
+
+def _derive_bundle_projection(
+    *,
+    feature_set: FeatureSetConfiguration,
+    artifacts: tuple[FeatureArtifactV2, ...],
+    selected_symbols: tuple[str, ...],
+) -> tuple[
+    tuple[FeatureArtifactReferenceV2, ...],
+    FeatureBundleCoverage,
+    str,
+    FeatureBundleState,
+]:
+    references = tuple(FeatureArtifactReferenceV2.from_artifact(item) for item in artifacts)
+    available_count = sum(
+        value.state is FeatureValueState.AVAILABLE
+        for item in artifacts
+        for value in item.values
+    )
+    missing_values = tuple(
+        value
+        for item in artifacts
+        for value in item.values
+        if value.state is FeatureValueState.MISSING
+    )
+    reason_counts: dict[str, int] = {}
+    for value in missing_values:
+        for reason in value.missing_reason_codes:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    coverage = FeatureBundleCoverage(
+        artifact_count=len(artifacts),
+        available_value_count=available_count,
+        missing_value_count=len(missing_values),
+        missing_reason_counts=tuple(sorted(reason_counts.items())),
+    )
+    required_pairs = {
+        (feature_id, symbol)
+        for feature_id in feature_set.required_feature_ids
+        for symbol in selected_symbols
+    }
+    required_artifacts = tuple(
+        item
+        for item in artifacts
+        if (item.feature_id, item.symbol) in required_pairs
+    )
+    covered_count = sum(
+        item.state is not FeatureArtifactState.DATA_INSUFFICIENT
+        for item in required_artifacts
+    )
+    if feature_set.coverage_policy is RequiredFeatureCoveragePolicy.BLOCK_ON_ANY_REQUIRED_MISSING:
+        blocked = covered_count != len(required_artifacts)
+    else:
+        coverage_ratio = (
+            Decimal("1")
+            if not required_artifacts
+            else Decimal(covered_count) / Decimal(len(required_artifacts))
+        )
+        blocked = coverage_ratio < feature_set.minimum_required_coverage
+    required_status = "BLOCKED" if blocked else "COMPLETE"
+    state = (
+        FeatureBundleState.BLOCKED_REQUIRED_FEATURE
+        if blocked
+        else FeatureBundleState.PARTIAL_COVERAGE
+        if missing_values
+        else FeatureBundleState.COMPLETE
+    )
+    return references, coverage, required_status, state
 
 
 def _receipt_payload(
@@ -1453,6 +1572,18 @@ def _object_array(value: object, label: str) -> list[dict[str, Any]]:
     if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
         raise ValueError(f"{label} must be an array of objects")
     return value
+
+
+def _artifact_hash_references(
+    value: object, label: str
+) -> tuple[tuple[ArtifactId, str], ...]:
+    items = _object_array(value, label)
+    if any(set(item) != {"artifact_id", "content_hash"} for item in items):
+        raise ValueError(f"{label} entries have invalid fields")
+    return tuple(
+        (ArtifactId(str(item["artifact_id"])), str(item["content_hash"]))
+        for item in items
+    )
 
 
 def _non_negative_int(value: object, label: str) -> int:

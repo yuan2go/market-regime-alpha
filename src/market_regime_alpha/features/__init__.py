@@ -41,24 +41,29 @@ from market_regime_alpha.features.spine import (
 )
 from market_regime_alpha.features.materialization_v2 import (
     FeatureBundleState,
+    FeatureConfigurationInvalidError,
     FeatureMaterializationRunner,
     FeatureMaterializationStatus,
+    FeatureReplayDivergenceError,
     load_verified_feature_artifact_v2,
     load_verified_feature_bundle_v2,
     load_verified_feature_replay_report,
     publish_feature_replay_report,
+    recompute_feature_bundle_v2,
     replay_feature_bundle_v2,
 )
 
 __all__ = [
     "FeatureConfiguration",
     "FeatureBundleState",
+    "FeatureConfigurationInvalidError",
     "FeatureDefinitionV2",
     "FeatureOutputDefinition",
     "FeatureParameter",
     "FeatureParameterType",
     "FeatureMaterializationRunner",
     "FeatureMaterializationStatus",
+    "FeatureReplayDivergenceError",
     "FeatureSetConfiguration",
     "FeatureValidationStatus",
     "MissingnessPolicy",
@@ -69,5 +74,6 @@ __all__ = [
     "load_verified_feature_bundle_v2",
     "load_verified_feature_replay_report",
     "publish_feature_replay_report",
+    "recompute_feature_bundle_v2",
     "replay_feature_bundle_v2",
 ]

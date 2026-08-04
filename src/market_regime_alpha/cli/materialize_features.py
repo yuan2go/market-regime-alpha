@@ -9,6 +9,7 @@ from typing import NoReturn, Sequence
 from market_regime_alpha.cli._feature_output import (
     EXIT_ARGUMENT_ERROR,
     EXIT_COMPUTATION_FAILED,
+    EXIT_DATA_INSUFFICIENT,
     EXIT_INPUT_TAMPERED,
     EXIT_IO_ERROR,
     EXIT_PARTIAL_COVERAGE,
@@ -20,6 +21,7 @@ from market_regime_alpha.cli._feature_output import (
     require_decision_scope,
 )
 from market_regime_alpha.features import (
+    FeatureConfigurationInvalidError,
     FeatureMaterializationRunner,
     FeatureMaterializationStatus,
 )
@@ -73,6 +75,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (FileNotFoundError, PermissionError, OSError) as exc:
         emit_error(status="IO_ERROR", reason_code="FEATURE_IO_ERROR", error=exc)
         return EXIT_IO_ERROR
+    except FeatureConfigurationInvalidError as exc:
+        emit_error(
+            status="CONFIGURATION_INVALID",
+            reason_code="FEATURE_CONFIGURATION_INVALID",
+            error=exc,
+        )
+        return EXIT_ARGUMENT_ERROR
     except ValueError as exc:
         reason = (
             "FEATURE_INPUT_TAMPERED"
@@ -101,7 +110,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
     )
     return (
-        EXIT_PARTIAL_COVERAGE
+        EXIT_DATA_INSUFFICIENT
+        if receipt.status is FeatureMaterializationStatus.BLOCKED_REQUIRED_FEATURE
+        else EXIT_PARTIAL_COVERAGE
         if receipt.status is FeatureMaterializationStatus.PARTIAL_COVERAGE
         else EXIT_SUCCESS
     )

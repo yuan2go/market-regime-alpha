@@ -60,6 +60,9 @@ class SignalRunArtifactV2:
         if tuple(item.symbol for item in self.observations) != symbols:
             raise ValueError("Signal V2 observations and snapshots must align")
         if any(
+            item.candidate_set_id != self.candidate_set.envelope.artifact_id
+            or item.candidate_set_hash != self.candidate_set.envelope.content_hash
+            or
             item.feature_bundle_id != self.feature_bundle_id
             or item.feature_bundle_hash != self.feature_bundle_hash
             or item.mapping_configuration_id
@@ -189,7 +192,11 @@ def run_signal_model_v2(
     )
     for observation in ordered_observations:
         observation.verify_identity()
-        if observation.decision_time != decision_time.value:
+        if (
+            observation.decision_time != decision_time.value
+            or observation.candidate_set_id != candidate_set.envelope.artifact_id
+            or observation.candidate_set_hash != candidate_set.envelope.content_hash
+        ):
             raise ValueError("Signal V2 observation DecisionTime mismatch")
 
     snapshots = tuple(

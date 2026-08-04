@@ -106,7 +106,6 @@ from tests.application.canonical_lifecycle.test_lifecycle_integration import (
 
 UTC = timezone.utc
 SOURCE_HASH = "sha256:" + "1" * 64
-MANIFEST_HASH = "sha256:" + "2" * 64
 
 
 def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
@@ -144,6 +143,10 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
         tmp_path=tmp_path,
         symbols=symbols,
         decision_time=fixture.as_of_time,
+        source_manifest_reference=(
+            research.artifact.candidate_set.envelope.source_manifest_id,
+            research.artifact.candidate_set.envelope.source_manifest_hash,
+        ),
     )
     mapping = canonical_signal_input_mapping(
         effective_from=fixture.as_of_time - timedelta(days=30)
@@ -415,7 +418,11 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
 
 
 def _materialize_bundle(
-    *, tmp_path: Path, symbols: tuple[str, ...], decision_time: datetime
+    *,
+    tmp_path: Path,
+    symbols: tuple[str, ...],
+    decision_time: datetime,
+    source_manifest_reference: tuple[ArtifactId, str],
 ):
     created_at = decision_time + timedelta(minutes=5)
     bars = tuple(
@@ -439,9 +446,7 @@ def _materialize_bundle(
             factors=(),
             limitations=(),
         ),
-        source_manifest_references=(
-            (ArtifactId("lifecycle-feature-source-manifest"), MANIFEST_HASH),
-        ),
+        source_manifest_references=(source_manifest_reference,),
         data_eligibility=DataEligibility.EXPLORATORY,
         formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
         limitations=("FORMAL_PIT_NOT_ESTABLISHED",),

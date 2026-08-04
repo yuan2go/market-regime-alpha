@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from market_regime_alpha.core.identity import ArtifactId, ProviderId
-from market_regime_alpha.core.time import RetrievedAt
+from market_regime_alpha.core.time import DecisionTime, RetrievedAt
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.providers.public_composite import (
     AcquiredSourcePayload,
@@ -20,6 +20,8 @@ from market_regime_alpha.data.providers.public_composite import (
 from market_regime_alpha.data.providers.public_composite.contracts import (
     SourceFieldFinality,
 )
+from market_regime_alpha.data.source_manifest import SourceManifest
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.market_data import (
     AdjustmentMode,
     AssetType,
@@ -44,6 +46,18 @@ DECISION_TIME = datetime(2026, 8, 4, 2, 30, tzinfo=UTC)
 CREATED_AT = datetime(2026, 8, 4, 3, 0, tzinfo=UTC)
 SOURCE_HASH = "sha256:" + "1" * 64
 MANIFEST_HASH = "sha256:" + "2" * 64
+
+
+def _source_manifest(raw: AcquiredSourcePayload) -> SourceManifest:
+    return SourceManifest(
+        provider_profile_id="public-history-test-v1",
+        decision_time=DecisionTime(DECISION_TIME),
+        source_artifacts=(raw.reference,),
+        fields=(),
+        source_conflicts=(),
+        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+        data_eligibility=DataEligibility.EXPLORATORY,
+    )
 
 
 def _bar(
@@ -131,6 +145,25 @@ def test_dataset_is_deterministic_partitioned_and_content_addressed() -> None:
         ("amount", 1),
         ("turnover_rate", 3),
     )
+
+
+def test_dataset_reconstructs_coverage_instead_of_trusting_projection() -> None:
+    dataset = _dataset()
+    payload = dataset.to_canonical_dict()
+    coverage = dict(payload["coverage"])
+    coverage["missing_field_counts"] = []
+    payload["coverage"] = coverage
+    semantic = {key: value for key, value in payload.items() if key not in {"dataset_id", "content_hash"}}
+    content_hash = canonical_hash(semantic)
+    payload["content_hash"] = content_hash
+    payload["dataset_id"] = f"market-data-dataset-{content_hash.split(':', 1)[1][:24]}"
+
+    with pytest.raises(ValueError, match="coverage projection mismatch"):
+        MarketDataDatasetArtifact.from_canonical_dict(
+            payload,
+            partitions=dataset.partitions,
+            adjustment_policy=dataset.adjustment_policy,
+        )
 
 
 def test_dataset_rejects_duplicate_or_future_bar() -> None:
@@ -246,8 +279,7 @@ def test_normalize_verified_public_history_uses_archived_source_bytes(
         decision_time=DECISION_TIME,
         created_at=CREATED_AT,
         expected_symbols=("600000.SH",),
-        source_manifest_id=ArtifactId("source-manifest-1"),
-        source_manifest_hash=MANIFEST_HASH,
+        source_manifest=_source_manifest(raw),
         asset_types={"600000.SH": AssetType.A_SHARE},
     )
     bar = next(normalized.iter_bars())
@@ -258,6 +290,63 @@ def test_normalize_verified_public_history_uses_archived_source_bytes(
     assert bar.open == Decimal("10.0")
     assert bar.turnover_rate is None
     assert "SOURCE_FLOAT_NORMALIZED_TO_DECIMAL" in normalized.limitations
+
+
+def test_normalizer_rejects_source_manifest_that_does_not_cover_archived_bytes(
+    tmp_path: Path,
+) -> None:
+    raw = AcquiredSourcePayload(
+        provider_id=ProviderId("baostock-public"),
+        product="daily",
+        locator="baostock://history/600000.SH",
+        raw_payload=b"real-history",
+        retrieved_time=RetrievedAt(datetime(2026, 8, 4, 2, 0, tzinfo=UTC)),
+        limitations=(),
+    )
+    other = AcquiredSourcePayload(
+        provider_id=ProviderId("baostock-public"),
+        product="daily",
+        locator="baostock://history/000001.SZ",
+        raw_payload=b"different-history",
+        retrieved_time=RetrievedAt(datetime(2026, 8, 4, 2, 0, tzinfo=UTC)),
+        limitations=(),
+    )
+    source_bar = PublicBar(
+        symbol="600000.SH",
+        event_time=datetime(2026, 8, 3, 15, 0, tzinfo=timezone(timedelta(hours=8))),
+        available_time=None,
+        source_artifact_id=raw.source_artifact_id,
+        open=10.0,
+        high=11.0,
+        low=9.8,
+        close=10.5,
+        volume=100000.0,
+        amount=1050000.0,
+        unit="CNY",
+        adjustment_basis="RAW",
+        finality=SourceFieldFinality.UNKNOWN,
+    )
+    package = publish_public_source_stage_artifact(
+        root=tmp_path / "source",
+        stage=PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+        batch=PublicCompositeBatch(
+            raw_payloads=(raw,),
+            bars=(source_bar,),
+            quotes=(),
+            source_conflicts=(),
+            limitations=(),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="SourceManifest source scope mismatch"):
+        normalize_public_history_stage(
+            verified=load_verified_public_source_stage_artifact(package),
+            decision_time=DECISION_TIME,
+            created_at=CREATED_AT,
+            expected_symbols=("600000.SH",),
+            source_manifest=_source_manifest(other),
+            asset_types={"600000.SH": AssetType.A_SHARE},
+        )
 
 
 def test_normalizer_rejects_non_raw_adjustment_basis(tmp_path: Path) -> None:
@@ -302,7 +391,6 @@ def test_normalizer_rejects_non_raw_adjustment_basis(tmp_path: Path) -> None:
             decision_time=DECISION_TIME,
             created_at=CREATED_AT,
             expected_symbols=("600000.SH",),
-            source_manifest_id=ArtifactId("source-manifest-1"),
-            source_manifest_hash=MANIFEST_HASH,
+            source_manifest=_source_manifest(raw),
             asset_types={"600000.SH": AssetType.A_SHARE},
         )

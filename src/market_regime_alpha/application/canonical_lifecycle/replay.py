@@ -49,6 +49,7 @@ from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction imp
 from market_regime_alpha.features.artifact import replay_feature_artifact
 from market_regime_alpha.features.materialization_v2 import (
     load_verified_feature_bundle_v2,
+    recompute_feature_bundle_v2,
     replay_feature_bundle_v2,
 )
 from market_regime_alpha.forecasting.artifact import replay_path_forecast
@@ -629,11 +630,25 @@ def _signal_v2(
     )
     assert bundle_reference.locator is not None
     bundle_path = Path(bundle_reference.locator)
-    bundle = load_verified_feature_bundle_v2(
-        bundle_path,
-        artifact_root=bundle_path.parent.parent / "feature-artifacts",
+    stored_bundle = load_verified_feature_bundle_v2(
+        bundle_path, artifact_root=bundle_path.parent.parent / "feature-artifacts"
     )
-    replayed = replay_signal_run_v2(signal_path, feature_bundle=bundle).artifact
+    dataset_reference = _matching_reference(
+        all_references,
+        object_type=LifecycleObjectType.MARKET_DATA_DATASET,
+        object_id=str(stored_bundle.artifact.dataset_id),
+        content_hash=stored_bundle.artifact.dataset_hash,
+    )
+    assert dataset_reference.locator is not None
+    dataset = load_verified_market_data_dataset(Path(dataset_reference.locator))
+    _, recomputed_bundle = recompute_feature_bundle_v2(
+        bundle_path=bundle_path,
+        artifact_root=bundle_path.parent.parent / "feature-artifacts",
+        verified_dataset=dataset,
+    )
+    replayed = replay_signal_run_v2(
+        signal_path, feature_bundle=recomputed_bundle
+    ).artifact
     return (
         str(replayed.artifact_id),
         replayed.envelope.content_hash,

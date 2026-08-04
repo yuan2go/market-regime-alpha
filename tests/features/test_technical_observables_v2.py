@@ -37,10 +37,10 @@ SOURCE_HASH = "sha256:" + "1" * 64
 def _daily_bars(
     count: int,
     *,
+    start_date: date = date(2026, 1, 1),
     amount_missing_at: int | None = None,
     suspended_at: int | None = None,
 ) -> tuple[CanonicalMarketBar, ...]:
-    start_date = date(2026, 1, 1)
     bars: list[CanonicalMarketBar] = []
     for index in range(count):
         market_date = start_date + timedelta(days=index)
@@ -139,12 +139,17 @@ def _config(feature_id: str):
     )
 
 
-def _values(feature_id: str, bars: tuple[CanonicalMarketBar, ...]):
+def _values(
+    feature_id: str,
+    bars: tuple[CanonicalMarketBar, ...],
+    *,
+    decision_time: datetime = datetime(2026, 8, 4, 2, 30, tzinfo=UTC),
+):
     computation = compute_technical_feature(
         feature_id=feature_id,
         bars=bars,
         configuration=_config(feature_id),
-        decision_time=datetime(2026, 8, 4, 2, 30, tzinfo=UTC),
+        decision_time=decision_time,
     )
     return {item.output_id: item for item in computation.values}
 
@@ -160,10 +165,21 @@ def test_price_action_returns_and_ranges_use_explicit_endpoints() -> None:
     assert values["close_location_value"].value == Decimal("0")
     assert values["intraday_return_to_decision_time"].state is FeatureValueState.MISSING
     assert values["intraday_return_to_decision_time"].missing_reason_codes == (
-        "DECISION_SESSION_DATA_NOT_AVAILABLE",
+        "INTRADAY_REQUIRES_MINUTE_DATA",
     )
 
 
+def test_current_session_daily_close_is_not_intraday_price_authority() -> None:
+    values = _values(
+        PRICE_ACTION_FEATURE_ID,
+        _daily_bars(11, start_date=date(2026, 7, 25)),
+        decision_time=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),
+    )
+
+    assert values["intraday_return_to_decision_time"].value is None
+    assert values["intraday_return_to_decision_time"].missing_reason_codes == (
+        "INTRADAY_REQUIRES_MINUTE_DATA",
+    )
 def test_moving_average_family_has_strict_windows_cross_and_alignment() -> None:
     bars = _daily_bars(61)
     values = _values(MOVING_AVERAGE_FEATURE_ID, bars)
@@ -219,7 +235,14 @@ def test_volume_amount_and_turnover_missingness_is_per_output() -> None:
     assert values["volume_ratio_5"].state is FeatureValueState.AVAILABLE
     assert values["amount_ratio_5"].state is FeatureValueState.MISSING
     assert values["amount_ratio_5"].missing_reason_codes == ("FIELD_UNAVAILABLE_AMOUNT",)
+    assert values["amount_expansion"].missing_reason_codes == (
+        "FIELD_UNAVAILABLE_AMOUNT",
+    )
+    assert values["amount_contraction"].missing_reason_codes == (
+        "FIELD_UNAVAILABLE_AMOUNT",
+    )
     assert values["turnover_expansion"].state is FeatureValueState.AVAILABLE
+    assert values["turnover_persistence"].state is FeatureValueState.AVAILABLE
 
 
 def test_vwap_uses_real_amount_and_volume_and_rejects_daily_approximation() -> None:

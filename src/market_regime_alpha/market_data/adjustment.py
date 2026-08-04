@@ -18,6 +18,8 @@ from market_regime_alpha.evidence.canonical import (
 from market_regime_alpha.market_data.contracts import (
     AdjustmentMode,
     Exchange,
+    canonical_decimal,
+    parse_canonical_decimal,
     parse_utc_second,
     require_canonical_symbol,
     require_decimal,
@@ -69,7 +71,7 @@ class AdjustmentFactorEvidence:
             "exchange": exchange.value,
             "effective_date": effective_date.isoformat(),
             "available_at": canonical_datetime(available_at),
-            "factor": str(factor),
+            "factor": canonical_decimal(factor),
             "source_artifact_id": str(source_artifact_id),
             "source_content_hash": source_content_hash,
         }
@@ -97,7 +99,7 @@ class AdjustmentFactorEvidence:
             "exchange": self.exchange.value,
             "effective_date": self.effective_date.isoformat(),
             "available_at": canonical_datetime(self.available_at),
-            "factor": str(self.factor),
+            "factor": canonical_decimal(self.factor),
             "source_artifact_id": str(self.source_artifact_id),
             "source_content_hash": self.source_content_hash,
         }
@@ -143,7 +145,7 @@ class AdjustmentFactorEvidence:
             exchange=Exchange(str(payload["exchange"])),
             effective_date=date.fromisoformat(str(payload["effective_date"])),
             available_at=parse_utc_second("available_at", payload["available_at"]),
-            factor=Decimal(str(payload["factor"])),
+            factor=parse_canonical_decimal("factor", payload["factor"]),
             source_artifact_id=ArtifactId(str(payload["source_artifact_id"])),
             source_content_hash=str(payload["source_content_hash"]),
         )
