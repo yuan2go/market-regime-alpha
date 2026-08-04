@@ -205,9 +205,16 @@ class RawMinuteSourceArtifact:
     def from_response(cls, response: MinuteSourceResponse) -> RawMinuteSourceArtifact:
         if response.http_status < 200 or response.http_status >= 300:
             raise MinuteDataConflictError(f"provider HTTP status is not successful: {response.http_status}")
+        _validate_tencent_response_envelope(response.raw_payload, response.request)
         lowered_content_type = response.content_type.lower()
-        if "json" not in lowered_content_type:
-            raise MinuteDataConflictError("provider response is not declared JSON")
+        limitations = tuple(
+            sorted(
+                {
+                    *response.limitations,
+                    *(("PROVIDER_CONTENT_TYPE_MISMATCH_VALID_JSON",) if "json" not in lowered_content_type else ()),
+                }
+            )
+        )
         raw_hash = f"sha256:{sha256(response.raw_payload).hexdigest()}"
         semantic = {
             "schema_version": RAW_MINUTE_SOURCE_SCHEMA,
@@ -224,7 +231,7 @@ class RawMinuteSourceArtifact:
             "http_status": response.http_status,
             "content_type": response.content_type,
             "provider_timestamp": response.provider_timestamp,
-            "retrieval_limitations": list(response.limitations),
+            "retrieval_limitations": list(limitations),
         }
         content_hash = canonical_hash(semantic)
         return cls(
@@ -244,7 +251,7 @@ class RawMinuteSourceArtifact:
             http_status=response.http_status,
             content_type=response.content_type,
             provider_timestamp=response.provider_timestamp,
-            retrieval_limitations=response.limitations,
+            retrieval_limitations=limitations,
             _raw_payload=response.raw_payload,
         )
 
@@ -1171,6 +1178,43 @@ def _five_minute_windows(market_date: date) -> tuple[tuple[datetime, datetime], 
             windows.append((start, end))
             current += timedelta(minutes=5)
     return tuple(windows)
+
+
+def _validate_tencent_response_envelope(
+    raw: bytes,
+    request: MinuteSourceRequest,
+) -> None:
+    """Admit Tencent's misdeclared JSON, while rejecting HTML/error payloads."""
+
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise MinuteDataConflictError("provider response is not valid Tencent JSON") from exc
+    if not isinstance(payload, dict):
+        raise MinuteDataConflictError("provider response is not a Tencent JSON object")
+    if payload.get("code") != 0:
+        raise MinuteDataConflictError("provider response declares an error")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise MinuteDataConflictError("provider response lacks Tencent data object")
+    for symbol in request.symbols:
+        provider_symbol = f"{symbol[-2:].lower()}{symbol[:6]}"
+        symbol_payload = data.get(provider_symbol)
+        if not isinstance(symbol_payload, dict):
+            raise MinuteDataConflictError("provider response lacks requested symbol")
+        minute_payload = symbol_payload.get("data")
+        if not isinstance(minute_payload, dict):
+            raise MinuteDataConflictError("provider response lacks minute data object")
+        provider_date = minute_payload.get("date")
+        rows = minute_payload.get("data")
+        if (
+            not isinstance(provider_date, str)
+            or len(provider_date) != 8
+            or not provider_date.isdigit()
+            or not isinstance(rows, list)
+            or any(not isinstance(item, str) for item in rows)
+        ):
+            raise MinuteDataConflictError("provider response minute envelope is invalid")
 
 
 def _provider_date_from_raw(raw: bytes) -> str | None:

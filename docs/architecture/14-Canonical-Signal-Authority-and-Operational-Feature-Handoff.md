@@ -140,6 +140,14 @@ checksum, extra-file and directory-identity tampering. Acquisition failures and
 invalid HTTP/HTML payloads produce immutable `RawMinuteSourceAttempt` evidence;
 they never become Market Bars.
 
+The observed Tencent endpoint labels its JSON response as `text/html`. The
+adapter therefore validates the body as a strict Tencent JSON envelope before
+accepting this mismatch, records
+`PROVIDER_CONTENT_TYPE_MISMATCH_VALID_JSON`, and retains the original
+Content-Type in lineage. A real HTML body, invalid JSON, Provider error code or
+wrong-symbol envelope still becomes failed Attempt evidence and never a Source
+Artifact.
+
 Tencent cumulative LOT volume is converted through
 `CANONICAL_VOLUME_SHARES_V1`, whose versioned A-share board-lot rule is explicit.
 Cumulative decreases are `DATA_CONFLICT`; they are never clamped to zero. Only

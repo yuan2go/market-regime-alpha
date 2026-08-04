@@ -87,6 +87,36 @@ The Signal Artifact hash remained
 Replay equality was `true`. The benchmark status was `PASS`; this is storage
 and Reader engineering evidence, not model-quality or Shadow evidence.
 
+## Public minute-source smoke evidence
+
+After the offline test gate, the new client performed one public Tencent smoke
+acquisition for `600000.SH`; the raw Provider bytes and derived package remained
+outside the repository under `/tmp`. The endpoint returned HTTP 200 JSON bytes
+with a misdeclared `text/html` Content-Type. Strict Tencent-envelope validation
+accepted the JSON and recorded
+`PROVIDER_CONTENT_TYPE_MISMATCH_VALID_JSON`; no general HTML fallback was
+introduced.
+
+```text
+response_received_at = 2026-08-04T18:35:51Z
+source_artifact_id = raw-minute-source-948b785d3687b23c2bb73ee4
+source_content_hash = sha256:948b785d3687b23c2bb73ee438b98590e5ae8072047da9d657465e8e91d02dde
+raw_payload_hash = sha256:e24bcbb121c125b04dd2b4e53fde0d4eb1db153ca79ca0f2cdc1cf26c0ef7e8c
+source_manifest_id = source-manifest-7a64048f57fea8f5cd96d13b
+source_manifest_hash = sha256:7a64048f57fea8f5cd96d13be3a28875442eb16e1299ae5f55bda4477789f409
+one_minute_bars = 240
+five_minute_bars = 48
+dataset_id = market-data-dataset-0809919401c6d97bbab4fe7c
+dataset_hash = sha256:0809919401c6d97bbab4fe7ce391927d687bbd8bf2b51e4a9a08239035b6c82d
+archive_replay_equal = true
+dataset_replay_equal = true
+data_eligibility = EXPLORATORY
+formal_pit_status = FORMAL_PIT_NOT_ESTABLISHED
+```
+
+This is a single engineering smoke, not controlled 14:55, sustained Shadow,
+formal Provider qualification or OOS Alpha evidence.
+
 ## Safety evidence ceiling
 
 The minute Provider and Signal model are exploratory. This work establishes
@@ -111,12 +141,12 @@ git diff --check = PASS
 uv sync --frozen --extra dev --extra postgres = PASS, 77 packages checked
 uv run python scripts/check_docs_links.py = PASS
 uv run pytest -q tests/scripts/test_check_docs_links.py = PASS, 8 collected
-uv run pytest -q tests/market_data = PASS, 43 collected
+uv run pytest -q tests/market_data = PASS, 44 collected
 uv run pytest -q tests/features = PASS, 78 collected
 uv run pytest -q tests/signals = PASS, 21 collected
 uv run pytest -q tests/application/canonical_lifecycle = PASS, 353 collected
 uv run pytest -q tests/architecture = PASS, 5 collected
-uv run pytest -q = PASS, 2081 collected, 6 existing pandas warnings
+uv run pytest -q = PASS, 2082 collected, 6 existing pandas warnings
 uv run ruff check . = PASS
 uv run mypy = PASS, 328 source files
 uv run python -m build = PASS, sdist and wheel

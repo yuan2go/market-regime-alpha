@@ -214,11 +214,23 @@ def test_html_or_failed_provider_response_never_becomes_source_artifact() -> Non
         provider_timestamp=None,
         limitations=(),
     )
-    with pytest.raises(MinuteDataConflictError, match="not declared JSON"):
+    with pytest.raises(MinuteDataConflictError, match="not valid Tencent JSON"):
         RawMinuteSourceArtifact.from_response(response)
 
 
-def test_provider_declared_error_never_normalizes() -> None:
+def test_valid_tencent_json_with_html_content_type_is_archived_with_limitation() -> None:
+    artifact = _artifact(content_type="text/html")
+
+    assert "PROVIDER_CONTENT_TYPE_MISMATCH_VALID_JSON" in (artifact.retrieval_limitations)
+    normalized = normalize_tencent_minute_source(
+        artifact=artifact,
+        asset_type=AssetType.A_SHARE,
+        volume_policy=CanonicalVolumeUnitPolicy.a_share_v1(),
+    )
+    assert normalized.one_minute_bars
+
+
+def test_provider_declared_error_never_becomes_source_artifact() -> None:
     with pytest.raises(MinuteDataConflictError, match="declares an error"):
         normalize_tencent_minute_source(
             artifact=_artifact(raw=_raw_payload(code=7)),

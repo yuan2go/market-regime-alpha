@@ -577,8 +577,8 @@ complete.
 
 ### 6.5 WP-SIG-01A branch verification
 
-The pre-commit branch passed the 43 Market Data, 78 Feature, 21 Signal, 353
-Canonical Lifecycle and five Architecture focused collections plus all 2081
+The pre-commit branch passed the 44 Market Data, 78 Feature, 21 Signal, 353
+Canonical Lifecycle and five Architecture focused collections plus all 2082
 tests. Ruff, mypy over 328 source files, package build, frozen dependency sync,
 documentation authority/links and diff hygiene passed. The same-fixture
 100-symbol benchmark reduced package bytes by 85.8937% and selective-read time
