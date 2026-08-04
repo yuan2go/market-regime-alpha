@@ -22,6 +22,9 @@ from market_regime_alpha.application.canonical_lifecycle.runtime_configuration i
 from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
     SQLiteLifecycleRunRepository,
 )
+from market_regime_alpha.application.canonical_lifecycle.sqlite_composition import (
+    build_sqlite_lifecycle_runner,
+)
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunType,
 )
@@ -37,7 +40,6 @@ from market_regime_alpha.cli.run_canonical_lifecycle import (
     EXIT_RUNTIME_FAILED,
     EXIT_SUCCESS,
     EXIT_VALIDATION_ERROR,
-    _runner,
     main as lifecycle_main,
 )
 from market_regime_alpha.evidence.canonical import canonical_datetime
@@ -320,13 +322,14 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
     )
     journal_path = tmp_path / "risk-journal.sqlite3"
     repository = SQLiteLifecycleRunRepository(journal_path)
-    runner = _runner(
+    runner = build_sqlite_lifecycle_runner(
         repository=repository,
         command=command,
         manifest=None,
         configurations=RuntimeConfigurationReader().read_all(
             command.configuration_references
         ),
+        clock=lambda: as_of + timedelta(seconds=1),
     )
     initial = runner.run(command)
     assert initial.run.status.value == "WAITING_FOR_MANUAL_CONFIRMATION"
