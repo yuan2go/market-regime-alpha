@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from market_regime_alpha.application.canonical_lifecycle import _immutable_io
 from market_regime_alpha.application.canonical_lifecycle.durable_replay import (
     lifecycle_history_hash,
     run_durable_lifecycle_replay,
@@ -385,6 +386,63 @@ def test_replay_rejects_a_tampered_captured_source_snapshot(tmp_path: Path) -> N
             clock=_TickingClock(fixture.as_of_time + timedelta(hours=5)),
             output_directory=replay_root,
         )
+
+
+def test_interrupted_snapshot_publication_is_atomic_and_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture, manifest_path = _canonical_fixture(tmp_path / "source")
+    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    source_output = tmp_path / "source-runtime"
+    source = _canonical_runner(
+        fixture,
+        repository=repository,
+        output_root=source_output,
+        clock_start=fixture.as_of_time + timedelta(hours=2),
+    ).run(
+        _canonical_command(
+            fixture,
+            manifest_path=manifest_path,
+            idempotency_key="atomic-snapshot-source",
+            output_root=source_output,
+        )
+    )
+    replay_root = tmp_path / "replay-runtime"
+    original_link = _immutable_io.os.link
+    interrupted = False
+
+    def interrupt_snapshot_link(source_path, target_path) -> None:
+        nonlocal interrupted
+        if Path(target_path).name == "history.json" and not interrupted:
+            interrupted = True
+            raise RuntimeError("injected snapshot publication interruption")
+        original_link(source_path, target_path)
+
+    monkeypatch.setattr(_immutable_io.os, "link", interrupt_snapshot_link)
+    with pytest.raises(RuntimeError, match="snapshot publication interruption"):
+        run_durable_lifecycle_replay(
+            repository=repository,
+            source_run_id=source.run.run_id,
+            idempotency_key="atomic-snapshot-replay",
+            clock=_TickingClock(fixture.as_of_time + timedelta(hours=4)),
+            output_directory=replay_root,
+        )
+
+    assert repository.get_run_by_idempotency_key("atomic-snapshot-replay") is None
+    assert not tuple(replay_root.rglob("history.json"))
+    assert not tuple(replay_root.rglob("*.tmp"))
+
+    monkeypatch.setattr(_immutable_io.os, "link", original_link)
+    recovered = run_durable_lifecycle_replay(
+        repository=repository,
+        source_run_id=source.run.run_id,
+        idempotency_key="atomic-snapshot-replay",
+        clock=_TickingClock(fixture.as_of_time + timedelta(hours=5)),
+        output_directory=replay_root,
+    )
+    assert recovered.replay_run.run_type is LifecycleRunType.REPLAY
+    assert recovered.report_path.is_file()
 
 
 def test_replay_idempotency_key_rejects_a_different_source_run(

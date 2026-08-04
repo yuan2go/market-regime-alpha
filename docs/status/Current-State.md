@@ -372,9 +372,9 @@ Implemented on the canonical-runtime development branch:
   pure/model Artifacts, compares cross-run Receipt fingerprints and reloads
   ManualTrade read-only without invoking business handlers, H4.5 confirmation,
   Fill creation or a Broker; the exact source view is captured before journal
-  mutation, so interrupted replay remains recoverable after the source advances;
-  Command V2 and LifecycleRun V1 journal JSON remain readable after the replay
-  linkage schema increment;
+  mutation through a crash-atomic immutable publish, so interrupted replay
+  remains recoverable after the source advances; Command V2 and LifecycleRun V1
+  journal JSON remain readable after the replay linkage schema increment;
 - structured module CLIs for start/resume/durable replay with stable exit
   codes and explicit `NO_ORDER_CREATED`, `BROKER_NOT_INVOKED`,
   `NO_FILL_CREATED` and admission-ceiling fields.
@@ -492,9 +492,9 @@ development branch:
 python scripts/check_docs_links.py = PASS
 python -m pytest -q tests/scripts/test_check_docs_links.py = 8 passed
 python -m pytest -q tests/platform = 23 passed
-python -m pytest -q = PASS, 1966 tests collected, 6 existing pandas PerformanceWarnings
+python -m pytest -q = PASS, 1967 tests collected, 6 existing pandas PerformanceWarnings
 python -m ruff check . = PASS
-python -m mypy = PASS, 297 source files
+python -m mypy = PASS, 298 source files
 python -m build = PASS, sdist and wheel built
 ```
 

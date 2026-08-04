@@ -8,6 +8,9 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
+from market_regime_alpha.application.canonical_lifecycle._immutable_io import (
+    publish_immutable_text,
+)
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleObjectReference,
     LifecycleObjectType,
@@ -585,14 +588,11 @@ def publish_lifecycle_replay_report(
     directory = root.resolve() / "replay-reports" / report.report_hash.split(":", 1)[1]
     path = directory / "report.json"
     payload = canonical_json(report.to_canonical_dict()) + "\n"
-    directory.mkdir(parents=True, exist_ok=True)
-    try:
-        with path.open("x", encoding="utf-8") as stream:
-            stream.write(payload)
-    except FileExistsError:
-        if path.read_text(encoding="utf-8") != payload:
-            raise ValueError("replay report identity collision") from None
-    return path
+    return publish_immutable_text(
+        path=path,
+        payload=payload,
+        collision_message="replay report identity collision",
+    )
 
 
 def load_lifecycle_replay_report(path: Path) -> LifecycleReplayReport:

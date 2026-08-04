@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from market_regime_alpha.application.canonical_lifecycle._immutable_io import (
+    publish_immutable_text,
+)
 from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
 )
@@ -54,15 +57,14 @@ def publish_source_history_snapshot(
             "history": _history_payload(source_history),
         }
     ) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with path.open("x", encoding="utf-8") as stream:
-            stream.write(payload)
-    except FileExistsError:
-        if path.read_text(encoding="utf-8") != payload:
-            raise LifecycleJournalIntegrityError(
-                "source history snapshot identity collision"
-            ) from None
+        publish_immutable_text(
+            path=path,
+            payload=payload,
+            collision_message="source history snapshot identity collision",
+        )
+    except ValueError as exc:
+        raise LifecycleJournalIntegrityError(str(exc)) from exc
     return path
 
 

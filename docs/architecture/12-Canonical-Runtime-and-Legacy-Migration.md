@@ -125,11 +125,12 @@ Replay invokes neither the canonical business Runner nor execution services.
 `run_durable_lifecycle_replay()` binds the exact source run, command and history
 hash in a separate `REPLAY` LifecycleRun. The source history is read in one
 SQLite snapshot and published as an immutable, content-addressed snapshot
-before the replay run is created. An interrupted replay resumes from that
-captured view even if the source run later advances; snapshot tamper fails
-closed. It recomputes Platform Research, Signal and PathForecast through their
-existing pure replay functions, reloads mutating/read-only outputs instead of
-invoking their mutation, journals replay Attempts/Stages/Receipts, and
+through a same-directory, fsynced atomic install before the replay run is
+created. An interrupted replay resumes from that captured view even if the
+source run later advances; interrupted publication is retryable and snapshot
+tamper fails closed. It recomputes Platform Research, Signal and PathForecast
+through their existing pure replay functions, reloads mutating/read-only
+outputs instead of invoking their mutation, journals replay Attempts/Stages/Receipts, and
 publishes a content-addressed report. Receipt
 fingerprints exclude only the replay run identity, so their inputs, outputs,
 models, configuration, reasons and result remain comparable across runs.
