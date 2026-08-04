@@ -147,12 +147,12 @@ def get_source_package_paths(
 ### Task 4: Migration 010 and schema validation
 
 **Files:**
-- Create: `src/market_regime_alpha/execution/migrations/010_risk_reduction_confirmation_up.sql`
-- Create: `src/market_regime_alpha/execution/migrations/010_risk_reduction_confirmation_down.sql`
-- Create: `src/market_regime_alpha/execution/sqlite_risk_reduction.py`
+- Create: `src/market_regime_alpha/execution/migrations/010_risk_reduction_manual_intent_up.sql`
+- Create: `src/market_regime_alpha/execution/migrations/010_risk_reduction_manual_intent_down.sql`
+- Create: `src/market_regime_alpha/application/trading_lifecycle/sqlite_risk_reduction.py`
 - Modify: `src/market_regime_alpha/execution/sqlite_repository.py`
 - Modify: `pyproject.toml` only if package-data discovery requires an explicit addition
-- Create: `tests/execution/test_risk_reduction_migration.py`
+- Create: `tests/execution/test_migration_010_risk_reduction.py`
 
 **Interfaces:**
 - Adds route columns to `manual_trade_records` and append-only Directive/Attempt/Command/reducing-binding tables.
@@ -235,7 +235,8 @@ def verify_h5_h6_operational_lineage(
 ### Task 8: Atomic confirmation repository and Application Service
 
 **Files:**
-- Modify: `src/market_regime_alpha/execution/sqlite_risk_reduction.py`
+- Modify: `src/market_regime_alpha/application/trading_lifecycle/sqlite_risk_reduction.py`
+- Create: `src/market_regime_alpha/application/trading_lifecycle/risk_reduction_lineage.py`
 - Create: `src/market_regime_alpha/application/trading_lifecycle/risk_reduction_confirmation.py`
 - Modify: `src/market_regime_alpha/application/trading_lifecycle/__init__.py`
 - Create: `tests/application/test_risk_reduction_confirmation.py`

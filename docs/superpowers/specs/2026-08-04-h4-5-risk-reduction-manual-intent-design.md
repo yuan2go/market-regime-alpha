@@ -88,20 +88,22 @@ composition repository.
 
 New domain behavior is split into:
 
-1. `execution/risk_reduction.py`: immutable Directive, confirmation Policy,
-   Attempt and lineage/recheck validation;
+1. `execution/risk_reduction.py`: immutable Directive, confirmation Policy and
+   Attempt contracts;
 2. `ManualTradeRecord` V3 in `execution/manual.py`: one strict route-aware
    aggregate while V1/V2 canonical dictionaries remain unchanged;
-3. `execution/sqlite_risk_reduction.py`: migration 010, authority reload,
-   one-transaction confirmation and reducing binding;
-4. `application/trading_lifecycle/risk_reduction_confirmation.py`: an
-   ID/hash-only command boundary and public Repository orchestration;
-5. `scripts/confirm_risk_reduction.py`: CLI over canonical evidence paths and
+3. `application/trading_lifecycle/risk_reduction_lineage.py`: cross-domain
+   H4/H5/H6 directive construction and lineage validation;
+4. `application/trading_lifecycle/sqlite_risk_reduction.py`: migration 010,
+   authority reload, one-transaction confirmation and reducing binding;
+5. `application/trading_lifecycle/risk_reduction_confirmation.py`: an
+   ID/hash-only command boundary over the repository port;
+6. `scripts/confirm_risk_reduction.py`: CLI over canonical evidence paths and
    identifiers.
 
-The Application Service performs public-repository preflight reads. The
-SQLite composition repository then re-reads and replays the same authorities
-inside one `BEGIN IMMEDIATE` transaction before writing anything. This second
+The Application Service canonicalizes the caller evidence behind an ID/hash
+boundary. The SQLite composition repository reads and replays every durable
+authority inside one `BEGIN IMMEDIATE` transaction before writing anything. This
 read is the authoritative concurrency boundary.
 
 All participating SQLite repositories must resolve to the same database path

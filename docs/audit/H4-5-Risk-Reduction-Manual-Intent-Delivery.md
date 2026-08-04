@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../superpowers/specs/2026-08-04-h4-5-risk-reduction-manual-intent-design.md, ../superpowers/plans/2026-08-04-h4-5-risk-reduction-manual-intent.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, H6-Composite-Operational-Evidence-Delivery.md, H5-Thesis-Health-Delivery.md, H4-Risk-Route-Delivery.md
-> **Code Evidence:** implementation checkpoint `7c91be46c8adf1ad958e9c41b5a45021bcfa58ed`, based on `190fede53ab01487e7f339c38cf223b944ac861e`
+> **Code Evidence:** hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`, based on `190fede53ab01487e7f339c38cf223b944ac861e`
 
 ## 1. Delivered outcome
 
@@ -66,7 +66,7 @@ historical aggregate JSON/hash semantics.
 
 | Route | Required authority | Forbidden authority |
 |---|---|---|
-| INCREASING | approved complete-account Risk, Portfolio, target delta and post-trade snapshot | H4 reducing decision, confirmation and source reducing Position |
+| INCREASING | BUY plus approved complete-account Risk, Portfolio, positive OPEN/ADD delta and post-trade snapshot | H4 reducing decision, confirmation and source reducing Position |
 | REDUCING | SELL, permitted H4 decision, confirmed attempt, existing OPEN book, Thesis, Opportunity, source Position, target and order quantities | complete-account Risk, Portfolio, target-position and post-trade snapshot |
 
 Domain validation and migration 010 database checks reject both authority sets
@@ -110,6 +110,15 @@ Public repository methods load and replay:
 - existing book, trade history and Fill history from the traceable execution
   repository.
 
+The cross-domain lineage validator and concrete SQLite lifecycle unit of work
+live under `application/trading_lifecycle`; the `execution` domain owns route
+contracts, the ledger and lower persistence adapters and does not depend on
+Application. If one submitted Decision/Directive reference is unknown, the
+other valid reference resolves the real persisted authority and records a
+`DATA_INSUFFICIENT` attempt. If neither reference resolves, the CLI returns a
+structured pre-attempt command rejection with null authority fields; it does
+not invent Position or Directive identifiers.
+
 The H5 lineage validator accepts only H5 V2 inputs whose Market, Theme,
 Capital, Candidate, Signal and Path chain descends from
 `ResearchInputBundleV2.OPERATIONAL_EXPLORATORY_ARCHIVE` and the exact VERIFIED
@@ -125,13 +134,13 @@ append-only Fills, explicit `TradingCalendarArtifact` and current
 `SymbolTradingSessionStatus` through
 `PositionProjector.project_book_t_plus_one()`.
 
-The ordered current Fill ledger is compared with the H4 source Fill identity.
-If it is unchanged, replay uses the source Position `as_of` so elapsed wall
-clock alone cannot invent a new content identity; the explicit policy then
-checks the source Position age at confirmation. If any Fill was added or
-corrected, replay advances to confirmation time and exposes the changed
-snapshot. Current calendar/session evidence can also change sellability and
-therefore the canonical Position.
+The ordered current Fill ledger, calendar ID/hash and all status IDs available
+at confirmation are compared with the H4 source authority. If all are
+unchanged, replay uses the source Position `as_of` so elapsed wall clock alone
+cannot invent a new content identity; the explicit policy then checks the
+source Position age at confirmation. If any Fill, calendar or available status
+authority changed, replay advances to confirmation time and exposes quantity
+or sellability changes in the canonical Position.
 
 The current snapshot ID, canonical hash, version, total, available, book,
 Thesis, Opportunity and symbol must exactly equal the H4 source Position. Any
@@ -191,17 +200,17 @@ relaxed.
 Observed locally on the implementation checkpoint:
 
 ```text
-H4_5_FOCUSED = 72 passed
-EXECUTION_CONTEXT = 87 passed
+H4_5_FOCUSED = 81 passed
+EXECUTION_CONTEXT = 97 passed
 PORTFOLIO_CONTEXT = 55 passed
 POSITION_CONTEXT = 91 passed
 APPLICATION_CONTEXT = 114 passed
 H4_REGRESSION = 42 passed
 H5_REGRESSION = 101 passed
 H6_REGRESSION = 67 passed
-FULL_PYTEST = 1531 passed, 8 subtests passed, 6 existing warnings
+FULL_PYTEST = 1541 passed, 8 subtests passed, 6 existing warnings
 RUFF = PASS
-MYPY = PASS, 265 source files
+MYPY = PASS, 266 source files
 PACKAGE_BUILD = PASS, sdist and wheel
 DOCUMENT_AUTHORITY_AND_LINKS = PASS
 GIT_DIFF_CHECK = PASS

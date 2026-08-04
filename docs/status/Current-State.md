@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** H4.5 implementation checkpoint `7c91be46c8adf1ad958e9c41b5a45021bcfa58ed`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Code Evidence:** H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -280,7 +280,7 @@ operational run or any execution authority.
 ### 3.12 H4.5 reducing-risk manual intent bridge
 
 H4.5 is **IMPLEMENTED_AND_VERIFIED** at
-`7c91be46c8adf1ad958e9c41b5a45021bcfa58ed`:
+`b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`:
 
 - `ManualTradeRecord` V3 has mutually exclusive `INCREASING` and `REDUCING`
   authority routes while preserving V1/V2 Reader and hash semantics;
@@ -367,21 +367,21 @@ Repository delivery records report passing focused and full gates for earlier se
 
 ### 6.2 Current checkpoint evidence
 
-The local Python 3.12 verification on H4.5 implementation checkpoint
-`7c91be46c8adf1ad958e9c41b5a45021bcfa58ed` observed:
+The local Python 3.12 verification on H4.5 hardened implementation checkpoint
+`b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254` observed:
 
 ```text
-FOCUSED_H4_5 = 72 passed, 0 skipped, 0 failed
-EXECUTION_CONTEXT = 87 passed, 0 skipped, 0 failed
+FOCUSED_H4_5 = 81 passed, 0 skipped, 0 failed
+EXECUTION_CONTEXT = 97 passed, 0 skipped, 0 failed
 PORTFOLIO_CONTEXT = 55 passed, 0 skipped, 0 failed
 POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
 APPLICATION_CONTEXT = 114 passed, 0 skipped, 0 failed
 H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
 H5_FOCUSED_REGRESSION = 101 passed, 0 skipped, 0 failed
 H6_FOCUSED_REGRESSION = 67 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1531 passed, 0 skipped, 0 failed, 8 subtests passed
+FULL_PYTEST = 1541 passed, 0 skipped, 0 failed, 8 subtests passed
 RUFF = PASS
-MYPY_FORMAL_SCOPE = PASS, 265 source files
+MYPY_FORMAL_SCOPE = PASS, 266 source files
 PACKAGE_BUILD = PASS, sdist and wheel
 DOCUMENT_AUTHORITY_AND_LINKS = PASS
 GIT_DIFF_CHECK = PASS

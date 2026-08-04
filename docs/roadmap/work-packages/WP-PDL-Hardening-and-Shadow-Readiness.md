@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../../audit/H6-Composite-Operational-Evidence-Delivery.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** H4.5 checkpoint `7c91be46c8adf1ad958e9c41b5a45021bcfa58ed`; H6 hardened checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
+> **Code Evidence:** H4.5 hardened checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -363,13 +363,13 @@ does not change H4 V1 replay semantics or grant broker/trading authority.
 
 ### Implementation evidence
 
-Delivered at `7c91be46c8adf1ad958e9c41b5a45021bcfa58ed` with
+Delivered and hardened at `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254` with
 ManualTrade V3, content-addressed Directive/Policy/Attempt, public verified
 H4/H5/H6 repository reads, migration 010, unified atomic confirmation,
 T+1/market rechecks, reducing trace binding, existing manual Fill compatibility
-and a reference-only CLI. Focused H4.5 tests report 72 passed; H4/H5/H6
-regressions report 42/101/67 passed; the full checkpoint reports 1531 passed
-and eight subtests. Ruff, configured mypy over 265 source files, package build,
+and a reference-only CLI. Focused H4.5 tests report 81 passed; H4/H5/H6
+regressions report 42/101/67 passed; the full checkpoint reports 1541 passed
+and eight subtests. Ruff, configured mypy over 266 source files, package build,
 documentation authority/links and diff checks pass.
 
 ### Fill and partial-execution policy
