@@ -425,6 +425,10 @@ def test_real_h6_research_signal_forecast_chain_is_verified_and_fail_closed(
 ) -> None:
     _, results = _execute_through_forecast(tmp_path)
 
+    assert sum(
+        item.object_type is LifecycleObjectType.SOURCE_MANIFEST
+        for item in results[0].input_references
+    ) == 2
     research = load_verified_research_artifact(Path(results[1].output_references[0].locator or ""))
     signal = load_verified_signal_run(Path(results[2].output_references[0].locator or ""))
     forecasts = tuple(load_verified_path_forecast(Path(item.locator or "")) for item in results[3].output_references)
