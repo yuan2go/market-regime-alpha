@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** 04-Data-and-Time-Semantics.md, 09-Platform-Architecture-V2.md, 12-Canonical-Runtime-and-Legacy-Migration.md, decisions/ADR-005-Feature-Materialization-Precedes-Lifecycle-V1.md
-> **Code Evidence:** implementation checkpoint `14058a5`; `market_data/**`, `features/{spine,materialization_v2,v2_contracts}.py`, `features/technical/**`, `signals/{input_assembly,v2}.py`, `application/canonical_lifecycle/stages/signal_forecast.py`
+> **Code Evidence:** implementation/gate checkpoint `72c8ed940d8b9d43788d6f2898ab081dc98bdc10`; `market_data/**`, `features/{spine,materialization_v2,v2_contracts}.py`, `features/technical/**`, `signals/{input_assembly,v2}.py`, `application/canonical_lifecycle/stages/signal_forecast.py`
 
 ## 1. Boundary and authority
 
@@ -109,7 +109,8 @@ reason such as `WINDOW_NOT_READY`, `FIELD_UNAVAILABLE_*`,
 
 | Feature ID | Timeframe / minimum history | Outputs and formula summary | Legacy comparison |
 |---|---|---|---|
-| `technical.price_action.v1` | Daily, 11 | `return_n = close_t / close_(t-n) - 1` for 1/3/5/10; intraday open-to-current; gap to real previous close; high-low range; close-location value | No Legacy authority claimed |
+| `technical.price_action.v1` | Daily, 11 | `return_n = close_t / close_(t-n) - 1` for 1/3/5/10; gap to real previous close; high-low range; close-location value | No Legacy authority claimed |
+| `technical.intraday_price_action.v1` | real minute Bar, 1 | current-session first observed minute-Bar open to the latest close available by DecisionTime; never changes daily return windows into bar windows | No Legacy authority claimed |
 | `technical.moving_average.v2` | Daily, 61 | strict trailing SMA 5/10/20/60; recursive-first-observation EMA 5/10/12/20/26/60; price distance, one-confirmed-Bar slope/cross, alignment and MA distances | MA/EMA real Legacy adapters; per-family Decimal/float tolerances |
 | `technical.macd.v1` | Daily, warmup 34 | `DIF=EMA12-EMA26`; `DEA=EMA9(DIF)`; histogram `=2*(DIF-DEA)`; cross, zero axis, expansion, consecutive direction, slopes and divergence candidate | real Legacy MACD; state-vocabulary change is explicit, invariants remain mandatory |
 | `technical.volume_amount_structure.v1` | Daily, 21 | real volume/amount ratios 5/10/20 using prior completed sessions excluding current; percentiles, expansion/contraction, direction agreement, breakout/abnormal state, turnover expansion and persistence | Legacy volume denominator difference is explicit; amount structure may be `NOT_COMPARABLE` |
@@ -117,7 +118,7 @@ reason such as `WINDOW_NOT_READY`, `FIELD_UNAVAILABLE_*`,
 | `technical.overheat_extension.v1` | Daily, 21 | 3-session return, price/SMA5/10 distance, range/gap extension, consecutive-up count, rolling-high distance and volume-price extension | observable only; not a sell signal |
 
 Suspended or field-incomplete observations do not poison independent Features.
-VWAP is optional in the initial Feature Set; the five daily families are
+VWAP and intraday Price Action are optional in the initial Feature Set; the five daily families are
 required. A missing required family makes the Bundle
 `BLOCKED_REQUIRED_FEATURE`; any optional missing output makes coverage partial,
 never complete by assertion.
@@ -174,6 +175,9 @@ records value or `None`, source Feature/Artifact ID/hash, timeframe,
 `available_at` and missing reason. Candidate/Bundle Dataset scope, symbol,
 Feature Set, configuration, freshness, validation status and exploratory
 eligibility are verified before invoking the existing shared Signal rules.
+The assembler receives the verified Market Data Dataset itself and reconstructs
+the Bundle's Dataset, adjustment-policy and SourceManifest projection instead
+of trusting self-declared Bundle fields.
 
 The minimum factor count is currently one so the Canonical Signal can consume a
 real non-empty factor while explaining the others. This is a model assumption,
@@ -195,18 +199,18 @@ Fill, order or Broker call is created.
 
 ## 8. Performance evidence and limitations
 
-Offline benchmark at implementation checkpoint `14058a5`:
+Offline benchmark at implementation/gate checkpoint `72c8ed9`:
 
 | Metric | Observed value |
 |---|---:|
 | Symbols | 100 |
 | Daily sessions / Bars | 250 / 25,000 |
 | 5-minute Bars | 4,800 |
-| Feature families / Artifacts | 6 / 600 |
-| Cold Feature run | 18.875838 s |
-| Cached receipt verification | 4.493092 s |
-| Process `ru_maxrss` | 421,773,312 bytes |
-| Dataset + output package size | 127,261,684 bytes |
+| Feature definitions / Artifacts | 7 / 700 |
+| Cold Feature run | 29.502912 s |
+| Cached receipt verification | 8.359181 s |
+| Process `ru_maxrss` | 398,229,504 bytes |
+| Dataset + output package size | 131,843,243 bytes |
 
 The fixture is deterministic, offline and synthetic; it measures engineering
 cost only. JSON/Hash package size and repeated immutable verification are the

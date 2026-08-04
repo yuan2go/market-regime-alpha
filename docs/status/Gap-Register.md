@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
-> **Code Evidence:** Canonical Feature Spine checkpoint `14058a5`; canonical runtime merge baseline `9ccc751`; H4.5 checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Code Evidence:** Canonical Feature Spine checkpoint `72c8ed940d8b9d43788d6f2898ab081dc98bdc10`; canonical runtime merge baseline `9ccc751`; H4.5 checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps
@@ -35,7 +35,7 @@
 | H8 sustained Shadow operations | P1 | The development branch has a single-run Lifecycle owner, migration-011 stage receipts, one-snapshot history reads, retry/resume and captured-source durable replay; it has no scheduler/control plane, lease owner, deadlines, operator acknowledgement, metrics, alerts or sustained run evidence | Canonical runtime plus H7 | A scheduled Shadow operation proves consecutive runs, operator deadlines/acknowledgements, metrics/alerts, recovery drills and replay without changing authority ceilings |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
-| Feature package storage efficiency | P2 | 100-symbol offline benchmark produced 127,261,684 bytes; deterministic JSON packages duplicate source references for audit clarity | Stable schema plus format migration design | Versioned selective/columnar encoding materially reduces storage and read latency without Decimal/time/hash/Reader drift |
+| Feature package storage efficiency | P2 | 100-symbol, seven-definition offline benchmark produced 131,843,243 bytes; deterministic JSON packages duplicate source references for audit clarity | Stable schema plus format migration design | Versioned selective/columnar encoding materially reduces storage and read latency without Decimal/time/hash/Reader drift |
 | PostgreSQL repository parity | P1 | Lifecycle persistence is SQLite local/test authority | Stable Repository protocols and contract suite | PostgreSQL adapters pass the same concurrency, idempotency, reconstruction and migration contract tests |
 
 ## 3. Data and operational evidence gaps
@@ -115,7 +115,7 @@ The following are not open implementation gaps, although their operating/model e
   ManualTrade verification on the development branch, with the local
   repository-wide engineering gate passed;
 - canonical-to-Legacy import enforcement, role-specific migration Protocols,
-  six technical-observable families, per-family differential evidence,
+  seven technical-observable definitions, per-family differential evidence,
   FeatureBundle/Signal recomputation replay and architecture guards on the
   Feature Spine branch;
 - append-only manual Fill ledger;

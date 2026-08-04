@@ -7,7 +7,7 @@
 > **Supersedes:** None
 > **Superseded By:** None
 > **Related Documents:** ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md
-> **Code Evidence:** starting `main@9ccc751c237b060ab13a86602993d08753d5c634`; implementation checkpoint `14058a5`; gate checkpoint `1e861a7`
+> **Code Evidence:** starting `main@9ccc751c237b060ab13a86602993d08753d5c634`; implementation/gate checkpoint `72c8ed940d8b9d43788d6f2898ab081dc98bdc10`
 
 ## 1. Delivery boundary
 
@@ -55,19 +55,19 @@ The durable integration fixture observed:
 
 ```text
 Feature Bundle ID:
-  feature-bundle-26e22a85008aec678365aafe
+  feature-bundle-c9da2f0305b5c58c680af58e
 Feature Bundle original/replayed hash:
-  sha256:26e22a85008aec678365aafed24e01be671eb613dde75c206645bf70180a6dad
+  sha256:c9da2f0305b5c58c680af58ee90856f69a2fd696bceff23899552e5c694a970c
 
 Signal input mapping hash:
   sha256:897e05e7d61462711e04e0b032b6082f5d2757f5c50abab441b47e3f1cfb8987
 Signal original/replayed content hash:
-  sha256:3d9e66641db7de9bba068c3549fee944e8a17f0e9383d73c55316d1f1639ab28
+  sha256:6273b6b07eb610380e97cf8b0c027e41604207bac212d955e24c4535c2cdab56
 
 Source Signal receipt hash:
-  sha256:d19e8da3dda40a7b40169160314deb495b8aa43bfee5b973f0df081765306b0b
+  sha256:96d7bade4f9c9d60532a1612567e79124fe1fb8be2a493411bdcff42a4980efe
 Durable Replay report hash:
-  sha256:ea3b6fcd33cbe026ee38140ec385423cde5c36fc14613cbe291e7711d499da9f
+  sha256:bcdfd37abefecb09e8bbec2e2de2855bbc909edb2e97999a341aeb5d4a2b7a0e
 Replay status:
   STABLE
 ```
@@ -79,14 +79,14 @@ returns the same Run and does not republish Signal packages.
 ## 4. Performance evidence
 
 The offline benchmark used 100 symbols, 250 daily sessions per symbol and 4,800
-real-field synthetic 5-minute Bars. It materialized 600 Artifacts across six
-families:
+real-field synthetic 5-minute Bars. It materialized 700 Artifacts across seven
+versioned Feature definitions:
 
 ```text
-cold Feature run       18.875838 seconds
-cached verified replay  4.493092 seconds
-process ru_maxrss       421,773,312 bytes
-output bytes            127,261,684
+cold Feature run       29.502912 seconds
+cached verified replay  8.359181 seconds
+process ru_maxrss       398,229,504 bytes
+output bytes            131,843,243
 ```
 
 The benchmark is an engineering fixture, not provider, PIT, model-quality or
@@ -100,13 +100,13 @@ uv sync --frozen --extra dev --extra postgres
   PASS
 
 focused Feature/Market/Signal/Migration/Forecast/Lifecycle/Architecture
-  490 passed, 0 skipped, 0 failed
+  503 passed, 0 skipped, 0 failed
 
 H4/H5 focused regression
   143 passed, 0 skipped, 0 failed
 
 uv run pytest -q
-  2045 passed, 0 skipped, 0 failed
+  2058 passed, 0 skipped, 0 failed
   6 pre-existing pandas PerformanceWarnings
 
 uv run ruff check .
@@ -127,6 +127,14 @@ uv run pytest -q tests/scripts/test_check_docs_links.py
 git diff --check
   PASS
 ```
+
+The Bundle Reader reconstructs the exact FeatureSet × symbol projection from
+loaded Feature Artifacts. Signal assembly additionally loads the verified
+Dataset and validates Dataset/hash, adjustment policy and SourceManifest
+projection. The `feature-bundle-v1`, `signal-observation-v2` and canonical Bar
+schemas are new, unreleased contracts introduced and finalized on this feature
+branch; no previously merged package authority was rewritten, while the
+pre-existing historical Feature/Signal V1 Readers remain intact.
 
 Remote CI and branch-protection status are not claimed by this local audit.
 

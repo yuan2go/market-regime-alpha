@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** Canonical Feature Spine implementation checkpoint `14058a5`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Code Evidence:** Canonical Feature Spine implementation/gate checkpoint `72c8ed940d8b9d43788d6f2898ab081dc98bdc10`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -57,7 +57,7 @@ external H4.5 human confirmation, an existing ManualTrade and a separately
 human-recorded Fill.
 
 The Canonical Feature Spine branch adds a content-addressed Market Data
-authority, versioned Feature Set, six Decimal technical-observable families,
+authority, versioned Feature Set, seven Decimal technical-observable definitions,
 deterministic materialization/Bundle/replay, per-family Legacy differential
 evidence and five-factor Signal assembly. Canonical Signal now consumes actual
 non-empty Feature values when evidence exists. PathForecast still has no
@@ -512,14 +512,14 @@ formal model validation, Broker authority or production admission.
 
 ### 6.4 Canonical Feature Spine verification
 
-At implementation checkpoint `14058a5` and docs/gate checkpoint `1e861a7`, the
+At implementation/gate checkpoint `72c8ed940d8b9d43788d6f2898ab081dc98bdc10`, the
 frozen Python 3.12 environment observed:
 
 ```text
 FROZEN_UV_SYNC_DEFAULT_DEV_POSTGRES = PASS
 FEATURE_FOCUSED = 490 passed, 0 skipped, 0 failed
 H4_H5_REGRESSION = 143 passed, 0 skipped, 0 failed
-FULL_PYTEST = 2045 passed, 0 skipped, 0 failed
+FULL_PYTEST = 2058 passed, 0 skipped, 0 failed
 RUFF = PASS
 MYPY_FORMAL_SCOPE = PASS, 319 source files
 PACKAGE_BUILD = PASS, sdist and wheel
@@ -529,8 +529,8 @@ GIT_DIFF_CHECK = PASS
 ```
 
 The full run retained six existing pandas fragmentation warnings. The 100-symbol
-offline performance fixture measured an 18.875838-second cold Feature run and a
-4.493092-second cached verification; this is engineering performance evidence,
+offline performance fixture measured a 29.502912-second cold Feature run and an
+8.359181-second cached verification; this is engineering performance evidence,
 not Alpha or production admission. Remote CI is not claimed until pushed checks
 complete.
 
