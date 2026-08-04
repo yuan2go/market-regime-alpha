@@ -339,6 +339,16 @@ def _verify_confirmation_result(
 ) -> None:
     attempt = result.attempt
     trade = _required_trade(result)
+    policy_reference = require_single_reference(
+        context, LifecycleObjectType.RISK_REDUCTION_CONFIRMATION_POLICY
+    )
+    if (
+        str(attempt.confirmation_policy_id) != str(policy_reference.object_id)
+        or attempt.confirmation_policy_hash != policy_reference.content_hash
+    ):
+        raise ValueError(
+            "H4.5 confirmation policy does not match the command-bound policy"
+        )
     book_reference = require_single_reference(
         context, LifecycleObjectType.POSITION_BOOK
     )

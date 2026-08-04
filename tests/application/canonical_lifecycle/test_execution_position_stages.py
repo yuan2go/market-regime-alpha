@@ -349,6 +349,11 @@ def _fixture(tmp_path: Path, daily_decision_fixture) -> ExecutionStageFixture:
     )
     status_path = tmp_path / "lifecycle-symbol-statuses.json"
     status_path.write_text(_json(status_payload), encoding="utf-8")
+    policy_path = tmp_path / "lifecycle-confirmation-policy.json"
+    policy_path.write_text(
+        _json(authority.command.confirmation_policy.to_canonical_dict()),
+        encoding="utf-8",
+    )
     available = authority.command.confirmed_at.astimezone(UTC)
     references = ordered_references(
         (
@@ -392,6 +397,18 @@ def _fixture(tmp_path: Path, daily_decision_fixture) -> ExecutionStageFixture:
                 ),
                 reader_kind=LifecycleReaderKind.THESIS_HEALTH_REPOSITORY,
                 available_at=health.observation.assessed_at,
+            ),
+            _reference(
+                object_type=(
+                    LifecycleObjectType.RISK_REDUCTION_CONFIRMATION_POLICY
+                ),
+                object_id=authority.command.confirmation_policy.policy_id,
+                content_hash=authority.command.confirmation_policy.policy_hash,
+                reader_kind=(
+                    LifecycleReaderKind.RISK_REDUCTION_CONFIRMATION_POLICY_READER
+                ),
+                available_at=available,
+                locator=policy_path,
             ),
         )
     )
