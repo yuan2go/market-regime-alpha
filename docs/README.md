@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Canonical documentation entry point and authority policy  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-01  
+> **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** constitution/**, architecture/**, research/**, specs/**, status/**, roadmap/**, audit/**, archive/**  
@@ -111,6 +111,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [H6 Composite Operational Evidence Implementation Plan](superpowers/plans/2026-08-04-h6-composite-operational-evidence.md)
 - [H4.5 Risk-Reduction Manual Intent Design](superpowers/specs/2026-08-04-h4-5-risk-reduction-manual-intent-design.md)
 - [H4.5 Risk-Reduction Manual Intent Implementation Plan](superpowers/plans/2026-08-04-h4-5-risk-reduction-manual-intent.md)
+- [Canonical Runtime and Legacy Model Migration Infrastructure Design](superpowers/specs/2026-08-04-canonical-runtime-and-legacy-migration-design.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
