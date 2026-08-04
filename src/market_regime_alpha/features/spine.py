@@ -513,6 +513,18 @@ class FeatureSetConfiguration:
         for configuration in self.configurations:
             configuration.verify_identity()
 
+    @property
+    def configuration_id(self) -> ArtifactId:
+        """Typed lifecycle configuration identity view."""
+
+        return self.feature_set_id
+
+    @property
+    def configuration_hash(self) -> str:
+        """Typed lifecycle configuration hash view."""
+
+        return self.content_hash
+
     @classmethod
     def create(
         cls,

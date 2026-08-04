@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Mapping
@@ -530,7 +530,7 @@ class SignalInputAssembler:
                 symbol=symbol,
                 feature_bundle=feature_bundle,
                 configuration=configuration,
-                decision_time=decision_time.value,
+                decision_time=decision_time.value.astimezone(timezone.utc),
             )
             for symbol in selected_symbols
         )

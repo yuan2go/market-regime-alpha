@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 
@@ -19,6 +20,9 @@ from market_regime_alpha.forecasting import (
     PATH_FORECAST_CONFIG_SCHEMA,
     PathForecastConfig,
 )
+from market_regime_alpha.features.technical.catalog import (
+    canonical_technical_feature_set,
+)
 from market_regime_alpha.portfolio import (
     COMPLETE_ACCOUNT_RISK_CONFIGURATION_SCHEMA,
     RISK_BUDGET_SCHEMA,
@@ -33,6 +37,7 @@ from market_regime_alpha.signals import (
     SIGNAL_MODEL_CONFIG_SCHEMA,
     SignalFamily,
     SignalModelConfig,
+    canonical_signal_input_mapping,
 )
 from market_regime_alpha.strategies.entry import (
     EntryBarrierSpec,
@@ -169,6 +174,44 @@ def test_reader_restores_existing_typed_configuration_without_defaults(
     loaded = RuntimeConfigurationReader().read(reference)
     assert loaded.reference == reference
     assert loaded.configuration == configuration
+
+
+def test_reader_restores_feature_set_and_signal_mapping_configurations(
+    tmp_path: Path,
+) -> None:
+    effective = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    feature_set = canonical_technical_feature_set(effective_from=effective)
+    mapping = canonical_signal_input_mapping(effective_from=effective)
+    values = (
+        (
+            feature_set,
+            LifecycleConfigurationKind.FEATURE_SET,
+            feature_set.feature_set_id,
+            feature_set.feature_set_version,
+            feature_set.content_hash,
+        ),
+        (
+            mapping,
+            LifecycleConfigurationKind.SIGNAL_INPUT_MAPPING,
+            mapping.configuration_id,
+            mapping.configuration_version,
+            mapping.configuration_hash,
+        ),
+    )
+    for configuration, kind, identity, version, content_hash in values:
+        path = tmp_path / f"{kind.value.lower()}.json"
+        path.write_text(
+            json.dumps(configuration.to_canonical_dict(), sort_keys=True),
+            encoding="utf-8",
+        )
+        reference = LifecycleConfigurationReference(
+            configuration_kind=kind,
+            configuration_id=identity,
+            configuration_version=version,
+            content_hash=content_hash,
+            locator=str(path),
+        )
+        assert RuntimeConfigurationReader().read(reference).configuration == configuration
 
 
 def test_reader_rejects_locator_content_hash_identity_and_version_tamper(

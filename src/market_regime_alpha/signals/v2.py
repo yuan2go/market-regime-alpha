@@ -76,6 +76,12 @@ class SignalRunArtifactV2:
     def artifact_id(self) -> ArtifactId:
         return self.envelope.artifact_id
 
+    @property
+    def configuration(self) -> SignalModelConfig:
+        """Common read-only view used by V1-compatible downstream models."""
+
+        return self.signal_configuration
+
     def artifact_payload(self) -> dict[str, Any]:
         return {
             "schema_version": SIGNAL_RUN_V2_SCHEMA,

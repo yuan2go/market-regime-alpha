@@ -41,6 +41,10 @@ _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 _READER_BY_OBJECT_TYPE: dict[LifecycleObjectType, LifecycleReaderKind] = {
+    LifecycleObjectType.MARKET_DATA_DATASET: (
+        LifecycleReaderKind.MARKET_DATA_DATASET_READER
+    ),
+    LifecycleObjectType.FEATURE_BUNDLE: LifecycleReaderKind.FEATURE_BUNDLE_READER,
     LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST: (
         LifecycleReaderKind.COMPOSITE_OPERATIONAL_ARTIFACT_READER
     ),
@@ -118,6 +122,8 @@ _READER_BY_OBJECT_TYPE: dict[LifecycleObjectType, LifecycleReaderKind] = {
 
 _LOCATOR_REQUIRED_READERS = frozenset(
     {
+        LifecycleReaderKind.MARKET_DATA_DATASET_READER,
+        LifecycleReaderKind.FEATURE_BUNDLE_READER,
         LifecycleReaderKind.COMPOSITE_OPERATIONAL_ARTIFACT_READER,
         LifecycleReaderKind.SOURCE_MANIFEST_READER,
         LifecycleReaderKind.DAILY_DECISION_ARTIFACT_READER,

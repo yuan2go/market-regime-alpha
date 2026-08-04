@@ -141,6 +141,41 @@ def test_manifest_binds_actual_operational_research_reader_inputs() -> None:
     )
 
 
+def test_manifest_accepts_reader_bound_market_dataset_and_feature_bundle() -> None:
+    manifest = _manifest()
+    market_data = _reference(
+        LifecycleObjectType.MARKET_DATA_DATASET,
+        "market-data-dataset-1",
+        _hash("7"),
+        LifecycleReaderKind.MARKET_DATA_DATASET_READER,
+        "artifacts/market-data-dataset-1",
+    )
+    feature_bundle = _reference(
+        LifecycleObjectType.FEATURE_BUNDLE,
+        "feature-bundle-1",
+        _hash("8"),
+        LifecycleReaderKind.FEATURE_BUNDLE_READER,
+        "artifacts/feature-bundle-1",
+    )
+    extended = CanonicalLifecycleInputManifest.create(
+        decision_date=manifest.decision_date,
+        as_of_time=manifest.as_of_time,
+        created_at=manifest.created_at,
+        input_references=(*manifest.input_references, market_data, feature_bundle),
+        configuration_references=manifest.configuration_references,
+        model_references=manifest.model_references,
+        authority_ceiling=manifest.authority_ceiling,
+        limitations=manifest.limitations,
+    )
+    by_type = {item.object_type: item for item in extended.input_references}
+    assert by_type[LifecycleObjectType.MARKET_DATA_DATASET].reader_kind is (
+        LifecycleReaderKind.MARKET_DATA_DATASET_READER
+    )
+    assert by_type[LifecycleObjectType.FEATURE_BUNDLE].reader_kind is (
+        LifecycleReaderKind.FEATURE_BUNDLE_READER
+    )
+
+
 def test_file_reader_requires_locator_but_repository_reference_forbids_one() -> None:
     file_reference = _inputs()[0]
     with pytest.raises(ValueError, match="requires a controlled locator"):

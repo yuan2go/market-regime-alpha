@@ -47,7 +47,15 @@ from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction imp
     SQLiteRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.features.artifact import replay_feature_artifact
+from market_regime_alpha.features.materialization_v2 import (
+    load_verified_feature_bundle_v2,
+    replay_feature_bundle_v2,
+)
 from market_regime_alpha.forecasting.artifact import replay_path_forecast
+from market_regime_alpha.market_data import (
+    load_verified_market_data_dataset,
+    replay_market_data_dataset,
+)
 from market_regime_alpha.migration.comparison.artifact import (
     load_verified_model_comparison_report,
 )
@@ -56,6 +64,10 @@ from market_regime_alpha.research.platform_v2.reader_registry import (
 )
 from market_regime_alpha.research.platform_v2.replay import replay_research_layer
 from market_regime_alpha.signals.artifact import replay_signal_run
+from market_regime_alpha.signals.v2 import (
+    load_verified_signal_run_v2,
+    replay_signal_run_v2,
+)
 
 
 class ReplayCheckStatus(str, Enum):
@@ -293,8 +305,10 @@ def verify_lifecycle_replay(
             )
             if prior != object_reference:
                 raise ValueError("journal contains conflicting replay references")
+    all_references = tuple(references.values())
     checks.extend(
-        verify_replay_reference(reference) for reference in references.values()
+        verify_replay_reference(reference, all_references=all_references)
+        for reference in all_references
     )
 
     journal_hash = canonical_hash(
@@ -350,6 +364,7 @@ def verify_replay_reference(
     reference: LifecycleObjectReference,
     *,
     authority_database_locator: Path | None = None,
+    all_references: tuple[LifecycleObjectReference, ...] = (),
 ) -> LifecycleReplayCheck:
     """Recompute or reload one reference without invoking a domain mutation."""
 
@@ -386,6 +401,24 @@ def verify_replay_reference(
             expected_hash=reference.content_hash,
             observed_hash=None,
             detail="REPOSITORY_AUTHORITY_REQUIRES_EXPLICIT_INJECTION",
+        )
+    contextual = _contextual_replay(reference, all_references)
+    if contextual is not None:
+        try:
+            object_id, observed_hash, status, detail = contextual()
+            if (
+                object_id != str(reference.object_id)
+                or observed_hash != reference.content_hash
+            ):
+                raise ValueError("replayed Artifact identity or content hash mismatch")
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            return _failed_check(subject, reference.content_hash, exc)
+        return LifecycleReplayCheck(
+            subject=subject,
+            status=status,
+            expected_hash=reference.content_hash,
+            observed_hash=observed_hash,
+            detail=detail,
         )
     verifier = _REFERENCE_VERIFIERS.get(reference.object_type)
     if verifier is None:
@@ -477,6 +510,16 @@ def _signal(path: Path) -> _VerifiedReference:
     )
 
 
+def _market_data(path: Path) -> _VerifiedReference:
+    value = replay_market_data_dataset(path).artifact
+    return (
+        str(value.dataset_id),
+        value.content_hash,
+        ReplayCheckStatus.REPLAY_STABLE,
+        "MARKET_DATA_DATASET_PURE_REPLAY_STABLE",
+    )
+
+
 def _forecast(path: Path) -> _VerifiedReference:
     value = replay_path_forecast(path).artifact
     return (
@@ -510,6 +553,7 @@ def _comparison(path: Path) -> _VerifiedReference:
 _REFERENCE_VERIFIERS: dict[
     LifecycleObjectType, Callable[[Path], _VerifiedReference]
 ] = {
+    LifecycleObjectType.MARKET_DATA_DATASET: _market_data,
     LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST: _composite,
     LifecycleObjectType.SOURCE_MANIFEST: _source,
     LifecycleObjectType.DAILY_DECISION_ARTIFACT: _daily,
@@ -520,6 +564,108 @@ _REFERENCE_VERIFIERS: dict[
     LifecycleObjectType.FEATURE_ARTIFACT: _feature,
     LifecycleObjectType.MODEL_COMPARISON_REPORT: _comparison,
 }
+
+
+def _contextual_replay(
+    reference: LifecycleObjectReference,
+    all_references: tuple[LifecycleObjectReference, ...],
+) -> Callable[[], _VerifiedReference] | None:
+    if reference.locator is None:
+        return None
+    if reference.object_type is LifecycleObjectType.FEATURE_BUNDLE:
+        return lambda: _feature_bundle(reference, all_references)
+    if reference.object_type is LifecycleObjectType.SIGNAL_ARTIFACT and (
+        _package_schema(Path(reference.locator)) == "signal-run-package-v2"
+    ):
+        return lambda: _signal_v2(reference, all_references)
+    return None
+
+
+def _feature_bundle(
+    reference: LifecycleObjectReference,
+    all_references: tuple[LifecycleObjectReference, ...],
+) -> _VerifiedReference:
+    assert reference.locator is not None
+    bundle_path = Path(reference.locator)
+    artifact_root = bundle_path.parent.parent / "feature-artifacts"
+    bundle = load_verified_feature_bundle_v2(
+        bundle_path, artifact_root=artifact_root
+    )
+    dataset_reference = _matching_reference(
+        all_references,
+        object_type=LifecycleObjectType.MARKET_DATA_DATASET,
+        object_id=str(bundle.artifact.dataset_id),
+        content_hash=bundle.artifact.dataset_hash,
+    )
+    assert dataset_reference.locator is not None
+    dataset = load_verified_market_data_dataset(Path(dataset_reference.locator))
+    replay = replay_feature_bundle_v2(
+        bundle_path=bundle_path,
+        artifact_root=artifact_root,
+        verified_dataset=dataset,
+    )
+    if not replay.semantic_match:
+        raise ValueError("Feature Bundle pure replay did not match")
+    return (
+        str(bundle.artifact.bundle_id),
+        replay.replayed_bundle_hash,
+        ReplayCheckStatus.REPLAY_STABLE,
+        "FEATURE_BUNDLE_PURE_RECOMPUTATION_STABLE",
+    )
+
+
+def _signal_v2(
+    reference: LifecycleObjectReference,
+    all_references: tuple[LifecycleObjectReference, ...],
+) -> _VerifiedReference:
+    assert reference.locator is not None
+    signal_path = Path(reference.locator)
+    signal = load_verified_signal_run_v2(signal_path)
+    bundle_reference = _matching_reference(
+        all_references,
+        object_type=LifecycleObjectType.FEATURE_BUNDLE,
+        object_id=str(signal.artifact.feature_bundle_id),
+        content_hash=signal.artifact.feature_bundle_hash,
+    )
+    assert bundle_reference.locator is not None
+    bundle_path = Path(bundle_reference.locator)
+    bundle = load_verified_feature_bundle_v2(
+        bundle_path,
+        artifact_root=bundle_path.parent.parent / "feature-artifacts",
+    )
+    replayed = replay_signal_run_v2(signal_path, feature_bundle=bundle).artifact
+    return (
+        str(replayed.artifact_id),
+        replayed.envelope.content_hash,
+        ReplayCheckStatus.REPLAY_STABLE,
+        "SIGNAL_FEATURE_INPUT_REASSEMBLY_REPLAY_STABLE",
+    )
+
+
+def _matching_reference(
+    references: tuple[LifecycleObjectReference, ...],
+    *,
+    object_type: LifecycleObjectType,
+    object_id: str,
+    content_hash: str,
+) -> LifecycleObjectReference:
+    matches = tuple(
+        item
+        for item in references
+        if item.object_type is object_type
+        and str(item.object_id) == object_id
+        and item.content_hash == content_hash
+    )
+    if len(matches) != 1:
+        raise ValueError(
+            f"pure replay requires one matching {object_type.value} reference"
+        )
+    return matches[0]
+
+
+def _package_schema(path: Path) -> object:
+    payload = _read_json_object(path / "manifest.json")
+    return payload.get("schema_version")
 
 
 def _read_json_object(path: Path) -> Mapping[str, Any]:
