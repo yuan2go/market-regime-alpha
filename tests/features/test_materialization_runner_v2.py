@@ -25,6 +25,7 @@ from market_regime_alpha.features.materialization_v2 import (
     replay_feature_bundle_v2,
 )
 from market_regime_alpha.features.spine import (
+    FeatureConfiguration,
     FeatureSetConfiguration,
     RequiredFeatureCoveragePolicy,
 )
@@ -427,6 +428,69 @@ def test_bundle_reconstructs_coverage_from_loaded_feature_artifacts(
         verified.artifact.verify_materialized_projection(
             tuple(item.artifact for item in verified.artifacts[:-1])
         )
+    with pytest.raises(ValueError, match="materialized scope mismatch"):
+        verified.artifact.verify_materialized_projection(
+            (*tuple(item.artifact for item in verified.artifacts), verified.artifacts[0].artifact)
+        )
+
+
+def test_bundle_rejects_legitimate_artifact_from_different_feature_configuration(
+    tmp_path: Path,
+) -> None:
+    _, feature_set, receipt = _run(tmp_path / "canonical")
+    canonical_bundle = load_verified_feature_bundle_v2(
+        tmp_path / "canonical" / "features" / receipt.bundle_locator,
+        artifact_root=tmp_path / "canonical" / "features" / "feature-artifacts",
+    )
+    original_configuration = feature_set.configurations[0]
+    changed_parameters = tuple(
+        replace(item, value="10") if item.name == "output_scale" else item
+        for item in original_configuration.parameters
+    )
+    alternate_configuration = FeatureConfiguration.create(
+        configuration_version="alternate-binding-test-v1",
+        feature_id=original_configuration.feature_id,
+        effective_from=original_configuration.effective_from,
+        parameters=changed_parameters,
+        validation_status=original_configuration.validation_status,
+    )
+    alternate_set = FeatureSetConfiguration.create(
+        feature_set_version="alternate-binding-test-v1",
+        definitions=feature_set.definitions,
+        configurations=(
+            alternate_configuration,
+            *feature_set.configurations[1:],
+        ),
+        required_feature_ids=feature_set.required_feature_ids,
+        optional_feature_ids=feature_set.optional_feature_ids,
+        timeframe_policy=feature_set.timeframe_policy,
+        coverage_policy=feature_set.coverage_policy,
+        minimum_required_coverage=feature_set.minimum_required_coverage,
+        missingness_policy=feature_set.missingness_policy,
+        validation_status=feature_set.validation_status,
+        limitations=feature_set.limitations,
+    )
+    _, _, alternate_receipt = _run(
+        tmp_path / "alternate", feature_set=alternate_set
+    )
+    alternate_bundle = load_verified_feature_bundle_v2(
+        tmp_path / "alternate" / "features" / alternate_receipt.bundle_locator,
+        artifact_root=tmp_path / "alternate" / "features" / "feature-artifacts",
+    )
+    alternate = next(
+        item.artifact
+        for item in alternate_bundle.artifacts
+        if item.artifact.feature_id == original_configuration.feature_id
+    )
+    artifacts = tuple(
+        alternate
+        if item.artifact.feature_id == original_configuration.feature_id
+        else item.artifact
+        for item in canonical_bundle.artifacts
+    )
+
+    with pytest.raises(ValueError, match="configuration binding mismatch"):
+        canonical_bundle.artifact.verify_materialized_projection(artifacts)
 
 
 def test_orphan_command_staging_file_does_not_block_retry(tmp_path: Path) -> None:

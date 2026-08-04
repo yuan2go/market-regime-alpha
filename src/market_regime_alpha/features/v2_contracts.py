@@ -684,8 +684,12 @@ class FeatureBundleArtifact:
             for symbol in selected_symbols
         }
         actual = {(item.feature_id, item.symbol) for item in ordered_artifacts}
-        if actual != expected:
+        if actual != expected or len(ordered_artifacts) != len(expected):
             raise ValueError("Feature Bundle artifacts do not cover Feature Set and symbols")
+        _verify_feature_set_artifact_bindings(
+            feature_set=feature_set,
+            artifacts=ordered_artifacts,
+        )
         if any(
             item.dataset_id != dataset.dataset_id
             or item.dataset_hash != dataset.content_hash
@@ -813,8 +817,12 @@ class FeatureBundleArtifact:
             for symbol in self.symbols
         }
         actual_scope = {(item.feature_id, item.symbol) for item in ordered}
-        if actual_scope != expected_scope:
+        if actual_scope != expected_scope or len(ordered) != len(expected_scope):
             raise ValueError("Feature Bundle materialized scope mismatch")
+        _verify_feature_set_artifact_bindings(
+            feature_set=self.feature_set,
+            artifacts=ordered,
+        )
         for item in ordered:
             item.verify_identity()
             if (
@@ -1444,6 +1452,22 @@ def _derive_bundle_projection(
         else FeatureBundleState.COMPLETE
     )
     return references, coverage, required_status, state
+
+
+def _verify_feature_set_artifact_bindings(
+    *,
+    feature_set: FeatureSetConfiguration,
+    artifacts: tuple[FeatureArtifactV2, ...],
+) -> None:
+    definitions = {item.feature_id: item for item in feature_set.definitions}
+    configurations = {
+        item.feature_id: item for item in feature_set.configurations
+    }
+    for artifact in artifacts:
+        if artifact.definition != definitions.get(artifact.feature_id):
+            raise ValueError("Feature Bundle Artifact definition binding mismatch")
+        if artifact.configuration != configurations.get(artifact.feature_id):
+            raise ValueError("Feature Bundle Artifact configuration binding mismatch")
 
 
 def _receipt_payload(
