@@ -1,6 +1,7 @@
 """Canonical feature contracts and explicitly scoped R5 rehearsal baselines."""
 
 from .contracts import FeatureDefinition, FeatureMaterialization, FeatureObservation, FeatureRegistry
+from .model_contracts import FeatureArtifact, FeatureComputationRequest, FeatureComputer
 from .rehearsal_baselines import (
     LIQUIDITY_20S_ID,
     MOMENTUM_5S_ID,
@@ -12,6 +13,9 @@ from .rehearsal_baselines import (
 
 __all__ = [
     "FeatureDefinition",
+    "FeatureArtifact",
+    "FeatureComputationRequest",
+    "FeatureComputer",
     "FeatureMaterialization",
     "FeatureObservation",
     "FeatureRegistry",

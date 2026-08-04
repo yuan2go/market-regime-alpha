@@ -19,13 +19,23 @@ from market_regime_alpha.signals.engine import (
     SignalRunArtifact,
     run_signal_model,
 )
+from market_regime_alpha.signals.model_contracts import (
+    SignalMeaning,
+    SignalModel,
+    SignalModelRequest,
+    SignalModelResult,
+)
 
 __all__ = [
     "SIGNAL_MODEL_CONFIG_SCHEMA",
     "SIGNAL_OBSERVATION_SCHEMA",
     "ConfirmationState",
     "SignalFamily",
+    "SignalMeaning",
+    "SignalModel",
     "SignalModelConfig",
+    "SignalModelRequest",
+    "SignalModelResult",
     "SignalObservation",
     "SignalRunArtifact",
     "SignalSnapshot",

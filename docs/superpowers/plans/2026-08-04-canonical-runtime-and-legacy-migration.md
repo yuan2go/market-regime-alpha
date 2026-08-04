@@ -179,9 +179,9 @@ git commit -m "refactor: isolate legacy runtime dependencies"
 - Modify: `src/market_regime_alpha/features/__init__.py`
 - Modify: `src/market_regime_alpha/signals/__init__.py`
 - Create: `tests/features/test_model_contracts.py`
-- Create: `tests/research/test_model_contracts.py`
-- Create: `tests/signals/test_model_contracts.py`
-- Create: `tests/decision/test_model_contracts.py`
+- Create: `tests/research/test_research_model_contracts.py`
+- Create: `tests/signals/test_signal_model_contracts.py`
+- Create: `tests/decision/test_decision_model_contracts.py`
 
 **Interfaces:**
 
@@ -261,14 +261,14 @@ Tests reject order, broker, fill and automatic-execution strings.
 - [ ] **Step 4: Run contract tests and static checks.**
 
 ```bash
-python -m pytest -q tests/features/test_model_contracts.py tests/research/test_model_contracts.py tests/signals/test_model_contracts.py tests/decision/test_model_contracts.py
+python -m pytest -q tests/features/test_model_contracts.py tests/research/test_research_model_contracts.py tests/signals/test_signal_model_contracts.py tests/decision/test_decision_model_contracts.py
 python -m ruff check src/market_regime_alpha/features/model_contracts.py src/market_regime_alpha/research/model_contracts.py src/market_regime_alpha/signals/model_contracts.py src/market_regime_alpha/decision/model_contracts.py
 ```
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add src/market_regime_alpha/features src/market_regime_alpha/research/model_contracts.py src/market_regime_alpha/signals src/market_regime_alpha/decision/model_contracts.py tests/features/test_model_contracts.py tests/research/test_model_contracts.py tests/signals/test_model_contracts.py tests/decision/test_model_contracts.py
+git add src/market_regime_alpha/features src/market_regime_alpha/research/model_contracts.py src/market_regime_alpha/signals src/market_regime_alpha/decision/model_contracts.py tests/features/test_model_contracts.py tests/research/test_research_model_contracts.py tests/signals/test_signal_model_contracts.py tests/decision/test_decision_model_contracts.py
 git diff --cached --check
 git commit -m "feat: add role-specific model migration contracts"
 ```
