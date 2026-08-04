@@ -175,6 +175,22 @@ def test_reference_and_all_journal_records_round_trip_canonically() -> None:
         run.version = 99  # type: ignore[misc]
 
 
+def test_legacy_v1_run_json_remains_readable_without_replay_linkage() -> None:
+    run = replace(
+        _run(),
+        schema_version=LifecycleRun.LEGACY_SCHEMA_VERSION,
+    )
+    payload = run.to_canonical_dict()
+    assert payload["schema_version"] == "canonical-lifecycle-run-v1"
+    assert "source_run_id" not in payload
+    assert "replay_report_hash" not in payload
+
+    restored = LifecycleRun.from_canonical_dict(payload)
+
+    assert restored == run
+    assert restored.source_run_id is None
+
+
 def test_receipt_identity_excludes_attempt_and_wall_clock_audit_values() -> None:
     def build(attempt_number: int, created_at: datetime) -> StageReceipt:
         return StageReceipt.create(

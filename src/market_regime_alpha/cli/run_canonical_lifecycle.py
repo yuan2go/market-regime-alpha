@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -17,6 +17,9 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleRunId,
     parse_utc_second,
 )
+from market_regime_alpha.application.canonical_lifecycle.durable_replay import (
+    run_durable_lifecycle_replay,
+)
 from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
     CanonicalLifecycleInputManifest,
     CanonicalLifecycleInputManifestReader,
@@ -29,7 +32,6 @@ from market_regime_alpha.application.canonical_lifecycle.repositories import (
 )
 from market_regime_alpha.application.canonical_lifecycle.replay import (
     LifecycleReplayStatus,
-    verify_lifecycle_replay,
 )
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     LifecycleRunResult,
@@ -64,8 +66,6 @@ EXIT_IDEMPOTENCY_CONFLICT = 3
 EXIT_RESUME_REJECTED = 4
 EXIT_STAGE_FAILED = 5
 EXIT_REPOSITORY_ERROR = 6
-EXIT_REPLAY_NOT_COMPARABLE = 5
-EXIT_REPLAY_FAILED = 6
 
 
 class CLIValidationError(ValueError):
@@ -188,7 +188,6 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
             "input_manifest",
             "decision_date",
             "as_of",
-            "idempotency_key",
             "authority_database",
             "stop_after_stage",
         )
@@ -202,12 +201,37 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
     if not database.is_file():
         raise CLIValidationError("replay requires an existing lifecycle database")
     repository = _repository(database)
-    run_id = LifecycleRunId(str(args.replay_run_id))
-    first = verify_lifecycle_replay(repository=repository, run_id=run_id)
-    second = verify_lifecycle_replay(repository=repository, run_id=run_id)
+    source_run_id = LifecycleRunId(str(args.replay_run_id))
+    source_history = repository.history(source_run_id)
+    replay_clock = _DeterministicReplayClock(
+        source_history.run.updated_at + timedelta(seconds=1)
+    )
+    idempotency_key = (
+        str(args.idempotency_key)
+        if args.idempotency_key is not None
+        else f"canonical-replay:{source_run_id}"
+    )
+    output_directory = (
+        args.output_dir.resolve() if args.output_dir is not None else None
+    )
+    first = run_durable_lifecycle_replay(
+        repository=repository,
+        source_run_id=source_run_id,
+        idempotency_key=idempotency_key,
+        clock=replay_clock,
+        output_directory=output_directory,
+    )
+    second = run_durable_lifecycle_replay(
+        repository=repository,
+        source_run_id=source_run_id,
+        idempotency_key=idempotency_key,
+        clock=replay_clock,
+        output_directory=output_directory,
+    )
     stable = (
-        first.report_hash == second.report_hash
-        and first.to_canonical_dict() == second.to_canonical_dict()
+        first.replay_run.run_id == second.replay_run.run_id
+        and first.report.report_hash == second.report.report_hash
+        and first.report.to_canonical_dict() == second.report.to_canonical_dict()
     )
     if not stable:
         raise CLIValidationError(
@@ -216,8 +240,13 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
     print(
         json.dumps(
             {
-                **first.to_canonical_dict(),
-                "replay_status": first.status.value,
+                **first.report.to_canonical_dict(),
+                "source_run_id": str(first.source_run_id),
+                "replay_run_id": str(first.replay_run.run_id),
+                "replay_run_type": first.replay_run.run_type.value,
+                "replay_run_status": first.replay_run.status.value,
+                "replay_report_path": str(first.report_path),
+                "replay_status": first.report.status.value,
                 "REPORT_HASH_STABLE": True,
                 "RUNNER_INVOKED": False,
                 "MANUAL_CONFIRMATION_REQUIRED": False,
@@ -228,11 +257,11 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
             sort_keys=True,
         )
     )
-    return {
-        LifecycleReplayStatus.STABLE: EXIT_SUCCESS,
-        LifecycleReplayStatus.NOT_COMPARABLE: EXIT_REPLAY_NOT_COMPARABLE,
-        LifecycleReplayStatus.FAILED: EXIT_REPLAY_FAILED,
-    }[first.status]
+    return (
+        EXIT_STAGE_FAILED
+        if first.report.status is LifecycleReplayStatus.FAILED
+        else EXIT_SUCCESS
+    )
 
 
 def _start(
@@ -401,6 +430,16 @@ def _date(value: str) -> date:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+class _DeterministicReplayClock:
+    def __init__(self, start: datetime) -> None:
+        self._current = start
+
+    def __call__(self) -> datetime:
+        value = self._current
+        self._current += timedelta(seconds=1)
+        return value
 
 
 def _repository(database: Path) -> SQLiteLifecycleRunRepository:

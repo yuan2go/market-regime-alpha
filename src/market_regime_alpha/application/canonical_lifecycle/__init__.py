@@ -41,6 +41,11 @@ from market_regime_alpha.application.canonical_lifecycle.replay import (
     ReplayCheckStatus,
     verify_lifecycle_replay,
 )
+from market_regime_alpha.application.canonical_lifecycle.durable_replay import (
+    DurableLifecycleReplayResult,
+    lifecycle_history_hash,
+    run_durable_lifecycle_replay,
+)
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LIFECYCLE_STAGE_ORDER,
     InvalidLifecycleTransition,
@@ -59,6 +64,7 @@ __all__ = [
     "CanonicalLifecycleCommand",
     "CanonicalLifecycleInputManifest",
     "CanonicalLifecycleInputManifestReader",
+    "DurableLifecycleReplayResult",
     "InvalidLifecycleTransition",
     "LifecycleAttempt",
     "LifecycleAttemptId",
@@ -95,4 +101,6 @@ __all__ = [
     "validate_lifecycle_stage_progression",
     "validate_lifecycle_stage_transition",
     "verify_lifecycle_replay",
+    "lifecycle_history_hash",
+    "run_durable_lifecycle_replay",
 ]

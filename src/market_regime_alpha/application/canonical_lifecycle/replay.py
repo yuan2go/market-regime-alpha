@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Protocol
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleObjectReference,
     LifecycleObjectType,
     LifecycleRunId,
+    StageReceipt,
 )
 from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
@@ -20,7 +21,7 @@ from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
     CanonicalLifecycleInputManifestReader,
 )
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
-    LifecycleRunRepository,
+    LifecycleHistory,
 )
 from market_regime_alpha.application.canonical_lifecycle.runtime_configuration import (
     RuntimeConfigurationError,
@@ -37,6 +38,11 @@ from market_regime_alpha.daily_decision.reader_registry import (
 )
 from market_regime_alpha.data.source_manifest import SourceManifest
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
+from market_regime_alpha.evidence.canonical import canonical_json
+from market_regime_alpha.core.identity import ManualTradeId
+from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
+    SQLiteRiskReductionManualIntentRepository,
+)
 from market_regime_alpha.features.artifact import replay_feature_artifact
 from market_regime_alpha.forecasting.artifact import replay_path_forecast
 from market_regime_alpha.migration.comparison.artifact import (
@@ -45,6 +51,7 @@ from market_regime_alpha.migration.comparison.artifact import (
 from market_regime_alpha.research.platform_v2.reader_registry import (
     load_verified_research_artifact,
 )
+from market_regime_alpha.research.platform_v2.replay import replay_research_layer
 from market_regime_alpha.signals.artifact import replay_signal_run
 
 
@@ -59,6 +66,14 @@ class LifecycleReplayStatus(str, Enum):
     STABLE = "STABLE"
     NOT_COMPARABLE = "NOT_COMPARABLE"
     FAILED = "FAILED"
+
+
+class LifecycleReplaySource(Protocol):
+    """Read-only journal subset required by replay verification."""
+
+    def get_command(self, run_id: LifecycleRunId) -> CanonicalLifecycleCommand: ...
+
+    def history(self, run_id: LifecycleRunId) -> LifecycleHistory: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,10 +190,62 @@ class LifecycleReplayReport:
     def to_canonical_dict(self) -> dict[str, Any]:
         return {**self.semantic_payload(), "report_hash": self.report_hash}
 
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> LifecycleReplayReport:
+        expected = {
+            "schema_version",
+            "run_id",
+            "command_hash",
+            "journal_hash",
+            "status",
+            "checks",
+            "report_hash",
+        }
+        if set(payload) != expected:
+            raise ValueError("LifecycleReplayReport fields mismatch")
+        if payload["schema_version"] != "canonical-lifecycle-replay-report-v1":
+            raise ValueError("unsupported LifecycleReplayReport schema")
+        raw_checks = payload["checks"]
+        if not isinstance(raw_checks, list):
+            raise ValueError("LifecycleReplayReport checks must be a list")
+        checks: list[LifecycleReplayCheck] = []
+        for raw_check in raw_checks:
+            if not isinstance(raw_check, Mapping) or set(raw_check) != {
+                "subject",
+                "status",
+                "expected_hash",
+                "observed_hash",
+                "detail",
+            }:
+                raise ValueError("LifecycleReplayCheck fields mismatch")
+            checks.append(
+                LifecycleReplayCheck(
+                    subject=_mapping_text(raw_check, "subject"),
+                    status=ReplayCheckStatus(_mapping_text(raw_check, "status")),
+                    expected_hash=_mapping_optional_text(
+                        raw_check, "expected_hash"
+                    ),
+                    observed_hash=_mapping_optional_text(
+                        raw_check, "observed_hash"
+                    ),
+                    detail=_mapping_text(raw_check, "detail"),
+                )
+            )
+        return cls(
+            run_id=LifecycleRunId(_mapping_text(payload, "run_id")),
+            command_hash=_mapping_text(payload, "command_hash"),
+            journal_hash=_mapping_text(payload, "journal_hash"),
+            status=LifecycleReplayStatus(_mapping_text(payload, "status")),
+            checks=tuple(checks),
+            report_hash=_mapping_text(payload, "report_hash"),
+        )
+
 
 def verify_lifecycle_replay(
     *,
-    repository: LifecycleRunRepository,
+    repository: LifecycleReplaySource,
     run_id: LifecycleRunId,
 ) -> LifecycleReplayReport:
     """Verify an existing run without invoking Runner or any mutating service."""
@@ -223,7 +290,9 @@ def verify_lifecycle_replay(
             )
             if prior != object_reference:
                 raise ValueError("journal contains conflicting replay references")
-    checks.extend(_verify_reference(reference) for reference in references.values())
+    checks.extend(
+        verify_replay_reference(reference) for reference in references.values()
+    )
 
     journal_hash = canonical_hash(
         {
@@ -274,8 +343,39 @@ def _verify_input_manifest(
     )
 
 
-def _verify_reference(reference: LifecycleObjectReference) -> LifecycleReplayCheck:
+def verify_replay_reference(
+    reference: LifecycleObjectReference,
+    *,
+    authority_database_locator: Path | None = None,
+) -> LifecycleReplayCheck:
+    """Recompute or reload one reference without invoking a domain mutation."""
+
     subject = f"OBJECT:{reference.object_type.value}:{reference.object_id}"
+    if reference.object_type is LifecycleObjectType.MANUAL_TRADE:
+        if authority_database_locator is None:
+            return LifecycleReplayCheck(
+                subject=subject,
+                status=ReplayCheckStatus.NOT_COMPARABLE,
+                expected_hash=reference.content_hash,
+                observed_hash=None,
+                detail="MANUAL_TRADE_AUTHORITY_DATABASE_NOT_BOUND",
+            )
+        try:
+            trade = SQLiteRiskReductionManualIntentRepository(
+                authority_database_locator
+            ).get_trade(ManualTradeId(str(reference.object_id)))
+            observed_hash = canonical_hash(trade.to_canonical_dict())
+            if observed_hash != reference.content_hash:
+                raise ValueError("ManualTrade content hash mismatch")
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            return _failed_check(subject, reference.content_hash, exc)
+        return LifecycleReplayCheck(
+            subject=subject,
+            status=ReplayCheckStatus.VERIFIED_READ_ONLY,
+            expected_hash=reference.content_hash,
+            observed_hash=observed_hash,
+            detail="MANUAL_TRADE_REPOSITORY_OBJECT_VERIFIED_READ_ONLY",
+        )
     if reference.locator is None:
         return LifecycleReplayCheck(
             subject=subject,
@@ -355,12 +455,12 @@ def _supplemental(path: Path) -> _VerifiedReference:
 
 
 def _research(path: Path) -> _VerifiedReference:
-    value = load_verified_research_artifact(path).artifact
+    value = replay_research_layer(load_verified_research_artifact(path)).artifact
     return (
         str(value.artifact_id),
         value.content_hash,
-        ReplayCheckStatus.VERIFIED_READ_ONLY,
-        "PLATFORM_RESEARCH_ARTIFACT_VERIFIED",
+        ReplayCheckStatus.REPLAY_STABLE,
+        "PLATFORM_RESEARCH_PURE_REPLAY_STABLE",
     )
 
 
@@ -452,3 +552,72 @@ def _report_status(
     if any(item.status is ReplayCheckStatus.NOT_COMPARABLE for item in checks):
         return LifecycleReplayStatus.NOT_COMPARABLE
     return LifecycleReplayStatus.STABLE
+
+
+def receipt_semantic_fingerprint(receipt: StageReceipt) -> str:
+    """Hash receipt meaning while deliberately excluding run identity."""
+
+    if not isinstance(receipt, StageReceipt):
+        raise TypeError("receipt must be a StageReceipt")
+    return canonical_hash(
+        {
+            "schema_version": "cross-run-stage-receipt-fingerprint-v1",
+            "stage_name": receipt.stage_name.value,
+            "input_hashes": list(receipt.input_hashes),
+            "output_hashes": list(receipt.output_hashes),
+            "model_versions": list(receipt.model_versions),
+            "configuration_hashes": list(receipt.configuration_hashes),
+            "reason_codes": list(receipt.reason_codes),
+            "stage_result": receipt.stage_result.value,
+        }
+    )
+
+
+def publish_lifecycle_replay_report(
+    *, root: Path, report: LifecycleReplayReport
+) -> Path:
+    """Publish one immutable content-addressed replay report."""
+
+    if not isinstance(root, Path):
+        raise TypeError("root must be a Path")
+    if not isinstance(report, LifecycleReplayReport):
+        raise TypeError("report must be a LifecycleReplayReport")
+    directory = root.resolve() / "replay-reports" / report.report_hash.split(":", 1)[1]
+    path = directory / "report.json"
+    payload = canonical_json(report.to_canonical_dict()) + "\n"
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            stream.write(payload)
+    except FileExistsError:
+        if path.read_text(encoding="utf-8") != payload:
+            raise ValueError("replay report identity collision") from None
+    return path
+
+
+def load_lifecycle_replay_report(path: Path) -> LifecycleReplayReport:
+    """Load and revalidate one content-addressed replay report."""
+
+    payload = _read_json_object(path)
+    report = LifecycleReplayReport.from_canonical_dict(payload)
+    if path.parent.name != report.report_hash.split(":", 1)[1]:
+        raise ValueError("replay report path does not match report hash")
+    return report
+
+
+def _mapping_text(payload: Mapping[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    return value
+
+
+def _mapping_optional_text(
+    payload: Mapping[str, Any], key: str
+) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string or null")
+    return value

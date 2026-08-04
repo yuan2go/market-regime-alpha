@@ -134,6 +134,16 @@ class SQLiteLifecycleRunRepository:
             completed_at=None,
             version=1,
             claim_token=0,
+            source_run_id=command.source_run_id,
+            source_command_hash=command.source_command_hash,
+            source_history_hash=command.source_history_hash,
+            replay_report_hash=command.replay_report_hash,
+            schema_version=(
+                LifecycleRun.LEGACY_SCHEMA_VERSION
+                if command.schema_version
+                == CanonicalLifecycleCommand.LEGACY_SCHEMA_VERSION
+                else LifecycleRun.SCHEMA_VERSION
+            ),
         )
         command_json = _encode(command.to_canonical_dict())
         run_json = _encode(created.to_canonical_dict())

@@ -58,7 +58,8 @@ _RISK_CONTINUATION_REQUIRED_TYPES = frozenset(
 class CanonicalLifecycleCommand:
     """One evidence-bound lifecycle request plus non-semantic execution controls."""
 
-    SCHEMA_VERSION = "canonical-lifecycle-command-v2"
+    SCHEMA_VERSION = "canonical-lifecycle-command-v3"
+    LEGACY_SCHEMA_VERSION = "canonical-lifecycle-command-v2"
 
     run_type: LifecycleRunType
     decision_date: date
@@ -75,12 +76,22 @@ class CanonicalLifecycleCommand:
     authority_database_locator: Path | None
     resume_run_id: LifecycleRunId | None = None
     resume_command_hash: str | None = None
+    source_run_id: LifecycleRunId | None = None
+    source_command_hash: str | None = None
+    source_history_hash: str | None = None
+    replay_report_hash: str | None = None
+    schema_version: str = field(default=SCHEMA_VERSION, repr=False)
     command_hash: str = field(init=False)
     run_id: LifecycleRunId = field(init=False)
     configuration_manifest_hash: str = field(init=False)
     model_version_manifest_hash: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.schema_version not in {
+            self.LEGACY_SCHEMA_VERSION,
+            self.SCHEMA_VERSION,
+        }:
+            raise ValueError("unsupported CanonicalLifecycleCommand schema")
         if not isinstance(self.run_type, LifecycleRunType):
             raise TypeError("run_type must be a LifecycleRunType")
         if type(self.decision_date) is not date:
@@ -111,9 +122,18 @@ class CanonicalLifecycleCommand:
             validate_lifecycle_locator_policy(reference)
             if reference.available_at > self.as_of_time:
                 raise ValueError("continuation input was not available by as_of_time")
-        if self.run_type is LifecycleRunType.RISK_REDUCTION_CONTINUATION:
+        explicit_prerequisite_replay = (
+            self.run_type is LifecycleRunType.REPLAY
+            and self.input_manifest_id is None
+        )
+        if (
+            self.run_type is LifecycleRunType.RISK_REDUCTION_CONTINUATION
+            or explicit_prerequisite_replay
+        ):
             if self.input_manifest_id is not None:
-                raise ValueError("risk continuation uses explicit prerequisite references")
+                raise ValueError(
+                    f"{self.run_type.value} uses explicit prerequisite references"
+                )
             present_types = {item.object_type for item in self.input_references}
             missing = _RISK_CONTINUATION_REQUIRED_TYPES - present_types
             if missing:
@@ -185,6 +205,28 @@ class CanonicalLifecycleCommand:
             raise TypeError("resume_run_id must be a LifecycleRunId or None")
         if self.resume_command_hash is not None:
             require_sha256("resume_command_hash", self.resume_command_hash)
+        if (self.source_run_id is None) != (self.source_command_hash is None):
+            raise ValueError("source run identity and command hash must be paired")
+        if self.source_run_id is not None and not isinstance(
+            self.source_run_id, LifecycleRunId
+        ):
+            raise TypeError("source_run_id must be a LifecycleRunId or None")
+        if self.source_command_hash is not None:
+            require_sha256("source_command_hash", self.source_command_hash)
+        if (
+            self.schema_version == self.SCHEMA_VERSION
+            and self.run_type is LifecycleRunType.REPLAY
+        ):
+            if self.source_run_id is None:
+                raise ValueError("REPLAY requires source run identity")
+            if self.source_history_hash is None or self.replay_report_hash is None:
+                raise ValueError("REPLAY requires source history and report hashes")
+            require_sha256("source_history_hash", self.source_history_hash)
+            require_sha256("replay_report_hash", self.replay_report_hash)
+        elif self.source_run_id is not None:
+            raise ValueError("only REPLAY may carry source run identity")
+        elif self.source_history_hash is not None or self.replay_report_hash is not None:
+            raise ValueError("only REPLAY may carry replay evidence hashes")
         command_hash = canonical_hash(self.semantic_payload())
         run_identity_hash = canonical_hash(
             {
@@ -198,6 +240,8 @@ class CanonicalLifecycleCommand:
         )
         object.__setattr__(self, "command_hash", command_hash)
         object.__setattr__(self, "run_id", run_id)
+        if self.source_run_id == run_id:
+            raise ValueError("REPLAY source run cannot be the replay run itself")
         if self.resume_command_hash is not None and self.resume_command_hash != command_hash:
             raise ValueError("resume command does not preserve original command identity")
         if self.resume_run_id is not None and self.resume_run_id != run_id:
@@ -210,8 +254,8 @@ class CanonicalLifecycleCommand:
     def semantic_payload(self) -> dict[str, Any]:
         """Return only evidence and model semantics, excluding execution controls."""
 
-        return {
-            "schema_version": self.SCHEMA_VERSION,
+        payload = {
+            "schema_version": self.schema_version,
             "run_type": self.run_type.value,
             "decision_date": self.decision_date.isoformat(),
             "as_of_time": canonical_datetime(self.as_of_time),
@@ -241,6 +285,20 @@ class CanonicalLifecycleCommand:
                 else None
             ),
         }
+        if self.schema_version == self.SCHEMA_VERSION:
+            payload.update(
+                {
+                    "source_run_id": (
+                        str(self.source_run_id)
+                        if self.source_run_id is not None
+                        else None
+                    ),
+                    "source_command_hash": self.source_command_hash,
+                    "source_history_hash": self.source_history_hash,
+                    "replay_report_hash": self.replay_report_hash,
+                }
+            )
+        return payload
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -274,6 +332,10 @@ class CanonicalLifecycleCommand:
             or run.input_content_hash != self.input_content_hash
             or run.configuration_manifest_hash != self.configuration_manifest_hash
             or run.model_version_manifest_hash != self.model_version_manifest_hash
+            or run.source_run_id != self.source_run_id
+            or run.source_command_hash != self.source_command_hash
+            or run.source_history_hash != self.source_history_hash
+            or run.replay_report_hash != self.replay_report_hash
         ):
             raise ValueError("resume command does not identify the persisted run")
 
@@ -281,7 +343,7 @@ class CanonicalLifecycleCommand:
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
     ) -> CanonicalLifecycleCommand:
-        expected = {
+        base_expected = {
             "schema_version", "run_type", "decision_date", "as_of_time",
             "idempotency_key", "input_manifest_id", "input_content_hash",
             "input_manifest_locator",
@@ -291,16 +353,46 @@ class CanonicalLifecycleCommand:
             "authority_database_locator",
             "resume_run_id", "resume_command_hash", "command_hash", "run_id",
         }
+        schema_version = payload.get("schema_version")
+        if schema_version == cls.SCHEMA_VERSION:
+            expected = base_expected | {
+                "source_run_id",
+                "source_command_hash",
+                "source_history_hash",
+                "replay_report_hash",
+            }
+        elif schema_version == cls.LEGACY_SCHEMA_VERSION:
+            expected = base_expected
+        else:
+            raise ValueError("unsupported CanonicalLifecycleCommand schema")
         if set(payload) != expected:
             raise ValueError("CanonicalLifecycleCommand fields mismatch")
-        if payload["schema_version"] != cls.SCHEMA_VERSION:
-            raise ValueError("unsupported CanonicalLifecycleCommand schema")
         input_manifest_id = _optional_text(payload, "input_manifest_id")
         stop_after_stage = _optional_text(payload, "stop_after_stage")
         resume_run_id = _optional_text(payload, "resume_run_id")
         input_manifest_locator = _optional_text(payload, "input_manifest_locator")
         authority_database_locator = _optional_text(
             payload, "authority_database_locator"
+        )
+        source_run_id = (
+            _optional_text(payload, "source_run_id")
+            if schema_version == cls.SCHEMA_VERSION
+            else None
+        )
+        source_command_hash = (
+            _optional_text(payload, "source_command_hash")
+            if schema_version == cls.SCHEMA_VERSION
+            else None
+        )
+        source_history_hash = (
+            _optional_text(payload, "source_history_hash")
+            if schema_version == cls.SCHEMA_VERSION
+            else None
+        )
+        replay_report_hash = (
+            _optional_text(payload, "replay_report_hash")
+            if schema_version == cls.SCHEMA_VERSION
+            else None
         )
         result = cls(
             run_type=LifecycleRunType(_text(payload, "run_type")),
@@ -337,6 +429,13 @@ class CanonicalLifecycleCommand:
             ),
             resume_run_id=LifecycleRunId(resume_run_id) if resume_run_id else None,
             resume_command_hash=_optional_text(payload, "resume_command_hash"),
+            source_run_id=(
+                LifecycleRunId(source_run_id) if source_run_id else None
+            ),
+            source_command_hash=source_command_hash,
+            source_history_hash=source_history_hash,
+            replay_report_hash=replay_report_hash,
+            schema_version=str(schema_version),
         )
         for label, actual in (
             ("configuration_manifest_hash", result.configuration_manifest_hash),

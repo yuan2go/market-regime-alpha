@@ -277,8 +277,9 @@ def test_replay_cli_is_current_time_independent_and_never_invokes_runner(
     assert lifecycle_main(args) == EXIT_SUCCESS
     run = json.loads(capsys.readouterr().out)
     with sqlite3.connect(database) as connection:
-        attempts_before = connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts"
+        source_attempts_before = connection.execute(
+            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
+            (run["run_id"],),
         ).fetchone()[0]
 
     replay_args = [
@@ -294,20 +295,29 @@ def test_replay_cli_is_current_time_independent_and_never_invokes_runner(
     assert first_text == second_text
     payload = json.loads(first_text)
     assert payload["replay_status"] == "STABLE"
+    assert payload["replay_run_type"] == "REPLAY"
+    assert payload["replay_run_id"] != run["run_id"]
+    assert payload["source_run_id"] == run["run_id"]
     assert payload["REPORT_HASH_STABLE"] is True
     assert payload["RUNNER_INVOKED"] is False
     assert payload["MANUAL_TRADE_CREATED"] is False
     assert payload["BROKER_NOT_INVOKED"] is True
     with sqlite3.connect(database) as connection:
         assert connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts"
-        ).fetchone()[0] == attempts_before
+            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
+            (run["run_id"],),
+        ).fetchone()[0] == source_attempts_before
+        assert connection.execute(
+            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
+            (payload["replay_run_id"],),
+        ).fetchone()[0] == 5
 
     assert replay_main(
         ["--database", str(database), "--run-id", run["run_id"]]
     ) == EXIT_STABLE
     standalone = json.loads(capsys.readouterr().out)
     assert standalone["report_hash"] == payload["report_hash"]
+    assert standalone["replay_run_id"] == payload["replay_run_id"]
 
 
 def test_risk_continuation_resume_uses_only_explicit_authority_database(

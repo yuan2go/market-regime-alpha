@@ -70,6 +70,11 @@ def _command(
     authority_database_locator: Path | None = None,
     resume_run_id: object = None,
     resume_command_hash: str | None = None,
+    source_run_id: object = None,
+    source_command_hash: str | None = None,
+    source_history_hash: str | None = None,
+    replay_report_hash: str | None = None,
+    schema_version: str = CanonicalLifecycleCommand.SCHEMA_VERSION,
 ) -> CanonicalLifecycleCommand:
     from market_regime_alpha.application.canonical_lifecycle.contracts import (
         LifecycleRunId,
@@ -77,6 +82,13 @@ def _command(
 
     if resume_run_id is not None and not isinstance(resume_run_id, LifecycleRunId):
         raise TypeError("test resume_run_id must be LifecycleRunId")
+    if source_run_id is not None and not isinstance(source_run_id, LifecycleRunId):
+        raise TypeError("test source_run_id must be LifecycleRunId")
+    if run_type is LifecycleRunType.REPLAY and source_run_id is None:
+        source_run_id = LifecycleRunId("lifecycle-run-source-1")
+        source_command_hash = _hash("0")
+        source_history_hash = _hash("1")
+        replay_report_hash = _hash("2")
     return CanonicalLifecycleCommand(
         run_type=run_type,
         decision_date=as_of_time.astimezone(
@@ -99,6 +111,11 @@ def _command(
         authority_database_locator=authority_database_locator,
         resume_run_id=resume_run_id,
         resume_command_hash=resume_command_hash,
+        source_run_id=source_run_id,
+        source_command_hash=source_command_hash,
+        source_history_hash=source_history_hash,
+        replay_report_hash=replay_report_hash,
+        schema_version=schema_version,
     )
 
 
@@ -228,6 +245,22 @@ def test_command_round_trip_and_deterministic_run_identity() -> None:
     restored = CanonicalLifecycleCommand.from_canonical_dict(
         command.to_canonical_dict()
     )
+    assert restored == command
+    assert restored.command_hash == command.command_hash
+    assert restored.run_id == command.run_id
+
+
+def test_legacy_v2_command_round_trip_preserves_original_hash_semantics() -> None:
+    command = _command(
+        schema_version=CanonicalLifecycleCommand.LEGACY_SCHEMA_VERSION
+    )
+    payload = command.to_canonical_dict()
+    assert payload["schema_version"] == "canonical-lifecycle-command-v2"
+    assert "source_run_id" not in payload
+    assert "replay_report_hash" not in payload
+
+    restored = CanonicalLifecycleCommand.from_canonical_dict(payload)
+
     assert restored == command
     assert restored.command_hash == command.command_hash
     assert restored.run_id == command.run_id

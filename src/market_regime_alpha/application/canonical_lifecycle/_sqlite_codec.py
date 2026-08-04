@@ -91,6 +91,10 @@ def verify_stored_command(
         or run.input_content_hash != stored.input_content_hash
         or run.configuration_manifest_hash != stored.configuration_manifest_hash
         or run.model_version_manifest_hash != stored.model_version_manifest_hash
+        or run.source_run_id != stored.source_run_id
+        or run.source_command_hash != stored.source_command_hash
+        or run.source_history_hash != stored.source_history_hash
+        or run.replay_report_hash != stored.replay_report_hash
     ):
         raise LifecycleJournalIntegrityError(
             "stored run projection does not bind its canonical command"

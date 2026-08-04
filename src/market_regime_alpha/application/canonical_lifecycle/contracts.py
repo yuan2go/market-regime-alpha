@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Any, Mapping, TypeVar
@@ -473,7 +473,8 @@ def model_version_manifest_hash(
 
 @dataclass(frozen=True, slots=True)
 class LifecycleRun:
-    SCHEMA_VERSION = "canonical-lifecycle-run-v1"
+    SCHEMA_VERSION = "canonical-lifecycle-run-v2"
+    LEGACY_SCHEMA_VERSION = "canonical-lifecycle-run-v1"
 
     run_id: LifecycleRunId
     idempotency_key: str
@@ -498,8 +499,18 @@ class LifecycleRun:
     completed_at: datetime | None
     version: int
     claim_token: int
+    source_run_id: LifecycleRunId | None = None
+    source_command_hash: str | None = None
+    source_history_hash: str | None = None
+    replay_report_hash: str | None = None
+    schema_version: str = field(default=SCHEMA_VERSION, repr=False)
 
     def __post_init__(self) -> None:
+        if self.schema_version not in {
+            self.LEGACY_SCHEMA_VERSION,
+            self.SCHEMA_VERSION,
+        }:
+            raise ValueError("unsupported LifecycleRun schema")
         if not isinstance(self.run_id, LifecycleRunId):
             raise TypeError("run_id must be a LifecycleRunId")
         require_text("idempotency_key", self.idempotency_key)
@@ -578,10 +589,34 @@ class LifecycleRun:
             raise ValueError("terminal evidence states must carry completed_at")
         _require_positive("version", self.version)
         _require_non_negative("claim_token", self.claim_token)
+        if (self.source_run_id is None) != (self.source_command_hash is None):
+            raise ValueError("source run identity and command hash must be paired")
+        if self.source_run_id is not None and not isinstance(
+            self.source_run_id, LifecycleRunId
+        ):
+            raise TypeError("source_run_id must be a LifecycleRunId or None")
+        if self.source_command_hash is not None:
+            require_sha256("source_command_hash", self.source_command_hash)
+        if (
+            self.schema_version == self.SCHEMA_VERSION
+            and self.run_type is LifecycleRunType.REPLAY
+        ):
+            if self.source_run_id is None:
+                raise ValueError("REPLAY run requires source run identity")
+            if self.source_run_id == self.run_id:
+                raise ValueError("REPLAY source run cannot be itself")
+            if self.source_history_hash is None or self.replay_report_hash is None:
+                raise ValueError("REPLAY run requires source history and report hashes")
+            require_sha256("source_history_hash", self.source_history_hash)
+            require_sha256("replay_report_hash", self.replay_report_hash)
+        elif self.source_run_id is not None:
+            raise ValueError("only REPLAY runs may carry source run identity")
+        elif self.source_history_hash is not None or self.replay_report_hash is not None:
+            raise ValueError("only REPLAY runs may carry replay evidence hashes")
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.SCHEMA_VERSION,
+        payload = {
+            "schema_version": self.schema_version,
             "run_id": str(self.run_id),
             "idempotency_key": self.idempotency_key,
             "command_hash": self.command_hash,
@@ -614,10 +649,24 @@ class LifecycleRun:
             "version": self.version,
             "claim_token": self.claim_token,
         }
+        if self.schema_version == self.SCHEMA_VERSION:
+            payload.update(
+                {
+                    "source_run_id": (
+                        str(self.source_run_id)
+                        if self.source_run_id is not None
+                        else None
+                    ),
+                    "source_command_hash": self.source_command_hash,
+                    "source_history_hash": self.source_history_hash,
+                    "replay_report_hash": self.replay_report_hash,
+                }
+            )
+        return payload
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> LifecycleRun:
-        expected = {
+        base_expected = {
             "schema_version", "run_id", "idempotency_key", "command_hash",
             "run_type", "decision_date", "as_of_time", "status", "current_stage",
             "input_manifest_id", "input_content_hash", "completed_stages",
@@ -626,9 +675,19 @@ class LifecycleRun:
             "failure_reason", "blocker_reason", "created_at", "updated_at",
             "completed_at", "version", "claim_token",
         }
-        _expect_fields(payload, expected, "LifecycleRun")
-        if payload["schema_version"] != cls.SCHEMA_VERSION:
+        schema_version = payload.get("schema_version")
+        if schema_version == cls.SCHEMA_VERSION:
+            expected = base_expected | {
+                "source_run_id",
+                "source_command_hash",
+                "source_history_hash",
+                "replay_report_hash",
+            }
+        elif schema_version == cls.LEGACY_SCHEMA_VERSION:
+            expected = base_expected
+        else:
             raise ValueError("unsupported LifecycleRun schema")
+        _expect_fields(payload, expected, "LifecycleRun")
         manifest_id = _optional_text_value(payload, "input_manifest_id")
         current_stage = _optional_text_value(payload, "current_stage")
         completed_at = payload["completed_at"]
@@ -669,6 +728,32 @@ class LifecycleRun:
             ),
             version=_positive_int(payload, "version"),
             claim_token=_non_negative_int(payload, "claim_token"),
+            source_run_id=(
+                LifecycleRunId(source_run_id)
+                if (
+                    schema_version == cls.SCHEMA_VERSION
+                    and (source_run_id := _optional_text_value(
+                        payload, "source_run_id"
+                    ))
+                )
+                else None
+            ),
+            source_command_hash=(
+                _optional_text_value(payload, "source_command_hash")
+                if schema_version == cls.SCHEMA_VERSION
+                else None
+            ),
+            source_history_hash=(
+                _optional_text_value(payload, "source_history_hash")
+                if schema_version == cls.SCHEMA_VERSION
+                else None
+            ),
+            replay_report_hash=(
+                _optional_text_value(payload, "replay_report_hash")
+                if schema_version == cls.SCHEMA_VERSION
+                else None
+            ),
+            schema_version=str(schema_version),
         )
 
 
