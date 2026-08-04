@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** None
 > **Superseded By:** None
-> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H6-Composite-Operational-Evidence-Delivery.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
-> **Code Evidence:** H6 hardened checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
+> **Related Documents:** WP-PDL-Production-Decision-Lifecycle.md, ../../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../../audit/H6-Composite-Operational-Evidence-Delivery.md, ../../audit/H5-Thesis-Health-Delivery.md, ../../audit/H4-Risk-Route-Delivery.md, ../../audit/Production-Lifecycle-Hardening-Baseline.md, ../../operations/Production-Decision-Lifecycle-Runbook.md
+> **Code Evidence:** H4.5 hardened checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`; each later phase requires its own commit-bound delivery evidence
 
 ## 1. Objective
 
@@ -28,11 +28,10 @@ Fill-derived Position projection; Holding/Exit models; an immutable
 LifecycleReview package; Signal/Path Artifacts; and an Operational Research
 Bridge.
 
-The remaining gaps after H5/H6 delivery are:
+The remaining gaps after H4.5/H5/H6 delivery are:
 
 - H5 Decision aggregate input is not yet loaded from repository authority;
 - no qualified real Composite Operational Evidence producer/run sample;
-- no reducing-decision-to-ManualTrade execution bridge;
 - no durable assessment state;
 - no recoverable Shadow operation;
 - no complete Signal incremental-value and Path calibration infrastructure.
@@ -83,10 +82,11 @@ H0 Baseline
  │   ├─ H2 Traceability
  │   │   └─ H3 T+1 Position authority
  │   │       └─ H4 Increasing/reducing split
- │   │           └─ H7 Durable assessment state
- │   │               └─ H8 Shadow operations
  │   └─ H5 Thesis-health builder
  └─ H6 Composite operational evidence
+H4 + H5 + H6 ──> H4.5 Reducing decision/manual intent
+              └─> H7 Durable assessment state
+                  └─> H8 Shadow operations
 H1–H8 ──> H9 validation infrastructure where external data is not required
 ```
 
@@ -341,25 +341,36 @@ independently readable and unchanged.
 
 ## 12A. H4.5 — Risk-Reducing Decision to Manual Execution Bridge
 
-H4.5 is design-only here and is not required for H4 completion. It must be
-completed before or as the first dependency-coherent slice of H7.
+H4.5 is delivered as a dependency-coherent bridge after H4 and before H7. It
+does not change H4 V1 replay semantics or grant broker/trading authority.
 
 ### Implementation contract
 
 | Concern | Contract |
 |---|---|
-| Business goal | Allow an authenticated operator to turn a still-valid permitted reducing decision into a manual trade intent without creating broker authority. |
-| Input Artifacts | `PERMITTED_FOR_MANUAL_CONFIRMATION` RiskReducingDecision, its original evidence, latest PositionSnapshot, fresh execution observation and authenticated confirmer. |
-| Output Artifact | ManualTrade V2 intent plus append-only `RiskReductionConfirmation` linking `risk_reducing_decision_id`; no Fill is created. |
-| State machine | `AWAITING_CONFIRMATION → CONFIRMED_INTENT | EXPIRED | POSITION_CHANGED | BLOCKED_ON_RECHECK | CANCELLED`; execution/Fills remain separate. |
+| Business goal | Allow a recorded human confirmation to turn a still-valid permitted reducing decision into a manual SELL intent without creating broker authority. |
+| Input Artifacts | `OperationalExitDirectiveV2`, `PERMITTED_FOR_MANUAL_CONFIRMATION` RiskReducingDecision, latest H3 Position, current operational H5/H6 lineage, explicit calendar/session/execution evidence and policy/audit fields. |
+| Output Artifact | ManualTrade V3 `REDUCING` intent plus immutable `RiskReductionConfirmationAttempt`; no Fill or Broker Order is created. |
+| State machine | `CONFIRMED_INTENT | EXPIRED | POSITION_CHANGED | BLOCKED_ON_RECHECK | DATA_INSUFFICIENT | ACTION_SEMANTICS_CONFLICT`; execution/Fills remain separate. |
 | Idempotency key | Risk-reducing decision ID + latest Position version/hash + operator intent nonce. |
-| Persistence tables | Migration introduces route-separated ManualTrade V2 references and confirmation events/commands; existing OPEN/ADD rows migrate as `INCREASING` and keep complete-account Risk references. |
-| Transaction boundary | Lock command, reload decision, verify permission/expiry, rebuild latest sellability, require exact Position version, then atomically write confirmation and ManualTrade intent. |
+| Persistence tables | Migration 010 safely rebuilds the ManualTrade projection with mutually exclusive `INCREASING`/`REDUCING` authority and adds append-only attempts, commands, directives and reducing bindings; historical aggregate JSON remains unchanged. |
+| Transaction boundary | One lifecycle SQLite database and one `BEGIN IMMEDIATE` reload/replay H4/H5/H6/Decision/Execution authority, rebuild current T+1 Position, rerun the original H4 Gate, then atomically write attempt, ManualTrade V3, reducing binding and command. |
 | Failure recovery | Any Position/available-quantity change invalidates reuse and requires a new H4 decision; transaction rolls back on either write; restart resolves the command ledger. |
-| Audit evidence | `risk_reducing_decision_id`, confirmed by/at/reason, prior/latest Position IDs/hashes, recheck observation/config and resulting ManualTrade ID. |
-| Tests | Expired decision, non-permitted state, stale/current Position mismatch, T+1 change, duplicate/conflict, rollback, restart, OPEN/ADD route separation and authentication. |
+| Audit evidence | Decision/directive IDs/hashes, source/current Position IDs/hashes, current H5/H6 IDs/hashes, full recheck observation/config/policy and resulting nullable ManualTrade ID. |
+| Tests | Route exclusivity, canonical tamper, migration/restart, authority replay, operational lineage, Position/Gate/price recheck, duplicate/conflict/rollback, V1/V2 replay and later manual Fill compatibility. |
 | Completion condition | A permitted decision can create one traceable manual intent only after recheck; it cannot create Fill/order; all schema compatibility and migration tests pass. |
-| Dependencies | H4 complete; H6 evidence available. Must precede or be part of H7. |
+| Dependencies | H4, H5 and H6 complete; delivered before H7. |
+
+### Implementation evidence
+
+Delivered and hardened at `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254` with
+ManualTrade V3, content-addressed Directive/Policy/Attempt, public verified
+H4/H5/H6 repository reads, migration 010, unified atomic confirmation,
+T+1/market rechecks, reducing trace binding, existing manual Fill compatibility
+and a reference-only CLI. Focused H4.5 tests report 81 passed; H4/H5/H6
+regressions report 42/101/67 passed; the full checkpoint reports 1541 passed
+and eight subtests. Ruff, configured mypy over 266 source files, package build,
+documentation authority/links and diff checks pass.
 
 ### Fill and partial-execution policy
 
@@ -369,11 +380,17 @@ fill, cancellation or changed Position closes the old confirmation scope; any
 residual REDUCE/EXIT requires a new H4 decision. An EXIT may never be treated
 as complete until effective Fill reduces the actual Position to zero.
 
+H4 V1 may replay `REDUCE target_quantity=0`. H4.5 rejects confirmation as
+`ACTION_SEMANTICS_CONFLICT` with `REQUIRES_NEW_EXIT_DECISION`; the separate
+`H4_V2_REDUCE_REQUIRES_POSITIVE_REMAINDER` gap owns the future schema change.
+
 ### Authority separation
 
 The migration must enforce exactly one route authority: OPEN/ADD references an
 approved complete-account Risk decision; REDUCE/EXIT references a permitted
 risk-reducing decision and its recheck. Neither route calls a Broker adapter.
+The current actor field is not authenticated production identity, so
+`OPERATOR_AUTHENTICATION_NOT_ESTABLISHED` remains mandatory.
 
 ## 13. H7 — Durable Holding, Exit and exception state
 

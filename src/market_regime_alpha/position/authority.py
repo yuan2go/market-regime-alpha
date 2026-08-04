@@ -21,6 +21,7 @@ from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
 from market_regime_alpha.execution.manual import (
+    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     TRACEABLE_MANUAL_TRADE_SCHEMA,
     Fill,
     FillKind,
@@ -751,7 +752,11 @@ class PositionProjector:
             raise ValueError("duplicate ManualTrade identity in Position book")
         for trade in trades:
             if (
-                trade.schema_version != TRACEABLE_MANUAL_TRADE_SCHEMA
+                trade.schema_version
+                not in {
+                    TRACEABLE_MANUAL_TRADE_SCHEMA,
+                    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                }
                 or trade.position_book_id != book.position_book_id
                 or trade.thesis_id != book.thesis_id
                 or trade.opportunity_id != book.opportunity_id
@@ -1048,7 +1053,11 @@ def _validate_traceable_book_inputs(
         raise ValueError("duplicate ManualTrade identity in Position book")
     for trade in trades:
         if (
-            trade.schema_version != TRACEABLE_MANUAL_TRADE_SCHEMA
+            trade.schema_version
+            not in {
+                TRACEABLE_MANUAL_TRADE_SCHEMA,
+                ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+            }
             or trade.position_book_id != book.position_book_id
             or trade.thesis_id != book.thesis_id
             or trade.opportunity_id != book.opportunity_id

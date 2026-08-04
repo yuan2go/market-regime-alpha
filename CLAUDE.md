@@ -47,6 +47,7 @@ H3  Fill-derived A-share T+1 sellability
 H4  Increasing-risk and reducing-risk separation
 H5  Derived Thesis-health observation
 H6  Composite operational evidence manifest
+H4.5 Risk-reducing decision to ManualTrade V3 intent
 H7  Durable Holding, Exit and exception state
 H8  Recoverable Shadow operations
 H9  Validation infrastructure without formal evidence claims

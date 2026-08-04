@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Repository execution contract for coding and research agents  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-01  
+> **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** CLAUDE.md, docs/README.md, docs/status/Current-State.md, docs/architecture/10-Production-Decision-Lifecycle.md, docs/roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md  
@@ -65,7 +65,13 @@ Never use a plan or design document to overrule executable evidence. Never chang
 
 Implemented and tested on the current repository baseline include stable identity and semantic-time contracts, Provider and SourceManifest boundaries, PIT Universe and Eligibility contracts, Feature and Candidate datasets, B0/B1 PredictionRuns, Entry Path Target infrastructure, immutable Artifacts and Readers, the recoverable exploratory Daily Runtime Journal, public exploratory acquisition and replay, Platform V2 research, the Operational Research Bridge, durable SQLite Model Registry and Experiment Governance adapters, Signal and uncalibrated PathForecast research, durable Opportunity/Thesis and Portfolio/Risk decisions, a manual Fill ledger, Fill-derived PositionSnapshot, independent Holding/Exit assessment models and complete-trade diagnostic evaluation/replay.
 
-These Phase 0–7 mechanics are not production-qualified. The complete-account Portfolio/Risk view, strict Thesis-to-Outcome trace, Fill-derived A-share T+1 sellability, reducing-risk gate, derived Thesis-health builder, composite operational manifest, durable assessment state, sustained Shadow operation and operator workbench remain unimplemented at the H0 hardening baseline.
+These Phase 0–7 mechanics are not production-qualified. H1 complete-account
+Portfolio/Risk, H2 Thesis-to-Outcome trace, H3 Fill-derived A-share T+1
+sellability, H4 reducing-risk gate, H5 derived Thesis health, H6 composite
+operational evidence and H4.5 reducing-risk-to-manual-intent mechanics are now
+implemented and locally verified engineering checkpoints. Durable H7 assessment
+state, H8 sustained Shadow operation, H9 formal validation, authenticated
+operators and the operator workbench remain unimplemented.
 
 External or evidence blockers remain for qualified formal data, operational PIT theme mappings, formal OOS Alpha, calibrated model probabilities and any live broker authority.
 

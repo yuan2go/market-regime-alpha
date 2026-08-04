@@ -13,11 +13,12 @@ from market_regime_alpha.decision.thesis import TradingThesis
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.manual import (
-    TRACEABLE_MANUAL_TRADE_SCHEMA,
+    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     ExecutionDeviation,
     Fill,
     ManualOrderState,
     ManualTradeRecord,
+    ManualTradeAuthorityRoute,
     TradeSide,
 )
 from market_regime_alpha.execution.position_book import PositionBook
@@ -31,6 +32,7 @@ from market_regime_alpha.portfolio.account_authority import (
 )
 from market_regime_alpha.portfolio.lifecycle import RiskDecisionState
 from market_regime_alpha.position.authority import (
+    T_PLUS_ONE_POSITION_SNAPSHOT_SCHEMA,
     PositionProjector,
     PositionSnapshot,
     PositionState,
@@ -61,8 +63,8 @@ class TraceableManualExecutionApplicationService:
     ) -> tuple[PositionBook, ManualTradeRecord]:
         if risk_decision.state is not RiskDecisionState.APPROVED:
             raise ValueError("traceable manual trade requires approved RiskDecision")
-        if trade_delta.trade_quantity == 0:
-            raise ValueError("zero trade delta creates no manual trade")
+        if trade_delta.trade_quantity <= 0:
+            raise ValueError("INCREASING route requires positive OPEN/ADD trade delta")
         book = PositionBook.open(
             account_id=account_id,
             symbol=trade_delta.symbol,
@@ -89,7 +91,7 @@ class TraceableManualExecutionApplicationService:
         }
         digest = canonical_hash(semantic).split(":", 1)[1]
         record = ManualTradeRecord(
-            schema_version=TRACEABLE_MANUAL_TRADE_SCHEMA,
+            schema_version=ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
             manual_trade_id=ManualTradeId(f"manual-trade-trace-{digest[:24]}"),
             risk_decision_id=risk_decision.risk_decision_id,
             risk_decision_hash=canonical_hash(risk_decision.to_canonical_dict()),
@@ -119,6 +121,7 @@ class TraceableManualExecutionApplicationService:
             opportunity_id=opportunity.opportunity_id,
             post_trade_snapshot_id=portfolio_decision.post_trade.snapshot_id,
             post_trade_snapshot_hash=portfolio_decision.post_trade.content_hash,
+            authority_route=ManualTradeAuthorityRoute.INCREASING,
         )
         return self._repository.create_traceable_trade(
             record,
@@ -198,6 +201,8 @@ class TraceableManualExecutionApplicationService:
         *,
         expected_version: int,
         final_position: PositionSnapshot,
+        trading_calendar: TradingCalendarArtifact | None = None,
+        symbol_trading_statuses: tuple[SymbolTradingSessionStatus, ...] = (),
         actor: str,
         reason: str,
         closed_at: datetime,
@@ -212,7 +217,19 @@ class TraceableManualExecutionApplicationService:
             or final_position.opportunity_id != book.opportunity_id
         ):
             raise ValueError("final Position does not belong to PositionBook")
-        replay = self.rebuild_position(book_id, as_of=final_position.as_of)
+        if final_position.schema_version == T_PLUS_ONE_POSITION_SNAPSHOT_SCHEMA:
+            if trading_calendar is None or not symbol_trading_statuses:
+                raise ValueError(
+                    "T+1 final Position requires TradingCalendar and symbol session evidence"
+                )
+            replay = self.rebuild_a_share_position(
+                book_id,
+                calendar=trading_calendar,
+                symbol_session_statuses=symbol_trading_statuses,
+                as_of=final_position.as_of,
+            )
+        else:
+            replay = self.rebuild_position(book_id, as_of=final_position.as_of)
         if replay != final_position:
             raise ValueError("final Position differs from Fill-derived replay")
         closed = book.close(closed_at=closed_at, actor=actor, reason=reason)

@@ -16,6 +16,7 @@ from market_regime_alpha.position.thesis_health import (
     ThesisHealthObservationV2,
     ThesisHealthRuleConfiguration,
     ThesisInvalidationRuleSet,
+    VerifiedThesisHealthBundle,
     thesis_health_command_hash,
 )
 
@@ -255,6 +256,32 @@ class SQLiteThesisHealthRepository:
                 return None
             return _load_observation(
                 connection, ArtifactId(str(row["observation_id"]))
+            )
+
+    def get_verified_thesis_health_bundle(
+        self, observation_id: ArtifactId
+    ) -> VerifiedThesisHealthBundle:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM thesis_health_observations WHERE observation_id = ?",
+                (str(observation_id),),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown ThesisHealthObservation: {observation_id}")
+            observation, bundle = _restore_row(
+                connection,
+                row,
+                ancestry=frozenset({observation_id}),
+            )
+            tip = _chain_tip(connection, observation.thesis_id)
+            return VerifiedThesisHealthBundle(
+                observation=observation,
+                input_bundle=bundle,
+                is_latest=(
+                    tip is not None
+                    and str(tip["observation_id"])
+                    == str(observation.observation_id)
+                ),
             )
 
 

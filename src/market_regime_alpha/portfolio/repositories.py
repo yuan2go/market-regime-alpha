@@ -19,6 +19,7 @@ from market_regime_alpha.portfolio.risk_routes import (
     ReducingExecutionObservation,
     RiskReducingDecision,
     RiskReducingGateConfiguration,
+    VerifiedRiskReducingDecisionBundle,
 )
 from market_regime_alpha.position.authority import PositionSnapshot
 
@@ -92,3 +93,7 @@ class RiskRouteRepository(Protocol):
     def get_reducing_decision(
         self, decision_id: ArtifactId
     ) -> RiskReducingDecision: ...
+
+    def get_verified_reducing_decision_bundle(
+        self, decision_id: ArtifactId
+    ) -> VerifiedRiskReducingDecisionBundle: ...

@@ -735,6 +735,16 @@ class RiskReducingExecutionGate:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedRiskReducingDecisionBundle:
+    """Public, fully replayed H4 authority package."""
+
+    position: PositionSnapshot
+    execution_observation: ReducingExecutionObservation
+    configuration: RiskReducingGateConfiguration
+    decision: RiskReducingDecision
+
+
 class RiskRouteApplicationService:
     """Persist a reducing-risk decision without creating execution authority."""
 

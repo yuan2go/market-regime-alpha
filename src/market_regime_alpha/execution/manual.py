@@ -15,6 +15,7 @@ from market_regime_alpha.core.identity import (
     OpportunityId,
     PortfolioDecisionId,
     PositionBookId,
+    PositionSnapshotId,
     RiskDecisionId,
     ThesisId,
 )
@@ -23,12 +24,20 @@ from market_regime_alpha.evidence.canonical import require_sha256
 
 MANUAL_TRADE_SCHEMA = "manual-trade-record-v1"
 TRACEABLE_MANUAL_TRADE_SCHEMA = "manual-trade-record-v2-traceable"
+ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA = (
+    "manual-trade-record-v3-route-authorized"
+)
 FILL_SCHEMA = "manual-fill-v1"
 
 
 class TradeSide(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
+
+
+class ManualTradeAuthorityRoute(str, Enum):
+    INCREASING = "INCREASING"
+    REDUCING = "REDUCING"
 
 
 class ManualOrderState(str, Enum):
@@ -50,10 +59,10 @@ class FillKind(str, Enum):
 class ManualTradeRecord:
     schema_version: str
     manual_trade_id: ManualTradeId
-    risk_decision_id: RiskDecisionId
-    risk_decision_hash: str
-    portfolio_decision_id: PortfolioDecisionId
-    target_position_hash: str
+    risk_decision_id: RiskDecisionId | None
+    risk_decision_hash: str | None
+    portfolio_decision_id: PortfolioDecisionId | None
+    target_position_hash: str | None
     account_id: str
     symbol: str
     side: TradeSide
@@ -74,15 +83,24 @@ class ManualTradeRecord:
     opportunity_id: OpportunityId | None = None
     post_trade_snapshot_id: ArtifactId | None = None
     post_trade_snapshot_hash: str | None = None
+    authority_route: ManualTradeAuthorityRoute | None = None
+    risk_reducing_decision_id: ArtifactId | None = None
+    risk_reducing_decision_hash: str | None = None
+    risk_reduction_confirmation_id: ArtifactId | None = None
+    risk_reduction_confirmation_hash: str | None = None
+    source_position_snapshot_id: PositionSnapshotId | None = None
+    source_position_snapshot_hash: str | None = None
+    source_position_snapshot_version: int | None = None
+    target_quantity: int | None = None
+    order_quantity: int | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version not in {
             MANUAL_TRADE_SCHEMA,
             TRACEABLE_MANUAL_TRADE_SCHEMA,
+            ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
         }:
             raise ValueError("unsupported ManualTradeRecord schema")
-        require_sha256("risk_decision_hash", self.risk_decision_hash)
-        require_sha256("target_position_hash", self.target_position_hash)
         for label, text_value in (
             ("account_id", self.account_id),
             ("symbol", self.symbol),
@@ -123,30 +141,145 @@ class ManualTradeRecord:
                 raise ValueError("manual trade timestamps must be timezone-aware")
         if self.updated_at < self.created_at:
             raise ValueError("manual trade update cannot precede creation")
-        trace_values = (
-            self.position_book_id,
-            self.thesis_id,
-            self.opportunity_id,
+        increasing_authority = (
+            self.risk_decision_id,
+            self.risk_decision_hash,
+            self.portfolio_decision_id,
+            self.target_position_hash,
             self.post_trade_snapshot_id,
             self.post_trade_snapshot_hash,
         )
+        common_trace = (
+            self.position_book_id,
+            self.thesis_id,
+            self.opportunity_id,
+        )
+        reducing_authority = (
+            self.risk_reducing_decision_id,
+            self.risk_reducing_decision_hash,
+            self.risk_reduction_confirmation_id,
+            self.risk_reduction_confirmation_hash,
+            self.source_position_snapshot_id,
+            self.source_position_snapshot_hash,
+            self.source_position_snapshot_version,
+            self.target_quantity,
+            self.order_quantity,
+        )
+        if self.schema_version in {
+            MANUAL_TRADE_SCHEMA,
+            TRACEABLE_MANUAL_TRADE_SCHEMA,
+        }:
+            if any(value is None for value in increasing_authority[:4]):
+                raise ValueError(
+                    "V1/V2 ManualTradeRecord requires increasing authority"
+                )
+            assert self.risk_decision_hash is not None
+            assert self.target_position_hash is not None
+            require_sha256("risk_decision_hash", self.risk_decision_hash)
+            require_sha256("target_position_hash", self.target_position_hash)
+            if self.authority_route is not None or any(
+                value is not None for value in reducing_authority
+            ):
+                raise ValueError("V1/V2 ManualTradeRecord cannot carry V3 authority")
         if self.schema_version == MANUAL_TRADE_SCHEMA:
-            if any(value is not None for value in trace_values):
+            if any(value is not None for value in (*common_trace, *increasing_authority[4:])):
                 raise ValueError("V1 ManualTradeRecord cannot carry V2 trace")
-        elif any(value is None for value in trace_values):
+        elif self.schema_version == TRACEABLE_MANUAL_TRADE_SCHEMA and any(
+            value is None for value in (*common_trace, *increasing_authority[4:])
+        ):
             raise ValueError("traceable ManualTradeRecord requires complete trace")
-        elif self.post_trade_snapshot_hash is not None:
+        elif self.schema_version == TRACEABLE_MANUAL_TRADE_SCHEMA:
+            assert self.post_trade_snapshot_hash is not None
             require_sha256(
                 "post_trade_snapshot_hash", self.post_trade_snapshot_hash
             )
+        elif self.schema_version == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA:
+            self._validate_v3_route(
+                common_trace=common_trace,
+                increasing_authority=increasing_authority,
+                reducing_authority=reducing_authority,
+            )
+
+    def _validate_v3_route(
+        self,
+        *,
+        common_trace: tuple[object | None, ...],
+        increasing_authority: tuple[object | None, ...],
+        reducing_authority: tuple[object | None, ...],
+    ) -> None:
+        if any(value is None for value in common_trace):
+            raise ValueError("V3 ManualTradeRecord requires complete book trace")
+        if self.authority_route is ManualTradeAuthorityRoute.INCREASING:
+            if any(value is None for value in increasing_authority):
+                raise ValueError(
+                    "INCREASING route requires complete increasing authority"
+                )
+            if any(value is not None for value in reducing_authority):
+                raise ValueError(
+                    "INCREASING route cannot carry reducing authority"
+                )
+            assert self.risk_decision_hash is not None
+            assert self.target_position_hash is not None
+            assert self.post_trade_snapshot_hash is not None
+            require_sha256("risk_decision_hash", self.risk_decision_hash)
+            require_sha256("target_position_hash", self.target_position_hash)
+            require_sha256(
+                "post_trade_snapshot_hash", self.post_trade_snapshot_hash
+            )
+            if self.side is not TradeSide.BUY:
+                raise ValueError("INCREASING route requires BUY")
+            return
+        if self.authority_route is ManualTradeAuthorityRoute.REDUCING:
+            if any(value is not None for value in increasing_authority):
+                raise ValueError("REDUCING route cannot carry increasing authority")
+            if any(value is None for value in reducing_authority):
+                raise ValueError("REDUCING route requires complete reducing authority")
+            assert self.risk_reducing_decision_hash is not None
+            assert self.risk_reduction_confirmation_hash is not None
+            assert self.source_position_snapshot_hash is not None
+            assert self.source_position_snapshot_version is not None
+            assert self.target_quantity is not None
+            assert self.order_quantity is not None
+            require_sha256(
+                "risk_reducing_decision_hash",
+                self.risk_reducing_decision_hash,
+            )
+            require_sha256(
+                "risk_reduction_confirmation_hash",
+                self.risk_reduction_confirmation_hash,
+            )
+            require_sha256(
+                "source_position_snapshot_hash",
+                self.source_position_snapshot_hash,
+            )
+            if (
+                self.source_position_snapshot_version < 0
+                or self.target_quantity < 0
+                or self.order_quantity <= 0
+                or self.side is not TradeSide.SELL
+                or self.intended_quantity != self.order_quantity
+            ):
+                raise ValueError(
+                    "reducing ManualTradeRecord has invalid SELL order semantics"
+                )
+            return
+        raise ValueError("V3 ManualTradeRecord requires an authority route")
 
     def to_canonical_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "manual_trade_id": str(self.manual_trade_id),
-            "risk_decision_id": str(self.risk_decision_id),
+            "risk_decision_id": (
+                str(self.risk_decision_id)
+                if self.risk_decision_id is not None
+                else None
+            ),
             "risk_decision_hash": self.risk_decision_hash,
-            "portfolio_decision_id": str(self.portfolio_decision_id),
+            "portfolio_decision_id": (
+                str(self.portfolio_decision_id)
+                if self.portfolio_decision_id is not None
+                else None
+            ),
             "target_position_hash": self.target_position_hash,
             "account_id": self.account_id,
             "symbol": self.symbol,
@@ -164,21 +297,60 @@ class ManualTradeRecord:
             "last_actor": self.last_actor,
             "last_reason": self.last_reason,
         }
-        if self.schema_version == TRACEABLE_MANUAL_TRADE_SCHEMA:
+        if self.schema_version in {
+            TRACEABLE_MANUAL_TRADE_SCHEMA,
+            ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+        }:
             assert self.position_book_id is not None
             assert self.thesis_id is not None
             assert self.opportunity_id is not None
-            assert self.post_trade_snapshot_id is not None
-            assert self.post_trade_snapshot_hash is not None
             payload.update(
                 {
                     "position_book_id": str(self.position_book_id),
                     "thesis_id": str(self.thesis_id),
                     "opportunity_id": str(self.opportunity_id),
-                    "post_trade_snapshot_id": str(
-                        self.post_trade_snapshot_id
+                    "post_trade_snapshot_id": (
+                        str(self.post_trade_snapshot_id)
+                        if self.post_trade_snapshot_id is not None
+                        else None
                     ),
                     "post_trade_snapshot_hash": self.post_trade_snapshot_hash,
+                }
+            )
+        if self.schema_version == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA:
+            assert self.authority_route is not None
+            payload.update(
+                {
+                    "authority_route": self.authority_route.value,
+                    "risk_reducing_decision_id": (
+                        str(self.risk_reducing_decision_id)
+                        if self.risk_reducing_decision_id is not None
+                        else None
+                    ),
+                    "risk_reducing_decision_hash": (
+                        self.risk_reducing_decision_hash
+                    ),
+                    "risk_reduction_confirmation_id": (
+                        str(self.risk_reduction_confirmation_id)
+                        if self.risk_reduction_confirmation_id is not None
+                        else None
+                    ),
+                    "risk_reduction_confirmation_hash": (
+                        self.risk_reduction_confirmation_hash
+                    ),
+                    "source_position_snapshot_id": (
+                        str(self.source_position_snapshot_id)
+                        if self.source_position_snapshot_id is not None
+                        else None
+                    ),
+                    "source_position_snapshot_hash": (
+                        self.source_position_snapshot_hash
+                    ),
+                    "source_position_snapshot_version": (
+                        self.source_position_snapshot_version
+                    ),
+                    "target_quantity": self.target_quantity,
+                    "order_quantity": self.order_quantity,
                 }
             )
         return payload
@@ -201,17 +373,50 @@ class ManualTradeRecord:
             "post_trade_snapshot_id",
             "post_trade_snapshot_hash",
         }
-        if schema == TRACEABLE_MANUAL_TRADE_SCHEMA:
+        if schema in {
+            TRACEABLE_MANUAL_TRADE_SCHEMA,
+            ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+        }:
             expected |= trace_expected
+        route_expected = {
+            "authority_route",
+            "risk_reducing_decision_id",
+            "risk_reducing_decision_hash",
+            "risk_reduction_confirmation_id",
+            "risk_reduction_confirmation_hash",
+            "source_position_snapshot_id",
+            "source_position_snapshot_hash",
+            "source_position_snapshot_version",
+            "target_quantity",
+            "order_quantity",
+        }
+        if schema == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA:
+            expected |= route_expected
         if set(payload) != expected:
             raise ValueError("ManualTradeRecord fields mismatch")
         return cls(
             schema_version=str(payload["schema_version"]),
             manual_trade_id=ManualTradeId(str(payload["manual_trade_id"])),
-            risk_decision_id=RiskDecisionId(str(payload["risk_decision_id"])),
-            risk_decision_hash=str(payload["risk_decision_hash"]),
-            portfolio_decision_id=PortfolioDecisionId(str(payload["portfolio_decision_id"])),
-            target_position_hash=str(payload["target_position_hash"]),
+            risk_decision_id=(
+                RiskDecisionId(str(payload["risk_decision_id"]))
+                if payload["risk_decision_id"] is not None
+                else None
+            ),
+            risk_decision_hash=(
+                str(payload["risk_decision_hash"])
+                if payload["risk_decision_hash"] is not None
+                else None
+            ),
+            portfolio_decision_id=(
+                PortfolioDecisionId(str(payload["portfolio_decision_id"]))
+                if payload["portfolio_decision_id"] is not None
+                else None
+            ),
+            target_position_hash=(
+                str(payload["target_position_hash"])
+                if payload["target_position_hash"] is not None
+                else None
+            ),
             account_id=str(payload["account_id"]),
             symbol=str(payload["symbol"]),
             side=TradeSide(str(payload["side"])),
@@ -229,30 +434,109 @@ class ManualTradeRecord:
             last_reason=str(payload["last_reason"]),
             position_book_id=(
                 PositionBookId(str(payload["position_book_id"]))
-                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                if schema
+                in {
+                    TRACEABLE_MANUAL_TRADE_SCHEMA,
+                    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                }
                 else None
             ),
             thesis_id=(
                 ThesisId(str(payload["thesis_id"]))
-                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                if schema
+                in {
+                    TRACEABLE_MANUAL_TRADE_SCHEMA,
+                    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                }
                 else None
             ),
             opportunity_id=(
                 OpportunityId(str(payload["opportunity_id"]))
-                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                if schema
+                in {
+                    TRACEABLE_MANUAL_TRADE_SCHEMA,
+                    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                }
                 else None
             ),
             post_trade_snapshot_id=(
                 ArtifactId(str(payload["post_trade_snapshot_id"]))
-                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                if schema
+                in {
+                    TRACEABLE_MANUAL_TRADE_SCHEMA,
+                    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                }
+                and payload["post_trade_snapshot_id"] is not None
                 else None
             ),
             post_trade_snapshot_hash=(
                 str(payload["post_trade_snapshot_hash"])
-                if schema == TRACEABLE_MANUAL_TRADE_SCHEMA
+                if schema
+                in {
+                    TRACEABLE_MANUAL_TRADE_SCHEMA,
+                    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                }
+                and payload["post_trade_snapshot_hash"] is not None
                 else None
             ),
+            authority_route=(
+                ManualTradeAuthorityRoute(str(payload["authority_route"]))
+                if schema == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA
+                else None
+            ),
+            risk_reducing_decision_id=_optional_artifact_id(
+                payload, "risk_reducing_decision_id", schema
+            ),
+            risk_reducing_decision_hash=_optional_route_string(
+                payload, "risk_reducing_decision_hash", schema
+            ),
+            risk_reduction_confirmation_id=_optional_artifact_id(
+                payload, "risk_reduction_confirmation_id", schema
+            ),
+            risk_reduction_confirmation_hash=_optional_route_string(
+                payload, "risk_reduction_confirmation_hash", schema
+            ),
+            source_position_snapshot_id=(
+                PositionSnapshotId(str(payload["source_position_snapshot_id"]))
+                if schema == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA
+                and payload["source_position_snapshot_id"] is not None
+                else None
+            ),
+            source_position_snapshot_hash=_optional_route_string(
+                payload, "source_position_snapshot_hash", schema
+            ),
+            source_position_snapshot_version=_optional_route_int(
+                payload, "source_position_snapshot_version", schema
+            ),
+            target_quantity=_optional_route_int(
+                payload, "target_quantity", schema
+            ),
+            order_quantity=_optional_route_int(payload, "order_quantity", schema),
         )
+
+
+def _optional_artifact_id(
+    payload: dict[str, Any], key: str, schema: str
+) -> ArtifactId | None:
+    if schema != ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA or payload[key] is None:
+        return None
+    return ArtifactId(str(payload[key]))
+
+
+def _optional_route_string(
+    payload: dict[str, Any], key: str, schema: str
+) -> str | None:
+    if schema != ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA or payload[key] is None:
+        return None
+    return str(payload[key])
+
+
+def _optional_route_int(
+    payload: dict[str, Any], key: str, schema: str
+) -> int | None:
+    if schema != ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA or payload[key] is None:
+        return None
+    return int(payload[key])
 
 
 @dataclass(frozen=True, slots=True)

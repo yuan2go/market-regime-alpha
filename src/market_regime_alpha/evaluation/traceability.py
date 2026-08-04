@@ -26,10 +26,12 @@ from market_regime_alpha.evaluation.lifecycle import (
 )
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
 from market_regime_alpha.execution.manual import (
+    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     TRACEABLE_MANUAL_TRADE_SCHEMA,
     ExecutionDeviation,
     Fill,
     ManualTradeRecord,
+    ManualTradeAuthorityRoute,
 )
 from market_regime_alpha.portfolio.account_authority import (
     CompleteAccountPortfolioDecision,
@@ -194,6 +196,11 @@ class TraceableTradeOutcomeEvaluator:
         ):
             raise ValueError("traceable outcome authority identities must be unique")
         for trade in trades:
+            if (
+                trade.risk_decision_id is None
+                or trade.portfolio_decision_id is None
+            ):
+                raise ValueError("traceable outcome omits Portfolio/Risk authority")
             risk = risks.get(trade.risk_decision_id)
             portfolio = portfolios.get(trade.portfolio_decision_id)
             if risk is None or portfolio is None:
@@ -212,7 +219,15 @@ class TraceableTradeOutcomeEvaluator:
                 == trade.target_position_hash
             )
             if (
-                trade.schema_version != TRACEABLE_MANUAL_TRADE_SCHEMA
+                (
+                    trade.schema_version != TRACEABLE_MANUAL_TRADE_SCHEMA
+                    and not (
+                        trade.schema_version
+                        == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA
+                        and trade.authority_route
+                        is ManualTradeAuthorityRoute.INCREASING
+                    )
+                )
                 or trade.position_book_id != final_position.position_book_id
                 or trade.thesis_id != thesis.thesis_id
                 or trade.opportunity_id != opportunity.opportunity_id
