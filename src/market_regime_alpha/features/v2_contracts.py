@@ -898,9 +898,9 @@ class FeatureMaterializationReceipt:
         bundle: FeatureBundleArtifact,
     ) -> FeatureMaterializationReceipt:
         status = (
-            FeatureMaterializationStatus.PARTIAL_COVERAGE
-            if bundle.state is FeatureBundleState.BLOCKED_REQUIRED_FEATURE
-            else FeatureMaterializationStatus.COMPLETE
+            FeatureMaterializationStatus.COMPLETE
+            if bundle.state is FeatureBundleState.COMPLETE
+            else FeatureMaterializationStatus.PARTIAL_COVERAGE
         )
         semantic = _receipt_payload(
             command_hash=command_hash,
@@ -1082,6 +1082,97 @@ class FeatureBundleReplayReport:
             semantic_match=semantic_match,
             limitations=limitations,
         )
+
+    def semantic_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "original_bundle_hash": self.original_bundle_hash,
+            "replayed_bundle_hash": self.replayed_bundle_hash,
+            "original_artifact_hashes": list(self.original_artifact_hashes),
+            "replayed_artifact_hashes": list(self.replayed_artifact_hashes),
+            "semantic_match": self.semantic_match,
+            "limitations": list(self.limitations),
+        }
+
+    def verify_identity(self) -> None:
+        for label, value in (
+            ("content_hash", self.content_hash),
+            ("original_bundle_hash", self.original_bundle_hash),
+            ("replayed_bundle_hash", self.replayed_bundle_hash),
+            *(
+                ("original_artifact_hash", item)
+                for item in self.original_artifact_hashes
+            ),
+            *(
+                ("replayed_artifact_hash", item)
+                for item in self.replayed_artifact_hashes
+            ),
+        ):
+            require_sha256(label, value)
+        if len(self.original_artifact_hashes) != len(
+            self.replayed_artifact_hashes
+        ):
+            raise ValueError("Feature replay artifact hashes must align")
+        expected_match = (
+            self.original_bundle_hash == self.replayed_bundle_hash
+            and self.original_artifact_hashes == self.replayed_artifact_hashes
+        )
+        if self.semantic_match is not expected_match:
+            raise ValueError("Feature replay semantic match projection mismatch")
+        require_unique_text("limitation", self.limitations)
+        if self.limitations != tuple(sorted(self.limitations)):
+            raise ValueError("Feature replay limitations must be sorted")
+        expected_hash = canonical_hash(self.semantic_payload())
+        if self.content_hash != expected_hash:
+            raise ValueError("Feature replay report hash mismatch")
+        expected_id = f"feature-replay-report-{expected_hash.split(':', 1)[1][:24]}"
+        if str(self.report_id) != expected_id:
+            raise ValueError("Feature replay report identity mismatch")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        self.verify_identity()
+        return {
+            "report_id": str(self.report_id),
+            "content_hash": self.content_hash,
+            **self.semantic_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> FeatureBundleReplayReport:
+        if set(payload) != {
+            "schema_version",
+            "report_id",
+            "content_hash",
+            "original_bundle_hash",
+            "replayed_bundle_hash",
+            "original_artifact_hashes",
+            "replayed_artifact_hashes",
+            "semantic_match",
+            "limitations",
+        } or payload["schema_version"] != FEATURE_REPLAY_REPORT_SCHEMA:
+            raise ValueError("Feature replay report fields mismatch")
+        semantic_match = payload["semantic_match"]
+        if not isinstance(semantic_match, bool):
+            raise TypeError("Feature replay semantic_match must be boolean")
+        result = cls(
+            schema_version=str(payload["schema_version"]),
+            report_id=ArtifactId(str(payload["report_id"])),
+            content_hash=str(payload["content_hash"]),
+            original_bundle_hash=str(payload["original_bundle_hash"]),
+            replayed_bundle_hash=str(payload["replayed_bundle_hash"]),
+            original_artifact_hashes=_string_tuple(
+                payload["original_artifact_hashes"], "original_artifact_hashes"
+            ),
+            replayed_artifact_hashes=_string_tuple(
+                payload["replayed_artifact_hashes"], "replayed_artifact_hashes"
+            ),
+            semantic_match=semantic_match,
+            limitations=_string_tuple(payload["limitations"], "limitations"),
+        )
+        result.verify_identity()
+        return result
 
 
 def _feature_artifact_payload(

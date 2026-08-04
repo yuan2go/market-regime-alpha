@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from market_regime_alpha.evidence.canonical import (
     canonical_hash,
@@ -74,8 +74,14 @@ class VerifiedFeatureBundleV2:
         return matches[0]
 
 
+FailureInjector = Callable[[str], None]
+
+
 def publish_feature_artifact_v2(
-    *, root: Path, artifact: FeatureArtifactV2
+    *,
+    root: Path,
+    artifact: FeatureArtifactV2,
+    failure_injector: FailureInjector | None = None,
 ) -> Path:
     artifact.verify_identity()
     root.mkdir(parents=True, exist_ok=True)
@@ -100,9 +106,13 @@ def publish_feature_artifact_v2(
         _write_json(stage / "SHA256SUMS.json", checksums)
         _fsync_directory(stage)
         _load_verified_feature_artifact_v2(stage, enforce_directory_identity=False)
+        if failure_injector is not None:
+            failure_injector("AFTER_STAGING_VALIDATED")
         os.replace(stage, final)
         installed = True
         _fsync_directory(root)
+        if failure_injector is not None:
+            failure_injector("AFTER_ATOMIC_INSTALL")
         return final
     finally:
         if not installed and stage.exists():
@@ -153,6 +163,7 @@ def publish_feature_bundle_v2(
     root: Path,
     artifact_root: Path,
     bundle: FeatureBundleArtifact,
+    failure_injector: FailureInjector | None = None,
 ) -> Path:
     bundle.verify_identity()
     for reference in bundle.feature_artifact_references:
@@ -184,9 +195,13 @@ def publish_feature_bundle_v2(
             artifact_root=artifact_root,
             enforce_directory_identity=False,
         )
+        if failure_injector is not None:
+            failure_injector("AFTER_STAGING_VALIDATED")
         os.replace(stage, final)
         installed = True
         _fsync_directory(root)
+        if failure_injector is not None:
+            failure_injector("AFTER_ATOMIC_INSTALL")
         return final
     finally:
         if not installed and stage.exists():
@@ -429,6 +444,7 @@ def replay_feature_bundle_v2(
     bundle_path: Path,
     artifact_root: Path,
     verified_dataset: VerifiedMarketDataDataset,
+    report_root: Path | None = None,
 ) -> FeatureBundleReplayReport:
     verified = load_verified_feature_bundle_v2(
         bundle_path,
@@ -467,6 +483,73 @@ def replay_feature_bundle_v2(
     )
     if not report.semantic_match:
         raise ValueError("Feature Bundle replay semantic mismatch")
+    if report_root is not None:
+        publish_feature_replay_report(root=report_root, report=report)
+    return report
+
+
+def publish_feature_replay_report(
+    *,
+    root: Path,
+    report: FeatureBundleReplayReport,
+    failure_injector: FailureInjector | None = None,
+) -> Path:
+    report.verify_identity()
+    root.mkdir(parents=True, exist_ok=True)
+    final = root / str(report.report_id)
+    if final.exists():
+        existing = load_verified_feature_replay_report(final)
+        if existing.to_canonical_dict() != report.to_canonical_dict():
+            raise FileExistsError("conflicting Feature replay report exists")
+        return final
+    stage = Path(tempfile.mkdtemp(prefix=f".{final.name}.", dir=root))
+    installed = False
+    try:
+        _write_json(stage / "report.json", report.to_canonical_dict())
+        _write_json(
+            stage / "SHA256SUMS.json",
+            {"report.json": _file_hash(stage / "report.json")},
+        )
+        _fsync_directory(stage)
+        _load_verified_feature_replay_report(
+            stage, enforce_directory_identity=False
+        )
+        if failure_injector is not None:
+            failure_injector("AFTER_STAGING_VALIDATED")
+        os.replace(stage, final)
+        installed = True
+        _fsync_directory(root)
+        if failure_injector is not None:
+            failure_injector("AFTER_ATOMIC_INSTALL")
+        return final
+    finally:
+        if not installed and stage.exists():
+            shutil.rmtree(stage)
+
+
+def load_verified_feature_replay_report(path: Path) -> FeatureBundleReplayReport:
+    return _load_verified_feature_replay_report(
+        path, enforce_directory_identity=True
+    )
+
+
+def _load_verified_feature_replay_report(
+    path: Path, *, enforce_directory_identity: bool
+) -> FeatureBundleReplayReport:
+    root = path.resolve()
+    expected_files = {"SHA256SUMS.json", "report.json"}
+    _require_exact_files(root, expected_files, "Feature replay report")
+    checksums = _read_checksum_index(
+        root / "SHA256SUMS.json", "Feature replay report"
+    )
+    if set(checksums) != {"report.json"}:
+        raise ValueError("Feature replay report checksum index mismatch")
+    _verify_checksums(root, checksums, "Feature replay report")
+    report = FeatureBundleReplayReport.from_canonical_dict(
+        _read_object(root / "report.json", "Feature replay report")
+    )
+    if enforce_directory_identity and root.name != str(report.report_id):
+        raise ValueError("Feature replay report directory identity mismatch")
     return report
 
 
@@ -563,7 +646,9 @@ __all__ = [
     "VerifiedFeatureBundleV2",
     "load_verified_feature_artifact_v2",
     "load_verified_feature_bundle_v2",
+    "load_verified_feature_replay_report",
     "publish_feature_artifact_v2",
     "publish_feature_bundle_v2",
+    "publish_feature_replay_report",
     "replay_feature_bundle_v2",
 ]

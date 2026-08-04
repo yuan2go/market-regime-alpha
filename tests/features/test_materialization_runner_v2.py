@@ -15,6 +15,9 @@ from market_regime_alpha.features.materialization_v2 import (
     FeatureMaterializationStatus,
     load_verified_feature_bundle_v2,
     load_verified_feature_artifact_v2,
+    load_verified_feature_replay_report,
+    publish_feature_bundle_v2,
+    publish_feature_replay_report,
     replay_feature_bundle_v2,
 )
 from market_regime_alpha.features.technical.catalog import (
@@ -193,7 +196,7 @@ def _run(
 def test_runner_publishes_artifacts_bundle_coverage_and_receipt(tmp_path: Path) -> None:
     dataset, feature_set, receipt = _run(tmp_path)
 
-    assert receipt.status is FeatureMaterializationStatus.COMPLETE
+    assert receipt.status is FeatureMaterializationStatus.PARTIAL_COVERAGE
     assert receipt.no_order_created is True
     assert receipt.broker_not_invoked is True
     assert receipt.no_fill_created is True
@@ -259,6 +262,48 @@ def test_serial_parallel_and_restart_replay_are_hash_identical(tmp_path: Path) -
     assert replay.original_bundle_hash == replay.replayed_bundle_hash
     assert replay.original_artifact_hashes == replay.replayed_artifact_hashes
     assert replay.semantic_match is True
+
+
+def test_bundle_and_replay_report_publication_are_crash_atomic(tmp_path: Path) -> None:
+    dataset, _, receipt = _run(tmp_path / "source")
+    bundle = load_verified_feature_bundle_v2(
+        tmp_path / "source" / "features" / receipt.bundle_locator,
+        artifact_root=tmp_path / "source" / "features" / "feature-artifacts",
+    )
+    artifact_root = tmp_path / "source" / "features" / "feature-artifacts"
+
+    def fail_after_staging(stage: str) -> None:
+        if stage == "AFTER_STAGING_VALIDATED":
+            raise RuntimeError("injected crash")
+
+    bundle_root = tmp_path / "crash-bundles"
+    with pytest.raises(RuntimeError, match="injected crash"):
+        publish_feature_bundle_v2(
+            root=bundle_root,
+            artifact_root=artifact_root,
+            bundle=bundle.artifact,
+            failure_injector=fail_after_staging,
+        )
+    assert not (bundle_root / str(bundle.artifact.bundle_id)).exists()
+    assert not tuple(bundle_root.glob(".*"))
+
+    report = replay_feature_bundle_v2(
+        bundle_path=bundle.root,
+        artifact_root=artifact_root,
+        verified_dataset=dataset,
+    )
+    report_root = tmp_path / "crash-reports"
+    with pytest.raises(RuntimeError, match="injected crash"):
+        publish_feature_replay_report(
+            root=report_root,
+            report=report,
+            failure_injector=fail_after_staging,
+        )
+    assert not (report_root / str(report.report_id)).exists()
+    assert not tuple(report_root.glob(".*"))
+
+    package = publish_feature_replay_report(root=report_root, report=report)
+    assert load_verified_feature_replay_report(package) == report
 
 
 def test_same_idempotency_replays_and_semantic_conflict_is_rejected(

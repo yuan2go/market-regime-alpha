@@ -45,6 +45,8 @@ from market_regime_alpha.features.materialization_v2 import (
     FeatureMaterializationStatus,
     load_verified_feature_artifact_v2,
     load_verified_feature_bundle_v2,
+    load_verified_feature_replay_report,
+    publish_feature_replay_report,
     replay_feature_bundle_v2,
 )
 
@@ -65,5 +67,7 @@ __all__ = [
     "ValueType",
     "load_verified_feature_artifact_v2",
     "load_verified_feature_bundle_v2",
+    "load_verified_feature_replay_report",
+    "publish_feature_replay_report",
     "replay_feature_bundle_v2",
 ]
