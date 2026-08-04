@@ -8,7 +8,7 @@
 > **Superseded By:** None
 > **Related Documents:** 06-Legacy-Migration.md, 10-Production-Decision-Lifecycle.md, 11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../status/Current-State.md, ../status/Capability-Matrix.md, ../status/Gap-Register.md
 > **Code Evidence:** `src/market_regime_alpha/application/canonical_lifecycle/**`; `src/market_regime_alpha/features/model_contracts.py`; `src/market_regime_alpha/research/model_contracts.py`; `src/market_regime_alpha/signals/model_contracts.py`; `src/market_regime_alpha/decision/model_contracts.py`; `src/market_regime_alpha/migration/**`; `tests/application/canonical_lifecycle/**`; `tests/migration/**`; `tests/architecture/test_legacy_import_boundary.py`
-> **Verification Boundary:** The implementation described here is present on the canonical-runtime development branch. Final whole-branch pytest, Ruff, mypy and package-build verification remains pending the delivery checkpoint.
+> **Verification Boundary:** The implementation described here is present on the canonical-runtime development branch and has passed the local repository-wide pytest, Ruff, mypy and package-build gate. Remote CI, sustained operation, model validation and production admission remain separate evidence requirements.
 
 ## 1. Purpose and authority ceiling
 

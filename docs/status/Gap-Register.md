@@ -7,7 +7,7 @@
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
-> **Code Evidence:** Canonical runtime/migration development branch implementation with final branch quality gate pending; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Code Evidence:** Canonical runtime/migration development branch implementation with the local repository-wide engineering gate passed; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps
@@ -15,7 +15,6 @@
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Reproducible dependency set | P0 | Dependencies use lower bounds and no confirmed lockfile is present | Select one package workflow | Clean Python 3.12 environment installs from a committed lock and reproduces the full gate |
-| Canonical-runtime branch final quality gate | P0 | Runner, migration 011, H4 observation stages and migration infrastructure are implemented with focused tests, but final whole-branch pytest/Ruff/mypy/build evidence is pending | Complete implementation integration | Exact branch commit passes all repository-required commands; failures are reported rather than hidden |
 | CI enforcement | P1 | Workflow covers Python 3.12 install, docs, pytest, Ruff, configured mypy and package build on push/PR; both remote branch and Draft PR jobs passed at `dfd7a0b`, while required-check policy was not inspected | Repository settings authority | Protected branches require the complete workflow and preserve passing push/PR checks |
 
 ## 2. Pre-Shadow hardening gaps
@@ -114,7 +113,7 @@ The following are not open implementation gaps, although their operating/model e
 - H6 typed composition policy/manifest, exact immutable package, migration 009, append-only SQLite replay index, V2-only operational research route and H5 integration;
 - canonical 16-stage Runner, migration-011 Lifecycle Runtime Journal,
   idempotent/recoverable stage receipts and read-only replay on the development
-  branch, with the final whole-branch quality gate still pending;
+  branch, with the local repository-wide engineering gate passed;
 - canonical-to-Legacy import enforcement, role-specific migration Protocols,
   differential comparison/report replay and the Decimal simple-moving-average
   example on the development branch;
@@ -127,7 +126,6 @@ Delivered mechanics must not be upgraded to production, Alpha or trading-authori
 
 ```text
 P0 lockfile and remote CI enforcement
-→ canonical-runtime branch final quality gate
 → H7 durable Holding/Exit
 → qualified H6 operational package production
 → H8 sustained Shadow operations and control plane

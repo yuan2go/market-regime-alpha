@@ -90,7 +90,7 @@ LIFECYCLE_RUNTIME_JOURNAL_MIGRATION_011_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
 CANONICAL_LEGACY_IMPORT_BOUNDARY_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
 ROLE_SPECIFIC_MODEL_MIGRATION_CONTRACTS_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
 SIMPLE_MOVING_AVERAGE_MIGRATION_EXAMPLE_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
-CANONICAL_RUNTIME_BRANCH_FINAL_QUALITY_GATE_PENDING
+CANONICAL_RUNTIME_BRANCH_LOCAL_ENGINEERING_GATE_VERIFIED
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -480,17 +480,21 @@ research/Entry blocking, H4 continuation observation, manual confirmation,
 ManualTrade/Fill boundaries, Legacy imports, role-specific contracts,
 differential classification and Feature replay.
 
-The final branch-wide commands remain **PENDING** at this documentation update:
+The final branch-wide commands were observed locally on the canonical-runtime
+development branch:
 
 ```text
-python -m pytest -q
-python -m ruff check .
-python -m mypy
-python -m build
+python scripts/check_docs_links.py = PASS
+python -m pytest -q tests/scripts/test_check_docs_links.py = 8 passed
+python -m pytest -q tests/platform = 23 passed
+python -m pytest -q = PASS, 1952 tests collected, 6 existing pandas PerformanceWarnings
+python -m ruff check . = PASS
+python -m mypy = PASS, 295 source files
+python -m build = PASS, sdist and wheel built
 ```
 
-No PASS result for those commands is claimed here. The delivery report must
-replace this pending statement only with actually observed results.
+These are local engineering checks, not remote CI, sustained Shadow evidence,
+formal model validation, Broker authority or production admission.
 
 ## 7. Not implemented as production authority
 
