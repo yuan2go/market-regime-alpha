@@ -114,6 +114,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [H4.5 Risk-Reduction Manual Intent Implementation Plan](superpowers/plans/2026-08-04-h4-5-risk-reduction-manual-intent.md)
 - [Canonical Runtime and Legacy Model Migration Infrastructure Design](superpowers/specs/2026-08-04-canonical-runtime-and-legacy-migration-design.md)
 - [Canonical Runtime and Legacy Model Migration Implementation Plan](superpowers/plans/2026-08-04-canonical-runtime-and-legacy-migration.md)
+- [Canonical Feature Spine and Signal Inputs Design](superpowers/specs/2026-08-04-canonical-feature-spine-and-signal-inputs-design.md)
+- [Canonical Feature Spine and Signal Inputs Implementation Plan](superpowers/plans/2026-08-04-canonical-feature-spine-and-signal-inputs.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
