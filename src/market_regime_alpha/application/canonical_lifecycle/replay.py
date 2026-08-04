@@ -647,7 +647,9 @@ def _signal_v2(
         verified_dataset=dataset,
     )
     replayed = replay_signal_run_v2(
-        signal_path, feature_bundle=recomputed_bundle
+        signal_path,
+        feature_bundle=recomputed_bundle,
+        verified_dataset=dataset,
     ).artifact
     return (
         str(replayed.artifact_id),

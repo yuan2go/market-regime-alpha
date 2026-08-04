@@ -23,6 +23,7 @@ from market_regime_alpha.market_data import Timeframe
 
 
 PRICE_ACTION_FEATURE_ID = "technical.price_action.v1"
+INTRADAY_PRICE_ACTION_FEATURE_ID = "technical.intraday_price_action.v1"
 MOVING_AVERAGE_FEATURE_ID = "technical.moving_average.v2"
 MACD_FEATURE_ID = "technical.macd.v1"
 CAPITAL_VOLUME_FEATURE_ID = "technical.volume_amount_structure.v1"
@@ -33,12 +34,12 @@ PRICE_ACTION_OUTPUTS = (
     "close_location_value",
     "gap_return",
     "high_low_range",
-    "intraday_return_to_decision_time",
     "return_1",
     "return_10",
     "return_3",
     "return_5",
 )
+INTRADAY_PRICE_ACTION_OUTPUTS = ("intraday_return_to_decision_time",)
 MOVING_AVERAGE_DECIMAL_OUTPUTS = (
     "distance_ema12_ema26",
     "distance_sma5_sma20",
@@ -119,9 +120,22 @@ def canonical_technical_feature_set(
         _definition(
             feature_id=PRICE_ACTION_FEATURE_ID,
             required_fields=("close", "high", "low", "open"),
-            timeframes=(Timeframe.DAILY, Timeframe.MINUTE_5),
+            timeframes=(Timeframe.DAILY,),
             minimum_history=11,
             outputs=_outputs(PRICE_ACTION_OUTPUTS, ValueType.DECIMAL),
+        ),
+        _definition(
+            feature_id=INTRADAY_PRICE_ACTION_FEATURE_ID,
+            required_fields=("close", "open"),
+            timeframes=(
+                Timeframe.MINUTE_1,
+                Timeframe.MINUTE_5,
+                Timeframe.MINUTE_15,
+                Timeframe.MINUTE_30,
+                Timeframe.MINUTE_60,
+            ),
+            minimum_history=1,
+            outputs=_outputs(INTRADAY_PRICE_ACTION_OUTPUTS, ValueType.DECIMAL),
         ),
         _definition(
             feature_id=MOVING_AVERAGE_FEATURE_ID,
@@ -194,6 +208,16 @@ def canonical_technical_feature_set(
                 _integer("output_scale", 12),
                 _text("rounding", "ROUND_HALF_EVEN"),
                 _text("selected_timeframe", Timeframe.DAILY.value),
+            ),
+        ),
+        _configuration(
+            feature_id=INTRADAY_PRICE_ACTION_FEATURE_ID,
+            effective_from=effective_from,
+            parameters=(
+                _integer("output_scale", 12),
+                _text("rounding", "ROUND_HALF_EVEN"),
+                _text("selected_timeframe", Timeframe.MINUTE_5.value),
+                _text("session_policy", "A_SHARE_CURRENT_SESSION_OBSERVED_BARS_ONLY"),
             ),
         ),
         _configuration(
@@ -273,7 +297,7 @@ def canonical_technical_feature_set(
         definitions=definitions,
         configurations=configurations,
         required_feature_ids=required,
-        optional_feature_ids=(VWAP_FEATURE_ID,),
+        optional_feature_ids=(INTRADAY_PRICE_ACTION_FEATURE_ID, VWAP_FEATURE_ID),
         timeframe_policy=TimeframePolicy.EXACT_MATCH_ONLY,
         coverage_policy=RequiredFeatureCoveragePolicy.BLOCK_ON_ANY_REQUIRED_MISSING,
         minimum_required_coverage=Decimal("1"),

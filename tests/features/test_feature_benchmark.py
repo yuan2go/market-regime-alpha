@@ -28,7 +28,7 @@ def test_offline_feature_benchmark_reports_real_measurements(
     payload = json.loads(capsys.readouterr().out)
     assert payload["symbols"] == 2
     assert payload["market_bar_count"] == 134
-    assert payload["feature_family_count"] == 6
+    assert payload["feature_family_count"] == 7
     assert payload["feature_artifact_count"] == 12
     assert payload["cold_run_seconds"] >= 0
     assert payload["cached_run_seconds"] >= 0

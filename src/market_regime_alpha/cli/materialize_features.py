@@ -22,6 +22,7 @@ from market_regime_alpha.cli._feature_output import (
 )
 from market_regime_alpha.features import (
     FeatureConfigurationInvalidError,
+    FeatureComputationFailedError,
     FeatureMaterializationRunner,
     FeatureMaterializationStatus,
 )
@@ -82,6 +83,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             error=exc,
         )
         return EXIT_ARGUMENT_ERROR
+    except FeatureComputationFailedError as exc:
+        emit_error(
+            status="COMPUTATION_FAILED",
+            reason_code="FEATURE_COMPUTATION_FAILED",
+            error=exc,
+        )
+        return EXIT_COMPUTATION_FAILED
     except ValueError as exc:
         reason = (
             "FEATURE_INPUT_TAMPERED"

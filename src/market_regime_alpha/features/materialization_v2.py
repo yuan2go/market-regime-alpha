@@ -90,6 +90,10 @@ class FeatureConfigurationInvalidError(ValueError):
     """A content-addressed Feature configuration has no executable semantics."""
 
 
+class FeatureComputationFailedError(RuntimeError):
+    """A valid Feature computation failed rather than lacking market evidence."""
+
+
 def publish_feature_artifact_v2(
     *,
     root: Path,
@@ -121,7 +125,17 @@ def publish_feature_artifact_v2(
         _load_verified_feature_artifact_v2(stage, enforce_directory_identity=False)
         if failure_injector is not None:
             failure_injector("AFTER_STAGING_VALIDATED")
-        os.replace(stage, final)
+        try:
+            os.replace(stage, final)
+        except OSError:
+            if not final.exists():
+                raise
+            existing = load_verified_feature_artifact_v2(final)
+            if existing.artifact.to_canonical_dict() != artifact.to_canonical_dict():
+                raise FileExistsError(
+                    f"conflicting Feature Artifact V2 exists: {final}"
+                )
+            return final
         installed = True
         _fsync_directory(root)
         if failure_injector is not None:
@@ -210,7 +224,17 @@ def publish_feature_bundle_v2(
         )
         if failure_injector is not None:
             failure_injector("AFTER_STAGING_VALIDATED")
-        os.replace(stage, final)
+        try:
+            os.replace(stage, final)
+        except OSError:
+            if not final.exists():
+                raise
+            existing = load_verified_feature_bundle_v2(
+                final, artifact_root=artifact_root
+            )
+            if existing.artifact.to_canonical_dict() != bundle.to_canonical_dict():
+                raise FileExistsError(f"conflicting Feature Bundle exists: {final}")
+            return final
         installed = True
         _fsync_directory(root)
         if failure_injector is not None:
@@ -326,21 +350,11 @@ class FeatureMaterializationRunner:
         )
         command_path = _command_path(output_root, idempotency_key)
         if command_path.exists():
-            payload = _read_object(command_path, "Feature materialization command")
-            if payload.get("command_hash") != command_hash:
-                raise ValueError("idempotency key semantic conflict")
-            raw_receipt = payload.get("receipt")
-            if not isinstance(raw_receipt, dict):
-                raise ValueError("Feature materialization command receipt is invalid")
-            receipt = FeatureMaterializationReceipt.from_canonical_dict(raw_receipt)
-            bundle_path = output_root / receipt.bundle_locator
-            verified = load_verified_feature_bundle_v2(
-                bundle_path,
-                artifact_root=output_root / "feature-artifacts",
+            return _load_materialization_receipt(
+                command_path=command_path,
+                command_hash=command_hash,
+                output_root=output_root,
             )
-            if verified.artifact.content_hash != receipt.bundle_hash:
-                raise ValueError("Feature materialization command Bundle mismatch")
-            return receipt
         artifacts = self._compute_artifacts(
             verified_dataset=verified_dataset,
             feature_set=feature_set,
@@ -368,17 +382,27 @@ class FeatureMaterializationRunner:
             command_hash=command_hash,
             bundle=bundle,
         )
-        _write_command(
-            path=command_path,
-            payload={
-                "schema_version": "feature-materialization-command-index-v1",
-                "idempotency_key_hash": canonical_hash(
-                    {"idempotency_key": idempotency_key}
-                ),
-                "command_hash": command_hash,
-                "receipt": receipt.to_canonical_dict(),
-            },
-        )
+        try:
+            _write_command(
+                path=command_path,
+                payload={
+                    "schema_version": "feature-materialization-command-index-v1",
+                    "idempotency_key_hash": canonical_hash(
+                        {"idempotency_key": idempotency_key}
+                    ),
+                    "command_hash": command_hash,
+                    "receipt": receipt.to_canonical_dict(),
+                },
+            )
+        except FileExistsError:
+            concurrent = _load_materialization_receipt(
+                command_path=command_path,
+                command_hash=command_hash,
+                output_root=output_root,
+            )
+            if concurrent != receipt:
+                raise ValueError("concurrent materialization receipt mismatch")
+            return concurrent
         return receipt
 
     def _compute_artifacts(
@@ -414,12 +438,17 @@ class FeatureMaterializationRunner:
             symbol, feature_id = task
             definition = definitions[feature_id]
             configuration = configurations[feature_id]
-            raw_timeframe = configuration.parameter_map().get("selected_timeframe")
-            if raw_timeframe is None:
-                raise ValueError("Feature Configuration lacks selected_timeframe")
-            timeframe = Timeframe(raw_timeframe)
-            if timeframe not in definition.supported_timeframes:
-                raise ValueError("configured timeframe is unsupported by definition")
+            try:
+                raw_timeframe = configuration.parameter_map().get("selected_timeframe")
+                if raw_timeframe is None:
+                    raise ValueError("Feature Configuration lacks selected_timeframe")
+                timeframe = Timeframe(raw_timeframe)
+                if timeframe not in definition.supported_timeframes:
+                    raise ValueError("configured timeframe is unsupported by definition")
+            except ValueError as exc:
+                raise FeatureConfigurationInvalidError(
+                    f"invalid configuration for {feature_id}"
+                ) from exc
             input_bars = bars_by_scope.get((symbol, timeframe), ())
             output_ids = tuple(item.output_id for item in definition.output_schema)
             if not input_bars:
@@ -444,16 +473,10 @@ class FeatureMaterializationRunner:
                     raise FeatureConfigurationInvalidError(
                         f"invalid configuration for {feature_id}"
                     ) from exc
-                except ArithmeticError:
-                    computation = missing_technical_feature_computation(
-                        feature_id=feature_id,
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        available_at=max(item.available_at for item in input_bars),
-                        configuration=configuration,
-                        output_ids=output_ids,
-                        reason_code="COMPUTATION_FAILED",
-                    )
+                except ArithmeticError as exc:
+                    raise FeatureComputationFailedError(
+                        f"Feature computation failed for {feature_id}/{symbol}"
+                    ) from exc
             return FeatureArtifactV2.create(
                 definition=definition,
                 configuration=configuration,
@@ -650,9 +673,6 @@ def _write_command(*, path: Path, payload: Mapping[str, Any]) -> None:
     if path.exists():
         raise FileExistsError("Feature materialization command already exists")
     prefix = f".{path.name}.tmp-"
-    for stale in path.parent.glob(f"{prefix}*"):
-        if stale.is_file() and stale.name.startswith(prefix):
-            stale.unlink()
     descriptor, raw_temporary = tempfile.mkstemp(prefix=prefix, dir=path.parent)
     temporary = Path(raw_temporary)
     try:
@@ -665,6 +685,26 @@ def _write_command(*, path: Path, payload: Mapping[str, Any]) -> None:
         _fsync_directory(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _load_materialization_receipt(
+    *, command_path: Path, command_hash: str, output_root: Path
+) -> FeatureMaterializationReceipt:
+    payload = _read_object(command_path, "Feature materialization command")
+    if payload.get("command_hash") != command_hash:
+        raise ValueError("idempotency key semantic conflict")
+    raw_receipt = payload.get("receipt")
+    if not isinstance(raw_receipt, dict):
+        raise ValueError("Feature materialization command receipt is invalid")
+    receipt = FeatureMaterializationReceipt.from_canonical_dict(raw_receipt)
+    bundle_path = output_root / receipt.bundle_locator
+    verified = load_verified_feature_bundle_v2(
+        bundle_path,
+        artifact_root=output_root / "feature-artifacts",
+    )
+    if verified.artifact.content_hash != receipt.bundle_hash:
+        raise ValueError("Feature materialization command Bundle mismatch")
+    return receipt
 
 
 def _require_exact_files(root: Path, expected: set[str], label: str) -> None:
@@ -728,6 +768,7 @@ __all__ = [
     "FeatureMaterializationRunner",
     "FeatureMaterializationStatus",
     "FeatureConfigurationInvalidError",
+    "FeatureComputationFailedError",
     "FeatureReplayDivergenceError",
     "VerifiedFeatureArtifactV2",
     "VerifiedFeatureBundleV2",

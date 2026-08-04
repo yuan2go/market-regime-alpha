@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -13,6 +14,7 @@ from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.features.materialization_v2 import (
     FeatureBundleState,
+    FeatureComputationFailedError,
     FeatureMaterializationRunner,
     FeatureMaterializationStatus,
     load_verified_feature_bundle_v2,
@@ -55,7 +57,9 @@ SOURCE_HASH = "sha256:" + "1" * 64
 MANIFEST_HASH = "sha256:" + "9" * 64
 
 
-def _daily_bars(count: int = 70) -> tuple[CanonicalMarketBar, ...]:
+def _daily_bars(
+    count: int = 70, *, amount_missing_at: int | None = None
+) -> tuple[CanonicalMarketBar, ...]:
     start = date(2026, 5, 26)
     result = []
     for index in range(count):
@@ -87,7 +91,11 @@ def _daily_bars(count: int = 70) -> tuple[CanonicalMarketBar, ...]:
                 previous_close=previous,
                 volume=Decimal(100000 + index * 100),
                 volume_unit=VolumeUnit.SHARES,
-                amount=close * Decimal(100000 + index * 100),
+                amount=(
+                    None
+                    if index == amount_missing_at
+                    else close * Decimal(100000 + index * 100)
+                ),
                 turnover_rate=Decimal("0.01"),
                 adjustment_mode=AdjustmentMode.RAW,
                 adjustment_factor=Decimal("1"),
@@ -140,8 +148,12 @@ def _verified_dataset(
     *,
     include_minutes: bool = True,
     daily_count: int = 70,
+    amount_missing_at: int | None = None,
 ):
-    bars = (*_daily_bars(daily_count), *(_minute_bars() if include_minutes else ()))
+    bars = (
+        *_daily_bars(daily_count, amount_missing_at=amount_missing_at),
+        *(_minute_bars() if include_minutes else ()),
+    )
     expected_timeframes = (
         (Timeframe.DAILY, Timeframe.MINUTE_5)
         if include_minutes
@@ -173,6 +185,7 @@ def _run(
     *,
     include_minutes: bool = True,
     daily_count: int = 70,
+    amount_missing_at: int | None = None,
     max_workers: int = 1,
     idempotency_key: str = "feature-run-1",
     code_revision: str = "revision-1",
@@ -182,6 +195,7 @@ def _run(
         tmp_path,
         include_minutes=include_minutes,
         daily_count=daily_count,
+        amount_missing_at=amount_missing_at,
     )
     feature_set = feature_set or canonical_technical_feature_set(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
@@ -203,7 +217,7 @@ def _run(
 def test_runner_publishes_artifacts_bundle_coverage_and_receipt(tmp_path: Path) -> None:
     dataset, feature_set, receipt = _run(tmp_path)
 
-    assert receipt.status is FeatureMaterializationStatus.PARTIAL_COVERAGE
+    assert receipt.status is FeatureMaterializationStatus.COMPLETE
     assert receipt.no_order_created is True
     assert receipt.broker_not_invoked is True
     assert receipt.no_fill_created is True
@@ -214,9 +228,9 @@ def test_runner_publishes_artifacts_bundle_coverage_and_receipt(tmp_path: Path) 
     )
     assert verified.artifact.dataset_id == dataset.artifact.dataset_id
     assert verified.artifact.feature_set_id == feature_set.feature_set_id
-    assert verified.artifact.state is FeatureBundleState.PARTIAL_COVERAGE
+    assert verified.artifact.state is FeatureBundleState.COMPLETE
     assert verified.artifact.required_feature_status == "COMPLETE"
-    assert len(verified.artifacts) == 6
+    assert len(verified.artifacts) == 7
     vwap = next(
         item for item in verified.artifacts if item.artifact.feature_id == VWAP_FEATURE_ID
     )
@@ -242,6 +256,8 @@ def test_no_minute_data_keeps_vwap_explicitly_missing(tmp_path: Path) -> None:
         item.missing_reason_codes == ("DATA_UNAVAILABLE_TIMEFRAME",)
         for item in vwap.artifact.values
     )
+    assert receipt.status is FeatureMaterializationStatus.PARTIAL_COVERAGE
+    assert verified.artifact.required_feature_status == "COMPLETE"
 
 
 def test_required_family_without_warmup_blocks_complete_status(tmp_path: Path) -> None:
@@ -254,6 +270,20 @@ def test_required_family_without_warmup_blocks_complete_status(tmp_path: Path) -
     assert receipt.status is FeatureMaterializationStatus.BLOCKED_REQUIRED_FEATURE
     assert verified.artifact.state is FeatureBundleState.BLOCKED_REQUIRED_FEATURE
     assert verified.artifact.required_feature_status == "BLOCKED"
+
+
+def test_partial_required_family_is_usable_but_bundle_remains_partial(
+    tmp_path: Path,
+) -> None:
+    _, _, receipt = _run(tmp_path, amount_missing_at=69)
+    verified = load_verified_feature_bundle_v2(
+        tmp_path / "features" / receipt.bundle_locator,
+        artifact_root=tmp_path / "features" / "feature-artifacts",
+    )
+
+    assert receipt.status is FeatureMaterializationStatus.PARTIAL_COVERAGE
+    assert verified.artifact.required_feature_status == "COMPLETE"
+    assert verified.artifact.state is FeatureBundleState.PARTIAL_COVERAGE
 
 
 def test_allow_partial_policy_enforces_minimum_required_family_coverage(
@@ -393,6 +423,11 @@ def test_bundle_reconstructs_coverage_from_loaded_feature_artifacts(
             tuple(item.artifact for item in verified.artifacts)
         )
 
+    with pytest.raises(ValueError, match="materialized scope mismatch"):
+        verified.artifact.verify_materialized_projection(
+            tuple(item.artifact for item in verified.artifacts[:-1])
+        )
+
 
 def test_orphan_command_staging_file_does_not_block_retry(tmp_path: Path) -> None:
     key_hash = canonical_hash({"idempotency_key": "feature-run-1"}).split(":", 1)[1]
@@ -404,7 +439,63 @@ def test_orphan_command_staging_file_does_not_block_retry(tmp_path: Path) -> Non
     _, _, receipt = _run(tmp_path)
 
     assert receipt.bundle_hash.startswith("sha256:")
-    assert not orphan.exists()
+    # A writer cannot know whether another unique temp belongs to a live peer.
+    # It therefore makes progress without deleting an unowned staging file.
+    assert orphan.exists()
+
+
+def test_concurrent_same_command_returns_one_identical_receipt(tmp_path: Path) -> None:
+    dataset = _verified_dataset(tmp_path)
+    feature_set = canonical_technical_feature_set(
+        effective_from=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+
+    def run() -> object:
+        return FeatureMaterializationRunner(max_workers=1).run(
+            verified_dataset=dataset,
+            feature_set=feature_set,
+            decision_time=DECISION_TIME,
+            created_at=CREATED_AT,
+            selected_symbols=("600000.SH",),
+            code_revision="revision-1",
+            output_root=tmp_path / "features",
+            idempotency_key="concurrent-command",
+            resume=True,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = tuple(executor.map(lambda _: run(), range(2)))
+
+    assert first == second
+
+
+def test_arithmetic_failure_is_not_mislabeled_as_missing_data(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset = _verified_dataset(tmp_path)
+    feature_set = canonical_technical_feature_set(
+        effective_from=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+
+    def fail(**_kwargs):
+        raise ArithmeticError("injected")
+
+    monkeypatch.setattr(
+        "market_regime_alpha.features.materialization_v2.compute_technical_feature",
+        fail,
+    )
+    with pytest.raises(FeatureComputationFailedError, match="computation failed"):
+        FeatureMaterializationRunner().run(
+            verified_dataset=dataset,
+            feature_set=feature_set,
+            decision_time=DECISION_TIME,
+            created_at=CREATED_AT,
+            selected_symbols=("600000.SH",),
+            code_revision="revision-1",
+            output_root=tmp_path / "features",
+            idempotency_key="failure",
+            resume=True,
+        )
 
 
 def test_feature_bundle_detects_missing_referenced_artifact(tmp_path: Path) -> None:

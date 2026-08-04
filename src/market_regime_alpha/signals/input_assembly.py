@@ -31,7 +31,11 @@ from market_regime_alpha.features.technical.catalog import (
     VWAP_FEATURE_ID,
 )
 from market_regime_alpha.features.technical.observables import FeatureValueState
-from market_regime_alpha.market_data import AdjustmentMode, Timeframe
+from market_regime_alpha.market_data import (
+    AdjustmentMode,
+    Timeframe,
+    VerifiedMarketDataDataset,
+)
 from market_regime_alpha.market_data.contracts import (
     parse_utc_second,
     require_utc_second,
@@ -523,11 +527,14 @@ class SignalInputAssembler:
         *,
         candidate_set: CandidateSet,
         feature_bundle: VerifiedFeatureBundleV2,
+        verified_dataset: VerifiedMarketDataDataset,
         configuration: SignalInputMappingConfiguration,
         decision_time: DecisionTime,
     ) -> tuple[SignalObservationV2, ...]:
         candidate_set.envelope.verify_payload(candidate_set.artifact_payload())
         feature_bundle.artifact.verify_identity()
+        dataset = verified_dataset.artifact
+        dataset.verify_identity()
         configuration.verify_identity()
         if configuration.effective_from > decision_time.value:
             raise ValueError("Signal Input Mapping is not effective at DecisionTime")
@@ -540,7 +547,19 @@ class SignalInputAssembler:
             raise ValueError("Candidate symbols must exactly match Feature Bundle symbols")
         if feature_bundle.artifact.state is FeatureBundleState.BLOCKED_REQUIRED_FEATURE:
             raise ValueError("blocked Feature Bundle cannot enter Signal assembly")
-        if feature_bundle.artifact.adjustment_mode is AdjustmentMode.RESEARCH_BACK_ADJUSTED:
+        if (
+            feature_bundle.artifact.dataset_id != dataset.dataset_id
+            or feature_bundle.artifact.dataset_hash != dataset.content_hash
+            or feature_bundle.artifact.adjustment_mode is not dataset.adjustment_policy.mode
+            or feature_bundle.artifact.adjustment_policy_id
+            != dataset.adjustment_policy.policy_id
+            or feature_bundle.artifact.adjustment_policy_hash
+            != dataset.adjustment_policy.policy_hash
+            or feature_bundle.artifact.source_manifest_references
+            != dataset.source_manifest_references
+        ):
+            raise ValueError("Feature Bundle Market Data Dataset projection mismatch")
+        if dataset.adjustment_policy.mode is AdjustmentMode.RESEARCH_BACK_ADJUSTED:
             raise ValueError(
                 "research-back-adjusted Feature Bundle cannot enter DecisionTime Signal"
             )

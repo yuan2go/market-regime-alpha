@@ -48,6 +48,7 @@ from market_regime_alpha.market_data import AdjustmentMode
 from tests.features.test_materialization_runner_v2 import (
     CREATED_AT,
     DECISION_TIME,
+    _verified_dataset,
     _run as run_features,
 )
 
@@ -148,6 +149,16 @@ def _bundle(
     )
 
 
+def _dataset(
+    tmp_path: Path, *, include_minutes: bool = True, daily_count: int = 70
+):
+    return _verified_dataset(
+        tmp_path,
+        include_minutes=include_minutes,
+        daily_count=daily_count,
+    )
+
+
 def test_mapping_and_v2_observation_are_content_addressed(tmp_path: Path) -> None:
     mapping = canonical_signal_input_mapping(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
@@ -155,6 +166,7 @@ def test_mapping_and_v2_observation_are_content_addressed(tmp_path: Path) -> Non
     observations = SignalInputAssembler().assemble(
         candidate_set=_candidate_set(),
         feature_bundle=_bundle(tmp_path),
+        verified_dataset=_dataset(tmp_path),
         configuration=mapping,
         decision_time=DecisionTime(DECISION_TIME),
     )
@@ -183,6 +195,7 @@ def test_missing_vwap_remains_per_factor_missing_without_zero_fill(tmp_path: Pat
     observation = SignalInputAssembler().assemble(
         candidate_set=_candidate_set(),
         feature_bundle=_bundle(tmp_path, include_minutes=False),
+        verified_dataset=_dataset(tmp_path, include_minutes=False),
         configuration=canonical_signal_input_mapping(
             effective_from=datetime(2026, 1, 1, tzinfo=UTC)
         ),
@@ -205,6 +218,7 @@ def test_observation_identity_tamper_and_candidate_scope_mismatch_fail_closed(
     observation = SignalInputAssembler().assemble(
         candidate_set=_candidate_set(),
         feature_bundle=_bundle(tmp_path),
+        verified_dataset=_dataset(tmp_path),
         configuration=canonical_signal_input_mapping(
             effective_from=datetime(2026, 1, 1, tzinfo=UTC)
         ),
@@ -219,6 +233,7 @@ def test_observation_identity_tamper_and_candidate_scope_mismatch_fail_closed(
         SignalInputAssembler().assemble(
             candidate_set=_candidate_set(symbol="000001.SZ"),
             feature_bundle=_bundle(tmp_path / "mismatch"),
+            verified_dataset=_dataset(tmp_path / "mismatch"),
             configuration=canonical_signal_input_mapping(
                 effective_from=datetime(2026, 1, 1, tzinfo=UTC)
             ),
@@ -239,6 +254,7 @@ def test_signal_assembly_rejects_lineage_blocked_and_back_adjusted_bundles(
                 source_manifest_id=ArtifactId("other-source-manifest")
             ),
             feature_bundle=bundle,
+            verified_dataset=_dataset(tmp_path / "normal"),
             configuration=mapping,
             decision_time=DecisionTime(DECISION_TIME),
         )
@@ -249,6 +265,7 @@ def test_signal_assembly_rejects_lineage_blocked_and_back_adjusted_bundles(
         SignalInputAssembler().assemble(
             candidate_set=_candidate_set(),
             feature_bundle=blocked,
+            verified_dataset=_dataset(tmp_path / "blocked", daily_count=5),
             configuration=mapping,
             decision_time=DecisionTime(DECISION_TIME),
         )
@@ -266,10 +283,11 @@ def test_signal_assembly_rejects_lineage_blocked_and_back_adjusted_bundles(
         ),
     )
     adjusted_bundle = replace(bundle, artifact=adjusted_artifact)
-    with pytest.raises(ValueError, match="research-back-adjusted"):
+    with pytest.raises(ValueError, match="Dataset projection mismatch"):
         SignalInputAssembler().assemble(
             candidate_set=_candidate_set(),
             feature_bundle=adjusted_bundle,
+            verified_dataset=_dataset(tmp_path / "normal"),
             configuration=mapping,
             decision_time=DecisionTime(DECISION_TIME),
         )
@@ -286,6 +304,7 @@ def test_v2_signal_run_uses_shared_model_and_replays_from_feature_bundle(
     observations = SignalInputAssembler().assemble(
         candidate_set=candidate,
         feature_bundle=bundle,
+        verified_dataset=_dataset(tmp_path),
         configuration=mapping,
         decision_time=DecisionTime(DECISION_TIME),
     )
@@ -307,7 +326,11 @@ def test_v2_signal_run_uses_shared_model_and_replays_from_feature_bundle(
     assert len(signal.snapshots[0].envelope.input_artifact_ids) >= 5
     package = publish_signal_run_v2(root=tmp_path / "signals", artifact=signal)
     assert load_verified_signal_run_v2(package).artifact == signal
-    replayed = replay_signal_run_v2(package, feature_bundle=bundle)
+    replayed = replay_signal_run_v2(
+        package,
+        feature_bundle=bundle,
+        verified_dataset=_dataset(tmp_path),
+    )
     assert replayed.artifact == signal
 
 
@@ -320,6 +343,7 @@ def test_v2_signal_stays_data_insufficient_when_vwap_is_missing(tmp_path: Path) 
     observations = SignalInputAssembler().assemble(
         candidate_set=candidate,
         feature_bundle=bundle,
+        verified_dataset=_dataset(tmp_path, include_minutes=False),
         configuration=mapping,
         decision_time=DecisionTime(DECISION_TIME),
     )

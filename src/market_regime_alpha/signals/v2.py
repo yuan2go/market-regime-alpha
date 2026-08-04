@@ -17,6 +17,7 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
+from market_regime_alpha.market_data import VerifiedMarketDataDataset
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.signals.contracts import SignalSnapshot
 from market_regime_alpha.signals.engine import (
@@ -366,7 +367,10 @@ def _load_verified_signal_run_v2(
 
 
 def replay_signal_run_v2(
-    path: Path, *, feature_bundle: VerifiedFeatureBundleV2
+    path: Path,
+    *,
+    feature_bundle: VerifiedFeatureBundleV2,
+    verified_dataset: VerifiedMarketDataDataset,
 ) -> VerifiedSignalRunArtifactV2:
     """Reassemble factors from Feature Artifacts, then rerun the Signal model."""
 
@@ -379,6 +383,7 @@ def replay_signal_run_v2(
     observations = SignalInputAssembler().assemble(
         candidate_set=original.candidate_set,
         feature_bundle=feature_bundle,
+        verified_dataset=verified_dataset,
         configuration=original.mapping_configuration,
         decision_time=original.envelope.decision_time,
     )

@@ -6,6 +6,7 @@ from decimal import Decimal, getcontext
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.features.technical.catalog import (
     CAPITAL_VOLUME_FEATURE_ID,
+    INTRADAY_PRICE_ACTION_FEATURE_ID,
     MACD_FEATURE_ID,
     MOVING_AVERAGE_FEATURE_ID,
     OVERHEAT_FEATURE_ID,
@@ -163,23 +164,16 @@ def test_price_action_returns_and_ranges_use_explicit_endpoints() -> None:
     assert values["gap_return"].value == Decimal("0.004587155963")
     assert values["high_low_range"].value == Decimal("0.036697247706")
     assert values["close_location_value"].value == Decimal("0")
-    assert values["intraday_return_to_decision_time"].state is FeatureValueState.MISSING
-    assert values["intraday_return_to_decision_time"].missing_reason_codes == (
-        "INTRADAY_REQUIRES_MINUTE_DATA",
-    )
+    assert "intraday_return_to_decision_time" not in values
 
 
-def test_current_session_daily_close_is_not_intraday_price_authority() -> None:
+def test_current_session_minute_evidence_uses_session_open_not_last_bar_open() -> None:
     values = _values(
-        PRICE_ACTION_FEATURE_ID,
-        _daily_bars(11, start_date=date(2026, 7, 25)),
-        decision_time=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),
+        INTRADAY_PRICE_ACTION_FEATURE_ID,
+        _minute_bars(),
     )
 
-    assert values["intraday_return_to_decision_time"].value is None
-    assert values["intraday_return_to_decision_time"].missing_reason_codes == (
-        "INTRADAY_REQUIRES_MINUTE_DATA",
-    )
+    assert values["intraday_return_to_decision_time"].value == Decimal("0.2")
 def test_moving_average_family_has_strict_windows_cross_and_alignment() -> None:
     bars = _daily_bars(61)
     values = _values(MOVING_AVERAGE_FEATURE_ID, bars)

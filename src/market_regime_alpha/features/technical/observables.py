@@ -14,6 +14,8 @@ from market_regime_alpha.evidence.canonical import require_sha256, require_text
 from market_regime_alpha.features.spine import FeatureConfiguration
 from market_regime_alpha.features.technical.catalog import (
     CAPITAL_VOLUME_FEATURE_ID,
+    INTRADAY_PRICE_ACTION_FEATURE_ID,
+    INTRADAY_PRICE_ACTION_OUTPUTS,
     MACD_DECIMAL_OUTPUTS,
     MACD_FEATURE_ID,
     MACD_TEXT_OUTPUTS,
@@ -159,6 +161,7 @@ def compute_technical_feature(
         ],
     ] = {
         PRICE_ACTION_FEATURE_ID: _compute_price_action,
+        INTRADAY_PRICE_ACTION_FEATURE_ID: _compute_intraday_price_action,
         MOVING_AVERAGE_FEATURE_ID: _compute_moving_average,
         MACD_FEATURE_ID: _compute_macd,
         CAPITAL_VOLUME_FEATURE_ID: _compute_volume,
@@ -185,7 +188,7 @@ def _compute_price_action(
         feature_id=PRICE_ACTION_FEATURE_ID,
         bars=bars,
         configuration=configuration,
-        supported={Timeframe.DAILY, Timeframe.MINUTE_5},
+        supported={Timeframe.DAILY},
         output_ids=output_ids,
     )
     if unsupported is not None:
@@ -205,31 +208,6 @@ def _compute_price_action(
                     (bars[-window - 1], latest),
                 )
             )
-    decision_date = decision_time.astimezone(_SHANGHAI).date()
-    if latest.timeframe is Timeframe.DAILY:
-        values.append(
-            _missing(
-                "intraday_return_to_decision_time",
-                (latest,),
-                "INTRADAY_REQUIRES_MINUTE_DATA",
-            )
-        )
-    elif latest.market_date != decision_date:
-        values.append(
-            _missing(
-                "intraday_return_to_decision_time",
-                (latest,),
-                "DECISION_SESSION_DATA_NOT_AVAILABLE",
-            )
-        )
-    else:
-        values.append(
-            _available(
-                "intraday_return_to_decision_time",
-                _q(latest.close / latest.open - Decimal("1"), scale),
-                (latest,),
-            )
-        )
     if latest.previous_close is None:
         values.extend(
             (
@@ -263,6 +241,52 @@ def _compute_price_action(
             _available("close_location_value", _q(close_location, scale), (latest,))
         )
     return _result(PRICE_ACTION_FEATURE_ID, bars, configuration, values)
+
+
+def _compute_intraday_price_action(
+    bars: tuple[CanonicalMarketBar, ...],
+    configuration: FeatureConfiguration,
+    decision_time: datetime,
+) -> TechnicalFeatureComputation:
+    unsupported = _unsupported_or_suspended(
+        feature_id=INTRADAY_PRICE_ACTION_FEATURE_ID,
+        bars=bars,
+        configuration=configuration,
+        supported={
+            Timeframe.MINUTE_1,
+            Timeframe.MINUTE_5,
+            Timeframe.MINUTE_15,
+            Timeframe.MINUTE_30,
+            Timeframe.MINUTE_60,
+        },
+        output_ids=INTRADAY_PRICE_ACTION_OUTPUTS,
+    )
+    if unsupported is not None:
+        return unsupported
+    decision_date = decision_time.astimezone(_SHANGHAI).date()
+    session = tuple(item for item in bars if item.market_date == decision_date)
+    if not session:
+        return _all_missing(
+            INTRADAY_PRICE_ACTION_FEATURE_ID,
+            bars,
+            configuration,
+            INTRADAY_PRICE_ACTION_OUTPUTS,
+            "DECISION_SESSION_DATA_NOT_AVAILABLE",
+        )
+    first, latest = session[0], session[-1]
+    value = _q(latest.close / first.open - Decimal("1"), _scale(configuration))
+    return _result(
+        INTRADAY_PRICE_ACTION_FEATURE_ID,
+        bars,
+        configuration,
+        [
+            _available(
+                "intraday_return_to_decision_time",
+                value,
+                (first, latest) if first is not latest else (first,),
+            )
+        ],
+    )
 
 
 def _compute_moving_average(

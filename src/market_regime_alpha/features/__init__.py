@@ -42,6 +42,7 @@ from market_regime_alpha.features.spine import (
 from market_regime_alpha.features.materialization_v2 import (
     FeatureBundleState,
     FeatureConfigurationInvalidError,
+    FeatureComputationFailedError,
     FeatureMaterializationRunner,
     FeatureMaterializationStatus,
     FeatureReplayDivergenceError,
@@ -57,6 +58,7 @@ __all__ = [
     "FeatureConfiguration",
     "FeatureBundleState",
     "FeatureConfigurationInvalidError",
+    "FeatureComputationFailedError",
     "FeatureDefinitionV2",
     "FeatureOutputDefinition",
     "FeatureParameter",

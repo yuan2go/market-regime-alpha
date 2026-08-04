@@ -59,6 +59,10 @@ from market_regime_alpha.features.materialization_v2 import (
     load_verified_feature_bundle_v2,
 )
 from market_regime_alpha.features.spine import FeatureSetConfiguration
+from market_regime_alpha.market_data import (
+    VerifiedMarketDataDataset,
+    load_verified_market_data_dataset,
+)
 from market_regime_alpha.research.platform_v2.reader import (
     VerifiedResearchLayerArtifact,
 )
@@ -137,21 +141,27 @@ class SignalStageHandler:
     def recover(self, context: LifecycleStageContext) -> StageExecutionResult | None:
         research_reference, research = _load_research(context)
         self._validate_command_bindings(context)
-        feature_reference, feature_bundle = self._optional_feature_bundle(context)
-        expected = self._compute(context, research, feature_bundle)
+        feature_reference, feature_bundle, dataset_reference, dataset = (
+            self._optional_feature_inputs(context)
+        )
+        expected = self._compute(context, research, feature_bundle, dataset)
         path = self._output_root / str(expected.artifact_id)
         if not path.exists():
             return None
         verified = _load_signal_package(path)
         if verified.artifact != expected:
             raise ValueError("recovered Signal Artifact semantic mismatch")
-        return self._result(research_reference, feature_reference, verified)
+        return self._result(
+            research_reference, feature_reference, dataset_reference, verified
+        )
 
     def execute(self, context: LifecycleStageContext) -> StageExecutionResult:
         research_reference, research = _load_research(context)
         self._validate_command_bindings(context)
-        feature_reference, feature_bundle = self._optional_feature_bundle(context)
-        artifact = self._compute(context, research, feature_bundle)
+        feature_reference, feature_bundle, dataset_reference, dataset = (
+            self._optional_feature_inputs(context)
+        )
+        artifact = self._compute(context, research, feature_bundle, dataset)
         path = (
             publish_signal_run_v2(root=self._output_root, artifact=artifact)
             if isinstance(artifact, SignalRunArtifactV2)
@@ -160,7 +170,9 @@ class SignalStageHandler:
         verified = _load_signal_package(path)
         if verified.artifact != artifact:
             raise ValueError("published Signal Artifact semantic mismatch")
-        return self._result(research_reference, feature_reference, verified)
+        return self._result(
+            research_reference, feature_reference, dataset_reference, verified
+        )
 
     def _validate_command_bindings(self, context: LifecycleStageContext) -> None:
         require_configuration_binding(
@@ -198,8 +210,11 @@ class SignalStageHandler:
         context: LifecycleStageContext,
         research: VerifiedResearchLayerArtifact,
         feature_bundle: VerifiedFeatureBundleV2 | None,
+        verified_dataset: VerifiedMarketDataDataset | None,
     ) -> _SignalRun:
         if feature_bundle is not None:
+            if verified_dataset is None:
+                raise ValueError("Feature-derived Signal requires Market Data Dataset")
             if self._mapping_configuration is None or (
                 self._feature_set_configuration is None
             ):
@@ -212,6 +227,7 @@ class SignalStageHandler:
             v2_observations = SignalInputAssembler().assemble(
                 candidate_set=research.artifact.candidate_set,
                 feature_bundle=feature_bundle,
+                verified_dataset=verified_dataset,
                 configuration=self._mapping_configuration,
                 decision_time=research.artifact.envelope.decision_time,
             )
@@ -276,6 +292,7 @@ class SignalStageHandler:
         self,
         research_reference: LifecycleObjectReference,
         feature_reference: LifecycleObjectReference | None,
+        dataset_reference: LifecycleObjectReference | None,
         verified: _VerifiedSignalRun,
     ) -> StageExecutionResult:
         artifact = verified.artifact
@@ -308,11 +325,15 @@ class SignalStageHandler:
             )
             if not is_v2:
                 reasons.add(_H6_SIGNAL_LIMITATION)
-        inputs = (
-            (research_reference,)
-            if feature_reference is None
-            else ordered_references((research_reference, feature_reference))
-        )
+        inputs: tuple[LifecycleObjectReference, ...]
+        if feature_reference is None:
+            inputs = (research_reference,)
+        else:
+            if dataset_reference is None:
+                raise ValueError("Feature-derived Signal result lacks Dataset input")
+            inputs = ordered_references(
+                (research_reference, feature_reference, dataset_reference)
+            )
         configuration_hashes = {self._configuration.configuration_hash}
         model_versions = {
             (str(self._configuration.model_id), self._configuration.model_version)
@@ -334,12 +355,17 @@ class SignalStageHandler:
             blocker_reason=None,
         )
 
-    def _optional_feature_bundle(
+    def _optional_feature_inputs(
         self, context: LifecycleStageContext
-    ) -> tuple[LifecycleObjectReference | None, VerifiedFeatureBundleV2 | None]:
+    ) -> tuple[
+        LifecycleObjectReference | None,
+        VerifiedFeatureBundleV2 | None,
+        LifecycleObjectReference | None,
+        VerifiedMarketDataDataset | None,
+    ]:
         references = references_for_type(context, LifecycleObjectType.FEATURE_BUNDLE)
         if not references:
-            return None, None
+            return None, None, None, None
         if len(references) != 1:
             raise ValueError("lifecycle Signal stage requires one FEATURE_BUNDLE")
         reference = references[0]
@@ -353,7 +379,19 @@ class SignalStageHandler:
             or verified.artifact.content_hash != reference.content_hash
         ):
             raise ValueError("Feature Bundle lifecycle reference mismatch")
-        return reference, verified
+        dataset_references = references_for_type(
+            context, LifecycleObjectType.MARKET_DATA_DATASET
+        )
+        if len(dataset_references) != 1:
+            raise ValueError("Feature-derived Signal requires one MARKET_DATA_DATASET")
+        dataset_reference = dataset_references[0]
+        dataset = load_verified_market_data_dataset(reference_path(dataset_reference))
+        if (
+            str(dataset.artifact.dataset_id) != str(dataset_reference.object_id)
+            or dataset.artifact.content_hash != dataset_reference.content_hash
+        ):
+            raise ValueError("Market Data Dataset lifecycle reference mismatch")
+        return reference, verified, dataset_reference, dataset
 
 
 class PathForecastStageHandler:

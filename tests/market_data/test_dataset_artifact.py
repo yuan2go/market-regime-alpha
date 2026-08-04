@@ -48,13 +48,15 @@ SOURCE_HASH = "sha256:" + "1" * 64
 MANIFEST_HASH = "sha256:" + "2" * 64
 
 
-def _source_manifest(raw: AcquiredSourcePayload) -> SourceManifest:
+def _source_manifest(
+    raw: AcquiredSourcePayload, *, source_conflicts: tuple[str, ...] = ()
+) -> SourceManifest:
     return SourceManifest(
         provider_profile_id="public-history-test-v1",
         decision_time=DecisionTime(DECISION_TIME),
         source_artifacts=(raw.reference,),
         fields=(),
-        source_conflicts=(),
+        source_conflicts=source_conflicts,
         limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
         data_eligibility=DataEligibility.EXPLORATORY,
     )
@@ -290,6 +292,18 @@ def test_normalize_verified_public_history_uses_archived_source_bytes(
     assert bar.open == Decimal("10.0")
     assert bar.turnover_rate is None
     assert "SOURCE_FLOAT_NORMALIZED_TO_DECIMAL" in normalized.limitations
+
+    with pytest.raises(ValueError, match="SourceManifest conflicts"):
+        normalize_public_history_stage(
+            verified=verified_source,
+            decision_time=DECISION_TIME,
+            created_at=CREATED_AT,
+            expected_symbols=("600000.SH",),
+            source_manifest=_source_manifest(
+                raw, source_conflicts=("CLOSE_AUTHORITY_CONFLICT",)
+            ),
+            asset_types={"600000.SH": AssetType.A_SHARE},
+        )
 
 
 def test_normalizer_rejects_source_manifest_that_does_not_cover_archived_bytes(

@@ -238,8 +238,11 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
     )
     assert "H6_SIGNAL_FACTOR_INPUTS_NOT_AVAILABLE" not in signal_result.reason_codes
     assert feature_reference in signal_result.input_references
+    assert dataset_reference in signal_result.input_references
     assert replay_signal_run_v2(
-        signal.root, feature_bundle=bundle
+        signal.root,
+        feature_bundle=bundle,
+        verified_dataset=dataset,
     ).artifact == signal.artifact
     replay_references = (
         dataset_reference,

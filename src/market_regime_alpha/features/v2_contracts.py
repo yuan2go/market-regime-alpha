@@ -807,6 +807,22 @@ class FeatureBundleArtifact:
                 key=lambda item: (item.feature_id, item.symbol, item.timeframe.value),
             )
         )
+        expected_scope = {
+            (definition.feature_id, symbol)
+            for definition in self.feature_set.definitions
+            for symbol in self.symbols
+        }
+        actual_scope = {(item.feature_id, item.symbol) for item in ordered}
+        if actual_scope != expected_scope:
+            raise ValueError("Feature Bundle materialized scope mismatch")
+        for item in ordered:
+            item.verify_identity()
+            if (
+                item.dataset_id != self.dataset_id
+                or item.dataset_hash != self.dataset_hash
+                or item.decision_time != self.decision_time
+            ):
+                raise ValueError("Feature Bundle artifact dataset scope mismatch")
         references, coverage, required_status, state = _derive_bundle_projection(
             feature_set=self.feature_set,
             artifacts=ordered,
@@ -1402,6 +1418,10 @@ def _derive_bundle_projection(
         for item in artifacts
         if (item.feature_id, item.symbol) in required_pairs
     )
+    # Coverage policy is deliberately defined at Feature Family granularity. A
+    # PARTIAL_COVERAGE Artifact proves that the required family ran and emitted
+    # at least one observable; missing optional outputs keep the Bundle partial
+    # but do not erase the whole family's usable evidence.
     covered_count = sum(
         item.state is not FeatureArtifactState.DATA_INSUFFICIENT
         for item in required_artifacts

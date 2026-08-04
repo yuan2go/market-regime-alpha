@@ -8,6 +8,7 @@ from market_regime_alpha.cli.materialize_features import main as materialize_mai
 from market_regime_alpha.cli.replay_feature_bundle import main as replay_main
 from market_regime_alpha.evidence.canonical import canonical_json
 from market_regime_alpha.features.materialization_v2 import (
+    FeatureComputationFailedError,
     FeatureMaterializationStatus,
     FeatureReplayDivergenceError,
 )
@@ -18,8 +19,8 @@ from market_regime_alpha.features.technical.catalog import (
 from tests.features.test_materialization_runner_v2 import _verified_dataset
 
 
-def _inputs(tmp_path: Path) -> tuple[Path, Path]:
-    dataset = _verified_dataset(tmp_path)
+def _inputs(tmp_path: Path, *, daily_count: int = 70) -> tuple[Path, Path]:
+    dataset = _verified_dataset(tmp_path, daily_count=daily_count)
     feature_set = canonical_technical_feature_set(
         effective_from=dataset.artifact.decision_time
     )
@@ -60,8 +61,8 @@ def test_materialize_and_replay_cli_are_structured_and_side_effect_free(
 
     status = materialize_main(_materialize_args(dataset, config, output))
     first = json.loads(capsys.readouterr().out)
-    assert status in {0, 8}
-    assert first["status"] == FeatureMaterializationStatus.PARTIAL_COVERAGE.value
+    assert status == 0
+    assert first["status"] == FeatureMaterializationStatus.COMPLETE.value
     assert first["NO_ORDER_CREATED"] is True
     assert first["BROKER_NOT_INVOKED"] is True
     assert first["NO_FILL_CREATED"] is True
@@ -69,7 +70,7 @@ def test_materialize_and_replay_cli_are_structured_and_side_effect_free(
 
     status = materialize_main(_materialize_args(dataset, config, output))
     second = json.loads(capsys.readouterr().out)
-    assert status == 8
+    assert status == 0
     assert second["feature_bundle_id"] == first["feature_bundle_id"]
 
     bundle_path = output / "feature-bundles" / first["feature_bundle_id"]
@@ -159,3 +160,30 @@ def test_replay_cli_classifies_semantic_divergence_as_canonical_regression(
     assert status == 6
     assert payload["status"] == "CANONICAL_REGRESSION"
     assert payload["reason_codes"] == ["FEATURE_REPLAY_DIVERGED"]
+
+
+def test_materialize_cli_distinguishes_blocked_evidence_and_computation_failure(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    dataset, config = _inputs(tmp_path / "blocked", daily_count=5)
+    status = materialize_main(
+        _materialize_args(dataset, config, tmp_path / "blocked-output")
+    )
+    blocked = json.loads(capsys.readouterr().out)
+    assert status == 4
+    assert blocked["status"] == FeatureMaterializationStatus.BLOCKED_REQUIRED_FEATURE.value
+
+    def failed(*_args, **_kwargs):
+        raise FeatureComputationFailedError("injected computation failure")
+
+    monkeypatch.setattr(
+        "market_regime_alpha.cli.materialize_features.FeatureMaterializationRunner.run",
+        failed,
+    )
+    dataset, config = _inputs(tmp_path / "failed")
+    status = materialize_main(
+        _materialize_args(dataset, config, tmp_path / "failed-output")
+    )
+    failure = json.loads(capsys.readouterr().out)
+    assert status == 5
+    assert failure["status"] == "COMPUTATION_FAILED"

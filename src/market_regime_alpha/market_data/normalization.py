@@ -53,6 +53,10 @@ def normalize_public_history_stage(
         raise TypeError("source_manifest must be a verified SourceManifest")
     if source_manifest.decision_time != DecisionTime(decision_time):
         raise ValueError("SourceManifest DecisionTime mismatch")
+    if source_manifest.source_conflicts:
+        raise ValueError("SourceManifest conflicts cannot enter canonical market data")
+    if verified.batch.source_conflicts:
+        raise ValueError("public history source conflicts cannot enter canonical market data")
     archived_references = tuple(
         sorted((item.reference for item in verified.batch.raw_payloads), key=str)
     )
