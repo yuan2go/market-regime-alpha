@@ -20,6 +20,10 @@ from market_regime_alpha.portfolio.risk_routes import (
 from market_regime_alpha.position.authority import SymbolTradingSessionStatus
 
 
+class RiskReductionConfirmationIdempotencyConflict(ValueError):
+    """An H4.5 idempotency key was reused for different command semantics."""
+
+
 class RiskReductionConfirmationApplicationService:
     """Canonicalize caller evidence; repository reloads every durable authority."""
 

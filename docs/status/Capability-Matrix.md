@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Related Documents:** Current-State.md, Gap-Register.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
+> **Code Evidence:** Canonical runtime/migration implementation and local repository-wide engineering gate on the development branch; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Status Rule:** `IMPLEMENTED` describes code mechanics. `VERIFIED_IMPLEMENTATION_CHECKPOINT` requires observed checks on the cited code commit. Historical checkpoint PASS records do not verify later code changes.
 
 | Capability | Status | Code evidence | Verification evidence | Runtime/evidence ceiling | Primary blocker | Next action |
@@ -21,9 +21,17 @@
 | Operational stock Universe | PARTIAL_SMOKE_ONLY | `universe/daily_exploratory.py` | 20-symbol smoke tests | Not a 100–300 symbol operating pool | Approved PIT membership/liquidity source | Build versioned operational Universe artifact |
 | ETF Universe | NOT_IMPLEMENTED_CANONICAL | No canonical ETF Universe owner | None | ETF observations only appear as supplemental evidence | ETF identity, mapping and PIT membership | Implement separate ETF Universe and selection policy |
 | Feature materialization | IMPLEMENTED_BASELINE | `features/**` | Historical feature/materialization tests | Baseline features only | Qualified observations and expansion | Add validated features through registered definitions |
+| Role-specific model migration contracts | IMPLEMENTED_LOCAL_ENGINEERING_GATE_VERIFIED | `features/model_contracts.py`, `research/model_contracts.py`, `signals/model_contracts.py`, `decision/model_contracts.py` | Focused structural/semantic tests plus local repository-wide gate | No universal Model base; Signal/Decision cannot express order execution | Migrated model implementations and validation absent | Apply through WP-MIG-01 one observable at a time |
+| Decimal simple moving-average migration example | IMPLEMENTED_RESEARCH_ONLY_LOCAL_ENGINEERING_GATE_VERIFIED | `features/technical/moving_average.py`, `features/artifact.py`, Legacy MA adapter | Focused purity, missingness, Reader and replay tests plus local repository-wide gate | One unvalidated Feature example, not a Signal or trade action | Broader Moving Average family and formal validation absent | Continue under WP-MIG-01 without changing Legacy thresholds |
+| Legacy/New differential harness | IMPLEMENTED_LOCAL_ENGINEERING_GATE_VERIFIED | `migration/comparison/**`, `migration/legacy/normalization/**` | Focused seven-class classification and comparison replay tests plus local repository-wide gate | Comparison evidence only; unknown differences remain `NOT_COMPARABLE` | Model-specific comparison policies and qualified datasets absent | Add policy/invariants for each WP-MIG-01 observable |
+| Canonical-to-Legacy import boundary | IMPLEMENTED_LOCAL_ENGINEERING_GATE_VERIFIED | `tests/architecture/test_legacy_import_boundary.py`, `migration/legacy/**` | AST import-boundary test plus local repository-wide gate | Legacy may be called only through isolated adapters/compatibility roots | Legacy God Objects still exist | Preserve the guard and retire only after replacement evidence |
 | B0 Candidate baseline | IMPLEMENTED_AND_HISTORICALLY_VERIFIED | `candidates/baselines.py`, Prediction adapters | Prior equivalence and replay tests | Baseline rank, not probability | Formal OOS absent | Preserve frozen baseline and evaluate formally |
 | B1 Candidate baseline | IMPLEMENTED_AND_HISTORICALLY_VERIFIED | `candidates/composite_baseline.py`, Prediction adapters | Prior equivalence and replay tests | Baseline rank, not probability | Formal OOS/model winner absent | Preserve frozen baseline and evaluate formally |
 | Daily Runtime Journal | IMPLEMENTED_SQLITE | `application/daily_loop/**` | Prior restart/idempotency tests | Single-machine recoverability | No distributed leases/Saga | Integrate into ShadowRun control plane |
+| Lifecycle Runtime Journal | IMPLEMENTED_LOCAL_ENGINEERING_GATE_VERIFIED | `application/canonical_lifecycle/{contracts,repositories,sqlite_repository}.py`, migration 011 | Focused migration/idempotency/single-snapshot concurrent history/recovery tests plus local repository-wide gate | Single-machine cross-domain reference journal; domain objects remain in existing authorities | No lease owner, distributed scheduler or PostgreSQL parity | Add H8 operational control plane without inflating authority |
+| Canonical Decision Lifecycle Runner | IMPLEMENTED_FAIL_CLOSED_LOCAL_ENGINEERING_GATE_VERIFIED | `application/canonical_lifecycle/runner.py`, `stages/**` | Focused state, recovery and stage-adapter tests plus local repository-wide gate | Research path blocks at unvalidated Entry; H4 continuation observes manual boundaries only | Entry validation, durable H7 authority and sustained operation absent | Keep blockers explicit; do not manufacture stage inputs |
+| Durable Lifecycle replay | IMPLEMENTED_LOCAL_ENGINEERING_GATE_VERIFIED | `application/canonical_lifecycle/{durable_replay,replay,replay_snapshot,_immutable_io}.py` | Atomic publish interruption/retry, captured-source advance/recovery, snapshot tamper, independent REPLAY journal, pure recomputation, receipt fingerprint, idempotency and ManualTrade read-only tests plus local repository-wide gate | Recomputes registered pure/model Artifacts and verifies mutating objects without invoking mutation; unavailable repository Readers remain `NOT_COMPARABLE` | No external trusted producer/signature and incomplete Reader registry | Extend safe Reader registry as authorities mature |
+| Canonical lifecycle CLI | IMPLEMENTED_LOCAL_ENGINEERING_GATE_VERIFIED | `cli/run_canonical_lifecycle.py`, `cli/replay_canonical_lifecycle.py` | Focused start/idempotency/resume/replay/safety JSON tests plus local repository-wide gate | Structured local CLI; starts research lifecycle and never creates ManualTrade/Fill/order or invokes Broker | No risk-continuation constructor CLI and no operator authentication/control plane | Preserve stable exits and explicit authority binding; extend only with complete typed inputs |
 | Exploratory Daily Loop | IMPLEMENTED_EXPLORATORY | `application/daily_loop/runner.py`, daily CLI | Prior single/ten-session replay evidence | Smoke pool and exploratory providers | Real 14:55 successful archive absent | Run controlled daily shadow schedule |
 | Daily Decision Artifact | IMPLEMENTED | `daily_decision/artifact.py`, Readers | Prior exact-file/checksum/replay tests plus current full regression | Research decision artifact only | Qualified operating evidence absent | Preserve in exact-commit CI |
 | Candidate Recommendation | IMPLEMENTED_PRESENTATION_ONLY | `daily_decision/recommendation.py` | Prior projection tests | Not trading authority | No validated Entry Model | Keep separate from Entry and orders |
@@ -63,7 +71,7 @@
 | Authentication and RBAC | NOT_IMPLEMENTED_PRODUCTION | No confirmed canonical owner | None | `actor` is a string, not authenticated identity | Role/permission model absent | Design operator, approver and reconciliation roles |
 | Metrics, tracing and alerts | NOT_IMPLEMENTED_PRODUCTION | Reason codes/artifacts only | None | No operational observability stack | H8 absent | Add stage metrics, trace IDs and alerts |
 | PostgreSQL lifecycle parity | NOT_IMPLEMENTED | Optional dependency only | None | SQLite local/test authority | Repository parity and deployment | Implement contract-tested PostgreSQL adapters |
-| Shadow Operations | NOT_IMPLEMENTED | No `ShadowRun` owner | None | No sustained run claim | H4–H7 and control plane | Implement H8 after dependency closure |
+| Shadow Operations | PARTIAL_RUNTIME_FOUNDATION_ONLY | Canonical lifecycle Runner/journal on development branch; no scheduler/control plane | Focused runtime tests exist; no sustained run evidence | Recoverable single-run mechanics do not establish H8 or Shadow readiness | H7, operator workflow, deadlines, metrics, alerts and sustained schedule absent | Implement H8 control plane after dependency closure |
 | Formal PIT/OOS Alpha | NOT_ESTABLISHED | Research protocols and negative results only | No current formal winning run | No return promise or model authority | Qualified future data and locked protocol | Implement H9 and run formal studies |
 | Live broker execution | NOT_AUTHORIZED_NOT_IMPLEMENTED | Placeholder adapters reject orders | Safe-fail behavior only | No trading authority | Security, reconciliation, kill switch and approval | Separate future architecture decision |
 
@@ -88,3 +96,18 @@ REMOTE_GITHUB_ACTIONS_FOR_H4_5 = NOT_YET_CLAIMED
 ```
 
 H4, H4.5, H5 and H6 are verified engineering capabilities only. The matrix still does not establish Shadow readiness, production readiness, formal PIT/OOS Alpha or trading authority.
+
+For the canonical-runtime development branch, the local repository-wide gate
+passed: documentation authority/link checks, 8 documentation tests, 23 platform
+tests, the full pytest suite (1967 tests collected), Ruff, mypy over 298 source
+files, and both sdist and wheel builds. The full pytest run emitted six existing
+pandas `PerformanceWarning` messages and no test failures. These results do not
+represent remote CI or production admission and are separate from the historical
+H4.5 checkpoint totals above.
+
+```text
+automatic_order_execution = false
+broker_integration_proven = false
+entry_model_empirically_validated = false
+production_ready = false
+```

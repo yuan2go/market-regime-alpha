@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Canonical documentation entry point and authority policy  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-01  
+> **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** constitution/**, architecture/**, research/**, specs/**, status/**, roadmap/**, audit/**, archive/**  
@@ -20,7 +20,7 @@ Use this order to determine what the project **should** do:
 ```text
 1. Latest explicit user decision that has not been superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–11 and architecture/domains/**
+3. docs/architecture/00–12 and architecture/domains/**
 4. docs/research/Current-Research-Program.md and focused current research programs
 5. docs/specs/** and docs/roadmap/work-packages/**
 6. HISTORICAL/SUPERSEDED material for context only
@@ -73,6 +73,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Platform Architecture V2](architecture/09-Platform-Architecture-V2.md)
 - [Production Decision Lifecycle](architecture/10-Production-Decision-Lifecycle.md)
 - [Production Lifecycle Hardening and Shadow Operations](architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md)
+- [Canonical Runtime and Legacy Model Migration](architecture/12-Canonical-Runtime-and-Legacy-Migration.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
 
 ### Current research
@@ -111,6 +112,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [H6 Composite Operational Evidence Implementation Plan](superpowers/plans/2026-08-04-h6-composite-operational-evidence.md)
 - [H4.5 Risk-Reduction Manual Intent Design](superpowers/specs/2026-08-04-h4-5-risk-reduction-manual-intent-design.md)
 - [H4.5 Risk-Reduction Manual Intent Implementation Plan](superpowers/plans/2026-08-04-h4-5-risk-reduction-manual-intent.md)
+- [Canonical Runtime and Legacy Model Migration Infrastructure Design](superpowers/specs/2026-08-04-canonical-runtime-and-legacy-migration-design.md)
+- [Canonical Runtime and Legacy Model Migration Implementation Plan](superpowers/plans/2026-08-04-canonical-runtime-and-legacy-migration.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)

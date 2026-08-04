@@ -8,6 +8,8 @@ import pandas as pd
 import pytest
 
 from market_regime_alpha.data_sources.a_share_bars import LatestQuote
+from market_regime_alpha.migration.legacy.adapters import tencent_dividend_t
+from market_regime_alpha.research import tencent_composite_dividend_t
 from market_regime_alpha.research.tencent_composite_dividend_t import (
     CompositeFrameProvider,
     refresh_dividend_t_from_composite,
@@ -15,6 +17,17 @@ from market_regime_alpha.research.tencent_composite_dividend_t import (
 
 
 TZ = ZoneInfo("Asia/Shanghai")
+
+
+def test_historical_module_is_a_compatibility_facade() -> None:
+    assert (
+        tencent_composite_dividend_t.CompositeFrameProvider
+        is tencent_dividend_t.CompositeFrameProvider
+    )
+    assert (
+        tencent_composite_dividend_t.refresh_dividend_t_from_composite
+        is tencent_dividend_t.refresh_dividend_t_from_composite
+    )
 
 
 def _frame(symbol: str = "000001.SZ") -> pd.DataFrame:

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from market_regime_alpha.core.identity import ArtifactId, ManualTradeId, PositionBookId
+from market_regime_alpha.core.identity import (
+    ArtifactId,
+    ManualTradeId,
+    PositionBookId,
+    PositionSnapshotId,
+)
 from market_regime_alpha.decision.opportunity import TradingOpportunity
 from market_regime_alpha.decision.thesis import TradingThesis
 from market_regime_alpha.execution.manual import Fill, ManualTradeRecord
@@ -26,6 +31,7 @@ from market_regime_alpha.portfolio.lifecycle import (
     TargetPosition,
 )
 from market_regime_alpha.position.assessment import ExitAssessment
+from market_regime_alpha.position.authority import PositionSnapshot
 
 
 class ManualExecutionRepository(Protocol):
@@ -116,6 +122,17 @@ class RiskReductionManualIntentRepository(
     def get_confirmation_attempt(
         self, attempt_id: ArtifactId
     ) -> RiskReductionConfirmationAttempt: ...
+
+    def get_confirmed_risk_reduction(
+        self, risk_reducing_decision_id: ArtifactId
+    ) -> RiskReductionConfirmationResult | None: ...
+
+    def get_fill_derived_position(
+        self,
+        risk_reducing_decision_id: ArtifactId,
+        *,
+        position_snapshot_id: PositionSnapshotId | None = None,
+    ) -> PositionSnapshot | None: ...
 
     def confirm_risk_reduction(
         self, command: RiskReductionConfirmationCommand

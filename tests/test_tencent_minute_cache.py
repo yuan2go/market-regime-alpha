@@ -14,14 +14,28 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from market_regime_alpha.data_sources.tencent_minute_cache import (  # noqa: E402
+    DEFAULT_TENCENT_CACHE_DB,
     TENCENT_1M_TABLE,
     is_a_share_market_session,
     normalize_tencent_1min_payload,
     write_tencent_1min_cache,
 )
+from market_regime_alpha.data_sources.storage_paths import (  # noqa: E402
+    DEFAULT_RESEARCH_DIR,
+)
+from market_regime_alpha.dividend_t.storage import (  # noqa: E402
+    DEFAULT_RESEARCH_DIR as LEGACY_RESEARCH_DIR,
+)
 
 
 class TencentMinuteCacheTests(unittest.TestCase):
+    def test_default_cache_path_comes_from_neutral_storage_module(self) -> None:
+        self.assertEqual(
+            DEFAULT_TENCENT_CACHE_DB,
+            DEFAULT_RESEARCH_DIR / "research.duckdb",
+        )
+        self.assertEqual(DEFAULT_RESEARCH_DIR, LEGACY_RESEARCH_DIR)
+
     def test_normalize_tencent_1min_payload_outputs_incremental_volume(self) -> None:
         payload = {
             "code": 0,

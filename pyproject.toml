@@ -45,6 +45,7 @@ market_regime_alpha = [
     "position/migrations/*.sql",
     "execution/migrations/*.sql",
     "application/operational_research/migrations/*.sql",
+    "application/canonical_lifecycle/migrations/*.sql",
 ]
 
 [tool.pytest.ini_options]
@@ -90,6 +91,9 @@ files = [
     "src/market_regime_alpha/features/contracts.py",
     "src/market_regime_alpha/features/rehearsal_baselines.py",
     "src/market_regime_alpha/features/daily_pipeline.py",
+    "src/market_regime_alpha/features/model_contracts.py",
+    "src/market_regime_alpha/features/artifact.py",
+    "src/market_regime_alpha/features/technical",
     "src/market_regime_alpha/candidates/contracts.py",
     "src/market_regime_alpha/candidates/dataset.py",
     "src/market_regime_alpha/candidates/panel.py",
@@ -129,6 +133,7 @@ files = [
     "src/market_regime_alpha/application/__init__.py",
     "src/market_regime_alpha/application/research_layer",
     "src/market_regime_alpha/application/operational_research",
+    "src/market_regime_alpha/application/canonical_lifecycle",
     "src/market_regime_alpha/application/trading_lifecycle/risk_reduction_lineage.py",
     "src/market_regime_alpha/application/trading_lifecycle/sqlite_risk_reduction.py",
     "src/market_regime_alpha/application/daily_loop/__init__.py",

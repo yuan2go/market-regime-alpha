@@ -14,7 +14,12 @@ from market_regime_alpha.application.operational_research.composite_artifact imp
 from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
     SQLiteCompositeOperationalRepository,
 )
-from market_regime_alpha.core.identity import ArtifactId, ManualTradeId
+from market_regime_alpha.core.identity import (
+    ArtifactId,
+    ManualTradeId,
+    PositionSnapshotId,
+)
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.decision.opportunity import (
     OpportunityState,
     TradingOpportunity,
@@ -53,6 +58,7 @@ from market_regime_alpha.execution.sqlite_traceability import (
 )
 from market_regime_alpha.portfolio.risk_routes import (
     RiskChangeKind,
+    RiskReducingDecision,
     RiskReducingDecisionState,
     RiskReducingExecutionGate,
     VerifiedRiskReducingDecisionBundle,
@@ -64,6 +70,7 @@ from market_regime_alpha.position.assessment import ExitAssessment
 from market_regime_alpha.position.authority import (
     PositionProjector,
     PositionSnapshot,
+    SymbolTradingSessionStatus,
 )
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
@@ -74,6 +81,9 @@ from market_regime_alpha.position.thesis_health import (
 from market_regime_alpha.application.trading_lifecycle.risk_reduction_lineage import (
     build_operational_exit_directive_v2,
     validate_h5_h6_operational_lineage,
+)
+from market_regime_alpha.application.trading_lifecycle.risk_reduction_confirmation import (
+    RiskReductionConfirmationIdempotencyConflict,
 )
 
 
@@ -191,6 +201,144 @@ class SQLiteRiskReductionManualIntentRepository(
         with self._connect() as connection:
             return _load_attempt(connection, attempt_id)[0]
 
+    def get_confirmed_risk_reduction(
+        self, risk_reducing_decision_id: ArtifactId
+    ) -> RiskReductionConfirmationResult | None:
+        """Read the unique durable H4.5 confirmation for one H4 decision.
+
+        This query is the observation seam used by resumable orchestration.  It
+        deliberately does not run the confirmation service and therefore can
+        neither create a ManualTrade nor mutate Fill authority.
+        """
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT attempt_id
+                FROM risk_reduction_confirmation_attempts
+                WHERE risk_reducing_decision_id = ?
+                  AND state = 'CONFIRMED_INTENT'
+                ORDER BY created_at, attempt_id
+                """,
+                (str(risk_reducing_decision_id),),
+            ).fetchall()
+            if not rows:
+                return None
+            if len(rows) != 1:
+                raise ValueError(
+                    "risk-reducing decision has ambiguous confirmed intent"
+                )
+            attempt, current_position = _load_attempt(
+                connection, ArtifactId(str(rows[0]["attempt_id"]))
+            )
+            if (
+                attempt.state
+                is not RiskReductionConfirmationState.CONFIRMED_INTENT
+                or attempt.risk_reducing_decision_id
+                != risk_reducing_decision_id
+                or attempt.manual_trade_id is None
+            ):
+                raise ValueError("confirmed H4.5 projection is inconsistent")
+            trade = _load_trade(connection, attempt.manual_trade_id)
+            self._validate_loaded_trade(connection, trade)
+            if (
+                trade.manual_trade_id != attempt.manual_trade_id
+                or trade.risk_reducing_decision_id
+                != attempt.risk_reducing_decision_id
+                or trade.risk_reducing_decision_hash
+                != attempt.risk_reducing_decision_hash
+                or trade.risk_reduction_confirmation_id != attempt.attempt_id
+                or trade.risk_reduction_confirmation_hash
+                != attempt.content_hash
+            ):
+                raise ValueError("confirmed H4.5 ManualTrade lineage is inconsistent")
+            return RiskReductionConfirmationResult(
+                attempt=attempt,
+                current_position=current_position,
+                manual_trade=trade,
+                outcome="MANUAL_INTENT_CREATED",
+            )
+
+    def get_fill_derived_position(
+        self,
+        risk_reducing_decision_id: ArtifactId,
+        *,
+        position_snapshot_id: PositionSnapshotId | None = None,
+    ) -> PositionSnapshot | None:
+        """Load a current or historical Fill-derived Position projection.
+
+        The confirmed H4.5 attempt stores the exact TradingCalendar and symbol
+        session evidence used by the manual intent.  Historical snapshots are
+        replayed from every append-only Fill prefix, so a settled lifecycle
+        reference remains loadable after later Fill records are appended.
+        """
+
+        result = self.get_confirmed_risk_reduction(risk_reducing_decision_id)
+        if result is None:
+            return None
+        trade = result.manual_trade
+        if trade is None or trade.position_book_id is None:
+            raise ValueError("confirmed H4.5 result has no PositionBook binding")
+        reducing_fills = self.fills_for_trade(trade.manual_trade_id)
+        if not reducing_fills:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT trading_calendar_json, symbol_trading_status_json
+                FROM risk_reduction_confirmation_attempts
+                WHERE attempt_id = ? AND state = 'CONFIRMED_INTENT'
+                """,
+                (str(result.attempt.attempt_id),),
+            ).fetchone()
+            if row is None:
+                raise ValueError("confirmed H4.5 Reader evidence is missing")
+        calendar = TradingCalendarArtifact.from_canonical_dict(
+            _object_json(str(row["trading_calendar_json"]))
+        )
+        status_payload = _object_json(str(row["symbol_trading_status_json"]))
+        status_items = status_payload.get("items")
+        if not isinstance(status_items, list) or any(
+            not isinstance(item, dict) for item in status_items
+        ):
+            raise ValueError("stored H4.5 symbol status evidence is invalid")
+        statuses = tuple(
+            SymbolTradingSessionStatus.from_canonical_dict(item)
+            for item in status_items
+        )
+        book = self.get_position_book(trade.position_book_id)
+        trades = self.trades_for_book(book.position_book_id)
+        fills = self.fills_for_book(book.position_book_id)
+        prefixes = (
+            (fills,)
+            if position_snapshot_id is None
+            else tuple(fills[:index] for index in range(1, len(fills) + 1))
+        )
+        reducing_fill_ids = {item.fill_id for item in reducing_fills}
+        for prefix in prefixes:
+            if not reducing_fill_ids.intersection(
+                item.fill_id for item in prefix
+            ):
+                continue
+            position_as_of = max(
+                result.attempt.confirmed_at,
+                *(item.recorded_at for item in prefix),
+            )
+            position = PositionProjector().project_book_t_plus_one(
+                book=book,
+                trades=trades,
+                fills=prefix,
+                calendar=calendar,
+                symbol_session_statuses=statuses,
+                as_of=position_as_of,
+            )
+            if (
+                position_snapshot_id is None
+                or position.snapshot_id == position_snapshot_id
+            ):
+                return position
+        raise KeyError(f"unknown Fill-derived PositionSnapshot: {position_snapshot_id}")
+
     def confirm_risk_reduction(
         self, command: RiskReductionConfirmationCommand
     ) -> RiskReductionConfirmationResult:
@@ -250,6 +398,10 @@ class SQLiteRiskReductionManualIntentRepository(
                     and directive.content_hash == command.exit_directive_hash
                     and directive_row["risk_reducing_decision_id"]
                     == str(decision.decision_id)
+                )
+                decision_is_latest_same_scope = _is_latest_same_scope_decision(
+                    connection,
+                    decision,
                 )
 
                 book = self.get_position_book(decision.position_book_id)
@@ -318,6 +470,9 @@ class SQLiteRiskReductionManualIntentRepository(
                     composite=composite,
                     decision_reference_matches=decision_reference_matches,
                     directive_reference_matches=directive_reference_matches,
+                    decision_is_latest_same_scope=(
+                        decision_is_latest_same_scope
+                    ),
                 )
                 if failure is not None:
                     state, reason_codes = failure
@@ -401,6 +556,7 @@ class SQLiteRiskReductionManualIntentRepository(
         composite: VerifiedCompositeOperationalManifest,
         decision_reference_matches: bool,
         directive_reference_matches: bool,
+        decision_is_latest_same_scope: bool,
     ) -> tuple[RiskReductionConfirmationState, tuple[str, ...]] | None:
         decision = risk_bundle.decision
         source = risk_bundle.position
@@ -415,6 +571,11 @@ class SQLiteRiskReductionManualIntentRepository(
             return (
                 RiskReductionConfirmationState.DATA_INSUFFICIENT,
                 ("OPERATIONAL_EXIT_DIRECTIVE_REFERENCE_MISMATCH",),
+            )
+        if not decision_is_latest_same_scope:
+            return (
+                RiskReductionConfirmationState.BLOCKED_ON_RECHECK,
+                ("RISK_REDUCING_DECISION_SUPERSEDED",),
             )
         if decision.state is RiskReducingDecisionState.DATA_INSUFFICIENT:
             return (
@@ -869,7 +1030,9 @@ def _resolve_confirmation_command(
     if row is None:
         return None
     if row["command_hash"] != command.command_hash:
-        raise ValueError("idempotency key reused for different H4.5 command")
+        raise RiskReductionConfirmationIdempotencyConflict(
+            "idempotency key reused for different H4.5 command"
+        )
     attempt, current_position = _load_attempt(
         connection, ArtifactId(str(row["attempt_id"]))
     )
@@ -888,6 +1051,45 @@ def _resolve_confirmation_command(
             else attempt.state.value
         ),
     )
+
+
+def _is_latest_same_scope_decision(
+    connection: sqlite3.Connection,
+    decision: RiskReducingDecision,
+) -> bool:
+    """Resolve same-book, same-Thesis, same-symbol supersession deterministically."""
+
+    rows = connection.execute(
+        """
+        SELECT decision_id, position_book_id, thesis_id, decision_json,
+               assessed_at AS created_at
+        FROM risk_reducing_decisions
+        WHERE position_book_id = ? AND thesis_id = ?
+        ORDER BY created_at, decision_id
+        """,
+        (str(decision.position_book_id), str(decision.thesis_id)),
+    ).fetchall()
+    same_scope: list[RiskReducingDecision] = []
+    for row in rows:
+        candidate = RiskReducingDecision.from_canonical_dict(
+            _object_json(str(row["decision_json"]))
+        )
+        if (
+            row["decision_id"] != str(candidate.decision_id)
+            or row["position_book_id"] != str(candidate.position_book_id)
+            or row["thesis_id"] != str(candidate.thesis_id)
+            or row["created_at"] != candidate.assessed_at.isoformat()
+        ):
+            raise ValueError("risk-reducing decision scope projection is invalid")
+        if candidate.symbol == decision.symbol:
+            same_scope.append(candidate)
+    if not any(item.decision_id == decision.decision_id for item in same_scope):
+        raise ValueError("risk-reducing decision is missing from its durable scope")
+    latest = max(
+        same_scope,
+        key=lambda item: (item.assessed_at, str(item.decision_id)),
+    )
+    return latest.decision_id == decision.decision_id
 
 
 def _load_directive(

@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
+> **Code Evidence:** Canonical runtime/migration development branch implementation with the local repository-wide engineering gate passed; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps
@@ -32,7 +32,7 @@
 | H4_V2_REDUCE_REQUIRES_POSITIVE_REMAINDER | P2 | H4 V1 still permits `REDUCE target_quantity=0`; H4.5 preserves replay but rejects confirmation with `ACTION_SEMANTICS_CONFLICT` and `REQUIRES_NEW_EXIT_DECISION` | Explicit H4 V2 schema/semantic migration | H4 V2 enforces `0 < target_quantity < current_quantity` for REDUCE and `target_quantity=0` for EXIT while V1 replay remains immutable |
 | H4.5 operator authentication | P1 | Confirmation policy and attempts explicitly emit `OPERATOR_AUTHENTICATION_NOT_ESTABLISHED`; actor is audit text only | Authentication/RBAC design | Confirmation binds an authenticated principal/role and verifiable audit identity without rewriting historical attempts |
 | Manual invalidation authentication | P1 | H5 ManualInvalidationEvidence binds actor/reason/time and content identity but actor authentication is not established | Authentication/RBAC design | Evidence carries authenticated principal/role and verifiable audit identity without changing historical V1/V2 content |
-| H8 recoverable ShadowRun | P1 | Daily research, operational research, Signal/Path, Decision, Risk, Fill and Review are separate CLIs; no whole-lifecycle run owner exists | H4–H7 | ShadowRun has stage receipts, retries, resume, deadlines, operator acknowledgement, metrics, alerts and deterministic replay |
+| H8 sustained Shadow operations | P1 | The development branch has a single-run Lifecycle owner, migration-011 stage receipts, one-snapshot history reads, retry/resume and captured-source durable replay; it has no scheduler/control plane, lease owner, deadlines, operator acknowledgement, metrics, alerts or sustained run evidence | Canonical runtime plus H7 | A scheduled Shadow operation proves consecutive runs, operator deadlines/acknowledgements, metrics/alerts, recovery drills and replay without changing authority ceilings |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
 | PostgreSQL repository parity | P1 | Lifecycle persistence is SQLite local/test authority | Stable Repository protocols and contract suite | PostgreSQL adapters pass the same concurrency, idempotency, reconstruction and migration contract tests |
@@ -64,7 +64,20 @@
 | PathForecast calibration | P1 | MFE/MAE, barriers and quantiles exist without validated profile or event probability | H9 and qualified samples | Horizon/barrier profile is selected only from training data and evaluated on locked OOS |
 | Risk parameter validation | P1 | Risk constraints are explicit engineering fixtures | Shadow account/position/outcome sample | Limits are approved through a versioned protocol with sensitivity and incident review |
 | Holding/Exit parameter validation | P1 | Actions and contracts exist with synthetic profiles | H5/H7/H8 and closed shadow trades | Frozen configurations are evaluated by regime/theme/liquidity slices without causal overclaim |
+| WP-MIG-01 Technical Observable Migration | P1 | Isolation, contracts, differential harness and one Decimal simple-moving-average example exist; the Legacy model families are not migrated | Qualified normalized datasets and model-specific comparison policies | MACD, broader Moving Average, Volume Structure, Force Ratio, Chan Features and Tuishen Volume-Price Features each have a pure canonical Feature, isolated adapter, explicit differences, verified Artifact/Reader and replay evidence |
 | Formal PIT/OOS Alpha | P0-RESEARCH | No model has current formal winning evidence | Qualified data, H9 and locked protocol | Formal study publishes immutable protocol, access history, results and negative outcomes; no data reuse violation |
+
+WP-MIG-01 must remain observable-first. Its explicit backlog is:
+
+- MACD;
+- Moving Average beyond the delivered simple example;
+- Volume Structure;
+- Force Ratio;
+- Chan Features;
+- Tuishen Volume-Price Features.
+
+It does not authorize migration of complete buy/sell points, risk, position
+sizing, COSCO strategy behavior or any Legacy Broker path.
 
 ## 5. Product, security and operations gaps
 
@@ -98,6 +111,14 @@ The following are not open implementation gaps, although their operating/model e
   T+1/Gate recheck, reducing Fill compatibility and reference-only CLI;
 - H5 typed invalidation rules, verified current-evidence Builder, V2 Observation, migration 008, SQLite replay, V2-only CLI and thin operational assessment adapter;
 - H6 typed composition policy/manifest, exact immutable package, migration 009, append-only SQLite replay index, V2-only operational research route and H5 integration;
+- canonical 16-stage Runner, migration-011 Lifecycle Runtime Journal,
+  idempotent/recoverable stage receipts, single-snapshot history reads and
+  captured-source durable replay with pure model recomputation and read-only
+  ManualTrade verification on the development branch, with the local
+  repository-wide engineering gate passed;
+- canonical-to-Legacy import enforcement, role-specific migration Protocols,
+  differential comparison/report replay and the Decimal simple-moving-average
+  example on the development branch;
 - append-only manual Fill ledger;
 - exploratory Holding/Exit, TradeOutcome and rolling diagnostics.
 
@@ -109,7 +130,7 @@ Delivered mechanics must not be upgraded to production, Alpha or trading-authori
 P0 lockfile and remote CI enforcement
 → H7 durable Holding/Exit
 → qualified H6 operational package production
-→ H8 recoverable ShadowRun
+→ H8 sustained Shadow operations and control plane
 → qualified 14:55/Universe/Theme/Capital/account evidence
 → H9 formal validation infrastructure
 → sustained shadow evidence
@@ -118,3 +139,12 @@ P0 lockfile and remote CI enforcement
 ```
 
 Do not start production UI or live broker integration while the ShadowRun/evidence/validation layers remain incomplete. H4.5 completion creates only a manual intent and does not authorize an order, Fill or broker action.
+
+The gap register retains these admission facts:
+
+```text
+automatic_order_execution = false
+broker_integration_proven = false
+entry_model_empirically_validated = false
+production_ready = false
+```

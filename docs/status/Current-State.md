@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
+> **Code Evidence:** Canonical runtime development branch `src/market_regime_alpha/application/canonical_lifecycle/**`, migration 011, migration contracts/adapters/comparison and their focused tests; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -45,6 +45,24 @@ from fresh execution evidence and atomically records the immutable confirmation
 attempt, route binding, intent and command. It creates no Fill, Broker Order,
 Position mutation or trading authority.
 
+The canonical-runtime development branch adds a 16-stage
+`CanonicalDecisionLifecycleRunner` and a distinct migration-011 Lifecycle
+Runtime Journal. The Runner stores typed references to existing domain
+authorities and calls their Readers, Repositories and Application Services; it
+does not copy their rules. A normal research run currently reaches verified
+Research, Signal and PathForecast mechanics and then honestly stops at
+`BLOCKED_BY_MODEL_VALIDATION` because Entry validation is absent. A separately
+scoped H4 continuation verifies existing risk authorities and then waits for
+external H4.5 human confirmation, an existing ManualTrade and a separately
+human-recorded Fill.
+
+The same branch establishes an enforced canonical-to-Legacy import boundary,
+four role-specific migration Protocols, a policy-driven differential harness,
+and one Decimal simple-moving-average Feature/Legacy-adapter/replay example.
+These are migration mechanics, not evidence that MACD, the broader moving
+average family, Volume Structure, Force Ratio, Chan or Tuishen models have been
+migrated or validated.
+
 ## 2. Current stage
 
 ```text
@@ -67,6 +85,12 @@ H5_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
 H6_COMPOSITE_OPERATIONAL_EVIDENCE_IMPLEMENTED_AND_VERIFIED
 H6_RESEARCH_INPUT_BUNDLE_V2_IMPLEMENTED
 H6_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
+CANONICAL_LIFECYCLE_RUNTIME_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
+LIFECYCLE_RUNTIME_JOURNAL_MIGRATION_011_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
+CANONICAL_LEGACY_IMPORT_BOUNDARY_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
+ROLE_SPECIFIC_MODEL_MIGRATION_CONTRACTS_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
+SIMPLE_MOVING_AVERAGE_MIGRATION_EXAMPLE_IMPLEMENTED_ON_DEVELOPMENT_BRANCH
+CANONICAL_RUNTIME_BRANCH_LOCAL_ENGINEERING_GATE_VERIFIED
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -325,6 +349,62 @@ Implemented on prior verified checkpoints:
 
 No component contacts a broker or treats recorded Fill as broker authority.
 
+### 3.14 Canonical Lifecycle Runtime Journal
+
+Implemented on the canonical-runtime development branch:
+
+- one Runner with the exact ordered stages Evidence, Research, Signal,
+  Forecast, Entry, Opportunity, Thesis, Portfolio/Risk, Risk Reduction, Manual
+  Confirmation, ManualTrade, Fill/Position, Thesis Health, Holding, Exit and
+  Outcome/Review;
+- explicit `CANONICAL_DECISION_LIFECYCLE`,
+  `RISK_REDUCTION_CONTINUATION` and source-bound durable `REPLAY` run types;
+- immutable commands with deterministic run identity, typed object/config/model
+  references and command-hash conflict rejection;
+- migration 011 tables for run and stage projections, append-only attempts,
+  immutable receipts and gap-free event history;
+- `BEGIN IMMEDIATE` transactions, version compare-and-set and monotonic claim
+  tokens for stale-writer rejection, plus one-snapshot read transactions for
+  multi-query journal history;
+- recover-before-execute behavior, explicit failure/resume, no overwrite of
+  completed stages and no implicit retry on duplicate invocation;
+- durable replay that creates an independent journal run, recomputes registered
+  pure/model Artifacts, compares cross-run Receipt fingerprints and reloads
+  ManualTrade read-only without invoking business handlers, H4.5 confirmation,
+  Fill creation or a Broker; the exact source view is captured before journal
+  mutation through a crash-atomic immutable publish, so interrupted replay
+  remains recoverable after the source advances; Command V2 and LifecycleRun V1
+  journal JSON remain readable after the replay linkage schema increment;
+- structured module CLIs for start/resume/durable replay with stable exit
+  codes and explicit `NO_ORDER_CREATED`, `BROKER_NOT_INVOKED`,
+  `NO_FILL_CREATED` and admission-ceiling fields.
+
+The Runner does not remove every operator boundary. H4.5 confirmation and Fill
+recording remain external manual actions. Opportunity approval inputs,
+complete-account Portfolio/Risk inputs and durable H7 assessment authorities
+must be explicitly persisted; they are never synthesized to advance a run.
+
+### 3.15 Legacy model migration infrastructure
+
+Implemented on the canonical-runtime development branch:
+
+- an AST architecture test that prevents canonical modules from importing
+  `market_regime_alpha.dividend_t` directly;
+- isolated `migration.legacy` normalization/adapters that may call Legacy but
+  cannot write canonical Repositories or create trade lifecycle objects;
+- independent `FeatureComputer`, `ResearchModel`, `SignalModel` and
+  `DecisionModel` contracts, with Signal and Decision semantics capped below
+  execution;
+- `ModelComparisonReport` and differential classification for exact,
+  field-tolerated, expected semantic, Legacy-defect, canonical-regression,
+  insufficient-data and non-comparable outcomes;
+- a content-addressed Decimal simple-moving-average Feature Artifact, exact
+  Legacy pandas adapter, verified Reader and deterministic replay test.
+
+This example remains `RESEARCH_ONLY`, `UNVALIDATED` and
+`NO_TRADING_AUTHORITY`. It does not convert a technical observable into a buy
+or sell action.
+
 ## 4. Persistence, transactions and consistency
 
 Implemented SQLite repositories generally use:
@@ -338,16 +418,20 @@ Implemented SQLite repositories generally use:
 - restore by replaying and validating history;
 - recomputation of Risk before accepting caller-supplied decisions.
 
+Migration 011 applies the same discipline to cross-domain orchestration while
+keeping domain objects in their existing authorities. Its claim token is a
+local fencing-shaped primitive only; lease ownership and distributed scheduling
+are not implemented.
+
 This is a strong single-machine engineering boundary. It is not multi-process or distributed production authority.
 
 Not implemented:
 
 - PostgreSQL parity for the full lifecycle;
-- distributed lease/fencing semantics;
+- distributed leases and multi-instance ownership;
 - cross-database or file/database transactions;
 - outbox/message delivery guarantees;
-- durable whole-lifecycle Saga;
-- multi-instance Shadow operations.
+- multi-instance or sustained scheduled Shadow operations.
 
 ## 5. Frontend, scheduler and broker boundary
 
@@ -393,6 +477,30 @@ The CI workflow runs docs validation, pytest, Ruff, configured mypy and
 not claimed until the Draft PR jobs complete; required-check branch protection
 was not inspected.
 
+### 6.3 Canonical-runtime development branch verification
+
+Focused tests exist for state transitions, command idempotency/hash conflict,
+migration-011 schema integrity, attempts/receipts/history, failure recovery,
+research/Entry blocking, H4 continuation observation, manual confirmation,
+ManualTrade/Fill boundaries, Legacy imports, role-specific contracts,
+differential classification and Feature replay.
+
+The final branch-wide commands were observed locally on the canonical-runtime
+development branch:
+
+```text
+python scripts/check_docs_links.py = PASS
+python -m pytest -q tests/scripts/test_check_docs_links.py = 8 passed
+python -m pytest -q tests/platform = 23 passed
+python -m pytest -q = PASS, 1967 tests collected, 6 existing pandas PerformanceWarnings
+python -m ruff check . = PASS
+python -m mypy = PASS, 298 source files
+python -m build = PASS, sdist and wheel built
+```
+
+These are local engineering checks, not remote CI, sustained Shadow evidence,
+formal model validation, Broker authority or production admission.
+
 ## 7. Not implemented as production authority
 
 - qualified operational Theme/Capital/PIT mapping evidence;
@@ -403,7 +511,8 @@ was not inspected.
 - sustained real 14:55 Shadow runs;
 - qualified real Composite Operational Evidence packages and producer identity;
 - durable Holding/Exit schedules and acknowledgement state;
-- recoverable ShadowRun queues, receipts, metrics, tracing and alerts;
+- sustained scheduled Shadow operations, operator deadlines/acknowledgements,
+  metrics, tracing and alerts;
 - production authentication, authorization and operator signatures;
 - external account/statement/Fill reconciliation;
 - PostgreSQL operational deployment;
@@ -436,7 +545,7 @@ P1 complete pre-Shadow mechanics
   → H6 Composite Evidence Manifest complete
   → H4.5 Risk-Reducing Decision to Manual Execution Bridge complete
   → H7 Durable Holding/Exit Operations
-  → H8 Recoverable ShadowRun
+  → H8 sustained Shadow operations and control plane
   → H9 Validation Infrastructure
 
 P1 establish qualified evidence
@@ -459,4 +568,13 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with verified H4, H4.5, H5 and H6 engineering checkpoints and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+> **A pre-Shadow research decision platform with verified H4, H4.5, H5 and H6 engineering checkpoints plus a development-branch canonical lifecycle/migration foundation, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+
+The canonical-runtime branch does not change these admission facts:
+
+```text
+automatic_order_execution = false
+broker_integration_proven = false
+entry_model_empirically_validated = false
+production_ready = false
+```

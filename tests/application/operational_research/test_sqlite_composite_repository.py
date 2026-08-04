@@ -162,7 +162,16 @@ def test_repository_rejects_idempotency_conflict_and_projection_tamper(
             "DROP TRIGGER composite_operational_components_no_update"
         )
         connection.execute(
-            "UPDATE composite_operational_components SET content_hash = ? LIMIT 1",
+            """
+            UPDATE composite_operational_components
+            SET content_hash = ?
+            WHERE rowid = (
+                SELECT rowid
+                FROM composite_operational_components
+                ORDER BY manifest_id, role, scope_key
+                LIMIT 1
+            )
+            """,
             ("sha256:" + "8" * 64,),
         )
     with pytest.raises(ValueError, match="component projection"):
