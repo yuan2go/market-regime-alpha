@@ -29,7 +29,7 @@ def test_offline_feature_benchmark_reports_real_measurements(
     assert payload["symbols"] == 2
     assert payload["market_bar_count"] == 134
     assert payload["feature_family_count"] == 7
-    assert payload["feature_artifact_count"] == 12
+    assert payload["feature_artifact_count"] == 14
     assert payload["cold_run_seconds"] >= 0
     assert payload["cached_run_seconds"] >= 0
     assert payload["peak_memory_bytes"] > 0
