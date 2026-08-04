@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from market_regime_alpha.core.identity import (
     ArtifactId,
@@ -18,11 +18,7 @@ from market_regime_alpha.core.identity import (
     ModelId,
 )
 from market_regime_alpha.core.status import InputAvailabilityStatus
-from market_regime_alpha.evidence.canonical import (
-    require_sha256,
-    require_text,
-    require_unique_text,
-)
+from market_regime_alpha.evidence.canonical import require_sha256, require_text, require_unique_text
 
 
 def _require_aware_time(label: str, value: datetime) -> None:
@@ -66,6 +62,24 @@ def _require_score(score: Decimal | None) -> None:
         raise TypeError("score must be a Decimal or None")
     if not score.is_finite():
         raise ValueError("score must be finite")
+
+
+def _require_configuration_parameters(
+    values: tuple[tuple[str, str], ...],
+) -> None:
+    if not isinstance(values, tuple) or any(
+        not isinstance(item, tuple) or len(item) != 2 for item in values
+    ):
+        raise TypeError("configuration_parameters must be name/value tuples")
+    names: list[str] = []
+    for name, value in values:
+        require_text("configuration parameter name", name)
+        require_text("configuration parameter value", value)
+        names.append(name)
+    if len(names) != len(set(names)):
+        raise ValueError("configuration parameter names must be unique")
+    if tuple(names) != tuple(sorted(names)):
+        raise ValueError("configuration parameters must be sorted")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +140,7 @@ class FeatureArtifact:
     limitations: tuple[str, ...]
     validation_status: str
     observations: tuple[object, ...]
+    configuration_parameters: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.artifact_id, ArtifactId):
@@ -156,6 +171,24 @@ class FeatureArtifact:
         require_text("validation_status", self.validation_status)
         if not isinstance(self.observations, tuple):
             raise TypeError("observations must be an immutable tuple")
+        _require_configuration_parameters(self.configuration_parameters)
+
+    def semantic_payload(self) -> dict[str, Any]:
+        """Return the exact payload bound by ``content_hash`` and ``artifact_id``."""
+
+        from market_regime_alpha.features.artifact import feature_artifact_payload
+
+        return feature_artifact_payload(self)
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        from market_regime_alpha.features.artifact import feature_artifact_to_dict
+
+        return feature_artifact_to_dict(self)
+
+    def verify_content_identity(self) -> None:
+        from market_regime_alpha.features.artifact import verify_feature_artifact_identity
+
+        verify_feature_artifact_identity(self)
 
 
 @runtime_checkable
@@ -168,4 +201,8 @@ class FeatureComputer(Protocol):
     def compute(self, request: FeatureComputationRequest) -> FeatureArtifact: ...
 
 
-__all__ = ["FeatureArtifact", "FeatureComputationRequest", "FeatureComputer"]
+__all__ = [
+    "FeatureArtifact",
+    "FeatureComputationRequest",
+    "FeatureComputer",
+]
