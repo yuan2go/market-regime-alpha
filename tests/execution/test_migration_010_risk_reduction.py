@@ -10,7 +10,7 @@ from market_regime_alpha.execution.sqlite_repository import (
 from market_regime_alpha.execution.sqlite_traceability import (
     EXECUTION_TRACEABILITY_UP_MIGRATION,
 )
-from market_regime_alpha.execution.sqlite_risk_reduction import (
+from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
     SQLiteRiskReductionManualIntentRepository,
 )
 
@@ -254,4 +254,60 @@ def test_repository_rejects_weak_schema_with_spoofed_migration_marker(
         )
 
     with pytest.raises(ValueError, match="table schema mismatch"):
+        SQLiteRiskReductionManualIntentRepository(path)
+
+
+def test_repository_rejects_spoofed_confirmed_intent_unique_index(tmp_path) -> None:
+    path = tmp_path / "spoofed-unique-index.sqlite3"
+    SQLiteRiskReductionManualIntentRepository(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP INDEX one_confirmed_intent_per_reducing_decision")
+        connection.execute(
+            """
+            CREATE INDEX one_confirmed_intent_per_reducing_decision
+            ON risk_reduction_confirmation_attempts(risk_reducing_decision_id)
+            WHERE state = 'CONFIRMED_INTENT'
+            """
+        )
+
+    with pytest.raises(ValueError, match="confirmed-intent uniqueness"):
+        SQLiteRiskReductionManualIntentRepository(path)
+
+
+def test_repository_rejects_confirmed_intent_index_on_wrong_column(tmp_path) -> None:
+    path = tmp_path / "wrong-confirmed-index-column.sqlite3"
+    SQLiteRiskReductionManualIntentRepository(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP INDEX one_confirmed_intent_per_reducing_decision")
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX one_confirmed_intent_per_reducing_decision
+            ON risk_reduction_confirmation_attempts(attempt_id)
+            WHERE state = 'CONFIRMED_INTENT'
+            """
+        )
+
+    with pytest.raises(ValueError, match="confirmed-intent uniqueness"):
+        SQLiteRiskReductionManualIntentRepository(path)
+
+
+def test_repository_rejects_weak_command_foreign_keys(tmp_path) -> None:
+    path = tmp_path / "weak-command-foreign-keys.sqlite3"
+    SQLiteRiskReductionManualIntentRepository(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE risk_reduction_confirmation_commands")
+        connection.execute(
+            """
+            CREATE TABLE risk_reduction_confirmation_commands (
+                idempotency_key TEXT PRIMARY KEY,
+                command_hash TEXT NOT NULL,
+                risk_reducing_decision_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                manual_trade_id TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+    with pytest.raises(ValueError, match="foreign-key schema mismatch"):
         SQLiteRiskReductionManualIntentRepository(path)

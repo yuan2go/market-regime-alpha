@@ -24,9 +24,6 @@ from market_regime_alpha.execution.sqlite_repository import (
 from market_regime_alpha.execution.sqlite_traceability import (
     SQLiteTraceableManualExecutionRepository,
 )
-from market_regime_alpha.execution.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
-)
 
 __all__ = [
     "ExecutionDeviation",
@@ -42,7 +39,6 @@ __all__ = [
     "PositionBookState",
     "RiskReductionManualIntentRepository",
     "SQLiteManualExecutionRepository",
-    "SQLiteRiskReductionManualIntentRepository",
     "SQLiteTraceableManualExecutionRepository",
     "TraceableManualExecutionRepository",
     "TradeSide",

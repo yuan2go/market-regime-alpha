@@ -122,3 +122,74 @@ def test_cli_failed_attempt_outputs_evidence_and_null_trade(
     assert payload["source_position_snapshot_id"]
     assert payload["current_position_snapshot_id"]
     assert payload["recheck_observation_id"]
+
+
+def test_cli_unknown_decision_reference_persists_data_insufficient_attempt(
+    tmp_path, daily_decision_fixture, capsys
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    arguments = list(_arguments(tmp_path, fixture))
+    decision_index = arguments.index("--risk-reducing-decision-id") + 1
+    arguments[decision_index] = "missing-risk-reducing-decision"
+
+    assert main(arguments) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["attempt_id"]
+    assert payload["state"] == "DATA_INSUFFICIENT"
+    assert payload["reason_codes"] == [
+        "RISK_REDUCING_DECISION_HASH_MISMATCH"
+    ]
+    assert payload["source_position_snapshot_id"]
+    assert payload["current_position_snapshot_id"]
+    assert payload["recheck_observation_id"]
+    assert payload["manual_trade_id"] is None
+    assert payload["MANUAL_INTENT_CREATED"] is False
+    assert payload["NO_FILL_CREATED"] is True
+    assert payload["NO_BROKER_ORDER_CREATED"] is True
+
+
+def test_cli_unknown_directive_reference_persists_data_insufficient_attempt(
+    tmp_path, daily_decision_fixture, capsys
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    arguments = list(_arguments(tmp_path, fixture))
+    directive_index = arguments.index("--exit-directive-id") + 1
+    arguments[directive_index] = "missing-exit-directive"
+
+    assert main(arguments) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["attempt_id"]
+    assert payload["state"] == "DATA_INSUFFICIENT"
+    assert payload["reason_codes"] == [
+        "OPERATIONAL_EXIT_DIRECTIVE_REFERENCE_MISMATCH"
+    ]
+    assert payload["source_position_snapshot_id"]
+    assert payload["current_position_snapshot_id"]
+    assert payload["recheck_observation_id"]
+    assert payload["manual_trade_id"] is None
+    assert payload["MANUAL_INTENT_CREATED"] is False
+    assert payload["NO_FILL_CREATED"] is True
+    assert payload["NO_BROKER_ORDER_CREATED"] is True
+
+
+def test_cli_fully_unresolvable_authority_is_structured_command_rejection(
+    tmp_path, daily_decision_fixture, capsys
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    arguments = list(_arguments(tmp_path, fixture))
+    arguments[arguments.index("--risk-reducing-decision-id") + 1] = (
+        "missing-risk-reducing-decision"
+    )
+    arguments[arguments.index("--exit-directive-id") + 1] = (
+        "missing-exit-directive"
+    )
+
+    assert main(arguments) == 2
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["attempt_id"] is None
+    assert payload["reason_codes"] == ["AUTHORITY_REFERENCE_NOT_RESOLVED"]
+    assert payload["manual_trade_id"] is None
+    assert payload["MANUAL_INTENT_CREATED"] is False

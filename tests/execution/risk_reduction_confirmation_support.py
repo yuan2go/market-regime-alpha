@@ -70,9 +70,11 @@ from market_regime_alpha.execution.risk_reduction import (
     RiskReductionConfirmationCommand,
     RiskReductionConfirmationPolicy,
     OperatorAuthenticationRequirement,
+)
+from market_regime_alpha.application.trading_lifecycle.risk_reduction_lineage import (
     build_operational_exit_directive_v2,
 )
-from market_regime_alpha.execution.sqlite_risk_reduction import (
+from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
     SQLiteRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.forecasting import (

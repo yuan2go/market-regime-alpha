@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from math import isfinite
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import (
     ArtifactId,
@@ -32,19 +32,6 @@ from market_regime_alpha.position.authority import (
 from market_regime_alpha.portfolio.risk_routes import (
     ReducingExecutionObservation,
 )
-
-if TYPE_CHECKING:
-    from market_regime_alpha.application.operational_research.composite_artifact import (
-        VerifiedCompositeOperationalManifest,
-    )
-    from market_regime_alpha.portfolio.risk_routes import (
-        VerifiedRiskReducingDecisionBundle,
-    )
-    from market_regime_alpha.position.assessment import ExitAssessment
-    from market_regime_alpha.position.thesis_health import (
-        VerifiedThesisHealthBundle,
-    )
-
 
 OPERATIONAL_EXIT_DIRECTIVE_V2_SCHEMA = "operational-exit-directive-v2"
 RISK_REDUCTION_CONFIRMATION_POLICY_SCHEMA = (
@@ -271,8 +258,46 @@ class OperationalExitDirectiveV2:
             raise ValueError("OperationalExitDirectiveV2 identity mismatch")
 
     @classmethod
-    def create(cls, **values: Any) -> OperationalExitDirectiveV2:
-        semantic = cls.semantic_payload_for(**values)
+    def create(
+        cls,
+        *,
+        exit_assessment_id: ExitAssessmentId,
+        exit_assessment_hash: str,
+        action: PositionLifecycleAction,
+        thesis_id: ThesisId,
+        thesis_version: int,
+        opportunity_id: OpportunityId,
+        position_book_id: PositionBookId,
+        symbol: str,
+        position_snapshot_id: PositionSnapshotId,
+        position_snapshot_hash: str,
+        position_snapshot_version: int,
+        thesis_health_observation_id: ArtifactId,
+        thesis_health_observation_hash: str,
+        composite_manifest_id: ArtifactId,
+        composite_manifest_hash: str,
+        created_at: datetime,
+        reason_codes: tuple[str, ...],
+    ) -> OperationalExitDirectiveV2:
+        semantic = cls.semantic_payload_for(
+            exit_assessment_id=exit_assessment_id,
+            exit_assessment_hash=exit_assessment_hash,
+            action=action,
+            thesis_id=thesis_id,
+            thesis_version=thesis_version,
+            opportunity_id=opportunity_id,
+            position_book_id=position_book_id,
+            symbol=symbol,
+            position_snapshot_id=position_snapshot_id,
+            position_snapshot_hash=position_snapshot_hash,
+            position_snapshot_version=position_snapshot_version,
+            thesis_health_observation_id=thesis_health_observation_id,
+            thesis_health_observation_hash=thesis_health_observation_hash,
+            composite_manifest_id=composite_manifest_id,
+            composite_manifest_hash=composite_manifest_hash,
+            created_at=created_at,
+            reason_codes=reason_codes,
+        )
         digest = canonical_hash(semantic)
         return cls(
             schema_version=OPERATIONAL_EXIT_DIRECTIVE_V2_SCHEMA,
@@ -284,37 +309,68 @@ class OperationalExitDirectiveV2:
             formal_pit=FORMAL_PIT_NOT_ESTABLISHED,
             formal_oos_alpha=FORMAL_OOS_ALPHA_NOT_ESTABLISHED,
             trading_authority=TRADING_AUTHORITY_NOT_GRANTED,
-            **values,
+            exit_assessment_id=exit_assessment_id,
+            exit_assessment_hash=exit_assessment_hash,
+            action=action,
+            thesis_id=thesis_id,
+            thesis_version=thesis_version,
+            opportunity_id=opportunity_id,
+            position_book_id=position_book_id,
+            symbol=symbol,
+            position_snapshot_id=position_snapshot_id,
+            position_snapshot_hash=position_snapshot_hash,
+            position_snapshot_version=position_snapshot_version,
+            thesis_health_observation_id=thesis_health_observation_id,
+            thesis_health_observation_hash=thesis_health_observation_hash,
+            composite_manifest_id=composite_manifest_id,
+            composite_manifest_hash=composite_manifest_hash,
+            created_at=created_at,
+            reason_codes=reason_codes,
         )
 
     @staticmethod
-    def semantic_payload_for(**values: Any) -> dict[str, Any]:
+    def semantic_payload_for(
+        *,
+        exit_assessment_id: ExitAssessmentId,
+        exit_assessment_hash: str,
+        action: PositionLifecycleAction,
+        thesis_id: ThesisId,
+        thesis_version: int,
+        opportunity_id: OpportunityId,
+        position_book_id: PositionBookId,
+        symbol: str,
+        position_snapshot_id: PositionSnapshotId,
+        position_snapshot_hash: str,
+        position_snapshot_version: int,
+        thesis_health_observation_id: ArtifactId,
+        thesis_health_observation_hash: str,
+        composite_manifest_id: ArtifactId,
+        composite_manifest_hash: str,
+        created_at: datetime,
+        reason_codes: tuple[str, ...],
+    ) -> dict[str, Any]:
         return {
             "schema_version": OPERATIONAL_EXIT_DIRECTIVE_V2_SCHEMA,
-            "exit_assessment_id": str(values["exit_assessment_id"]),
-            "exit_assessment_hash": values["exit_assessment_hash"],
-            "action": values["action"].value,
+            "exit_assessment_id": str(exit_assessment_id),
+            "exit_assessment_hash": exit_assessment_hash,
+            "action": action.value,
             "required_authority_route": (
                 RequiredExitAuthorityRoute.REDUCING_RISK_DECISION.value
             ),
-            "thesis_id": str(values["thesis_id"]),
-            "thesis_version": values["thesis_version"],
-            "opportunity_id": str(values["opportunity_id"]),
-            "position_book_id": str(values["position_book_id"]),
-            "symbol": values["symbol"],
-            "position_snapshot_id": str(values["position_snapshot_id"]),
-            "position_snapshot_hash": values["position_snapshot_hash"],
-            "position_snapshot_version": values["position_snapshot_version"],
-            "thesis_health_observation_id": str(
-                values["thesis_health_observation_id"]
-            ),
-            "thesis_health_observation_hash": values[
-                "thesis_health_observation_hash"
-            ],
-            "composite_manifest_id": str(values["composite_manifest_id"]),
-            "composite_manifest_hash": values["composite_manifest_hash"],
-            "created_at": values["created_at"].isoformat(),
-            "reason_codes": list(values["reason_codes"]),
+            "thesis_id": str(thesis_id),
+            "thesis_version": thesis_version,
+            "opportunity_id": str(opportunity_id),
+            "position_book_id": str(position_book_id),
+            "symbol": symbol,
+            "position_snapshot_id": str(position_snapshot_id),
+            "position_snapshot_hash": position_snapshot_hash,
+            "position_snapshot_version": position_snapshot_version,
+            "thesis_health_observation_id": str(thesis_health_observation_id),
+            "thesis_health_observation_hash": thesis_health_observation_hash,
+            "composite_manifest_id": str(composite_manifest_id),
+            "composite_manifest_hash": composite_manifest_hash,
+            "created_at": created_at.isoformat(),
+            "reason_codes": list(reason_codes),
             "formal_pit": FORMAL_PIT_NOT_ESTABLISHED,
             "formal_oos_alpha": FORMAL_OOS_ALPHA_NOT_ESTABLISHED,
             "trading_authority": TRADING_AUTHORITY_NOT_GRANTED,
@@ -440,8 +496,30 @@ class RiskReductionConfirmationPolicy:
             raise ValueError("confirmation policy identity mismatch")
 
     @classmethod
-    def create(cls, **values: Any) -> RiskReductionConfirmationPolicy:
-        semantic = cls.semantic_payload_for(**values)
+    def create(
+        cls,
+        *,
+        profile_id: str,
+        builder_revision: str,
+        maximum_decision_age_seconds: float,
+        maximum_position_age_seconds: float,
+        maximum_execution_observation_age_seconds: float,
+        maximum_reference_price_deviation: float,
+        operator_authentication_requirement: OperatorAuthenticationRequirement,
+    ) -> RiskReductionConfirmationPolicy:
+        semantic = cls.semantic_payload_for(
+            profile_id=profile_id,
+            builder_revision=builder_revision,
+            maximum_decision_age_seconds=maximum_decision_age_seconds,
+            maximum_position_age_seconds=maximum_position_age_seconds,
+            maximum_execution_observation_age_seconds=(
+                maximum_execution_observation_age_seconds
+            ),
+            maximum_reference_price_deviation=maximum_reference_price_deviation,
+            operator_authentication_requirement=(
+                operator_authentication_requirement
+            ),
+        )
         digest = canonical_hash(semantic)
         return cls(
             schema_version=RISK_REDUCTION_CONFIRMATION_POLICY_SCHEMA,
@@ -452,30 +530,45 @@ class RiskReductionConfirmationPolicy:
             operator_authentication_limitation=(
                 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
             ),
-            **values,
+            profile_id=profile_id,
+            builder_revision=builder_revision,
+            maximum_decision_age_seconds=maximum_decision_age_seconds,
+            maximum_position_age_seconds=maximum_position_age_seconds,
+            maximum_execution_observation_age_seconds=(
+                maximum_execution_observation_age_seconds
+            ),
+            maximum_reference_price_deviation=maximum_reference_price_deviation,
+            operator_authentication_requirement=(
+                operator_authentication_requirement
+            ),
         )
 
     @staticmethod
-    def semantic_payload_for(**values: Any) -> dict[str, Any]:
+    def semantic_payload_for(
+        *,
+        profile_id: str,
+        builder_revision: str,
+        maximum_decision_age_seconds: float,
+        maximum_position_age_seconds: float,
+        maximum_execution_observation_age_seconds: float,
+        maximum_reference_price_deviation: float,
+        operator_authentication_requirement: OperatorAuthenticationRequirement,
+    ) -> dict[str, Any]:
         return {
             "schema_version": RISK_REDUCTION_CONFIRMATION_POLICY_SCHEMA,
-            "profile_id": values["profile_id"],
-            "builder_revision": values["builder_revision"],
-            "maximum_decision_age_seconds": float(
-                values["maximum_decision_age_seconds"]
-            ),
-            "maximum_position_age_seconds": float(
-                values["maximum_position_age_seconds"]
-            ),
+            "profile_id": profile_id,
+            "builder_revision": builder_revision,
+            "maximum_decision_age_seconds": float(maximum_decision_age_seconds),
+            "maximum_position_age_seconds": float(maximum_position_age_seconds),
             "maximum_execution_observation_age_seconds": float(
-                values["maximum_execution_observation_age_seconds"]
+                maximum_execution_observation_age_seconds
             ),
             "maximum_reference_price_deviation": float(
-                values["maximum_reference_price_deviation"]
+                maximum_reference_price_deviation
             ),
-            "operator_authentication_requirement": values[
-                "operator_authentication_requirement"
-            ].value,
+            "operator_authentication_requirement": (
+                operator_authentication_requirement.value
+            ),
             "operator_authentication_limitation": (
                 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
             ),
@@ -605,73 +698,176 @@ class RiskReductionConfirmationAttempt:
             raise ValueError("confirmation attempt identity mismatch")
 
     @classmethod
-    def create(cls, **values: Any) -> RiskReductionConfirmationAttempt:
-        semantic = cls.semantic_payload_for(**values)
+    def create(
+        cls,
+        *,
+        state: RiskReductionConfirmationState,
+        risk_reducing_decision_id: ArtifactId,
+        risk_reducing_decision_hash: str,
+        exit_directive_id: ArtifactId,
+        exit_directive_hash: str,
+        source_position_snapshot_id: PositionSnapshotId,
+        source_position_snapshot_hash: str,
+        current_position_snapshot_id: PositionSnapshotId,
+        current_position_snapshot_hash: str,
+        thesis_health_observation_id: ArtifactId,
+        thesis_health_observation_hash: str,
+        composite_manifest_id: ArtifactId,
+        composite_manifest_hash: str,
+        recheck_observation_id: ArtifactId,
+        recheck_observation_hash: str,
+        configuration_id: ArtifactId,
+        configuration_hash: str,
+        confirmation_policy_id: ArtifactId,
+        confirmation_policy_hash: str,
+        manual_trade_id: ManualTradeId | None,
+        actor: str,
+        reason: str,
+        confirmed_at: datetime,
+        reason_codes: tuple[str, ...],
+    ) -> RiskReductionConfirmationAttempt:
+        semantic = cls.semantic_payload_for(
+            state=state,
+            risk_reducing_decision_id=risk_reducing_decision_id,
+            risk_reducing_decision_hash=risk_reducing_decision_hash,
+            exit_directive_id=exit_directive_id,
+            exit_directive_hash=exit_directive_hash,
+            source_position_snapshot_id=source_position_snapshot_id,
+            source_position_snapshot_hash=source_position_snapshot_hash,
+            current_position_snapshot_id=current_position_snapshot_id,
+            current_position_snapshot_hash=current_position_snapshot_hash,
+            thesis_health_observation_id=thesis_health_observation_id,
+            thesis_health_observation_hash=thesis_health_observation_hash,
+            composite_manifest_id=composite_manifest_id,
+            composite_manifest_hash=composite_manifest_hash,
+            recheck_observation_id=recheck_observation_id,
+            recheck_observation_hash=recheck_observation_hash,
+            configuration_id=configuration_id,
+            configuration_hash=configuration_hash,
+            confirmation_policy_id=confirmation_policy_id,
+            confirmation_policy_hash=confirmation_policy_hash,
+            manual_trade_id=manual_trade_id,
+            actor=actor,
+            reason=reason,
+            confirmed_at=confirmed_at,
+            reason_codes=reason_codes,
+        )
         digest = canonical_hash(semantic)
         return cls(
             schema_version=RISK_REDUCTION_CONFIRMATION_ATTEMPT_SCHEMA,
             attempt_id=_content_id("risk-reduction-confirmation-attempt", digest),
             content_hash=digest,
-            **values,
+            state=state,
+            risk_reducing_decision_id=risk_reducing_decision_id,
+            risk_reducing_decision_hash=risk_reducing_decision_hash,
+            exit_directive_id=exit_directive_id,
+            exit_directive_hash=exit_directive_hash,
+            source_position_snapshot_id=source_position_snapshot_id,
+            source_position_snapshot_hash=source_position_snapshot_hash,
+            current_position_snapshot_id=current_position_snapshot_id,
+            current_position_snapshot_hash=current_position_snapshot_hash,
+            thesis_health_observation_id=thesis_health_observation_id,
+            thesis_health_observation_hash=thesis_health_observation_hash,
+            composite_manifest_id=composite_manifest_id,
+            composite_manifest_hash=composite_manifest_hash,
+            recheck_observation_id=recheck_observation_id,
+            recheck_observation_hash=recheck_observation_hash,
+            configuration_id=configuration_id,
+            configuration_hash=configuration_hash,
+            confirmation_policy_id=confirmation_policy_id,
+            confirmation_policy_hash=confirmation_policy_hash,
+            manual_trade_id=manual_trade_id,
+            actor=actor,
+            reason=reason,
+            confirmed_at=confirmed_at,
+            reason_codes=reason_codes,
         )
 
     @staticmethod
-    def semantic_payload_for(**values: Any) -> dict[str, Any]:
+    def semantic_payload_for(
+        *,
+        state: RiskReductionConfirmationState,
+        risk_reducing_decision_id: ArtifactId,
+        risk_reducing_decision_hash: str,
+        exit_directive_id: ArtifactId,
+        exit_directive_hash: str,
+        source_position_snapshot_id: PositionSnapshotId,
+        source_position_snapshot_hash: str,
+        current_position_snapshot_id: PositionSnapshotId,
+        current_position_snapshot_hash: str,
+        thesis_health_observation_id: ArtifactId,
+        thesis_health_observation_hash: str,
+        composite_manifest_id: ArtifactId,
+        composite_manifest_hash: str,
+        recheck_observation_id: ArtifactId,
+        recheck_observation_hash: str,
+        configuration_id: ArtifactId,
+        configuration_hash: str,
+        confirmation_policy_id: ArtifactId,
+        confirmation_policy_hash: str,
+        manual_trade_id: ManualTradeId | None,
+        actor: str,
+        reason: str,
+        confirmed_at: datetime,
+        reason_codes: tuple[str, ...],
+    ) -> dict[str, Any]:
         return {
             "schema_version": RISK_REDUCTION_CONFIRMATION_ATTEMPT_SCHEMA,
-            "state": values["state"].value,
-            "risk_reducing_decision_id": str(
-                values["risk_reducing_decision_id"]
-            ),
-            "risk_reducing_decision_hash": values[
-                "risk_reducing_decision_hash"
-            ],
-            "exit_directive_id": str(values["exit_directive_id"]),
-            "exit_directive_hash": values["exit_directive_hash"],
-            "source_position_snapshot_id": str(
-                values["source_position_snapshot_id"]
-            ),
-            "source_position_snapshot_hash": values[
-                "source_position_snapshot_hash"
-            ],
-            "current_position_snapshot_id": str(
-                values["current_position_snapshot_id"]
-            ),
-            "current_position_snapshot_hash": values[
-                "current_position_snapshot_hash"
-            ],
-            "thesis_health_observation_id": str(
-                values["thesis_health_observation_id"]
-            ),
-            "thesis_health_observation_hash": values[
-                "thesis_health_observation_hash"
-            ],
-            "composite_manifest_id": str(values["composite_manifest_id"]),
-            "composite_manifest_hash": values["composite_manifest_hash"],
-            "recheck_observation_id": str(values["recheck_observation_id"]),
-            "recheck_observation_hash": values["recheck_observation_hash"],
-            "configuration_id": str(values["configuration_id"]),
-            "configuration_hash": values["configuration_hash"],
-            "confirmation_policy_id": str(values["confirmation_policy_id"]),
-            "confirmation_policy_hash": values["confirmation_policy_hash"],
+            "state": state.value,
+            "risk_reducing_decision_id": str(risk_reducing_decision_id),
+            "risk_reducing_decision_hash": risk_reducing_decision_hash,
+            "exit_directive_id": str(exit_directive_id),
+            "exit_directive_hash": exit_directive_hash,
+            "source_position_snapshot_id": str(source_position_snapshot_id),
+            "source_position_snapshot_hash": source_position_snapshot_hash,
+            "current_position_snapshot_id": str(current_position_snapshot_id),
+            "current_position_snapshot_hash": current_position_snapshot_hash,
+            "thesis_health_observation_id": str(thesis_health_observation_id),
+            "thesis_health_observation_hash": thesis_health_observation_hash,
+            "composite_manifest_id": str(composite_manifest_id),
+            "composite_manifest_hash": composite_manifest_hash,
+            "recheck_observation_id": str(recheck_observation_id),
+            "recheck_observation_hash": recheck_observation_hash,
+            "configuration_id": str(configuration_id),
+            "configuration_hash": configuration_hash,
+            "confirmation_policy_id": str(confirmation_policy_id),
+            "confirmation_policy_hash": confirmation_policy_hash,
             "manual_trade_id": (
-                str(values["manual_trade_id"])
-                if values["manual_trade_id"] is not None
-                else None
+                str(manual_trade_id) if manual_trade_id is not None else None
             ),
-            "actor": values["actor"],
-            "reason": values["reason"],
-            "confirmed_at": values["confirmed_at"].isoformat(),
-            "reason_codes": list(values["reason_codes"]),
+            "actor": actor,
+            "reason": reason,
+            "confirmed_at": confirmed_at.isoformat(),
+            "reason_codes": list(reason_codes),
         }
 
     def semantic_payload(self) -> dict[str, Any]:
-        values = {
-            name: getattr(self, name)
-            for name in _ATTEMPT_SEMANTIC_FIELDS
-            if name != "schema_version"
-        }
-        return self.semantic_payload_for(**values)
+        return self.semantic_payload_for(
+            state=self.state,
+            risk_reducing_decision_id=self.risk_reducing_decision_id,
+            risk_reducing_decision_hash=self.risk_reducing_decision_hash,
+            exit_directive_id=self.exit_directive_id,
+            exit_directive_hash=self.exit_directive_hash,
+            source_position_snapshot_id=self.source_position_snapshot_id,
+            source_position_snapshot_hash=self.source_position_snapshot_hash,
+            current_position_snapshot_id=self.current_position_snapshot_id,
+            current_position_snapshot_hash=self.current_position_snapshot_hash,
+            thesis_health_observation_id=self.thesis_health_observation_id,
+            thesis_health_observation_hash=self.thesis_health_observation_hash,
+            composite_manifest_id=self.composite_manifest_id,
+            composite_manifest_hash=self.composite_manifest_hash,
+            recheck_observation_id=self.recheck_observation_id,
+            recheck_observation_hash=self.recheck_observation_hash,
+            configuration_id=self.configuration_id,
+            configuration_hash=self.configuration_hash,
+            confirmation_policy_id=self.confirmation_policy_id,
+            confirmation_policy_hash=self.confirmation_policy_hash,
+            manual_trade_id=self.manual_trade_id,
+            actor=self.actor,
+            reason=self.reason,
+            confirmed_at=self.confirmed_at,
+            reason_codes=self.reason_codes,
+        )
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -741,164 +937,6 @@ class RiskReductionConfirmationAttempt:
             confirmed_at=datetime.fromisoformat(str(payload["confirmed_at"])),
             reason_codes=_string_tuple(payload["reason_codes"], "reason_codes"),
         )
-
-
-def build_operational_exit_directive_v2(
-    *,
-    exit_assessment: ExitAssessment,
-    risk_bundle: VerifiedRiskReducingDecisionBundle,
-    health_bundle: VerifiedThesisHealthBundle,
-    composite: VerifiedCompositeOperationalManifest,
-    created_at: datetime,
-) -> OperationalExitDirectiveV2:
-    """Bind one actionable H5 assessment to verified H4/H6 authority."""
-
-    from market_regime_alpha.evidence.canonical import canonical_hash
-
-    decision = risk_bundle.decision
-    position = risk_bundle.position
-    health = health_bundle.observation
-    manifest = composite.manifest
-    validate_h5_h6_operational_lineage(
-        health_bundle=health_bundle,
-        composite=composite,
-    )
-    if (
-        exit_assessment.action.value != decision.action.value
-        or exit_assessment.position_snapshot_id != position.snapshot_id
-        or exit_assessment.position_version != position.version
-        or exit_assessment.thesis_id != decision.thesis_id
-        or exit_assessment.thesis_version != health.thesis_version
-        or exit_assessment.evidence.artifact_id != health.observation_id
-        or exit_assessment.evidence.content_hash != health.content_hash
-        or decision.position_snapshot_id != position.snapshot_id
-        or decision.position_snapshot_hash
-        != canonical_hash(position.to_canonical_dict())
-        or decision.position_book_id != position.position_book_id
-        or decision.thesis_id != position.thesis_id
-        or decision.symbol != position.symbol
-        or health.thesis_id != decision.thesis_id
-        or health.opportunity_id != position.opportunity_id
-        or health.symbol != decision.symbol
-    ):
-        raise ValueError("exit directive H4/H5/Position scope mismatch")
-    assert position.position_book_id is not None
-    assert position.opportunity_id is not None
-    return OperationalExitDirectiveV2.create(
-        exit_assessment_id=exit_assessment.assessment_id,
-        exit_assessment_hash=canonical_hash(
-            exit_assessment.to_canonical_dict()
-        ),
-        action=exit_assessment.action,
-        thesis_id=decision.thesis_id,
-        thesis_version=health.thesis_version,
-        opportunity_id=position.opportunity_id,
-        position_book_id=position.position_book_id,
-        symbol=decision.symbol,
-        position_snapshot_id=position.snapshot_id,
-        position_snapshot_hash=decision.position_snapshot_hash,
-        position_snapshot_version=position.version,
-        thesis_health_observation_id=health.observation_id,
-        thesis_health_observation_hash=health.content_hash,
-        composite_manifest_id=manifest.manifest_id,
-        composite_manifest_hash=manifest.content_hash,
-        created_at=created_at,
-        reason_codes=tuple(
-            sorted(
-                {
-                    *exit_assessment.reason_codes,
-                    "REDUCING_RISK_DECISION_REQUIRED",
-                    "H6_OPERATIONAL_LINEAGE_VERIFIED",
-                    FORMAL_PIT_NOT_ESTABLISHED,
-                    FORMAL_OOS_ALPHA_NOT_ESTABLISHED,
-                    TRADING_AUTHORITY_NOT_GRANTED,
-                }
-            )
-        ),
-    )
-
-
-def validate_h5_h6_operational_lineage(
-    *,
-    health_bundle: VerifiedThesisHealthBundle,
-    composite: VerifiedCompositeOperationalManifest,
-) -> None:
-    """Fail closed unless current H5 artifacts descend from exact VERIFIED H6."""
-
-    from market_regime_alpha.application.operational_research.composite_manifest import (
-        CompositeOperationalCompositionStatus,
-    )
-    from market_regime_alpha.data.contracts import DataEligibility
-    from market_regime_alpha.evidence.envelope import EvidenceAuthority
-
-    if not health_bundle.is_latest:
-        raise ValueError("H4.5 requires the latest H5 Observation")
-    manifest = composite.manifest
-    if manifest.status is not CompositeOperationalCompositionStatus.VERIFIED:
-        raise ValueError("H4.5 requires a VERIFIED H6 Composite Manifest")
-    bundle = health_bundle.input_bundle
-    base = (
-        bundle.market_regime.envelope,
-        bundle.theme_rotation.envelope,
-        bundle.capital_evolution.envelope,
-        bundle.candidate_set.envelope,
-    )
-    manifest_pair = (manifest.manifest_id, manifest.content_hash)
-    for envelope in base:
-        lineage = tuple(
-            zip(
-                envelope.input_artifact_ids,
-                envelope.input_content_hashes,
-                strict=True,
-            )
-        )
-        if (
-            manifest_pair not in lineage
-            or envelope.source_manifest_id
-            != manifest.daily_source_manifest_id
-            or envelope.source_manifest_hash
-            != manifest.daily_source_manifest_hash
-            or envelope.data_eligibility is not DataEligibility.EXPLORATORY
-            or envelope.evidence_authority
-            is not EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT
-        ):
-            raise ValueError("H5 artifact is not bound to exact H6 lineage")
-    candidate_pair = (
-        bundle.candidate_set.envelope.artifact_id,
-        bundle.candidate_set.envelope.content_hash,
-    )
-    signal = bundle.signal_snapshot.envelope
-    signal_lineage = tuple(
-        zip(
-            signal.input_artifact_ids,
-            signal.input_content_hashes,
-            strict=True,
-        )
-    )
-    signal_pair = (signal.artifact_id, signal.content_hash)
-    path = bundle.path_forecast.envelope
-    path_lineage = tuple(
-        zip(
-            path.input_artifact_ids,
-            path.input_content_hashes,
-            strict=True,
-        )
-    )
-    if (
-        candidate_pair not in signal_lineage
-        or signal_pair not in path_lineage
-        or signal.source_manifest_id != manifest.daily_source_manifest_id
-        or signal.source_manifest_hash != manifest.daily_source_manifest_hash
-        or path.source_manifest_id != manifest.daily_source_manifest_id
-        or path.source_manifest_hash != manifest.daily_source_manifest_hash
-        or signal.data_eligibility is not DataEligibility.EXPLORATORY
-        or path.data_eligibility is not DataEligibility.EXPLORATORY
-        or signal.evidence_authority
-        is not EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT
-        or path.evidence_authority
-        is not EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT
-    ):
-        raise ValueError("H5 Signal/Path chain is not bound to H6 artifacts")
 
 
 _DIRECTIVE_FIELDS = {

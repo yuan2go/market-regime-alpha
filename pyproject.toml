@@ -129,6 +129,8 @@ files = [
     "src/market_regime_alpha/application/__init__.py",
     "src/market_regime_alpha/application/research_layer",
     "src/market_regime_alpha/application/operational_research",
+    "src/market_regime_alpha/application/trading_lifecycle/risk_reduction_lineage.py",
+    "src/market_regime_alpha/application/trading_lifecycle/sqlite_risk_reduction.py",
     "src/market_regime_alpha/application/daily_loop/__init__.py",
     "src/market_regime_alpha/application/daily_loop/commands.py",
     "src/market_regime_alpha/application/daily_loop/errors.py",

@@ -18,7 +18,7 @@ from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.execution.risk_reduction import (
     RiskReductionConfirmationPolicy,
 )
-from market_regime_alpha.execution.sqlite_risk_reduction import (
+from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
     SQLiteRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.portfolio.risk_routes import (
@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    observation: ReducingExecutionObservation | None = None
     try:
         calendar = TradingCalendarArtifact.from_canonical_dict(
             _object(_read_json(args.trading_calendar), "trading calendar")
@@ -111,9 +112,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {
+                    "attempt_id": None,
                     "state": "DATA_INSUFFICIENT",
                     "error": str(error),
+                    "reason_codes": ["AUTHORITY_REFERENCE_NOT_RESOLVED"],
+                    "risk_reducing_decision_id": args.risk_reducing_decision_id,
+                    "risk_reducing_decision_hash": args.risk_reducing_decision_hash,
+                    "source_position_snapshot_id": None,
+                    "source_position_snapshot_hash": None,
+                    "current_position_snapshot_id": None,
+                    "current_position_snapshot_hash": None,
+                    "recheck_observation_id": (
+                        str(observation.observation_id)
+                        if observation is not None
+                        else None
+                    ),
+                    "recheck_observation_hash": (
+                        observation.content_hash
+                        if observation is not None
+                        else None
+                    ),
                     "manual_trade_id": None,
+                    "MANUAL_INTENT_CREATED": False,
                     "NO_FILL_CREATED": True,
                     "NO_BROKER_ORDER_CREATED": True,
                     "TRADING_AUTHORITY_NOT_GRANTED": True,

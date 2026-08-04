@@ -226,6 +226,8 @@ class ManualTradeRecord:
             require_sha256(
                 "post_trade_snapshot_hash", self.post_trade_snapshot_hash
             )
+            if self.side is not TradeSide.BUY:
+                raise ValueError("INCREASING route requires BUY")
             return
         if self.authority_route is ManualTradeAuthorityRoute.REDUCING:
             if any(value is not None for value in increasing_authority):

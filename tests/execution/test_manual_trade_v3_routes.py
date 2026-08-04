@@ -100,6 +100,11 @@ def test_manual_trade_v3_increasing_route_round_trips() -> None:
     assert restored.authority_route is ManualTradeAuthorityRoute.INCREASING
 
 
+def test_manual_trade_v3_increasing_route_rejects_sell() -> None:
+    with pytest.raises(ValueError, match="INCREASING route requires BUY"):
+        _base_trade(side=TradeSide.SELL)
+
+
 def test_manual_trade_v3_reducing_route_round_trips() -> None:
     trade = _reducing_trade()
 

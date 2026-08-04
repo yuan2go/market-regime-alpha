@@ -12,7 +12,7 @@ from market_regime_alpha.application.trading_lifecycle.manual_execution import (
 from market_regime_alpha.application.trading_lifecycle.traceable_execution import (
     TraceableManualExecutionApplicationService,
 )
-from market_regime_alpha.core.identity import FillId
+from market_regime_alpha.core.identity import ArtifactId, FillId
 from market_regime_alpha.decision.sqlite_repository import (
     SQLiteDecisionLifecycleRepository,
 )
@@ -24,6 +24,8 @@ from market_regime_alpha.execution.manual import (
 )
 from market_regime_alpha.execution.risk_reduction import (
     RiskReductionConfirmationState,
+)
+from market_regime_alpha.application.trading_lifecycle.risk_reduction_lineage import (
     validate_h5_h6_operational_lineage,
 )
 from market_regime_alpha.portfolio.risk_routes import (
@@ -31,7 +33,7 @@ from market_regime_alpha.portfolio.risk_routes import (
     ReducingExecutionObservation,
     RiskChangeKind,
 )
-from market_regime_alpha.execution.sqlite_risk_reduction import (
+from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
     SQLiteRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.position.authority import (
@@ -173,6 +175,32 @@ def test_decision_hash_mismatch_persists_data_insufficient_attempt(
         "RISK_REDUCING_DECISION_HASH_MISMATCH",
     )
     assert result.manual_trade is None
+
+
+def test_unknown_submitted_decision_reference_uses_directive_authority_for_attempt(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+
+    result = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            risk_reducing_decision_id=ArtifactId("unknown-submitted-decision"),
+            idempotency_key="h4-5-unknown-submitted-decision",
+        )
+    )
+
+    assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
+    assert result.attempt.reason_codes == (
+        "RISK_REDUCING_DECISION_HASH_MISMATCH",
+    )
+    assert result.attempt.risk_reducing_decision_id == (
+        fixture.command.risk_reducing_decision_id
+    )
+    assert result.manual_trade is None
+    assert fixture.repository.get_confirmation_attempt(
+        result.attempt.attempt_id
+    ) == result.attempt
 
 
 def test_directive_hash_mismatch_persists_data_insufficient_attempt(
@@ -321,6 +349,38 @@ def test_changed_t_plus_one_sellability_evidence_yields_position_changed(
     assert result.manual_trade is None
 
 
+def test_later_status_evidence_is_projected_at_confirmation_time(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    source = fixture.command.symbol_trading_statuses[0]
+    later_suspension = SymbolTradingSessionStatus.create(
+        symbol=source.symbol,
+        session_date=source.session_date,
+        state=SymbolTradingState.SUSPENDED,
+        source_artifact_id=source.source_artifact_id,
+        source_artifact_hash=source.source_artifact_hash,
+        availability_time=fixture.command.confirmed_at - timedelta(seconds=1),
+        reason_code="H4_5_LATER_CURRENT_SUSPENSION",
+    )
+
+    result = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            symbol_trading_statuses=(later_suspension,),
+            idempotency_key="h4-5-later-sellability-changed",
+        )
+    )
+
+    assert result.attempt.state is RiskReductionConfirmationState.POSITION_CHANGED
+    assert result.current_position.as_of == fixture.command.confirmed_at
+    assert result.current_position.source_trading_status_ids == (
+        later_suspension.status_id,
+    )
+    assert result.current_position.available_quantity == 0
+    assert result.manual_trade is None
+
+
 def test_closed_position_book_blocks_confirmation_without_new_book(
     tmp_path, daily_decision_fixture
 ) -> None:
@@ -377,13 +437,18 @@ def test_second_command_cannot_create_another_intent_for_confirmed_decision(
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     fixture.repository.confirm_risk_reduction(fixture.command)
 
-    with pytest.raises(ValueError, match="already created a confirmed intent"):
-        fixture.repository.confirm_risk_reduction(
-            replace(
-                fixture.command,
-                idempotency_key="h4-5-same-evidence-new-command",
-            )
+    second = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            idempotency_key="h4-5-same-evidence-new-command",
         )
+    )
+
+    assert second.attempt.state is RiskReductionConfirmationState.BLOCKED_ON_RECHECK
+    assert second.attempt.reason_codes == (
+        "RISK_REDUCING_DECISION_ALREADY_CONFIRMED",
+    )
+    assert second.manual_trade is None
 
 
 def test_expired_decision_persists_failed_attempt_without_trade(

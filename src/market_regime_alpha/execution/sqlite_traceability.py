@@ -94,6 +94,14 @@ class SQLiteTraceableManualExecutionRepository(SQLiteManualExecutionRepository):
         idempotency_key: str,
         command_hash: str,
     ) -> tuple[PositionBook, ManualTradeRecord]:
+        if (
+            record.schema_version != ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA
+            or record.authority_route is not ManualTradeAuthorityRoute.INCREASING
+            or record.side is not TradeSide.BUY
+        ):
+            raise ValueError(
+                "new traceable manual trade requires V3 INCREASING BUY route"
+            )
         _validate_trace_authority(
             record,
             book=book,

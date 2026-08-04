@@ -63,8 +63,8 @@ class TraceableManualExecutionApplicationService:
     ) -> tuple[PositionBook, ManualTradeRecord]:
         if risk_decision.state is not RiskDecisionState.APPROVED:
             raise ValueError("traceable manual trade requires approved RiskDecision")
-        if trade_delta.trade_quantity == 0:
-            raise ValueError("zero trade delta creates no manual trade")
+        if trade_delta.trade_quantity <= 0:
+            raise ValueError("INCREASING route requires positive OPEN/ADD trade delta")
         book = PositionBook.open(
             account_id=account_id,
             symbol=trade_delta.symbol,

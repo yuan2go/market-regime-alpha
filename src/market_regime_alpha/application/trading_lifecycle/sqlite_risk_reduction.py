@@ -1,4 +1,4 @@
-"""Unified SQLite H4.5 authority and atomic manual-intent confirmation."""
+"""Application-layer SQLite H4.5 authority unit of work."""
 
 from __future__ import annotations
 
@@ -8,15 +8,21 @@ import sqlite3
 from market_regime_alpha.application.operational_research.composite_manifest import (
     CompositeOperationalCompositionStatus,
 )
+from market_regime_alpha.application.operational_research.composite_artifact import (
+    VerifiedCompositeOperationalManifest,
+)
 from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
     SQLiteCompositeOperationalRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId, ManualTradeId
-from market_regime_alpha.decision.opportunity import OpportunityState
+from market_regime_alpha.decision.opportunity import (
+    OpportunityState,
+    TradingOpportunity,
+)
 from market_regime_alpha.decision.sqlite_repository import (
     SQLiteDecisionLifecycleRepository,
 )
-from market_regime_alpha.decision.thesis import ThesisState
+from market_regime_alpha.decision.thesis import ThesisState, TradingThesis
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.manual import (
     ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
@@ -25,21 +31,22 @@ from market_regime_alpha.execution.manual import (
     ManualTradeRecord,
     TradeSide,
 )
-from market_regime_alpha.execution.position_book import PositionBookState
+from market_regime_alpha.execution.position_book import (
+    PositionBook,
+    PositionBookState,
+)
 from market_regime_alpha.execution.risk_reduction import (
     OperationalExitDirectiveV2,
     RiskReductionConfirmationAttempt,
     RiskReductionConfirmationCommand,
     RiskReductionConfirmationResult,
     RiskReductionConfirmationState,
-    build_operational_exit_directive_v2,
-    validate_h5_h6_operational_lineage,
 )
 from market_regime_alpha.execution.sqlite_repository import (
-    _insert_trade_event,
-    _json,
-    _load_trade,
-    _object_json,
+    insert_manual_trade_event as _insert_trade_event,
+    load_manual_trade_projection as _load_trade,
+    restore_manual_execution_json as _object_json,
+    serialize_manual_execution_json as _json,
 )
 from market_regime_alpha.execution.sqlite_traceability import (
     SQLiteTraceableManualExecutionRepository,
@@ -48,6 +55,7 @@ from market_regime_alpha.portfolio.risk_routes import (
     RiskChangeKind,
     RiskReducingDecisionState,
     RiskReducingExecutionGate,
+    VerifiedRiskReducingDecisionBundle,
 )
 from market_regime_alpha.portfolio.sqlite_risk_routes import (
     SQLiteRiskRouteRepository,
@@ -60,12 +68,27 @@ from market_regime_alpha.position.authority import (
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
 )
+from market_regime_alpha.position.thesis_health import (
+    VerifiedThesisHealthBundle,
+)
+from market_regime_alpha.application.trading_lifecycle.risk_reduction_lineage import (
+    build_operational_exit_directive_v2,
+    validate_h5_h6_operational_lineage,
+)
 
 
 class SQLiteRiskReductionManualIntentRepository(
     SQLiteTraceableManualExecutionRepository
 ):
-    """One lifecycle DB, one writer transaction, no Fill or broker side effect."""
+    """SQLite lifecycle unit of work for one atomic H4.5 confirmation.
+
+    The adapter deliberately composes the existing SQLite authority readers at
+    one database path. ``BEGIN IMMEDIATE`` is acquired before those reloads, so
+    no concurrent writer can change H4/H5/H6/Decision/Execution authority
+    between verification and the attempt/trade/binding/command writes. This is
+    an infrastructure transaction seam; it creates neither Fill nor broker
+    side effects.
+    """
 
     def __init__(self, path: Path) -> None:
         super().__init__(path)
@@ -179,16 +202,6 @@ class SQLiteRiskReductionManualIntentRepository(
                     connection.commit()
                     return replay
 
-                risk_bundle = (
-                    self._risk_routes.get_verified_reducing_decision_bundle(
-                        command.risk_reducing_decision_id
-                    )
-                )
-                decision = risk_bundle.decision
-                decision_reference_matches = (
-                    decision.content_hash
-                    == command.risk_reducing_decision_hash
-                )
                 directive_row = connection.execute(
                     """
                     SELECT * FROM operational_exit_directives
@@ -196,13 +209,45 @@ class SQLiteRiskReductionManualIntentRepository(
                     """,
                     (str(command.exit_directive_id),),
                 ).fetchone()
+                directive_id_resolved = directive_row is not None
                 if directive_row is None:
-                    raise KeyError(
-                        f"unknown OperationalExitDirectiveV2: {command.exit_directive_id}"
+                    risk_bundle = (
+                        self._risk_routes.get_verified_reducing_decision_bundle(
+                            command.risk_reducing_decision_id
+                        )
+                    )
+                    fallback_rows = connection.execute(
+                        """
+                        SELECT * FROM operational_exit_directives
+                        WHERE risk_reducing_decision_id = ?
+                        ORDER BY created_at, directive_id
+                        """,
+                        (str(risk_bundle.decision.decision_id),),
+                    ).fetchall()
+                    if len(fallback_rows) != 1:
+                        raise KeyError(
+                            "unknown or ambiguous OperationalExitDirectiveV2: "
+                            f"{command.exit_directive_id}"
+                        )
+                    directive_row = fallback_rows[0]
+                else:
+                    risk_bundle = (
+                        self._risk_routes.get_verified_reducing_decision_bundle(
+                            ArtifactId(
+                                str(directive_row["risk_reducing_decision_id"])
+                            )
+                        )
                     )
                 directive = _directive_from_row(directive_row)
+                decision = risk_bundle.decision
+                decision_reference_matches = (
+                    decision.decision_id == command.risk_reducing_decision_id
+                    and decision.content_hash
+                    == command.risk_reducing_decision_hash
+                )
                 directive_reference_matches = (
-                    directive.content_hash == command.exit_directive_hash
+                    directive_id_resolved
+                    and directive.content_hash == command.exit_directive_hash
                     and directive_row["risk_reducing_decision_id"]
                     == str(decision.decision_id)
                 )
@@ -218,10 +263,29 @@ class SQLiteRiskReductionManualIntentRepository(
                         key=lambda item: (item.recorded_at, str(item.fill_id)),
                     )
                 )
+                current_status_ids = tuple(
+                    sorted(
+                        {
+                            item.status_id
+                            for item in command.symbol_trading_statuses
+                            if item.availability_time <= command.confirmed_at
+                        },
+                        key=str,
+                    )
+                )
+                position_authority_changed = (
+                    current_fill_ids != source_position.source_fill_ids
+                    or current_status_ids
+                    != source_position.source_trading_status_ids
+                    or command.trading_calendar.artifact_id
+                    != source_position.calendar_artifact_id
+                    or command.trading_calendar.content_hash
+                    != source_position.calendar_content_hash
+                )
                 position_as_of = (
-                    source_position.as_of
-                    if current_fill_ids == source_position.source_fill_ids
-                    else command.confirmed_at
+                    command.confirmed_at
+                    if position_authority_changed
+                    else source_position.as_of
                 )
                 current_position = PositionProjector().project_book_t_plus_one(
                     book=book,
@@ -278,9 +342,21 @@ class SQLiteRiskReductionManualIntentRepository(
                     (str(decision.decision_id),),
                 ).fetchone()
                 if confirmed is not None:
-                    raise ValueError(
-                        "RiskReducingDecision already created a confirmed intent"
+                    result = _persist_failed_confirmation(
+                        connection,
+                        command=command,
+                        directive=directive,
+                        risk_bundle=risk_bundle,
+                        current_position=current_position,
+                        state=(
+                            RiskReductionConfirmationState.BLOCKED_ON_RECHECK
+                        ),
+                        reason_codes=(
+                            "RISK_REDUCING_DECISION_ALREADY_CONFIRMED",
+                        ),
                     )
+                    connection.commit()
+                    return result
                 result = _persist_confirmed_intent(
                     connection,
                     command=command,
@@ -316,13 +392,13 @@ class SQLiteRiskReductionManualIntentRepository(
         *,
         command: RiskReductionConfirmationCommand,
         directive: OperationalExitDirectiveV2,
-        risk_bundle,
+        risk_bundle: VerifiedRiskReducingDecisionBundle,
         current_position: PositionSnapshot,
-        book,
-        thesis,
-        opportunity,
-        health_bundle,
-        composite,
+        book: PositionBook,
+        thesis: TradingThesis,
+        opportunity: TradingOpportunity,
+        health_bundle: VerifiedThesisHealthBundle,
+        composite: VerifiedCompositeOperationalManifest,
         decision_reference_matches: bool,
         directive_reference_matches: bool,
     ) -> tuple[RiskReductionConfirmationState, tuple[str, ...]] | None:
@@ -520,11 +596,11 @@ def _persist_confirmed_intent(
     *,
     command: RiskReductionConfirmationCommand,
     directive: OperationalExitDirectiveV2,
-    risk_bundle,
+    risk_bundle: VerifiedRiskReducingDecisionBundle,
     current_position: PositionSnapshot,
-    book,
-    opportunity,
-    thesis,
+    book: PositionBook,
+    opportunity: TradingOpportunity,
+    thesis: TradingThesis,
 ) -> RiskReductionConfirmationResult:
     decision = risk_bundle.decision
     manual_trade_id = ManualTradeId(
@@ -645,7 +721,7 @@ def _persist_failed_confirmation(
     *,
     command: RiskReductionConfirmationCommand,
     directive: OperationalExitDirectiveV2,
-    risk_bundle,
+    risk_bundle: VerifiedRiskReducingDecisionBundle,
     current_position: PositionSnapshot,
     state: RiskReductionConfirmationState,
     reason_codes: tuple[str, ...],
@@ -673,7 +749,7 @@ def _attempt(
     *,
     command: RiskReductionConfirmationCommand,
     directive: OperationalExitDirectiveV2,
-    risk_bundle,
+    risk_bundle: VerifiedRiskReducingDecisionBundle,
     current_position: PositionSnapshot,
     state: RiskReductionConfirmationState,
     manual_trade_id: ManualTradeId | None,
@@ -1011,6 +1087,39 @@ _H4_5_ROUTE_GUARDS = {
     ),
 }
 
+_H4_5_FOREIGN_KEYS = {
+    "risk_reduction_confirmation_attempts": {
+        (
+            "exit_directive_id",
+            "operational_exit_directives",
+            "directive_id",
+        ),
+        ("manual_trade_id", "manual_trade_records", "manual_trade_id"),
+    },
+    "risk_reduction_confirmation_commands": {
+        ("attempt_id", "risk_reduction_confirmation_attempts", "attempt_id"),
+        ("manual_trade_id", "manual_trade_records", "manual_trade_id"),
+    },
+    "risk_reducing_manual_trade_bindings": {
+        ("manual_trade_id", "manual_trade_records", "manual_trade_id"),
+        ("position_book_id", "position_books", "position_book_id"),
+        (
+            "confirmation_attempt_id",
+            "risk_reduction_confirmation_attempts",
+            "attempt_id",
+        ),
+    },
+}
+
+_H4_5_UNIQUE_COLUMNS = {
+    "risk_reduction_confirmation_attempts": {("manual_trade_id",)},
+    "risk_reducing_manual_trade_bindings": {
+        ("manual_trade_id",),
+        ("risk_reducing_decision_id",),
+        ("confirmation_attempt_id",),
+    },
+}
+
 
 def _validate_h4_5_schema(connection: sqlite3.Connection) -> None:
     if connection.execute(
@@ -1038,15 +1147,63 @@ def _validate_h4_5_schema(connection: sqlite3.Connection) -> None:
         )
     ):
         raise ValueError("H4.5 manual trade route CHECK is missing")
+    attempts_sql = _table_sql(connection, "risk_reduction_confirmation_attempts")
+    if any(
+        token not in attempts_sql
+        for token in (
+            "statein('confirmed_intent','expired','position_changed',"
+            "'blocked_on_recheck','data_insufficient',"
+            "'action_semantics_conflict')",
+            "(state='confirmed_intent'andmanual_trade_idisnotnull)"
+            "or(state!='confirmed_intent'andmanual_trade_idisnull)",
+        )
+    ):
+        raise ValueError("H4.5 confirmation attempt CHECK is missing")
+    binding_sql = _table_sql(connection, "risk_reducing_manual_trade_bindings")
+    if any(
+        token not in binding_sql
+        for token in (
+            "source_position_snapshot_version>=0",
+            "target_quantity>=0",
+            "order_quantity>0",
+        )
+    ):
+        raise ValueError("H4.5 reducing binding CHECK is missing")
+    for table, required_foreign_keys in _H4_5_FOREIGN_KEYS.items():
+        if not required_foreign_keys.issubset(
+            _foreign_key_targets(connection, table)
+        ):
+            raise ValueError(f"H4.5 foreign-key schema mismatch: {table}")
+    for table, required_unique_columns in _H4_5_UNIQUE_COLUMNS.items():
+        if not required_unique_columns.issubset(
+            _unique_column_sets(connection, table)
+        ):
+            raise ValueError(f"H4.5 uniqueness schema mismatch: {table}")
     index = connection.execute(
         """
-        SELECT sql FROM sqlite_master
+        SELECT tbl_name, sql FROM sqlite_master
         WHERE type = 'index'
           AND name = 'one_confirmed_intent_per_reducing_decision'
         """
     ).fetchone()
-    if index is None or "wherestate='confirmed_intent'" not in _compact_sql(
-        str(index["sql"])
+    index_sql = "" if index is None else _compact_sql(str(index["sql"]))
+    index_columns = (
+        ()
+        if index is None
+        else tuple(
+            str(row["name"])
+            for row in connection.execute(
+                "PRAGMA index_info('one_confirmed_intent_per_reducing_decision')"
+            )
+        )
+    )
+    if (
+        index is None
+        or str(index["tbl_name"]) != "risk_reduction_confirmation_attempts"
+        or index_columns != ("risk_reducing_decision_id",)
+        or "createuniqueindexone_confirmed_intent_per_reducing_decision"
+        not in index_sql
+        or "wherestate='confirmed_intent'" not in index_sql
     ):
         raise ValueError("H4.5 confirmed-intent uniqueness is missing")
     triggers = {
@@ -1057,11 +1214,11 @@ def _validate_h4_5_schema(connection: sqlite3.Connection) -> None:
     }
     for name, (table, operation, message) in _H4_5_APPEND_ONLY_TRIGGERS.items():
         actual = triggers.get(name, "")
-        required = (
+        required_trigger_tokens = (
             f"before{operation}on{table}",
             f"raise(abort,'{message.replace(' ', '')}')",
         )
-        if any(token not in actual for token in required):
+        if any(token not in actual for token in required_trigger_tokens):
             raise ValueError(f"H4.5 append-only trigger mismatch: {name}")
     for name, (table, route, opposite_table) in _H4_5_ROUTE_GUARDS.items():
         actual = triggers.get(name, "")
@@ -1089,6 +1246,32 @@ def _table_sql(connection: sqlite3.Connection, table: str) -> str:
     if row is None:
         raise ValueError(f"H4.5 table schema mismatch: {table}")
     return _compact_sql(str(row["sql"]))
+
+
+def _foreign_key_targets(
+    connection: sqlite3.Connection, table: str
+) -> set[tuple[str, str, str]]:
+    return {
+        (str(row["from"]), str(row["table"]), str(row["to"]))
+        for row in connection.execute(f"PRAGMA foreign_key_list('{table}')")
+    }
+
+
+def _unique_column_sets(
+    connection: sqlite3.Connection, table: str
+) -> set[tuple[str, ...]]:
+    result: set[tuple[str, ...]] = set()
+    for row in connection.execute(f"PRAGMA index_list('{table}')"):
+        if not bool(row["unique"]):
+            continue
+        name = str(row["name"])
+        result.add(
+            tuple(
+                str(column["name"])
+                for column in connection.execute(f"PRAGMA index_info('{name}')")
+            )
+        )
+    return result
 
 
 def _compact_sql(value: str) -> str:

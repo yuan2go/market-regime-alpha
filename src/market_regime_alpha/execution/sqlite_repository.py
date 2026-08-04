@@ -548,3 +548,35 @@ def _object_json(value: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("manual execution JSON must be an object")
     return payload
+
+
+def load_manual_trade_projection(
+    connection: sqlite3.Connection,
+    trade_id: ManualTradeId,
+    version: int | None = None,
+) -> ManualTradeRecord:
+    """Public in-transaction ManualTrade replay for composed repositories."""
+
+    return _load_trade(connection, trade_id, version)
+
+
+def insert_manual_trade_event(
+    connection: sqlite3.Connection,
+    record: ManualTradeRecord,
+    idempotency_key: str,
+) -> None:
+    """Append one ManualTrade event inside a caller-owned transaction."""
+
+    _insert_trade_event(connection, record, idempotency_key)
+
+
+def serialize_manual_execution_json(payload: dict[str, Any]) -> str:
+    """Serialize canonical manual-execution persistence JSON."""
+
+    return _json(payload)
+
+
+def restore_manual_execution_json(value: str) -> dict[str, Any]:
+    """Restore object-shaped manual-execution persistence JSON."""
+
+    return _object_json(value)

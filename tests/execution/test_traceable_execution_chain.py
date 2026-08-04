@@ -16,6 +16,7 @@ from market_regime_alpha.application.trading_lifecycle import (
 from market_regime_alpha.core.identity import (
     ArtifactId,
     DatasetId,
+    ManualTradeId,
     ModelId,
     OpportunityId,
     ThesisId,
@@ -35,17 +36,29 @@ from market_regime_alpha.decision.opportunity import TRADING_OPPORTUNITY_SCHEMA
 from market_regime_alpha.decision.thesis import TRADING_THESIS_SCHEMA
 from market_regime_alpha.data import TradingSession, build_trading_calendar_artifact
 from market_regime_alpha.execution import (
+    PositionBook,
     SQLiteTraceableManualExecutionRepository,
 )
-from market_regime_alpha.execution.sqlite_traceability import (
-    EXECUTION_TRACEABILITY_DOWN_MIGRATION,
-)
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.evaluation import (
     TRADE_EVALUATION_CONFIG_SCHEMA,
     TradeEvaluationConfig,
     TradePathObservation,
     TraceableTradeOutcome,
     TraceableTradeOutcomeEvaluator,
+)
+from market_regime_alpha.execution.manual import (
+    TRACEABLE_MANUAL_TRADE_SCHEMA,
+    ManualOrderState,
+    ManualTradeRecord,
+    TradeSide,
+)
+from market_regime_alpha.execution.sqlite_repository import (
+    insert_manual_trade_event,
+    serialize_manual_execution_json,
+)
+from market_regime_alpha.execution.sqlite_traceability import (
+    EXECUTION_TRACEABILITY_DOWN_MIGRATION,
 )
 from market_regime_alpha.portfolio import (
     RISK_BUDGET_SCHEMA,
@@ -265,6 +278,90 @@ def _create_trade(service: TraceableManualExecutionApplicationService, authority
     )
 
 
+def _insert_historical_v2_sell(
+    repository: SQLiteTraceableManualExecutionRepository,
+    book: PositionBook,
+    authority,
+) -> ManualTradeRecord:
+    opportunity, thesis, portfolio, risk, _ = authority
+    delta = portfolio.post_trade.proposed_deltas[0]
+    record = ManualTradeRecord(
+        schema_version=TRACEABLE_MANUAL_TRADE_SCHEMA,
+        manual_trade_id=ManualTradeId("historical-v2-exit"),
+        risk_decision_id=risk.risk_decision_id,
+        risk_decision_hash=canonical_hash(risk.to_canonical_dict()),
+        portfolio_decision_id=portfolio.decision_id,
+        target_position_hash=canonical_hash(delta.to_canonical_dict()),
+        account_id=book.account_id,
+        symbol=book.symbol,
+        side=TradeSide.SELL,
+        intended_quantity=abs(delta.trade_quantity),
+        expected_price_lower=10.8,
+        expected_price_upper=11.2,
+        state=ManualOrderState.RECORDED,
+        filled_quantity=0,
+        version=0,
+        actor="historical-manual-operator",
+        reason="pre-H4.5 V2 exit fixture",
+        created_at=NOW + timedelta(seconds=2),
+        updated_at=NOW + timedelta(seconds=2),
+        last_actor="historical-manual-operator",
+        last_reason="pre-H4.5 V2 exit fixture",
+        position_book_id=book.position_book_id,
+        thesis_id=thesis.thesis_id,
+        opportunity_id=opportunity.opportunity_id,
+        post_trade_snapshot_id=portfolio.post_trade.snapshot_id,
+        post_trade_snapshot_hash=portfolio.post_trade.content_hash,
+    )
+    with sqlite3.connect(repository.path, isolation_level=None) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            INSERT INTO manual_trade_records(
+                manual_trade_id, authority_route, risk_decision_id,
+                risk_reducing_decision_id, risk_reduction_confirmation_id,
+                account_id, symbol, side, state, filled_quantity,
+                aggregate_json, version
+            ) VALUES (?, 'INCREASING', ?, NULL, NULL, ?, ?, 'SELL',
+                      'RECORDED', 0, ?, 0)
+            """,
+            (
+                str(record.manual_trade_id),
+                str(risk.risk_decision_id),
+                book.account_id,
+                book.symbol,
+                serialize_manual_execution_json(record.to_canonical_dict()),
+            ),
+        )
+        insert_manual_trade_event(connection, record, "historical-v2-exit")
+        connection.execute(
+            """
+            INSERT INTO traceable_manual_trade_bindings(
+                manual_trade_id, position_book_id, opportunity_id, thesis_id,
+                portfolio_decision_id, risk_decision_id,
+                post_trade_snapshot_id, post_trade_snapshot_hash,
+                target_delta_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(record.manual_trade_id),
+                str(book.position_book_id),
+                str(opportunity.opportunity_id),
+                str(thesis.thesis_id),
+                str(portfolio.decision_id),
+                str(risk.risk_decision_id),
+                str(portfolio.post_trade.snapshot_id),
+                portfolio.post_trade.content_hash,
+                canonical_hash(delta.to_canonical_dict()),
+                record.created_at.isoformat(),
+            ),
+        )
+        connection.commit()
+    return repository.get_trade(record.manual_trade_id)
+
+
 def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
     path = tmp_path / "execution.sqlite3"
     repository = SQLiteTraceableManualExecutionRepository(path)
@@ -477,7 +574,7 @@ def test_expired_opportunity_cannot_create_traceable_risk(tmp_path) -> None:
         _authority(tmp_path, index=10, opportunity=active, thesis=invalidated)
 
 
-def test_closed_book_allows_later_thesis_for_same_account_symbol(tmp_path) -> None:
+def test_increasing_route_cannot_sell_or_close_position_book(tmp_path) -> None:
     repository = SQLiteTraceableManualExecutionRepository(tmp_path / "execution.sqlite3")
     service = TraceableManualExecutionApplicationService(repository)
     first_authority = _authority(tmp_path, index=1)
@@ -502,18 +599,54 @@ def test_closed_book_allows_later_thesis_for_same_account_symbol(tmp_path) -> No
         opportunity=first_authority[0],
         thesis=first_authority[1],
     )
-    _, sell = _create_trade(service, sell_authority, "create-sell")
+    with pytest.raises(ValueError, match="INCREASING route requires positive OPEN/ADD"):
+        _create_trade(service, sell_authority, "create-sell")
+
+    assert repository.get_position_book(book.position_book_id).state.value == "OPEN"
+    stored = repository.trades_for_book(book.position_book_id)
+    assert len(stored) == 1
+    assert stored[0].manual_trade_id == buy.manual_trade_id
+    assert stored[0].side.value == "BUY"
+
+
+def test_historical_v2_sell_path_remains_readable_and_evaluable(tmp_path) -> None:
+    repository = SQLiteTraceableManualExecutionRepository(tmp_path / "execution.sqlite3")
+    service = TraceableManualExecutionApplicationService(repository)
+    first_authority = _authority(tmp_path, index=1)
+    book, buy = _create_trade(service, first_authority, "create-buy-v2-history")
+    service.record_fill(
+        buy.manual_trade_id,
+        external_fill_id="fill-buy-v2-history",
+        quantity=100,
+        price=10.0,
+        fees=0.0,
+        occurred_at=NOW + timedelta(minutes=1),
+        recorded_at=NOW + timedelta(minutes=1, seconds=1),
+        actor="manual-operator",
+        reason="entry",
+        idempotency_key="fill-buy-v2-history",
+    )
+    sell_authority = _authority(
+        tmp_path,
+        index=1,
+        quantity=100,
+        target=0,
+        opportunity=first_authority[0],
+        thesis=first_authority[1],
+    )
+    sell = _insert_historical_v2_sell(repository, book, sell_authority)
+    assert sell.schema_version == TRACEABLE_MANUAL_TRADE_SCHEMA
     service.record_fill(
         sell.manual_trade_id,
-        external_fill_id="fill-sell",
+        external_fill_id="fill-sell-v2-history",
         quantity=100,
         price=11.0,
         fees=0.0,
         occurred_at=NOW + timedelta(days=1),
         recorded_at=NOW + timedelta(days=1, seconds=1),
         actor="manual-operator",
-        reason="exit",
-        idempotency_key="fill-sell",
+        reason="historical V2 exit",
+        idempotency_key="fill-sell-v2-history",
     )
     final_position = service.rebuild_position(
         book.position_book_id, as_of=NOW + timedelta(days=1, minutes=1)
@@ -524,15 +657,15 @@ def test_closed_book_allows_later_thesis_for_same_account_symbol(tmp_path) -> No
         expected_version=0,
         final_position=final_position,
         actor="manual-operator",
-        reason="authoritative position closed",
+        reason="authoritative historical V2 position closed",
         closed_at=NOW + timedelta(days=1, minutes=2),
-        idempotency_key="close-first-book",
+        idempotency_key="close-v2-history-book",
     )
     assert closed.version == 1
 
     fills = repository.fills_for_book(book.position_book_id)
     trades = repository.trades_for_book(book.position_book_id)
-    entry_fill = next(item for item in fills if item.side.value == "BUY")
+    entry_fill = next(item for item in fills if item.side is TradeSide.BUY)
     path = TradePathObservation(
         symbol="000001.SZ",
         path_started_at=NOW,
@@ -577,18 +710,26 @@ def test_closed_book_allows_later_thesis_for_same_account_symbol(tmp_path) -> No
             thesis=first_authority[1],
             portfolio_decisions=(first_authority[2], sell_authority[2]),
             risk_decisions=(first_authority[3], sell_authority[3]),
-            manual_trades=(replace(trades[0], thesis_id=ThesisId("wrong-thesis")), *trades[1:]),
+            manual_trades=(
+                replace(trades[0], thesis_id=ThesisId("wrong-thesis")),
+                *trades[1:],
+            ),
             final_position=final_position,
             fills=fills,
             path=path,
             execution_deviations=tuple(
-                service.execution_deviation(item.manual_trade_id) for item in trades
+                service.execution_deviation(item.manual_trade_id)
+                for item in trades
             ),
             configuration=configuration,
             evaluated_at=NOW + timedelta(days=1, seconds=4),
         )
 
-    second, _ = _create_trade(service, _authority(tmp_path, index=2), "create-next-book")
+    second, _ = _create_trade(
+        service,
+        _authority(tmp_path, index=2),
+        "create-next-book-after-v2-history",
+    )
     assert second.thesis_id == ThesisId("thesis-trace-2")
 
 
