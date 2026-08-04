@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
-> **Code Evidence:** H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
+> **Related Documents:** Current-State.md, Capability-Matrix.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md
+> **Code Evidence:** H4.5 implementation checkpoint `7c91be46c8adf1ad958e9c41b5a45021bcfa58ed`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`
 > **Ordering Rule:** Fix current-baseline correctness before adding capabilities. Engineering mechanics, operating evidence, model validation and production admission are separate exit conditions.
 
 ## 1. Immediate P0 gaps
@@ -22,15 +22,15 @@
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Qualified H6 operational packages | P1-EVIDENCE | H6 mechanics now preserve both manifests, per-field authority and DecisionTime without eligibility inflation, but current tests use synthetic/exploratory fixtures | Controlled Daily/Supplemental producers and authenticated runtime | Consecutive real packages pass H6 verification with qualified availability, lineage and producer evidence; no formal-PIT inflation |
-| H4.5 reducing-decision execution bridge | P1 | H4 persists a permitted decision but intentionally does not create ManualTrade or Fill | H4, H6 and explicit execution authorization design | ManualTrade references a fresh permitted decision, rechecks latest sellability/position version, records authenticated confirmation and preserves partial/cancel/redecision history without broker authority |
 | H7 durable Holding/Exit operations | P1 | The H5 V2 adapter can compute one-shot Holding/Exit assessments, but there is no append-only schedule, blocked state, acknowledgement or durable projection | Delivered H5 health plus H6 evidence and H4.5 bridge | Repository supports CAS, idempotency, restart, rebuild, due/blocked/acknowledged state and migration isolation |
 | H5 canonical Decision input authority | P1 | `build_thesis_health.py` loads canonical Thesis/Opportunity JSON supplied by the caller rather than the current aggregate version from `DecisionLifecycleRepository` | H7 operational command authority | H7 loads current Thesis/Opportunity by ID/version from Decision authority and rejects stale or caller-substituted aggregate files |
 | H5 assessment freshness/scheduling | P1 | The V2 adapter requires Health `assessed_at` to equal assessment time and has no durable schedule, Position maximum age or retry semantics | H7 durable lifecycle | Versioned freshness policy, due time, retry/reassessment and Position age are persisted and replayable |
 | H5 module decomposition | P2 | `position/thesis_health.py` is a large aggregate module; behavior is tested but navigation and change isolation are weak | Separate behavior-preserving refactor package | Rules, bundle/observation and Builder seams are split without schema/hash/public-API drift and all H5/H6 regressions pass |
 | H6 Builder module decomposition | P2 | `composite_manifest.py` deliberately centralizes H6 domain validation for the first delivery and is now large | Separate behavior-preserving refactor package after H6 evidence stabilizes | Policy/manifest/value objects and Builder relationship validators are split without schema/hash/status/public-API drift |
-| H4.5/H7 reducing-risk assessment semantics | P1 | Legacy `ExitAssessment` still marks REDUCE/EXIT as requiring a new Portfolio/Risk decision; H5 intentionally does not connect those outputs to H4 | H4.5 permission split and H7 durable lifecycle | REDUCE/EXIT bind a fresh H4 decision while OPEN/ADD retain complete-account Risk authority, without creating Broker authority |
+| H7 reducing-risk assessment lifecycle | P1 | H4.5 adds `OperationalExitDirectiveV2` with explicit reducing authority, but Legacy `ExitAssessment` keeps its historical Portfolio/Risk wording and there is no durable H7 producer/acknowledgement flow | H7 durable lifecycle | Durable REDUCE/EXIT assessments produce and track H4/H4.5 references while OPEN/ADD retain complete-account Risk authority, without creating Broker authority |
 | H7 T+1 projection integration | P1 | Historical `LifecycleReviewApplicationService` uses base `PositionProjector.project()` instead of the H3 `project_book_t_plus_one()` authority path | H7 durable review redesign | V2 durable review consumes an H3 PositionSnapshot with calendar/session evidence and never reconstructs weaker sellability |
-| H4 REDUCE/EXIT quantity vocabulary | P2 | H4 currently permits `REDUCE target_quantity=0`, overlapping full `EXIT`; no H5 code changes this established behavior | Explicit H4/H4.5 domain decision | Decide whether REDUCE is partial-only (`target_quantity > 0`) or a documented full-exit alias, then migrate/tests without silent semantic drift |
+| H4_V2_REDUCE_REQUIRES_POSITIVE_REMAINDER | P2 | H4 V1 still permits `REDUCE target_quantity=0`; H4.5 preserves replay but rejects confirmation with `ACTION_SEMANTICS_CONFLICT` and `REQUIRES_NEW_EXIT_DECISION` | Explicit H4 V2 schema/semantic migration | H4 V2 enforces `0 < target_quantity < current_quantity` for REDUCE and `target_quantity=0` for EXIT while V1 replay remains immutable |
+| H4.5 operator authentication | P1 | Confirmation policy and attempts explicitly emit `OPERATOR_AUTHENTICATION_NOT_ESTABLISHED`; actor is audit text only | Authentication/RBAC design | Confirmation binds an authenticated principal/role and verifiable audit identity without rewriting historical attempts |
 | Manual invalidation authentication | P1 | H5 ManualInvalidationEvidence binds actor/reason/time and content identity but actor authentication is not established | Authentication/RBAC design | Evidence carries authenticated principal/role and verifiable audit identity without changing historical V1/V2 content |
 | H8 recoverable ShadowRun | P1 | Daily research, operational research, Signal/Path, Decision, Risk, Fill and Review are separate CLIs; no whole-lifecycle run owner exists | H4–H7 | ShadowRun has stage receipts, retries, resume, deadlines, operator acknowledgement, metrics, alerts and deterministic replay |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
@@ -93,6 +93,9 @@ The following are not open implementation gaps, although their operating/model e
 - H2 Thesis-scoped authority trace;
 - H3 Fill/calendar-derived T+1 Position;
 - H4 reducing-risk domain, SQLite persistence, idempotency, strict restoration and decision-only CLI;
+- H4.5 ManualTrade V3 route authority, immutable Directive/Policy/Attempt,
+  migration 010, unified atomic confirmation, H5/H6 lineage validation,
+  T+1/Gate recheck, reducing Fill compatibility and reference-only CLI;
 - H5 typed invalidation rules, verified current-evidence Builder, V2 Observation, migration 008, SQLite replay, V2-only CLI and thin operational assessment adapter;
 - H6 typed composition policy/manifest, exact immutable package, migration 009, append-only SQLite replay index, V2-only operational research route and H5 integration;
 - append-only manual Fill ledger;
@@ -104,7 +107,6 @@ Delivered mechanics must not be upgraded to production, Alpha or trading-authori
 
 ```text
 P0 lockfile and remote CI enforcement
-→ H4.5 reducing-decision/manual-execution bridge
 → H7 durable Holding/Exit
 → qualified H6 operational package production
 → H8 recoverable ShadowRun
@@ -115,4 +117,4 @@ P0 lockfile and remote CI enforcement
 → separately approved broker architecture
 ```
 
-Do not start production UI or live broker integration while the ShadowRun/evidence/validation layers remain incomplete. H4 completion does not authorize order creation.
+Do not start production UI or live broker integration while the ShadowRun/evidence/validation layers remain incomplete. H4.5 completion creates only a manual intent and does not authorize an order, Fill or broker action.

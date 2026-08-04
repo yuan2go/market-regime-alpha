@@ -6,8 +6,8 @@
 > **Last Updated:** 2026-08-04
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
-> **Code Evidence:** H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
+> **Code Evidence:** H4.5 implementation checkpoint `7c91be46c8adf1ad958e9c41b5a45021bcfa58ed`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -37,6 +37,14 @@ manifest, append-only SQLite replay index and `ResearchInputBundleV2` labelled
 run a new model, transition a Thesis, call H4, create a ManualTrade/Fill/Broker
 Order or grant trading authority.
 
+The H4.5 implementation checkpoint adds the reducing-risk-only bridge from a
+current permitted H4 decision to a ManualTrade V3 SELL intent. One SQLite
+`BEGIN IMMEDIATE` transaction reloads and replays Decision, H4, H5, H6 and
+Execution authorities, rebuilds the latest H3 T+1 Position, reruns the H4 Gate
+from fresh execution evidence and atomically records the immutable confirmation
+attempt, route binding, intent and command. It creates no Fill, Broker Order,
+Position mutation or trading authority.
+
 ## 2. Current stage
 
 ```text
@@ -50,6 +58,9 @@ H2_THESIS_TO_OUTCOME_TRACE_IMPLEMENTED_SQLITE
 H3_FILL_CALENDAR_DERIVED_T_PLUS_ONE_IMPLEMENTED
 H4_REDUCING_RISK_ROUTE_IMPLEMENTED_AND_VERIFIED
 H4_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
+H4_5_RISK_REDUCTION_MANUAL_INTENT_IMPLEMENTED_AND_VERIFIED
+H4_5_MANUAL_TRADE_V3_ROUTE_AUTHORITY_IMPLEMENTED
+H4_5_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
 H5_ARTIFACT_DERIVED_THESIS_HEALTH_IMPLEMENTED_AND_VERIFIED
 H5_V2_OPERATIONAL_ASSESSMENT_ADAPTER_IMPLEMENTED
 H5_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
@@ -62,6 +73,7 @@ FORMAL_OOS_ALPHA_NOT_ESTABLISHED
 TRADING_AUTHORITY_NOT_GRANTED
 REAL_BROKER_AUTHORITY_NOT_IMPLEMENTED
 PRODUCTION_READINESS_NOT_ESTABLISHED
+OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 ```
 
 ## 3. Implemented capabilities
@@ -205,7 +217,9 @@ H4 is **IMPLEMENTED_AND_VERIFIED** at `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 - public package exports and `application/trading_lifecycle` expose the stable H4 route;
 - `scripts/assess_risk_reduction.py` emits `DECISION_ONLY`, `NO_ORDER_CREATED` and `TRADING_AUTHORITY_NOT_GRANTED`.
 
-The CLI is an assessment/persistence entry point only. Connecting a permitted decision to ManualTrade/Fill is the separate H4.5 work package and is not part of H4.
+The H4 CLI remains an assessment/persistence entry point only. H4.5 consumes a
+separately reloaded and replayed permitted decision; H4 itself still creates no
+ManualTrade, Fill or Broker Order.
 
 ### 3.10 H5 artifact-derived Thesis Health
 
@@ -263,7 +277,39 @@ H6 is an authority-composition and lineage capability. It does not establish a
 qualified Supplemental producer, formal PIT/OOS evidence, a sustained
 operational run or any execution authority.
 
-### 3.12 Manual execution, Position and review
+### 3.12 H4.5 reducing-risk manual intent bridge
+
+H4.5 is **IMPLEMENTED_AND_VERIFIED** at
+`7c91be46c8adf1ad958e9c41b5a45021bcfa58ed`:
+
+- `ManualTradeRecord` V3 has mutually exclusive `INCREASING` and `REDUCING`
+  authority routes while preserving V1/V2 Reader and hash semantics;
+- increasing intent retains approved complete-account Portfolio/Risk,
+  ProposedTradeDelta and post-trade snapshot requirements;
+- reducing intent requires SELL plus exact H4 decision, immutable confirmation,
+  source Position, book, Thesis, Opportunity, target and order quantity binding;
+- `OperationalExitDirectiveV2`, `RiskReductionConfirmationPolicy` and
+  `RiskReductionConfirmationAttempt` are content-addressed and fail closed;
+- only the latest operational H5 V2 replay chain bound to an exact VERIFIED H6
+  Composite manifest is accepted; synthetic, historical V1 and mismatched
+  lineage are rejected;
+- the unified SQLite repository owns migration 010 composition and uses one
+  `BEGIN IMMEDIATE` transaction for authority reload, T+1 Position recheck,
+  fresh Gate replay, attempt, ManualTrade, reducing binding and command;
+- each H4 decision can create at most one confirmed intent; failures remain
+  append-only attempts and do not create a trade;
+- later manual partial/full SELL Fills flow through the existing append-only
+  ledger and T+1 projector; a full EXIT Fill can support an explicit later book
+  close, but H4.5 never records a Fill or closes a book itself;
+- `scripts/confirm_risk_reduction.py` accepts IDs/hashes and explicit current
+  evidence/configuration, not caller-supplied aggregate objects.
+
+The actor remains an audit string, not an authenticated production identity.
+Every successful result therefore retains `OPERATOR_AUTHENTICATION_NOT_ESTABLISHED`,
+`TRADING_AUTHORITY_NOT_GRANTED`, `NO_FILL_CREATED` and
+`NO_BROKER_ORDER_CREATED`.
+
+### 3.13 Manual execution, Position and review
 
 Implemented on prior verified checkpoints:
 
@@ -321,20 +367,21 @@ Repository delivery records report passing focused and full gates for earlier se
 
 ### 6.2 Current checkpoint evidence
 
-The local Python 3.12 verification on H6 hardened implementation checkpoint
-`654e025b97c5d9553d7614b4b5be0898272aacbc` observed:
+The local Python 3.12 verification on H4.5 implementation checkpoint
+`7c91be46c8adf1ad958e9c41b5a45021bcfa58ed` observed:
 
 ```text
-FOCUSED_H6 = 67 passed, 0 skipped, 0 failed
-H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
-H5_FOCUSED_REGRESSION = 101 passed, 0 skipped, 0 failed
-RESEARCH_CONTEXT = 396 passed, 0 skipped, 0 failed
-PLATFORM_CONTEXT = 23 passed, 0 skipped, 0 failed
+FOCUSED_H4_5 = 72 passed, 0 skipped, 0 failed
+EXECUTION_CONTEXT = 87 passed, 0 skipped, 0 failed
+PORTFOLIO_CONTEXT = 55 passed, 0 skipped, 0 failed
 POSITION_CONTEXT = 91 passed, 0 skipped, 0 failed
 APPLICATION_CONTEXT = 114 passed, 0 skipped, 0 failed
-FULL_PYTEST = 1459 passed, 0 skipped, 0 failed, 8 subtests passed
+H4_FOCUSED_REGRESSION = 42 passed, 0 skipped, 0 failed
+H5_FOCUSED_REGRESSION = 101 passed, 0 skipped, 0 failed
+H6_FOCUSED_REGRESSION = 67 passed, 0 skipped, 0 failed
+FULL_PYTEST = 1531 passed, 0 skipped, 0 failed, 8 subtests passed
 RUFF = PASS
-MYPY_FORMAL_SCOPE = PASS, 263 source files
+MYPY_FORMAL_SCOPE = PASS, 265 source files
 PACKAGE_BUILD = PASS, sdist and wheel
 DOCUMENT_AUTHORITY_AND_LINKS = PASS
 GIT_DIFF_CHECK = PASS
@@ -342,9 +389,9 @@ GIT_DIFF_CHECK = PASS
 
 The full run emitted six existing pandas fragmentation warnings and no failures.
 The CI workflow runs docs validation, pytest, Ruff, configured mypy and
-`python -m build` on Python 3.12 for push and pull requests. Remote H6 CI is not
-claimed until the Draft PR jobs complete; required-check branch protection was
-not inspected.
+`python -m build` on Python 3.12 for push and pull requests. Remote H4.5 CI is
+not claimed until the Draft PR jobs complete; required-check branch protection
+was not inspected.
 
 ## 7. Not implemented as production authority
 
@@ -354,7 +401,6 @@ not inspected.
 - validated Signal, PathForecast, Portfolio, Risk, Holding or Exit parameters;
 - formal PIT and formal OOS Alpha evidence;
 - sustained real 14:55 Shadow runs;
-- H4.5 reducing-decision-to-manual-execution bridge;
 - qualified real Composite Operational Evidence packages and producer identity;
 - durable Holding/Exit schedules and acknowledgement state;
 - recoverable ShadowRun queues, receipts, metrics, tracing and alerts;
@@ -374,7 +420,9 @@ Research outputs may support manual decisions. No current component may:
 - automatically promote a model;
 - describe exploratory thresholds as validated parameters;
 - describe CandidateSet or Signal as an Entry;
-- treat a permitted H4 decision as an order, Fill or execution confirmation.
+- treat a permitted H4 decision by itself as an order, Fill or execution
+  confirmation;
+- treat an H4.5 ManualTrade intent as a Fill, Broker Order or trading authority.
 
 ## 9. Immediate required sequence
 
@@ -386,7 +434,7 @@ P0 engineering baseline restored
 P1 complete pre-Shadow mechanics
   H5 Artifact-derived Thesis Health complete
   → H6 Composite Evidence Manifest complete
-  → H4.5 Risk-Reducing Decision to Manual Execution Bridge
+  → H4.5 Risk-Reducing Decision to Manual Execution Bridge complete
   → H7 Durable Holding/Exit Operations
   → H8 Recoverable ShadowRun
   → H9 Validation Infrastructure
@@ -411,4 +459,4 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with verified H4, H5 and H6 engineering checkpoints and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+> **A pre-Shadow research decision platform with verified H4, H4.5, H5 and H6 engineering checkpoints and strong evidence/manual-lifecycle mechanics, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
