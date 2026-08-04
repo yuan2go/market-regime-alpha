@@ -26,3 +26,30 @@ __all__ = [
     "materialize_r5_baseline_features",
     "r5_baseline_feature_definitions",
 ]
+from market_regime_alpha.features.spine import (
+    FeatureConfiguration,
+    FeatureDefinitionV2,
+    FeatureOutputDefinition,
+    FeatureParameter,
+    FeatureParameterType,
+    FeatureSetConfiguration,
+    FeatureValidationStatus,
+    MissingnessPolicy,
+    RequiredFeatureCoveragePolicy,
+    TimeframePolicy,
+    ValueType,
+)
+
+__all__ = [
+    "FeatureConfiguration",
+    "FeatureDefinitionV2",
+    "FeatureOutputDefinition",
+    "FeatureParameter",
+    "FeatureParameterType",
+    "FeatureSetConfiguration",
+    "FeatureValidationStatus",
+    "MissingnessPolicy",
+    "RequiredFeatureCoveragePolicy",
+    "TimeframePolicy",
+    "ValueType",
+]
