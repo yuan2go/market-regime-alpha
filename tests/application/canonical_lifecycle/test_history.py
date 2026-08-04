@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 import json
 from pathlib import Path
 import sqlite3
+from threading import Event
 
 import pytest
 
@@ -11,11 +13,15 @@ from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleJournalIntegrityError,
     StageTransition,
 )
-from market_regime_alpha.application.canonical_lifecycle.contracts import LifecycleRun
+from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleRun,
+    LifecycleRunId,
+)
 from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
     SQLiteLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
+    LifecycleRunStatus,
     LifecycleStageName,
 )
 from market_regime_alpha.evidence.canonical import canonical_json
@@ -56,6 +62,59 @@ def test_history_is_complete_deterministic_and_retains_hashed_event_payloads(
         payload["extra"].get("to_stage_status") == "COMPLETED"
         for payload in payloads
     )
+
+
+def test_history_uses_one_snapshot_while_concurrent_writer_commits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "journal.sqlite3"
+    reader = SQLiteLifecycleRunRepository(path)
+    command = _command(tmp_path, idempotency_key="history-snapshot")
+    created = reader.create_or_get(command, created_at=T0)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
+
+    writer = SQLiteLifecycleRunRepository(path)
+    run_selected = Event()
+    writer_committed = Event()
+    original_select_run = reader._select_run
+
+    def select_run_then_pause(
+        connection: sqlite3.Connection,
+        run_id: LifecycleRunId,
+    ) -> sqlite3.Row:
+        row = original_select_run(connection, run_id)
+        run_selected.set()
+        if not writer_committed.wait(timeout=5):
+            raise TimeoutError("concurrent writer did not commit")
+        return row
+
+    monkeypatch.setattr(reader, "_select_run", select_run_then_pause)
+
+    def claim_after_reader_snapshot() -> LifecycleRun:
+        if not run_selected.wait(timeout=5):
+            raise TimeoutError("history did not establish its read snapshot")
+        claimed = writer.claim(
+            created.run_id,
+            expected_version=created.version,
+            claimed_at=T0 + timedelta(seconds=1),
+        )
+        writer_committed.set()
+        return claimed
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        claimed_future = executor.submit(claim_after_reader_snapshot)
+        history = reader.history(created.run_id)
+        claimed = claimed_future.result(timeout=5)
+
+    assert history.run.status is LifecycleRunStatus.CREATED
+    assert len(history.events) == 1
+    assert history.events[0].to_status is LifecycleRunStatus.CREATED
+    assert claimed.status is LifecycleRunStatus.RUNNING
+    current = writer.history(created.run_id)
+    assert current.run.status is LifecycleRunStatus.RUNNING
+    assert len(current.events) == 2
 
 
 def test_history_fails_closed_on_event_payload_tamper(tmp_path: Path) -> None:

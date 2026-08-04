@@ -837,7 +837,7 @@ class SQLiteLifecycleRunRepository:
     def history(self, run_id: LifecycleRunId) -> LifecycleHistory:
         _require_run_id(run_id)
         stage_order = {stage.value: index for index, stage in enumerate(LIFECYCLE_STAGE_ORDER)}
-        with self._connect() as connection:
+        with self._read_transaction() as connection:
             run = _run_from_row(self._select_run(connection, run_id))
             stage_rows = connection.execute(
                 "SELECT * FROM lifecycle_stages WHERE run_id = ?",
@@ -915,6 +915,20 @@ class SQLiteLifecycleRunRepository:
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield connection
+            except BaseException:
+                connection.rollback()
+                raise
+            else:
+                connection.commit()
+
+    @contextmanager
+    def _read_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Keep multi-query journal reads on one SQLite snapshot."""
+
+        with self._connect() as connection:
+            connection.execute("BEGIN")
             try:
                 yield connection
             except BaseException:
