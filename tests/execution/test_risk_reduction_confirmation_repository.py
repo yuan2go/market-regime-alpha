@@ -9,6 +9,9 @@ import pytest
 from market_regime_alpha.application.trading_lifecycle.manual_execution import (
     ManualExecutionApplicationService,
 )
+from market_regime_alpha.application.trading_lifecycle.traceable_execution import (
+    TraceableManualExecutionApplicationService,
+)
 from market_regime_alpha.core.identity import FillId
 from market_regime_alpha.decision.sqlite_repository import (
     SQLiteDecisionLifecycleRepository,
@@ -31,7 +34,7 @@ from market_regime_alpha.portfolio.risk_routes import (
 from market_regime_alpha.execution.sqlite_risk_reduction import (
     SQLiteRiskReductionManualIntentRepository,
 )
-from market_regime_alpha.position.authority import PositionProjector
+from market_regime_alpha.position.authority import PositionProjector, PositionState
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
 )
@@ -558,6 +561,51 @@ def test_confirmed_reducing_trade_accepts_manual_fill_and_reprojects_position(
     )
     assert second.attempt.state is RiskReductionConfirmationState.POSITION_CHANGED
     assert second.manual_trade is None
+
+
+def test_full_exit_fill_supports_later_explicit_position_book_close(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    result = fixture.repository.confirm_risk_reduction(fixture.command)
+    assert result.manual_trade is not None
+    service = TraceableManualExecutionApplicationService(fixture.repository)
+
+    filled_trade, _ = service.record_fill(
+        result.manual_trade.manual_trade_id,
+        external_fill_id="external-h4-5-full-exit",
+        quantity=fixture.quantity,
+        price=10.0,
+        fees=0.0,
+        occurred_at=fixture.command.confirmed_at,
+        recorded_at=fixture.command.confirmed_at + timedelta(seconds=1),
+        actor="manual-operator",
+        reason="full manual EXIT Fill",
+        idempotency_key="h4-5-full-exit-fill",
+    )
+    final_position = service.rebuild_a_share_position(
+        fixture.book.position_book_id,
+        calendar=fixture.command.trading_calendar,
+        symbol_session_statuses=fixture.command.symbol_trading_statuses,
+        as_of=fixture.command.confirmed_at + timedelta(seconds=1),
+    )
+
+    assert filled_trade.state is ManualOrderState.FILLED
+    assert final_position.state is PositionState.CLOSED
+    assert final_position.total_quantity == 0
+    closed = service.close_position_book(
+        fixture.book.position_book_id,
+        expected_version=fixture.book.version,
+        final_position=final_position,
+        trading_calendar=fixture.command.trading_calendar,
+        symbol_trading_statuses=fixture.command.symbol_trading_statuses,
+        actor="manual-operator",
+        reason="explicit close after authoritative full EXIT Fill",
+        closed_at=fixture.command.confirmed_at + timedelta(seconds=2),
+        idempotency_key="h4-5-close-after-full-exit",
+    )
+
+    assert closed.state.value == "CLOSED"
 
 
 def test_atomic_rollback_removes_attempt_and_trade_on_binding_failure(

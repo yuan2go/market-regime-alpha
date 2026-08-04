@@ -32,6 +32,7 @@ from market_regime_alpha.portfolio.account_authority import (
 )
 from market_regime_alpha.portfolio.lifecycle import RiskDecisionState
 from market_regime_alpha.position.authority import (
+    T_PLUS_ONE_POSITION_SNAPSHOT_SCHEMA,
     PositionProjector,
     PositionSnapshot,
     PositionState,
@@ -200,6 +201,8 @@ class TraceableManualExecutionApplicationService:
         *,
         expected_version: int,
         final_position: PositionSnapshot,
+        trading_calendar: TradingCalendarArtifact | None = None,
+        symbol_trading_statuses: tuple[SymbolTradingSessionStatus, ...] = (),
         actor: str,
         reason: str,
         closed_at: datetime,
@@ -214,7 +217,19 @@ class TraceableManualExecutionApplicationService:
             or final_position.opportunity_id != book.opportunity_id
         ):
             raise ValueError("final Position does not belong to PositionBook")
-        replay = self.rebuild_position(book_id, as_of=final_position.as_of)
+        if final_position.schema_version == T_PLUS_ONE_POSITION_SNAPSHOT_SCHEMA:
+            if trading_calendar is None or not symbol_trading_statuses:
+                raise ValueError(
+                    "T+1 final Position requires TradingCalendar and symbol session evidence"
+                )
+            replay = self.rebuild_a_share_position(
+                book_id,
+                calendar=trading_calendar,
+                symbol_session_statuses=symbol_trading_statuses,
+                as_of=final_position.as_of,
+            )
+        else:
+            replay = self.rebuild_position(book_id, as_of=final_position.as_of)
         if replay != final_position:
             raise ValueError("final Position differs from Fill-derived replay")
         closed = book.close(closed_at=closed_at, actor=actor, reason=reason)
