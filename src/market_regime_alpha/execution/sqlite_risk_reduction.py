@@ -185,8 +185,10 @@ class SQLiteRiskReductionManualIntentRepository(
                     )
                 )
                 decision = risk_bundle.decision
-                if decision.content_hash != command.risk_reducing_decision_hash:
-                    raise ValueError("RiskReducingDecision hash mismatch")
+                decision_reference_matches = (
+                    decision.content_hash
+                    == command.risk_reducing_decision_hash
+                )
                 directive_row = connection.execute(
                     """
                     SELECT * FROM operational_exit_directives
@@ -199,23 +201,35 @@ class SQLiteRiskReductionManualIntentRepository(
                         f"unknown OperationalExitDirectiveV2: {command.exit_directive_id}"
                     )
                 directive = _directive_from_row(directive_row)
-                if (
-                    directive.content_hash != command.exit_directive_hash
-                    or directive_row["risk_reducing_decision_id"]
-                    != str(decision.decision_id)
-                ):
-                    raise ValueError("OperationalExitDirectiveV2 hash/scope mismatch")
+                directive_reference_matches = (
+                    directive.content_hash == command.exit_directive_hash
+                    and directive_row["risk_reducing_decision_id"]
+                    == str(decision.decision_id)
+                )
 
                 book = self.get_position_book(decision.position_book_id)
                 trades = self.trades_for_book(book.position_book_id)
                 fills = self.fills_for_book(book.position_book_id)
+                source_position = risk_bundle.position
+                current_fill_ids = tuple(
+                    item.fill_id
+                    for item in sorted(
+                        fills,
+                        key=lambda item: (item.recorded_at, str(item.fill_id)),
+                    )
+                )
+                position_as_of = (
+                    source_position.as_of
+                    if current_fill_ids == source_position.source_fill_ids
+                    else command.confirmed_at
+                )
                 current_position = PositionProjector().project_book_t_plus_one(
                     book=book,
                     trades=trades,
                     fills=fills,
                     calendar=command.trading_calendar,
                     symbol_session_statuses=command.symbol_trading_statuses,
-                    as_of=command.confirmed_at,
+                    as_of=position_as_of,
                 )
                 thesis = self._decisions.get_thesis(decision.thesis_id)
                 opportunity = self._decisions.get_opportunity(thesis.opportunity_id)
@@ -238,6 +252,8 @@ class SQLiteRiskReductionManualIntentRepository(
                     opportunity=opportunity,
                     health_bundle=health_bundle,
                     composite=composite,
+                    decision_reference_matches=decision_reference_matches,
+                    directive_reference_matches=directive_reference_matches,
                 )
                 if failure is not None:
                     state, reason_codes = failure
@@ -307,11 +323,23 @@ class SQLiteRiskReductionManualIntentRepository(
         opportunity,
         health_bundle,
         composite,
+        decision_reference_matches: bool,
+        directive_reference_matches: bool,
     ) -> tuple[RiskReductionConfirmationState, tuple[str, ...]] | None:
         decision = risk_bundle.decision
         source = risk_bundle.position
         health = health_bundle.observation
         manifest = composite.manifest
+        if not decision_reference_matches:
+            return (
+                RiskReductionConfirmationState.DATA_INSUFFICIENT,
+                ("RISK_REDUCING_DECISION_HASH_MISMATCH",),
+            )
+        if not directive_reference_matches:
+            return (
+                RiskReductionConfirmationState.DATA_INSUFFICIENT,
+                ("OPERATIONAL_EXIT_DIRECTIVE_REFERENCE_MISMATCH",),
+            )
         if decision.state is RiskReducingDecisionState.DATA_INSUFFICIENT:
             return (
                 RiskReductionConfirmationState.DATA_INSUFFICIENT,
@@ -332,6 +360,17 @@ class SQLiteRiskReductionManualIntentRepository(
             return (
                 RiskReductionConfirmationState.EXPIRED,
                 ("RISK_REDUCING_DECISION_EXPIRED",),
+            )
+        position_age = (command.confirmed_at - source.as_of).total_seconds()
+        if position_age < 0.0:
+            return (
+                RiskReductionConfirmationState.DATA_INSUFFICIENT,
+                ("CONFIRMATION_PRECEDES_SOURCE_POSITION",),
+            )
+        if position_age > command.confirmation_policy.maximum_position_age_seconds:
+            return (
+                RiskReductionConfirmationState.EXPIRED,
+                ("SOURCE_POSITION_EXPIRED",),
             )
         if (
             decision.action is RiskChangeKind.REDUCE

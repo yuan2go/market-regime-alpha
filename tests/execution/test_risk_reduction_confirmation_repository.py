@@ -34,7 +34,12 @@ from market_regime_alpha.portfolio.risk_routes import (
 from market_regime_alpha.execution.sqlite_risk_reduction import (
     SQLiteRiskReductionManualIntentRepository,
 )
-from market_regime_alpha.position.authority import PositionProjector, PositionState
+from market_regime_alpha.position.authority import (
+    PositionProjector,
+    PositionState,
+    SymbolTradingSessionStatus,
+    SymbolTradingState,
+)
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
 )
@@ -88,6 +93,27 @@ def test_atomic_exit_confirmation_creates_only_route_authorized_manual_intent(
     assert restarted.confirm_risk_reduction(fixture.command) == result
 
 
+def test_fresh_later_confirmation_preserves_identical_position_authority(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    later = replace(
+        fixture.command,
+        confirmed_at=fixture.command.confirmed_at + timedelta(seconds=5),
+        idempotency_key="h4-5-confirm-five-seconds-later",
+    )
+
+    result = fixture.repository.confirm_risk_reduction(later)
+
+    assert result.attempt.state is RiskReductionConfirmationState.CONFIRMED_INTENT
+    assert result.current_position.snapshot_id == (
+        result.attempt.source_position_snapshot_id
+    )
+    assert canonical_hash(result.current_position.to_canonical_dict()) == (
+        result.attempt.source_position_snapshot_hash
+    )
+
+
 def test_legal_reduce_creates_sell_intent_with_positive_remainder(
     tmp_path, daily_decision_fixture
 ) -> None:
@@ -126,6 +152,81 @@ def test_h4_v1_reduce_to_zero_requires_new_exit_decision_without_trade(
         "H4_V2_REDUCE_REQUIRES_POSITIVE_REMAINDER",
         "REQUIRES_NEW_EXIT_DECISION",
     )
+    assert result.manual_trade is None
+
+
+def test_decision_hash_mismatch_persists_data_insufficient_attempt(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+
+    result = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            risk_reducing_decision_hash="sha256:" + "8" * 64,
+            idempotency_key="h4-5-wrong-decision-hash",
+        )
+    )
+
+    assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
+    assert result.attempt.reason_codes == (
+        "RISK_REDUCING_DECISION_HASH_MISMATCH",
+    )
+    assert result.manual_trade is None
+
+
+def test_directive_hash_mismatch_persists_data_insufficient_attempt(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+
+    result = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            exit_directive_hash="sha256:" + "7" * 64,
+            idempotency_key="h4-5-wrong-directive-hash",
+        )
+    )
+
+    assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
+    assert result.attempt.reason_codes == (
+        "OPERATIONAL_EXIT_DIRECTIVE_REFERENCE_MISMATCH",
+    )
+    assert result.manual_trade is None
+
+
+@pytest.mark.parametrize(
+    ("h4_state", "expected_state", "reason_code"),
+    [
+        (
+            ExecutionConstraintState.SUSPENDED,
+            RiskReductionConfirmationState.BLOCKED_ON_RECHECK,
+            "H4_DECISION_NOT_PERMITTED",
+        ),
+        (
+            ExecutionConstraintState.UNKNOWN,
+            RiskReductionConfirmationState.DATA_INSUFFICIENT,
+            "H4_DECISION_DATA_INSUFFICIENT",
+        ),
+    ],
+)
+def test_non_permitted_h4_decision_never_creates_manual_intent(
+    tmp_path,
+    daily_decision_fixture,
+    h4_state,
+    expected_state,
+    reason_code,
+) -> None:
+    fixture = build_confirmation_fixture(
+        tmp_path,
+        daily_decision_fixture,
+        h4_execution_state=h4_state,
+    )
+
+    result = fixture.repository.confirm_risk_reduction(fixture.command)
+
+    assert result.attempt.state is expected_state
+    assert result.attempt.reason_codes == (reason_code,)
     assert result.manual_trade is None
 
 
@@ -188,6 +289,35 @@ def test_new_append_only_fill_before_confirmation_yields_position_changed(
     assert result.attempt.source_position_snapshot_hash != (
         result.attempt.current_position_snapshot_hash
     )
+    assert result.manual_trade is None
+
+
+def test_changed_t_plus_one_sellability_evidence_yields_position_changed(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    source = fixture.command.symbol_trading_statuses[0]
+    suspended = SymbolTradingSessionStatus.create(
+        symbol=source.symbol,
+        session_date=source.session_date,
+        state=SymbolTradingState.SUSPENDED,
+        source_artifact_id=source.source_artifact_id,
+        source_artifact_hash=source.source_artifact_hash,
+        availability_time=source.availability_time,
+        reason_code="H4_5_CURRENT_SUSPENSION",
+    )
+
+    result = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            symbol_trading_statuses=(suspended,),
+            idempotency_key="h4-5-sellability-changed",
+        )
+    )
+
+    assert result.attempt.state is RiskReductionConfirmationState.POSITION_CHANGED
+    assert result.current_position.total_quantity == fixture.quantity
+    assert result.current_position.available_quantity == 0
     assert result.manual_trade is None
 
 
@@ -281,6 +411,39 @@ def test_expired_decision_persists_failed_attempt_without_trade(
     ) == result.attempt
 
 
+def test_expired_source_position_uses_explicit_policy_threshold(
+    tmp_path, daily_decision_fixture
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    source = fixture.command.confirmation_policy
+    position_strict = type(source).create(
+        profile_id="h4-5-position-strict",
+        builder_revision=source.builder_revision,
+        maximum_decision_age_seconds=120,
+        maximum_position_age_seconds=10,
+        maximum_execution_observation_age_seconds=30,
+        maximum_reference_price_deviation=(
+            source.maximum_reference_price_deviation
+        ),
+        operator_authentication_requirement=(
+            source.operator_authentication_requirement
+        ),
+    )
+
+    result = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            confirmation_policy=position_strict,
+            confirmed_at=fixture.command.confirmed_at + timedelta(seconds=11),
+            idempotency_key="h4-5-position-expired",
+        )
+    )
+
+    assert result.attempt.state is RiskReductionConfirmationState.EXPIRED
+    assert result.attempt.reason_codes == ("SOURCE_POSITION_EXPIRED",)
+    assert result.manual_trade is None
+
+
 @pytest.mark.parametrize(
     ("state", "expected"),
     [
@@ -361,6 +524,76 @@ def test_stale_execution_observation_is_data_insufficient(
     )
 
     assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
+    assert result.manual_trade is None
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_state", "reason_code"),
+    [
+        (
+            "symbol",
+            RiskReductionConfirmationState.DATA_INSUFFICIENT,
+            "FRESH_EXECUTION_OBSERVATION_NOT_ESTABLISHED",
+        ),
+        (
+            "session",
+            RiskReductionConfirmationState.DATA_INSUFFICIENT,
+            "FRESH_EXECUTION_OBSERVATION_NOT_ESTABLISHED",
+        ),
+        (
+            "future",
+            RiskReductionConfirmationState.DATA_INSUFFICIENT,
+            "FRESH_EXECUTION_OBSERVATION_NOT_ESTABLISHED",
+        ),
+        (
+            "liquidity",
+            RiskReductionConfirmationState.BLOCKED_ON_RECHECK,
+            "LIQUIDITY_PARTICIPATION_EXCEEDED",
+        ),
+    ],
+)
+def test_execution_recheck_rejects_scope_time_and_liquidity_failures(
+    tmp_path,
+    daily_decision_fixture,
+    case,
+    expected_state,
+    reason_code,
+) -> None:
+    fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    source = fixture.command.execution_observation
+    values = {
+        "symbol": source.symbol,
+        "session_date": source.session_date,
+        "state": source.state,
+        "reference_price": source.reference_price,
+        "average_daily_volume": source.average_daily_volume,
+        "source_artifact_id": source.source_artifact_id,
+        "source_artifact_hash": source.source_artifact_hash,
+        "availability_time": source.availability_time,
+        "reason_code": f"H4_5_{case.upper()}_RECHECK",
+    }
+    if case == "symbol":
+        values["symbol"] = "000001.SZ"
+    elif case == "session":
+        values["session_date"] = source.session_date + timedelta(days=1)
+    elif case == "future":
+        values["availability_time"] = fixture.command.confirmed_at + timedelta(
+            seconds=1
+        )
+    else:
+        values["average_daily_volume"] = fixture.quantity
+    observation = ReducingExecutionObservation.create(**values)
+
+    result = fixture.repository.confirm_risk_reduction(
+        replace(
+            fixture.command,
+            execution_observation=observation,
+            idempotency_key=f"h4-5-{case}-recheck",
+        )
+    )
+
+    assert result.attempt.state is expected_state
+    assert reason_code in result.attempt.reason_codes
     assert result.manual_trade is None
 
 

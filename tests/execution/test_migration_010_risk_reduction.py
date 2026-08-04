@@ -191,6 +191,39 @@ def test_migration_010_down_isolated_restores_v2_projection(tmp_path) -> None:
         ).fetchone() is None
 
 
+def test_migration_010_down_refuses_to_discard_reducing_authority(
+    tmp_path,
+) -> None:
+    path = tmp_path / "down-guard.sqlite3"
+    _legacy_database(path)
+    with sqlite3.connect(path, isolation_level=None) as connection:
+        connection.executescript(
+            _migration("010_risk_reduction_manual_intent_up.sql")
+        )
+        connection.execute(
+            """
+            INSERT INTO manual_trade_records(
+                manual_trade_id, authority_route, risk_decision_id,
+                risk_reducing_decision_id, risk_reduction_confirmation_id,
+                account_id, symbol, side, state, filled_quantity,
+                aggregate_json, version
+            ) VALUES ('reducing-trade', 'REDUCING', NULL, 'reducing-a',
+                      'attempt-a', 'account-a', '000001.SZ', 'SELL',
+                      'RECORDED', 0, '{}', 0)
+            """
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.executescript(
+                _migration("010_risk_reduction_manual_intent_down.sql")
+            )
+
+        assert connection.execute(
+            "SELECT authority_route FROM manual_trade_records "
+            "WHERE manual_trade_id = 'reducing-trade'"
+        ).fetchone() == ("REDUCING",)
+
+
 def test_repository_rejects_spoofed_append_only_trigger(tmp_path) -> None:
     path = tmp_path / "spoofed-trigger.sqlite3"
     SQLiteRiskReductionManualIntentRepository(path)

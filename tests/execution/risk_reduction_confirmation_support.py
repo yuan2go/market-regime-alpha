@@ -145,6 +145,9 @@ def build_confirmation_fixture(
     action: RiskChangeKind = RiskChangeKind.EXIT,
     reduce_target_zero: bool = False,
     invalidated_thesis: bool = False,
+    h4_execution_state: ExecutionConstraintState = (
+        ExecutionConstraintState.EXECUTABLE
+    ),
 ) -> ConfirmationFixture:
     database = root / "lifecycle.sqlite3"
     repository = SQLiteRiskReductionManualIntentRepository(database)
@@ -295,7 +298,7 @@ def build_confirmation_fixture(
     execution_observation = ReducingExecutionObservation.create(
         symbol=symbol,
         session_date=assessed_at.date(),
-        state=ExecutionConstraintState.EXECUTABLE,
+        state=h4_execution_state,
         reference_price=10.0,
         average_daily_volume=10_000,
         source_artifact_id=ArtifactId("h4-5-execution-observation-source"),
