@@ -565,6 +565,12 @@ class FeatureBundleArtifact:
     def feature_set_hash(self) -> str:
         return self.feature_set.content_hash
 
+    @property
+    def available_at(self) -> datetime:
+        """Latest bound Feature evidence availability, not publication time."""
+
+        return max(item.available_at for item in self.feature_artifact_references)
+
     def __post_init__(self) -> None:
         if self.schema_version != FEATURE_BUNDLE_V1_SCHEMA:
             raise ValueError("unsupported Feature Bundle schema")

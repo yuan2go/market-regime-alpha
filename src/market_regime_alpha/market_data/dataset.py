@@ -296,6 +296,12 @@ class MarketDataDatasetArtifact:
     coverage: MarketDataCoverage
     limitations: tuple[str, ...]
 
+    @property
+    def available_at(self) -> datetime:
+        """Latest source-bar availability, distinct from package creation time."""
+
+        return max(item.available_at for item in self.iter_bars())
+
     def __post_init__(self) -> None:
         if self.schema_version != MARKET_DATA_DATASET_SCHEMA:
             raise ValueError("unsupported Market Data Dataset schema")

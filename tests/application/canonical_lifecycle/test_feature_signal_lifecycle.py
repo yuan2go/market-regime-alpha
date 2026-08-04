@@ -14,12 +14,26 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleObjectType,
     LifecycleReaderKind,
 )
+from market_regime_alpha.application.canonical_lifecycle.commands import (
+    CanonicalLifecycleCommand,
+)
+from market_regime_alpha.application.canonical_lifecycle.durable_replay import (
+    run_durable_lifecycle_replay,
+)
 from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
+    CanonicalLifecycleInputManifest,
     LifecycleAuthorityCeiling,
 )
 from market_regime_alpha.application.canonical_lifecycle.replay import (
     ReplayCheckStatus,
+    LifecycleReplayStatus,
     verify_replay_reference,
+)
+from market_regime_alpha.application.canonical_lifecycle.runner import (
+    CanonicalDecisionLifecycleRunner,
+)
+from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
+    SQLiteLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.evidence import (
     VerifiedCompositeEvidenceStageHandler,
@@ -34,12 +48,14 @@ from market_regime_alpha.application.canonical_lifecycle.stages.signal_forecast 
     SignalStageHandler,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
+    LIFECYCLE_STAGE_ORDER,
     LifecycleRunStatus,
+    LifecycleRunType,
     LifecycleStageName,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.contracts import DataEligibility
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
 from market_regime_alpha.features.materialization_v2 import (
     FeatureMaterializationRunner,
     load_verified_feature_bundle_v2,
@@ -79,6 +95,12 @@ from market_regime_alpha.signals import (
 from tests.application.canonical_lifecycle.test_research_stages import (
     _context,
     _stage_fixture,
+)
+from tests.application.canonical_lifecycle.test_decision_risk_stages import (
+    _NeverCalledHandler,
+)
+from tests.application.canonical_lifecycle.test_lifecycle_integration import (
+    _TickingClock,
 )
 
 
@@ -132,7 +154,7 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
         content_hash=bundle.artifact.content_hash,
         reader_kind=LifecycleReaderKind.FEATURE_BUNDLE_READER,
         locator=str(bundle.root),
-        available_at=bundle.artifact.created_at,
+        available_at=bundle.artifact.available_at,
     )
     dataset_reference = LifecycleObjectReference(
         object_type=LifecycleObjectType.MARKET_DATA_DATASET,
@@ -140,7 +162,7 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
         content_hash=dataset.artifact.content_hash,
         reader_kind=LifecycleReaderKind.MARKET_DATA_DATASET_READER,
         locator=str(dataset.root),
-        available_at=dataset.artifact.created_at,
+        available_at=dataset.artifact.available_at,
     )
     mapping_reference = LifecycleConfigurationReference(
         configuration_kind=LifecycleConfigurationKind.SIGNAL_INPUT_MAPPING,
@@ -265,6 +287,131 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
     assert entry_result.run_status is LifecycleRunStatus.BLOCKED_BY_MODEL_VALIDATION
     assert entry_result.output_references == ()
     assert "ENTRY_MODEL_EMPIRICALLY_VALIDATED_FALSE" in entry_result.reason_codes
+
+    configuration_values = {
+        LifecycleConfigurationKind.RESEARCH_PIPELINE: fixture.research_configuration,
+        LifecycleConfigurationKind.SIGNAL_MODEL: fixture.signal_configuration,
+        LifecycleConfigurationKind.PATH_FORECAST: fixture.forecast_configuration,
+        LifecycleConfigurationKind.FEATURE_SET: bundle.artifact.feature_set,
+        LifecycleConfigurationKind.SIGNAL_INPUT_MAPPING: mapping,
+    }
+    persisted_configuration_references = []
+    for reference in fixture.configuration_references:
+        configuration = configuration_values[reference.configuration_kind]
+        configuration_path = (
+            tmp_path
+            / "journal-configurations"
+            / f"{reference.configuration_id}.json"
+        )
+        configuration_path.parent.mkdir(parents=True, exist_ok=True)
+        configuration_path.write_text(
+            canonical_json(configuration.to_canonical_dict()), encoding="utf-8"
+        )
+        persisted_configuration_references.append(
+            replace(reference, locator=str(configuration_path.resolve()))
+        )
+    fixture = replace(
+        fixture,
+        configuration_references=tuple(
+            sorted(
+                persisted_configuration_references,
+                key=lambda item: item.sort_key,
+            )
+        ),
+    )
+    manifest = CanonicalLifecycleInputManifest.create(
+        decision_date=fixture.decision_date,
+        as_of_time=fixture.as_of_time,
+        created_at=fixture.as_of_time + timedelta(seconds=1),
+        input_references=fixture.initial_references,
+        configuration_references=fixture.configuration_references,
+        model_references=fixture.model_references,
+        authority_ceiling=LifecycleAuthorityCeiling(),
+        limitations=("ENTRY_MODEL_NOT_EMPIRICALLY_VALIDATED",),
+    )
+    manifest_path = tmp_path / "journal-input-manifest.json"
+    manifest_path.write_text(
+        canonical_json(manifest.to_canonical_dict()), encoding="utf-8"
+    )
+    output_root = tmp_path / "journal-runtime"
+    command = CanonicalLifecycleCommand(
+        run_type=LifecycleRunType.CANONICAL_DECISION_LIFECYCLE,
+        decision_date=fixture.decision_date,
+        as_of_time=fixture.as_of_time,
+        idempotency_key="feature-signal-durable-journal",
+        input_manifest_id=manifest.manifest_id,
+        input_content_hash=manifest.content_hash,
+        input_manifest_locator=manifest_path,
+        input_references=fixture.initial_references,
+        configuration_references=fixture.configuration_references,
+        model_references=fixture.model_references,
+        stop_after_stage=None,
+        output_directory=output_root,
+        authority_database_locator=None,
+    )
+    configured_handlers = {
+        LifecycleStageName.VERIFY_COMPOSITE_EVIDENCE: (
+            VerifiedCompositeEvidenceStageHandler()
+        ),
+        LifecycleStageName.PLATFORM_RESEARCH: PlatformResearchStageHandler(
+            configuration=fixture.research_configuration,
+            output_root=output_root / "research",
+        ),
+        LifecycleStageName.SIGNAL: SignalStageHandler(
+            configuration=fixture.signal_configuration,
+            mapping_configuration=mapping,
+            feature_set_configuration=bundle.artifact.feature_set,
+            output_root=output_root / "signals",
+        ),
+        LifecycleStageName.PATH_FORECAST: PathForecastStageHandler(
+            configuration=fixture.forecast_configuration,
+            output_root=output_root / "forecasts",
+        ),
+        LifecycleStageName.ENTRY_ASSESSMENT: EntryAssessmentStageHandler(
+            authority_ceiling=LifecycleAuthorityCeiling()
+        ),
+    }
+    handlers = tuple(
+        configured_handlers.get(stage, _NeverCalledHandler(stage))
+        for stage in LIFECYCLE_STAGE_ORDER
+    )
+    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    runner = CanonicalDecisionLifecycleRunner(
+        repository=repository,
+        handlers=handlers,
+        clock=_TickingClock(fixture.as_of_time + timedelta(hours=1)),
+    )
+    first = runner.run(command)
+    assert first.run.status is LifecycleRunStatus.BLOCKED_BY_MODEL_VALIDATION
+    signal_receipt = next(
+        receipt
+        for receipt in first.receipts
+        if receipt.stage_name is LifecycleStageName.SIGNAL
+    )
+    assert bundle.artifact.content_hash in signal_receipt.input_hashes
+    signal_packages = tuple((output_root / "signals").iterdir())
+
+    repeated = runner.run(command)
+    assert repeated.run.run_id == first.run.run_id
+    assert repeated.attempted_stages == ()
+    assert tuple((output_root / "signals").iterdir()) == signal_packages
+
+    durable_replay = run_durable_lifecycle_replay(
+        repository=repository,
+        source_run_id=first.run.run_id,
+        idempotency_key="feature-signal-durable-replay",
+        clock=_TickingClock(first.run.updated_at + timedelta(seconds=1)),
+        output_directory=tmp_path / "durable-replay",
+    )
+    assert durable_replay.report.status is LifecycleReplayStatus.STABLE
+    assert any(
+        item.detail == "FEATURE_BUNDLE_PURE_RECOMPUTATION_STABLE"
+        for item in durable_replay.report.checks
+    )
+    assert any(
+        item.detail == "SIGNAL_FEATURE_INPUT_REASSEMBLY_REPLAY_STABLE"
+        for item in durable_replay.report.checks
+    )
 
 
 def _materialize_bundle(
