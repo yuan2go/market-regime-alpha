@@ -279,6 +279,11 @@ class LifecycleRunRepository(Protocol):
 
     def get_run(self, run_id: LifecycleRunId) -> LifecycleRun: ...
 
+    def get_run_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> LifecycleRun | None: ...
+
     def get_command(
         self,
         run_id: LifecycleRunId,

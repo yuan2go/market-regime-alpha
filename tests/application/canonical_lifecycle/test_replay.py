@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 import sqlite3
@@ -28,6 +29,7 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
 )
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleIdempotencyConflict,
+    LifecycleJournalIntegrityError,
 )
 from tests.application.canonical_lifecycle.test_lifecycle_integration import (
     _confirmation_command_for_references,
@@ -261,6 +263,128 @@ def test_durable_replay_resumes_an_interrupted_journal_attempt(
     assert lifecycle_history_hash(
         source_repository.history(source.run.run_id)
     ) == source_hash
+
+
+def test_interrupted_replay_recovers_from_captured_snapshot_after_source_advances(
+    tmp_path: Path,
+) -> None:
+    fixture, manifest_path = _canonical_fixture(tmp_path / "source")
+    journal_path = tmp_path / "lifecycle.sqlite3"
+    source_repository = SQLiteLifecycleRunRepository(journal_path)
+    source_output = tmp_path / "source-runtime"
+    command = replace(
+        _canonical_command(
+            fixture,
+            manifest_path=manifest_path,
+            idempotency_key="mutable-replay-source",
+            output_root=source_output,
+        ),
+        stop_after_stage=LifecycleStageName.PLATFORM_RESEARCH,
+    )
+    source_runner = _canonical_runner(
+        fixture,
+        repository=source_repository,
+        output_root=source_output,
+        clock_start=fixture.as_of_time + timedelta(hours=2),
+    )
+    source = source_runner.run(command)
+    assert source.run.status is LifecycleRunStatus.RUNNING
+    captured_hash = lifecycle_history_hash(
+        source_repository.history(source.run.run_id)
+    )
+    failure = _FailFirstReplaySettlement()
+    crashing_repository = SQLiteLifecycleRunRepository(
+        journal_path,
+        fault_injector=failure,
+    )
+    replay_root = tmp_path / "replay-runtime"
+
+    with pytest.raises(RuntimeError, match="durable replay journal crash"):
+        run_durable_lifecycle_replay(
+            repository=crashing_repository,
+            source_run_id=source.run.run_id,
+            idempotency_key="captured-source-recovery",
+            clock=_TickingClock(fixture.as_of_time + timedelta(hours=4)),
+            output_directory=replay_root,
+        )
+
+    interrupted = crashing_repository.get_run_by_idempotency_key(
+        "captured-source-recovery"
+    )
+    assert interrupted is not None
+    assert interrupted.status is LifecycleRunStatus.RUNNING
+    advanced = source_runner.resume(source.run.run_id)
+    assert advanced.run.status is LifecycleRunStatus.BLOCKED_BY_MODEL_VALIDATION
+    assert (
+        lifecycle_history_hash(source_repository.history(source.run.run_id))
+        != captured_hash
+    )
+
+    recovered = run_durable_lifecycle_replay(
+        repository=SQLiteLifecycleRunRepository(journal_path),
+        source_run_id=source.run.run_id,
+        idempotency_key="captured-source-recovery",
+        clock=_TickingClock(fixture.as_of_time + timedelta(hours=5)),
+        output_directory=replay_root,
+    )
+
+    assert recovered.replay_run.run_id == interrupted.run_id
+    assert recovered.source_history_hash == captured_hash
+    assert recovered.report.journal_hash == captured_hash
+    assert recovered.replay_run.status is LifecycleRunStatus.COMPLETED
+    snapshot_path = (
+        replay_root
+        / "source-history-snapshots"
+        / captured_hash.split(":", 1)[1]
+        / "history.json"
+    )
+    assert snapshot_path.is_file()
+
+
+def test_replay_rejects_a_tampered_captured_source_snapshot(tmp_path: Path) -> None:
+    fixture, manifest_path = _canonical_fixture(tmp_path / "source")
+    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    source_output = tmp_path / "source-runtime"
+    source = _canonical_runner(
+        fixture,
+        repository=repository,
+        output_root=source_output,
+        clock_start=fixture.as_of_time + timedelta(hours=2),
+    ).run(
+        _canonical_command(
+            fixture,
+            manifest_path=manifest_path,
+            idempotency_key="snapshot-tamper-source",
+            output_root=source_output,
+        )
+    )
+    replay_root = tmp_path / "replay-runtime"
+    first = run_durable_lifecycle_replay(
+        repository=repository,
+        source_run_id=source.run.run_id,
+        idempotency_key="snapshot-tamper-replay",
+        clock=_TickingClock(fixture.as_of_time + timedelta(hours=4)),
+        output_directory=replay_root,
+    )
+    snapshot_path = (
+        replay_root
+        / "source-history-snapshots"
+        / first.source_history_hash.split(":", 1)[1]
+        / "history.json"
+    )
+    snapshot_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(
+        LifecycleJournalIntegrityError,
+        match="snapshot fields mismatch",
+    ):
+        run_durable_lifecycle_replay(
+            repository=repository,
+            source_run_id=source.run.run_id,
+            idempotency_key="snapshot-tamper-replay",
+            clock=_TickingClock(fixture.as_of_time + timedelta(hours=5)),
+            output_directory=replay_root,
+        )
 
 
 def test_replay_idempotency_key_rejects_a_different_source_run(

@@ -240,6 +240,19 @@ class SQLiteLifecycleRunRepository:
             row = self._select_run(connection, run_id)
         return _run_from_row(row)
 
+    def get_run_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> LifecycleRun | None:
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+            raise ValueError("idempotency_key must be non-empty")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM lifecycle_runs WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        return _run_from_row(row) if row is not None else None
+
     def get_command(self, run_id: LifecycleRunId) -> CanonicalLifecycleCommand:
         """Reload the exact controlled inputs and controls needed for recovery."""
 

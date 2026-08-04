@@ -364,14 +364,17 @@ Implemented on the canonical-runtime development branch:
 - migration 011 tables for run and stage projections, append-only attempts,
   immutable receipts and gap-free event history;
 - `BEGIN IMMEDIATE` transactions, version compare-and-set and monotonic claim
-  tokens for stale-writer rejection;
+  tokens for stale-writer rejection, plus one-snapshot read transactions for
+  multi-query journal history;
 - recover-before-execute behavior, explicit failure/resume, no overwrite of
   completed stages and no implicit retry on duplicate invocation;
 - durable replay that creates an independent journal run, recomputes registered
   pure/model Artifacts, compares cross-run Receipt fingerprints and reloads
   ManualTrade read-only without invoking business handlers, H4.5 confirmation,
-  Fill creation or a Broker; Command V2 and LifecycleRun V1 journal JSON remain
-  readable after the replay linkage schema increment;
+  Fill creation or a Broker; the exact source view is captured before journal
+  mutation, so interrupted replay remains recoverable after the source advances;
+  Command V2 and LifecycleRun V1 journal JSON remain readable after the replay
+  linkage schema increment;
 - structured module CLIs for start/resume/durable replay with stable exit
   codes and explicit `NO_ORDER_CREATED`, `BROKER_NOT_INVOKED`,
   `NO_FILL_CREATED` and admission-ceiling fields.
@@ -489,9 +492,9 @@ development branch:
 python scripts/check_docs_links.py = PASS
 python -m pytest -q tests/scripts/test_check_docs_links.py = 8 passed
 python -m pytest -q tests/platform = 23 passed
-python -m pytest -q = PASS, 1962 tests collected, 6 existing pandas PerformanceWarnings
+python -m pytest -q = PASS, 1966 tests collected, 6 existing pandas PerformanceWarnings
 python -m ruff check . = PASS
-python -m mypy = PASS, 296 source files
+python -m mypy = PASS, 297 source files
 python -m build = PASS, sdist and wheel built
 ```
 

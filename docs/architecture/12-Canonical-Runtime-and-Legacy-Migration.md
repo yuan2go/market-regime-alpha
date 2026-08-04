@@ -123,10 +123,14 @@ python -m market_regime_alpha.cli.replay_canonical_lifecycle \
 
 Replay invokes neither the canonical business Runner nor execution services.
 `run_durable_lifecycle_replay()` binds the exact source run, command and history
-hash in a separate `REPLAY` LifecycleRun. It recomputes Platform Research,
-Signal and PathForecast through their existing pure replay functions, reloads
-mutating/read-only outputs instead of invoking their mutation, journals replay
-Attempts/Stages/Receipts, and publishes a content-addressed report. Receipt
+hash in a separate `REPLAY` LifecycleRun. The source history is read in one
+SQLite snapshot and published as an immutable, content-addressed snapshot
+before the replay run is created. An interrupted replay resumes from that
+captured view even if the source run later advances; snapshot tamper fails
+closed. It recomputes Platform Research, Signal and PathForecast through their
+existing pure replay functions, reloads mutating/read-only outputs instead of
+invoking their mutation, journals replay Attempts/Stages/Receipts, and
+publishes a content-addressed report. Receipt
 fingerprints exclude only the replay run identity, so their inputs, outputs,
 models, configuration, reasons and result remain comparable across runs.
 Repository objects without an injected Reader are explicit `NOT_COMPARABLE`;
@@ -287,8 +291,11 @@ The bridge cannot:
 
 Its CLI/result boundary explicitly reports
 `MANUAL_CONFIRMATION_REQUIRED`, `NO_ORDER_CREATED`, `BROKER_NOT_INVOKED` and
-`NO_FILL_CREATED` as applicable. The actor remains audit text rather than an
-authenticated principal, so operator authentication is still a blocker.
+`NO_FILL_CREATED` as applicable. SQLite repository failures use a distinct
+structured error exit and preserve the same safety declarations rather than
+escaping as a traceback or being confused with a domain rejection. The actor
+remains audit text rather than an authenticated principal, so operator
+authentication is still a blocker.
 
 ## 7. Legacy dependency and adapter boundary
 

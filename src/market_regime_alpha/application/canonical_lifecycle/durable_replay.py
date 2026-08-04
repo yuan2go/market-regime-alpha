@@ -27,6 +27,7 @@ from market_regime_alpha.application.canonical_lifecycle.replay import (
     LifecycleReplayCheck,
     LifecycleReplayReport,
     ReplayCheckStatus,
+    load_lifecycle_replay_report,
     publish_lifecycle_replay_report,
     receipt_semantic_fingerprint,
     verify_lifecycle_replay,
@@ -34,10 +35,16 @@ from market_regime_alpha.application.canonical_lifecycle.replay import (
 )
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleHistory,
+    LifecycleIdempotencyConflict,
     LifecycleJournalIntegrityError,
     LifecycleRunRepository,
     StageFailure,
     StageTransition,
+)
+from market_regime_alpha.application.canonical_lifecycle.replay_snapshot import (
+    lifecycle_history_hash,
+    load_or_recover_source_snapshot as _load_or_recover_source_snapshot,
+    publish_source_history_snapshot as _publish_source_history_snapshot,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LIFECYCLE_STAGE_ORDER,
@@ -47,7 +54,7 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleStageName,
     LifecycleStageStatus,
 )
-from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
+from market_regime_alpha.evidence.canonical import require_sha256
 
 
 Clock = Callable[[], datetime]
@@ -95,7 +102,7 @@ def run_durable_lifecycle_replay(
     clock: Clock,
     output_directory: Path | None = None,
 ) -> DurableLifecycleReplayResult:
-    """Create or reuse an audit-only replay run for one immutable source view."""
+    """Create or reuse an audit-only replay run for one captured source view."""
 
     if not isinstance(source_run_id, LifecycleRunId):
         raise TypeError("source_run_id must be a LifecycleRunId")
@@ -103,53 +110,60 @@ def run_durable_lifecycle_replay(
         raise ValueError("idempotency_key must be non-empty")
     if not callable(clock):
         raise TypeError("clock must be callable")
-    source_command = repository.get_command(source_run_id)
-    source_history = repository.history(source_run_id)
-    if source_history.run.run_type is LifecycleRunType.REPLAY:
-        raise ValueError("a durable replay cannot use another REPLAY run as source")
-    if (
-        source_command.run_id != source_run_id
-        or source_command.command_hash != source_history.run.command_hash
-    ):
-        raise LifecycleJournalIntegrityError(
-            "source command and run identity are inconsistent"
+    existing = repository.get_run_by_idempotency_key(idempotency_key)
+    if existing is None:
+        source_command = repository.get_command(source_run_id)
+        source_history = repository.history(source_run_id)
+        _validate_source_view(source_run_id, source_command, source_history)
+        source_history_hash = lifecycle_history_hash(source_history)
+        report = _build_durable_report(
+            source_command=source_command,
+            source_history=source_history,
         )
-    source_history_hash = lifecycle_history_hash(source_history)
-    report = _build_durable_report(
-        source_command=source_command,
-        source_history=source_history,
-    )
-    if report.journal_hash != source_history_hash:
-        raise LifecycleJournalIntegrityError("replay report source history mismatch")
-    replay_root = (
-        output_directory.resolve()
-        if output_directory is not None
-        else source_command.output_directory / "replay"
-    )
-    replay_command = CanonicalLifecycleCommand(
-        run_type=LifecycleRunType.REPLAY,
-        decision_date=source_command.decision_date,
-        as_of_time=source_command.as_of_time,
-        idempotency_key=idempotency_key,
-        input_manifest_id=source_command.input_manifest_id,
-        input_content_hash=source_command.input_content_hash,
-        input_manifest_locator=source_command.input_manifest_locator,
-        input_references=source_command.input_references,
-        configuration_references=source_command.configuration_references,
-        model_references=source_command.model_references,
-        stop_after_stage=None,
-        output_directory=replay_root,
-        authority_database_locator=source_command.authority_database_locator,
-        source_run_id=source_run_id,
-        source_command_hash=source_command.command_hash,
-        source_history_hash=source_history_hash,
-        replay_report_hash=report.report_hash,
-    )
-    replay_run = repository.create_or_get(
-        replay_command,
-        created_at=_now(clock),
-    )
-    report_path = publish_lifecycle_replay_report(root=replay_root, report=report)
+        if report.journal_hash != source_history_hash:
+            raise LifecycleJournalIntegrityError(
+                "replay report source history mismatch"
+            )
+        replay_root = (
+            output_directory.resolve()
+            if output_directory is not None
+            else source_command.output_directory / "replay"
+        )
+        _publish_source_history_snapshot(
+            root=replay_root,
+            source_command=source_command,
+            source_history=source_history,
+        )
+        report_path = publish_lifecycle_replay_report(
+            root=replay_root,
+            report=report,
+        )
+        replay_command = _build_replay_command(
+            source_run_id=source_run_id,
+            source_command=source_command,
+            source_history_hash=source_history_hash,
+            report=report,
+            idempotency_key=idempotency_key,
+            replay_root=replay_root,
+        )
+        replay_run = repository.create_or_get(
+            replay_command,
+            created_at=_now(clock),
+        )
+    else:
+        (
+            replay_command,
+            replay_run,
+            source_command,
+            source_history,
+            report,
+            report_path,
+        ) = _load_existing_replay(
+            repository=repository,
+            existing=existing,
+            source_run_id=source_run_id,
+            idempotency_key=idempotency_key,
+        )
     operation_clock = _MonotonicReplayClock(
         delegate=clock,
         last_value=replay_run.updated_at,
@@ -214,26 +228,127 @@ def run_durable_lifecycle_replay(
         if claimed.status is not LifecycleRunStatus.RUNNING:
             break
 
-    if lifecycle_history_hash(repository.history(source_run_id)) != source_history_hash:
-        raise LifecycleJournalIntegrityError("source run changed during durable replay")
     return _result(repository.get_run(replay_command.run_id), report, report_path)
 
 
-def lifecycle_history_hash(history: LifecycleHistory) -> str:
-    """Bind one exact, immutable view of a lifecycle journal."""
+def _validate_source_view(
+    source_run_id: LifecycleRunId,
+    source_command: CanonicalLifecycleCommand,
+    source_history: LifecycleHistory,
+) -> None:
+    if source_history.run.run_type is LifecycleRunType.REPLAY:
+        raise ValueError("a durable replay cannot use another REPLAY run as source")
+    if (
+        source_command.run_id != source_run_id
+        or source_history.run.run_id != source_run_id
+        or source_command.command_hash != source_history.run.command_hash
+    ):
+        raise LifecycleJournalIntegrityError(
+            "source command and run identity are inconsistent"
+        )
 
-    if not isinstance(history, LifecycleHistory):
-        raise TypeError("history must be a LifecycleHistory")
-    return canonical_hash(
-        {
-            "schema_version": "canonical-lifecycle-replay-journal-v1",
-            "run": history.run.to_canonical_dict(),
-            "stages": [item.to_canonical_dict() for item in history.stages],
-            "attempts": [item.to_canonical_dict() for item in history.attempts],
-            "receipts": [item.to_canonical_dict() for item in history.receipts],
-            "events": [item.to_canonical_dict() for item in history.events],
-            "event_payloads": list(history.event_payloads),
-        }
+
+def _build_replay_command(
+    *,
+    source_run_id: LifecycleRunId,
+    source_command: CanonicalLifecycleCommand,
+    source_history_hash: str,
+    report: LifecycleReplayReport,
+    idempotency_key: str,
+    replay_root: Path,
+) -> CanonicalLifecycleCommand:
+    return CanonicalLifecycleCommand(
+        run_type=LifecycleRunType.REPLAY,
+        decision_date=source_command.decision_date,
+        as_of_time=source_command.as_of_time,
+        idempotency_key=idempotency_key,
+        input_manifest_id=source_command.input_manifest_id,
+        input_content_hash=source_command.input_content_hash,
+        input_manifest_locator=source_command.input_manifest_locator,
+        input_references=source_command.input_references,
+        configuration_references=source_command.configuration_references,
+        model_references=source_command.model_references,
+        stop_after_stage=None,
+        output_directory=replay_root,
+        authority_database_locator=source_command.authority_database_locator,
+        source_run_id=source_run_id,
+        source_command_hash=source_command.command_hash,
+        source_history_hash=source_history_hash,
+        replay_report_hash=report.report_hash,
+    )
+
+
+def _load_existing_replay(
+    *,
+    repository: LifecycleRunRepository,
+    existing: LifecycleRun,
+    source_run_id: LifecycleRunId,
+    idempotency_key: str,
+) -> tuple[
+    CanonicalLifecycleCommand,
+    LifecycleRun,
+    CanonicalLifecycleCommand,
+    LifecycleHistory,
+    LifecycleReplayReport,
+    Path,
+]:
+    if (
+        existing.run_type is not LifecycleRunType.REPLAY
+        or existing.source_run_id != source_run_id
+        or existing.idempotency_key != idempotency_key
+    ):
+        raise LifecycleIdempotencyConflict(
+            "replay idempotency key is already bound to different semantics"
+        )
+    replay_command = repository.get_command(existing.run_id)
+    if (
+        replay_command.run_type is not LifecycleRunType.REPLAY
+        or replay_command.source_run_id != source_run_id
+        or replay_command.command_hash != existing.command_hash
+        or replay_command.source_history_hash != existing.source_history_hash
+        or replay_command.replay_report_hash != existing.replay_report_hash
+    ):
+        raise LifecycleJournalIntegrityError(
+            "stored replay command and run identity are inconsistent"
+        )
+    source_command, source_history = _load_or_recover_source_snapshot(
+        repository=repository,
+        replay_command=replay_command,
+    )
+    _validate_source_view(source_run_id, source_command, source_history)
+    if lifecycle_history_hash(source_history) != existing.source_history_hash:
+        raise LifecycleJournalIntegrityError(
+            "stored replay source snapshot hash mismatch"
+        )
+    assert existing.replay_report_hash is not None
+    report_path = (
+        replay_command.output_directory
+        / "replay-reports"
+        / existing.replay_report_hash.split(":", 1)[1]
+        / "report.json"
+    )
+    try:
+        report = load_lifecycle_replay_report(report_path)
+    except (OSError, TypeError, ValueError) as exc:
+        raise LifecycleJournalIntegrityError(
+            "stored replay report is unavailable or invalid"
+        ) from exc
+    if (
+        report.report_hash != existing.replay_report_hash
+        or report.run_id != source_run_id
+        or report.command_hash != source_command.command_hash
+        or report.journal_hash != existing.source_history_hash
+    ):
+        raise LifecycleJournalIntegrityError(
+            "stored replay report does not bind the captured source snapshot"
+        )
+    return (
+        replay_command,
+        existing,
+        source_command,
+        source_history,
+        report,
+        report_path,
     )
 
 
