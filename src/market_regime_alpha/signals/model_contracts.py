@@ -130,4 +130,3 @@ class SignalModel(Protocol):
 
 
 __all__ = ["SignalMeaning", "SignalModel", "SignalModelRequest", "SignalModelResult"]
-
