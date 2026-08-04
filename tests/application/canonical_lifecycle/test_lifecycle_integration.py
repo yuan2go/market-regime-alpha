@@ -134,6 +134,20 @@ class _CrashAfterResearch:
             raise RuntimeError("delivery failed after durable research settlement")
 
 
+class _ArmableJournalCrash:
+    """Fail one journal settlement after an external domain commit."""
+
+    def __init__(self, *, point: str) -> None:
+        self._point = point
+        self.armed = False
+        self.raised = False
+
+    def __call__(self, point: str) -> None:
+        if self.armed and point == self._point and not self.raised:
+            self.raised = True
+            raise RuntimeError("injected crash before lifecycle receipt commit")
+
+
 def test_verified_h6_chain_is_durable_replayable_and_clock_independent(
     tmp_path: Path,
 ) -> None:
@@ -336,6 +350,101 @@ def test_manual_confirmation_rejects_policy_not_bound_by_continuation(
     failed = journal.history(command.run_id)
     assert failed.run.status is LifecycleRunStatus.FAILED
     assert failed.stages[9].stage_status is LifecycleStageStatus.FAILED
+
+
+def test_manual_trade_commit_survives_crash_before_lifecycle_receipt(
+    tmp_path: Path,
+    daily_decision_fixture,
+) -> None:
+    authority = build_confirmation_fixture(tmp_path, daily_decision_fixture)
+    references = _risk_references(authority, tmp_path)
+    as_of = _risk_continuation_as_of(authority).astimezone(UTC)
+    command = _risk_command(
+        authority=authority,
+        references=references,
+        as_of=as_of,
+        idempotency_key="risk-cross-repository-crash",
+        root=tmp_path,
+    )
+    crash = _ArmableJournalCrash(point="finish_after_attempt")
+    journal_path = tmp_path / "cross-repository-journal.sqlite3"
+    crashing_repository = SQLiteLifecycleRunRepository(
+        journal_path,
+        fault_injector=crash,
+    )
+    handlers = list(_risk_handlers(authority))
+    risk = _CountingHandler(handlers[8])
+    confirmation = _CountingHandler(handlers[9])
+    manual_trade = _CountingHandler(handlers[10])
+    handlers[8] = risk
+    handlers[9] = confirmation
+    handlers[10] = manual_trade
+    clock = _TickingClock(as_of + timedelta(minutes=1))
+    crashing_runner = CanonicalDecisionLifecycleRunner(
+        repository=crashing_repository,
+        handlers=tuple(handlers),
+        clock=clock,
+    )
+
+    waiting = crashing_runner.run(command)
+    assert waiting.run.status is LifecycleRunStatus.WAITING_FOR_MANUAL_CONFIRMATION
+    assert risk.recover_calls == 1
+    counts_before_confirmation = _execution_counts(authority.repository)
+    confirmation_result = authority.repository.confirm_risk_reduction(
+        _confirmation_command_for_references(authority, references)
+    )
+    assert confirmation_result.manual_trade is not None
+    committed_trade_id = confirmation_result.manual_trade.manual_trade_id
+    committed_counts = _execution_counts(authority.repository)
+    crash.armed = True
+
+    with pytest.raises(LifecycleStageExecutionError) as captured:
+        crashing_runner.resume(command.run_id)
+
+    assert not captured.value.journal_settled
+    assert captured.value.stage_name is LifecycleStageName.MANUAL_CONFIRMATION
+    after_crash = crashing_repository.history(command.run_id)
+    assert after_crash.run.status is LifecycleRunStatus.FAILED
+    assert after_crash.stages[9].stage_status is LifecycleStageStatus.FAILED
+    assert after_crash.stages[9].attempt_count == 1
+    assert not any(
+        receipt.stage_name is LifecycleStageName.MANUAL_CONFIRMATION
+        for receipt in after_crash.receipts
+    )
+    assert _execution_counts(authority.repository) == committed_counts
+
+    durable_repository = SQLiteLifecycleRunRepository(journal_path)
+    resumed = CanonicalDecisionLifecycleRunner(
+        repository=durable_repository,
+        handlers=tuple(handlers),
+        clock=clock,
+    ).resume(command.run_id)
+
+    assert resumed.run.run_id == waiting.run.run_id
+    assert resumed.run.status is LifecycleRunStatus.WAITING_FOR_FILL
+    assert resumed.stages[9].attempt_count == 2
+    assert resumed.stages[10].attempt_count == 1
+    assert risk.recover_calls == 1
+    assert confirmation.recover_calls == 2
+    assert manual_trade.recover_calls == 1
+    confirmation_receipts = tuple(
+        receipt
+        for receipt in resumed.receipts
+        if receipt.stage_name is LifecycleStageName.MANUAL_CONFIRMATION
+    )
+    assert len(confirmation_receipts) == 1
+    manual_trade_reference = next(
+        reference
+        for reference in resumed.stages[10].output_references
+        if reference.object_type is LifecycleObjectType.MANUAL_TRADE
+    )
+    assert str(manual_trade_reference.object_id) == str(committed_trade_id)
+    assert _execution_counts(authority.repository) == committed_counts
+    assert committed_counts[2] == counts_before_confirmation[2]
+    assert not any(
+        "broker" in table.lower() or "order" in table.lower()
+        for table in _table_names(authority.repository.path)
+    )
 
 
 def test_delivery_failure_after_real_research_receipt_resumes_at_signal(
@@ -564,7 +673,17 @@ def _risk_runner(
     repository: SQLiteLifecycleRunRepository,
     as_of: datetime,
 ) -> CanonicalDecisionLifecycleRunner:
-    handlers: tuple[LifecycleStageHandler, ...] = tuple(
+    return CanonicalDecisionLifecycleRunner(
+        repository=repository,
+        handlers=_risk_handlers(authority),
+        clock=_TickingClock(as_of + timedelta(minutes=1)),
+    )
+
+
+def _risk_handlers(
+    authority: ConfirmationFixture,
+) -> tuple[LifecycleStageHandler, ...]:
+    return tuple(
         _risk_handler(authority)
         if stage_name is LifecycleStageName.RISK_REDUCTION
         else ManualConfirmationStageHandler(repository=authority.repository)
@@ -573,11 +692,6 @@ def _risk_runner(
         if stage_name is LifecycleStageName.MANUAL_TRADE
         else _NeverCalledHandler(stage_name)
         for stage_name in LIFECYCLE_STAGE_ORDER
-    )
-    return CanonicalDecisionLifecycleRunner(
-        repository=repository,
-        handlers=handlers,
-        clock=_TickingClock(as_of + timedelta(minutes=1)),
     )
 
 
