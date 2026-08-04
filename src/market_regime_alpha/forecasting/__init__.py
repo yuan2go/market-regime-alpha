@@ -20,6 +20,11 @@ from market_regime_alpha.forecasting.path import (
     PathForecastSample,
     build_path_forecast,
 )
+from market_regime_alpha.forecasting.sample_provider import (
+    PathForecastSampleBatch,
+    PathForecastSampleProvider,
+    UnavailablePathForecastSampleProvider,
+)
 
 __all__ = [
     "PATH_FORECAST_CONFIG_SCHEMA",
@@ -30,8 +35,11 @@ __all__ = [
     "PathForecastArtifact",
     "PathForecastConfig",
     "PathForecastSample",
+    "PathForecastSampleBatch",
+    "PathForecastSampleProvider",
     "PathForecastStatus",
     "ReturnQuantile",
+    "UnavailablePathForecastSampleProvider",
     "build_path_forecast",
     "load_verified_path_forecast",
     "publish_path_forecast",

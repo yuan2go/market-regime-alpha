@@ -49,6 +49,11 @@ from market_regime_alpha.forecasting.path import (
     PathForecastConfig,
     build_path_forecast,
 )
+from market_regime_alpha.forecasting.sample_provider import (
+    PathForecastSampleBatch,
+    PathForecastSampleProvider,
+    UnavailablePathForecastSampleProvider,
+)
 from market_regime_alpha.features.materialization_v2 import (
     VerifiedFeatureBundleV2,
     load_verified_feature_bundle_v2,
@@ -362,6 +367,7 @@ class PathForecastStageHandler:
         *,
         configuration: PathForecastConfig,
         output_root: Path,
+        sample_provider: PathForecastSampleProvider | None = None,
     ) -> None:
         if not isinstance(configuration, PathForecastConfig):
             raise TypeError("configuration must be a PathForecastConfig")
@@ -369,11 +375,17 @@ class PathForecastStageHandler:
             raise TypeError("output_root must be a Path")
         self._configuration = configuration
         self._output_root = output_root.resolve()
+        self._sample_provider = (
+            sample_provider
+            if sample_provider is not None
+            else UnavailablePathForecastSampleProvider()
+        )
 
     def recover(self, context: LifecycleStageContext) -> StageExecutionResult | None:
         signal_reference, signal = _load_signal(context)
         self._validate_command_bindings(context)
-        expected = self._compute(context, signal)
+        computed = self._compute(context, signal)
+        expected = tuple(item[0] for item in computed)
         verified: list[VerifiedPathForecastArtifact] = []
         for artifact in expected:
             path = self._output_root / str(artifact.artifact_id)
@@ -383,12 +395,17 @@ class PathForecastStageHandler:
             if restored.artifact != artifact:
                 raise ValueError("recovered PathForecast semantic mismatch")
             verified.append(restored)
-        return self._result(signal_reference, tuple(verified))
+        return self._result(
+            signal_reference,
+            tuple(verified),
+            tuple(item[1] for item in computed),
+        )
 
     def execute(self, context: LifecycleStageContext) -> StageExecutionResult:
         signal_reference, signal = _load_signal(context)
         self._validate_command_bindings(context)
-        artifacts = self._compute(context, signal)
+        computed = self._compute(context, signal)
+        artifacts = tuple(item[0] for item in computed)
         verified: list[VerifiedPathForecastArtifact] = []
         for artifact in artifacts:
             path = publish_path_forecast(root=self._output_root, artifact=artifact)
@@ -396,7 +413,11 @@ class PathForecastStageHandler:
             if restored.artifact != artifact:
                 raise ValueError("published PathForecast semantic mismatch")
             verified.append(restored)
-        return self._result(signal_reference, tuple(verified))
+        return self._result(
+            signal_reference,
+            tuple(verified),
+            tuple(item[1] for item in computed),
+        )
 
     def _validate_command_bindings(self, context: LifecycleStageContext) -> None:
         require_configuration_binding(
@@ -415,24 +436,35 @@ class PathForecastStageHandler:
         self,
         context: LifecycleStageContext,
         signal: _VerifiedSignalRun,
-    ) -> tuple[PathForecastArtifact, ...]:
+    ) -> tuple[tuple[PathForecastArtifact, PathForecastSampleBatch], ...]:
         artifact = signal.artifact
         return tuple(
-            build_path_forecast(
-                signal_snapshot=snapshot,
-                configuration=self._configuration,
-                samples=(),
-                decision_time=artifact.envelope.decision_time,
-                created_at=artifact.envelope.created_at,
-                code_revision=lifecycle_code_revision(context.run),
+            (
+                build_path_forecast(
+                    signal_snapshot=snapshot,
+                    configuration=self._configuration,
+                    samples=batch.samples,
+                    decision_time=artifact.envelope.decision_time,
+                    created_at=artifact.envelope.created_at,
+                    code_revision=lifecycle_code_revision(context.run),
+                ),
+                batch,
             )
             for snapshot in artifact.snapshots
+            for batch in (
+                self._sample_provider.load_samples(
+                    signal_snapshot=snapshot,
+                    configuration=self._configuration,
+                    decision_time=artifact.envelope.decision_time,
+                ),
+            )
         )
 
     def _result(
         self,
         signal_reference: LifecycleObjectReference,
         verified: tuple[VerifiedPathForecastArtifact, ...],
+        sample_batches: tuple[PathForecastSampleBatch, ...],
     ) -> StageExecutionResult:
         outputs = ordered_references(
             tuple(
@@ -450,6 +482,8 @@ class PathForecastStageHandler:
         reasons = {
             "PATH_FORECAST_STAGE_COMPLETED",
             *(reason_code for item in verified for reason_code in item.artifact.forecast.reason_codes),
+            *(reason for batch in sample_batches for reason in batch.reason_codes),
+            *(limitation for batch in sample_batches for limitation in batch.limitations),
         }
         if not verified:
             reasons.update(

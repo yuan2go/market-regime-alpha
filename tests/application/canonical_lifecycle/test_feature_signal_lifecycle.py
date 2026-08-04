@@ -251,6 +251,7 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
         is CalibrationStatus.DATA_INSUFFICIENT
         for item in forecasts
     )
+    assert "FORMAL_PATH_SAMPLE_PROVIDER_NOT_CONFIGURED" in forecast_result.reason_codes
     assert all(
         item.artifact.signal_snapshot in signal.artifact.snapshots
         for item in forecasts
