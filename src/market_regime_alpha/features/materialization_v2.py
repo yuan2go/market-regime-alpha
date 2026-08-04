@@ -35,8 +35,13 @@ from market_regime_alpha.features.v2_contracts import (
     FeatureBundleState,
     FeatureMaterializationReceipt,
     FeatureMaterializationStatus,
+    _verified_dataset_membership,
 )
-from market_regime_alpha.market_data import Timeframe, VerifiedMarketDataDataset
+from market_regime_alpha.market_data import (
+    CanonicalMarketBar,
+    Timeframe,
+    VerifiedMarketDataDataset,
+)
 from market_regime_alpha.market_data.contracts import require_utc_second
 
 
@@ -378,6 +383,16 @@ class FeatureMaterializationRunner:
         configurations = {
             item.feature_id: item for item in feature_set.configurations
         }
+        membership = _verified_dataset_membership(verified_dataset.artifact)
+        bars_by_scope: dict[
+            tuple[str, Timeframe], tuple[CanonicalMarketBar, ...]
+        ] = {}
+        grouped: dict[tuple[str, Timeframe], list[CanonicalMarketBar]] = {}
+        for bar in verified_dataset.bars:
+            grouped.setdefault((bar.symbol, bar.timeframe), []).append(bar)
+        bars_by_scope = {
+            key: tuple(values) for key, values in grouped.items()
+        }
         tasks = tuple(
             (symbol, feature_id)
             for symbol in selected_symbols
@@ -394,10 +409,7 @@ class FeatureMaterializationRunner:
             timeframe = Timeframe(raw_timeframe)
             if timeframe not in definition.supported_timeframes:
                 raise ValueError("configured timeframe is unsupported by definition")
-            input_bars = verified_dataset.bars_for(
-                symbol=symbol,
-                timeframe=timeframe,
-            )
+            input_bars = bars_by_scope.get((symbol, timeframe), ())
             output_ids = tuple(item.output_id for item in definition.output_schema)
             computation = (
                 compute_technical_feature(
@@ -424,6 +436,7 @@ class FeatureMaterializationRunner:
                 computation=computation,
                 input_bars=input_bars,
                 created_at=created_at,
+                _membership=membership,
             )
 
         if self._max_workers == 1:

@@ -8,9 +8,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
+import resource
+import sys
 import tempfile
 import time as wall_time
-import tracemalloc
 from typing import Sequence
 
 from market_regime_alpha.core.identity import ArtifactId
@@ -111,7 +112,6 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         effective_from=decision_time - timedelta(days=365)
     )
     runner = FeatureMaterializationRunner(max_workers=args.max_workers)
-    tracemalloc.start()
     started = wall_time.perf_counter()
     receipt = runner.run(
         verified_dataset=verified,
@@ -125,8 +125,8 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         resume=True,
     )
     cold_seconds = wall_time.perf_counter() - started
-    _, peak_bytes = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    peak_value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_bytes = peak_value if sys.platform == "darwin" else peak_value * 1024
     cached_started = wall_time.perf_counter()
     replayed_receipt = runner.run(
         verified_dataset=verified,
@@ -154,7 +154,8 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         "missing_value_count": receipt.missing_value_count,
         "cold_run_seconds": round(cold_seconds, 6),
         "cached_run_seconds": round(cached_seconds, 6),
-        "peak_traced_memory_bytes": peak_bytes,
+        "peak_memory_bytes": peak_bytes,
+        "peak_memory_metric": "PROCESS_RU_MAXRSS_BYTES",
         "output_bytes": _tree_size(root),
         "feature_bundle_id": str(receipt.bundle_id),
         "feature_bundle_hash": receipt.bundle_hash,

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId
@@ -63,6 +64,25 @@ class FeatureBundleState(str, Enum):
 class FeatureMaterializationStatus(str, Enum):
     COMPLETE = "COMPLETE"
     PARTIAL_COVERAGE = "PARTIAL_COVERAGE"
+
+
+class _VerifiedDatasetMembership:
+    """Run-local immutable membership index bound to one Dataset object."""
+
+    __slots__ = ("bar_hashes", "dataset")
+
+    def __init__(self, dataset: MarketDataDatasetArtifact) -> None:
+        dataset.verify_identity()
+        self.dataset = dataset
+        self.bar_hashes: Mapping[ArtifactId, str] = MappingProxyType(
+            {item.bar_id: item.content_hash for item in dataset.iter_bars()}
+        )
+
+
+def _verified_dataset_membership(
+    dataset: MarketDataDatasetArtifact,
+) -> _VerifiedDatasetMembership:
+    return _VerifiedDatasetMembership(dataset)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,8 +194,12 @@ class FeatureArtifactV2:
         computation: TechnicalFeatureComputation,
         input_bars: tuple[CanonicalMarketBar, ...],
         created_at: datetime,
+        _membership: _VerifiedDatasetMembership | None = None,
     ) -> FeatureArtifactV2:
-        dataset.verify_identity()
+        if _membership is None:
+            dataset.verify_identity()
+        elif _membership.dataset is not dataset:
+            raise ValueError("Feature Dataset membership index scope mismatch")
         definition.verify_identity()
         configuration.verify_identity()
         if computation.feature_id != definition.feature_id:
@@ -184,9 +208,14 @@ class FeatureArtifactV2:
             computation.configuration_hash != configuration.configuration_hash
         ):
             raise ValueError("Feature computation does not match configuration")
-        dataset_bars = {item.bar_id: item.content_hash for item in dataset.iter_bars()}
+        dataset_bars = (
+            _membership.bar_hashes
+            if _membership is not None
+            else {item.bar_id: item.content_hash for item in dataset.iter_bars()}
+        )
         for bar in input_bars:
-            bar.verify_identity()
+            if _membership is None:
+                bar.verify_identity()
             if dataset_bars.get(bar.bar_id) != bar.content_hash:
                 raise ValueError("Feature input bar is not part of Market Data Dataset")
         if any(
