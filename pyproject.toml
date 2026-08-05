@@ -38,6 +38,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 market_regime_alpha = [
+    "persistence/postgres/migrations/*.sql",
     "platform/migrations/*.sql",
     "decision/migrations/*.sql",
     "portfolio/migrations/*.sql",

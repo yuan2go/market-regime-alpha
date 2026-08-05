@@ -1,0 +1,236 @@
+"""Catalog verification for the complete PostgreSQL authority schema."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any, Final
+
+import psycopg
+
+
+EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "schema_migrations",
+        "governance_commands",
+        "model_registrations",
+        "model_lifecycle_transitions",
+        "governed_experiments",
+        "experiment_access_events",
+        "decision_commands",
+        "trading_opportunities",
+        "opportunity_events",
+        "trading_theses",
+        "thesis_events",
+        "portfolio_risk_commands",
+        "portfolio_decisions",
+        "risk_decisions",
+        "execution_commands",
+        "manual_trade_records",
+        "manual_trade_events",
+        "manual_fills",
+        "complete_account_risk_commands",
+        "authoritative_account_portfolio_snapshots",
+        "complete_account_portfolio_decisions",
+        "complete_account_risk_decisions",
+        "position_books",
+        "position_book_events",
+        "traceable_manual_trade_bindings",
+        "risk_reducing_decisions",
+        "risk_reducing_commands",
+        "thesis_health_observations",
+        "thesis_health_commands",
+        "composite_operational_manifests",
+        "composite_operational_components",
+        "composite_operational_field_authorities",
+        "composite_operational_commands",
+        "operational_exit_directives",
+        "risk_reduction_confirmation_attempts",
+        "risk_reduction_confirmation_commands",
+        "risk_reducing_manual_trade_bindings",
+        "lifecycle_runs",
+        "lifecycle_stages",
+        "lifecycle_attempts",
+        "lifecycle_stage_receipts",
+        "lifecycle_events",
+        "feature_materialization_run",
+        "feature_materialization_task",
+        "feature_materialization_attempt",
+        "feature_materialization_receipt",
+        "feature_materialization_event",
+        "controlled_operation_run",
+        "controlled_operation_stage",
+        "controlled_operation_attempt",
+        "controlled_operation_receipt",
+        "controlled_operation_child_run",
+        "controlled_operation_event",
+        "longitudinal_operational_index",
+        "daily_runs",
+        "acquisition_stage_receipts",
+        "stage_receipts",
+    }
+)
+
+EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
+    {
+        ("composite_operational_commands", "composite_operational_commands_no_delete"),
+        ("composite_operational_commands", "composite_operational_commands_no_update"),
+        ("composite_operational_components", "composite_operational_components_no_delete"),
+        ("composite_operational_components", "composite_operational_components_no_update"),
+        ("composite_operational_field_authorities", "composite_operational_field_authorities_no_delete"),
+        ("composite_operational_field_authorities", "composite_operational_field_authorities_no_update"),
+        ("composite_operational_manifests", "composite_operational_manifests_no_delete"),
+        ("composite_operational_manifests", "composite_operational_manifests_no_update"),
+        ("controlled_operation_attempt", "controlled_operation_attempt_identity_guard"),
+        ("controlled_operation_attempt", "controlled_operation_attempts_no_delete"),
+        ("controlled_operation_child_run", "controlled_operation_child_runs_no_delete"),
+        ("controlled_operation_child_run", "controlled_operation_child_runs_no_update"),
+        ("controlled_operation_event", "controlled_operation_events_no_delete"),
+        ("controlled_operation_event", "controlled_operation_events_no_update"),
+        ("controlled_operation_receipt", "controlled_operation_receipts_no_delete"),
+        ("controlled_operation_receipt", "controlled_operation_receipts_no_update"),
+        ("controlled_operation_run", "controlled_operation_run_identity_immutable"),
+        ("controlled_operation_run", "controlled_operation_runs_no_delete"),
+        ("controlled_operation_stage", "controlled_operation_completed_stage_immutable"),
+        ("controlled_operation_stage", "controlled_operation_stages_no_delete"),
+        ("feature_materialization_attempt", "feature_materialization_attempt_transition_guard"),
+        ("feature_materialization_attempt", "feature_materialization_attempts_no_delete"),
+        ("feature_materialization_event", "feature_materialization_events_no_delete"),
+        ("feature_materialization_event", "feature_materialization_events_no_update"),
+        ("feature_materialization_receipt", "feature_materialization_receipts_no_delete"),
+        ("feature_materialization_receipt", "feature_materialization_receipts_no_update"),
+        ("feature_materialization_run", "feature_materialization_run_identity_immutable"),
+        ("feature_materialization_run", "feature_materialization_runs_no_delete"),
+        ("feature_materialization_task", "feature_materialization_completed_tasks_immutable"),
+        ("feature_materialization_task", "feature_materialization_tasks_no_delete"),
+        ("lifecycle_attempts", "lifecycle_attempts_completion_only"),
+        ("lifecycle_attempts", "lifecycle_attempts_no_delete"),
+        ("lifecycle_events", "lifecycle_events_no_delete"),
+        ("lifecycle_events", "lifecycle_events_no_update"),
+        ("lifecycle_runs", "lifecycle_runs_identity_immutable"),
+        ("lifecycle_runs", "lifecycle_runs_no_delete"),
+        ("lifecycle_stage_receipts", "lifecycle_stage_receipts_no_delete"),
+        ("lifecycle_stage_receipts", "lifecycle_stage_receipts_no_update"),
+        ("lifecycle_stages", "lifecycle_stages_no_delete"),
+        ("lifecycle_stages", "lifecycle_terminal_stages_immutable"),
+        ("longitudinal_operational_index", "longitudinal_operational_no_delete"),
+        ("longitudinal_operational_index", "longitudinal_operational_no_update"),
+        ("manual_fills", "manual_fills_no_delete"),
+        ("manual_fills", "manual_fills_no_update"),
+        ("operational_exit_directives", "operational_exit_directives_no_delete"),
+        ("operational_exit_directives", "operational_exit_directives_no_update"),
+        ("risk_reducing_commands", "risk_reducing_commands_no_delete"),
+        ("risk_reducing_commands", "risk_reducing_commands_no_update"),
+        ("risk_reducing_decisions", "risk_reducing_decisions_no_delete"),
+        ("risk_reducing_decisions", "risk_reducing_decisions_no_update"),
+        ("risk_reducing_manual_trade_bindings", "risk_reducing_manual_trade_binding_route_guard"),
+        ("risk_reducing_manual_trade_bindings", "risk_reducing_manual_trade_bindings_no_delete"),
+        ("risk_reducing_manual_trade_bindings", "risk_reducing_manual_trade_bindings_no_update"),
+        ("risk_reduction_confirmation_attempts", "risk_reduction_confirmation_attempts_no_delete"),
+        ("risk_reduction_confirmation_attempts", "risk_reduction_confirmation_attempts_no_update"),
+        ("risk_reduction_confirmation_commands", "risk_reduction_confirmation_commands_no_delete"),
+        ("risk_reduction_confirmation_commands", "risk_reduction_confirmation_commands_no_update"),
+        ("thesis_health_commands", "thesis_health_commands_no_delete"),
+        ("thesis_health_commands", "thesis_health_commands_no_update"),
+        ("thesis_health_observations", "thesis_health_observations_no_delete"),
+        ("thesis_health_observations", "thesis_health_observations_no_update"),
+        ("traceable_manual_trade_bindings", "traceable_manual_trade_binding_route_guard"),
+        ("traceable_manual_trade_bindings", "traceable_manual_trade_bindings_no_delete"),
+        ("traceable_manual_trade_bindings", "traceable_manual_trade_bindings_no_update"),
+    }
+)
+
+
+class PostgresSchemaError(RuntimeError):
+    """Raised when catalog evidence differs from authoritative expectations."""
+
+
+def verify_postgres_authority_schema(
+    connection: psycopg.Connection[Any],
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT tablename
+        FROM pg_catalog.pg_tables
+        WHERE schemaname = current_schema()
+        """
+    ).fetchall()
+    actual = {str(row[0]) for row in rows}
+    missing = EXPECTED_AUTHORITY_TABLES - actual
+    unexpected = actual - EXPECTED_AUTHORITY_TABLES
+    if missing:
+        raise PostgresSchemaError(f"missing tables: {sorted(missing)}")
+    if unexpected:
+        raise PostgresSchemaError(f"unexpected tables: {sorted(unexpected)}")
+    _verify_primary_keys(connection, EXPECTED_AUTHORITY_TABLES)
+    _verify_foreign_key_indexes(connection)
+    _verify_triggers(connection)
+
+
+def _verify_primary_keys(
+    connection: psycopg.Connection[Any],
+    tables: Iterable[str],
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT table_name
+        FROM information_schema.table_constraints
+        WHERE table_schema = current_schema()
+          AND constraint_type = 'PRIMARY KEY'
+        """
+    ).fetchall()
+    present = {str(row[0]) for row in rows}
+    missing = set(tables) - present
+    if missing:
+        raise PostgresSchemaError(
+            f"tables without primary keys: {sorted(missing)}"
+        )
+
+
+def _verify_foreign_key_indexes(connection: psycopg.Connection[Any]) -> None:
+    rows = connection.execute(
+        """
+        SELECT relation.relname, constraint_record.conname
+        FROM pg_catalog.pg_constraint AS constraint_record
+        JOIN pg_catalog.pg_class AS relation
+          ON relation.oid = constraint_record.conrelid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = current_schema()
+          AND constraint_record.contype = 'f'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_index AS index_record
+              WHERE index_record.indrelid = constraint_record.conrelid
+                AND index_record.indisvalid
+                AND (
+                    SELECT array_agg(index_key.attnum ORDER BY index_key.ordinality)
+                    FROM unnest(index_record.indkey::smallint[])
+                        WITH ORDINALITY AS index_key(attnum, ordinality)
+                    WHERE index_key.ordinality
+                        <= cardinality(constraint_record.conkey)
+                ) = constraint_record.conkey
+          )
+        """
+    ).fetchall()
+    if rows:
+        formatted = [f"{row[0]}.{row[1]}" for row in rows]
+        raise PostgresSchemaError(
+            f"foreign keys without supporting indexes: {formatted}"
+        )
+
+
+def _verify_triggers(connection: psycopg.Connection[Any]) -> None:
+    rows = connection.execute(
+        """
+        SELECT event_object_table, trigger_name
+        FROM information_schema.triggers
+        WHERE trigger_schema = current_schema()
+        """
+    ).fetchall()
+    actual = {(str(row[0]), str(row[1])) for row in rows}
+    missing = EXPECTED_AUTHORITY_TRIGGERS - actual
+    unexpected = actual - EXPECTED_AUTHORITY_TRIGGERS
+    if missing:
+        raise PostgresSchemaError(f"missing triggers: {sorted(missing)}")
+    if unexpected:
+        raise PostgresSchemaError(f"unexpected triggers: {sorted(unexpected)}")
