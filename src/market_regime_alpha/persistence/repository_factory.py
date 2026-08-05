@@ -33,6 +33,10 @@ from market_regime_alpha.application.controlled_operation.sqlite_journal import 
     DEFAULT_CONTROLLED_OPERATION_LEASE,
     SQLiteDecisionTimeOperationJournal,
 )
+from market_regime_alpha.application.continuous_research.postgres_journal import (
+    DEFAULT_CONTINUOUS_TICK_LEASE,
+    PostgresContinuousResearchJournal,
+)
 from market_regime_alpha.application.daily_loop.postgres_repository import (
     PostgresDailyRunRepository,
 )
@@ -310,6 +314,20 @@ class RepositoryFactory:
             lease_duration=lease_duration,
         )
 
+    def continuous_research(
+        self,
+        *,
+        clock: Clock,
+        lease_duration: timedelta = DEFAULT_CONTINUOUS_TICK_LEASE,
+    ) -> PostgresContinuousResearchJournal:
+        if self._postgres is None:
+            raise ValueError("continuous research authority requires PostgreSQL")
+        return PostgresContinuousResearchJournal(
+            self._postgres,
+            clock=clock,
+            lease_duration=lease_duration,
+        )
+
     def longitudinal(self, *, clock: Clock) -> LongitudinalOperationalIndex:
         if self._postgres is not None:
             return PostgresLongitudinalOperationalIndex(
@@ -496,6 +514,7 @@ def _validate_runtime_binding_key(scope_type: str, scope_id: str) -> None:
         "CONTROLLED_OPERATION",
         "DAILY_LOOP",
         "FREE_DATA_OPERATION",
+        "CONTINUOUS_RESEARCH",
     }:
         raise ValueError("unsupported runtime database binding scope")
     if not isinstance(scope_id, str) or not scope_id.strip():

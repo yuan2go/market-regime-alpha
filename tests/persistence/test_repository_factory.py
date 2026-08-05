@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
@@ -10,6 +11,9 @@ from market_regime_alpha.application.canonical_lifecycle.postgres_repository imp
 )
 from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
     SQLiteLifecycleRunRepository,
+)
+from market_regime_alpha.application.continuous_research.postgres_journal import (
+    PostgresContinuousResearchJournal,
 )
 from market_regime_alpha.decision.postgres_repository import (
     PostgresDecisionLifecycleRepository,
@@ -54,6 +58,9 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
         lifecycle = repositories.lifecycle()
         model_registry = repositories.model_registry()
         experiment_governance = repositories.experiment_governance()
+        continuous = repositories.continuous_research(
+            clock=lambda: datetime(2026, 8, 6, tzinfo=timezone.utc)
+        )
         binding = repositories.binding
 
     assert isinstance(decision, PostgresDecisionLifecycleRepository)
@@ -63,6 +70,7 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
         experiment_governance,
         PostgresExperimentGovernanceRepository,
     )
+    assert isinstance(continuous, PostgresContinuousResearchJournal)
     assert binding.backend is DatabaseBackend.POSTGRES
     assert "***" in binding.locator
     assert configured.require_database_url() not in binding.locator
@@ -84,6 +92,10 @@ def test_repository_factory_keeps_sqlite_explicit_and_path_bound(
         experiment_governance = repositories.experiment_governance()
         with pytest.raises(ValueError, match="requires PostgreSQL"):
             repositories.free_data_blocked()
+        with pytest.raises(ValueError, match="requires PostgreSQL"):
+            repositories.continuous_research(
+                clock=lambda: datetime(2026, 8, 6, tzinfo=timezone.utc)
+            )
 
     assert isinstance(decision, SQLiteDecisionLifecycleRepository)
     assert isinstance(lifecycle, SQLiteLifecycleRunRepository)
@@ -125,6 +137,24 @@ def test_postgres_runtime_binding_is_immutable_idempotent_and_credential_free(
             "SELECT backend, locator FROM runtime_database_bindings"
         ).fetchone()
     assert row == (first.backend.value, first.locator)
+
+
+def test_postgres_continuous_runtime_binding_is_supported(
+    postgres_factory,
+) -> None:
+    configured = DatabaseSettings.from_sources(
+        database_url=os.environ[TEST_DATABASE_URL_ENV],
+        sqlite_path=None,
+        environ={},
+    )
+    repositories = RepositoryFactory(configured, postgres_factory=postgres_factory)
+
+    first = repositories.bind_runtime("CONTINUOUS_RESEARCH", "continuous-run-1")
+    second = repositories.assert_runtime_binding(
+        "CONTINUOUS_RESEARCH", "continuous-run-1"
+    )
+
+    assert first == second
 
 
 def test_postgres_runtime_binding_rejects_authority_mismatch(
