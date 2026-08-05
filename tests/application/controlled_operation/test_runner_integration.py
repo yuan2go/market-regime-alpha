@@ -258,7 +258,9 @@ def _settlement_inputs(
 
 def _input_paths(tmp_path: Path, fixture: DailyDecisionFixture):
     decision = fixture.source_manifest.decision_time.value.astimezone(UTC)
-    symbols = tuple(sorted(fixture.reconciliation.population.symbols))
+    fixture_symbols = tuple(sorted(fixture.reconciliation.population.symbols))
+    generated_symbols = tuple(f"{600100 + index:06d}.SH" for index in range(80))
+    symbols = tuple(sorted((*fixture_symbols, *generated_symbols)))
     sessions = _sessions(decision.date() - timedelta(days=1), 70)
     raw = AcquiredSourcePayload(
         provider_id=ProviderId("recorded-daily-provider"),
@@ -374,7 +376,25 @@ def _input_paths(tmp_path: Path, fixture: DailyDecisionFixture):
         limitations=("CONTROLLED_EXPLORATORY_UNIVERSE", "FORMAL_PIT_NOT_ESTABLISHED"),
     )
     universe_path = publish_operational_universe(root=tmp_path / "universes", artifact=universe)
-    supplemental = replace(_supplemental(fixture), created_at=decision)
+    base_supplemental = _supplemental(fixture)
+    supplemental = replace(
+        base_supplemental,
+        symbol_observations=tuple(
+            replace(
+                base_supplemental.symbol_observations[index % len(fixture_symbols)],
+                symbol=symbol,
+            )
+            for index, symbol in enumerate(symbols)
+        ),
+        theme_memberships=tuple(
+            replace(
+                base_supplemental.theme_memberships[index % len(fixture_symbols)],
+                symbol=symbol,
+            )
+            for index, symbol in enumerate(symbols)
+        ),
+        created_at=decision,
+    )
     supplemental_path = publish_supplemental_research_evidence(root=tmp_path / "supplemental", bundle=supplemental)
     configuration = ControlledOperationRuntimeConfiguration.create(
         static_feature_set=static_technical_feature_set(effective_from=decision - timedelta(days=365)),
@@ -469,7 +489,7 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
         ),
     )
     observed = policy.decision_instant(decision.date()) - timedelta(seconds=30)
-    current_time = [observed]
+    current_time = [policy.static_ready_deadline_instant(decision.date())]
     factory_calls = 0
 
     def factory(symbol: str, _attempt: int, _timeout: float):
@@ -483,16 +503,28 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
         clock=lambda: current_time[0],
         minute_client_factory=factory,
     )
+    runner.prepare(command=command, policy=policy, inputs=inputs)
+    current_time[0] = observed
     result = runner.run_decision_window(command=command, policy=policy, inputs=inputs)
     calls_after_first = factory_calls
     replayed_run = runner.run_decision_window(command=command, policy=policy, inputs=inputs)
 
-    assert len(universe.symbols) == 20
+    assert len(universe.symbols) == 100
     assert len(result.candidate_set.selected) == 5
     assert result.minute_coverage.succeeded_count == 5
     assert result.minute_coverage.failed_count == 0
     assert result.package.status.value == "OUTCOME_PENDING"
     assert result.snapshot.status is DecisionTimeOperationRunStatus.OUTCOME_PENDING
+    latency = {item.stage_name: item.elapsed_ms for item in result.package.stage_latencies}
+    assert sum(
+        latency[name]
+        for name in (
+            "CANDIDATE_MINUTE_ACQUISITION",
+            "INTRADAY_DATASET",
+            "INTRADAY_FEATURE_OVERLAY",
+            "SIGNAL",
+        )
+    ) <= 30_000
     assert all(item.artifact.forecast.forecast_status is PathForecastStatus.DATA_INSUFFICIENT for item in result.forecasts)
     assert result.package == replayed_run.package
     assert factory_calls == calls_after_first
@@ -582,12 +614,15 @@ def test_controlled_runner_archives_all_provider_failure_as_data_blocked(
         ),
     )
     observed = policy.decision_instant(decision.date()) - timedelta(seconds=30)
+    current_time = [policy.static_ready_deadline_instant(decision.date())]
     runner = ControlledDecisionTimeOperationRunner(
-        journal=SQLiteDecisionTimeOperationJournal(tmp_path / "controlled-operation.sqlite3", clock=lambda: observed),
+        journal=SQLiteDecisionTimeOperationJournal(tmp_path / "controlled-operation.sqlite3", clock=lambda: current_time[0]),
         output_root=tmp_path / "operations",
-        clock=lambda: observed,
+        clock=lambda: current_time[0],
         minute_client_factory=lambda _symbol, _attempt, _timeout: _FailingMinuteClient(),
     )
+    runner.prepare(command=command, policy=policy, inputs=inputs)
+    current_time[0] = observed
 
     with pytest.raises(ValueError, match="NO_USABLE_SOURCE"):
         runner.run_decision_window(command=command, policy=policy, inputs=inputs)

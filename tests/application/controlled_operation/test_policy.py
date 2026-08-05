@@ -50,7 +50,7 @@ def _at(hour: int, minute: int, second: int = 0) -> datetime:
         (_at(14, 53), True, DecisionWindowState.WAITING_FOR_DECISION_WINDOW),
         (_at(14, 54), True, DecisionWindowState.DECISION_WINDOW_RUNNING),
         (_at(14, 55), True, DecisionWindowState.DECISION_WINDOW_RUNNING),
-        (_at(14, 55, 1), True, DecisionWindowState.DECISION_WINDOW_RUNNING),
+        (_at(14, 55, 1), True, DecisionWindowState.DEADLINE_MISSED),
         (_at(14, 56, 1), True, DecisionWindowState.DEADLINE_MISSED),
     ),
 )
@@ -66,7 +66,11 @@ def test_decision_window_policy_states(
         decision_date=TRADE_DATE,
         calendar=calendar,
         expected_calendar_hash=calendar.content_hash,
-        static_inputs_ready=static_ready,
+        static_inputs_ready_at=(
+            (_at(14, 39) if observed == _at(14, 40) else _at(14, 49))
+            if static_ready
+            else None
+        ),
     )
 
     assert result.state is expected
@@ -91,7 +95,7 @@ def test_calendar_missing_conflict_holiday_and_early_close_fail_closed() -> None
     common = {
         "observed_at": _at(14, 55),
         "decision_date": TRADE_DATE,
-        "static_inputs_ready": True,
+        "static_inputs_ready_at": _at(14, 49),
     }
 
     assert policy.assess(
@@ -124,7 +128,7 @@ def test_weekend_or_long_holiday_is_not_inferred_from_weekday() -> None:
         decision_date=weekend,
         calendar=calendar,
         expected_calendar_hash=calendar.content_hash,
-        static_inputs_ready=True,
+        static_inputs_ready_at=datetime(2026, 8, 8, 14, 49, tzinfo=SHANGHAI),
     )
 
     assert result.state is DecisionWindowState.NON_TRADING_DAY
@@ -155,5 +159,30 @@ def test_policy_rejects_naive_observed_time() -> None:
             decision_date=TRADE_DATE,
             calendar=_calendar(),
             expected_calendar_hash=None,
-            static_inputs_ready=True,
+            static_inputs_ready_at=_at(14, 49),
         )
+
+
+def test_policy_rejects_late_or_future_static_receipt() -> None:
+    policy = default_decision_time_operation_policy()
+    calendar = _calendar()
+
+    late = policy.assess(
+        observed_at=_at(14, 54),
+        decision_date=TRADE_DATE,
+        calendar=calendar,
+        expected_calendar_hash=calendar.content_hash,
+        static_inputs_ready_at=_at(14, 50, 1),
+    )
+    future = policy.assess(
+        observed_at=_at(14, 49),
+        decision_date=TRADE_DATE,
+        calendar=calendar,
+        expected_calendar_hash=calendar.content_hash,
+        static_inputs_ready_at=_at(14, 49, 1),
+    )
+
+    assert late.state is DecisionWindowState.DATA_BLOCKED
+    assert late.reason_codes == ("STATIC_READY_DEADLINE_MISSED",)
+    assert future.state is DecisionWindowState.DATA_BLOCKED
+    assert future.reason_codes == ("STATIC_RECEIPT_AFTER_OBSERVATION",)

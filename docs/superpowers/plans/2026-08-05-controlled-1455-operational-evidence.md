@@ -1,5 +1,14 @@
 # Controlled 14:55 Operational Evidence Implementation Plan
 
+> **Status:** CURRENT_SPECIFICATION
+> **Authority:** Executable plan for WP-DATA-OPS-01
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-05
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../specs/2026-08-05-controlled-1455-operational-evidence-design.md, ../../architecture/15-Controlled-Decision-Time-Operation.md
+> **Code Evidence:** Planning baseline `68f91295a888e54b83334c7d7afcaab580961244`; checkboxes are not implementation evidence.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver WP-DATA-OPS-01 as one controlled, recoverable 14:55 canonical operation with longitudinal evidence and offline replay while Entry and trading authority remain blocked.

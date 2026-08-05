@@ -81,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daily-sessions", type=int, default=250)
     parser.add_argument("--minute-bars-per-symbol", type=int, default=48)
     parser.add_argument("--max-workers", type=int, default=4)
+    parser.add_argument("--candidate-count", type=int)
+    parser.add_argument(
+        "--columnar-v2-only",
+        action="store_true",
+        help="Measure the research-scale V2 run without repeating the JSON V1 baseline.",
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--reuse-json-v1-root", type=Path)
     parser.add_argument("--reuse-json-v1-metrics", type=Path)
@@ -95,6 +101,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--daily-sessions must be at least 60")
     if not 0 <= args.minute_bars_per_symbol <= 72:
         raise SystemExit("--minute-bars-per-symbol must be between 0 and 72")
+    if args.candidate_count is None:
+        args.candidate_count = min(10, args.symbols)
+    if not 1 <= args.candidate_count <= args.symbols:
+        raise SystemExit("--candidate-count must be between 1 and --symbols")
+    if args.columnar_v2_only and args.reuse_json_v1_root is not None:
+        raise SystemExit("--columnar-v2-only cannot reuse a JSON V1 baseline")
     if (args.reuse_json_v1_root is None) != (args.reuse_json_v1_metrics is None):
         raise SystemExit("--reuse-json-v1-root and --reuse-json-v1-metrics must be supplied together")
     if args.output_dir is None:
@@ -136,7 +148,9 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         limitations=("OFFLINE_SYNTHETIC_PERFORMANCE_FIXTURE",),
     )
     feature_set = canonical_technical_feature_set(effective_from=decision_time - timedelta(days=365))
-    if args.reuse_json_v1_root is not None:
+    if args.columnar_v2_only:
+        v1 = None
+    elif args.reuse_json_v1_root is not None:
         v1 = _reuse_json_v1_baseline(
             root=args.reuse_json_v1_root.resolve(),
             metrics_path=args.reuse_json_v1_metrics.resolve(),
@@ -168,6 +182,37 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         artifact_encoding=FEATURE_ARTIFACT_ENCODING_V2,
         bundle_encoding=FEATURE_BUNDLE_ENCODING_V2,
     )
+    if v1 is None:
+        peak_value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        process_peak_bytes = peak_value if sys.platform == "darwin" else peak_value * 1024
+        return {
+            "status": "MEASURED",
+            "benchmark_scope": "RESEARCH_SCALE_COLUMNAR_V2_ONLY",
+            "symbols": len(symbols),
+            "candidate_count": args.candidate_count,
+            "daily_sessions": args.daily_sessions,
+            "minute_bars": args.minute_bars_per_symbol * len(symbols),
+            "market_bar_count": len(bars),
+            "feature_family_count": len(feature_set.definitions),
+            "feature_artifact_count": v2["feature_artifact_count"],
+            "cold_run_seconds": v2["cold_materialization_seconds"],
+            "cached_run_seconds": v2["cached_receipt_seconds"],
+            "peak_memory_bytes": v2["peak_memory_bytes"],
+            "process_peak_memory_bytes": process_peak_bytes,
+            "output_bytes": v2["output_bytes"],
+            "file_count": v2["artifact_file_count"],
+            "feature_bundle_id": v2["feature_bundle_id"],
+            "feature_bundle_hash": v2["feature_bundle_hash"],
+            "deterministic_cached_receipt": v2["deterministic_cached_receipt"],
+            "network_used": False,
+            "absolute_ci_gate_applied": False,
+            "limitations": [
+                "OFFLINE_SYNTHETIC_PERFORMANCE_FIXTURE",
+                "RESEARCH_SCALE_ABSOLUTE_CI_GATE_NOT_APPLIED",
+                "NOT_A_MODEL_QUALITY_BENCHMARK",
+                "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+            ],
+        }
     if v1["feature_bundle_hash"] != v2["feature_bundle_hash"]:
         raise RuntimeError("Feature logical hash differs between physical encodings")
     signal_hash_v1 = _signal_hash(
@@ -195,6 +240,7 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
     return {
         "status": "PASS" if benchmark_passed else "TARGET_NOT_MET",
         "symbols": len(symbols),
+        "candidate_count": args.candidate_count,
         "daily_sessions": args.daily_sessions,
         "minute_bars": args.minute_bars_per_symbol * len(symbols),
         "market_bar_count": len(bars),

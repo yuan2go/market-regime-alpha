@@ -377,12 +377,20 @@ class ControlledDecisionTimeOperationRunner:
         inputs = preparation.input_paths
         configuration = load_controlled_runtime_configuration(inputs.runtime_configuration)
         observed_at = self._now()
+        static_stage_receipt = _completed_receipt(
+            preparation.snapshot,
+            DecisionTimeOperationStageName.STATIC_FEATURES,
+        )
         assessment = policy.assess(
             decision_date=command.decision_date,
             observed_at=observed_at,
             calendar=preparation.calendar,
             expected_calendar_hash=command.trading_calendar_hash,
-            static_inputs_ready=True,
+            static_inputs_ready_at=(
+                static_stage_receipt.created_at
+                if static_stage_receipt is not None
+                else None
+            ),
         )
         if assessment.state is not DecisionWindowState.DECISION_WINDOW_RUNNING:
             status = (
@@ -533,6 +541,7 @@ class ControlledDecisionTimeOperationRunner:
             )
             raise ControlledOperationDataBlocked(reason)
 
+        started = perf_counter()
         normalized_sources = []
         source_reader = RawMinuteSourceReader()
         for source_id, expected_hash in coverage.accepted_source_references:
@@ -557,6 +566,9 @@ class ControlledDecisionTimeOperationRunner:
         )
         minute_path = publish_market_data_dataset(root=run_root / "minute-datasets", artifact=minute_artifact)
         minute = load_verified_market_data_dataset(minute_path)
+        latencies[DecisionTimeOperationStageName.INTRADAY_DATASET.value] = int(
+            (perf_counter() - started) * 1000
+        )
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.INTRADAY_DATASET,
@@ -565,6 +577,7 @@ class ControlledDecisionTimeOperationRunner:
             outputs=(_reference("MINUTE_DATASET", minute.artifact.dataset_id, minute.artifact.content_hash),),
             reasons=("CANDIDATE_INTRADAY_CANONICAL_DATASET_PUBLISHED",),
             latency_sink=latencies,
+            premeasured=True,
         )
 
         started = perf_counter()

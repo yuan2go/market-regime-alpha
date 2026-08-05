@@ -36,3 +36,31 @@ def test_offline_feature_benchmark_reports_real_measurements(
     assert payload["output_bytes"] > 0
     assert payload["deterministic_cached_receipt"] is True
     assert payload["network_used"] is False
+
+
+def test_research_scale_v2_only_benchmark_is_measurement_not_absolute_gate(
+    tmp_path, capsys
+) -> None:
+    assert (
+        main(
+            [
+                "--symbols",
+                "3",
+                "--candidate-count",
+                "2",
+                "--daily-sessions",
+                "65",
+                "--minute-bars-per-symbol",
+                "2",
+                "--columnar-v2-only",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "MEASURED"
+    assert payload["candidate_count"] == 2
+    assert payload["absolute_ci_gate_applied"] is False
+    assert payload["deterministic_cached_receipt"] is True

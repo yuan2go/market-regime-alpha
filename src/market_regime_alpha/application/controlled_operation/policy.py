@@ -202,10 +202,15 @@ class DecisionTimeOperationPolicy:
         decision_date: date,
         calendar: TradingCalendarArtifact | None,
         expected_calendar_hash: str | None,
-        static_inputs_ready: bool,
+        static_inputs_ready_at: datetime | None,
     ) -> DecisionWindowAssessment:
         if observed_at.tzinfo is None or observed_at.utcoffset() is None:
             raise ValueError("observed_at must be timezone-aware")
+        if static_inputs_ready_at is not None and (
+            static_inputs_ready_at.tzinfo is None
+            or static_inputs_ready_at.utcoffset() is None
+        ):
+            raise ValueError("static_inputs_ready_at must be timezone-aware")
         if expected_calendar_hash is not None:
             require_sha256("expected_calendar_hash", expected_calendar_hash)
         if calendar is None:
@@ -247,7 +252,7 @@ class DecisionTimeOperationPolicy:
                 observed_at,
                 ("OBSERVATION_OUTSIDE_DECISION_DATE",),
             )
-        if not static_inputs_ready:
+        if static_inputs_ready_at is None:
             state = (
                 DecisionWindowState.WAITING_FOR_STATIC_INPUTS
                 if local_time < self.static_ready_deadline
@@ -259,6 +264,31 @@ class DecisionTimeOperationPolicy:
                 else "STATIC_READY_DEADLINE_MISSED"
             )
             return self._assessment(state, decision_date, observed_at, (reason,))
+        static_ready_local = static_inputs_ready_at.astimezone(zone)
+        if static_ready_local.date() != decision_date:
+            return self._assessment(
+                DecisionWindowState.DATA_BLOCKED,
+                decision_date,
+                observed_at,
+                ("STATIC_RECEIPT_OUTSIDE_DECISION_DATE",),
+            )
+        if static_inputs_ready_at > observed_at:
+            return self._assessment(
+                DecisionWindowState.DATA_BLOCKED,
+                decision_date,
+                observed_at,
+                ("STATIC_RECEIPT_AFTER_OBSERVATION",),
+            )
+        if (
+            static_ready_local.time().replace(tzinfo=None)
+            > self.static_ready_deadline
+        ):
+            return self._assessment(
+                DecisionWindowState.DATA_BLOCKED,
+                decision_date,
+                observed_at,
+                ("STATIC_READY_DEADLINE_MISSED",),
+            )
         if local_time < self.minute_fetch_start:
             state = (
                 DecisionWindowState.TOO_EARLY
@@ -271,12 +301,17 @@ class DecisionTimeOperationPolicy:
                 observed_at,
                 ("DECISION_WINDOW_NOT_OPEN",),
             )
-        if local_time > self.hard_cutoff:
+        if local_time > self.decision_time:
+            reason = (
+                "HARD_CUTOFF_EXCEEDED"
+                if local_time > self.hard_cutoff
+                else "DECISION_TIME_EXCEEDED"
+            )
             return self._assessment(
                 DecisionWindowState.DEADLINE_MISSED,
                 decision_date,
                 observed_at,
-                ("HARD_CUTOFF_EXCEEDED",),
+                (reason,),
             )
         return self._assessment(
             DecisionWindowState.DECISION_WINDOW_RUNNING,
@@ -296,6 +331,13 @@ class DecisionTimeOperationPolicy:
         """Return the configured DecisionTime as a canonical UTC instant."""
 
         return self._instant(decision_date, self.decision_time).astimezone(
+            timezone.utc
+        )
+
+    def static_ready_deadline_instant(self, decision_date: date) -> datetime:
+        """Return the latest accepted static-stage Receipt time in UTC."""
+
+        return self._instant(decision_date, self.static_ready_deadline).astimezone(
             timezone.utc
         )
 

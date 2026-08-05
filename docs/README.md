@@ -20,7 +20,7 @@ Use this order to determine what the project **should** do:
 ```text
 1. Latest explicit user decision that has not been superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–14 and architecture/domains/**
+3. docs/architecture/00–15 and architecture/domains/**
 4. docs/research/Current-Research-Program.md and focused current research programs
 5. docs/specs/** and docs/roadmap/work-packages/**
 6. HISTORICAL/SUPERSEDED material for context only
@@ -76,6 +76,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Canonical Runtime and Legacy Model Migration](architecture/12-Canonical-Runtime-and-Legacy-Migration.md)
 - [Canonical Market Data and Feature Spine](architecture/13-Canonical-Market-Data-and-Feature-Spine.md)
 - [Canonical Signal Authority and Operational Feature Handoff](architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md)
+- [Controlled 14:55 Decision-Time Operation](architecture/15-Controlled-Decision-Time-Operation.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
 
 ### Current research
@@ -118,6 +119,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Canonical Runtime and Legacy Model Migration Implementation Plan](superpowers/plans/2026-08-04-canonical-runtime-and-legacy-migration.md)
 - [Canonical Feature Spine and Signal Inputs Design](superpowers/specs/2026-08-04-canonical-feature-spine-and-signal-inputs-design.md)
 - [Canonical Feature Spine and Signal Inputs Implementation Plan](superpowers/plans/2026-08-04-canonical-feature-spine-and-signal-inputs.md)
+- [Controlled 14:55 Operational Evidence Design](superpowers/specs/2026-08-05-controlled-1455-operational-evidence-design.md)
+- [Controlled 14:55 Operational Evidence Implementation Plan](superpowers/plans/2026-08-05-controlled-1455-operational-evidence.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
@@ -144,6 +147,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [H6 Composite Operational Evidence Delivery](audit/H6-Composite-Operational-Evidence-Delivery.md)
 - [Canonical Feature Spine Delivery](audit/Canonical-Feature-Spine-Delivery.md)
 - [WP-SIG-01A Delivery](audit/WP-SIG-01A-Delivery.md)
+- [WP-DATA-OPS-01 Delivery](audit/WP-DATA-OPS-01-Delivery.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)

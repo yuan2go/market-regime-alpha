@@ -455,6 +455,33 @@ Implemented on the WP-SIG-01A branch:
 These mechanics remain exploratory. Path samples are unavailable, Entry is
 blocked, and no Opportunity, ManualTrade, Fill, order or Broker action is added.
 
+### 3.17 WP-DATA-OPS-01 controlled operation and archive
+
+Implemented on the Controlled 14:55 operation branch:
+
+- a versioned Calendar-bound DecisionTime policy and 100–300-symbol
+  `OperationalUniverseArtifact`; admission binds the actual static-stage
+  Receipt to the 14:50 deadline, and the 20-symbol DailyLoop pool remains Smoke;
+- pre-decision static daily Feature materialization plus Candidate-only minute
+  acquisition, intraday Feature overlay and `CandidateFeatureViewV2`;
+- controlled Platform research without B0/B1, Signal V3, unavailable-sample
+  PathForecast and an immutable Entry blocker;
+- bounded Tencent per-symbol acquisition with deadline, finite retry, partial
+  failure and complete coverage evidence;
+- migrations 013/014/015 for Feature Run hardening, the parent operation
+  journal and an append-only longitudinal index, including leases, monotonic
+  fencing epochs, CAS and database triggers;
+- immutable pending/settled operational packages, factual T+1 Outcome evidence,
+  full offline semantic replay and six JSON CLIs;
+- a 100-symbol cold Feature result of 56.801836 seconds against the 60-second
+  engineering target, a 300-symbol research measurement of 173.300481 seconds,
+  and a 100-Universe/5-Candidate decision increment of 0.148 seconds.
+
+These are local engineering Fixtures. No operation in WP-DATA-OPS-01 was
+observed at real wall-clock 14:55. Tencent remains exploratory, formal PIT and
+OOS Alpha are not established, PathForecast has no Sample Authority, Entry is
+blocked, and Shadow/Production/Trading Authority remain `NO`.
+
 ## 4. Persistence, transactions and consistency
 
 Implemented SQLite repositories generally use:
