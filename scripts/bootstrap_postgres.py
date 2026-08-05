@@ -231,18 +231,20 @@ def _ensure_role(
             )
         )
         connection.execute(
-            sql.SQL("ALTER ROLE {} PASSWORD %s").format(
-                sql.Identifier(TARGET_NAME)
-            ),
-            (application_secret,),
+            sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+                sql.Identifier(TARGET_NAME),
+                sql.Literal(application_secret),
+            )
         )
         return
     connection.execute(
         sql.SQL(
             "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-            "NOREPLICATION PASSWORD %s"
-        ).format(sql.Identifier(TARGET_NAME)),
-        (application_secret,),
+            "NOREPLICATION PASSWORD {}"
+        ).format(
+            sql.Identifier(TARGET_NAME),
+            sql.Literal(application_secret),
+        )
     )
 
 
