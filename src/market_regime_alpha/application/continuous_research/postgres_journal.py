@@ -14,12 +14,21 @@ from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
     RuntimeTickCommand,
 )
+from market_regime_alpha.application.continuous_research.evidence import (
+    CurrentEvidenceSnapshot,
+    EvidenceCommit,
+    EvidenceCommitResult,
+    ProviderAttemptOutcome,
+    ProviderAttemptSnapshot,
+    StartedProviderAttempt,
+)
 from market_regime_alpha.application.continuous_research.journal import (
     ClaimedRuntimeTick,
     ContinuousRunSnapshot,
     ContinuousRuntimeEvent,
     ContinuousTickSnapshot,
     ContinuousTickStatus,
+    ProviderAttemptStatus,
     RuntimeTickReceipt,
 )
 from market_regime_alpha.application.continuous_research.policy import (
@@ -27,7 +36,11 @@ from market_regime_alpha.application.continuous_research.policy import (
     ContinuousSessionPhase,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_json, require_text
+from market_regime_alpha.evidence.canonical import (
+    canonical_json,
+    require_sha256,
+    require_text,
+)
 from market_regime_alpha.market_data.contracts import require_utc_second
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
@@ -583,6 +596,544 @@ class PostgresContinuousResearchJournal:
         self._factory.run_transaction(operation)
         return self.get_tick(claim.run_id, claim.tick_id)
 
+    def start_provider_attempt(
+        self,
+        *,
+        claim: ClaimedRuntimeTick,
+        provider_id: str,
+        product: str,
+        request_hash: str,
+        provider_revision: str | None,
+    ) -> StartedProviderAttempt:
+        self._require_claim(claim)
+        require_text("provider_id", provider_id)
+        require_text("product", product)
+        if provider_revision is not None:
+            require_text("provider_revision", provider_revision)
+        require_sha256("request_hash", request_hash)
+        now = self._now()
+
+        def operation(
+            connection: psycopg.Connection[Any],
+        ) -> tuple[int, int]:
+            active = connection.execute(
+                """
+                SELECT COALESCE(MAX(attempt_number), 0)
+                FROM continuous_provider_attempt
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (str(claim.run_id), str(claim.tick_id)),
+            ).fetchone()
+            attempt_number = 1 if active is None else int(active[0]) + 1
+            attempt_row = connection.execute(
+                """
+                INSERT INTO continuous_provider_attempt(
+                    run_id, tick_id, attempt_number, claim_id, fencing_token,
+                    tick_version, provider_id, product, request_hash,
+                    started_at, lease_expires_at, heartbeat_at, status,
+                    reason_codes_json, provider_revision, attempt_json
+                )
+                SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                       %s, lease_expires_at, heartbeat_at, 'STARTED',
+                       '[]', %s, %s
+                FROM continuous_runtime_tick
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                RETURNING attempt_id
+                """,
+                (
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    attempt_number,
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    provider_id,
+                    product,
+                    request_hash,
+                    now,
+                    provider_revision,
+                    canonical_json(
+                        {
+                            "schema_version": "continuous-provider-attempt-v1",
+                            "status": ProviderAttemptStatus.STARTED.value,
+                        }
+                    ),
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+            if attempt_row is None:
+                raise ContinuousResearchClaimRejected(
+                    "Provider Attempt start rejected by fencing"
+                )
+            attempt_id = int(attempt_row[0])
+            tick_row = connection.execute(
+                """
+                UPDATE continuous_runtime_tick
+                SET provider_attempt_id = %s, version = version + 1,
+                    updated_at = %s
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                RETURNING version
+                """,
+                (
+                    attempt_id,
+                    now,
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+            if tick_row is None:
+                raise ContinuousResearchClaimRejected(
+                    "Provider Attempt pointer rejected by fencing"
+                )
+            self._insert_event(
+                connection,
+                run_id=claim.run_id,
+                tick_id=claim.tick_id,
+                event_type="PROVIDER_ATTEMPT_STARTED",
+                event_time=now,
+                fencing_token=claim.fencing_token,
+                payload={
+                    "attempt_id": attempt_id,
+                    "attempt_number": attempt_number,
+                    "provider_id": provider_id,
+                    "product": product,
+                },
+            )
+            return attempt_id, int(tick_row[0])
+
+        attempt_id, tick_version = self._factory.run_transaction(operation)
+        return StartedProviderAttempt(
+            attempt=self.get_provider_attempt(attempt_id),
+            claim=replace(claim, tick_version=tick_version),
+        )
+
+    def complete_provider_attempt(
+        self,
+        *,
+        claim: ClaimedRuntimeTick,
+        attempt_id: int,
+        outcome: ProviderAttemptOutcome,
+    ) -> ProviderAttemptSnapshot:
+        self._require_claim(claim)
+        if (
+            isinstance(attempt_id, bool)
+            or not isinstance(attempt_id, int)
+            or attempt_id < 1
+        ):
+            raise ValueError("attempt_id must be positive")
+        if not isinstance(outcome, ProviderAttemptOutcome):
+            raise TypeError("outcome must be a ProviderAttemptOutcome")
+        now = self._now()
+
+        def operation(connection: psycopg.Connection[Any]) -> None:
+            active = connection.execute(
+                """
+                SELECT 1
+                FROM continuous_runtime_tick
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                FOR UPDATE
+                """,
+                (
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+            if active is None:
+                raise ContinuousResearchClaimRejected(
+                    "Provider Attempt completion rejected by fencing"
+                )
+            row = connection.execute(
+                """
+                UPDATE continuous_provider_attempt
+                SET completed_at = %s, status = %s,
+                    raw_response_hash = %s,
+                    source_manifest_id = %s, source_manifest_hash = %s,
+                    error_code = %s, error_message = %s,
+                    reason_codes_json = %s, retry_at = %s,
+                    attempt_json = %s
+                WHERE attempt_id = %s AND run_id = %s AND tick_id = %s
+                  AND claim_id = %s AND fencing_token = %s
+                  AND status = 'STARTED'
+                  AND started_at <= %s
+                RETURNING attempt_id
+                """,
+                (
+                    outcome.completed_at,
+                    outcome.status.value,
+                    outcome.raw_response_hash,
+                    (
+                        None
+                        if outcome.source_manifest_id is None
+                        else str(outcome.source_manifest_id)
+                    ),
+                    outcome.source_manifest_hash,
+                    outcome.error_code,
+                    outcome.error_message,
+                    _json_array(outcome.reason_codes),
+                    outcome.retry_at,
+                    canonical_json(
+                        {
+                            "schema_version": "continuous-provider-attempt-v1",
+                            "outcome": outcome.to_canonical_dict(),
+                        }
+                    ),
+                    attempt_id,
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    outcome.completed_at,
+                ),
+            ).fetchone()
+            if row is None:
+                raise ContinuousResearchClaimRejected(
+                    "Provider Attempt completion rejected by identity fencing"
+                )
+            self._insert_event(
+                connection,
+                run_id=claim.run_id,
+                tick_id=claim.tick_id,
+                event_type="PROVIDER_ATTEMPT_COMPLETED",
+                event_time=now,
+                fencing_token=claim.fencing_token,
+                payload={"attempt_id": attempt_id, "status": outcome.status.value},
+            )
+
+        self._factory.run_transaction(operation)
+        return self.get_provider_attempt(attempt_id)
+
+    def commit_evidence(
+        self,
+        *,
+        claim: ClaimedRuntimeTick,
+        attempt: ProviderAttemptSnapshot,
+        evidence: EvidenceCommit,
+    ) -> EvidenceCommitResult:
+        self._require_claim(claim)
+        if not isinstance(attempt, ProviderAttemptSnapshot):
+            raise TypeError("attempt must be a ProviderAttemptSnapshot")
+        if not isinstance(evidence, EvidenceCommit):
+            raise TypeError("evidence must be an EvidenceCommit")
+        evidence.verify_identity()
+        if (
+            attempt.status is not ProviderAttemptStatus.SUCCEEDED
+            or attempt.attempt_id != evidence.attempt_id
+            or attempt.run_id != claim.run_id
+            or attempt.tick_id != claim.tick_id
+            or evidence.run_id != claim.run_id
+            or evidence.tick_id != claim.tick_id
+            or attempt.source_manifest_id != evidence.source_manifest_id
+            or attempt.source_manifest_hash != evidence.source_manifest_hash
+        ):
+            raise ContinuousResearchConflict(
+                "Evidence does not match a successful validated Provider Attempt"
+            )
+        now = self._now()
+
+        def operation(
+            connection: psycopg.Connection[Any],
+        ) -> tuple[bool, int]:
+            active = connection.execute(
+                """
+                SELECT 1
+                FROM continuous_runtime_tick
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                FOR UPDATE
+                """,
+                (
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+            if active is None:
+                raise ContinuousResearchClaimRejected(
+                    "Evidence commit rejected by fencing"
+                )
+            authoritative_attempt = connection.execute(
+                """
+                SELECT status, source_manifest_id, source_manifest_hash
+                FROM continuous_provider_attempt
+                WHERE attempt_id = %s AND run_id = %s AND tick_id = %s
+                FOR UPDATE
+                """,
+                (attempt.attempt_id, str(claim.run_id), str(claim.tick_id)),
+            ).fetchone()
+            if authoritative_attempt is None or str(authoritative_attempt[0]) != "SUCCEEDED":
+                raise ContinuousResearchConflict(
+                    "Evidence requires a durable successful Provider Attempt"
+                )
+            if (
+                str(authoritative_attempt[1]) != str(evidence.source_manifest_id)
+                or str(authoritative_attempt[2]) != evidence.source_manifest_hash
+            ):
+                raise ContinuousResearchConflict(
+                    "Evidence SourceManifest differs from Provider Attempt"
+                )
+            connection.execute(
+                """
+                INSERT INTO continuous_evidence_commit(
+                    evidence_commit_id, commit_hash, run_id, tick_id, attempt_id,
+                    evidence_scope, trading_date, request_scope_hash,
+                    source_manifest_id, source_manifest_hash,
+                    raw_artifact_id, raw_artifact_hash,
+                    evidence_artifact_id, evidence_artifact_hash,
+                    material_identity_hash,
+                    provider_configuration_id, provider_configuration_hash,
+                    effective_at, retrieved_at, available_at, as_of_time,
+                    quality_status, evidence_qualification, evidence_json,
+                    created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (attempt_id) DO NOTHING
+                """,
+                (
+                    str(evidence.evidence_commit_id),
+                    evidence.commit_hash,
+                    str(evidence.run_id),
+                    str(evidence.tick_id),
+                    evidence.attempt_id,
+                    evidence.evidence_scope,
+                    evidence.trading_date,
+                    evidence.request_scope_hash,
+                    str(evidence.source_manifest_id),
+                    evidence.source_manifest_hash,
+                    (
+                        None
+                        if evidence.raw_artifact_id is None
+                        else str(evidence.raw_artifact_id)
+                    ),
+                    evidence.raw_artifact_hash,
+                    str(evidence.evidence_artifact_id),
+                    evidence.evidence_artifact_hash,
+                    evidence.material_identity_hash,
+                    str(evidence.provider_configuration_id),
+                    evidence.provider_configuration_hash,
+                    evidence.effective_at,
+                    evidence.retrieved_at,
+                    evidence.available_at,
+                    evidence.as_of_time,
+                    evidence.quality_status.value,
+                    evidence.evidence_qualification,
+                    canonical_json(evidence.to_canonical_dict()),
+                    now,
+                ),
+            )
+            durable = connection.execute(
+                """
+                SELECT evidence_commit_id, commit_hash
+                FROM continuous_evidence_commit
+                WHERE attempt_id = %s
+                """,
+                (evidence.attempt_id,),
+            ).fetchone()
+            if (
+                durable is None
+                or str(durable[0]) != str(evidence.evidence_commit_id)
+                or str(durable[1]) != evidence.commit_hash
+            ):
+                raise ContinuousResearchConflict("Evidence Attempt idempotency conflict")
+            current = connection.execute(
+                """
+                SELECT evidence_commit_id, material_identity_hash, version
+                FROM continuous_current_evidence
+                WHERE run_id = %s AND evidence_scope = %s
+                FOR UPDATE
+                """,
+                (str(claim.run_id), evidence.evidence_scope),
+            ).fetchone()
+            current_advanced = False
+            if current is None:
+                connection.execute(
+                    """
+                    INSERT INTO continuous_current_evidence(
+                        run_id, evidence_scope, evidence_commit_id,
+                        evidence_commit_hash, material_identity_hash,
+                        version, last_accepted_fencing_token, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
+                    """,
+                    (
+                        str(claim.run_id),
+                        evidence.evidence_scope,
+                        str(evidence.evidence_commit_id),
+                        evidence.commit_hash,
+                        evidence.material_identity_hash,
+                        claim.fencing_token,
+                        now,
+                    ),
+                )
+                current_advanced = True
+            elif str(current[1]) != evidence.material_identity_hash:
+                updated = connection.execute(
+                    """
+                    UPDATE continuous_current_evidence
+                    SET evidence_commit_id = %s, evidence_commit_hash = %s,
+                        material_identity_hash = %s, version = version + 1,
+                        last_accepted_fencing_token = %s, updated_at = %s
+                    WHERE run_id = %s AND evidence_scope = %s AND version = %s
+                    RETURNING version
+                    """,
+                    (
+                        str(evidence.evidence_commit_id),
+                        evidence.commit_hash,
+                        evidence.material_identity_hash,
+                        claim.fencing_token,
+                        now,
+                        str(claim.run_id),
+                        evidence.evidence_scope,
+                        int(current[2]),
+                    ),
+                ).fetchone()
+                if updated is None:
+                    raise ContinuousResearchConflict("Current Evidence CAS conflict")
+                current_advanced = True
+            tick = connection.execute(
+                """
+                UPDATE continuous_runtime_tick
+                SET evidence_commit_id = %s, version = version + 1,
+                    updated_at = %s
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                RETURNING version
+                """,
+                (
+                    str(evidence.evidence_commit_id),
+                    now,
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+            if tick is None:
+                raise ContinuousResearchClaimRejected(
+                    "Evidence pointer rejected by tick fencing"
+                )
+            self._insert_event(
+                connection,
+                run_id=claim.run_id,
+                tick_id=claim.tick_id,
+                event_type="EVIDENCE_COMMITTED",
+                event_time=now,
+                fencing_token=claim.fencing_token,
+                payload={
+                    "current_advanced": current_advanced,
+                    "evidence_commit_id": str(evidence.evidence_commit_id),
+                    "material_identity_hash": evidence.material_identity_hash,
+                },
+            )
+            if current_advanced:
+                self._insert_event(
+                    connection,
+                    run_id=claim.run_id,
+                    tick_id=claim.tick_id,
+                    event_type="CURRENT_EVIDENCE_CHANGED",
+                    event_time=now,
+                    fencing_token=claim.fencing_token,
+                    payload={"evidence_scope": evidence.evidence_scope},
+                )
+            return current_advanced, int(tick[0])
+
+        current_advanced, tick_version = self._factory.run_transaction(operation)
+        current = self.get_current_evidence(claim.run_id, evidence.evidence_scope)
+        if current is None:
+            raise RuntimeError("Current Evidence was not durable")
+        return EvidenceCommitResult(
+            evidence=self.get_evidence_commit(evidence.evidence_commit_id),
+            current=current,
+            claim=replace(claim, tick_version=tick_version),
+            current_advanced=current_advanced,
+        )
+
+    def get_provider_attempt(self, attempt_id: int) -> ProviderAttemptSnapshot:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                _ATTEMPT_SELECT + " WHERE attempt_id = %s",
+                (attempt_id,),
+            ).fetchone()
+        if row is None:
+            raise ContinuousResearchNotFound(f"Provider Attempt {attempt_id}")
+        return _attempt_from_row(row)
+
+    def get_evidence_commit(self, evidence_commit_id: ArtifactId) -> EvidenceCommit:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT evidence_json
+                FROM continuous_evidence_commit
+                WHERE evidence_commit_id = %s
+                """,
+                (str(evidence_commit_id),),
+            ).fetchone()
+        if row is None:
+            raise ContinuousResearchNotFound(str(evidence_commit_id))
+        return EvidenceCommit.from_canonical_dict(
+            _json_object(row[0], "evidence_json")
+        )
+
+    def get_current_evidence(
+        self, run_id: ArtifactId, evidence_scope: str
+    ) -> CurrentEvidenceSnapshot | None:
+        require_text("evidence_scope", evidence_scope)
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT evidence_commit_id, evidence_commit_hash,
+                       material_identity_hash, version,
+                       last_accepted_fencing_token, updated_at
+                FROM continuous_current_evidence
+                WHERE run_id = %s AND evidence_scope = %s
+                """,
+                (str(run_id), evidence_scope),
+            ).fetchone()
+        if row is None:
+            return None
+        return CurrentEvidenceSnapshot(
+            run_id=run_id,
+            evidence_scope=evidence_scope,
+            evidence_commit_id=ArtifactId(str(row[0])),
+            evidence_commit_hash=str(row[1]),
+            material_identity_hash=str(row[2]),
+            version=int(row[3]),
+            last_accepted_fencing_token=int(row[4]),
+            updated_at=_datetime(row[5]),
+        )
+
     def resume(self, run_id: ArtifactId) -> ContinuousRunSnapshot:
         now = self._now()
 
@@ -600,6 +1151,30 @@ class PostgresContinuousResearchJournal:
             ).fetchall()
             for row in rows:
                 tick_id = ArtifactId(str(row[0]))
+                connection.execute(
+                    """
+                    UPDATE continuous_provider_attempt
+                    SET completed_at = %s, status = 'LEASE_EXPIRED',
+                        error_code = 'LEASE_EXPIRED',
+                        error_message = 'Provider Attempt lease expired',
+                        reason_codes_json = '["LEASE_EXPIRED"]',
+                        attempt_json = %s
+                    WHERE run_id = %s AND tick_id = %s
+                      AND fencing_token = %s AND status = 'STARTED'
+                    """,
+                    (
+                        now,
+                        canonical_json(
+                            {
+                                "schema_version": "continuous-provider-attempt-v1",
+                                "status": ProviderAttemptStatus.LEASE_EXPIRED.value,
+                            }
+                        ),
+                        str(run_id),
+                        str(tick_id),
+                        int(row[2]),
+                    ),
+                )
                 connection.execute(
                     """
                     UPDATE continuous_runtime_tick
@@ -896,6 +1471,16 @@ SELECT tick_json, tick_sequence, session_phase, status, version,
 FROM continuous_runtime_tick
 """
 
+_ATTEMPT_SELECT = """
+SELECT attempt_id, run_id, tick_id, attempt_number, claim_id, fencing_token,
+       tick_version, provider_id, product, request_hash, started_at,
+       completed_at, lease_expires_at, heartbeat_at, status,
+       raw_response_hash, source_manifest_id, source_manifest_hash,
+       error_code, error_message, reason_codes_json, retry_at,
+       provider_revision
+FROM continuous_provider_attempt
+"""
+
 
 def _state_for_phase(phase: ContinuousSessionPhase) -> ContinuousRunState:
     return {
@@ -916,6 +1501,51 @@ def _json_object(value: object, label: str) -> Mapping[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must be a JSON object")
     return payload
+
+
+def _json_array(values: tuple[str, ...]) -> str:
+    return json.dumps(
+        list(values),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _attempt_from_row(row: tuple[Any, ...]) -> ProviderAttemptSnapshot:
+    reasons_payload = json.loads(str(row[20]))
+    if not isinstance(reasons_payload, list) or any(
+        not isinstance(item, str) for item in reasons_payload
+    ):
+        raise ValueError("Provider Attempt reasons row is invalid")
+    return ProviderAttemptSnapshot(
+        attempt_id=int(row[0]),
+        run_id=ArtifactId(str(row[1])),
+        tick_id=ArtifactId(str(row[2])),
+        attempt_number=int(row[3]),
+        claim_id=str(row[4]),
+        fencing_token=int(row[5]),
+        tick_version=int(row[6]),
+        provider_id=str(row[7]),
+        product=str(row[8]),
+        request_hash=str(row[9]),
+        started_at=_datetime(row[10]),
+        completed_at=_optional_datetime(row[11]),
+        lease_expires_at=_datetime(row[12]),
+        heartbeat_at=_datetime(row[13]),
+        status=ProviderAttemptStatus(str(row[14])),
+        raw_response_hash=(None if row[15] is None else str(row[15])),
+        source_manifest_id=(
+            None if row[16] is None else ArtifactId(str(row[16]))
+        ),
+        source_manifest_hash=(None if row[17] is None else str(row[17])),
+        error_code=None if row[18] is None else str(row[18]),
+        error_message=None if row[19] is None else str(row[19]),
+        reason_codes=tuple(reasons_payload),
+        retry_at=_optional_datetime(row[21]),
+        provider_revision=None if row[22] is None else str(row[22]),
+    )
 
 
 def _datetime(value: object) -> datetime:
