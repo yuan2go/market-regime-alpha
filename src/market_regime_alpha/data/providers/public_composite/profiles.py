@@ -11,6 +11,7 @@ from market_regime_alpha.data.providers.public_composite.contracts import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
     TENCENT_PUBLIC_PROVIDER_ID,
+    TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     PublicAcquisitionClient,
     PublicCompositeBatch,
     PublicCompositeProviderResult,
@@ -126,7 +127,15 @@ class PublicCompositeLiveProfile:
             security_status=security_status,
             current=current,
             request=request,
+            profile_id=self.profile_id,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TencentFreeOperationalProfile(PublicCompositeLiveProfile):
+    """Explicit free-data profile; never retains the legacy LIVE identity."""
+
+    profile_id: str = TENCENT_FREE_OPERATIONAL_PROFILE_ID
 
 
 def compose_public_composite_live(
@@ -135,12 +144,13 @@ def compose_public_composite_live(
     security_status: PublicCompositeBatch | None,
     current: PublicCompositeBatch,
     request: PublicCompositeRequest,
+    profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
 ) -> PublicCompositeProviderResult:
     """Compose verified frozen LIVE stages without any client dependency."""
 
     status = security_status
     return PublicCompositeProviderResult(
-        profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+        profile_id=profile_id,
         decision_time=request.decision_time,
         raw_payloads=(
             *history.raw_payloads,

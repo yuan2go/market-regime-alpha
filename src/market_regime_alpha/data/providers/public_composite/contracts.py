@@ -29,6 +29,7 @@ from market_regime_alpha.data.source_manifest import (
 
 PUBLIC_COMPOSITE_LIVE_PROFILE_ID = "public-composite-live-v1"
 PUBLIC_COMPOSITE_REPLAY_PROFILE_ID = "public-composite-replay-v1"
+TENCENT_FREE_OPERATIONAL_PROFILE_ID = "TENCENT_FREE_OPERATIONAL_V1"
 BAOSTOCK_PUBLIC_PROVIDER_ID = ProviderId("provider-baostock-public")
 TENCENT_PUBLIC_PROVIDER_ID = ProviderId("provider-tencent-public")
 HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1 = (
@@ -125,6 +126,144 @@ class PublicCompositeRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RawSourceRequestMetadata:
+    """Request/response facts bound to new raw source payloads."""
+
+    provider_profile_id: str
+    endpoint: str
+    request_parameters: tuple[tuple[str, str], ...]
+    requested_at: datetime
+    provider_timestamp: datetime | None
+    event_time: datetime | None
+    available_at: datetime | None
+    decision_time: datetime
+    http_status: int | None
+    content_type: str | None
+    response_size: int
+    encoding: str
+    symbol_scope: tuple[str, ...]
+    field_scope: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_text("provider_profile_id", self.provider_profile_id)
+        _require_text("endpoint", self.endpoint)
+        keys: list[str] = []
+        for key, value in self.request_parameters:
+            _require_text("request parameter key", key)
+            _require_text("request parameter value", value)
+            keys.append(key)
+        if tuple(sorted(set(keys))) != tuple(keys):
+            raise ValueError("request_parameters must have unique ordered keys")
+        _require_aware("requested_at", self.requested_at)
+        _require_aware("decision_time", self.decision_time)
+        for label, value in (
+            ("provider_timestamp", self.provider_timestamp),
+            ("event_time", self.event_time),
+            ("available_at", self.available_at),
+        ):
+            if value is not None:
+                _require_aware(label, value)
+        if self.http_status is not None and (
+            isinstance(self.http_status, bool) or not 100 <= self.http_status <= 599
+        ):
+            raise ValueError("http_status must be between 100 and 599")
+        if self.content_type is not None:
+            _require_text("content_type", self.content_type)
+        if isinstance(self.response_size, bool) or self.response_size < 1:
+            raise ValueError("response_size must be a positive integer")
+        _require_text("encoding", self.encoding)
+        for label, values in (
+            ("symbol_scope", self.symbol_scope),
+            ("field_scope", self.field_scope),
+        ):
+            if not values or tuple(sorted(set(values))) != values:
+                raise ValueError(f"{label} must be non-empty, unique, and ordered")
+            for value in values:
+                _require_text(label, value)
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        def instant(value: datetime | None) -> str | None:
+            return value.isoformat() if value is not None else None
+
+        return {
+            "provider_profile_id": self.provider_profile_id,
+            "endpoint": self.endpoint,
+            "request_parameters": [list(item) for item in self.request_parameters],
+            "requested_at": self.requested_at.isoformat(),
+            "provider_timestamp": instant(self.provider_timestamp),
+            "event_time": instant(self.event_time),
+            "available_at": instant(self.available_at),
+            "decision_time": self.decision_time.isoformat(),
+            "http_status": self.http_status,
+            "content_type": self.content_type,
+            "response_size": self.response_size,
+            "encoding": self.encoding,
+            "symbol_scope": list(self.symbol_scope),
+            "field_scope": list(self.field_scope),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> RawSourceRequestMetadata:
+        expected = {
+            "provider_profile_id",
+            "endpoint",
+            "request_parameters",
+            "requested_at",
+            "provider_timestamp",
+            "event_time",
+            "available_at",
+            "decision_time",
+            "http_status",
+            "content_type",
+            "response_size",
+            "encoding",
+            "symbol_scope",
+            "field_scope",
+        }
+        if set(payload) != expected:
+            raise ValueError("RawSourceRequestMetadata fields mismatch")
+
+        def optional_instant(key: str) -> datetime | None:
+            value = payload[key]
+            return datetime.fromisoformat(str(value)) if value is not None else None
+
+        parameters = payload["request_parameters"]
+        if not isinstance(parameters, list) or any(
+            not isinstance(item, list) or len(item) != 2 for item in parameters
+        ):
+            raise TypeError("request_parameters must be a list")
+        return cls(
+            provider_profile_id=str(payload["provider_profile_id"]),
+            endpoint=str(payload["endpoint"]),
+            request_parameters=tuple(
+                (str(item[0]), str(item[1])) for item in parameters
+            ),
+            requested_at=datetime.fromisoformat(str(payload["requested_at"])),
+            provider_timestamp=optional_instant("provider_timestamp"),
+            event_time=optional_instant("event_time"),
+            available_at=optional_instant("available_at"),
+            decision_time=datetime.fromisoformat(str(payload["decision_time"])),
+            http_status=(
+                int(payload["http_status"])
+                if payload["http_status"] is not None
+                else None
+            ),
+            content_type=(
+                str(payload["content_type"])
+                if payload["content_type"] is not None
+                else None
+            ),
+            response_size=int(payload["response_size"]),
+            encoding=str(payload["encoding"]),
+            symbol_scope=tuple(str(value) for value in payload["symbol_scope"]),
+            field_scope=tuple(str(value) for value in payload["field_scope"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AcquiredSourcePayload:
     """Exact provider bytes before normalization."""
 
@@ -134,6 +273,7 @@ class AcquiredSourcePayload:
     raw_payload: bytes
     retrieved_time: RetrievedAt
     limitations: tuple[str, ...]
+    request_metadata: RawSourceRequestMetadata | None = None
     raw_hash: str = field(init=False)
     source_artifact_id: ArtifactId = field(init=False)
 
@@ -146,6 +286,21 @@ class AcquiredSourcePayload:
             raise TypeError("retrieved_time must be a RetrievedAt")
         for value in self.limitations:
             _require_text("limitation", value)
+        if self.request_metadata is not None:
+            if not isinstance(self.request_metadata, RawSourceRequestMetadata):
+                raise TypeError("request_metadata must be RawSourceRequestMetadata")
+            if self.request_metadata.response_size != len(self.raw_payload):
+                raise ValueError(
+                    "request metadata response_size does not match raw bytes"
+                )
+            if self.request_metadata.available_at is not None and (
+                self.request_metadata.available_at != self.retrieved_time.value
+            ):
+                raise ValueError(
+                    "request metadata available_at must equal retrieved_time"
+                )
+            if self.request_metadata.requested_at > self.retrieved_time.value:
+                raise ValueError("request metadata requested_at exceeds retrieved_time")
         raw_hash = f"sha256:{sha256(self.raw_payload).hexdigest()}"
         object.__setattr__(self, "raw_hash", raw_hash)
         semantic = {
@@ -156,6 +311,8 @@ class AcquiredSourcePayload:
             "retrieved_time": self.retrieved_time.isoformat(),
             "limitations": list(self.limitations),
         }
+        if self.request_metadata is not None:
+            semantic["request_metadata"] = self.request_metadata.to_canonical_dict()
         identity_hash = _canonical_hash(semantic)
         object.__setattr__(
             self,
@@ -187,6 +344,8 @@ class AcquiredSourcePayload:
             from base64 import b64encode
 
             payload["raw_payload_base64"] = b64encode(self.raw_payload).decode("ascii")
+        if self.request_metadata is not None:
+            payload["request_metadata"] = self.request_metadata.to_canonical_dict()
         return payload
 
     @classmethod
@@ -196,7 +355,7 @@ class AcquiredSourcePayload:
     ) -> AcquiredSourcePayload:
         from base64 import b64decode
 
-        expected = {
+        legacy_expected = {
             "provider_id",
             "product",
             "locator",
@@ -206,8 +365,17 @@ class AcquiredSourcePayload:
             "source_artifact_id",
             "raw_payload_base64",
         }
-        if set(payload) != expected:
+        expected = legacy_expected | {"request_metadata"}
+        if frozenset(payload) not in {
+            frozenset(legacy_expected),
+            frozenset(expected),
+        }:
             raise ValueError("AcquiredSourcePayload fields mismatch")
+        metadata_payload = payload.get("request_metadata")
+        if "request_metadata" in payload and not isinstance(
+            metadata_payload, Mapping
+        ):
+            raise TypeError("request_metadata must be an object")
         item = cls(
             provider_id=ProviderId(str(payload["provider_id"])),
             product=str(payload["product"]),
@@ -217,6 +385,11 @@ class AcquiredSourcePayload:
                 datetime.fromisoformat(str(payload["retrieved_time"]))
             ),
             limitations=tuple(str(value) for value in payload["limitations"]),
+            request_metadata=(
+                RawSourceRequestMetadata.from_canonical_dict(metadata_payload)
+                if isinstance(metadata_payload, Mapping)
+                else None
+            ),
         )
         if (
             item.raw_hash != payload["raw_hash"]
@@ -581,12 +754,19 @@ class PublicCompositeProviderResult:
         if self.profile_id not in {
             PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
             PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+            TENCENT_FREE_OPERATIONAL_PROFILE_ID,
         }:
             raise ValueError("unsupported public composite profile")
         if not isinstance(self.decision_time, DecisionTime):
             raise TypeError("decision_time must be a DecisionTime")
         if not self.raw_payloads:
             raise ValueError("raw_payloads must not be empty")
+        if any(
+            item.request_metadata is not None
+            and item.request_metadata.provider_profile_id != self.profile_id
+            for item in self.raw_payloads
+        ):
+            raise ValueError("raw payload provider profile does not match result profile")
         source_ids = tuple(item.source_artifact_id for item in self.raw_payloads)
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("raw_payloads must be unique")

@@ -17,6 +17,7 @@ from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite.contracts import (
     PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
+    TENCENT_FREE_OPERATIONAL_PROFILE_ID,
 )
 
 
@@ -105,14 +106,14 @@ class DailyRunCommand:
             raise ValueError("REPLAY requires replay_source_manifest_id")
         if self.run_mode is RunMode.LIVE and self.replay_source_manifest_id is not None:
             raise ValueError("LIVE cannot carry replay_source_manifest_id")
-        expected_profile = (
-            PUBLIC_COMPOSITE_LIVE_PROFILE_ID
+        expected_profiles = (
+            {PUBLIC_COMPOSITE_LIVE_PROFILE_ID, TENCENT_FREE_OPERATIONAL_PROFILE_ID}
             if self.run_mode is RunMode.LIVE
-            else PUBLIC_COMPOSITE_REPLAY_PROFILE_ID
+            else {PUBLIC_COMPOSITE_REPLAY_PROFILE_ID}
         )
-        if self.provider_profile_id != expected_profile:
+        if self.provider_profile_id not in expected_profiles:
             raise ValueError(
-                f"{self.run_mode.value} requires provider profile {expected_profile}"
+                f"{self.run_mode.value} requires one of provider profiles {sorted(expected_profiles)}"
             )
         content_hash = _canonical_hash(self.semantic_payload())
         object.__setattr__(self, "content_hash", content_hash)

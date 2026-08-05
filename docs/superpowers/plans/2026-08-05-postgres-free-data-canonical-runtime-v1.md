@@ -59,13 +59,13 @@
 - Produces: `RawSourceRequestMetadata` embedded in new live `AcquiredSourcePayload` writes.
 - Preserves: V1 payload/archive readers for historical replay.
 
-- [ ] Write fixture tests for exact request metadata, raw byte hash, response size, encoding, Content-Type mismatch, timeout, empty body, malformed encoding, and provider-profile identity.
-- [ ] Implement the optional metadata schema with canonical serialization and backward-compatible V1 reads.
-- [ ] Capture Tencent HTTP status/headers/timing before parsing and validate the response envelope without trusting Content-Type alone.
-- [ ] Capture BaoStock product parameters and explicit unavailable HTTP/provider-time fields; never invent them.
-- [ ] Assert a Tencent failure raises a blocked acquisition result and never returns static or alternate-provider values.
-- [ ] Run `uv run pytest -q tests/data/test_free_data_source_metadata.py tests/data/test_public_composite_provider.py tests/data/test_public_source_stage_artifact.py` and require PASS.
-- [ ] Commit with `feat(data): define tencent free operational source evidence`.
+- [x] Write fixture tests for exact request metadata, raw byte hash, response size, encoding, Content-Type mismatch, timeout, empty body, malformed encoding, and provider-profile identity.
+- [x] Implement the optional metadata schema with canonical serialization and backward-compatible V1 reads.
+- [x] Capture Tencent HTTP status/headers/timing before parsing and validate the response envelope without trusting Content-Type alone.
+- [x] Capture BaoStock product parameters and explicit unavailable HTTP/provider-time fields; never invent them.
+- [x] Assert a Tencent failure raises a blocked acquisition result and never returns static or alternate-provider values.
+- [x] Run `uv run pytest -q tests/data/test_free_data_source_metadata.py tests/data/test_public_composite_provider.py tests/data/test_public_source_stage_artifact.py` and require PASS.
+- [x] Commit with `feat(data): define tencent free operational source evidence`.
 
 ### Task 3: Free-data input materialization
 

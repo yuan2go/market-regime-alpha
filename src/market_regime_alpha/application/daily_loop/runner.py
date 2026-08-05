@@ -640,6 +640,7 @@ class DailyLoopRunner:
             result = self._live_failure_result(
                 request,
                 RuntimeError("LIVE_PROVIDER_NOT_CONFIGURED"),
+                provider_profile_id=record.command.provider_profile_id,
             )
             return self._bind_live_control_evidence(
                 result=result,
@@ -670,6 +671,7 @@ class DailyLoopRunner:
             security_status=security_status,
             current=current,
             request=request,
+            profile_id=record.command.provider_profile_id,
         )
         return self._bind_live_control_evidence(
             result=result,
@@ -961,6 +963,7 @@ class DailyLoopRunner:
         request: PublicCompositeRequest,
         error: Exception,
         *,
+        provider_profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
         partial_batch: PublicCompositeBatch | None = None,
     ) -> PublicCompositeProviderResult:
         retrieved_at = RetrievedAt(self._now())
@@ -977,7 +980,7 @@ class DailyLoopRunner:
         payload = AcquiredSourcePayload(
             provider_id=ProviderId("provider-public-composite-live-runtime"),
             product="live-acquisition-failure",
-            locator="runtime://public-composite-live-v1/acquisition-failure",
+            locator=f"runtime://{provider_profile_id}/acquisition-failure",
             raw_payload=raw,
             retrieved_time=retrieved_at,
             limitations=(
@@ -993,7 +996,7 @@ class DailyLoopRunner:
             limitations=(),
         )
         return PublicCompositeProviderResult(
-            profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+            profile_id=provider_profile_id,
             decision_time=request.decision_time,
             raw_payloads=(*partial.raw_payloads, payload),
             bars=partial.bars,
