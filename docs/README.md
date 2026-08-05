@@ -121,6 +121,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Canonical Feature Spine and Signal Inputs Implementation Plan](superpowers/plans/2026-08-04-canonical-feature-spine-and-signal-inputs.md)
 - [Controlled 14:55 Operational Evidence Design](superpowers/specs/2026-08-05-controlled-1455-operational-evidence-design.md)
 - [Controlled 14:55 Operational Evidence Implementation Plan](superpowers/plans/2026-08-05-controlled-1455-operational-evidence.md)
+- [PostgreSQL Authority Migration Design](superpowers/specs/2026-08-05-postgresql-authority-migration-design.md)
+- [PostgreSQL Authority Migration Implementation Plan](superpowers/plans/2026-08-05-postgresql-authority-migration.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
@@ -128,6 +130,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 ### Operations and implementation prompts
 
 - [Production Decision Lifecycle Runbook](operations/Production-Decision-Lifecycle-Runbook.md)
+- [PostgreSQL Authority Runbook](operations/PostgreSQL-Authority-Runbook.md)
 - [Claude Code Production Decision Lifecycle Master Prompt](prompts/Claude-Code-Production-Decision-Lifecycle.md)
 
 ### Current status
@@ -153,6 +156,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)
 - [Production Lifecycle Hardening Baseline](audit/Production-Lifecycle-Hardening-Baseline.md)
 - [Production Lifecycle Hardening Delivery](audit/Production-Lifecycle-Hardening-Delivery.md)
+- [PostgreSQL Authority Migration Evidence](evidence/PostgreSQL-Authority-Migration-Evidence.md)
 - [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
 - [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
 - [WP-D3 Public LIVE Semantic Closure Audit](audit/WP-D3-Public-Live-Semantic-Closure.md)

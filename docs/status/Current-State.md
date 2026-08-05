@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-04
+> **Last Updated:** 2026-08-05
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
@@ -27,7 +27,7 @@ Data and Evidence
 → Outcome, Attribution and Review
 ```
 
-The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable SQLite journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability.
+The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable PostgreSQL-default journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability. SQLite adapters remain available only through explicit compatibility/import selection.
 
 The H6 implementation checkpoint extends the green H4/H5 baseline with an
 explicit Composite Operational Evidence authority. It binds verified Daily and
@@ -120,6 +120,10 @@ TRADING_AUTHORITY_NOT_GRANTED
 REAL_BROKER_AUTHORITY_NOT_IMPLEMENTED
 PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
+POSTGRESQL_DEFAULT_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
+SQLITE_EXPLICIT_COMPATIBILITY_AND_IMPORT_ONLY
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_017_APPLIED_LOCAL
+SQLITE_TO_POSTGRES_SCHEMA_ONLY_IMPORT_0_TO_0_VERIFIED
 ```
 
 ## 3. Implemented capabilities
@@ -158,7 +162,7 @@ BaoStock History
 → next-session 10:30 Outcome and DailyReview
 ```
 
-The loop is recoverable through a SQLite Runtime Journal and can publish a verified `DATA_BLOCKED` artifact rather than silently continue with invalid inputs.
+The loop is recoverable through a PostgreSQL-default Runtime Journal and can publish a verified `DATA_BLOCKED` artifact rather than silently continue with invalid inputs. The SQLite journal remains an explicit compatibility adapter.
 
 The operational runtime remains restricted to a small smoke Universe and exploratory data authority. A real controlled 14:55 run reaching `OUTCOME_PENDING` has not been established as current formal evidence.
 
@@ -490,7 +494,21 @@ blocked, and Shadow/Production/Trading Authority remain `NO`.
 
 ## 4. Persistence, transactions and consistency
 
-Implemented SQLite repositories generally use:
+PostgreSQL is now the default authority selected through
+`MARKET_REGIME_ALPHA_DATABASE_URL`; SQLite requires an explicit compatibility
+path. All current SQLite-backed bounded contexts have PostgreSQL adapters behind
+the same Repository protocols, including Governance, Decision, Portfolio/Risk,
+Manual Execution, Daily, Feature, Canonical Lifecycle, Controlled Operation and
+Longitudinal state. Runtime composition neither dual-writes nor falls back.
+
+PostgreSQL migration versions 001–017 are checksummed, contiguous and serialized
+with an advisory lock. The approved local PostgreSQL 16.14 schema contains 58
+catalog tables. The initial import manifest discovered no SQLite business source
+and produced a verified schema-only `0 -> 0` report at code checkpoint
+`7366ab326c2333d4f6eaefbe0a443b588d0e15b1`. This does not claim migration of
+DuckDB, Parquet, CSV, external files or undiscovered SQLite data.
+
+The retained explicit SQLite repositories generally use:
 
 - `BEGIN IMMEDIATE` transactions;
 - `busy_timeout`;
@@ -501,16 +519,16 @@ Implemented SQLite repositories generally use:
 - restore by replaying and validating history;
 - recomputation of Risk before accepting caller-supplied decisions.
 
-Migration 011 applies the same discipline to cross-domain orchestration while
-keeping domain objects in their existing authorities. Its claim token is a
-local fencing-shaped primitive only; lease ownership and distributed scheduling
-are not implemented.
+PostgreSQL adapters preserve idempotency, command hashes, compare-and-swap,
+fencing, append-only events, immutable identities, reconstruction and replay.
+Migration 017 records credential-free runtime backend/database/schema bindings;
+resume/replay rejects a missing or mismatched PostgreSQL binding.
 
-This is a strong single-machine engineering boundary. It is not multi-process or distributed production authority.
+This is local PostgreSQL engineering evidence. It is not multi-instance or
+distributed production authority.
 
 Not implemented:
 
-- PostgreSQL parity for the full lifecycle;
 - distributed leases and multi-instance ownership;
 - cross-database or file/database transactions;
 - outbox/message delivery guarantees;
@@ -620,6 +638,18 @@ measurements and the retained evidence ceiling are recorded in
 `../audit/WP-SIG-01A-Delivery.md`. Remote CI is reported externally after push;
 this status does not pre-claim it.
 
+### 6.6 PostgreSQL authority cutover verification
+
+The pre-final cutover worktree based on migration checkpoint
+`7366ab326c2333d4f6eaefbe0a443b588d0e15b1` observed PostgreSQL 16.14 with
+17/17 migrations, 58 catalog tables, no non-empty business/runtime table, a
+verified external custom-format backup and immutable schema-only import report
+`sha256:0a6091e24ab31b20146971576a3636b5734f08b1eb9b44aaa014814c3f1fc59b`.
+PostgreSQL isolated-schema smoke suites and the full 2234-test collection passed;
+frozen sync, documentation checks, Ruff, mypy over 338 source files and sdist/
+wheel build also passed. The checkpoint commit requires its own exact-HEAD
+rerun. Remote CI and production admission are not claimed.
+
 ## 7. Not implemented as production authority
 
 - qualified operational Theme/Capital/PIT mapping evidence;
@@ -634,7 +664,7 @@ this status does not pre-claim it.
   metrics, tracing and alerts;
 - production authentication, authorization and operator signatures;
 - external account/statement/Fill reconciliation;
-- PostgreSQL operational deployment;
+- production-qualified PostgreSQL deployment and restore drill;
 - QuantDesk production integration;
 - broker execution and kill-switch architecture.
 
@@ -683,7 +713,8 @@ P1 establish qualified evidence
   → formal validation protocols
 
 P2 production hardening
-  PostgreSQL
+  local PostgreSQL parity/cutover delivered
+  → production restore/operations qualification
   → authentication/RBAC
   → metrics/tracing/alerts
   → external reconciliation
@@ -695,7 +726,7 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with verified H4, H4.5, H5 and H6 engineering checkpoints plus a development-branch canonical lifecycle/migration foundation, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+> **A pre-Shadow research decision platform with PostgreSQL-default local persistence and verified H4, H4.5, H5 and H6 engineering checkpoints plus a canonical lifecycle/migration foundation, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
 
 The canonical-runtime branch does not change these admission facts:
 

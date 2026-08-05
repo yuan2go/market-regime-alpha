@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Ordered gap and dependency register  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-04
+> **Last Updated:** 2026-08-05
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
@@ -36,7 +36,7 @@
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
 | Feature package storage efficiency | DELIVERED_WP_SIG_01A_LOCAL_BENCHMARK_PASS | Encoding V2 separates logical hashes from compressed/columnar physical files, shares definition/configuration data and supports selective read; the required 100-symbol fixture reduced bytes by 85.8937% and selective read time by 99.7085% with stable Bundle/Signal hashes | Sustained operational profiling | Observe real Shadow-scale packages without changing logical identities or V1 compatibility |
-| PostgreSQL repository parity | P1 | Lifecycle persistence is SQLite local/test authority | Stable Repository protocols and contract suite | PostgreSQL adapters pass the same concurrency, idempotency, reconstruction and migration contract tests |
+| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–017 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
 
 ## 3. Data and operational evidence gaps
 
@@ -85,7 +85,7 @@ sizing, COSCO strategy behavior or any Legacy Broker path.
 | Authentication and RBAC | P1 | Domain `actor` is a string, not an authenticated principal | Operator/API architecture | Roles govern approval, risk, Fill, reconciliation, model transition and incident actions |
 | Artifact signatures | P2 | SHA-256 proves content consistency but not trusted producer identity | Key management and authenticated runtime | Artifacts carry verifiable producer/operator signatures and rotation/revocation rules |
 | Metrics, tracing and alerts | P1 | Reason codes and artifacts exist; no production telemetry stack | H8 | Stage latency/failure/data-quality/risk/reconciliation metrics, trace IDs and actionable alerts are operational |
-| Backup and recovery | P1 | Append-only histories and artifacts are reconstructible, but no production recovery evidence exists | PostgreSQL/filesystem deployment | Point-in-time restore, artifact restore and reconciliation drills are documented and tested |
+| Backup and recovery | P1 | PostgreSQL backup/restore commands are documented and one local custom-format pre-write dump/list check passed; no destructive restore or PITR drill has been performed | Production PostgreSQL/filesystem deployment | Point-in-time restore, isolated database restore, artifact restore and reconciliation drills are observed and documented |
 | QuantDesk read model | P2 | Canonical lifecycle is CLI-driven; Legacy FastAPI is not Reader-backed | Stable H8 commands/queries | UI reads verified artifacts and durable projections without recomputing decisions |
 | Legacy Dashboard isolation | P1 | `web/dividend_t_app.py` can use static fallback and Legacy strategy/risk paths | QuantDesk replacement or explicit isolation | Legacy endpoint is local-only/clearly labelled and cannot be confused with canonical authority |
 | Broker adapter architecture | DEFERRED | QMT/PTrade adapters safely reject live operations | Sustained shadow evidence, security review and separate approval | Versioned intent port, external receipts, reconciliation, permissions and kill switch pass dedicated admission |
@@ -120,7 +120,10 @@ The following are not open implementation gaps, although their operating/model e
   FeatureBundle/Signal recomputation replay and architecture guards on the
   Feature Spine branch;
 - append-only manual Fill ledger;
-- exploratory Holding/Exit, TradeOutcome and rolling diagnostics.
+- exploratory Holding/Exit, TradeOutcome and rolling diagnostics;
+- PostgreSQL-default settings/composition, bounded Repository parity, migrations
+  001–017, credential-free runtime bindings, explicit SQLite compatibility and
+  a schema-only `0 -> 0` local import report.
 
 Delivered mechanics must not be upgraded to production, Alpha or trading-authority claims without the separate exit conditions above.
 
@@ -134,7 +137,7 @@ Frozen dependency/CI mechanics delivered; enforce required remote checks
 → qualified 14:55/Universe/Theme/Capital/account evidence
 → H9 formal validation infrastructure
 → sustained shadow evidence
-→ security/PostgreSQL/observability/QuantDesk
+→ production restore/security/observability/QuantDesk
 → separately approved broker architecture
 ```
 

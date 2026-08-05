@@ -8,6 +8,20 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.14-bookworm
+        env:
+          POSTGRES_USER: market_regime_alpha_test
+          POSTGRES_PASSWORD: market_regime_alpha_test
+          POSTGRES_DB: market_regime_alpha_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U market_regime_alpha_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,6 +34,9 @@ jobs:
         run: uv run python scripts/check_docs_links.py
       - name: Run tests
         run: uv run pytest
+        env:
+          MARKET_REGIME_ALPHA_TEST_DATABASE_URL: >-
+            postgresql://market_regime_alpha_test:market_regime_alpha_test@127.0.0.1:5432/market_regime_alpha_test
       - name: Run Ruff
         run: uv run ruff check .
       - name: Run mypy

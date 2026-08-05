@@ -1,6 +1,6 @@
 # PostgreSQL Authority Migration Design
 
-**Status:** APPROVED DESIGN
+> **Status:** CURRENT_SPECIFICATION
 **Date:** 2026-08-05
 **Scope:** Make PostgreSQL the default runtime persistence backend while retaining SQLite as an explicit compatibility and replay backend
 **Authority ceiling:** Local PostgreSQL persistence and migration engineering evidence only

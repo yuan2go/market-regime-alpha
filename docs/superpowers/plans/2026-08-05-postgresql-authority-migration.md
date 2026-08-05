@@ -1,5 +1,7 @@
 # PostgreSQL Authority Migration Implementation Plan
 
+> **Status:** ROADMAP
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the dedicated local PostgreSQL 16 database the default persistence authority for every current SQLite-backed runtime and domain repository, with verified SQLite import and explicit SQLite compatibility.
