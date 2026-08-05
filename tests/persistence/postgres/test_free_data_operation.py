@@ -127,6 +127,7 @@ def test_postgres_free_data_prepare_is_idempotent_and_never_writes_sqlite(
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
         decision_time=DECISION,
         created_at=datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
+        code_revision="postgres-free-data-test",
         instruments=tuple(
             FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
             for symbol in policy.symbols

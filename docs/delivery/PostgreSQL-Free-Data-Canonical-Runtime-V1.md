@@ -40,6 +40,7 @@ provider-result hash and code revision.
 |---|---|---|
 | Runtime composition | BaoStock/Tencent, Daily, Controlled and Canonical pieces existed separately | One PostgreSQL-only application facade composes the existing Daily parent and Controlled/Canonical authorities |
 | PostgreSQL serialization | inherited `BEGIN IMMEDIATE` weakened to plain `BEGIN` | stable transaction advisory lock; retries limited to serialization/deadlock SQLSTATEs |
+| Free-data command identity | code revision was not part of the preparation identity | command hash binds code revision; cross-revision Blocked projections cannot overwrite or conflict |
 | Feature workers | CAS/fencing without PostgreSQL row-locked selection | `FOR UPDATE SKIP LOCKED` plus existing CAS/fencing |
 | Provider identity | public composite profile did not fully bind raw request metadata | `TENCENT_FREE_OPERATIONAL_V1`, no fallback, raw metadata/hash/size/time/encoding/limitations |
 | Universe | final pool could hide excluded requests | exact 20/100/300 records with inclusion and exclusion reasons |

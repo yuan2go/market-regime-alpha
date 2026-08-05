@@ -121,11 +121,13 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
         configuration = load_controlled_runtime_configuration(
             args.runtime_configuration.resolve()
         )
+        code_revision = args.code_revision or _git_revision()
         request = FreeDataPreparationRequest(
             scale=FreeDataOperationScale.from_symbol_count(len(symbols)),
             provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
             decision_time=DecisionTime(decision),
             created_at=now,
+            code_revision=code_revision,
             instruments=tuple(
                 FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
                 for symbol in symbols
@@ -153,7 +155,7 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
         service = FreeDataOperationService(
             repositories=repositories,
             output_root=args.output_root,
-            code_revision=args.code_revision or _git_revision(),
+            code_revision=code_revision,
             clock=_utc_now,
             live_profile=profile,
         )

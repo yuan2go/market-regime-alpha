@@ -207,6 +207,7 @@ def _request(count: int = 20) -> FreeDataPreparationRequest:
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
         decision_time=DECISION,
         created_at=(DECISION.value + timedelta(minutes=5)).astimezone(UTC),
+        code_revision="recorded-free-data-test",
         instruments=tuple(
             FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
             for symbol in _symbols(count)
@@ -297,8 +298,10 @@ def test_scale_contracts_are_exact() -> None:
 def test_request_identity_excludes_nonsemantic_invocation_timestamp() -> None:
     first = _request()
     second = replace(first, created_at=first.created_at + timedelta(minutes=1))
+    next_revision = replace(first, code_revision="recorded-free-data-test-next")
 
     assert second.command_hash == first.command_hash
+    assert next_revision.command_hash != first.command_hash
 
 
 def test_status_retrieved_after_decision_cannot_enter_operational_universe(

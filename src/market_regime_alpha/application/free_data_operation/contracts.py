@@ -69,6 +69,7 @@ class FreeDataPreparationRequest:
     provider_profile_id: str
     decision_time: DecisionTime
     created_at: datetime
+    code_revision: str
     instruments: tuple[FreeDataInstrument, ...]
     membership_source: str
     minimum_history_sessions: int
@@ -87,6 +88,7 @@ class FreeDataPreparationRequest:
             raise ValueError("created_at must be timezone-aware")
         if self.created_at < self.decision_time.value:
             raise ValueError("created_at cannot precede Decision Time")
+        require_text("code_revision", self.code_revision)
         symbols = tuple(item.symbol for item in self.instruments)
         if len(symbols) != self.scale.value or symbols != tuple(sorted(set(symbols))):
             raise ValueError("instrument scope must be ordered, unique, and match scale")
@@ -118,6 +120,7 @@ class FreeDataPreparationRequest:
             "scale": self.scale.name,
             "provider_profile_id": self.provider_profile_id,
             "decision_time": self.decision_time.isoformat(),
+            "code_revision": self.code_revision,
             "instruments": [item.to_canonical_dict() for item in self.instruments],
             "membership_source": self.membership_source,
             "minimum_history_sessions": self.minimum_history_sessions,

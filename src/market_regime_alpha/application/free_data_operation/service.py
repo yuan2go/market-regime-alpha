@@ -132,6 +132,8 @@ class FreeDataOperationService:
             raise ValueError("free-data request does not bind Runtime configuration")
         if request.provider_profile_id != TENCENT_FREE_OPERATIONAL_PROFILE_ID:
             raise ValueError("free-data service requires the Tencent operational profile")
+        if request.code_revision != self._code_revision:
+            raise ValueError("free-data request does not bind service code revision")
         if any(item.asset_type.value != "A_SHARE" for item in request.instruments):
             raise ValueError("free-data V1 acquisition currently supports A-share stocks")
         if request.minimum_median_daily_amount <= 0:

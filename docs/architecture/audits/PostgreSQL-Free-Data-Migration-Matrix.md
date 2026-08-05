@@ -52,6 +52,7 @@ transaction-scoped advisory lock; Feature task claims additionally use
 | Requirement | Executable status | Evidence / limitation |
 |---|---|---|
 | Unique idempotency plus command-hash conflict | Implemented | Repository unique keys and conflict tests reject key reuse with changed commands |
+| Code revision binding | Implemented | Free-data command hash changes with code revision; PostgreSQL projections cannot collide across revisions |
 | Optimistic version / CAS | Implemented | Daily, Controlled, Canonical and Feature repository contract tests |
 | Row locking | Implemented where queue selection needs it | Feature claims select with `FOR UPDATE SKIP LOCKED` |
 | Worker lease and fencing | Implemented locally | Feature and Controlled claim/expiry/stale-writer tests |
