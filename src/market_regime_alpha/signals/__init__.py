@@ -50,6 +50,11 @@ from market_regime_alpha.signals.candidate_view import (
     load_candidate_feature_view,
     publish_candidate_feature_view,
 )
+from market_regime_alpha.signals.candidate_view_v2 import (
+    CandidateFeatureViewV2,
+    load_candidate_feature_view_v2,
+    publish_candidate_feature_view_v2,
+)
 from market_regime_alpha.signals.decimal_model import (
     CANONICAL_SIGNAL_MODEL_ID,
     CANONICAL_SIGNAL_MODEL_VERSION,
@@ -99,6 +104,7 @@ __all__ = [
     "CANONICAL_SIGNAL_MODEL_VERSION",
     "CANONICAL_SIGNAL_TARGET_ID",
     "CandidateFeatureView",
+    "CandidateFeatureViewV2",
     "CanonicalSignalModelV2",
     "CanonicalSignalSnapshotV3",
     "SignalFamily",
@@ -138,10 +144,12 @@ __all__ = [
     "canonical_signal_model_definition",
     "persist_canonical_signal_model_for_research",
     "load_candidate_feature_view",
+    "load_candidate_feature_view_v2",
     "load_verified_signal_run",
     "load_verified_signal_run_v2",
     "load_verified_signal_run_v3",
     "publish_candidate_feature_view",
+    "publish_candidate_feature_view_v2",
     "publish_signal_run",
     "publish_signal_run_v2",
     "publish_signal_run_v3",

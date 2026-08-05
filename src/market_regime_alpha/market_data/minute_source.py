@@ -1095,6 +1095,68 @@ def minute_normalization_to_dataset(
     )
 
 
+def minute_normalizations_to_dataset(
+    *,
+    normalized_sources: tuple[tuple[MinuteNormalizationResult, RawMinuteSourceArtifact], ...],
+    expected_symbols: tuple[str, ...],
+    decision_time: datetime,
+    created_at: datetime,
+) -> MarketDataDatasetArtifact:
+    """Compose independently normalized one-symbol sources into one Candidate dataset."""
+
+    if not normalized_sources:
+        raise ValueError("Candidate minute Dataset requires at least one successful source")
+    expected = tuple(sorted(set(expected_symbols)))
+    if expected != tuple(sorted(expected_symbols)):
+        raise ValueError("Candidate minute expected symbols must be unique and sorted")
+    observed: set[str] = set()
+    bars: list[CanonicalMarketBar] = []
+    manifests: list[tuple[ArtifactId, str]] = []
+    limitations = {
+        "CANDIDATE_MINUTE_PARTIAL_COVERAGE_ALLOWED",
+        "FORMAL_PIT_NOT_ESTABLISHED",
+        "PUBLIC_TENCENT_EXPLORATORY_ONLY",
+        "TENCENT_CACHE_NOT_USED_AS_SOURCE_AUTHORITY",
+        f"VOLUME_POLICY:{CANONICAL_VOLUME_POLICY_V1}",
+        f"RESAMPLING_POLICY:{ONE_MINUTE_TO_FIVE_MINUTE_A_SHARE_V1}",
+    }
+    for normalized, source in normalized_sources:
+        if source.decision_time != decision_time:
+            raise ValueError("Candidate minute source DecisionTime mismatch")
+        if len(source.requested_symbols) != 1:
+            raise ValueError("Candidate minute source must bind one symbol")
+        symbol = source.requested_symbols[0]
+        if symbol not in expected or symbol in observed:
+            raise ValueError("Candidate minute source scope conflict")
+        observed.add(symbol)
+        bars.extend((*normalized.one_minute_bars, *normalized.five_minute_bars))
+        manifests.append(
+            (
+                normalized.source_manifest.source_manifest_id,
+                normalized.source_manifest.content_hash,
+            )
+        )
+    return MarketDataDatasetArtifact.create(
+        decision_time=decision_time,
+        created_at=created_at,
+        bars=tuple(bars),
+        expected_symbols=expected,
+        expected_timeframes=(Timeframe.MINUTE_1, Timeframe.MINUTE_5),
+        adjustment_policy=PriceAdjustmentPolicy.create(
+            policy_version="tencent-minute-raw-v1",
+            mode=AdjustmentMode.RAW,
+            factors=(),
+            limitations=(),
+        ),
+        source_manifest_references=tuple(
+            sorted(set(manifests), key=lambda item: (str(item[0]), item[1]))
+        ),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
+        limitations=tuple(sorted(limitations)),
+    )
+
+
 def _minute_source_manifest(
     *,
     artifact: RawMinuteSourceArtifact,
@@ -1303,6 +1365,7 @@ __all__ = [
     "TencentMinuteSourceClient",
     "acquire_and_archive_minute_source",
     "build_combined_market_data_dataset",
+    "minute_normalizations_to_dataset",
     "minute_normalization_to_dataset",
     "load_raw_minute_attempt",
     "normalize_tencent_minute_source",

@@ -88,6 +88,7 @@ class SQLiteLifecycleRunRepository:
         *,
         fault_injector: _FaultInjector | None = None,
         busy_timeout_seconds: float = 30.0,
+        read_only: bool = False,
     ) -> None:
         if not isinstance(path, Path):
             raise TypeError("path must be a Path")
@@ -95,11 +96,27 @@ class SQLiteLifecycleRunRepository:
             raise TypeError("fault_injector must be callable or None")
         if isinstance(busy_timeout_seconds, bool) or busy_timeout_seconds <= 0:
             raise ValueError("busy_timeout_seconds must be positive")
+        if not isinstance(read_only, bool):
+            raise TypeError("read_only must be a bool")
         self.path = path.resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fault_injector = fault_injector
         self._busy_timeout_seconds = float(busy_timeout_seconds)
-        self._initialize()
+        self._read_only = read_only
+        if read_only:
+            if not self.path.is_file():
+                raise LifecycleJournalIntegrityError(
+                    "read-only lifecycle journal does not exist"
+                )
+            try:
+                with self._connect() as connection:
+                    verify_lifecycle_schema(connection)
+            except sqlite3.DatabaseError as exc:
+                raise LifecycleJournalIntegrityError(
+                    "read-only lifecycle journal schema is invalid"
+                ) from exc
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._initialize()
 
     def create_or_get(
         self,
@@ -909,11 +926,19 @@ class SQLiteLifecycleRunRepository:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(
-            self.path,
-            timeout=self._busy_timeout_seconds,
-            isolation_level=None,
-        )
+        if self._read_only:
+            connection = sqlite3.connect(
+                f"file:{self.path}?mode=ro",
+                timeout=self._busy_timeout_seconds,
+                isolation_level=None,
+                uri=True,
+            )
+        else:
+            connection = sqlite3.connect(
+                self.path,
+                timeout=self._busy_timeout_seconds,
+                isolation_level=None,
+            )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
@@ -926,6 +951,10 @@ class SQLiteLifecycleRunRepository:
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
+        if self._read_only:
+            raise LifecycleJournalIntegrityError(
+                "read-only lifecycle journal rejects mutation"
+            )
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:

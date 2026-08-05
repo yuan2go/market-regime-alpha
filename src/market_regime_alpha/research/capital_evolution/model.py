@@ -20,7 +20,7 @@ from market_regime_alpha.research.platform_v2.configs import (
     CapitalEvolutionModelConfig,
 )
 from market_regime_alpha.research.platform_v2.inputs import (
-    ResearchInputView,
+    ResearchContextView,
     SymbolResearchObservation,
     ThemeResearchObservation,
 )
@@ -31,7 +31,7 @@ from market_regime_alpha.research.theme_rotation.contracts import (
 
 
 def evaluate_capital_evolution_v0(
-    inputs: ResearchInputView,
+    inputs: ResearchContextView,
     theme_rotation: ThemeRotationSnapshot,
     config: CapitalEvolutionModelConfig,
     *,

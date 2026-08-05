@@ -1,0 +1,11 @@
+PRAGMA foreign_keys = OFF;
+BEGIN IMMEDIATE;
+DROP TABLE IF EXISTS controlled_operation_event;
+DROP TABLE IF EXISTS controlled_operation_child_run;
+DROP TABLE IF EXISTS controlled_operation_receipt;
+DROP TABLE IF EXISTS controlled_operation_attempt;
+DROP TABLE IF EXISTS controlled_operation_stage;
+DROP TABLE IF EXISTS controlled_operation_run;
+DELETE FROM controlled_operation_schema_migration WHERE version = 14;
+COMMIT;
+PRAGMA foreign_keys = ON;

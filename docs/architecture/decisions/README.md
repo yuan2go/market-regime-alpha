@@ -15,6 +15,7 @@
 - [ADR-004 — Production Decision Lifecycle Organization](ADR-004-Production-Decision-Lifecycle-Organization.md)
 - [ADR-005 — Feature Materialization Precedes Lifecycle V1](ADR-005-Feature-Materialization-Precedes-Lifecycle-V1.md)
 - [ADR-006 — Canonical Signal Authority Convergence](ADR-006-Canonical-Signal-Authority-Convergence.md)
+- [ADR-007 — Controlled Decision-Time Operation and Immutable Evidence Archive](ADR-007-Controlled-Decision-Time-Operation.md)
 
 ADR-004 is realized by the Phase 0–7 modular-monolith engineering slices. It
 does not authorize a broker adapter, LIVE_ORDER, parameter promotion or an

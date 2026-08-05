@@ -552,23 +552,14 @@ class ResearchDailyBar:
         )
 
 
-class ResearchInputView(Protocol):
-    """Read-only model seam shared by exact V1 and V2 input schemas."""
+class ResearchContextView(Protocol):
+    """Common observable-evidence seam for reusable research components."""
 
     @property
     def evidence_kind(self) -> ResearchEvidenceKind: ...
 
     @property
     def source_manifest(self) -> SourceManifest: ...
-
-    @property
-    def universe_snapshot(self) -> PITUniverseSnapshot: ...
-
-    @property
-    def eligibility_snapshot(self) -> TradingEligibilitySnapshot: ...
-
-    @property
-    def decision_price_snapshot(self) -> DecisionPriceSnapshot: ...
 
     @property
     def market_observation(self) -> MarketObservation | None: ...
@@ -589,9 +580,6 @@ class ResearchInputView(Protocol):
     def stock_daily_bars(self) -> tuple[ResearchDailyBar, ...]: ...
 
     @property
-    def prediction_runs(self) -> tuple[PredictionRun, ...]: ...
-
-    @property
     def input_artifact_ids(self) -> tuple[ArtifactId, ...]: ...
 
     @property
@@ -610,6 +598,22 @@ class ResearchInputView(Protocol):
     def input_bundle_id(self) -> ArtifactId: ...
 
     def to_canonical_dict(self) -> dict[str, Any]: ...
+
+
+class ResearchInputView(ResearchContextView, Protocol):
+    """Legacy-compatible seam shared by exact V1 and V2 input schemas."""
+
+    @property
+    def universe_snapshot(self) -> PITUniverseSnapshot: ...
+
+    @property
+    def eligibility_snapshot(self) -> TradingEligibilitySnapshot: ...
+
+    @property
+    def decision_price_snapshot(self) -> DecisionPriceSnapshot: ...
+
+    @property
+    def prediction_runs(self) -> tuple[PredictionRun, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)

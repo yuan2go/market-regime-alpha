@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import resources
+from hashlib import sha256
 from pathlib import Path
 import sqlite3
 
@@ -192,6 +193,32 @@ def test_repository_rejects_spoofed_marker_with_weak_schema(tmp_path: Path) -> N
         )
     with pytest.raises(LifecycleJournalIntegrityError):
         SQLiteLifecycleRunRepository(path)
+
+
+def test_read_only_repository_never_creates_or_migrates_database(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing.sqlite3"
+    with pytest.raises(LifecycleJournalIntegrityError, match="does not exist"):
+        SQLiteLifecycleRunRepository(missing, read_only=True)
+    assert not missing.exists()
+
+    valid = tmp_path / "valid.sqlite3"
+    SQLiteLifecycleRunRepository(valid)
+    digest = sha256(valid.read_bytes()).hexdigest()
+    modified_at = valid.stat().st_mtime_ns
+
+    SQLiteLifecycleRunRepository(valid, read_only=True)
+
+    assert sha256(valid.read_bytes()).hexdigest() == digest
+    assert valid.stat().st_mtime_ns == modified_at
+
+    weak = tmp_path / "weak-read-only.sqlite3"
+    weak.write_bytes(b"not-a-sqlite-database")
+    weak_digest = sha256(weak.read_bytes()).hexdigest()
+    with pytest.raises(LifecycleJournalIntegrityError):
+        SQLiteLifecycleRunRepository(weak, read_only=True)
+    assert sha256(weak.read_bytes()).hexdigest() == weak_digest
 
 
 def test_migration_resources_exist_at_stable_package_paths() -> None:

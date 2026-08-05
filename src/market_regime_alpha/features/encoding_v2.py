@@ -48,8 +48,14 @@ class FeatureValueSelectionV2:
     physical_checksums_hash: str
 
 
-def publish_feature_artifact_encoding_v2(*, root: Path, artifact: FeatureArtifactV2) -> Path:
-    artifact.verify_identity()
+def publish_feature_artifact_encoding_v2(
+    *,
+    root: Path,
+    artifact: FeatureArtifactV2,
+    identity_verified: bool = False,
+) -> Path:
+    if not identity_verified:
+        artifact.verify_identity()
     _publish_registry(root=root, artifact=artifact)
     final = root / str(artifact.artifact_id)
     if final.exists():
@@ -148,13 +154,17 @@ def publish_feature_bundle_encoding_v2(
     root: Path,
     bundle: FeatureBundleArtifact,
     artifacts: tuple[FeatureArtifactV2, ...],
+    artifacts_verified: bool = False,
     failure_injector: FailureInjector | None = None,
 ) -> Path:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     bundle.verify_identity()
-    bundle.verify_materialized_projection(artifacts)
+    bundle.verify_materialized_projection(
+        artifacts,
+        artifacts_verified=artifacts_verified,
+    )
     final = root / str(bundle.bundle_id)
     if final.exists():
         selection = read_feature_values_v2(final)

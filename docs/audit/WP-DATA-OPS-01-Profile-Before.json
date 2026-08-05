@@ -1,0 +1,29 @@
+{
+  "schema_version": "wp-data-ops-01-feature-profile-v1",
+  "status": "OBSERVED_ENGINEERING_FIXTURE",
+  "scope": {
+    "symbols": 100,
+    "daily_sessions": 250,
+    "five_minute_bars_per_symbol": 48,
+    "feature_definitions": 7
+  },
+  "historical_reported_baseline_seconds": 584.626303,
+  "exact_profile_elapsed_seconds": 234.789293,
+  "profile_total_seconds": 233.84,
+  "rows": [
+    {"function": "_compute_artifacts", "calls": 175, "total_seconds": 1.002953, "cumulative_seconds": 177.021143, "percentage": 75.70},
+    {"function": "_verified_dataset_membership", "calls": 175, "total_seconds": 0.000296, "cumulative_seconds": 166.816023, "percentage": 71.34},
+    {"function": "MarketDataDatasetArtifact.verify_identity", "calls": 177, "total_seconds": 0.010305, "cumulative_seconds": 166.595061, "percentage": 71.24},
+    {"function": "partition verification", "calls": 35400, "total_seconds": 0.877163, "cumulative_seconds": 166.459568, "percentage": 71.18},
+    {"function": "Feature artifact load", "calls": 2100, "total_seconds": 0.003072, "cumulative_seconds": 34.284572, "percentage": 14.66},
+    {"function": "Bundle publication", "calls": 1, "total_seconds": 0.002, "cumulative_seconds": 15.822, "percentage": 6.77},
+    {"function": "Artifact publication", "calls": 700, "total_seconds": 0.002, "cumulative_seconds": 15.313, "percentage": 6.55}
+  ],
+  "root_cause": "Dataset identity, partition verification and full membership traversal were repeated once per small claimed Task batch.",
+  "profile_file_runtime_locator": "/tmp/wp-data-ops-v2-profile.nMzFn8/before.prof",
+  "limitations": [
+    "LOCAL_TEMP_PROFILE_NOT_REPOSITORY_EVIDENCE",
+    "OFFLINE_SYNTHETIC_PERFORMANCE_FIXTURE",
+    "NOT_PROVIDER_OR_MODEL_QUALITY_EVIDENCE"
+  ]
+}

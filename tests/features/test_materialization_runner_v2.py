@@ -340,6 +340,39 @@ def test_serial_parallel_and_restart_replay_are_hash_identical(tmp_path: Path) -
     assert replay.semantic_match is True
 
 
+def test_prepared_feature_execution_context_is_built_once_per_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from market_regime_alpha.features import materialization_v2 as module
+
+    original = module._verified_dataset_membership
+    calls = 0
+
+    def counted(dataset):
+        nonlocal calls
+        calls += 1
+        return original(dataset)
+
+    monkeypatch.setattr(module, "_verified_dataset_membership", counted)
+    dataset = _verified_dataset(tmp_path)
+    feature_set = canonical_technical_feature_set(
+        effective_from=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    FeatureMaterializationRunner(max_workers=4, task_batch_size=2).run(
+        verified_dataset=dataset,
+        feature_set=feature_set,
+        decision_time=DECISION_TIME,
+        created_at=CREATED_AT,
+        selected_symbols=("600000.SH",),
+        code_revision="revision-1",
+        output_root=tmp_path / "features",
+        idempotency_key="prepared-once",
+        execution_mode=FeatureMaterializationExecutionMode.START_NEW,
+    )
+
+    assert calls == 1
+
+
 def test_bundle_and_replay_report_publication_are_crash_atomic(tmp_path: Path) -> None:
     dataset, _, receipt = _run(tmp_path / "source")
     bundle = load_verified_feature_bundle_v2(
