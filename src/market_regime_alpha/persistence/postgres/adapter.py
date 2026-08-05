@@ -22,11 +22,19 @@ from market_regime_alpha.persistence.postgres.schema import (
 class PostgresRepositoryAdapter:
     """Initialize and expose the compatibility connection to domain logic."""
 
-    def __init__(self, factory: PostgresConnectionFactory) -> None:
+    def __init__(
+        self,
+        factory: PostgresConnectionFactory,
+        *,
+        migrate: bool = True,
+    ) -> None:
         if not isinstance(factory, PostgresConnectionFactory):
             raise TypeError("factory must be a PostgresConnectionFactory")
+        if not isinstance(migrate, bool):
+            raise TypeError("migrate must be a bool")
         self._postgres_factory = factory
-        PostgresMigrator().apply_all(factory)
+        if migrate:
+            PostgresMigrator().apply_all(factory)
         with factory.connection(read_only=True) as connection:
             verify_postgres_authority_schema(connection)
 

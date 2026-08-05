@@ -3,18 +3,39 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+import re
 import sqlite3
 from typing import Any, overload
 
 import psycopg
 
 
+_INSERT_OR_IGNORE = re.compile(
+    r"^\s*INSERT\s+OR\s+IGNORE\s+INTO\s+([a-z_][a-z0-9_]*)\b",
+    re.IGNORECASE,
+)
+_INSERT = re.compile(
+    r"^\s*INSERT\s+INTO\s+([a-z_][a-z0-9_]*)\b",
+    re.IGNORECASE,
+)
+_DECLARED_CONFLICT_TARGETS = {
+    "acquisition_stage_receipts": ("run_request_id", "stage"),
+    "daily_runs": ("run_request_id",),
+    "lifecycle_runs": ("idempotency_key",),
+    "stage_receipts": ("run_request_id", "stage"),
+}
+_DECLARED_GENERATED_IDENTITIES = {
+    "feature_materialization_run": "run_id",
+}
+
+
 class _InstantIsoString(str):
     """A text-shaped timestamp whose equality follows timestamptz semantics."""
 
     def __new__(cls, value: datetime) -> _InstantIsoString:
-        return super().__new__(cls, value.isoformat())
+        encoded = value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        return super().__new__(cls, encoded)
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
@@ -64,8 +85,14 @@ class PostgresRow:
 
 
 class PostgresDBAPICursor:
-    def __init__(self, cursor: psycopg.Cursor[tuple[Any, ...]]) -> None:
+    def __init__(
+        self,
+        cursor: psycopg.Cursor[tuple[Any, ...]],
+        *,
+        lastrowid: int | None = None,
+    ) -> None:
         self._cursor = cursor
+        self._lastrowid = lastrowid
 
     @property
     def rowcount(self) -> int:
@@ -73,7 +100,7 @@ class PostgresDBAPICursor:
 
     @property
     def lastrowid(self) -> int | None:
-        return None
+        return self._lastrowid
 
     def fetchone(self) -> PostgresRow | None:
         row = self._cursor.fetchone()
@@ -85,6 +112,11 @@ class PostgresDBAPICursor:
         columns = self._columns()
         return [PostgresRow(columns, row) for row in self._cursor.fetchall()]
 
+    def __iter__(self) -> Iterator[PostgresRow]:
+        columns = self._columns()
+        for row in self._cursor:
+            yield PostgresRow(columns, row)
+
     def _columns(self) -> tuple[str, ...]:
         description = self._cursor.description
         if description is None:
@@ -95,8 +127,26 @@ class PostgresDBAPICursor:
 class PostgresDBAPIConnection:
     """Translate only qmark parameters and SQLite transaction initiation."""
 
-    def __init__(self, connection: psycopg.Connection[tuple[Any, ...]]) -> None:
+    def __init__(
+        self,
+        connection: psycopg.Connection[tuple[Any, ...]],
+        *,
+        release_manager: Any | None = None,
+    ) -> None:
         self._connection = connection
+        self._release_manager = release_manager
+        self._closed = False
+
+    @classmethod
+    def acquire(
+        cls,
+        factory: Any,
+        *,
+        read_only: bool = False,
+    ) -> PostgresDBAPIConnection:
+        manager = factory.connection(read_only=read_only)
+        connection = manager.__enter__()
+        return cls(connection, release_manager=manager)
 
     def execute(
         self,
@@ -108,6 +158,8 @@ class PostgresDBAPIConnection:
             normalized = "BEGIN"
         if normalized.upper().startswith("PRAGMA"):
             raise ValueError("SQLite PRAGMA is not available in PostgreSQL")
+        normalized = _rewrite_declared_conflict(normalized)
+        normalized, generated_identity = _append_declared_returning(normalized)
         compiled = compile_qmark_sql(normalized)
         try:
             cursor = self._connection.execute(
@@ -117,7 +169,13 @@ class PostgresDBAPIConnection:
             )
         except (psycopg.IntegrityError, psycopg.errors.RaiseException) as exc:
             raise sqlite3.IntegrityError(str(exc)) from exc
-        return PostgresDBAPICursor(cursor)
+        lastrowid = None
+        if generated_identity is not None:
+            generated = cursor.fetchone()
+            if generated is None:
+                raise RuntimeError("PostgreSQL insert returned no generated identity")
+            lastrowid = int(generated[0])
+        return PostgresDBAPICursor(cursor, lastrowid=lastrowid)
 
     def executemany(
         self,
@@ -137,6 +195,25 @@ class PostgresDBAPIConnection:
 
     def rollback(self) -> None:
         self._connection.rollback()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._release_manager is not None:
+            self._release_manager.__exit__(None, None, None)
+
+    def __enter__(self) -> PostgresDBAPIConnection:
+        if self._closed:
+            raise RuntimeError("PostgreSQL compatibility connection is closed")
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._release_manager is not None:
+            self._release_manager.__exit__(exc_type, exc, traceback)
 
 
 def compile_qmark_sql(statement: str) -> str:
@@ -208,3 +285,27 @@ def _sqlite_compatible_value(value: Any) -> Any:
 
 def _parse_iso_instant(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _rewrite_declared_conflict(statement: str) -> str:
+    match = _INSERT_OR_IGNORE.match(statement)
+    if match is None:
+        return statement
+    table = match.group(1).lower()
+    target = _DECLARED_CONFLICT_TARGETS.get(table)
+    if target is None:
+        raise ValueError(f"INSERT OR IGNORE has no declared PostgreSQL target: {table}")
+    rewritten = _INSERT_OR_IGNORE.sub(f"INSERT INTO {table}", statement, count=1)
+    columns = ", ".join(target)
+    return f"{rewritten} ON CONFLICT ({columns}) DO NOTHING"
+
+
+def _append_declared_returning(statement: str) -> tuple[str, str | None]:
+    match = _INSERT.match(statement)
+    if match is None:
+        return statement, None
+    table = match.group(1).lower()
+    identity = _DECLARED_GENERATED_IDENTITIES.get(table)
+    if identity is None or re.search(r"\bRETURNING\b", statement, re.IGNORECASE):
+        return statement, None
+    return f"{statement} RETURNING {identity}", identity

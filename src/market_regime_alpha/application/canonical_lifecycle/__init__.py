@@ -57,6 +57,13 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
     validate_lifecycle_stage_progression,
     validate_lifecycle_stage_transition,
 )
+from market_regime_alpha.application.canonical_lifecycle.postgres_repository import (
+    PostgresLifecycleRunRepository,
+)
+from market_regime_alpha.application.canonical_lifecycle.postgres_composition import (
+    build_postgres_lifecycle_runner,
+    postgres_lifecycle_stage_handlers,
+)
 
 
 __all__ = [
@@ -91,6 +98,9 @@ __all__ = [
     "LifecycleStage",
     "LifecycleStageName",
     "LifecycleStageStatus",
+    "PostgresLifecycleRunRepository",
+    "build_postgres_lifecycle_runner",
+    "postgres_lifecycle_stage_handlers",
     "LoadedRuntimeConfiguration",
     "RuntimeConfigurationError",
     "RuntimeConfigurationReader",

@@ -112,6 +112,7 @@ def build_sqlite_lifecycle_runner(
         command=command,
         manifest=manifest,
         configurations=configurations,
+        authority_binder=_bind_authority_handlers,
     )
     return CanonicalDecisionLifecycleRunner(
         repository=repository,
@@ -125,6 +126,7 @@ def _build_handlers(
     command: CanonicalLifecycleCommand,
     manifest: CanonicalLifecycleInputManifest | None,
     configurations: RuntimeConfigurationSet,
+    authority_binder: Callable[..., None] | None,
 ) -> tuple[LifecycleStageHandler, ...]:
     output_root = command.output_directory
     research_configuration = configurations.get(
@@ -214,8 +216,8 @@ def _build_handlers(
         handlers[LifecycleStageName.ENTRY_ASSESSMENT] = EntryAssessmentStageHandler(
             authority_ceiling=manifest.authority_ceiling
         )
-    if command.authority_database_locator is not None:
-        _bind_authority_handlers(
+    if command.authority_database_locator is not None and authority_binder is not None:
+        authority_binder(
             handlers=handlers,
             authority_path=command.authority_database_locator,
         )
