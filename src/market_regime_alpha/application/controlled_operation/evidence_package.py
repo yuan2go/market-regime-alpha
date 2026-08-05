@@ -289,6 +289,7 @@ class ControlledOperationalEvidencePackage:
         required = {
             "TRADING_CALENDAR",
             "OPERATIONAL_UNIVERSE",
+            "DAILY_SOURCE_ARCHIVE",
             "DAILY_SOURCE_MANIFEST",
             "DAILY_DATASET",
             "STATIC_FEATURE_BUNDLE",
@@ -309,6 +310,17 @@ class ControlledOperationalEvidencePackage:
         } and not required.issubset(present):
             missing = ",".join(sorted(required - present))
             raise ValueError(f"Controlled package required evidence is missing: {missing}")
+        if self.status is ControlledOperationalEvidenceStatus.SETTLED:
+            settlement_required = {
+                "OUTCOME_SOURCE_MANIFEST",
+                "OUTCOME_DATASET",
+                "OUTCOME_OBSERVATION",
+            }
+            if not settlement_required.issubset(present):
+                missing = ",".join(sorted(settlement_required - present))
+                raise ValueError(
+                    f"settled Controlled package evidence is missing: {missing}"
+                )
 
     def semantic_payload(self) -> dict[str, Any]:
         return _payload(**_values(self))
@@ -369,11 +381,7 @@ class ControlledOperationalEvidencePackage:
             candidate_count=int(payload["candidate_count"]),
             minute_success_count=int(payload["minute_success_count"]),
             minute_failure_count=int(payload["minute_failure_count"]),
-            signal_state_counts=tuple(
-                (str(item["state"]), int(item["count"]))
-                for item in _objects(payload["signal_state_counts"], "signal state counts")
-                if set(item) == {"state", "count"}
-            ),
+            signal_state_counts=_signal_state_counts(payload["signal_state_counts"]),
             stage_latencies=tuple(
                 StageRuntimeLatency.from_canonical_dict(item)
                 for item in _objects(payload["stage_latencies"], "stage latencies")
@@ -588,6 +596,13 @@ def _object(value: object, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} must be an object")
     return value
+
+
+def _signal_state_counts(value: object) -> tuple[tuple[str, int], ...]:
+    items = _objects(value, "signal state counts")
+    if any(set(item) != {"state", "count"} for item in items):
+        raise ValueError("signal state count fields mismatch")
+    return tuple((str(item["state"]), int(item["count"])) for item in items)
 
 
 def _strings(value: object, label: str) -> tuple[str, ...]:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import (
@@ -160,7 +160,7 @@ class ControlledOperationCommand:
             schema_version=CONTROLLED_OPERATION_COMMAND_SCHEMA,
             run_id=ArtifactId(f"controlled-operation-{digest.split(':', 1)[1][:24]}"),
             command_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -331,7 +331,7 @@ class DecisionTimeOperationReceipt:
             schema_version=CONTROLLED_OPERATION_RECEIPT_SCHEMA,
             receipt_id=ArtifactId(f"operation-receipt-{digest.split(':', 1)[1][:24]}"),
             content_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     def semantic_payload(self) -> dict[str, Any]:

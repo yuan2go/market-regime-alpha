@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import (
@@ -131,7 +131,7 @@ class ControlledEntryAssessmentBlocker:
             schema_version=CONTROLLED_ENTRY_BLOCKER_SCHEMA,
             artifact_id=ArtifactId(f"entry-blocker-{digest.split(':', 1)[1][:24]}"),
             content_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     def semantic_payload(self) -> dict[str, Any]:

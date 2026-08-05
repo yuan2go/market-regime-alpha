@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from market_regime_alpha.core.identity import ArtifactId, ModelId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
@@ -94,7 +94,7 @@ class ControlledCandidateDiscoveryConfig:
             schema_version=CONTROLLED_CANDIDATE_CONFIG_SCHEMA,
             configuration_id=ArtifactId(f"controlled-candidate-config-{digest.split(':', 1)[1][:24]}"),
             configuration_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -180,7 +180,7 @@ class ControlledResearchPipelineConfig:
             schema_version=CONTROLLED_RESEARCH_CONFIG_SCHEMA,
             configuration_id=ArtifactId(f"controlled-research-config-{digest.split(':', 1)[1][:24]}"),
             configuration_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     def semantic_payload(self) -> dict[str, Any]:

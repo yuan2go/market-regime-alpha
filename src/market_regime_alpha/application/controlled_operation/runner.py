@@ -31,6 +31,10 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
     load_controlled_source_manifest,
     load_controlled_trading_calendar,
 )
+from market_regime_alpha.application.controlled_operation.longitudinal_index import (
+    LongitudinalOperationalRecord,
+    SQLiteLongitudinalOperationalIndex,
+)
 from market_regime_alpha.application.controlled_operation.journal import (
     ChildRunReferenceKind,
     ClaimedDecisionTimeOperationStage,
@@ -52,6 +56,14 @@ from market_regime_alpha.application.controlled_operation.research_input import 
 )
 from market_regime_alpha.application.controlled_operation.research_runner import (
     VerifiedControlledResearchArtifact,
+    load_verified_controlled_research_artifact,
+)
+from market_regime_alpha.application.controlled_operation.outcome_evidence import (
+    TradeHorizonDefinition,
+    TradeHorizonOutcomeEvidence,
+    build_trade_horizon_outcome_evidence,
+    load_trade_horizon_outcome_evidence,
+    publish_trade_horizon_outcome_evidence,
 )
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
@@ -88,7 +100,10 @@ from market_regime_alpha.features.operational_overlay import (
     publish_static_universe_feature_bundle,
 )
 from market_regime_alpha.features.v2_contracts import FeatureMaterializationReceipt
-from market_regime_alpha.forecasting.artifact import VerifiedPathForecastArtifact
+from market_regime_alpha.forecasting.artifact import (
+    VerifiedPathForecastArtifact,
+    load_verified_path_forecast,
+)
 from market_regime_alpha.market_data import (
     AssetType,
     VerifiedMarketDataDataset,
@@ -111,7 +126,10 @@ from market_regime_alpha.market_data.minute_source import (
     normalize_tencent_minute_source,
 )
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
-from market_regime_alpha.signals.v3 import VerifiedSignalRunArtifactV3
+from market_regime_alpha.signals.v3 import (
+    VerifiedSignalRunArtifactV3,
+    load_verified_signal_run_v3,
+)
 from market_regime_alpha.universe import (
     OperationalUniverseArtifact,
     load_operational_universe,
@@ -137,6 +155,12 @@ class ControlledOperationInputPaths:
     daily_source_manifest: Path
     supplemental_research_evidence: Path
     runtime_configuration: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledOperationSettlementInputPaths:
+    outcome_source_manifest: Path
+    outcome_dataset: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +194,16 @@ class ControlledOperationDecisionResult:
     entry_blocker_path: Path
     package: ControlledOperationalEvidencePackage
     package_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledOperationSettlementResult:
+    snapshot: DecisionTimeOperationRunSnapshot
+    outcome: TradeHorizonOutcomeEvidence
+    outcome_path: Path
+    package: ControlledOperationalEvidencePackage
+    package_path: Path
+    longitudinal_record: LongitudinalOperationalRecord
 
 
 class ControlledDecisionTimeOperationRunner:
@@ -228,10 +262,7 @@ class ControlledDecisionTimeOperationRunner:
             raise ValueError("Controlled preparation requires frozen daily source history")
         if source_manifest.decision_time.value != command.decision_time:
             raise ValueError("Controlled daily SourceManifest DecisionTime mismatch")
-        if any(
-            item.retrieved_at.value > command.decision_time
-            for item in source_manifest.source_artifacts
-        ):
+        if any(item.retrieved_at.value > command.decision_time for item in source_manifest.source_artifacts):
             raise ControlledOperationDataBlocked("DAILY_SOURCE_AVAILABLE_AFTER_DECISION_TIME")
         self._execute_stage(
             command=command,
@@ -265,9 +296,7 @@ class ControlledDecisionTimeOperationRunner:
             source_manifest=source_manifest,
             asset_types={item: AssetType.A_SHARE for item in universe.symbols},
         )
-        daily_path = publish_market_data_dataset(
-            root=run_root / "daily-datasets", artifact=daily_artifact
-        )
+        daily_path = publish_market_data_dataset(root=run_root / "daily-datasets", artifact=daily_artifact)
         daily = load_verified_market_data_dataset(daily_path)
         self._execute_stage(
             command=command,
@@ -303,20 +332,14 @@ class ControlledDecisionTimeOperationRunner:
             run_receipt=static_receipt,
             code_revision=command.code_revision,
         )
-        static_path = publish_static_universe_feature_bundle(
-            root=run_root / "static-bundles", artifact=static_bundle
-        )
-        latencies[DecisionTimeOperationStageName.STATIC_FEATURES.value] = int(
-            (perf_counter() - feature_start) * 1000
-        )
+        static_path = publish_static_universe_feature_bundle(root=run_root / "static-bundles", artifact=static_bundle)
+        latencies[DecisionTimeOperationStageName.STATIC_FEATURES.value] = int((perf_counter() - feature_start) * 1000)
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.STATIC_FEATURES,
             run_status=DecisionTimeOperationRunStatus.STATIC_READY,
             inputs=(_reference("DAILY_DATASET", daily.artifact.dataset_id, daily.artifact.content_hash),),
-            outputs=(
-                _reference("STATIC_FEATURE_BUNDLE", static_bundle.artifact_id, static_bundle.content_hash),
-            ),
+            outputs=(_reference("STATIC_FEATURE_BUNDLE", static_bundle.artifact_id, static_bundle.content_hash),),
             child_runs=(
                 OperationChildRunReference(
                     ChildRunReferenceKind.STATIC_FEATURE_RUN,
@@ -367,6 +390,21 @@ class ControlledDecisionTimeOperationRunner:
                 if assessment.state is DecisionWindowState.DEADLINE_MISSED
                 else DecisionTimeOperationRunStatus.DATA_BLOCKED
             )
+            self._publish_terminal_package(
+                command=command,
+                policy=policy,
+                inputs=inputs,
+                preparation=preparation,
+                configuration=configuration,
+                status=(
+                    ControlledOperationalEvidenceStatus.DEADLINE_MISSED
+                    if status is DecisionTimeOperationRunStatus.DEADLINE_MISSED
+                    else ControlledOperationalEvidenceStatus.DATA_BLOCKED
+                ),
+                deadline_status=assessment.state.value,
+                reason_codes=assessment.reason_codes,
+                latencies={},
+            )
             snapshot = self._journal.get(command.run_id)
             self._journal.set_run_status(
                 run_id=command.run_id,
@@ -379,9 +417,7 @@ class ControlledDecisionTimeOperationRunner:
             raise ControlledOperationDataBlocked("DECISION_TIME_EVIDENCE_WINDOW_CLOSED")
         latencies: dict[str, int] = {}
 
-        supplemental = load_verified_supplemental_research_evidence(
-            inputs.supplemental_research_evidence
-        )
+        supplemental = load_verified_supplemental_research_evidence(inputs.supplemental_research_evidence)
         research_inputs = ControlledOperationalResearchInput.create(
             operational_universe=preparation.universe,
             static_feature_bundle=preparation.static_bundle,
@@ -395,9 +431,7 @@ class ControlledDecisionTimeOperationRunner:
             output_root=run_root / "research",
             code_revision=command.code_revision,
         )
-        latencies[DecisionTimeOperationStageName.OPERATIONAL_RESEARCH.value] = int(
-            (perf_counter() - started) * 1000
-        )
+        latencies[DecisionTimeOperationStageName.OPERATIONAL_RESEARCH.value] = int((perf_counter() - started) * 1000)
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.OPERATIONAL_RESEARCH,
@@ -443,18 +477,12 @@ class ControlledDecisionTimeOperationRunner:
             ).run(command=minute_command, output_root=run_root / "minute-acquisition")
         else:
             reference = next(
-                item
-                for item in existing_minute_receipt.output_references
-                if item.reference_type == "MINUTE_ACQUISITION_COVERAGE"
+                item for item in existing_minute_receipt.output_references if item.reference_type == "MINUTE_ACQUISITION_COVERAGE"
             )
-            coverage = load_minute_acquisition_coverage(
-                run_root / "minute-acquisition" / "coverage" / str(reference.object_id)
-            )
+            coverage = load_minute_acquisition_coverage(run_root / "minute-acquisition" / "coverage" / str(reference.object_id))
             if coverage.content_hash != reference.content_hash:
                 raise ValueError("recovered minute Coverage Receipt mismatch")
-        latencies[DecisionTimeOperationStageName.CANDIDATE_MINUTE_ACQUISITION.value] = int(
-            (perf_counter() - started) * 1000
-        )
+        latencies[DecisionTimeOperationStageName.CANDIDATE_MINUTE_ACQUISITION.value] = int((perf_counter() - started) * 1000)
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.CANDIDATE_MINUTE_ACQUISITION,
@@ -473,7 +501,37 @@ class ControlledDecisionTimeOperationRunner:
             premeasured=True,
         )
         if coverage.coverage_state in {MinuteCoverageState.FAILED, MinuteCoverageState.DEADLINE_MISSED}:
-            raise ControlledOperationDataBlocked("CANDIDATE_MINUTE_ACQUISITION_HAS_NO_USABLE_SOURCE")
+            reason = "CANDIDATE_MINUTE_ACQUISITION_HAS_NO_USABLE_SOURCE"
+            self._publish_terminal_package(
+                command=command,
+                policy=policy,
+                inputs=inputs,
+                preparation=preparation,
+                configuration=configuration,
+                status=(
+                    ControlledOperationalEvidenceStatus.DEADLINE_MISSED
+                    if coverage.coverage_state is MinuteCoverageState.DEADLINE_MISSED
+                    else ControlledOperationalEvidenceStatus.DATA_BLOCKED
+                ),
+                deadline_status=coverage.coverage_state.value,
+                reason_codes=(reason, *coverage.reason_codes),
+                latencies=latencies,
+                research=research,
+                candidates=candidates,
+                coverage=coverage,
+            )
+            snapshot = self._journal.get(command.run_id)
+            self._journal.set_run_status(
+                run_id=command.run_id,
+                expected_version=snapshot.version,
+                status=(
+                    DecisionTimeOperationRunStatus.DEADLINE_MISSED
+                    if coverage.coverage_state is MinuteCoverageState.DEADLINE_MISSED
+                    else DecisionTimeOperationRunStatus.DATA_BLOCKED
+                ),
+                reason=reason,
+            )
+            raise ControlledOperationDataBlocked(reason)
 
         normalized_sources = []
         source_reader = RawMinuteSourceReader()
@@ -497,9 +555,7 @@ class ControlledDecisionTimeOperationRunner:
             decision_time=command.decision_time,
             created_at=command.decision_time,
         )
-        minute_path = publish_market_data_dataset(
-            root=run_root / "minute-datasets", artifact=minute_artifact
-        )
+        minute_path = publish_market_data_dataset(root=run_root / "minute-datasets", artifact=minute_artifact)
         minute = load_verified_market_data_dataset(minute_path)
         self._execute_stage(
             command=command,
@@ -532,12 +588,8 @@ class ControlledDecisionTimeOperationRunner:
             intraday_feature_bundle=intraday_features,
             trading_calendar=preparation.calendar,
         )
-        overlay_path = publish_candidate_intraday_feature_overlay(
-            root=run_root / "intraday-overlays", artifact=overlay
-        )
-        latencies[DecisionTimeOperationStageName.INTRADAY_FEATURE_OVERLAY.value] = int(
-            (perf_counter() - started) * 1000
-        )
+        overlay_path = publish_candidate_intraday_feature_overlay(root=run_root / "intraday-overlays", artifact=overlay)
+        latencies[DecisionTimeOperationStageName.INTRADAY_FEATURE_OVERLAY.value] = int((perf_counter() - started) * 1000)
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.INTRADAY_FEATURE_OVERLAY,
@@ -577,15 +629,15 @@ class ControlledDecisionTimeOperationRunner:
             created_at=command.decision_time,
             code_revision=command.code_revision,
         )
-        latencies[DecisionTimeOperationStageName.SIGNAL.value] = int(
-            (perf_counter() - started) * 1000
+        latencies[DecisionTimeOperationStageName.SIGNAL.value] = int((perf_counter() - started) * 1000)
+        canonical_segment_hash = canonical_hash(
+            {
+                "candidate_feature_view_id": str(signal_output.candidate_view.view_id),
+                "candidate_feature_view_hash": signal_output.candidate_view.content_hash,
+                "signal_id": str(signal_output.signal.artifact.artifact_id),
+                "signal_hash": signal_output.signal.artifact.envelope.content_hash,
+            }
         )
-        canonical_segment_hash = canonical_hash({
-            "candidate_feature_view_id": str(signal_output.candidate_view.view_id),
-            "candidate_feature_view_hash": signal_output.candidate_view.content_hash,
-            "signal_id": str(signal_output.signal.artifact.artifact_id),
-            "signal_hash": signal_output.signal.artifact.envelope.content_hash,
-        })
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.SIGNAL,
@@ -612,14 +664,14 @@ class ControlledDecisionTimeOperationRunner:
             configuration=configuration.path_forecast,
             output_root=run_root / "path-forecasts",
         ).run_controlled(signal=signal_output.signal)
-        latencies[DecisionTimeOperationStageName.PATH_FORECAST.value] = int(
-            (perf_counter() - started) * 1000
-        )
+        latencies[DecisionTimeOperationStageName.PATH_FORECAST.value] = int((perf_counter() - started) * 1000)
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.PATH_FORECAST,
             run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
-            inputs=(_reference("SIGNAL_V3", signal_output.signal.artifact.artifact_id, signal_output.signal.artifact.envelope.content_hash),),
+            inputs=(
+                _reference("SIGNAL_V3", signal_output.signal.artifact.artifact_id, signal_output.signal.artifact.envelope.content_hash),
+            ),
             outputs=tuple(
                 _reference("PATH_FORECAST", item.artifact.artifact_id, item.artifact.forecast.envelope.content_hash)
                 for item in path_output.forecasts
@@ -629,9 +681,7 @@ class ControlledDecisionTimeOperationRunner:
             premeasured=True,
         )
 
-        entry, entry_path = EntryAssessmentStageHandler(
-            authority_ceiling=LifecycleAuthorityCeiling()
-        ).run_controlled(
+        entry, entry_path = EntryAssessmentStageHandler(authority_ceiling=LifecycleAuthorityCeiling()).run_controlled(
             signal=signal_output.signal,
             forecasts=path_output.forecasts,
             output_root=run_root / "entry-blockers",
@@ -681,8 +731,7 @@ class ControlledDecisionTimeOperationRunner:
                 stage_receipts=tuple(
                     item.receipt
                     for item in snapshot.stages
-                    if item.receipt is not None
-                    and item.stage_name is not DecisionTimeOperationStageName.OPERATION_PACKAGE
+                    if item.receipt is not None and item.stage_name is not DecisionTimeOperationStageName.OPERATION_PACKAGE
                 ),
                 code_revision=command.code_revision,
                 feature_set_id=configuration.static_feature_set.feature_set_id,
@@ -696,9 +745,7 @@ class ControlledDecisionTimeOperationRunner:
                 signal_state_counts=tuple(
                     sorted(Counter(item.signal_state.value for item in signal_output.signal.artifact.snapshots).items())
                 ),
-                stage_latencies=tuple(
-                    StageRuntimeLatency(name, value) for name, value in sorted(latencies.items())
-                ),
+                stage_latencies=tuple(StageRuntimeLatency(name, value) for name, value in sorted(latencies.items())),
                 deadline_status=("ON_TIME" if not assessment.late_run else "LATE_RUN"),
                 created_at=command.decision_time,
                 authority_ceiling=(
@@ -755,6 +802,211 @@ class ControlledDecisionTimeOperationRunner:
     ) -> ControlledOperationDecisionResult:
         self._journal.resume(command.run_id)
         return self.run_decision_window(command=command, policy=policy, inputs=inputs)
+
+    def settle(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        inputs: ControlledOperationSettlementInputPaths,
+        horizon: TradeHorizonDefinition | None = None,
+    ) -> ControlledOperationSettlementResult:
+        """Attach immutable T+1 facts and index the superseding settled package."""
+
+        command.verify_identity()
+        run_root = self._run_root(command)
+        pending = _find_operation_package(
+            run_root / "operation-packages",
+            command.run_id,
+            status=ControlledOperationalEvidenceStatus.OUTCOME_PENDING,
+        )
+        if pending is None:
+            raise ControlledOperationDataBlocked("OUTCOME_PENDING_PACKAGE_MISSING")
+        if pending.command != command:
+            raise ValueError("Outcome settlement command conflicts with pending package")
+        settled = _find_operation_package(
+            run_root / "operation-packages",
+            command.run_id,
+            status=ControlledOperationalEvidenceStatus.SETTLED,
+        )
+        inputs = _freeze_settlement_input_paths(run_root=run_root, inputs=inputs)
+        source_manifest = load_controlled_source_manifest(inputs.outcome_source_manifest)
+        settlement_dataset = load_verified_market_data_dataset(inputs.outcome_dataset)
+        if (
+            source_manifest.source_manifest_id,
+            source_manifest.content_hash,
+        ) not in settlement_dataset.artifact.source_manifest_references:
+            raise ValueError("Outcome Dataset and SourceManifest lineage mismatch")
+        if source_manifest.decision_time.value <= command.decision_time:
+            raise ValueError("Outcome SourceManifest must be subsequent to DecisionTime")
+        if settled is not None:
+            if settled.supersedes_package_id != pending.package_id or settled.supersedes_package_hash != pending.content_hash:
+                raise ValueError("settled package supersession lineage mismatch")
+            source_ref = next(item for item in settled.evidence_references if item.reference_type == "OUTCOME_SOURCE_MANIFEST")
+            dataset_ref = next(item for item in settled.evidence_references if item.reference_type == "OUTCOME_DATASET")
+            if (
+                source_ref.object_id != source_manifest.source_manifest_id
+                or source_ref.content_hash != source_manifest.content_hash
+                or dataset_ref.object_id != ArtifactId(str(settlement_dataset.artifact.dataset_id))
+                or dataset_ref.content_hash != settlement_dataset.artifact.content_hash
+            ):
+                raise ValueError("settled package input identity conflict")
+            settled_path = run_root / "operation-packages" / str(settled.package_id)
+            outcome_path = _evidence_path(run_root, settled, "OUTCOME_OBSERVATION")
+            outcome = load_trade_horizon_outcome_evidence(outcome_path)
+            longitudinal_record = SQLiteLongitudinalOperationalIndex(
+                self._output_root / "longitudinal-operational-index.sqlite3",
+                clock=self._clock,
+            ).append(
+                package=settled,
+                package_locator=settled_path.relative_to(self._output_root).as_posix(),
+            )
+            return ControlledOperationSettlementResult(
+                snapshot=self._journal.get(command.run_id),
+                outcome=outcome,
+                outcome_path=outcome_path,
+                package=settled,
+                package_path=settled_path,
+                longitudinal_record=longitudinal_record,
+            )
+
+        calendar = load_controlled_trading_calendar(_evidence_path(run_root, pending, "TRADING_CALENDAR"))
+        next_sessions = tuple(item.trade_date for item in calendar.sessions if item.trade_date > command.decision_date)
+        if not next_sessions:
+            raise ControlledOperationDataBlocked("NEXT_TRADING_SESSION_UNAVAILABLE")
+        next_session_date = min(next_sessions)
+        if settlement_dataset.artifact.decision_time < source_manifest.decision_time.value:
+            raise ValueError("Outcome Dataset predates its SourceManifest authority")
+
+        research = load_verified_controlled_research_artifact(_evidence_path(run_root, pending, "CONTROLLED_RESEARCH"))
+        candidates = research.artifact.candidate_set
+        signal = load_verified_signal_run_v3(_evidence_path(run_root, pending, "SIGNAL_V3"))
+        forecasts = tuple(load_verified_path_forecast(path) for path in _evidence_paths(run_root, pending, "PATH_FORECAST"))
+        decision_dataset = load_verified_market_data_dataset(_evidence_path(run_root, pending, "DAILY_DATASET"))
+        horizon = horizon or TradeHorizonDefinition.create()
+        started = perf_counter()
+        outcome = build_trade_horizon_outcome_evidence(
+            operation_package=pending,
+            candidate_set=candidates,
+            signal=signal,
+            forecasts=forecasts,
+            decision_dataset=decision_dataset,
+            settlement_dataset=settlement_dataset,
+            next_session_date=next_session_date,
+            horizon=horizon,
+            created_at=self._now(),
+        )
+        outcome_path = publish_trade_horizon_outcome_evidence(root=run_root / "outcomes", artifact=outcome)
+        settlement_elapsed = int((perf_counter() - started) * 1000)
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.OUTCOME_SETTLEMENT,
+            run_status=DecisionTimeOperationRunStatus.SETTLED,
+            inputs=(
+                _reference("OPERATION_PACKAGE", pending.package_id, pending.content_hash),
+                _reference(
+                    "OUTCOME_SOURCE_MANIFEST",
+                    source_manifest.source_manifest_id,
+                    source_manifest.content_hash,
+                ),
+                _reference(
+                    "OUTCOME_DATASET",
+                    settlement_dataset.artifact.dataset_id,
+                    settlement_dataset.artifact.content_hash,
+                ),
+            ),
+            outputs=(_reference("OUTCOME_OBSERVATION", outcome.artifact_id, outcome.content_hash),),
+            child_runs=(
+                OperationChildRunReference(
+                    ChildRunReferenceKind.OUTCOME_RUN,
+                    str(outcome.artifact_id),
+                    outcome.content_hash,
+                ),
+            ),
+            reasons=("T_PLUS_ONE_FACTUAL_OUTCOME_ARCHIVED",),
+            latency_sink={},
+            premeasured=True,
+        )
+        if settled is None:
+            evidence = (
+                *pending.evidence_references,
+                _evidence(
+                    "OUTCOME_SOURCE_MANIFEST",
+                    source_manifest.source_manifest_id,
+                    source_manifest.content_hash,
+                    inputs.outcome_source_manifest,
+                    run_root,
+                ),
+                _evidence(
+                    "OUTCOME_DATASET",
+                    settlement_dataset.artifact.dataset_id,
+                    settlement_dataset.artifact.content_hash,
+                    inputs.outcome_dataset,
+                    run_root,
+                ),
+                _evidence(
+                    "OUTCOME_OBSERVATION",
+                    outcome.artifact_id,
+                    outcome.content_hash,
+                    outcome_path,
+                    run_root,
+                ),
+            )
+            snapshot = self._journal.get(command.run_id)
+            limitations = tuple(
+                sorted(
+                    {
+                        *(item for item in pending.limitations if item != "OUTCOME_PENDING"),
+                        "FACTUAL_OUTCOME_ARCHIVED_NOT_H9_VALIDATION",
+                        "SETTLED",
+                    }
+                )
+            )
+            latencies = {item.stage_name: item.elapsed_ms for item in pending.stage_latencies}
+            latencies[DecisionTimeOperationStageName.OUTCOME_SETTLEMENT.value] = settlement_elapsed
+            settled = ControlledOperationalEvidencePackage.create(
+                command=command,
+                policy=pending.policy,
+                status=ControlledOperationalEvidenceStatus.SETTLED,
+                evidence_references=tuple(evidence),
+                stage_receipts=tuple(item.receipt for item in snapshot.stages if item.receipt is not None),
+                code_revision=pending.code_revision,
+                feature_set_id=pending.feature_set_id,
+                signal_model_id=pending.signal_model_id,
+                signal_model_version=pending.signal_model_version,
+                configuration_hashes=pending.configuration_hashes,
+                universe_count=pending.universe_count,
+                candidate_count=pending.candidate_count,
+                minute_success_count=pending.minute_success_count,
+                minute_failure_count=pending.minute_failure_count,
+                signal_state_counts=pending.signal_state_counts,
+                stage_latencies=tuple(StageRuntimeLatency(name, value) for name, value in sorted(latencies.items())),
+                deadline_status=pending.deadline_status,
+                created_at=self._now(),
+                authority_ceiling=pending.authority_ceiling,
+                limitations=limitations,
+                supersedes_package_id=pending.package_id,
+                supersedes_package_hash=pending.content_hash,
+            )
+            settled_path = publish_controlled_operation_package(root=run_root / "operation-packages", artifact=settled)
+        else:
+            if settled.supersedes_package_id != pending.package_id or settled.supersedes_package_hash != pending.content_hash:
+                raise ValueError("settled package supersession lineage mismatch")
+            settled_path = run_root / "operation-packages" / str(settled.package_id)
+
+        index = SQLiteLongitudinalOperationalIndex(
+            self._output_root / "longitudinal-operational-index.sqlite3",
+            clock=self._clock,
+        )
+        locator = settled_path.relative_to(self._output_root).as_posix()
+        longitudinal_record = index.append(package=settled, package_locator=locator)
+        return ControlledOperationSettlementResult(
+            snapshot=self._journal.get(command.run_id),
+            outcome=outcome,
+            outcome_path=outcome_path,
+            package=settled,
+            package_path=settled_path,
+            longitudinal_record=longitudinal_record,
+        )
 
     def _execute_stage(
         self,
@@ -823,16 +1075,56 @@ class ControlledDecisionTimeOperationRunner:
         entry_id: ArtifactId,
         entry_hash: str,
     ) -> tuple[ControlledEvidenceReference, ...]:
+        daily_source = load_verified_public_source_stage_artifact(inputs.daily_source_stage)
         source_manifest = load_controlled_source_manifest(inputs.daily_source_manifest)
         items = [
-            _evidence("TRADING_CALENDAR", preparation.calendar.artifact_id, preparation.calendar.content_hash, inputs.trading_calendar, run_root),
-            _evidence("OPERATIONAL_UNIVERSE", preparation.universe.universe_id, preparation.universe.content_hash, inputs.operational_universe, run_root),
-            _evidence("DAILY_SOURCE_MANIFEST", source_manifest.source_manifest_id, source_manifest.content_hash, inputs.daily_source_manifest, run_root),
-            _evidence("DAILY_DATASET", preparation.daily_dataset.artifact.dataset_id, preparation.daily_dataset.artifact.content_hash, preparation.daily_dataset_path, run_root),
-            _evidence("STATIC_FEATURE_BUNDLE", preparation.static_bundle.artifact_id, preparation.static_bundle.content_hash, preparation.static_bundle_path, run_root),
+            _evidence(
+                "TRADING_CALENDAR", preparation.calendar.artifact_id, preparation.calendar.content_hash, inputs.trading_calendar, run_root
+            ),
+            _evidence(
+                "OPERATIONAL_UNIVERSE",
+                preparation.universe.universe_id,
+                preparation.universe.content_hash,
+                inputs.operational_universe,
+                run_root,
+            ),
+            _evidence(
+                "DAILY_SOURCE_ARCHIVE",
+                daily_source.artifact_id,
+                daily_source.content_hash,
+                inputs.daily_source_stage,
+                run_root,
+            ),
+            _evidence(
+                "DAILY_SOURCE_MANIFEST",
+                source_manifest.source_manifest_id,
+                source_manifest.content_hash,
+                inputs.daily_source_manifest,
+                run_root,
+            ),
+            _evidence(
+                "DAILY_DATASET",
+                preparation.daily_dataset.artifact.dataset_id,
+                preparation.daily_dataset.artifact.content_hash,
+                preparation.daily_dataset_path,
+                run_root,
+            ),
+            _evidence(
+                "STATIC_FEATURE_BUNDLE",
+                preparation.static_bundle.artifact_id,
+                preparation.static_bundle.content_hash,
+                preparation.static_bundle_path,
+                run_root,
+            ),
             _evidence("CONTROLLED_RESEARCH", research.artifact.artifact_id, research.artifact.content_hash, research.root, run_root),
             _evidence("CANDIDATE_SET", candidates.envelope.artifact_id, candidates.envelope.content_hash, research.root, run_root),
-            _evidence("MINUTE_ACQUISITION_COVERAGE", coverage.artifact_id, coverage.content_hash, run_root / "minute-acquisition" / "coverage" / str(coverage.artifact_id), run_root),
+            _evidence(
+                "MINUTE_ACQUISITION_COVERAGE",
+                coverage.artifact_id,
+                coverage.content_hash,
+                run_root / "minute-acquisition" / "coverage" / str(coverage.artifact_id),
+                run_root,
+            ),
             _evidence("MINUTE_DATASET", minute.artifact.dataset_id, minute.artifact.content_hash, minute_path, run_root),
             _evidence("INTRADAY_FEATURE_OVERLAY", overlay.artifact_id, overlay.content_hash, overlay_path, run_root),
             _evidence("CANDIDATE_FEATURE_VIEW_V2", candidate_view_id, candidate_view_hash, candidate_view_path, run_root),
@@ -844,6 +1136,145 @@ class ControlledDecisionTimeOperationRunner:
             for item in forecasts
         )
         return tuple(sorted(items, key=lambda item: (item.reference_type, str(item.object_id))))
+
+    def _publish_terminal_package(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        policy: DecisionTimeOperationPolicy,
+        inputs: ControlledOperationInputPaths,
+        preparation: ControlledOperationPreparation,
+        configuration: ControlledOperationRuntimeConfiguration,
+        status: ControlledOperationalEvidenceStatus,
+        deadline_status: str,
+        reason_codes: tuple[str, ...],
+        latencies: dict[str, int],
+        research: VerifiedControlledResearchArtifact | None = None,
+        candidates: CandidateSet | None = None,
+        coverage: MinuteAcquisitionCoverageArtifact | None = None,
+    ) -> tuple[ControlledOperationalEvidencePackage, Path]:
+        run_root = self._run_root(command)
+        package_root = run_root / "operation-packages"
+        existing = _find_operation_package(package_root, command.run_id, status=status)
+        if existing is not None:
+            return existing, package_root / str(existing.package_id)
+        daily_source = load_verified_public_source_stage_artifact(inputs.daily_source_stage)
+        source_manifest = load_controlled_source_manifest(inputs.daily_source_manifest)
+        references = [
+            _evidence(
+                "TRADING_CALENDAR",
+                preparation.calendar.artifact_id,
+                preparation.calendar.content_hash,
+                inputs.trading_calendar,
+                run_root,
+            ),
+            _evidence(
+                "OPERATIONAL_UNIVERSE",
+                preparation.universe.universe_id,
+                preparation.universe.content_hash,
+                inputs.operational_universe,
+                run_root,
+            ),
+            _evidence(
+                "DAILY_SOURCE_ARCHIVE",
+                daily_source.artifact_id,
+                daily_source.content_hash,
+                inputs.daily_source_stage,
+                run_root,
+            ),
+            _evidence(
+                "DAILY_SOURCE_MANIFEST",
+                source_manifest.source_manifest_id,
+                source_manifest.content_hash,
+                inputs.daily_source_manifest,
+                run_root,
+            ),
+            _evidence(
+                "DAILY_DATASET",
+                preparation.daily_dataset.artifact.dataset_id,
+                preparation.daily_dataset.artifact.content_hash,
+                preparation.daily_dataset_path,
+                run_root,
+            ),
+            _evidence(
+                "STATIC_FEATURE_BUNDLE",
+                preparation.static_bundle.artifact_id,
+                preparation.static_bundle.content_hash,
+                preparation.static_bundle_path,
+                run_root,
+            ),
+        ]
+        if research is not None and candidates is not None:
+            references.extend(
+                (
+                    _evidence(
+                        "CONTROLLED_RESEARCH",
+                        research.artifact.artifact_id,
+                        research.artifact.content_hash,
+                        research.root,
+                        run_root,
+                    ),
+                    _evidence(
+                        "CANDIDATE_SET",
+                        candidates.envelope.artifact_id,
+                        candidates.envelope.content_hash,
+                        research.root,
+                        run_root,
+                    ),
+                )
+            )
+        if coverage is not None:
+            references.append(
+                _evidence(
+                    "MINUTE_ACQUISITION_COVERAGE",
+                    coverage.artifact_id,
+                    coverage.content_hash,
+                    run_root / "minute-acquisition" / "coverage" / str(coverage.artifact_id),
+                    run_root,
+                )
+            )
+        snapshot = self._journal.get(command.run_id)
+        candidate_count = len(candidates.selected) if candidates is not None else 0
+        package = ControlledOperationalEvidencePackage.create(
+            command=command,
+            policy=policy,
+            status=status,
+            evidence_references=tuple(references),
+            stage_receipts=tuple(item.receipt for item in snapshot.stages if item.receipt is not None),
+            code_revision=command.code_revision,
+            feature_set_id=configuration.static_feature_set.feature_set_id,
+            signal_model_id=str(configuration.signal_model.model_id),
+            signal_model_version=configuration.signal_model.model_version,
+            configuration_hashes=configuration.configuration_hashes,
+            universe_count=len(preparation.universe.symbols),
+            candidate_count=candidate_count,
+            minute_success_count=(coverage.succeeded_count if coverage is not None else 0),
+            minute_failure_count=(candidate_count - coverage.succeeded_count if coverage is not None else candidate_count),
+            signal_state_counts=(),
+            stage_latencies=tuple(StageRuntimeLatency(name, value) for name, value in sorted(latencies.items())),
+            deadline_status=deadline_status,
+            created_at=command.decision_time,
+            authority_ceiling=(
+                "BROKER_NOT_INVOKED",
+                "ENTRY_MODEL_EMPIRICALLY_VALIDATED_FALSE",
+                "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+                "NO_FILL_CREATED",
+                "NO_ORDER_CREATED",
+                "TRADING_AUTHORITY_NOT_GRANTED",
+            ),
+            limitations=tuple(
+                sorted(
+                    {
+                        "CONTROLLED_OPERATION_FAILED_CLOSED",
+                        "FORMAL_PIT_NOT_ESTABLISHED",
+                        status.value,
+                        *reason_codes,
+                    }
+                )
+            ),
+        )
+        path = publish_controlled_operation_package(root=package_root, artifact=package)
+        return package, path
 
     def _validate_command(
         self,
@@ -946,7 +1377,10 @@ def _evidence(
 
 
 def _find_operation_package(
-    root: Path, run_id: ArtifactId
+    root: Path,
+    run_id: ArtifactId,
+    *,
+    status: ControlledOperationalEvidenceStatus | None = None,
 ) -> ControlledOperationalEvidencePackage | None:
     if not root.exists():
         return None
@@ -955,11 +1389,47 @@ def _find_operation_package(
         for path in sorted(root.iterdir())
         if path.is_dir() and not path.name.startswith(".")
         for artifact in (load_controlled_operation_package(path),)
-        if artifact.command.run_id == run_id
+        if artifact.command.run_id == run_id and (status is None or artifact.status is status)
     )
-    if len(matches) > 1:
-        raise ValueError("multiple Controlled operation packages bind one run")
-    return matches[0] if matches else None
+    by_status = {item.status: item for item in matches}
+    if len(by_status) != len(matches):
+        raise ValueError("multiple Controlled operation packages share one status and run")
+    pending = by_status.get(ControlledOperationalEvidenceStatus.OUTCOME_PENDING)
+    settled = by_status.get(ControlledOperationalEvidenceStatus.SETTLED)
+    if (
+        pending is not None
+        and settled is not None
+        and (settled.supersedes_package_id != pending.package_id or settled.supersedes_package_hash != pending.content_hash)
+    ):
+        raise ValueError("Controlled operation package supersession conflict")
+    if status is not None:
+        return by_status.get(status)
+    return settled or pending or (matches[0] if matches else None)
+
+
+def _evidence_paths(
+    run_root: Path,
+    package: ControlledOperationalEvidencePackage,
+    reference_type: str,
+) -> tuple[Path, ...]:
+    references = tuple(item for item in package.evidence_references if item.reference_type == reference_type)
+    if not references:
+        raise ValueError(f"Controlled package reference missing: {reference_type}")
+    paths = tuple((run_root / item.locator).resolve() for item in references)
+    if any(run_root.resolve() not in (path, *path.parents) for path in paths):
+        raise ValueError("Controlled package evidence locator escapes run root")
+    return paths
+
+
+def _evidence_path(
+    run_root: Path,
+    package: ControlledOperationalEvidencePackage,
+    reference_type: str,
+) -> Path:
+    paths = _evidence_paths(run_root, package, reference_type)
+    if len(paths) != 1:
+        raise ValueError(f"Controlled package reference is not singular: {reference_type}")
+    return paths[0]
 
 
 def _completed_receipt(
@@ -970,9 +1440,7 @@ def _completed_receipt(
     return item.receipt if item.status is DecisionTimeOperationStageStatus.COMPLETED else None
 
 
-def _freeze_input_paths(
-    *, run_root: Path, inputs: ControlledOperationInputPaths
-) -> ControlledOperationInputPaths:
+def _freeze_input_paths(*, run_root: Path, inputs: ControlledOperationInputPaths) -> ControlledOperationInputPaths:
     frozen_root = run_root / "input-freeze"
     return ControlledOperationInputPaths(
         trading_calendar=_install_input(
@@ -993,15 +1461,29 @@ def _freeze_input_paths(
         ),
         supplemental_research_evidence=_install_input(
             source=inputs.supplemental_research_evidence,
-            destination=(
-                frozen_root
-                / "supplemental-research-evidence"
-                / inputs.supplemental_research_evidence.name
-            ),
+            destination=(frozen_root / "supplemental-research-evidence" / inputs.supplemental_research_evidence.name),
         ),
         runtime_configuration=_install_input(
             source=inputs.runtime_configuration,
             destination=frozen_root / "runtime-configuration" / inputs.runtime_configuration.name,
+        ),
+    )
+
+
+def _freeze_settlement_input_paths(
+    *,
+    run_root: Path,
+    inputs: ControlledOperationSettlementInputPaths,
+) -> ControlledOperationSettlementInputPaths:
+    frozen_root = run_root / "input-freeze"
+    return ControlledOperationSettlementInputPaths(
+        outcome_source_manifest=_install_input(
+            source=inputs.outcome_source_manifest,
+            destination=(frozen_root / "outcome-source-manifest" / inputs.outcome_source_manifest.name),
+        ),
+        outcome_dataset=_install_input(
+            source=inputs.outcome_dataset,
+            destination=frozen_root / "outcome-dataset" / inputs.outcome_dataset.name,
         ),
     )
 
@@ -1029,4 +1511,6 @@ __all__ = [
     "ControlledOperationDecisionResult",
     "ControlledOperationInputPaths",
     "ControlledOperationPreparation",
+    "ControlledOperationSettlementInputPaths",
+    "ControlledOperationSettlementResult",
 ]

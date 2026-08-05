@@ -31,6 +31,7 @@ HASH = "sha256:" + "a" * 64
 REQUIRED = (
     "TRADING_CALENDAR",
     "OPERATIONAL_UNIVERSE",
+    "DAILY_SOURCE_ARCHIVE",
     "DAILY_SOURCE_MANIFEST",
     "DAILY_DATASET",
     "STATIC_FEATURE_BUNDLE",
@@ -85,11 +86,7 @@ def _artifact(
     refs = tuple(
         ControlledEvidenceReference(
             reference_type=kind,
-            object_id=(
-                ArtifactId(str(daily_dataset_id))
-                if kind == "DAILY_DATASET"
-                else ArtifactId(f"evidence-{index}")
-            ),
+            object_id=(ArtifactId(str(daily_dataset_id)) if kind == "DAILY_DATASET" else ArtifactId(f"evidence-{index}")),
             content_hash=(daily_dataset_hash if kind == "DAILY_DATASET" else HASH),
             locator=f"evidence/{index}",
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from market_regime_alpha.application.operational_research.contracts import (
     CapitalObservationEvidence,
@@ -120,7 +120,7 @@ class ControlledOperationalResearchInput:
             schema_version=CONTROLLED_RESEARCH_INPUT_SCHEMA,
             input_bundle_id=ArtifactId(f"controlled-research-input-{digest.split(':', 1)[1][:24]}"),
             content_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     @property

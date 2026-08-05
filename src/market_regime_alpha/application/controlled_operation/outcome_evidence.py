@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.application.controlled_operation.evidence_package import (
@@ -106,7 +106,7 @@ class TradeHorizonDefinition:
             schema_version=TRADE_HORIZON_DEFINITION_SCHEMA,
             horizon_id=ArtifactId(f"trade-horizon-{digest.split(':', 1)[1][:24]}"),
             content_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -377,7 +377,7 @@ class TradeHorizonOutcomeEvidence:
         return cls(
             artifact_id=ArtifactId(f"outcome-evidence-{digest.split(':', 1)[1][:24]}"),
             content_hash=digest,
-            **values,
+            **cast(Any, values),
         )
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -662,8 +662,16 @@ def load_trade_horizon_outcome_evidence(path: Path) -> TradeHorizonOutcomeEviden
 def replay_trade_horizon_outcome_evidence(path: Path) -> TradeHorizonOutcomeEvidence:
     artifact = load_trade_horizon_outcome_evidence(path)
     replayed = TradeHorizonOutcomeEvidence.create(
-        operation_package=_OperationPackageView(artifact.operation_package_id, artifact.operation_package_hash),
-        source_dataset=_DatasetView(artifact.source_dataset_id, artifact.source_dataset_hash),
+        operation_package=cast(
+            ControlledOperationalEvidencePackage,
+            _OperationPackageView(
+                artifact.operation_package_id, artifact.operation_package_hash
+            ),
+        ),
+        source_dataset=cast(
+            VerifiedMarketDataDataset,
+            _DatasetView(artifact.source_dataset_id, artifact.source_dataset_hash),
+        ),
         observations=artifact.observations,
         horizon=artifact.horizon,
         created_at=artifact.created_at,

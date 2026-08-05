@@ -24,6 +24,19 @@ from .sqlite_journal import (
     ControlledOperationConflict,
     SQLiteDecisionTimeOperationJournal,
 )
+from .runner import (
+    ControlledDecisionTimeOperationRunner,
+    ControlledOperationDataBlocked,
+    ControlledOperationDecisionResult,
+    ControlledOperationInputPaths,
+    ControlledOperationPreparation,
+    ControlledOperationSettlementInputPaths,
+    ControlledOperationSettlementResult,
+)
+from .replay import (
+    ControlledOperationReplayReport,
+    replay_controlled_operation,
+)
 
 __all__ = [
     "CONTROLLED_OPERATION_STAGE_ORDER",
@@ -32,6 +45,14 @@ __all__ = [
     "ControlledOperationClaimRejected",
     "ControlledOperationCommand",
     "ControlledOperationConflict",
+    "ControlledOperationDataBlocked",
+    "ControlledOperationDecisionResult",
+    "ControlledOperationInputPaths",
+    "ControlledOperationPreparation",
+    "ControlledOperationReplayReport",
+    "ControlledOperationSettlementInputPaths",
+    "ControlledOperationSettlementResult",
+    "ControlledDecisionTimeOperationRunner",
     "DecisionTimeOperationReceipt",
     "DecisionTimeOperationRunSnapshot",
     "DecisionTimeOperationRunStatus",
@@ -44,4 +65,5 @@ __all__ = [
     "OperationChildRunReference",
     "SQLiteDecisionTimeOperationJournal",
     "default_decision_time_operation_policy",
+    "replay_controlled_operation",
 ]
