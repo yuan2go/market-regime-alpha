@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Mapping, cast
+from typing import Any, Mapping, Protocol, cast
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import (
@@ -59,6 +59,52 @@ class DecisionTimeOperationStageStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"
     FAILED = "FAILED"
     COMPLETED = "COMPLETED"
+
+
+class DecisionTimeOperationJournal(Protocol):
+    """Persistence boundary consumed by the Controlled operation runner."""
+
+    def create_or_get(
+        self, command: ControlledOperationCommand
+    ) -> DecisionTimeOperationRunSnapshot: ...
+
+    def resume(self, run_id: ArtifactId) -> DecisionTimeOperationRunSnapshot: ...
+
+    def claim_stage(
+        self,
+        *,
+        run_id: ArtifactId,
+        stage_name: DecisionTimeOperationStageName,
+    ) -> ClaimedDecisionTimeOperationStage: ...
+
+    def complete_stage(
+        self,
+        *,
+        claim: ClaimedDecisionTimeOperationStage,
+        receipt: DecisionTimeOperationReceipt,
+        run_status: DecisionTimeOperationRunStatus,
+    ) -> DecisionTimeOperationRunSnapshot: ...
+
+    def fail_stage(
+        self,
+        *,
+        claim: ClaimedDecisionTimeOperationStage,
+        error: str,
+        run_status: DecisionTimeOperationRunStatus = (
+            DecisionTimeOperationRunStatus.FAILED
+        ),
+    ) -> DecisionTimeOperationRunSnapshot: ...
+
+    def set_run_status(
+        self,
+        *,
+        run_id: ArtifactId,
+        expected_version: int,
+        status: DecisionTimeOperationRunStatus,
+        reason: str,
+    ) -> DecisionTimeOperationRunSnapshot: ...
+
+    def get(self, run_id: ArtifactId) -> DecisionTimeOperationRunSnapshot: ...
 
 
 class DecisionTimeOperationAttemptStatus(str, Enum):

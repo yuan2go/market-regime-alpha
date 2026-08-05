@@ -501,8 +501,13 @@ Attribution may propose research work but shall not mutate a model or promote it
 | Store | Responsibility |
 |---|---|
 | Immutable file/object artifact store | source, research, signal, forecast and evaluation evidence |
-| SQLite | local development, replay and single-process tests |
-| PostgreSQL | future operational workflow, ledger and durable governance authority |
+| PostgreSQL | default runtime journals, domain ledgers and durable governance authority |
+| SQLite | explicit compatibility, historical replay and one-time import source |
+
+PostgreSQL and SQLite implement the same bounded Repository protocols. Runtime
+composition selects exactly one authority; it never dual-writes or silently
+falls back. Canonical JSON remains text so storage cannot normalize bytes that
+participate in hashes. Immutable file Artifacts remain outside the database.
 
 ### 19.2 Suggested operational tables
 
@@ -681,7 +686,9 @@ Inject failure after every durable boundary. Recovery must not reacquire immutab
 
 ## 27. Hardening and admission remainder
 
-The first engineering scope is A-share, long-only, CLI-first and SQLite-first.
+The first engineering scope is A-share, long-only, CLI-first and
+PostgreSQL-default, with SQLite retained only as an explicit compatibility and
+import path.
 Decision time, Path targets and Portfolio/Risk values are explicit versioned
 configurations with no implicit production defaults. Their production validity
 is not established.
@@ -689,5 +696,6 @@ is not established.
 Architecture 11 owns the remaining complete-account Risk, traceability, T+1,
 reducing-risk, evidence-building, durable assessment and Shadow-operation
 design. Formal Provider/theme-mapping authority, validated parameters,
-PostgreSQL admission, authentication, a sustained real Shadow period and any
-operator UI remain future evidence or scope.
+Production PostgreSQL admission, authentication, a sustained real Shadow period
+and any operator UI remain future evidence or scope. Local PostgreSQL parity and
+cutover evidence do not establish those production conditions.

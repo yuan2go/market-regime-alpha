@@ -12,8 +12,10 @@ from time import perf_counter, sleep
 from typing import Callable, NoReturn
 
 from market_regime_alpha.application.controlled_operation.canonical_bridge import (
+    CanonicalRepositoryFactory,
     ControlledCanonicalDeadlineExceeded,
     run_controlled_canonical_lifecycle,
+    sqlite_controlled_canonical_repository,
 )
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     AfterStageHook,
@@ -21,9 +23,6 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
 )
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleObjectType,
-)
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunType,
@@ -48,6 +47,7 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
     load_controlled_trading_calendar,
 )
 from market_regime_alpha.application.controlled_operation.longitudinal_index import (
+    LongitudinalOperationalIndex,
     LongitudinalOperationalRecord,
     SQLiteLongitudinalOperationalIndex,
 )
@@ -55,6 +55,7 @@ from market_regime_alpha.application.controlled_operation.journal import (
     ChildRunReferenceKind,
     ClaimedDecisionTimeOperationStage,
     ControlledOperationCommand,
+    DecisionTimeOperationJournal,
     DecisionTimeOperationReceipt,
     DecisionTimeOperationRunSnapshot,
     DecisionTimeOperationRunStatus,
@@ -88,9 +89,6 @@ from market_regime_alpha.application.controlled_operation.outcome_source_archive
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
 )
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
-    SQLiteDecisionTimeOperationJournal,
-)
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
     load_verified_supplemental_research_evidence,
 )
@@ -109,6 +107,7 @@ from market_regime_alpha.features import (
     FeatureMaterializationRunner,
 )
 from market_regime_alpha.features.materialization_v2 import (
+    FeatureRunRepositoryFactory,
     VerifiedFeatureBundleV2,
     load_verified_feature_bundle_v2,
 )
@@ -233,12 +232,17 @@ class ControlledDecisionTimeOperationRunner:
     def __init__(
         self,
         *,
-        journal: SQLiteDecisionTimeOperationJournal,
+        journal: DecisionTimeOperationJournal,
         output_root: Path,
         clock: Clock = _utc_now,
         minute_client_factory: MinuteClientFactory | None = None,
         sleeper: Sleeper = sleep,
         canonical_after_stage_hook: AfterStageHook | None = None,
+        longitudinal_index: LongitudinalOperationalIndex | None = None,
+        canonical_repository_factory: CanonicalRepositoryFactory = (
+            sqlite_controlled_canonical_repository
+        ),
+        feature_repository_factory: FeatureRunRepositoryFactory | None = None,
     ) -> None:
         self._journal = journal
         self._output_root = output_root.resolve()
@@ -246,6 +250,14 @@ class ControlledDecisionTimeOperationRunner:
         self._minute_client_factory = minute_client_factory
         self._sleeper = sleeper
         self._canonical_after_stage_hook = canonical_after_stage_hook
+        self._longitudinal_index = longitudinal_index or (
+            SQLiteLongitudinalOperationalIndex(
+                self._output_root / "longitudinal-operational-index.sqlite3",
+                clock=self._clock,
+            )
+        )
+        self._canonical_repository_factory = canonical_repository_factory
+        self._feature_repository_factory = feature_repository_factory
 
     def prepare(
         self,
@@ -345,6 +357,7 @@ class ControlledDecisionTimeOperationRunner:
             output_root=run_root / "static-features",
             idempotency_key=f"{command.idempotency_key}:static",
             max_workers=configuration.feature_max_workers,
+            repository_factory=self._feature_repository_factory,
         )
         static_features = load_verified_feature_bundle_v2(
             run_root / "static-features" / static_receipt.bundle_locator,
@@ -504,7 +517,28 @@ class ControlledDecisionTimeOperationRunner:
             latency_sink=latencies,
         )
         if not candidates.selected:
-            raise ControlledOperationDataBlocked("CONTROLLED_CANDIDATE_SET_EMPTY")
+            reason = "CONTROLLED_CANDIDATE_SET_EMPTY"
+            self._publish_terminal_package(
+                command=command,
+                policy=policy,
+                inputs=inputs,
+                preparation=preparation,
+                configuration=configuration,
+                status=ControlledOperationalEvidenceStatus.DATA_BLOCKED,
+                deadline_status=assessment.state.value,
+                reason_codes=(reason, "SUPPLEMENTAL_EVIDENCE_INSUFFICIENT"),
+                latencies=latencies,
+                research=research,
+                candidates=candidates,
+            )
+            snapshot = self._journal.get(command.run_id)
+            self._journal.set_run_status(
+                run_id=command.run_id,
+                expected_version=snapshot.version,
+                status=DecisionTimeOperationRunStatus.DATA_BLOCKED,
+                reason=reason,
+            )
+            raise ControlledOperationDataBlocked(reason)
 
         minute_command = CandidateMinuteAcquisitionCommand.create(
             candidate_set=candidates,
@@ -632,6 +666,7 @@ class ControlledDecisionTimeOperationRunner:
             output_root=run_root / "intraday-features",
             idempotency_key=f"{command.idempotency_key}:intraday",
             max_workers=configuration.feature_max_workers,
+            repository_factory=self._feature_repository_factory,
         )
         intraday_features = load_verified_feature_bundle_v2(
             run_root / "intraday-features" / intraday_receipt.bundle_locator,
@@ -739,6 +774,7 @@ class ControlledDecisionTimeOperationRunner:
                 overlay_path=overlay_path,
                 hard_cutoff=hard_cutoff,
                 after_stage_hook=self._canonical_after_stage_hook,
+                repository_factory=self._canonical_repository_factory,
             )
         except LifecycleStageExecutionError as exc:
             if exc.exception_type != ControlledCanonicalDeadlineExceeded.__name__:
@@ -1074,10 +1110,7 @@ class ControlledDecisionTimeOperationRunner:
             settled_path = run_root / "operation-packages" / str(settled.package_id)
             outcome_path = _evidence_path(run_root, settled, "OUTCOME_OBSERVATION")
             outcome = load_trade_horizon_outcome_evidence(outcome_path)
-            longitudinal_record = SQLiteLongitudinalOperationalIndex(
-                self._output_root / "longitudinal-operational-index.sqlite3",
-                clock=self._clock,
-            ).append(
+            longitudinal_record = self._longitudinal_index.append(
                 package=settled,
                 package_locator=settled_path.relative_to(self._output_root).as_posix(),
             )
@@ -1228,12 +1261,11 @@ class ControlledDecisionTimeOperationRunner:
                 raise ValueError("settled package supersession lineage mismatch")
             settled_path = run_root / "operation-packages" / str(settled.package_id)
 
-        index = SQLiteLongitudinalOperationalIndex(
-            self._output_root / "longitudinal-operational-index.sqlite3",
-            clock=self._clock,
-        )
         locator = settled_path.relative_to(self._output_root).as_posix()
-        longitudinal_record = index.append(package=settled, package_locator=locator)
+        longitudinal_record = self._longitudinal_index.append(
+            package=settled,
+            package_locator=locator,
+        )
         return ControlledOperationSettlementResult(
             snapshot=self._journal.get(command.run_id),
             outcome=outcome,
@@ -1676,10 +1708,8 @@ class ControlledDecisionTimeOperationRunner:
         if not required.issubset(completed):
             return False
         database_path = self._run_root(command) / "canonical-lifecycle.sqlite3"
-        if not database_path.is_file():
-            return False
         try:
-            repository = SQLiteLifecycleRunRepository(database_path, read_only=True)
+            repository = self._canonical_repository_factory(database_path, True)
             child_run = repository.get_run_by_idempotency_key(
                 f"{command.idempotency_key}:canonical-controlled-v2"
             )
@@ -1778,8 +1808,12 @@ def _run_feature_materialization(
     output_root: Path,
     idempotency_key: str,
     max_workers: int,
+    repository_factory: FeatureRunRepositoryFactory | None,
 ) -> FeatureMaterializationReceipt:
-    runner = FeatureMaterializationRunner(max_workers=max_workers)
+    runner = FeatureMaterializationRunner(
+        max_workers=max_workers,
+        repository_factory=repository_factory,
+    )
     common = {
         "verified_dataset": verified_dataset,
         "feature_set": feature_set,
@@ -1790,8 +1824,11 @@ def _run_feature_materialization(
         "output_root": output_root,
         "idempotency_key": idempotency_key,
     }
-    if not (output_root / "materialization-run.sqlite3").exists():
+    try:
         return runner.run(**common, execution_mode=FeatureMaterializationExecutionMode.START_NEW)  # type: ignore[arg-type]
+    except ValueError as exc:
+        if "already exists" not in str(exc):
+            raise
     try:
         return runner.run(**common, execution_mode=FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE)  # type: ignore[arg-type]
     except ValueError as exc:

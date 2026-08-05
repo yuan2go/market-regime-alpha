@@ -155,6 +155,15 @@ class DailyLoopRunResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyLoopSourceFreezeResult:
+    """Verified raw Source Archive bound to durable Runtime identity."""
+
+    record: DailyRunRecord
+    source_archive_path: Path
+    acquired: AcquiredReplaySource
+
+
+@dataclass(frozen=True, slots=True)
 class DailyLoopSettlementResult:
     """Append-only settlement result over immutable T-day evidence."""
 
@@ -249,6 +258,53 @@ class DailyLoopRunner:
                 PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
             ),
             acquire=lambda profile, request: profile.acquire_current(request),
+        )
+
+    def freeze_sources(
+        self,
+        command: DailyRunCommand,
+        *,
+        replay_archive_path: Path | None = None,
+    ) -> DailyLoopSourceFreezeResult:
+        """Freeze and bind sources without entering the Legacy research path."""
+
+        self._validate_command(command, source_only=True)
+        if command.run_mode is RunMode.LIVE:
+            self.prepare_history(command)
+            self.freeze_security_status(command)
+            self.freeze_decision_quote(command)
+        record = self._repository.create_or_get(
+            command,
+            created_at=self._now(),
+        )
+        if record.status is DailyRunStatus.FAILED:
+            record = self._repository.resume_failed(
+                record.run_request_id,
+                changed_at=self._now(),
+            )
+        try:
+            acquired, source_archive_path, record = self._freeze_source(
+                command=command,
+                record=record,
+                replay_archive_path=replay_archive_path,
+                allow_live_failure_fallback=False,
+            )
+        except Exception as exc:
+            current = self._repository.get(record.run_request_id)
+            if current.status not in {
+                DailyRunStatus.DATA_BLOCKED,
+                DailyRunStatus.REVIEW_PUBLISHED,
+            }:
+                self._repository.mark_failed(
+                    current.run_request_id,
+                    reason=f"{type(exc).__name__}:{exc}",
+                    changed_at=self._now(),
+                )
+            raise
+        return DailyLoopSourceFreezeResult(
+            record=record,
+            source_archive_path=source_archive_path,
+            acquired=acquired,
         )
 
     def finalize_run(
@@ -640,6 +696,7 @@ class DailyLoopRunner:
             result = self._live_failure_result(
                 request,
                 RuntimeError("LIVE_PROVIDER_NOT_CONFIGURED"),
+                provider_profile_id=record.command.provider_profile_id,
             )
             return self._bind_live_control_evidence(
                 result=result,
@@ -670,6 +727,7 @@ class DailyLoopRunner:
             security_status=security_status,
             current=current,
             request=request,
+            profile_id=record.command.provider_profile_id,
         )
         return self._bind_live_control_evidence(
             result=result,
@@ -775,7 +833,7 @@ class DailyLoopRunner:
             PublicCompositeBatch,
         ],
     ) -> AcquisitionStageReceipt:
-        self._validate_command(command)
+        self._validate_command(command, source_only=True)
         if command.run_mode is not RunMode.LIVE:
             raise ValueError("acquisition stage commands require LIVE mode")
         record = self._repository.create_or_get(
@@ -961,6 +1019,7 @@ class DailyLoopRunner:
         request: PublicCompositeRequest,
         error: Exception,
         *,
+        provider_profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
         partial_batch: PublicCompositeBatch | None = None,
     ) -> PublicCompositeProviderResult:
         retrieved_at = RetrievedAt(self._now())
@@ -977,7 +1036,7 @@ class DailyLoopRunner:
         payload = AcquiredSourcePayload(
             provider_id=ProviderId("provider-public-composite-live-runtime"),
             product="live-acquisition-failure",
-            locator="runtime://public-composite-live-v1/acquisition-failure",
+            locator=f"runtime://{provider_profile_id}/acquisition-failure",
             raw_payload=raw,
             retrieved_time=retrieved_at,
             limitations=(
@@ -993,7 +1052,7 @@ class DailyLoopRunner:
             limitations=(),
         )
         return PublicCompositeProviderResult(
-            profile_id=PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+            profile_id=provider_profile_id,
             decision_time=request.decision_time,
             raw_payloads=(*partial.raw_payloads, payload),
             bars=partial.bars,
@@ -1240,11 +1299,24 @@ class DailyLoopRunner:
         if self._after_stage_hook is not None:
             self._after_stage_hook(status)
 
-    def _validate_command(self, command: DailyRunCommand) -> None:
+    def _validate_command(
+        self,
+        command: DailyRunCommand,
+        *,
+        source_only: bool = False,
+    ) -> None:
         if command.universe_policy_id != str(self._policy.policy_id):
             raise ValueError("DailyRunCommand Universe Policy identity mismatch")
-        if command.model_set_id != DAILY_B0_B1_MODEL_SET_ID:
+        if (
+            not source_only
+            and command.model_set_id != DAILY_B0_B1_MODEL_SET_ID
+        ):
             raise ValueError("DailyRunCommand requires the frozen B0/B1 model set")
+        if source_only and command.model_set_id not in {
+            DAILY_B0_B1_MODEL_SET_ID,
+            "free-data-canonical-inputs-v1",
+        }:
+            raise ValueError("Daily source freeze model-set identity is unsupported")
 
     def _now(self) -> datetime:
         value = self._clock()

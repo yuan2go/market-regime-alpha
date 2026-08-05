@@ -14,6 +14,7 @@ from market_regime_alpha.core.time import AvailabilityTime, RetrievedAt
 from market_regime_alpha.data.providers.public_composite.contracts import (
     BAOSTOCK_PUBLIC_PROVIDER_ID,
     HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
+    PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     TENCENT_PUBLIC_PROVIDER_ID,
     AcquiredSourcePayload,
     PublicBar,
@@ -21,6 +22,7 @@ from market_regime_alpha.data.providers.public_composite.contracts import (
     PublicCompositeRequest,
     PublicQuote,
     PublicSecurityStatusObservation,
+    RawSourceRequestMetadata,
     STStatus,
     ListingStatus,
     SecurityStatusEvidenceScope,
@@ -61,8 +63,14 @@ def _retrieved_at(clock: Clock) -> RetrievedAt:
 class BaoStockHistoryClient:
     """Acquire prior-session BaoStock daily rows without cache substitution."""
 
-    def __init__(self, *, clock: Clock = _utc_now) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Clock = _utc_now,
+        provider_profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+    ) -> None:
         self._clock = clock
+        self._provider_profile_id = provider_profile_id
 
     def acquire(self, request: PublicCompositeRequest) -> PublicCompositeBatch:
         try:
@@ -79,6 +87,7 @@ class BaoStockHistoryClient:
             if getattr(login, "error_code", "0") != "0":
                 raise AShareDataError(f"BaoStock login failed: {login.error_msg}")
             for symbol in request.symbols:
+                requested = _retrieved_at(self._clock)
                 history_end = (
                     request.decision_time.value.date() - timedelta(days=1)
                 )
@@ -116,16 +125,48 @@ class BaoStockHistoryClient:
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode("utf-8")
+                retrieved = _retrieved_at(self._clock)
                 source = AcquiredSourcePayload(
                     provider_id=BAOSTOCK_PUBLIC_PROVIDER_ID,
                     product="query_history_k_data_plus:daily:adjustflag=3",
                     locator=f"baostock://history/{to_baostock_code(symbol)}",
                     raw_payload=raw,
-                    retrieved_time=_retrieved_at(self._clock),
+                    retrieved_time=retrieved,
                     limitations=(
                         "HISTORICAL_AVAILABLE_TIME_NOT_PROVIDED",
                         HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1,
+                        "BAOSTOCK_LIBRARY_RESULT_REENCODED_NOT_TRANSPORT_BYTES",
                         "PUBLIC_DATA_EXPLORATORY_ONLY",
+                    ),
+                    request_metadata=RawSourceRequestMetadata(
+                        provider_profile_id=self._provider_profile_id,
+                        endpoint="query_history_k_data_plus",
+                        request_parameters=tuple(
+                            sorted(
+                                (
+                                    ("adjustflag", "3"),
+                                    ("end_date", history_end.isoformat()),
+                                    ("frequency", "d"),
+                                    ("start_date", request.history_start.isoformat()),
+                                    ("symbol", to_baostock_code(symbol)),
+                                )
+                            )
+                        ),
+                        requested_at=requested.value,
+                        provider_timestamp=None,
+                        event_time=None,
+                        available_at=retrieved.value,
+                        decision_time=request.decision_time.value,
+                        http_status=None,
+                        content_type="application/json",
+                        response_size=len(raw),
+                        encoding="utf-8",
+                        symbol_scope=(symbol,),
+                        field_scope=(
+                            "amount",
+                            "daily_ohlcv",
+                            "prior_session_security_status",
+                        ),
                     ),
                 )
                 payloads.append(source)
@@ -213,11 +254,13 @@ class BaoStockSecurityStatusClient:
         *,
         timeout_seconds: float = 8.0,
         clock: Clock = _utc_now,
+        provider_profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     ) -> None:
         if timeout_seconds <= 0.0:
             raise ValueError("timeout_seconds must be positive")
         self.timeout_seconds = timeout_seconds
         self._clock = clock
+        self._provider_profile_id = provider_profile_id
 
     def acquire(self, request: PublicCompositeRequest) -> PublicCompositeBatch:
         try:
@@ -238,6 +281,7 @@ class BaoStockSecurityStatusClient:
                 raise AShareDataError(f"BaoStock login failed: {login.error_msg}")
             try:
                 for symbol in request.symbols:
+                    requested = _retrieved_at(self._clock)
                     history_response = _query_baostock_status_history(
                         bs=bs,
                         symbol=symbol,
@@ -284,6 +328,33 @@ class BaoStockSecurityStatusClient:
                             "PROVIDER_DOES_NOT_DECLARE_HISTORICAL_PUBLICATION_TIME",
                             "PUBLIC_DATA_EXPLORATORY_ONLY",
                             "FORMAL_PIT_NOT_ESTABLISHED",
+                            "BAOSTOCK_LIBRARY_RESULT_REENCODED_NOT_TRANSPORT_BYTES",
+                        ),
+                        request_metadata=RawSourceRequestMetadata(
+                            provider_profile_id=self._provider_profile_id,
+                            endpoint=("query_history_k_data_plus+query_stock_basic"),
+                            request_parameters=(
+                                (
+                                    "decision_date",
+                                    request.decision_time.value.date().isoformat(),
+                                ),
+                                ("symbol", to_baostock_code(symbol)),
+                            ),
+                            requested_at=requested.value,
+                            provider_timestamp=None,
+                            event_time=None,
+                            available_at=retrieved.value,
+                            decision_time=request.decision_time.value,
+                            http_status=None,
+                            content_type="application/json",
+                            response_size=len(raw),
+                            encoding="utf-8",
+                            symbol_scope=(symbol,),
+                            field_scope=(
+                                "listing_status",
+                                "st_status",
+                                "trading_status",
+                            ),
                         ),
                     )
                     payloads.append(source)
@@ -334,9 +405,13 @@ class TencentCurrentQuoteClient:
         *,
         timeout_seconds: float = 8.0,
         clock: Clock = _utc_now,
+        provider_profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
     ) -> None:
+        if timeout_seconds <= 0.0:
+            raise ValueError("timeout_seconds must be positive")
         self.timeout_seconds = timeout_seconds
         self._clock = clock
+        self._provider_profile_id = provider_profile_id
 
     def acquire(self, request: PublicCompositeRequest) -> PublicCompositeBatch:
         query = ",".join(to_tencent_code(symbol) for symbol in request.symbols)
@@ -348,28 +423,59 @@ class TencentCurrentQuoteClient:
                 "Referer": "https://gu.qq.com/",
             },
         )
+        requested = _retrieved_at(self._clock)
         try:
             with urlopen(  # noqa: S310 - fixed Tencent public quote endpoint.
                 http_request,
                 timeout=self.timeout_seconds,
             ) as response:
                 raw = response.read()
-        except Exception as exc:  # noqa: BLE001
+                http_status = int(getattr(response, "status", 200))
+                content_type = _response_content_type(response)
+        except (OSError, TimeoutError) as exc:
             raise AShareDataError(f"Tencent quote query failed: {exc}") from exc
+        if http_status < 200 or http_status >= 300:
+            raise AShareDataError(f"Tencent quote HTTP status {http_status}")
+        if not raw:
+            raise AShareDataError("Tencent quote empty response")
+        try:
+            decoded = raw.decode("gb18030", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise AShareDataError("Tencent quote invalid response encoding") from exc
+        parsed = parse_tencent_quote_text(decoded)
+        if not parsed:
+            raise AShareDataError("Tencent quote invalid response envelope")
         retrieved = _retrieved_at(self._clock)
+        content_type_mismatch = not _is_tencent_quote_content_type(content_type)
+        source_limitations = [
+            "TRADING_STATUS_NOT_QUALIFIED",
+            "PUBLIC_DATA_EXPLORATORY_ONLY",
+        ]
+        if content_type_mismatch:
+            source_limitations.append("TENCENT_CONTENT_TYPE_MISMATCH")
         source = AcquiredSourcePayload(
             provider_id=TENCENT_PUBLIC_PROVIDER_ID,
             product="qt.gtimg.cn:current-quote",
             locator=url,
             raw_payload=raw,
             retrieved_time=retrieved,
-            limitations=(
-                "TRADING_STATUS_NOT_QUALIFIED",
-                "PUBLIC_DATA_EXPLORATORY_ONLY",
+            limitations=tuple(source_limitations),
+            request_metadata=RawSourceRequestMetadata(
+                provider_profile_id=self._provider_profile_id,
+                endpoint=TENCENT_QUOTE_URL,
+                request_parameters=(("symbols", query),),
+                requested_at=requested.value,
+                provider_timestamp=None,
+                event_time=None,
+                available_at=retrieved.value,
+                decision_time=request.decision_time.value,
+                http_status=http_status,
+                content_type=content_type,
+                response_size=len(raw),
+                encoding="gb18030",
+                symbol_scope=request.symbols,
+                field_scope=("current_quote",),
             ),
-        )
-        parsed = parse_tencent_quote_text(
-            raw.decode("gb18030", errors="ignore")
         )
         quotes: list[PublicQuote] = []
         for symbol in request.symbols:
@@ -392,13 +498,34 @@ class TencentCurrentQuoteClient:
                     finality=SourceFieldFinality.PRELIMINARY,
                 )
             )
+        limitations = ["TENCENT_CURRENT_QUOTE_ONLY"]
+        if content_type_mismatch:
+            limitations.append("TENCENT_CONTENT_TYPE_MISMATCH")
         return PublicCompositeBatch(
             raw_payloads=(source,),
             bars=(),
             quotes=tuple(quotes),
             source_conflicts=(),
-            limitations=("TENCENT_CURRENT_QUOTE_ONLY",),
+            limitations=tuple(limitations),
         )
+
+
+def _response_content_type(response: Any) -> str | None:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get("Content-Type")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _is_tencent_quote_content_type(value: str | None) -> bool:
+    if value is None:
+        return False
+    media_type = value.split(";", 1)[0].strip().lower()
+    return media_type in {"text/plain", "application/javascript"}
 
 
 def _parse_tencent_time(

@@ -26,8 +26,10 @@ from market_regime_alpha.position import (
     ThesisHealthRuleConfiguration,
     ThesisInvalidationRuleSet,
 )
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
 )
 from market_regime_alpha.research.platform_v2.reader import (
     load_verified_research_layer_artifact,
@@ -231,12 +233,11 @@ def _load_inputs(
 
 
 def _assess(
-    database: Path,
+    repository: Any,
     request: dict[str, Any],
     *,
     base: Path,
 ) -> dict[str, object]:
-    repository = SQLiteThesisHealthRepository(database)
     inputs = _load_inputs(request, base=base)
     observation = ThesisHealthApplicationService(
         repository
@@ -359,14 +360,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Build and persist one Thesis Health V2 Observation only"
     )
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     parser.add_argument("--request", type=Path, required=True)
     args = parser.parse_args(argv)
-    result = _assess(
-        args.database,
-        _read_request(args.request),
-        base=args.request.resolve().parent,
-    )
+    with RepositoryFactory(settings_from_namespace(args)) as repositories:
+        result = _assess(
+            repositories.thesis_health(),
+            _read_request(args.request),
+            base=args.request.resolve().parent,
+        )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

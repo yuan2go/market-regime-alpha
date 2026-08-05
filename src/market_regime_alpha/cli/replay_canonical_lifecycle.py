@@ -23,9 +23,13 @@ from market_regime_alpha.application.canonical_lifecycle.repositories import (
 from market_regime_alpha.application.canonical_lifecycle.replay import (
     LifecycleReplayStatus,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from market_regime_alpha.persistence.repository_factory import (
+    DatabaseBindingError,
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
 )
+from market_regime_alpha.persistence.settings import DatabaseBackend
 
 
 EXIT_STABLE = 0
@@ -53,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Runner and all execution services remain disabled."
         )
     )
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--idempotency-key")
     parser.add_argument("--output-dir", type=Path)
@@ -63,13 +67,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
-        if not args.database.is_file():
+        repositories = RepositoryFactory(settings_from_namespace(args))
+        if (
+            repositories.settings.backend is DatabaseBackend.SQLITE
+            and not repositories.settings.require_sqlite_path().is_file()
+        ):
             raise _CLIValidationError(
                 "replay requires an existing lifecycle database"
             )
-        repository = SQLiteLifecycleRunRepository(args.database)
+        repository = repositories.lifecycle()
         source_run_id = LifecycleRunId(args.run_id)
         source_history = repository.history(source_run_id)
+        repositories.assert_runtime_binding(
+            "CANONICAL_LIFECYCLE",
+            str(source_run_id),
+        )
         clock = _DeterministicReplayClock(
             source_history.run.updated_at + timedelta(seconds=1)
         )
@@ -84,6 +96,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             idempotency_key=idempotency_key,
             clock=clock,
             output_directory=args.output_dir,
+        )
+        repositories.bind_runtime(
+            "CANONICAL_LIFECYCLE",
+            str(first.replay_run.run_id),
         )
         second = run_durable_lifecycle_replay(
             repository=repository,
@@ -112,7 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reason_code="REPLAY_SOURCE_NOT_FOUND",
             exc=exc,
         )
-    except LifecycleRepositoryError as exc:
+    except (LifecycleRepositoryError, DatabaseBindingError) as exc:
         return _print_error(
             exit_code=EXIT_REPOSITORY_ERROR,
             reason_code="REPLAY_REPOSITORY_ERROR",

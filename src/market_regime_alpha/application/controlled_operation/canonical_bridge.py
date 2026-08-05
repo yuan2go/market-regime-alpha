@@ -27,6 +27,7 @@ from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
 )
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleHistory,
+    LifecycleRunRepository,
     LifecycleRunNotFound,
 )
 from market_regime_alpha.application.canonical_lifecycle.runner import (
@@ -109,6 +110,14 @@ from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 
 
 Clock = Callable[[], datetime]
+CanonicalRepositoryFactory = Callable[[Path, bool], LifecycleRunRepository]
+
+
+def sqlite_controlled_canonical_repository(
+    path: Path,
+    read_only: bool,
+) -> LifecycleRunRepository:
+    return SQLiteLifecycleRunRepository(path, read_only=read_only)
 
 
 class ControlledCanonicalDeadlineExceeded(RuntimeError):
@@ -440,6 +449,9 @@ def run_controlled_canonical_lifecycle(
     overlay_path: Path,
     hard_cutoff: datetime,
     after_stage_hook: AfterStageHook | None = None,
+    repository_factory: CanonicalRepositoryFactory = (
+        sqlite_controlled_canonical_repository
+    ),
 ) -> ControlledCanonicalLifecycleExecution:
     """Run and durably journal the real canonical stage graph through Entry."""
 
@@ -625,7 +637,7 @@ def run_controlled_canonical_lifecycle(
         if stage not in handlers
     }
     database_path = run_root / "canonical-lifecycle.sqlite3"
-    repository = SQLiteLifecycleRunRepository(database_path)
+    repository = repository_factory(database_path, False)
     stage_latencies: dict[LifecycleStageName, int] = {}
     runner = CanonicalDecisionLifecycleRunner(
         repository=repository,

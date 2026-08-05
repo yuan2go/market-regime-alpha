@@ -10,6 +10,8 @@ import sqlite3
 import sys
 from typing import NoReturn, Sequence, cast
 
+import psycopg
+
 from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
 )
@@ -27,6 +29,7 @@ from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleIdempotencyConflict,
     LifecycleRepositoryError,
+    LifecycleRunRepository,
     LifecycleRunNotFound,
     LifecycleUnsafeResume,
 )
@@ -34,17 +37,19 @@ from market_regime_alpha.application.canonical_lifecycle.replay import (
     LifecycleReplayStatus,
 )
 from market_regime_alpha.application.canonical_lifecycle.runner import (
+    CanonicalDecisionLifecycleRunner,
     LifecycleRunResult,
     LifecycleStageExecutionError,
 )
 from market_regime_alpha.application.canonical_lifecycle.runtime_configuration import (
     RuntimeConfigurationReader,
-)
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+    RuntimeConfigurationSet,
 )
 from market_regime_alpha.application.canonical_lifecycle.sqlite_composition import (
     build_sqlite_lifecycle_runner,
+)
+from market_regime_alpha.application.canonical_lifecycle.postgres_composition import (
+    build_postgres_lifecycle_runner,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunStatus,
@@ -58,6 +63,16 @@ from market_regime_alpha.cli._canonical_lifecycle_output import (
     result_payload,
     safety_declarations,
 )
+from market_regime_alpha.persistence.repository_factory import (
+    DatabaseBindingError,
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
+from market_regime_alpha.persistence.postgres.connection import (
+    PostgresConnectionUnavailable,
+)
+from market_regime_alpha.persistence.settings import DatabaseBackend
 
 
 EXIT_SUCCESS = 0
@@ -103,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
     )
-    parser.add_argument("--database", type=Path)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     parser.add_argument("--authority-database", type=Path)
     return parser
 
@@ -122,17 +137,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.output_dir is not None
             else Path("artifacts/canonical-lifecycle").resolve()
         )
-        database = (
-            args.database.resolve()
-            if args.database is not None
-            else output_directory / "lifecycle-runtime.sqlite3"
-        )
+        repositories = RepositoryFactory(settings_from_namespace(args))
         if args.replay_run_id is not None:
-            return _replay(args=args, database=database)
+            return _replay(
+                args=args,
+                repository=repositories.lifecycle(),
+                repositories=repositories,
+            )
         if args.resume_run_id is not None:
             result = _resume(
                 args=args,
-                database=database,
+                repository=repositories.lifecycle(),
+                repositories=repositories,
                 stop_after_stage=stop_after,
                 requested_output_directory=(
                     args.output_dir.resolve()
@@ -143,7 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             result = _start(
                 args=args,
-                database=database,
+                repositories=repositories,
                 stop_after_stage=stop_after,
                 output_directory=output_directory,
             )
@@ -167,6 +183,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except LifecycleUnsafeResume as exc:
         print_error("LIFECYCLE_RESUME_REJECTED", exc, args=args)
         return EXIT_RESUME_REJECTED
+    except DatabaseBindingError as exc:
+        print_error("DATABASE_BINDING_MISMATCH", exc, args=args)
+        return EXIT_RESUME_REJECTED
     except LifecycleStageExecutionError as exc:
         repository = repository_from_args(args)
         if repository is None:
@@ -174,7 +193,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print_history_failure(repository, exc)
         return EXIT_STAGE_FAILED
-    except (LifecycleRepositoryError, sqlite3.Error) as exc:
+    except (
+        LifecycleRepositoryError,
+        sqlite3.Error,
+        psycopg.Error,
+        PostgresConnectionUnavailable,
+    ) as exc:
         print_error("LIFECYCLE_REPOSITORY_ERROR", exc, args=args)
         return EXIT_REPOSITORY_ERROR
     except (OSError, TypeError, ValueError) as exc:
@@ -189,7 +213,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
 
-def _replay(*, args: argparse.Namespace, database: Path) -> int:
+def _replay(
+    *,
+    args: argparse.Namespace,
+    repository: LifecycleRunRepository,
+    repositories: RepositoryFactory,
+) -> int:
     forbidden = tuple(
         name
         for name in (
@@ -206,11 +235,12 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
             "--replay-run-id cannot be combined with "
             + ", ".join(f"--{name.replace('_', '-')}" for name in forbidden)
         )
-    if not database.is_file():
-        raise CLIValidationError("replay requires an existing lifecycle database")
-    repository = _repository(database)
     source_run_id = LifecycleRunId(str(args.replay_run_id))
     source_history = repository.history(source_run_id)
+    repositories.assert_runtime_binding(
+        "CANONICAL_LIFECYCLE",
+        str(source_run_id),
+    )
     replay_clock = _DeterministicReplayClock(
         source_history.run.updated_at + timedelta(seconds=1)
     )
@@ -228,6 +258,10 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
         idempotency_key=idempotency_key,
         clock=replay_clock,
         output_directory=output_directory,
+    )
+    repositories.bind_runtime(
+        "CANONICAL_LIFECYCLE",
+        str(first.replay_run.run_id),
     )
     second = run_durable_lifecycle_replay(
         repository=repository,
@@ -275,7 +309,7 @@ def _replay(*, args: argparse.Namespace, database: Path) -> int:
 def _start(
     *,
     args: argparse.Namespace,
-    database: Path,
+    repositories: RepositoryFactory,
     stop_after_stage: LifecycleStageName | None,
     output_directory: Path,
 ) -> LifecycleRunResult:
@@ -287,6 +321,12 @@ def _start(
     if missing:
         raise CLIValidationError(
             "new run requires " + ", ".join(f"--{name.replace('_', '-')}" for name in missing)
+        )
+    if repositories.settings.backend is DatabaseBackend.POSTGRES and (
+        args.authority_database is not None
+    ):
+        raise CLIValidationError(
+            "PostgreSQL runtime uses its configured schema for domain authority"
         )
     if (
         args.authority_database is not None
@@ -325,13 +365,17 @@ def _start(
             else None
         ),
     )
-    repository = _repository(database)
-    runner = build_sqlite_lifecycle_runner(
+    repository = repositories.lifecycle()
+    runner = _build_runner(
+        repositories=repositories,
         repository=repository,
         command=command,
         manifest=manifest,
         configurations=configurations,
-        clock=_utc_now,
+    )
+    repositories.bind_runtime(
+        "CANONICAL_LIFECYCLE",
+        str(command.run_id),
     )
     return runner.run(command)
 
@@ -339,7 +383,8 @@ def _start(
 def _resume(
     *,
     args: argparse.Namespace,
-    database: Path,
+    repository: LifecycleRunRepository,
+    repositories: RepositoryFactory,
     stop_after_stage: LifecycleStageName | None,
     requested_output_directory: Path | None,
 ) -> LifecycleRunResult:
@@ -353,16 +398,24 @@ def _resume(
             "--resume-run-id cannot be combined with "
             + ", ".join(f"--{name.replace('_', '-')}" for name in forbidden)
         )
-    if not database.is_file():
-        raise CLIResumeRejected("resume requires an existing lifecycle database")
-    repository = _repository(database)
     run_id = LifecycleRunId(str(args.resume_run_id))
+    repositories.assert_runtime_binding(
+        "CANONICAL_LIFECYCLE",
+        str(run_id),
+    )
     command = repository.get_command(run_id)
     requested_authority = (
         args.authority_database.resolve()
         if args.authority_database is not None
         else None
     )
+    if (
+        repositories.settings.backend is DatabaseBackend.POSTGRES
+        and requested_authority is not None
+    ):
+        raise CLIResumeRejected(
+            "PostgreSQL resume uses the configured authority schema"
+        )
     if (
         requested_authority is not None
         and requested_authority != command.authority_database_locator
@@ -393,12 +446,12 @@ def _resume(
         raise CLIResumeRejected(
             "stored resume inputs no longer reconstruct the original command"
         ) from exc
-    runner = build_sqlite_lifecycle_runner(
+    runner = _build_runner(
+        repositories=repositories,
         repository=repository,
         command=command,
         manifest=manifest,
         configurations=configurations,
-        clock=_utc_now,
     )
     return runner.resume(run_id, stop_after_stage=stop_after_stage)
 
@@ -450,15 +503,30 @@ class _DeterministicReplayClock:
         return value
 
 
-def _repository(database: Path) -> SQLiteLifecycleRunRepository:
-    try:
-        return SQLiteLifecycleRunRepository(database)
-    except LifecycleRepositoryError:
-        raise
-    except (OSError, sqlite3.Error) as exc:
-        raise LifecycleRepositoryError(
-            "lifecycle repository could not be opened or migrated"
-        ) from exc
+def _build_runner(
+    *,
+    repositories: RepositoryFactory,
+    repository: LifecycleRunRepository,
+    command: CanonicalLifecycleCommand,
+    manifest: CanonicalLifecycleInputManifest | None,
+    configurations: RuntimeConfigurationSet,
+) -> CanonicalDecisionLifecycleRunner:
+    if repositories.settings.backend is DatabaseBackend.POSTGRES:
+        return build_postgres_lifecycle_runner(
+            repository=repository,
+            factory=repositories.postgres_factory,
+            command=command,
+            manifest=manifest,
+            configurations=configurations,
+            clock=_utc_now,
+        )
+    return build_sqlite_lifecycle_runner(
+        repository=repository,
+        command=command,
+        manifest=manifest,
+        configurations=configurations,
+        clock=_utc_now,
+    )
 
 
 if __name__ == "__main__":

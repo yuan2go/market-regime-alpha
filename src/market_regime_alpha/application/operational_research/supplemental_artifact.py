@@ -58,7 +58,9 @@ def publish_supplemental_research_evidence(
     root.mkdir(parents=True, exist_ok=True)
     final = root / str(bundle.bundle_id)
     if final.exists():
-        raise FileExistsError(f"Supplemental evidence Artifact exists: {final}")
+        if load_verified_supplemental_research_evidence(final).bundle != bundle:
+            raise FileExistsError(f"Supplemental evidence Artifact conflict: {final}")
+        return final
     stage = Path(tempfile.mkdtemp(prefix=f".{final.name}.", dir=root))
     try:
         _write_json(stage / "manifest.json", _manifest(bundle))

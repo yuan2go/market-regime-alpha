@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Ordered gap and dependency register  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-04
+> **Last Updated:** 2026-08-05
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
@@ -36,13 +36,16 @@
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
 | Feature package storage efficiency | DELIVERED_WP_SIG_01A_LOCAL_BENCHMARK_PASS | Encoding V2 separates logical hashes from compressed/columnar physical files, shares definition/configuration data and supports selective read; the required 100-symbol fixture reduced bytes by 85.8937% and selective read time by 99.7085% with stable Bundle/Signal hashes | Sustained operational profiling | Observe real Shadow-scale packages without changing logical identities or V1 compatibility |
-| PostgreSQL repository parity | P1 | Lifecycle persistence is SQLite local/test authority | Stable Repository protocols and contract suite | PostgreSQL adapters pass the same concurrency, idempotency, reconstruction and migration contract tests |
+| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–019 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
 
 ## 3. Data and operational evidence gaps
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Controlled 14:55 public runtime | P0-EXTERNAL | Complete controlled runner/package/outcome/index/replay mechanics pass a 100-Universe/5-Candidate offline Fixture; no real 14:55 operation was observed | Controlled scheduling and Provider availability | Sustained real exact-window archives reach `OUTCOME_PENDING`, settle and replay with stable hashes |
+| Free-data on-window operation | P0-EXTERNAL | 20-symbol real BaoStock/Tencent raw evidence was frozen after the window and correctly blocked; recorded 20/100/300 plus real PostgreSQL tests pass | trading-day scheduling and Provider availability | Exact-SHA 14:55 operation publishes a verified terminal package without late data or fallback |
+| Free-data two-phase acquisition | P1 | both CLIs reject a pre-14:55 clock, source freeze groups History/Status/quote, and Controlled static deadline is 14:50 | split static preparation from decision-stage acquisition | static inputs are durably prepared before 14:50; quote is fetched once in the permitted decision window and reused idempotently |
+| Free-data query facade | P1 | resume/replay/report/inspect are Controlled aliases and cannot reconstruct pre-Controlled source/prepared/blocked state | unified read projection over Daily, free-data block, Controlled and Canonical references | all six commands return the documented IDs/statuses for every reachable terminal |
 | Qualified minute-source authority | P0-EXTERNAL | Tencent exact-byte archive/normalizer/resampler is implemented but explicitly `EXPLORATORY`; recorded fixtures prove engineering replay only | Controlled DecisionTime acquisition and qualified formal Provider | Repeated real archives establish availability, units, coverage and PIT limits without promoting Tencent cache rows |
 | Qualified Xuntou V4 input | P0-EXTERNAL | Adapter/preflight/evidence contracts exist; no qualified real XtQuant bundle has passed | Windows XtQuant exporter and source inventory | Real bundle passes qualification and same-pipeline comparison without authority promotion |
 | Qualified PIT Operational stock Universe | P1-EXTERNAL | Versioned 100–300-symbol exploratory artifact is implemented; the fixed 20-symbol pool is isolated to Smoke compatibility | Approved effective-dated PIT membership/liquidity/status source | Repeated qualified Universes account for every inclusion/exclusion with availability evidence and `PIT_CORRECT_FOR_DECLARED_SCOPE` |
@@ -50,6 +53,7 @@
 | PIT theme membership | P1 | Bridge requires full membership coverage, but no qualified daily producer exists | Theme taxonomy and effective-dated source | Every symbol’s primary/supporting membership is available by DecisionTime and versioned |
 | Theme/ETF mapping | P1 | Supplemental contract requires exact mapping coverage; no operational producer exists | ETF Universe and theme taxonomy | Every proxy mapping has effective time, source lineage and deterministic Reader |
 | Theme and Capital observations | P1 | V0 models run from typed fixtures/supplemental artifacts | Qualified market/ETF/symbol history | Daily materializer produces complete decision-time observations with missingness and coverage reports |
+| Free-data supplemental producer | P1 | Built-in Tencent/BaoStock profile emits typed missing theme, ETF and capital evidence and therefore blocks Candidate Discovery | effective-dated taxonomy, ETF mapping and observable-proxy sources | Immutable supplemental artifact passes coverage/availability/lineage validation without claiming institutional intent |
 | External account authority | P1 | H1 snapshots and H3 positions are based on explicit/manual evidence | Broker statement/import boundary | Complete cash/position statement is authenticated, versioned and reconciled before Risk |
 | Fill reconciliation | P1 | Fill is append-only human-recorded evidence, not broker truth | External execution statement and operator roles | Every manual Fill is matched, disputed or corrected through an append-only reconciliation workflow |
 
@@ -85,7 +89,7 @@ sizing, COSCO strategy behavior or any Legacy Broker path.
 | Authentication and RBAC | P1 | Domain `actor` is a string, not an authenticated principal | Operator/API architecture | Roles govern approval, risk, Fill, reconciliation, model transition and incident actions |
 | Artifact signatures | P2 | SHA-256 proves content consistency but not trusted producer identity | Key management and authenticated runtime | Artifacts carry verifiable producer/operator signatures and rotation/revocation rules |
 | Metrics, tracing and alerts | P1 | Reason codes and artifacts exist; no production telemetry stack | H8 | Stage latency/failure/data-quality/risk/reconciliation metrics, trace IDs and actionable alerts are operational |
-| Backup and recovery | P1 | Append-only histories and artifacts are reconstructible, but no production recovery evidence exists | PostgreSQL/filesystem deployment | Point-in-time restore, artifact restore and reconciliation drills are documented and tested |
+| Backup and recovery | P1 | PostgreSQL backup/restore commands are documented and one local custom-format pre-write dump/list check passed; no destructive restore or PITR drill has been performed | Production PostgreSQL/filesystem deployment | Point-in-time restore, isolated database restore, artifact restore and reconciliation drills are observed and documented |
 | QuantDesk read model | P2 | Canonical lifecycle is CLI-driven; Legacy FastAPI is not Reader-backed | Stable H8 commands/queries | UI reads verified artifacts and durable projections without recomputing decisions |
 | Legacy Dashboard isolation | P1 | `web/dividend_t_app.py` can use static fallback and Legacy strategy/risk paths | QuantDesk replacement or explicit isolation | Legacy endpoint is local-only/clearly labelled and cannot be confused with canonical authority |
 | Broker adapter architecture | DEFERRED | QMT/PTrade adapters safely reject live operations | Sustained shadow evidence, security review and separate approval | Versioned intent port, external receipts, reconciliation, permissions and kill switch pass dedicated admission |
@@ -100,16 +104,16 @@ The following are not open implementation gaps, although their operating/model e
 - recoverable exploratory DailyLoop;
 - Market/Theme/Capital/Candidate research mechanics;
 - Signal and uncalibrated PathForecast mechanics;
-- SQLite Opportunity/Thesis lifecycle;
+- PostgreSQL-default Opportunity/Thesis lifecycle with explicit SQLite compatibility;
 - H1 complete-account Portfolio/Risk;
 - H2 Thesis-scoped authority trace;
 - H3 Fill/calendar-derived T+1 Position;
-- H4 reducing-risk domain, SQLite persistence, idempotency, strict restoration and decision-only CLI;
+- H4 reducing-risk domain, PostgreSQL-default persistence, idempotency, strict restoration and decision-only CLI;
 - H4.5 ManualTrade V3 route authority, immutable Directive/Policy/Attempt,
   migration 010, unified atomic confirmation, H5/H6 lineage validation,
   T+1/Gate recheck, reducing Fill compatibility and reference-only CLI;
-- H5 typed invalidation rules, verified current-evidence Builder, V2 Observation, migration 008, SQLite replay, V2-only CLI and thin operational assessment adapter;
-- H6 typed composition policy/manifest, exact immutable package, migration 009, append-only SQLite replay index, V2-only operational research route and H5 integration;
+- H5 typed invalidation rules, verified current-evidence Builder, V2 Observation, migration 008, PostgreSQL-default replay, V2-only CLI and thin operational assessment adapter;
+- H6 typed composition policy/manifest, exact immutable package, migration 009, append-only PostgreSQL-default replay index, V2-only operational research route and H5 integration;
 - canonical 16-stage Runner, migration-011 Lifecycle Runtime Journal,
   idempotent/recoverable stage receipts, single-snapshot history reads and
   captured-source durable replay with pure model recomputation and read-only
@@ -120,7 +124,10 @@ The following are not open implementation gaps, although their operating/model e
   FeatureBundle/Signal recomputation replay and architecture guards on the
   Feature Spine branch;
 - append-only manual Fill ledger;
-- exploratory Holding/Exit, TradeOutcome and rolling diagnostics.
+- exploratory Holding/Exit, TradeOutcome and rolling diagnostics;
+- PostgreSQL-default settings/composition, bounded Repository parity, migrations
+  001–019, credential-free runtime bindings, explicit SQLite compatibility and
+  a schema-only `0 -> 0` local import report.
 
 Delivered mechanics must not be upgraded to production, Alpha or trading-authority claims without the separate exit conditions above.
 
@@ -134,7 +141,7 @@ Frozen dependency/CI mechanics delivered; enforce required remote checks
 → qualified 14:55/Universe/Theme/Capital/account evidence
 → H9 formal validation infrastructure
 → sustained shadow evidence
-→ security/PostgreSQL/observability/QuantDesk
+→ production restore/security/observability/QuantDesk
 → separately approved broker architecture
 ```
 

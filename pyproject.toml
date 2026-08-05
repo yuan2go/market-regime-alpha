@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "psycopg[binary,pool]>=3.2",
     "tushare>=1.4",
     "akshare>=1.18",
     "baostock>=0.9",
@@ -23,10 +24,16 @@ dependencies = [
     "apscheduler>=3.10",
 ]
 
+[project.scripts]
+prepare-free-data-operation = "market_regime_alpha.cli.free_data_operation:prepare_main"
+run-free-data-decision-window = "market_regime_alpha.cli.free_data_operation:run_main"
+resume-free-data-operation = "market_regime_alpha.cli.free_data_operation:resume_main"
+replay-free-data-operation = "market_regime_alpha.cli.free_data_operation:replay_main"
+report-free-data-operation = "market_regime_alpha.cli.free_data_operation:report_main"
+inspect-free-data-operation = "market_regime_alpha.cli.free_data_operation:inspect_main"
+
 [project.optional-dependencies]
-postgres = [
-    "psycopg[binary]>=3.2",
-]
+postgres = []
 dev = [
     "build>=1.2",
     "pytest>=8.2",
@@ -39,6 +46,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 market_regime_alpha = [
+    "persistence/postgres/migrations/*.sql",
     "platform/migrations/*.sql",
     "decision/migrations/*.sql",
     "portfolio/migrations/*.sql",

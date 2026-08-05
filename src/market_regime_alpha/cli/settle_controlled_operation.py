@@ -38,7 +38,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
         run_id = args.run_id
-        runner, journal = runner_and_journal(args)
+        runner, journal, repositories = runner_and_journal(args)
+        repositories.assert_runtime_binding("CONTROLLED_OPERATION", run_id)
         command = load_snapshot(journal, run_id).command
         result = runner.settle(
             command=command,

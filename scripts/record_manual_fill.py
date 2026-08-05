@@ -13,7 +13,11 @@ from market_regime_alpha.application.trading_lifecycle import (
     ManualExecutionApplicationService,
 )
 from market_regime_alpha.core.identity import FillId, ManualTradeId
-from market_regime_alpha.execution import SQLiteManualExecutionRepository
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
 
 
 def _object(value: object) -> dict[str, Any]:
@@ -24,7 +28,7 @@ def _object(value: object) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Append manual Fill and rebuild Position")
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     subparsers = parser.add_subparsers(dest="command", required=True)
     record = subparsers.add_parser("record")
     record.add_argument("--request", type=Path, required=True)
@@ -33,37 +37,38 @@ def main() -> int:
     position.add_argument("--symbol", required=True)
     position.add_argument("--as-of", required=True)
     args = parser.parse_args()
-    service = ManualExecutionApplicationService(
-        SQLiteManualExecutionRepository(args.database)
-    )
-    if args.command == "record":
-        request = _object(json.loads(args.request.read_text(encoding="utf-8")))
-        correction = request.get("correction_of_fill_id")
-        trade, fill = service.record_fill(
-            ManualTradeId(str(request["manual_trade_id"])),
-            external_fill_id=str(request["external_fill_id"]),
-            quantity=int(request["quantity"]),
-            price=float(request["price"]),
-            fees=float(request["fees"]),
-            occurred_at=datetime.fromisoformat(str(request["occurred_at"])),
-            recorded_at=datetime.fromisoformat(str(request["recorded_at"])),
-            actor=str(request["actor"]),
-            reason=str(request["reason"]),
-            idempotency_key=str(request["idempotency_key"]),
-            correction_of_fill_id=(
-                FillId(str(correction)) if correction is not None else None
-            ),
+    with RepositoryFactory(settings_from_namespace(args)) as repositories:
+        service = ManualExecutionApplicationService(
+            repositories.manual_execution()
         )
-        result = {
-            "manual_trade": trade.to_canonical_dict(),
-            "fill": fill.to_canonical_dict(),
-        }
-    else:
-        result = service.rebuild_position(
-            account_id=args.account_id,
-            symbol=args.symbol,
-            as_of=datetime.fromisoformat(args.as_of),
-        ).to_canonical_dict()
+        if args.command == "record":
+            request = _object(json.loads(args.request.read_text(encoding="utf-8")))
+            correction = request.get("correction_of_fill_id")
+            trade, fill = service.record_fill(
+                ManualTradeId(str(request["manual_trade_id"])),
+                external_fill_id=str(request["external_fill_id"]),
+                quantity=int(request["quantity"]),
+                price=float(request["price"]),
+                fees=float(request["fees"]),
+                occurred_at=datetime.fromisoformat(str(request["occurred_at"])),
+                recorded_at=datetime.fromisoformat(str(request["recorded_at"])),
+                actor=str(request["actor"]),
+                reason=str(request["reason"]),
+                idempotency_key=str(request["idempotency_key"]),
+                correction_of_fill_id=(
+                    FillId(str(correction)) if correction is not None else None
+                ),
+            )
+            result = {
+                "manual_trade": trade.to_canonical_dict(),
+                "fill": fill.to_canonical_dict(),
+            }
+        else:
+            result = service.rebuild_position(
+                account_id=args.account_id,
+                symbol=args.symbol,
+                as_of=datetime.fromisoformat(args.as_of),
+            ).to_canonical_dict()
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

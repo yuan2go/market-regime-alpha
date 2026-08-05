@@ -17,12 +17,16 @@ from market_regime_alpha.application.daily_loop.repositories import (
 from market_regime_alpha.application.daily_loop.sqlite_repository import (
     SQLiteDailyRunRepository,
 )
+from market_regime_alpha.application.daily_loop.postgres_repository import (
+    PostgresDailyRunRepository,
+)
 from market_regime_alpha.application.daily_loop.state import DailyRunStatus
 
 if TYPE_CHECKING:
     from market_regime_alpha.application.daily_loop.runner import (
         DailyLoopRunner,
         DailyLoopRunResult,
+        DailyLoopSourceFreezeResult,
         DailyLoopSettlementResult,
     )
 
@@ -30,6 +34,7 @@ __all__ = [
     "DailyRunCommand",
     "DailyLoopRunResult",
     "DailyLoopRunner",
+    "DailyLoopSourceFreezeResult",
     "DailyLoopSettlementResult",
     "DailyRunId",
     "DailyRunIdentity",
@@ -38,6 +43,7 @@ __all__ = [
     "DailyRunStatus",
     "RunMode",
     "RunRequestId",
+    "PostgresDailyRunRepository",
     "SQLiteDailyRunRepository",
     "StageReceipt",
     "DAILY_B0_B1_MODEL_SET_ID",
@@ -49,6 +55,7 @@ def __getattr__(name: str) -> Any:
         "DAILY_B0_B1_MODEL_SET_ID",
         "DailyLoopRunner",
         "DailyLoopRunResult",
+        "DailyLoopSourceFreezeResult",
         "DailyLoopSettlementResult",
     }:
         from market_regime_alpha.application.daily_loop import runner

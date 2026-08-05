@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -19,6 +20,7 @@ from market_regime_alpha.application.operational_research.supplemental_artifact 
     load_verified_supplemental_research_evidence,
     publish_supplemental_research_evidence,
 )
+from market_regime_alpha.application.operational_research.contracts import MissingEvidence
 from market_regime_alpha.application.research_layer.runner import PlatformResearchRunner
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.contracts import DataEligibility
@@ -258,3 +260,74 @@ def test_controlled_platform_research_uses_static_features_and_no_prediction_run
         path=verified.root,
         static_feature_bundle=verified_features,
     ).artifact == artifact
+
+
+def test_controlled_research_preserves_typed_missing_theme_evidence_as_fail_closed(
+    tmp_path: Path, daily_decision_fixture: DailyDecisionFixture
+) -> None:
+    universe, static, verified_features, supplemental = _static_inputs(
+        tmp_path, daily_decision_fixture
+    )
+    incomplete = replace(
+        supplemental.bundle,
+        theme_observations=(),
+        capital_observations=(),
+        theme_memberships=(),
+        etf_theme_mappings=(),
+        etf_observations=(),
+        missing_evidence=tuple(
+            MissingEvidence(
+                evidence_kind="THEME_MEMBERSHIP",
+                key=symbol,
+                reason_codes=("FREE_DATA_THEME_MEMBERSHIP_NOT_PROVIDED",),
+            )
+            for symbol in universe.symbols
+        )
+        + (
+            MissingEvidence(
+                evidence_kind="THEME_OBSERVATION",
+                key="ALL_THEMES",
+                reason_codes=("THEME_COMPONENT_EVIDENCE_NOT_PROVIDED",),
+            ),
+            MissingEvidence(
+                evidence_kind="CAPITAL_OBSERVATION",
+                key="ALL_THEMES",
+                reason_codes=("OBSERVABLE_THEME_CAPITAL_PROXY_NOT_PROVIDED",),
+            ),
+        ),
+        reason_codes=tuple(
+            dict.fromkeys((*supplemental.bundle.reason_codes, "SUPPLEMENTAL_EVIDENCE_INCOMPLETE"))
+        ),
+    )
+    incomplete_path = publish_supplemental_research_evidence(
+        root=tmp_path / "supplemental-incomplete",
+        bundle=incomplete,
+    )
+    inputs = ControlledOperationalResearchInput.create(
+        operational_universe=universe,
+        static_feature_bundle=static,
+        supplemental_evidence=load_verified_supplemental_research_evidence(
+            incomplete_path
+        ),
+    )
+
+    verified = PlatformResearchRunner().run_controlled(
+        inputs=inputs,
+        static_feature_bundle=verified_features,
+        configuration=ControlledResearchPipelineConfig.create(
+            candidate_discovery=ControlledCandidateDiscoveryConfig.create(
+                top_n=1,
+                minimum_candidate_population=1,
+            )
+        ),
+        output_root=tmp_path / "research-incomplete",
+        code_revision="controlled-research-test",
+    )
+
+    assert verified.artifact.candidate_set.selected == ()
+    assert all(
+        "THEME_MEMBERSHIP_MISSING" in item.reason_codes
+        or "MARKET_REGIME_PROHIBITS_RISK" in item.reason_codes
+        for item in verified.artifact.candidate_set.records
+    )
+    assert "SUPPLEMENTAL_EVIDENCE_INCOMPLETE" in verified.artifact.limitations

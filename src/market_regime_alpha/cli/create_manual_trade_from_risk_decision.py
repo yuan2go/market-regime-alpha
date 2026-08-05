@@ -12,12 +12,11 @@ import sqlite3
 import sys
 from typing import Any, NoReturn, Sequence
 
+import psycopg
+
 from market_regime_alpha.application.trading_lifecycle.risk_reduction_confirmation import (
     RiskReductionConfirmationApplicationService,
     RiskReductionConfirmationIdempotencyConflict,
-)
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
@@ -29,6 +28,14 @@ from market_regime_alpha.portfolio.risk_routes import (
     ReducingExecutionObservation,
 )
 from market_regime_alpha.position.authority import SymbolTradingSessionStatus
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
+from market_regime_alpha.persistence.postgres.connection import (
+    PostgresConnectionUnavailable,
+)
 
 
 EXIT_SUCCESS = 0
@@ -53,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Create an H4.5 manual SELL intent; never create Fill or broker order."
         )
     )
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     parser.add_argument("--risk-reducing-decision-id", required=True)
     parser.add_argument("--risk-reducing-decision-hash", required=True)
     parser.add_argument("--exit-directive-id", required=True)
@@ -116,38 +123,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         policy = RiskReductionConfirmationPolicy.from_canonical_dict(
             _object(_read_json(args.confirmation_policy), "confirmation policy")
         )
-        result = RiskReductionConfirmationApplicationService(
-            SQLiteRiskReductionManualIntentRepository(args.database)
-        ).confirm(
-            risk_reducing_decision_id=ArtifactId(
-                args.risk_reducing_decision_id
-            ),
-            risk_reducing_decision_hash=args.risk_reducing_decision_hash,
-            exit_directive_id=ArtifactId(args.exit_directive_id),
-            exit_directive_hash=args.exit_directive_hash,
-            thesis_health_observation_id=ArtifactId(
-                args.thesis_health_observation_id
-            ),
-            thesis_health_observation_hash=(
-                args.thesis_health_observation_hash
-            ),
-            composite_manifest_id=ArtifactId(args.composite_manifest_id),
-            composite_manifest_hash=args.composite_manifest_hash,
-            trading_calendar=calendar,
-            symbol_trading_statuses=statuses,
-            execution_observation=observation,
-            confirmation_policy=policy,
-            expected_price_lower=_h4_5_compatible_price_float(
-                args.expected_price_lower
-            ),
-            expected_price_upper=_h4_5_compatible_price_float(
-                args.expected_price_upper
-            ),
-            confirmed_at=datetime.fromisoformat(args.confirmed_at),
-            actor=args.actor,
-            reason=args.reason,
-            idempotency_key=args.idempotency_key,
-        )
+        with RepositoryFactory(settings_from_namespace(args)) as repositories:
+            result = RiskReductionConfirmationApplicationService(
+                repositories.risk_reduction_manual_intent()
+            ).confirm(
+                risk_reducing_decision_id=ArtifactId(
+                    args.risk_reducing_decision_id
+                ),
+                risk_reducing_decision_hash=args.risk_reducing_decision_hash,
+                exit_directive_id=ArtifactId(args.exit_directive_id),
+                exit_directive_hash=args.exit_directive_hash,
+                thesis_health_observation_id=ArtifactId(
+                    args.thesis_health_observation_id
+                ),
+                thesis_health_observation_hash=(
+                    args.thesis_health_observation_hash
+                ),
+                composite_manifest_id=ArtifactId(args.composite_manifest_id),
+                composite_manifest_hash=args.composite_manifest_hash,
+                trading_calendar=calendar,
+                symbol_trading_statuses=statuses,
+                execution_observation=observation,
+                confirmation_policy=policy,
+                expected_price_lower=_h4_5_compatible_price_float(
+                    args.expected_price_lower
+                ),
+                expected_price_upper=_h4_5_compatible_price_float(
+                    args.expected_price_upper
+                ),
+                confirmed_at=datetime.fromisoformat(args.confirmed_at),
+                actor=args.actor,
+                reason=args.reason,
+                idempotency_key=args.idempotency_key,
+            )
     except RiskReductionConfirmationIdempotencyConflict as error:
         _print_rejection(
             error=error,
@@ -164,7 +172,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             observation=observation,
         )
         return EXIT_VALIDATION_ERROR
-    except sqlite3.Error as error:
+    except (sqlite3.Error, psycopg.Error, PostgresConnectionUnavailable) as error:
         _print_rejection(
             error=error,
             reason_code="H4_5_REPOSITORY_ERROR",

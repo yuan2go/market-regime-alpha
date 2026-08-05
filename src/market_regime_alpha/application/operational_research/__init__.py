@@ -38,6 +38,9 @@ from market_regime_alpha.application.operational_research.composite_service impo
 from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
     SQLiteCompositeOperationalRepository,
 )
+from market_regime_alpha.application.operational_research.postgres_composite_repository import (
+    PostgresCompositeOperationalRepository,
+)
 
 __all__ = [
     "CompositeCoveragePolicy",
@@ -55,6 +58,7 @@ __all__ = [
     "CompositeSourceConflictPolicy",
     "CompositeOperationalEvidenceApplicationService",
     "OperationalResearchRunner",
+    "PostgresCompositeOperationalRepository",
     "SQLiteCompositeOperationalRepository",
     "SupplementalResearchEvidenceBundle",
     "VerifiedCompositeOperationalManifest",
