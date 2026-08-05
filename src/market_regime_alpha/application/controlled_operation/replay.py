@@ -3,16 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
+import sqlite3
 from typing import Callable, TypeVar
 
+from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleRunId,
+)
+from market_regime_alpha.application.canonical_lifecycle.replay_snapshot import (
+    lifecycle_history_hash,
+)
+from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
+    SQLiteLifecycleRunRepository,
+)
+from market_regime_alpha.application.canonical_lifecycle.states import (
+    LifecycleStageName,
+)
 from market_regime_alpha.application.controlled_operation.entry_blocker import (
     ControlledEntryAssessmentBlocker,
     load_controlled_entry_blocker,
 )
 from market_regime_alpha.application.controlled_operation.canonical_segment import (
     CanonicalLifecycleRunObjectReference,
-    ControlledCanonicalLifecycleRunReceipt,
+    LEGACY_CONTROLLED_CANONICAL_RUN_SCHEMA,
     load_controlled_canonical_lifecycle_run,
 )
 from market_regime_alpha.application.controlled_operation.evidence_package import (
@@ -52,6 +66,7 @@ from market_regime_alpha.features.operational_overlay import (
     load_candidate_intraday_feature_overlay,
     load_static_universe_feature_bundle,
 )
+from market_regime_alpha.features.v2_contracts import FeatureMaterializationReceipt
 from market_regime_alpha.forecasting.artifact import replay_path_forecast
 from market_regime_alpha.market_data import (
     AssetType,
@@ -277,21 +292,16 @@ def replay_controlled_operation(
         "CANONICAL_LIFECYCLE_RUN",
         load_controlled_canonical_lifecycle_run,
     )
-    replayed_canonical_run = ControlledCanonicalLifecycleRunReceipt.create(
-        parent_operation_run_id=package.command.run_id,
-        parent_operation_command_hash=package.command.command_hash,
-        decision_time=package.command.decision_time,
-        code_revision=package.code_revision,
-        configuration_manifest_hash=package.configuration_manifest_hash,
-        model_manifest_hash=package.model_manifest_hash,
-        input_references=(
-            CanonicalLifecycleRunObjectReference(
-                "CANDIDATE_FEATURE_VIEW_V2",
-                view.view_id,
-                view.content_hash,
-            ),
+    expected_inputs = (
+        CanonicalLifecycleRunObjectReference(
+            "CANDIDATE_FEATURE_VIEW_V2",
+            view.view_id,
+            view.content_hash,
         ),
-        output_references=(
+    )
+    expected_outputs = tuple(
+        sorted(
+            (
             CanonicalLifecycleRunObjectReference(
                 "SIGNAL_V3",
                 signal.artifact.artifact_id,
@@ -310,12 +320,75 @@ def replay_controlled_operation(
                 entry.artifact_id,
                 entry.content_hash,
             ),
-        ),
-        created_at=package.command.decision_time,
+            ),
+            key=lambda item: (item.reference_type, str(item.object_id)),
+        )
     )
-    if replayed_canonical_run != canonical_run:
+    if (
+        canonical_run.parent_operation_run_id != package.command.run_id
+        or canonical_run.parent_operation_command_hash
+        != package.command.command_hash
+        or canonical_run.decision_time != package.command.decision_time
+        or canonical_run.code_revision != package.code_revision
+        or canonical_run.configuration_manifest_hash
+        != package.configuration_manifest_hash
+        or canonical_run.model_manifest_hash != package.model_manifest_hash
+        or canonical_run.input_references != expected_inputs
+        or canonical_run.output_references != expected_outputs
+    ):
         raise ValueError("Controlled replay Canonical child-run divergence")
-    _validate_stage_receipt_bindings(package, canonical_run)
+    if canonical_run.schema_version != LEGACY_CONTROLLED_CANONICAL_RUN_SCHEMA:
+        canonical_repository = SQLiteLifecycleRunRepository(
+            run_root / "canonical-lifecycle.sqlite3",
+            read_only=True,
+        )
+        lifecycle_run_id = LifecycleRunId(str(canonical_run.run_id))
+        stored_command = canonical_repository.get_command(lifecycle_run_id)
+        stored_history = canonical_repository.history(lifecycle_run_id)
+        receipt_by_stage = {
+            item.stage_name: item.receipt_hash for item in stored_history.receipts
+        }
+        expected_receipts = tuple(
+            receipt_by_stage[LifecycleStageName(stage)]
+            for stage in canonical_run.completed_stages
+        )
+        if (
+            stored_command.command_hash != canonical_run.command_hash
+            or stored_history.run.command_hash != canonical_run.command_hash
+            or lifecycle_history_hash(stored_history) != canonical_run.history_hash
+            or tuple(
+                item.stage_name.value
+                for item in stored_history.stages
+                if item.stage_name in receipt_by_stage
+            )
+            != canonical_run.completed_stages
+            or expected_receipts != canonical_run.stage_receipt_hashes
+            or stored_history.run.status.value != canonical_run.lifecycle_status
+        ):
+            raise ValueError("Controlled replay Canonical durable journal divergence")
+    static_child = _feature_child_reference(
+        run_root / "static-features",
+        bundle_id=static.feature_bundle_id,
+        bundle_hash=static.feature_bundle_hash,
+    )
+    intraday_child = _feature_child_reference(
+        run_root / "intraday-features",
+        bundle_id=overlay.intraday_feature_bundle_id,
+        bundle_hash=overlay.intraday_feature_bundle_hash,
+    )
+    expected_children = {
+        "DAILY_ACQUISITION_RUN": {
+            (source.acquisition_key or str(source.artifact_id), source.checksums_hash)
+        },
+        "STATIC_FEATURE_RUN": {static_child},
+        "MINUTE_ACQUISITION_BATCH": {
+            (str(coverage.command.command_id), coverage.content_hash)
+        },
+        "INTRADAY_FEATURE_RUN": {intraday_child},
+        "CANONICAL_LIFECYCLE_RUN": {
+            (str(canonical_run.run_id), canonical_run.content_hash)
+        },
+    }
     components.append(("CANONICAL_LIFECYCLE_RUN", canonical_run.content_hash))
 
     if package.status is ControlledOperationalEvidenceStatus.SETTLED:
@@ -374,11 +447,18 @@ def replay_controlled_operation(
         )
         if replayed_outcome != outcome:
             raise ValueError("Controlled replay T+1 Outcome divergence")
+        expected_children["OUTCOME_RUN"] = {
+            (str(outcome.artifact_id), outcome.content_hash)
+        }
         components.append(
             ("OUTCOME_SOURCE_ARCHIVE", outcome_source_archive.content_hash)
         )
         components.append(("OUTCOME_OBSERVATION", outcome.content_hash))
 
+    _validate_stage_receipt_bindings(
+        package,
+        expected_children=expected_children,
+    )
     component_hashes = tuple(sorted(components))
     receipt_fingerprint = canonical_hash({"stage_receipts": [item.to_canonical_dict() for item in package.stage_receipts]})
     semantic_hash = canonical_hash(
@@ -439,12 +519,14 @@ def _identity(value: object) -> tuple[ArtifactId, str]:
 
 def _validate_stage_receipt_bindings(
     package: ControlledOperationalEvidencePackage,
-    canonical_run: ControlledCanonicalLifecycleRunReceipt,
+    *,
+    expected_children: dict[str, set[tuple[str, str]]],
 ) -> None:
     evidence = {
         (item.reference_type, str(item.object_id)): item.content_hash
         for item in package.evidence_references
     }
+    actual_children: dict[str, list[tuple[str, str]]] = {}
     for receipt in package.stage_receipts:
         for reference in receipt.output_references:
             expected = evidence.get(
@@ -461,11 +543,55 @@ def _validate_stage_receipt_bindings(
                     f"Controlled replay stage Receipt output divergence: {receipt.stage_name.value}"
                 )
         for child in receipt.child_run_references:
-            if child.reference_kind.value == "CANONICAL_LIFECYCLE_RUN" and (
-                child.child_run_id != str(canonical_run.run_id)
-                or child.child_receipt_hash != canonical_run.content_hash
-            ):
-                raise ValueError("Controlled replay Canonical child Receipt divergence")
+            actual_children.setdefault(child.reference_kind.value, []).append(
+                (child.child_run_id, child.child_receipt_hash)
+            )
+            expected_child_set = expected_children.get(child.reference_kind.value)
+            if expected_child_set is None or (
+                child.child_run_id,
+                child.child_receipt_hash,
+            ) not in expected_child_set:
+                raise ValueError(
+                    "Controlled replay child Receipt divergence: "
+                    f"{child.reference_kind.value}"
+                )
+    actual_child_sets = {
+        kind: set(values) for kind, values in actual_children.items()
+    }
+    if (
+        actual_child_sets != expected_children
+        or any(len(values) != len(set(values)) for values in actual_children.values())
+    ):
+        raise ValueError("Controlled replay child Receipt set is incomplete or duplicated")
+
+
+def _feature_child_reference(
+    output_root: Path,
+    *,
+    bundle_id: ArtifactId,
+    bundle_hash: str,
+) -> tuple[str, str]:
+    matches: list[FeatureMaterializationReceipt] = []
+    database_path = output_root / "materialization-run.sqlite3"
+    if database_path.exists():
+        connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+        try:
+            rows = connection.execute(
+                "SELECT receipt_json FROM feature_materialization_receipt "
+                "ORDER BY run_id"
+            ).fetchall()
+        finally:
+            connection.close()
+        for (receipt_json,) in rows:
+            payload = json.loads(str(receipt_json))
+            if not isinstance(payload, dict):
+                raise ValueError("Controlled replay Feature Receipt JSON is invalid")
+            receipt = FeatureMaterializationReceipt.from_canonical_dict(payload)
+            if receipt.bundle_id == bundle_id and receipt.bundle_hash == bundle_hash:
+                matches.append(receipt)
+    if len(matches) != 1:
+        raise ValueError("Controlled replay Feature child Receipt is ambiguous")
+    return matches[0].command_hash, matches[0].content_hash
 
 
 def _single_ref(

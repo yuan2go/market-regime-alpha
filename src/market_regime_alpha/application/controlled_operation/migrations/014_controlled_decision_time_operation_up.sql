@@ -266,6 +266,13 @@ WHEN NEW.run_id != OLD.run_id
 BEGIN
     SELECT RAISE(ABORT, 'Controlled operation command identity is immutable');
 END;
+CREATE TRIGGER IF NOT EXISTS controlled_operation_terminal_status_guard
+BEFORE UPDATE OF status ON controlled_operation_run
+WHEN (OLD.status = 'OUTCOME_PENDING' AND NEW.status NOT IN ('OUTCOME_PENDING', 'SETTLED'))
+    OR (OLD.status = 'SETTLED' AND NEW.status != 'SETTLED')
+BEGIN
+    SELECT RAISE(ABORT, 'Controlled operation terminal status cannot regress');
+END;
 
 INSERT OR IGNORE INTO controlled_operation_schema_migration(version, applied_at)
 VALUES (14, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));

@@ -23,15 +23,22 @@ pending operation package and supersede it with a new settled package after T+1
 factual evidence. Index immutable package references in a rebuildable,
 append-only SQLite longitudinal index.
 
-Publish the Signal/Path/Entry segment as a separately readable Canonical child
-Run Receipt and bind that real identity/hash from the parent journal. Freeze T+1
-provider bytes in an exact-file Outcome Source Archive, require its raw hashes
-to match the SourceManifest, and reconstruct the Outcome Dataset from that
-archive during offline replay.
+Execute the Signal/Path/Entry segment through the migration-011
+`CanonicalDecisionLifecycleRunner` and its durable SQLite journal. Publish a
+separately readable binding to the actual canonical Run ID, command,
+one-snapshot history and ordered Stage Receipts, then bind that published
+Receipt hash from the parent journal. Freeze T+1 provider bytes in an exact-file
+Outcome Source Archive, require its raw hashes to match the SourceManifest, and
+reconstruct the Outcome Dataset from that archive before settlement and during
+offline replay. An incomplete 09:30–10:30 path cannot produce morning high/low
+or MFE/MAE.
 
 Use database-enforced leases, CAS and monotonic fencing epochs for Feature and
 parent operation claims. Reject post-DecisionTime source data and stop retry at
-the hard cutoff. Keep PathForecast without samples and Entry blocked.
+the hard cutoff. A post-DecisionTime resume is allowed only before hard cutoff
+and only when a read-only journal check proves the exact child command was
+persisted by DecisionTime with parent-frozen evidence. Keep PathForecast
+without samples and Entry blocked.
 
 ## Consequences
 
@@ -43,8 +50,15 @@ the hard cutoff. Keep PathForecast without samples and Entry blocked.
   `DATA_INSUFFICIENT` Signals; total failure produces a terminal evidence
   package.
 - Replay is local and side-effect-free.
+- Minute acquisition may begin at the policy fetch start, but the Runner waits
+  on the injected Clock/Sleeper and cannot run Signal before DecisionTime;
+  a new child after DecisionTime and any canonical-stage cutoff crossing are
+  archived as `DEADLINE_MISSED`, while an admitted child may recover before
+  cutoff.
 - Resume compares frozen input bytes and completed-stage Receipt references;
   immutable history cannot be silently combined with changed evidence.
+- An immutable `OUTCOME_PENDING` package remains idempotently readable after
+  cutoff and cannot regress to a deadline or data-blocked state.
 - This decision does not implement H7, H8 scheduling, H9 validation,
   PostgreSQL, RBAC, frontend, Broker, order or Entry authority.
 

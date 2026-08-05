@@ -246,8 +246,10 @@ def test_t1_outcome_is_factual_complete_immutable_and_replayable(tmp_path: Path)
 
     assert missing_interval.completeness is OutcomeCompleteness.DATA_INCOMPLETE
     assert "MORNING_MINUTE_INTERVALS_INCOMPLETE" in missing_interval.reason_codes
-    assert missing_interval.mfe is not None
-    assert missing_interval.mae is not None
+    assert missing_interval.morning_high is None
+    assert missing_interval.morning_low is None
+    assert missing_interval.mfe is None
+    assert missing_interval.mae is None
     assert missing_close.completeness is OutcomeCompleteness.DATA_INCOMPLETE
     assert missing_close.gross_return is not None
     assert missing_close.mfe is not None

@@ -30,10 +30,12 @@ ControlledDecisionTimeOperationRunner.run_decision_window
 -> canonical minute Dataset
 -> CandidateIntradayFeatureOverlay
 -> CandidateFeatureViewV2
--> SignalRunArtifactV3
--> PathForecast DATA_INSUFFICIENT
--> ControlledEntryAssessmentBlocker BLOCKED
--> immutable Canonical Lifecycle child-run Receipt
+-> injected-Clock wait from 14:54:30 to 14:55:00
+-> CanonicalDecisionLifecycleRunner with migration-011 journal
+   -> SignalRunArtifactV3
+   -> PathForecast DATA_INSUFFICIENT
+   -> EntryAssessment BLOCKED_BY_MODEL_VALIDATION
+-> immutable binding to actual canonical Run/history/Stage Receipts
 -> ControlledOperationalEvidencePackage OUTCOME_PENDING
 
 ControlledDecisionTimeOperationRunner.settle
@@ -78,16 +80,19 @@ not a fabricated rerun.
 | 300-static/10-Candidate cold V2 | not applicable | 161.981241 s |
 | 300-static/10-Candidate peak/output/files | not applicable | 125,667,134 B / 40,019,491 B / 4,908 |
 | Candidate minute acquisition | not applicable | 7 ms |
-| Candidate minute normalization + Dataset | not applicable | 56 ms |
-| Candidate intraday overlay | not applicable | 43 ms |
-| Signal V3 | not applicable | 33 ms |
-| Required decision increment | not applicable | 139 ms ≤ 30,000 ms |
+| Candidate minute normalization + Dataset | not applicable | 57 ms |
+| Candidate intraday overlay | not applicable | 51 ms |
+| Signal V3 | not applicable | 32 ms |
+| Required decision increment | not applicable | 147 ms ≤ 30,000 ms |
 
 The 300-symbol value is a real two-stage research measurement: five static
 families cover all 300 Symbols while two intraday families and 480 five-minute
 Bars cover exactly 10 Candidates. It has no absolute CI Gate. The 100-symbol
 and decision-increment targets passed on deterministic, offline,
-synthetic/recorded Fixtures.
+synthetic/recorded Fixtures. The 147 ms increment is the no-crash performance
+Fixture; recovery measurements are reported separately because completed work
+is content-addressedly reused after restart and must not be presented as cold
+compute latency.
 
 ## Database authority
 
@@ -105,7 +110,13 @@ artifact-reference and child-run-reference tables with the same CHECK,
 append-only, lease, fencing, CAS and transaction discipline. It references
 Daily acquisition, static/intraday Feature, minute batch, canonical lifecycle
 and Outcome runs without copying their state. The Canonical child reference is
-backed by an independently published Run Receipt, not a composed placeholder.
+backed by a real `CanonicalDecisionLifecycleRunner` Run. The published wrapper
+binds its command hash, one-snapshot history hash, ordered Stage Receipt hashes
+and fail-closed terminal status; the parent binds the wrapper content hash and
+Replay verifies it against migration 011 in SQLite read-only mode.
+Migration 014 also rejects any `OUTCOME_PENDING -> DEADLINE_MISSED/DATA_BLOCKED`
+regression in both the adapter and a database Trigger; only the Outcome stage
+may advance it to `SETTLED`.
 
 Migration 015 adds an append-only longitudinal package index with date/model/
 configuration/outcome indexes and database triggers rejecting update/delete.
@@ -125,9 +136,20 @@ Parent journal tests cover start/resume/idempotency/conflict, child references,
 completed Stage immutability, append-only Event/Receipt, leases/fencing, crash
 injection, package publication, settlement and index rebuild. Resume also
 compares frozen input bytes and all completed-stage Receipt references before
-reuse. Content-addressed
+reuse. The full 100-symbol integration injects a failure after the canonical
+Signal Stage Receipt is durable, then resumes the same migration-011 Run without
+repeating Provider acquisition and proceeds to the Entry blocker. Content-addressed
 publication makes a published-but-unsettled artifact reusable without creating
 a conflicting second artifact or Receipt.
+
+Resume after DecisionTime is admitted only for a canonical child whose exact
+run and command were already persisted no later than DecisionTime. A read-only
+migration-011 check verifies its idempotency identity, command time/type/output
+root and the Calendar, Universe, SourceManifest, daily/minute Dataset, static
+wrapper and overlay hashes frozen in completed parent Receipts. A schema-valid
+empty database is not admission evidence. The integration resumes at 14:55:10,
+before the 14:56 hard cutoff; a 14:56:01 call against its already-complete
+`OUTCOME_PENDING` package is an immutable read, not a new window admission.
 
 ## Operational evidence classification
 
@@ -137,13 +159,20 @@ The observed integration Package had:
 Universe: 100
 Candidates: 5
 Recorded Tencent responses: 5 / 5
-Deadline status: ON_TIME under injected Fixture Clock
-Canonical child run: controlled-canonical-run-892c8c83e1b0f725149b3e31
-Pending package: controlled-package-dbacd45b9f44606b9163164e
-Settled package: controlled-package-aa9790472b2488380af2196a
+Canonical child persisted: 14:55:00 under injected Fixture Clock
+Injected crash: after durable canonical Signal Stage Receipt
+Resume: 14:55:10, without repeating Provider acquisition
+Deadline status: RECOVERED_BEFORE_HARD_CUTOFF
+Post-cutoff idempotent read: 14:56:01, same pending Package
+Canonical child run: lifecycle-run-97e2b7752283e3b220b0d2d2
+Canonical wrapper hash: sha256:0790091bbb39fa89f3ef0ed6971b725b007e5b9a1b88e45cb9647bcf7d869dec
+Canonical history: sha256:77daf5ad3d26a6dc6e3a3830211087ba47226186eb7eaae6d237e81639ecdcba
+Pending package: controlled-package-50e9cfba242e974f37d980ca
+Settled package: controlled-package-e938d44b9002f1cf537b2013
 Replay: STABLE
 Outcome observations: 5 factual records
 T+1 raw source archive: exact-file/hash verified and Dataset replayed from source
+Recovery Fixture operation output: 11,063,466 bytes / 1,815 files
 ```
 
 This was not a real 14:55 execution. It is `ENGINEERING_FIXTURE` evidence.

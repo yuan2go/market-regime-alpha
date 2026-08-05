@@ -227,6 +227,44 @@ def test_child_run_references_and_append_only_database_rules(tmp_path: Path) -> 
             )
 
 
+def test_outcome_pending_run_cannot_regress_but_can_settle(tmp_path: Path) -> None:
+    path = tmp_path / "journal.sqlite"
+    journal = SQLiteDecisionTimeOperationJournal(path, clock=lambda: NOW)
+    command = _command()
+    journal.create_or_get(command)
+    _complete_through(
+        journal,
+        command,
+        DecisionTimeOperationStageName.OPERATION_PACKAGE,
+    )
+    pending = journal.get(command.run_id)
+
+    with pytest.raises(ControlledOperationConflict, match="may only become SETTLED"):
+        journal.set_run_status(
+            run_id=command.run_id,
+            expected_version=pending.version,
+            status=DecisionTimeOperationRunStatus.DEADLINE_MISSED,
+            reason="LATE_REENTRY_MUST_NOT_DOWNGRADE",
+        )
+    with sqlite3.connect(path) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="cannot regress"):
+            connection.execute(
+                "UPDATE controlled_operation_run SET status = 'DEADLINE_MISSED' WHERE run_id = ?",
+                (str(command.run_id),),
+            )
+
+    claim = journal.claim_stage(
+        run_id=command.run_id,
+        stage_name=DecisionTimeOperationStageName.OUTCOME_SETTLEMENT,
+    )
+    settled = journal.complete_stage(
+        claim=claim,
+        receipt=_receipt(claim),
+        run_status=DecisionTimeOperationRunStatus.SETTLED,
+    )
+    assert settled.status is DecisionTimeOperationRunStatus.SETTLED
+
+
 @pytest.mark.parametrize(
     "failure_point",
     [
@@ -342,4 +380,5 @@ def test_migration_014_checks_indexes_foreign_keys_and_triggers(tmp_path: Path) 
     assert "controlled_operation_event_history_idx" in indexes
     assert "controlled_operation_events_no_update" in triggers
     assert "controlled_operation_claim_owner_guard" in triggers
+    assert "controlled_operation_terminal_status_guard" in triggers
     assert foreign_keys

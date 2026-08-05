@@ -503,7 +503,15 @@ class SQLiteDecisionTimeOperationJournal:
         if not message:
             raise ValueError("run status reason is required")
         with self._immediate() as connection:
-            self._require_run(connection, run_id)
+            run = self._require_run(connection, run_id)
+            current_status = DecisionTimeOperationRunStatus(str(run["status"]))
+            if (
+                current_status is DecisionTimeOperationRunStatus.OUTCOME_PENDING
+                and status is not DecisionTimeOperationRunStatus.OUTCOME_PENDING
+            ):
+                raise ControlledOperationConflict(
+                    "OUTCOME_PENDING Controlled operation may only become SETTLED"
+                )
             cursor = connection.execute(
                 "UPDATE controlled_operation_run SET status = ?, version = version + 1, "
                 "updated_at = ? WHERE run_id = ? AND version = ? AND status != 'SETTLED'",

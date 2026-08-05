@@ -560,8 +560,6 @@ def _build_observation(
         == horizon.observation_time
     )
     price_1030 = morning[-1].close if reaches_observation else None
-    high = max((item.high for item in morning), default=None)
-    low = min((item.low for item in morning), default=None)
     close = daily.close if daily is not None else None
     complete_morning = _has_complete_minute_window(
         morning,
@@ -569,6 +567,8 @@ def _build_observation(
         start=horizon.morning_start,
         end=horizon.observation_time,
     )
+    high = max((item.high for item in morning), default=None) if complete_morning else None
+    low = min((item.low for item in morning), default=None) if complete_morning else None
     complete = complete_morning and (daily is not None or not horizon.include_session_close)
     completeness = OutcomeCompleteness.COMPLETE if complete else OutcomeCompleteness.DATA_INCOMPLETE
     availability = (

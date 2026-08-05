@@ -45,6 +45,19 @@ _READER_BY_OBJECT_TYPE: dict[LifecycleObjectType, LifecycleReaderKind] = {
         LifecycleReaderKind.MARKET_DATA_DATASET_READER
     ),
     LifecycleObjectType.FEATURE_BUNDLE: LifecycleReaderKind.FEATURE_BUNDLE_READER,
+    LifecycleObjectType.OPERATIONAL_UNIVERSE: (
+        LifecycleReaderKind.OPERATIONAL_UNIVERSE_READER
+    ),
+    LifecycleObjectType.STATIC_UNIVERSE_FEATURE_BUNDLE: (
+        LifecycleReaderKind.STATIC_UNIVERSE_FEATURE_BUNDLE_READER
+    ),
+    LifecycleObjectType.CANDIDATE_INTRADAY_FEATURE_OVERLAY: (
+        LifecycleReaderKind.CANDIDATE_INTRADAY_FEATURE_OVERLAY_READER
+    ),
+    LifecycleObjectType.CANDIDATE_SET: LifecycleReaderKind.CANDIDATE_SET_READER,
+    LifecycleObjectType.CANDIDATE_FEATURE_VIEW: (
+        LifecycleReaderKind.CANDIDATE_FEATURE_VIEW_READER
+    ),
     LifecycleObjectType.COMPOSITE_OPERATIONAL_MANIFEST: (
         LifecycleReaderKind.COMPOSITE_OPERATIONAL_ARTIFACT_READER
     ),
@@ -54,6 +67,9 @@ _READER_BY_OBJECT_TYPE: dict[LifecycleObjectType, LifecycleReaderKind] = {
     ),
     LifecycleObjectType.SUPPLEMENTAL_RESEARCH_EVIDENCE: (
         LifecycleReaderKind.SUPPLEMENTAL_RESEARCH_EVIDENCE_READER
+    ),
+    LifecycleObjectType.CONTROLLED_PLATFORM_RESEARCH_ARTIFACT: (
+        LifecycleReaderKind.CONTROLLED_PLATFORM_RESEARCH_ARTIFACT_READER
     ),
     LifecycleObjectType.PLATFORM_RESEARCH_ARTIFACT: (
         LifecycleReaderKind.PLATFORM_RESEARCH_ARTIFACT_READER
@@ -124,10 +140,16 @@ _LOCATOR_REQUIRED_READERS = frozenset(
     {
         LifecycleReaderKind.MARKET_DATA_DATASET_READER,
         LifecycleReaderKind.FEATURE_BUNDLE_READER,
+        LifecycleReaderKind.OPERATIONAL_UNIVERSE_READER,
+        LifecycleReaderKind.STATIC_UNIVERSE_FEATURE_BUNDLE_READER,
+        LifecycleReaderKind.CANDIDATE_INTRADAY_FEATURE_OVERLAY_READER,
+        LifecycleReaderKind.CANDIDATE_SET_READER,
+        LifecycleReaderKind.CANDIDATE_FEATURE_VIEW_READER,
         LifecycleReaderKind.COMPOSITE_OPERATIONAL_ARTIFACT_READER,
         LifecycleReaderKind.SOURCE_MANIFEST_READER,
         LifecycleReaderKind.DAILY_DECISION_ARTIFACT_READER,
         LifecycleReaderKind.SUPPLEMENTAL_RESEARCH_EVIDENCE_READER,
+        LifecycleReaderKind.CONTROLLED_PLATFORM_RESEARCH_ARTIFACT_READER,
         LifecycleReaderKind.PLATFORM_RESEARCH_ARTIFACT_READER,
         LifecycleReaderKind.SIGNAL_ARTIFACT_READER,
         LifecycleReaderKind.PATH_FORECAST_ARTIFACT_READER,

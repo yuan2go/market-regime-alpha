@@ -35,10 +35,15 @@ runner.run_decision_window
   -> minute_normalizations_to_dataset
   -> FeatureMaterializationRunner.run
   -> CandidateIntradayFeatureOverlay.create
-  -> SignalStageHandler.run_controlled_v2
-  -> PathForecastStageHandler.run_controlled
-  -> EntryAssessmentStageHandler.run_controlled
-  -> ControlledCanonicalLifecycleRunReceipt.create/publish
+  -> wait for the policy DecisionTime with the injected Clock/Sleeper
+  -> CanonicalDecisionLifecycleRunner.run
+     -> controlled evidence Reader stage
+     -> controlled Platform Research Reader/Receipt stage
+     -> SignalStageHandler.run_controlled_v2
+     -> PathForecastStageHandler.execute
+     -> EntryAssessmentStageHandler.execute
+     -> BLOCKED_BY_MODEL_VALIDATION
+  -> publish the exact canonical Run/history/Stage-Receipt binding
   -> ControlledOperationalEvidencePackage.create
 
 runner.settle
@@ -64,17 +69,25 @@ Increasing cardinality does not create PIT authority; the initial ceiling is
 
 `DecisionTimeOperationPolicy` is content-addressed and defaults to
 Asia/Shanghai 14:55, static-ready 14:50, minute-fetch 14:54 and hard cutoff
-14:56. UTC instants are derived from the policy. An injectable Clock and an
-explicit `TradingCalendarArtifact` govern live execution. Non-trading days,
-missing or conflicting calendars, early/late runs, sources received after the
-DecisionTime and retry after cutoff fail closed. Replay uses recorded semantic
-times and never the current wall clock.
+14:56. UTC instants are derived from the policy. An injectable Clock, Sleeper
+and explicit `TradingCalendarArtifact` govern live execution. Acquisition
+admitted at 14:54 waits until the policy DecisionTime before Signal/Path/Entry
+can run. A new canonical child cannot start after 14:55; every canonical stage
+is also guarded before and after execution so work stops once 14:56 is crossed.
+An already-persisted child may recover before 14:56 only after a read-only
+admission check matches its command and parent-frozen evidence. A mere SQLite
+file or migrated empty database is not admission evidence.
+Non-trading days, missing or conflicting calendars, early/late runs, sources
+received after the DecisionTime and retry after cutoff fail closed. Replay uses
+recorded semantic times and never the current wall clock.
 
 Window admission uses the immutable `STATIC_FEATURES` stage Receipt time, not
 the presence of a bundle alone. A Receipt after 14:50, after the observation
 time, or outside the declared decision date is `DATA_BLOCKED`; a run beginning
 after 14:55:00 is `DEADLINE_MISSED`. The 14:56 cutoff remains the cancellation
-boundary for work that was admitted before DecisionTime.
+boundary for work that was admitted before DecisionTime. Once the immutable
+pending Package exists, later invocations return it idempotently regardless of
+wall clock; adapter and database Trigger prevent terminal status regression.
 
 ## 3. Static Feature and Intraday Overlay architecture
 
@@ -119,10 +132,13 @@ Migration 014 adds the parent `DecisionTimeOperationRun`, Stage, Attempt,
 Receipt, Event, artifact-reference and child-run-reference tables. Completed
 Stages and Events/Receipts are immutable. Stage claims use leases, monotonic
 epochs and CAS. The parent records child Receipt hashes and never copies child
-domain state. Signal, Path and Entry publish a separately readable
-`ControlledCanonicalLifecycleRunReceipt`; the parent references its actual Run
-ID and Receipt hash, never a locally composed placeholder. Migration 015 adds a
-rebuildable append-only longitudinal index.
+domain state. Signal, Path and Entry execute through the real migration-011
+`CanonicalDecisionLifecycleRunner` and SQLite journal. A separately readable
+`ControlledCanonicalLifecycleRunReceipt` binds the actual Run ID, command hash,
+one-snapshot history hash, ordered Stage Receipt hashes, terminal status and
+exact outputs. The parent binds this published Receipt's content hash; its
+internal history hash remains a separate field. Migration 015 adds a rebuildable
+append-only longitudinal index.
 
 Crash tests cover failure before Feature publication, after publication before
 repository settlement, after Task completion before Bundle, and after Bundle
@@ -130,7 +146,10 @@ before Receipt. Resume reuses matching content-addressed output, rejects stale
 workers and never creates two conflicting Receipts. A completed parent Stage is
 accepted only when recomputed input, output, child-run and reason references
 exactly equal its immutable Receipt. Frozen input directories are compared by
-exact relative file set and SHA-256 before reuse.
+exact relative file set and SHA-256 before reuse. The controlled integration
+also injects a crash immediately after the canonical Signal Stage is durably
+settled; parent Resume detects the existing child journal, calls canonical
+`resume()` and continues without repeating minute acquisition.
 
 ## 6. Operational Evidence Package and longitudinal archive
 
@@ -162,7 +181,11 @@ the canonical Outcome Dataset from the recorded bar-source payload before
 recomputing factual observations.
 `TradeHorizonOutcomeObservation` records reference price, next open, 10:30,
 morning high/low, close, gross return, MFE, MAE, suspension, limits,
-completeness, feasibility observations, availability and source lineage.
+completeness, feasibility observations, availability and source lineage. If the
+09:30–10:30 path is incomplete, morning high/low and MFE/MAE remain absent
+instead of being computed from a partial path. Settlement reconstructs the
+expected canonical Dataset from the raw archive and rejects any supplied
+Dataset mismatch before publishing Outcome or changing parent state.
 These are factual observations for future H9 work, not a Label, Alpha result,
 win-rate claim, model approval or Entry authorization.
 
@@ -171,9 +194,12 @@ win-rate claim, model approval or Entry authorization.
 `replay_controlled_operation` reads only immutable local packages. It rebuilds
 daily Dataset semantics from the daily source archive, recomputes both Feature
 Bundles, controlled research/CandidateSet, minute normalization/Dataset,
-Overlay, Candidate View V2, Signal V3, PathForecast, Entry blocker, Canonical
-child-run Receipt and optional raw-source-derived Outcome, then compares package
-and Receipt fingerprints. It performs no
+Overlay, Candidate View V2, Signal V3, PathForecast, Entry blocker and optional
+raw-source-derived Outcome. It opens the migration-011 and Feature journals in
+SQLite read-only mode and verifies the exact daily/static/minute/intraday/
+canonical/Outcome child set, then compares package and Receipt fingerprints.
+The V1 Canonical wrapper remains readable as explicit historical compatibility;
+new V2 evidence requires the real migration-011 journal. Replay performs no
 network, current-time, Broker, ManualTrade, Fill, approval or model-promotion
 action.
 
@@ -207,7 +233,7 @@ The frozen offline synthetic benchmark on 2026-08-05 produced:
 | 300-static/10-Candidate two-stage V2 research run | 161.981241 s |
 | 300-static/10-Candidate tracemalloc peak | 125,667,134 B |
 | 300-static/10-Candidate output / files | 40,019,491 B / 4,908 |
-| 100-Universe/5-Candidate decision increment | 0.139 s |
+| 100-Universe/5-Candidate decision increment | 0.147 s |
 
 The 100-symbol target passed and the Candidate increment passed. The 300-symbol
 number is measurement only, not an absolute CI gate. All values are engineering

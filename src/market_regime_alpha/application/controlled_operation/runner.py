@@ -8,16 +8,26 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 import shutil
-from time import perf_counter
-from typing import Callable
+from time import perf_counter, sleep
+from typing import Callable, NoReturn
 
-from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
-    LifecycleAuthorityCeiling,
+from market_regime_alpha.application.controlled_operation.canonical_bridge import (
+    ControlledCanonicalDeadlineExceeded,
+    run_controlled_canonical_lifecycle,
 )
-from market_regime_alpha.application.canonical_lifecycle.stages.signal_forecast import (
-    EntryAssessmentStageHandler,
-    PathForecastStageHandler,
-    SignalStageHandler,
+from market_regime_alpha.application.canonical_lifecycle.runner import (
+    AfterStageHook,
+    LifecycleStageExecutionError,
+)
+from market_regime_alpha.application.canonical_lifecycle.contracts import (
+    LifecycleObjectType,
+)
+from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
+    SQLiteLifecycleRunRepository,
+)
+from market_regime_alpha.application.canonical_lifecycle.states import (
+    LifecycleRunType,
+    LifecycleStageName,
 )
 from market_regime_alpha.application.controlled_operation.canonical_segment import (
     CanonicalLifecycleRunObjectReference,
@@ -73,6 +83,7 @@ from market_regime_alpha.application.controlled_operation.outcome_evidence impor
 )
 from market_regime_alpha.application.controlled_operation.outcome_source_archive import (
     load_outcome_settlement_source_archive,
+    replay_outcome_dataset_from_source_archive,
 )
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
@@ -85,7 +96,6 @@ from market_regime_alpha.application.operational_research.supplemental_artifact 
 )
 from market_regime_alpha.application.research_layer.runner import PlatformResearchRunner
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
     load_verified_public_source_stage_artifact,
 )
@@ -146,6 +156,7 @@ from market_regime_alpha.universe import (
 
 
 Clock = Callable[[], datetime]
+Sleeper = Callable[[float], None]
 
 
 def _utc_now() -> datetime:
@@ -226,11 +237,15 @@ class ControlledDecisionTimeOperationRunner:
         output_root: Path,
         clock: Clock = _utc_now,
         minute_client_factory: MinuteClientFactory | None = None,
+        sleeper: Sleeper = sleep,
+        canonical_after_stage_hook: AfterStageHook | None = None,
     ) -> None:
         self._journal = journal
         self._output_root = output_root.resolve()
         self._clock = clock
         self._minute_client_factory = minute_client_factory
+        self._sleeper = sleeper
+        self._canonical_after_stage_hook = canonical_after_stage_hook
 
     def prepare(
         self,
@@ -381,6 +396,7 @@ class ControlledDecisionTimeOperationRunner:
         command: ControlledOperationCommand,
         policy: DecisionTimeOperationPolicy,
         inputs: ControlledOperationInputPaths,
+        _resume_admitted_child: bool = False,
     ) -> ControlledOperationDecisionResult:
         preparation = self.prepare(command=command, policy=policy, inputs=inputs)
         run_root = self._run_root(command)
@@ -402,7 +418,20 @@ class ControlledDecisionTimeOperationRunner:
                 else None
             ),
         )
-        if assessment.state is not DecisionWindowState.DECISION_WINDOW_RUNNING:
+        resume_admitted_child = (
+            _resume_admitted_child
+            and self._canonical_child_was_admitted(
+                command=command,
+                observed_at=observed_at,
+                hard_cutoff=policy.hard_cutoff_instant(command.decision_date),
+            )
+        )
+        completed_operation = self._outcome_pending_operation_is_complete(command)
+        if (
+            assessment.state is not DecisionWindowState.DECISION_WINDOW_RUNNING
+            and not resume_admitted_child
+            and not completed_operation
+        ):
             status = (
                 DecisionTimeOperationRunStatus.DEADLINE_MISSED
                 if assessment.state is DecisionWindowState.DEADLINE_MISSED
@@ -431,7 +460,11 @@ class ControlledDecisionTimeOperationRunner:
                 reason=assessment.reason_codes[0],
             )
             raise ControlledOperationDataBlocked(assessment.reason_codes[0])
-        if not assessment.accepts_signal_evidence:
+        if (
+            not assessment.accepts_signal_evidence
+            and not resume_admitted_child
+            and not completed_operation
+        ):
             raise ControlledOperationDataBlocked("DECISION_TIME_EVIDENCE_WINDOW_CLOSED")
         latencies: dict[str, int] = {}
 
@@ -631,69 +664,158 @@ class ControlledDecisionTimeOperationRunner:
             premeasured=True,
         )
 
-        started = perf_counter()
-        signal_output = SignalStageHandler(
-            configuration=configuration.signal_model,
-            output_root=run_root / "signals",
-            mapping_configuration=configuration.signal_mapping,
-            feature_set_configuration=configuration.static_feature_set,
-            requirement_policy=configuration.signal_requirement,
-            freshness_policy=configuration.signal_freshness,
-        ).run_controlled_v2(
-            candidate_set=candidates,
-            static_bundle=preparation.static_bundle,
-            static_feature_bundle=preparation.static_feature_bundle,
-            daily_dataset=preparation.daily_dataset,
-            intraday_overlay=overlay,
-            intraday_feature_bundle=intraday_features,
-            minute_dataset=minute,
-            trading_calendar=preparation.calendar,
-            decision_time=DecisionTime(command.decision_time),
-            created_at=command.decision_time,
-            code_revision=command.code_revision,
+        canonical_observed_at = self._now()
+        if canonical_observed_at < command.decision_time:
+            wait_seconds = (
+                command.decision_time - canonical_observed_at
+            ).total_seconds()
+            if wait_seconds > 60:
+                raise ControlledOperationDataBlocked(
+                    "DECISION_TIME_NOT_REACHED_FOR_SIGNAL"
+                )
+            self._sleeper(wait_seconds)
+            canonical_observed_at = self._now()
+            if canonical_observed_at < command.decision_time:
+                raise ControlledOperationDataBlocked(
+                    "DECISION_TIME_NOT_REACHED_FOR_SIGNAL"
+                )
+        if (
+            canonical_observed_at > command.decision_time
+            and not resume_admitted_child
+            and not completed_operation
+        ):
+            reason = (
+                "HARD_CUTOFF_EXCEEDED_BEFORE_CANONICAL_CHILD"
+                if canonical_observed_at
+                > policy.hard_cutoff_instant(command.decision_date)
+                else "DECISION_TIME_START_MISSED_FOR_CANONICAL_CHILD"
+            )
+            self._reject_decision_window_deadline(
+                command=command,
+                policy=policy,
+                inputs=inputs,
+                preparation=preparation,
+                configuration=configuration,
+                reason=reason,
+                latencies=latencies,
+                research=research,
+                candidates=candidates,
+                coverage=coverage,
+                minute=minute,
+                minute_path=minute_path,
+                overlay=overlay,
+                overlay_path=overlay_path,
+            )
+        hard_cutoff = policy.hard_cutoff_instant(command.decision_date)
+        canonical_available_at = (
+            command.decision_time
+            if resume_admitted_child or completed_operation
+            else canonical_observed_at
         )
-        latencies[DecisionTimeOperationStageName.SIGNAL.value] = int((perf_counter() - started) * 1000)
+        try:
+            canonical_execution = run_controlled_canonical_lifecycle(
+                parent_command=command,
+                run_root=run_root,
+                clock=self._clock,
+                available_at=canonical_available_at,
+                configuration=configuration,
+                runtime_configuration_path=inputs.runtime_configuration,
+                calendar=preparation.calendar,
+                calendar_path=inputs.trading_calendar,
+                universe=preparation.universe,
+                universe_path=inputs.operational_universe,
+                daily_source_manifest_path=inputs.daily_source_manifest,
+                supplemental_path=inputs.supplemental_research_evidence,
+                research=research,
+                daily_dataset=preparation.daily_dataset,
+                daily_dataset_path=preparation.daily_dataset_path,
+                static_bundle=preparation.static_bundle,
+                static_bundle_path=preparation.static_bundle_path,
+                static_feature_bundle=preparation.static_feature_bundle,
+                minute_dataset=minute,
+                minute_dataset_path=minute_path,
+                intraday_feature_bundle=intraday_features,
+                overlay=overlay,
+                overlay_path=overlay_path,
+                hard_cutoff=hard_cutoff,
+                after_stage_hook=self._canonical_after_stage_hook,
+            )
+        except LifecycleStageExecutionError as exc:
+            if exc.exception_type != ControlledCanonicalDeadlineExceeded.__name__:
+                raise
+            self._reject_decision_window_deadline(
+                command=command,
+                policy=policy,
+                inputs=inputs,
+                preparation=preparation,
+                configuration=configuration,
+                reason="HARD_CUTOFF_EXCEEDED_DURING_CANONICAL_CHILD",
+                latencies=latencies,
+                research=research,
+                candidates=candidates,
+                coverage=coverage,
+                minute=minute,
+                minute_path=minute_path,
+                overlay=overlay,
+                overlay_path=overlay_path,
+            )
+        if self._now() > hard_cutoff and not completed_operation:
+            self._reject_decision_window_deadline(
+                command=command,
+                policy=policy,
+                inputs=inputs,
+                preparation=preparation,
+                configuration=configuration,
+                reason="HARD_CUTOFF_EXCEEDED_AFTER_CANONICAL_CHILD",
+                latencies=latencies,
+                research=research,
+                candidates=candidates,
+                coverage=coverage,
+                minute=minute,
+                minute_path=minute_path,
+                overlay=overlay,
+                overlay_path=overlay_path,
+            )
+        canonical_latencies = dict(canonical_execution.stage_latencies_ms)
+        signal_output = canonical_execution.signal
+        candidate_view = canonical_execution.candidate_view
+        path_output = canonical_execution.forecasts
+        entry = canonical_execution.entry_blocker
+        entry_path = canonical_execution.entry_blocker_path
+        latencies[DecisionTimeOperationStageName.SIGNAL.value] = (
+            canonical_latencies.get(LifecycleStageName.SIGNAL, 0)
+        )
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.SIGNAL,
             run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
             inputs=(_reference("INTRADAY_FEATURE_OVERLAY", overlay.artifact_id, overlay.content_hash),),
             outputs=(
-                _reference("CANDIDATE_FEATURE_VIEW_V2", signal_output.candidate_view.view_id, signal_output.candidate_view.content_hash),
-                _reference("SIGNAL_V3", signal_output.signal.artifact.artifact_id, signal_output.signal.artifact.envelope.content_hash),
+                _reference("CANDIDATE_FEATURE_VIEW_V2", candidate_view.view_id, candidate_view.content_hash),
+                _reference("SIGNAL_V3", signal_output.artifact.artifact_id, signal_output.artifact.envelope.content_hash),
             ),
             reasons=("CANONICAL_SIGNAL_V3_FROM_CANDIDATE_VIEW_V2",),
             latency_sink=latencies,
             premeasured=True,
         )
 
-        started = perf_counter()
-        path_output = PathForecastStageHandler(
-            configuration=configuration.path_forecast,
-            output_root=run_root / "path-forecasts",
-        ).run_controlled(signal=signal_output.signal)
-        latencies[DecisionTimeOperationStageName.PATH_FORECAST.value] = int((perf_counter() - started) * 1000)
+        latencies[DecisionTimeOperationStageName.PATH_FORECAST.value] = (
+            canonical_latencies.get(LifecycleStageName.PATH_FORECAST, 0)
+        )
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.PATH_FORECAST,
             run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
             inputs=(
-                _reference("SIGNAL_V3", signal_output.signal.artifact.artifact_id, signal_output.signal.artifact.envelope.content_hash),
+                _reference("SIGNAL_V3", signal_output.artifact.artifact_id, signal_output.artifact.envelope.content_hash),
             ),
             outputs=tuple(
                 _reference("PATH_FORECAST", item.artifact.artifact_id, item.artifact.forecast.envelope.content_hash)
-                for item in path_output.forecasts
+                for item in path_output
             ),
             reasons=("PATH_FORECAST_SAMPLE_AUTHORITY_UNAVAILABLE", "PATH_FORECAST_DATA_INSUFFICIENT"),
             latency_sink=latencies,
             premeasured=True,
-        )
-
-        entry, entry_path = EntryAssessmentStageHandler(authority_ceiling=LifecycleAuthorityCeiling()).run_controlled(
-            signal=signal_output.signal,
-            forecasts=path_output.forecasts,
-            output_root=run_root / "entry-blockers",
-            created_at=command.decision_time,
         )
         canonical_run = ControlledCanonicalLifecycleRunReceipt.create(
             parent_operation_run_id=command.run_id,
@@ -705,15 +827,15 @@ class ControlledDecisionTimeOperationRunner:
             input_references=(
                 CanonicalLifecycleRunObjectReference(
                     "CANDIDATE_FEATURE_VIEW_V2",
-                    signal_output.candidate_view.view_id,
-                    signal_output.candidate_view.content_hash,
+                    candidate_view.view_id,
+                    candidate_view.content_hash,
                 ),
             ),
             output_references=(
                 CanonicalLifecycleRunObjectReference(
                     "SIGNAL_V3",
-                    signal_output.signal.artifact.artifact_id,
-                    signal_output.signal.artifact.envelope.content_hash,
+                    signal_output.artifact.artifact_id,
+                    signal_output.artifact.envelope.content_hash,
                 ),
                 *(
                     CanonicalLifecycleRunObjectReference(
@@ -721,7 +843,7 @@ class ControlledDecisionTimeOperationRunner:
                         item.artifact.artifact_id,
                         item.artifact.forecast.envelope.content_hash,
                     )
-                    for item in path_output.forecasts
+                    for item in path_output
                 ),
                 CanonicalLifecycleRunObjectReference(
                     "ENTRY_BLOCKER",
@@ -729,11 +851,15 @@ class ControlledDecisionTimeOperationRunner:
                     entry.content_hash,
                 ),
             ),
-            created_at=command.decision_time,
+            canonical_result=canonical_execution.result,
+            canonical_history=canonical_execution.history,
         )
         canonical_run_path = publish_controlled_canonical_lifecycle_run(
             root=run_root / "canonical-lifecycle-runs",
             artifact=canonical_run,
+        )
+        latencies[DecisionTimeOperationStageName.ENTRY_ASSESSMENT.value] = (
+            canonical_latencies.get(LifecycleStageName.ENTRY_ASSESSMENT, 0)
         )
         self._execute_stage(
             command=command,
@@ -741,7 +867,7 @@ class ControlledDecisionTimeOperationRunner:
             run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
             inputs=tuple(
                 _reference("PATH_FORECAST", item.artifact.artifact_id, item.artifact.forecast.envelope.content_hash)
-                for item in path_output.forecasts
+                for item in path_output
             ),
             outputs=(_reference("ENTRY_BLOCKER", entry.artifact_id, entry.content_hash),),
             child_runs=(
@@ -753,6 +879,7 @@ class ControlledDecisionTimeOperationRunner:
             ),
             reasons=entry.reason_codes,
             latency_sink=latencies,
+            premeasured=True,
         )
 
         package_root = run_root / "operation-packages"
@@ -774,11 +901,11 @@ class ControlledDecisionTimeOperationRunner:
                     minute=minute,
                     overlay_path=overlay_path,
                     overlay=overlay,
-                    candidate_view_path=signal_output.candidate_view_path,
-                    candidate_view_id=signal_output.candidate_view.view_id,
-                    candidate_view_hash=signal_output.candidate_view.content_hash,
-                    signal=signal_output.signal,
-                    forecasts=path_output.forecasts,
+                    candidate_view_path=canonical_execution.candidate_view_path,
+                    candidate_view_id=candidate_view.view_id,
+                    candidate_view_hash=candidate_view.content_hash,
+                    signal=signal_output,
+                    forecasts=path_output,
                     entry_path=entry_path,
                     entry_id=entry.artifact_id,
                     entry_hash=entry.content_hash,
@@ -800,10 +927,21 @@ class ControlledDecisionTimeOperationRunner:
                 minute_success_count=coverage.succeeded_count,
                 minute_failure_count=coverage.failed_count,
                 signal_state_counts=tuple(
-                    sorted(Counter(item.signal_state.value for item in signal_output.signal.artifact.snapshots).items())
+                    sorted(
+                        Counter(
+                            item.signal_state.value
+                            for item in signal_output.artifact.snapshots
+                        ).items()
+                    )
                 ),
                 stage_latencies=tuple(StageRuntimeLatency(name, value) for name, value in sorted(latencies.items())),
-                deadline_status=("ON_TIME" if not assessment.late_run else "LATE_RUN"),
+                deadline_status=(
+                    "RECOVERED_BEFORE_HARD_CUTOFF"
+                    if resume_admitted_child
+                    else "ON_TIME"
+                    if not assessment.late_run
+                    else "LATE_RUN"
+                ),
                 created_at=command.decision_time,
                 authority_ceiling=(
                     "BROKER_NOT_INVOKED",
@@ -843,8 +981,8 @@ class ControlledDecisionTimeOperationRunner:
             intraday_feature_receipt=intraday_receipt,
             overlay=overlay,
             overlay_path=overlay_path,
-            signal=signal_output.signal,
-            forecasts=path_output.forecasts,
+            signal=signal_output,
+            forecasts=path_output,
             entry_blocker_path=entry_path,
             package=package,
             package_path=package_path,
@@ -858,7 +996,12 @@ class ControlledDecisionTimeOperationRunner:
         inputs: ControlledOperationInputPaths,
     ) -> ControlledOperationDecisionResult:
         self._journal.resume(command.run_id)
-        return self.run_decision_window(command=command, policy=policy, inputs=inputs)
+        return self.run_decision_window(
+            command=command,
+            policy=policy,
+            inputs=inputs,
+            _resume_admitted_child=True,
+        )
 
     def settle(
         self,
@@ -901,6 +1044,16 @@ class ControlledDecisionTimeOperationRunner:
             source_manifest.content_hash,
         ) not in settlement_dataset.artifact.source_manifest_references:
             raise ValueError("Outcome Dataset and SourceManifest lineage mismatch")
+        replayed_settlement = replay_outcome_dataset_from_source_archive(
+            archive_path=inputs.outcome_source_archive,
+            source_manifest=source_manifest,
+            expected_dataset=settlement_dataset,
+        )
+        if (
+            replayed_settlement.to_canonical_dict()
+            != settlement_dataset.artifact.to_canonical_dict()
+        ):
+            raise ValueError("Outcome Dataset does not match immutable raw source archive")
         if source_manifest.decision_time.value <= command.decision_time:
             raise ValueError("Outcome SourceManifest must be subsequent to DecisionTime")
         if settled is not None:
@@ -1262,6 +1415,10 @@ class ControlledDecisionTimeOperationRunner:
         research: VerifiedControlledResearchArtifact | None = None,
         candidates: CandidateSet | None = None,
         coverage: MinuteAcquisitionCoverageArtifact | None = None,
+        minute: VerifiedMarketDataDataset | None = None,
+        minute_path: Path | None = None,
+        overlay: CandidateIntradayFeatureOverlay | None = None,
+        overlay_path: Path | None = None,
     ) -> tuple[ControlledOperationalEvidencePackage, Path]:
         run_root = self._run_root(command)
         package_root = run_root / "operation-packages"
@@ -1343,6 +1500,26 @@ class ControlledDecisionTimeOperationRunner:
                     run_root,
                 )
             )
+        if minute is not None and minute_path is not None:
+            references.append(
+                _evidence(
+                    "MINUTE_DATASET",
+                    minute.artifact.dataset_id,
+                    minute.artifact.content_hash,
+                    minute_path,
+                    run_root,
+                )
+            )
+        if overlay is not None and overlay_path is not None:
+            references.append(
+                _evidence(
+                    "INTRADAY_FEATURE_OVERLAY",
+                    overlay.artifact_id,
+                    overlay.content_hash,
+                    overlay_path,
+                    run_root,
+                )
+            )
         snapshot = self._journal.get(command.run_id)
         candidate_count = len(candidates.selected) if candidates is not None else 0
         package = ControlledOperationalEvidencePackage.create(
@@ -1386,6 +1563,51 @@ class ControlledDecisionTimeOperationRunner:
         path = publish_controlled_operation_package(root=package_root, artifact=package)
         return package, path
 
+    def _reject_decision_window_deadline(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        policy: DecisionTimeOperationPolicy,
+        inputs: ControlledOperationInputPaths,
+        preparation: ControlledOperationPreparation,
+        configuration: ControlledOperationRuntimeConfiguration,
+        reason: str,
+        latencies: dict[str, int],
+        research: VerifiedControlledResearchArtifact,
+        candidates: CandidateSet,
+        coverage: MinuteAcquisitionCoverageArtifact,
+        minute: VerifiedMarketDataDataset,
+        minute_path: Path,
+        overlay: CandidateIntradayFeatureOverlay,
+        overlay_path: Path,
+    ) -> NoReturn:
+        self._publish_terminal_package(
+            command=command,
+            policy=policy,
+            inputs=inputs,
+            preparation=preparation,
+            configuration=configuration,
+            status=ControlledOperationalEvidenceStatus.DEADLINE_MISSED,
+            deadline_status=DecisionWindowState.DEADLINE_MISSED.value,
+            reason_codes=(reason,),
+            latencies=latencies,
+            research=research,
+            candidates=candidates,
+            coverage=coverage,
+            minute=minute,
+            minute_path=minute_path,
+            overlay=overlay,
+            overlay_path=overlay_path,
+        )
+        snapshot = self._journal.get(command.run_id)
+        self._journal.set_run_status(
+            run_id=command.run_id,
+            expected_version=snapshot.version,
+            status=DecisionTimeOperationRunStatus.DEADLINE_MISSED,
+            reason=reason,
+        )
+        raise ControlledOperationDataBlocked(reason)
+
     def _validate_command(
         self,
         command: ControlledOperationCommand,
@@ -1420,6 +1642,125 @@ class ControlledDecisionTimeOperationRunner:
 
     def _run_root(self, command: ControlledOperationCommand) -> Path:
         return self._output_root / str(command.run_id)
+
+    def _canonical_child_was_admitted(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        observed_at: datetime,
+        hard_cutoff: datetime,
+    ) -> bool:
+        """Admit only a frozen, already-started child to resume before cutoff."""
+
+        if not (command.decision_time <= observed_at <= hard_cutoff):
+            return False
+        snapshot = self._journal.get(command.run_id)
+        if snapshot.status is not DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING:
+            return False
+        required = {
+            DecisionTimeOperationStageName.CALENDAR_UNIVERSE_FREEZE,
+            DecisionTimeOperationStageName.DAILY_SOURCE_FREEZE,
+            DecisionTimeOperationStageName.DAILY_DATASET,
+            DecisionTimeOperationStageName.STATIC_FEATURES,
+            DecisionTimeOperationStageName.OPERATIONAL_RESEARCH,
+            DecisionTimeOperationStageName.CANDIDATE_SET,
+            DecisionTimeOperationStageName.CANDIDATE_MINUTE_ACQUISITION,
+            DecisionTimeOperationStageName.INTRADAY_DATASET,
+            DecisionTimeOperationStageName.INTRADAY_FEATURE_OVERLAY,
+        }
+        completed = {
+            item.stage_name
+            for item in snapshot.stages
+            if item.status is DecisionTimeOperationStageStatus.COMPLETED
+        }
+        if not required.issubset(completed):
+            return False
+        database_path = self._run_root(command) / "canonical-lifecycle.sqlite3"
+        if not database_path.is_file():
+            return False
+        try:
+            repository = SQLiteLifecycleRunRepository(database_path, read_only=True)
+            child_run = repository.get_run_by_idempotency_key(
+                f"{command.idempotency_key}:canonical-controlled-v2"
+            )
+            if child_run is None:
+                return False
+            child_command = repository.get_command(child_run.run_id)
+        except (OSError, ValueError):
+            return False
+        if (
+            child_run.created_at > command.decision_time
+            or child_run.command_hash != child_command.command_hash
+            or child_command.run_id != child_run.run_id
+            or child_command.run_type
+            is not LifecycleRunType.CANONICAL_DECISION_LIFECYCLE
+            or child_command.decision_date != command.decision_date
+            or child_command.as_of_time != command.decision_time
+            or child_command.input_manifest_id is not None
+            or child_command.output_directory
+            != (self._run_root(command) / "canonical-lifecycle" / "outputs").resolve()
+            or any(
+                item.available_at > command.decision_time
+                for item in child_command.input_references
+            )
+        ):
+            return False
+        parent_to_child_type = {
+            "TRADING_CALENDAR": LifecycleObjectType.TRADING_CALENDAR_ARTIFACT,
+            "OPERATIONAL_UNIVERSE": LifecycleObjectType.OPERATIONAL_UNIVERSE,
+            "DAILY_SOURCE_MANIFEST": LifecycleObjectType.SOURCE_MANIFEST,
+            "DAILY_DATASET": LifecycleObjectType.MARKET_DATA_DATASET,
+            "STATIC_FEATURE_BUNDLE": (
+                LifecycleObjectType.STATIC_UNIVERSE_FEATURE_BUNDLE
+            ),
+            "MINUTE_DATASET": LifecycleObjectType.MARKET_DATA_DATASET,
+            "INTRADAY_FEATURE_OVERLAY": (
+                LifecycleObjectType.CANDIDATE_INTRADAY_FEATURE_OVERLAY
+            ),
+        }
+        frozen_parent_objects = {
+            (
+                parent_to_child_type[reference.reference_type],
+                str(reference.object_id),
+                reference.content_hash,
+            )
+            for stage in snapshot.stages
+            if stage.receipt is not None
+            for reference in stage.receipt.output_references
+            if reference.reference_type in parent_to_child_type
+        }
+        child_objects = {
+            (item.object_type, str(item.object_id), item.content_hash)
+            for item in child_command.input_references
+        }
+        return frozen_parent_objects.issubset(child_objects)
+
+    def _outcome_pending_operation_is_complete(
+        self,
+        command: ControlledOperationCommand,
+    ) -> bool:
+        """Recognize a completed immutable package before consulting wall time."""
+
+        snapshot = self._journal.get(command.run_id)
+        if snapshot.status is not DecisionTimeOperationRunStatus.OUTCOME_PENDING:
+            return False
+        package_stage = next(
+            item
+            for item in snapshot.stages
+            if item.stage_name is DecisionTimeOperationStageName.OPERATION_PACKAGE
+        )
+        if package_stage.status is not DecisionTimeOperationStageStatus.COMPLETED:
+            return False
+        package = _find_operation_package(
+            self._run_root(command) / "operation-packages",
+            command.run_id,
+            status=ControlledOperationalEvidenceStatus.OUTCOME_PENDING,
+        )
+        if package is None:
+            raise ValueError("OUTCOME_PENDING run is missing its immutable package")
+        if package.command != command:
+            raise ValueError("OUTCOME_PENDING package command conflicts with journal")
+        return True
 
     def _now(self) -> datetime:
         value = self._clock()

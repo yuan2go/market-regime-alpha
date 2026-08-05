@@ -53,6 +53,19 @@ _RISK_CONTINUATION_REQUIRED_TYPES = frozenset(
     }
 )
 
+_CONTROLLED_DECISION_TIME_REQUIRED_TYPES = frozenset(
+    {
+        LifecycleObjectType.MARKET_DATA_DATASET,
+        LifecycleObjectType.FEATURE_BUNDLE,
+        LifecycleObjectType.OPERATIONAL_UNIVERSE,
+        LifecycleObjectType.STATIC_UNIVERSE_FEATURE_BUNDLE,
+        LifecycleObjectType.CANDIDATE_INTRADAY_FEATURE_OVERLAY,
+        LifecycleObjectType.SOURCE_MANIFEST,
+        LifecycleObjectType.SUPPLEMENTAL_RESEARCH_EVIDENCE,
+        LifecycleObjectType.TRADING_CALENDAR_ARTIFACT,
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CanonicalLifecycleCommand:
@@ -126,6 +139,14 @@ class CanonicalLifecycleCommand:
             self.run_type is LifecycleRunType.REPLAY
             and self.input_manifest_id is None
         )
+        explicit_controlled_operation = (
+            self.run_type is LifecycleRunType.CANONICAL_DECISION_LIFECYCLE
+            and self.input_manifest_id is None
+            and any(
+                item.object_type in _CONTROLLED_DECISION_TIME_REQUIRED_TYPES
+                for item in self.input_references
+            )
+        )
         if (
             self.run_type is LifecycleRunType.RISK_REDUCTION_CONTINUATION
             or explicit_prerequisite_replay
@@ -153,6 +174,50 @@ class CanonicalLifecycleCommand:
                 names = ", ".join(sorted(item.value for item in duplicates))
                 raise ValueError(
                     f"risk continuation requires exactly one reference per type: {names}"
+                )
+        elif explicit_controlled_operation:
+            expected_counts = {
+                object_type: (
+                    2
+                    if object_type
+                    in {
+                        LifecycleObjectType.MARKET_DATA_DATASET,
+                        LifecycleObjectType.FEATURE_BUNDLE,
+                    }
+                    else 1
+                )
+                for object_type in _CONTROLLED_DECISION_TIME_REQUIRED_TYPES
+            }
+            actual_counts = {
+                object_type: sum(
+                    item.object_type is object_type for item in self.input_references
+                )
+                for object_type in {
+                    item.object_type for item in self.input_references
+                }
+            }
+            controlled_missing = {
+                object_type
+                for object_type, count in expected_counts.items()
+                if actual_counts.get(object_type, 0) < count
+            }
+            unexpected = set(actual_counts) - set(expected_counts)
+            invalid_counts = {
+                object_type
+                for object_type, count in expected_counts.items()
+                if actual_counts.get(object_type, 0) != count
+            }
+            if controlled_missing or unexpected or invalid_counts:
+                names = ", ".join(
+                    sorted(
+                        item.value
+                        for item in controlled_missing | unexpected | invalid_counts
+                    )
+                )
+                raise ValueError(
+                    "controlled decision-time lifecycle requires the exact "
+                    "prerequisite type/cardinality contract: "
+                    f"{names}"
                 )
         else:
             if self.input_manifest_id is None:

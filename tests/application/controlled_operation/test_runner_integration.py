@@ -3,12 +3,22 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from market_regime_alpha.application.canonical_lifecycle.runner import (
+    LifecycleStageExecutionError,
+)
+from market_regime_alpha.application.canonical_lifecycle.contracts import LifecycleRun
+from market_regime_alpha.application.canonical_lifecycle.states import (
+    LifecycleStageName,
+)
 from market_regime_alpha.application.controlled_operation import (
     ControlledOperationCommand,
     DecisionTimeOperationRunStatus,
@@ -20,6 +30,7 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
     publish_controlled_trading_calendar,
 )
 from market_regime_alpha.application.controlled_operation.evidence_package import (
+    ControlledOperationalEvidencePackage,
     load_controlled_operation_package,
 )
 from market_regime_alpha.application.controlled_operation.research_config import (
@@ -27,6 +38,7 @@ from market_regime_alpha.application.controlled_operation.research_config import
     ControlledResearchPipelineConfig,
 )
 from market_regime_alpha.application.controlled_operation.replay import (
+    _validate_stage_receipt_bindings,
     replay_controlled_operation,
 )
 from market_regime_alpha.application.controlled_operation.outcome_source_archive import (
@@ -39,6 +51,7 @@ from market_regime_alpha.application.controlled_operation.outcome_source_archive
 )
 from market_regime_alpha.application.controlled_operation.runner import (
     ControlledDecisionTimeOperationRunner,
+    ControlledOperationDataBlocked,
     ControlledOperationInputPaths,
     ControlledOperationSettlementInputPaths,
 )
@@ -87,6 +100,7 @@ from market_regime_alpha.market_data import (
     Timeframe,
     TradingStatus,
     VolumeUnit,
+    load_verified_market_data_dataset,
     publish_market_data_dataset,
 )
 from market_regime_alpha.market_data.minute_source import (
@@ -480,6 +494,59 @@ def _input_paths(tmp_path: Path, fixture: DailyDecisionFixture):
     )
 
 
+def _mismatched_settlement_inputs(
+    tmp_path: Path,
+    inputs: ControlledOperationSettlementInputPaths,
+) -> ControlledOperationSettlementInputPaths:
+    verified = load_verified_market_data_dataset(inputs.outcome_dataset)
+    original = verified.bars[0]
+    altered = CanonicalMarketBar.create(
+        symbol=original.symbol,
+        exchange=original.exchange,
+        asset_type=original.asset_type,
+        timeframe=original.timeframe,
+        market_date=original.market_date,
+        event_start=original.event_start,
+        event_end=original.event_end,
+        available_at=original.available_at,
+        open=original.open,
+        high=original.high + Decimal("0.001"),
+        low=original.low,
+        close=original.close,
+        previous_close=original.previous_close,
+        volume=original.volume,
+        volume_unit=original.volume_unit,
+        amount=original.amount,
+        turnover_rate=original.turnover_rate,
+        adjustment_mode=original.adjustment_mode,
+        adjustment_factor=original.adjustment_factor,
+        adjustment_factor_id=original.adjustment_factor_id,
+        adjustment_factor_hash=original.adjustment_factor_hash,
+        trading_status=original.trading_status,
+        price_limit_state=original.price_limit_state,
+        source_artifact_id=original.source_artifact_id,
+        source_content_hash=original.source_content_hash,
+    )
+    expected = verified.artifact
+    artifact = MarketDataDatasetArtifact.create(
+        decision_time=expected.decision_time,
+        created_at=expected.created_at,
+        bars=(altered, *verified.bars[1:]),
+        expected_symbols=expected.coverage.expected_symbols,
+        expected_timeframes=expected.coverage.expected_timeframes,
+        adjustment_policy=expected.adjustment_policy,
+        source_manifest_references=expected.source_manifest_references,
+        data_eligibility=expected.data_eligibility,
+        formal_pit_status=expected.formal_pit_status,
+        limitations=expected.limitations,
+    )
+    path = publish_market_data_dataset(
+        root=tmp_path / "mismatched-outcome-datasets",
+        artifact=artifact,
+    )
+    return replace(inputs, outcome_dataset=path)
+
+
 def _minute_payload(symbol: str, market_date: date) -> bytes:
     code = f"{symbol[-2:].lower()}{symbol[:6]}"
     rows = [f"{1440 + index:04d} {10 + index / 1000:.3f} {100 + index * 100} {100000 + index * 100000}" for index in range(15)]
@@ -541,28 +608,52 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
     observed = policy.decision_instant(decision.date()) - timedelta(seconds=30)
     current_time = [policy.static_ready_deadline_instant(decision.date())]
     factory_calls = 0
+    wait_calls: list[float] = []
+    crash_after_signal = [True]
 
     def factory(symbol: str, _attempt: int, _timeout: float):
         nonlocal factory_calls
         factory_calls += 1
         return _RecordedMinuteClient(symbol=symbol, observed_at=observed)
 
+    def advance_to_decision(seconds: float) -> None:
+        wait_calls.append(seconds)
+        current_time[0] = policy.decision_instant(decision.date())
+
+    def crash_once_after_signal(stage: LifecycleStageName, _run: LifecycleRun) -> None:
+        if stage is LifecycleStageName.SIGNAL and crash_after_signal[0]:
+            crash_after_signal[0] = False
+            raise RuntimeError("SIMULATED_CONTROLLED_CANONICAL_CRASH")
+
     runner = ControlledDecisionTimeOperationRunner(
         journal=SQLiteDecisionTimeOperationJournal(tmp_path / "controlled-operation.sqlite3", clock=lambda: current_time[0]),
         output_root=tmp_path / "operations",
         clock=lambda: current_time[0],
         minute_client_factory=factory,
+        sleeper=advance_to_decision,
+        canonical_after_stage_hook=crash_once_after_signal,
     )
     runner.prepare(command=command, policy=policy, inputs=inputs)
     current_time[0] = observed
-    result = runner.run_decision_window(command=command, policy=policy, inputs=inputs)
+    with pytest.raises(
+        LifecycleStageExecutionError,
+        match="SIMULATED_CONTROLLED_CANONICAL_CRASH",
+    ):
+        runner.run_decision_window(command=command, policy=policy, inputs=inputs)
+    calls_after_crash = factory_calls
+    current_time[0] = policy.decision_instant(decision.date()) + timedelta(seconds=10)
+    result = runner.resume(command=command, policy=policy, inputs=inputs)
     calls_after_first = factory_calls
+    assert result.package.deadline_status == "RECOVERED_BEFORE_HARD_CUTOFF"
+    current_time[0] = policy.hard_cutoff_instant(decision.date()) + timedelta(seconds=1)
     replayed_run = runner.run_decision_window(command=command, policy=policy, inputs=inputs)
 
     assert len(universe.symbols) == 100
     assert len(result.candidate_set.selected) == 5
     assert result.minute_coverage.succeeded_count == 5
     assert result.minute_coverage.failed_count == 0
+    assert wait_calls == [30.0]
+    assert calls_after_first == calls_after_crash
     assert result.package.status.value == "OUTCOME_PENDING"
     assert result.snapshot.status is DecisionTimeOperationRunStatus.OUTCOME_PENDING
     latency = {item.stage_name: item.elapsed_ms for item in result.package.stage_latencies}
@@ -584,6 +675,14 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
         decision_date=decision.date(),
     )
     current_time[0] = datetime.combine(decision.date() + timedelta(days=1), time(15, 5), tzinfo=SHANGHAI).astimezone(UTC)
+    with pytest.raises(
+        ValueError,
+        match="does not match immutable raw source archive",
+    ):
+        runner.settle(
+            command=command,
+            inputs=_mismatched_settlement_inputs(tmp_path, settlement_inputs),
+        )
     settlement = runner.settle(command=command, inputs=settlement_inputs)
     replayed_settlement = runner.settle(command=command, inputs=settlement_inputs)
 
@@ -592,8 +691,57 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
     assert len(settlement.outcome.observations) == 5
     assert settlement.package == replayed_settlement.package
     assert settlement.longitudinal_record.outcome_status == "SETTLED"
+    canonical_reference = next(
+        item
+        for item in settlement.package.evidence_references
+        if item.reference_type == "CANONICAL_LIFECYCLE_RUN"
+    )
+    canonical_child = next(
+        child
+        for receipt in settlement.package.stage_receipts
+        for child in receipt.child_run_references
+        if child.reference_kind.value == "CANONICAL_LIFECYCLE_RUN"
+    )
+    assert canonical_child.child_receipt_hash == canonical_reference.content_hash
+    expected_children: dict[str, set[tuple[str, str]]] = {}
+    for receipt in settlement.package.stage_receipts:
+        for child in receipt.child_run_references:
+            expected_children.setdefault(child.reference_kind.value, set()).add(
+                (child.child_run_id, child.child_receipt_hash)
+            )
+    receipt_with_child = next(
+        item for item in settlement.package.stage_receipts if item.child_run_references
+    )
+    incomplete_package = cast(
+        ControlledOperationalEvidencePackage,
+        SimpleNamespace(
+            evidence_references=settlement.package.evidence_references,
+            supersedes_package_id=settlement.package.supersedes_package_id,
+            supersedes_package_hash=settlement.package.supersedes_package_hash,
+            stage_receipts=tuple(
+                SimpleNamespace(
+                    stage_name=item.stage_name,
+                    output_references=item.output_references,
+                    child_run_references=(
+                        () if item is receipt_with_child else item.child_run_references
+                    ),
+                )
+                for item in settlement.package.stage_receipts
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="set is incomplete"):
+        _validate_stage_receipt_bindings(
+            incomplete_package,
+            expected_children=expected_children,
+        )
+    canonical_database = settlement.package_path.parent.parent / "canonical-lifecycle.sqlite3"
+    database_hash_before = sha256(canonical_database.read_bytes()).hexdigest()
+    database_mtime_before = canonical_database.stat().st_mtime_ns
     replay = replay_controlled_operation(settlement.package_path)
     assert replay.replay_status == "STABLE"
+    assert sha256(canonical_database.read_bytes()).hexdigest() == database_hash_before
+    assert canonical_database.stat().st_mtime_ns == database_mtime_before
     assert not replay.network_accessed
     assert not replay.broker_invoked
     assert not replay.manual_trade_created
@@ -639,6 +787,83 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
         for marker in ("opportunity", "manual-trade", "fill", "broker", "order")
         for path in (tmp_path / "operations").rglob("*")
     )
+
+
+def test_controlled_runner_publishes_deadline_missed_when_wait_overshoots(
+    tmp_path: Path,
+    daily_decision_fixture: DailyDecisionFixture,
+) -> None:
+    inputs, calendar, _, configuration, decision = _input_paths(
+        tmp_path,
+        daily_decision_fixture,
+    )
+    policy = default_decision_time_operation_policy()
+    command = ControlledOperationCommand.create(
+        idempotency_key="controlled-runner-overshoot",
+        decision_date=decision.date(),
+        decision_time=decision,
+        policy_id=policy.policy_id,
+        policy_hash=policy.content_hash,
+        trading_calendar_id=calendar.artifact_id,
+        trading_calendar_hash=calendar.content_hash,
+        configuration_manifest_id=configuration.configuration_id,
+        configuration_manifest_hash=configuration.configuration_hash,
+        model_manifest_id=configuration.model_manifest_id,
+        model_manifest_hash=configuration.model_manifest_hash,
+        code_revision="controlled-overshoot-test",
+        limitations=(
+            "ENGINEERING_FIXTURE",
+            "ENTRY_BLOCKED",
+            "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+            "NO_BROKER_AUTHORITY",
+        ),
+    )
+    observed = policy.decision_instant(decision.date()) - timedelta(seconds=30)
+    current_time = [policy.static_ready_deadline_instant(decision.date())]
+
+    def factory(symbol: str, _attempt: int, _timeout: float):
+        return _RecordedMinuteClient(symbol=symbol, observed_at=observed)
+
+    def overshoot(_seconds: float) -> None:
+        current_time[0] = policy.decision_instant(decision.date()) + timedelta(
+            seconds=1
+        )
+
+    journal = SQLiteDecisionTimeOperationJournal(
+        tmp_path / "controlled-operation.sqlite3",
+        clock=lambda: current_time[0],
+    )
+    runner = ControlledDecisionTimeOperationRunner(
+        journal=journal,
+        output_root=tmp_path / "operations",
+        clock=lambda: current_time[0],
+        minute_client_factory=factory,
+        sleeper=overshoot,
+    )
+    runner.prepare(command=command, policy=policy, inputs=inputs)
+    current_time[0] = observed
+
+    with pytest.raises(
+        ControlledOperationDataBlocked,
+        match="DECISION_TIME_START_MISSED",
+    ):
+        runner.run_decision_window(command=command, policy=policy, inputs=inputs)
+
+    snapshot = journal.get(command.run_id)
+    packages = tuple(
+        load_controlled_operation_package(path)
+        for path in (
+            tmp_path
+            / "operations"
+            / str(command.run_id)
+            / "operation-packages"
+        ).iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    )
+    assert snapshot.status is DecisionTimeOperationRunStatus.DEADLINE_MISSED
+    assert len(packages) == 1
+    assert packages[0].status.value == "DEADLINE_MISSED"
+    assert packages[0].deadline_status == "DEADLINE_MISSED"
 
 
 def test_controlled_runner_archives_all_provider_failure_as_data_blocked(

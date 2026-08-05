@@ -240,6 +240,59 @@ def _risk_command(
     )
 
 
+def _controlled_references() -> tuple[LifecycleObjectReference, ...]:
+    specs = (
+        (LifecycleObjectType.MARKET_DATA_DATASET, LifecycleReaderKind.MARKET_DATA_DATASET_READER, "a", "daily"),
+        (LifecycleObjectType.MARKET_DATA_DATASET, LifecycleReaderKind.MARKET_DATA_DATASET_READER, "b", "minute"),
+        (LifecycleObjectType.FEATURE_BUNDLE, LifecycleReaderKind.FEATURE_BUNDLE_READER, "c", "static-feature"),
+        (LifecycleObjectType.FEATURE_BUNDLE, LifecycleReaderKind.FEATURE_BUNDLE_READER, "d", "intraday-feature"),
+        (LifecycleObjectType.OPERATIONAL_UNIVERSE, LifecycleReaderKind.OPERATIONAL_UNIVERSE_READER, "e", "universe"),
+        (LifecycleObjectType.STATIC_UNIVERSE_FEATURE_BUNDLE, LifecycleReaderKind.STATIC_UNIVERSE_FEATURE_BUNDLE_READER, "f", "static"),
+        (LifecycleObjectType.CANDIDATE_INTRADAY_FEATURE_OVERLAY, LifecycleReaderKind.CANDIDATE_INTRADAY_FEATURE_OVERLAY_READER, "1", "overlay"),
+        (LifecycleObjectType.SOURCE_MANIFEST, LifecycleReaderKind.SOURCE_MANIFEST_READER, "2", "source"),
+        (LifecycleObjectType.SUPPLEMENTAL_RESEARCH_EVIDENCE, LifecycleReaderKind.SUPPLEMENTAL_RESEARCH_EVIDENCE_READER, "3", "supplemental"),
+        (LifecycleObjectType.TRADING_CALENDAR_ARTIFACT, LifecycleReaderKind.TRADING_CALENDAR_ARTIFACT_READER, "4", "calendar"),
+    )
+    return tuple(
+        sorted(
+            (
+                LifecycleObjectReference(
+                    object_type=object_type,
+                    object_id=LifecycleObjectId(f"controlled-{suffix}"),
+                    content_hash=_hash(char),
+                    reader_kind=reader_kind,
+                    locator=f"artifacts/controlled-{suffix}",
+                    available_at=AS_OF,
+                )
+                for object_type, reader_kind, char, suffix in specs
+            ),
+            key=lambda item: item.sort_key,
+        )
+    )
+
+
+def _controlled_command(
+    references: tuple[LifecycleObjectReference, ...] | None = None,
+) -> CanonicalLifecycleCommand:
+    return CanonicalLifecycleCommand(
+        run_type=LifecycleRunType.CANONICAL_DECISION_LIFECYCLE,
+        decision_date=date(2026, 8, 4),
+        as_of_time=AS_OF,
+        idempotency_key="controlled-request-1",
+        input_manifest_id=None,
+        input_content_hash=None,
+        input_manifest_locator=None,
+        input_references=(
+            _controlled_references() if references is None else references
+        ),
+        configuration_references=(_configuration(),),
+        model_references=(_model(),),
+        stop_after_stage=None,
+        output_directory=Path("artifacts/controlled-lifecycle"),
+        authority_database_locator=None,
+    )
+
+
 def test_command_round_trip_and_deterministic_run_identity() -> None:
     command = _command()
     restored = CanonicalLifecycleCommand.from_canonical_dict(
@@ -416,6 +469,43 @@ def test_risk_continuation_rejects_two_references_of_one_type() -> None:
     ambiguous = tuple(sorted((*references, duplicate), key=lambda item: item.sort_key))
     with pytest.raises(ValueError, match="exactly one"):
         _risk_command(ambiguous)
+
+
+def test_controlled_command_requires_exact_input_type_cardinality() -> None:
+    references = _controlled_references()
+    assert CanonicalLifecycleCommand.from_canonical_dict(
+        _controlled_command().to_canonical_dict()
+    ) == _controlled_command()
+
+    source = next(
+        item
+        for item in references
+        if item.object_type is LifecycleObjectType.SOURCE_MANIFEST
+    )
+    extra = LifecycleObjectReference(
+        object_type=LifecycleObjectType.CANDIDATE_SET,
+        object_id=LifecycleObjectId("controlled-unexpected-candidate-set"),
+        content_hash=_hash("9"),
+        reader_kind=LifecycleReaderKind.CANDIDATE_SET_READER,
+        locator="artifacts/controlled-unexpected-candidate-set",
+        available_at=AS_OF,
+    )
+    invalid_inputs = (
+        tuple(item for item in references if item is not source),
+        tuple(sorted((*references, replace(source, object_id=LifecycleObjectId("controlled-source-2"), content_hash=_hash("8"))), key=lambda item: item.sort_key)),
+        tuple(sorted((*references, extra), key=lambda item: item.sort_key)),
+        tuple(
+            item
+            for item in references
+            if not (
+                item.object_type is LifecycleObjectType.FEATURE_BUNDLE
+                and str(item.object_id) == "controlled-intraday-feature"
+            )
+        ),
+    )
+    for invalid in invalid_inputs:
+        with pytest.raises(ValueError, match="exact prerequisite"):
+            _controlled_command(invalid)
 
 
 def test_full_lifecycle_requires_recoverable_composite_and_source_inputs() -> None:
