@@ -123,7 +123,7 @@ def test_schema_only_zero_to_zero_import_publishes_verified_report(
 
     assert report.source_row_count == report.target_row_count == 0
     assert report.tables == ()
-    assert len(report.applied_migrations) == 17
+    assert len(report.applied_migrations) == 18
     assert MigrationReportReader().read(
         tmp_path / "reports" / report.report_id
     ) == report

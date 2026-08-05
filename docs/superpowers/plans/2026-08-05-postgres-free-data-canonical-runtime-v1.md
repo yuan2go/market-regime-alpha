@@ -125,13 +125,13 @@
 - Consumes: real PostgreSQL fixture and recorded raw archives.
 - Produces: deterministic replay equality and explicit live-smoke evidence classification.
 
-- [ ] Test idempotency conflict, CAS, concurrent claim, lease expiration, fencing, retry, restart, append-only events, and parent/child references on real PostgreSQL.
-- [ ] Parameterize recorded end-to-end tests for 20, 100, and 300 symbols; require stable hashes and no repeated acquisition or Feature publication.
-- [ ] Assert provider failure cannot enter a static example; missing evidence fails closed.
-- [ ] Assert zero Opportunity, Portfolio, ManualTrade, Fill, Position mutation, Order, and Broker calls.
-- [ ] Keep live network smoke outside ordinary CI and label fixture, recorded replay, and live evidence separately.
-- [ ] Run the PostgreSQL and recorded commands with `MARKET_REGIME_ALPHA_TEST_DATABASE_URL` and require PASS.
-- [ ] Commit with `test(runtime): prove free data postgres replay boundaries`.
+- [x] Test idempotency conflict, CAS, concurrent claim, lease expiration, fencing, retry, restart, append-only events, and parent/child references on real PostgreSQL.
+- [x] Parameterize recorded end-to-end tests for 20, 100, and 300 symbols; require stable hashes and no repeated acquisition or Feature publication.
+- [x] Assert provider failure cannot enter a static example; missing evidence fails closed.
+- [x] Assert zero Opportunity, Portfolio, ManualTrade, Fill, Position mutation, Order, and Broker calls.
+- [x] Keep live network smoke outside ordinary CI and label fixture, recorded replay, and live evidence separately.
+- [x] Run the PostgreSQL and recorded commands with `MARKET_REGIME_ALPHA_TEST_DATABASE_URL` and require PASS.
+- [x] Commit with `test(runtime): prove free data postgres replay boundaries`.
 
 ### Task 6: Documentation, qualification, and publication
 

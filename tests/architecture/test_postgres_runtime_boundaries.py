@@ -36,3 +36,19 @@ def test_free_data_production_modules_cannot_import_sqlite_adapters() -> None:
                 violations.append(f"{path.relative_to(PACKAGE_ROOT)} -> {module}")
 
     assert violations == [], "PostgreSQL free-data boundary violations:\n" + "\n".join(violations)
+
+
+def test_free_data_composition_cannot_import_trading_mutation_domains() -> None:
+    roots = (
+        PACKAGE_ROOT / "application" / "free_data_operation",
+        PACKAGE_ROOT / "cli" / "free_data_operation.py",
+    )
+    prohibited = (".execution", ".portfolio", ".position", ".broker")
+    violations: list[str] = []
+    paths = tuple(roots[0].rglob("*.py")) + (roots[1],)
+    for path in paths:
+        for module in sorted(_imports(path)):
+            if any(value in module for value in prohibited):
+                violations.append(f"{path.relative_to(PACKAGE_ROOT)} -> {module}")
+
+    assert violations == [], "Free-data trading mutation imports:\n" + "\n".join(violations)
