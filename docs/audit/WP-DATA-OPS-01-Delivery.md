@@ -203,3 +203,28 @@ The next authorized work remains limited to:
 Real controlled 14:55 operation, repeated trading-day coverage, Provider
 qualification, formal PIT/OOS, H7/H8/H9, PostgreSQL, RBAC, frontend and Broker
 authority remain outside this delivery.
+
+## Final GitHub publication evidence
+
+The implementation checkpoint before this report-only publication is:
+
+```text
+Base: 68f91295a888e54b83334c7d7afcaab580961244
+Branch: feat/controlled-1455-operational-evidence
+Implementation HEAD: 1b9d9c164bf6703fea201953b028dab905ac9911
+Draft PR: https://github.com/yuan2go/market-regime-alpha/pull/37
+PR state: OPEN / DRAFT / MERGEABLE
+Push CI: 30982312280 / SUCCESS / 8m29s
+PR CI: 30982372080 / SUCCESS / 8m19s
+```
+
+Both CI runs were bound to the implementation HEAD above and executed frozen
+dependency installation, documentation validation, the complete pytest suite,
+Ruff, mypy and sdist/wheel build. The locally observed checkpoint covered 2,165
+collected tests and retained six existing pandas `PerformanceWarning` messages
+without failures.
+
+The subsequent publication requested by the user is report-only. No tests were
+rerun for the report commit. The user-owned `.idea/modules.xml` modification
+remained unstaged and uncommitted; no local database, Provider payload, Feature
+output, Benchmark output, credential or build artifact was included.
