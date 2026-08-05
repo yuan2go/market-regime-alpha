@@ -268,7 +268,7 @@ class DailyLoopRunner:
     ) -> DailyLoopSourceFreezeResult:
         """Freeze and bind sources without entering the Legacy research path."""
 
-        self._validate_command(command)
+        self._validate_command(command, source_only=True)
         if command.run_mode is RunMode.LIVE:
             self.prepare_history(command)
             self.freeze_security_status(command)
@@ -833,7 +833,7 @@ class DailyLoopRunner:
             PublicCompositeBatch,
         ],
     ) -> AcquisitionStageReceipt:
-        self._validate_command(command)
+        self._validate_command(command, source_only=True)
         if command.run_mode is not RunMode.LIVE:
             raise ValueError("acquisition stage commands require LIVE mode")
         record = self._repository.create_or_get(
@@ -1299,11 +1299,24 @@ class DailyLoopRunner:
         if self._after_stage_hook is not None:
             self._after_stage_hook(status)
 
-    def _validate_command(self, command: DailyRunCommand) -> None:
+    def _validate_command(
+        self,
+        command: DailyRunCommand,
+        *,
+        source_only: bool = False,
+    ) -> None:
         if command.universe_policy_id != str(self._policy.policy_id):
             raise ValueError("DailyRunCommand Universe Policy identity mismatch")
-        if command.model_set_id != DAILY_B0_B1_MODEL_SET_ID:
+        if (
+            not source_only
+            and command.model_set_id != DAILY_B0_B1_MODEL_SET_ID
+        ):
             raise ValueError("DailyRunCommand requires the frozen B0/B1 model set")
+        if source_only and command.model_set_id not in {
+            DAILY_B0_B1_MODEL_SET_ID,
+            "free-data-canonical-inputs-v1",
+        }:
+            raise ValueError("Daily source freeze model-set identity is unsupported")
 
     def _now(self) -> datetime:
         value = self._clock()

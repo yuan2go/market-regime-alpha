@@ -462,7 +462,12 @@ def _postgres_binding_locator(
 
 
 def _validate_runtime_binding_key(scope_type: str, scope_id: str) -> None:
-    if scope_type not in {"CANONICAL_LIFECYCLE", "CONTROLLED_OPERATION"}:
+    if scope_type not in {
+        "CANONICAL_LIFECYCLE",
+        "CONTROLLED_OPERATION",
+        "DAILY_LOOP",
+        "FREE_DATA_OPERATION",
+    }:
         raise ValueError("unsupported runtime database binding scope")
     if not isinstance(scope_id, str) or not scope_id.strip():
         raise ValueError("runtime database binding scope ID must be non-empty")

@@ -11,8 +11,12 @@ from zoneinfo import ZoneInfo
 
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     load_controlled_runtime_configuration,
+    publish_controlled_runtime_configuration,
     publish_controlled_source_manifest,
     publish_controlled_trading_calendar,
+)
+from market_regime_alpha.application.controlled_operation.runtime_configuration import (
+    ControlledOperationRuntimeConfiguration,
 )
 from market_regime_alpha.application.free_data_operation.contracts import (
     FreeDataPreparationRequest,
@@ -73,6 +77,7 @@ from market_regime_alpha.research.platform_v2.inputs import (
     ResearchDailyBar,
     SymbolResearchObservation,
 )
+from market_regime_alpha.signals import canonical_signal_freshness_policy
 from market_regime_alpha.universe import (
     ListingStatus,
     OperationalLiquidityEvidence,
@@ -178,6 +183,37 @@ def prepare_free_data_inputs(
         root=root / "supplemental_research_evidence",
         bundle=supplemental,
     )
+    active_configuration_path: Path | None = None
+    active_configuration = None
+    if runtime_configuration_path is not None:
+        template = load_controlled_runtime_configuration(
+            runtime_configuration_path.resolve()
+        )
+        active_configuration = ControlledOperationRuntimeConfiguration.create(
+            static_feature_set=template.static_feature_set,
+            intraday_feature_set=template.intraday_feature_set,
+            research=template.research,
+            signal_model=template.signal_model,
+            signal_mapping=template.signal_mapping,
+            signal_requirement=template.signal_requirement,
+            signal_freshness=canonical_signal_freshness_policy(
+                trading_calendar=calendar
+            ),
+            path_forecast=template.path_forecast,
+            feature_max_workers=template.feature_max_workers,
+            minute_concurrency_limit=template.minute_concurrency_limit,
+            minute_per_request_timeout_seconds=(
+                template.minute_per_request_timeout_seconds
+            ),
+            minute_max_attempts=template.minute_max_attempts,
+            minute_retry_backoff_seconds=template.minute_retry_backoff_seconds,
+            provider_profile_id=template.provider_profile_id,
+            limitations=template.limitations,
+        )
+        active_configuration_path = publish_controlled_runtime_configuration(
+            root=root / "runtime_configurations",
+            artifact=active_configuration,
+        )
     paths = FreeDataPreparedPaths(
         history_source_stage=history_source.root,
         daily_source_manifest=history_manifest_path,
@@ -186,23 +222,16 @@ def prepare_free_data_inputs(
         trading_calendar=calendar_path,
         operational_universe=universe_path,
         supplemental_research_evidence=supplemental_path,
-        runtime_configuration=(
-            runtime_configuration_path.resolve()
-            if runtime_configuration_path is not None
-            else None
-        ),
+        runtime_configuration=active_configuration_path,
     )
     configuration_reference: tuple[PreparedArtifactReference, ...] = ()
-    if runtime_configuration_path is not None:
-        configuration = load_controlled_runtime_configuration(
-            runtime_configuration_path.resolve()
-        )
+    if active_configuration is not None and active_configuration_path is not None:
         configuration_reference = (
             _reference(
                 "RUNTIME_CONFIGURATION",
-                configuration.configuration_id,
-                configuration.configuration_hash,
-                runtime_configuration_path,
+                active_configuration.configuration_id,
+                active_configuration.configuration_hash,
+                active_configuration_path,
                 root,
             ),
         )
@@ -479,9 +508,11 @@ def _build_universe(
         for field in fields.values()
         if field.available_time is not None
     )
-    available_at = max(
-        *(item.liquidity_evidence.available_at for item in records),
-        *status_availability,
+    available_at = normalize_canonical_datetime(
+        max(
+            *(item.liquidity_evidence.available_at for item in records),
+            *status_availability,
+        )
     )
     return OperationalUniverseArtifact.create(
         decision_date=request.decision_time.value.astimezone(_SHANGHAI).date(),

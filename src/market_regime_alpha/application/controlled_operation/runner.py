@@ -517,7 +517,28 @@ class ControlledDecisionTimeOperationRunner:
             latency_sink=latencies,
         )
         if not candidates.selected:
-            raise ControlledOperationDataBlocked("CONTROLLED_CANDIDATE_SET_EMPTY")
+            reason = "CONTROLLED_CANDIDATE_SET_EMPTY"
+            self._publish_terminal_package(
+                command=command,
+                policy=policy,
+                inputs=inputs,
+                preparation=preparation,
+                configuration=configuration,
+                status=ControlledOperationalEvidenceStatus.DATA_BLOCKED,
+                deadline_status=assessment.state.value,
+                reason_codes=(reason, "SUPPLEMENTAL_EVIDENCE_INSUFFICIENT"),
+                latencies=latencies,
+                research=research,
+                candidates=candidates,
+            )
+            snapshot = self._journal.get(command.run_id)
+            self._journal.set_run_status(
+                run_id=command.run_id,
+                expected_version=snapshot.version,
+                status=DecisionTimeOperationRunStatus.DATA_BLOCKED,
+                reason=reason,
+            )
+            raise ControlledOperationDataBlocked(reason)
 
         minute_command = CandidateMinuteAcquisitionCommand.create(
             candidate_set=candidates,

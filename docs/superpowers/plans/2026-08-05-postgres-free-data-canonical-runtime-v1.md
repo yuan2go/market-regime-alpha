@@ -105,13 +105,13 @@
 - Produces: `prepare`, `run`, `resume`, `replay`, `report`, and `inspect` subcommands plus the six requested console-script names.
 - Consumes: `RepositoryFactory`, `ControlledDecisionTimeOperationRunner`, and existing replay/report readers.
 
-- [ ] Write CLI contract tests for all required identifiers, redacted database authority, code revision, configuration hash, runtime status, blocker, Artifact root, and safety declarations.
-- [ ] Compose DailyLoop source freeze, prepared inputs, Controlled parent, Feature runs, and Canonical child without creating another journal.
-- [ ] Treat empty CandidateSet, provider failure, missing theme evidence, missed window, Path `DATA_INSUFFICIENT`, and Entry blocker as distinct auditable statuses.
-- [ ] Ensure `ENGINEERING_RUN_COMPLETED` and `ENTRY_AUTHORITY_BLOCKED` cannot render as a successful trade decision.
-- [ ] Add structured provider/stage/feature/candidate/signal/recovery/retry/lock/deadline metrics without secrets.
-- [ ] Run `uv run pytest -q tests/application/free_data_operation tests/cli/test_free_data_operation_cli.py` and require PASS.
-- [ ] Commit with `feat(runtime): compose free data canonical operation`.
+- [x] Write CLI contract tests for all required identifiers, redacted database authority, code revision, configuration hash, runtime status, blocker, Artifact root, and safety declarations.
+- [x] Compose DailyLoop source freeze, prepared inputs, Controlled parent, Feature runs, and Canonical child without creating another journal.
+- [x] Treat empty CandidateSet, provider failure, missing theme evidence, missed window, Path `DATA_INSUFFICIENT`, and Entry blocker as distinct auditable statuses.
+- [x] Ensure `ENGINEERING_RUN_COMPLETED` and `ENTRY_AUTHORITY_BLOCKED` cannot render as a successful trade decision.
+- [x] Add structured provider/stage/feature/candidate/signal/recovery/retry/lock/deadline metrics without secrets.
+- [x] Run `uv run pytest -q tests/application/free_data_operation tests/cli/test_free_data_operation_cli.py` and require PASS.
+- [x] Commit with `feat(runtime): compose free data canonical operation`.
 
 ### Task 5: PostgreSQL and 20/100/300 end-to-end proof
 
