@@ -14,15 +14,16 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
 from market_regime_alpha.application.canonical_lifecycle.replay_snapshot import (
     lifecycle_history_hash,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
-)
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleStageName,
 )
 from market_regime_alpha.application.controlled_operation.entry_blocker import (
     ControlledEntryAssessmentBlocker,
     load_controlled_entry_blocker,
+)
+from market_regime_alpha.application.controlled_operation.canonical_bridge import (
+    CanonicalRepositoryFactory,
+    sqlite_controlled_canonical_repository,
 )
 from market_regime_alpha.application.controlled_operation.canonical_segment import (
     CanonicalLifecycleRunObjectReference,
@@ -124,10 +125,19 @@ class ControlledOperationReplayReport:
 
 def replay_controlled_operation(
     package_path: Path,
+    *,
+    canonical_repository_factory: CanonicalRepositoryFactory = (
+        sqlite_controlled_canonical_repository
+    ),
+    feature_receipt_loader: Callable[
+        [Path], tuple[FeatureMaterializationReceipt, ...]
+    ]
+    | None = None,
 ) -> ControlledOperationReplayReport:
     """Recompute the recorded chain without a clock, network, broker, or writes."""
 
     package_path = package_path.resolve()
+    receipt_loader = feature_receipt_loader or _sqlite_feature_receipts
     package = replay_controlled_operation_package(package_path)
     run_root = package_path.parent.parent
     components: list[tuple[str, str]] = []
@@ -338,9 +348,9 @@ def replay_controlled_operation(
     ):
         raise ValueError("Controlled replay Canonical child-run divergence")
     if canonical_run.schema_version != LEGACY_CONTROLLED_CANONICAL_RUN_SCHEMA:
-        canonical_repository = SQLiteLifecycleRunRepository(
+        canonical_repository = canonical_repository_factory(
             run_root / "canonical-lifecycle.sqlite3",
-            read_only=True,
+            True,
         )
         lifecycle_run_id = LifecycleRunId(str(canonical_run.run_id))
         stored_command = canonical_repository.get_command(lifecycle_run_id)
@@ -370,11 +380,13 @@ def replay_controlled_operation(
         run_root / "static-features",
         bundle_id=static.feature_bundle_id,
         bundle_hash=static.feature_bundle_hash,
+        receipt_loader=receipt_loader,
     )
     intraday_child = _feature_child_reference(
         run_root / "intraday-features",
         bundle_id=overlay.intraday_feature_bundle_id,
         bundle_hash=overlay.intraday_feature_bundle_hash,
+        receipt_loader=receipt_loader,
     )
     expected_children = {
         "DAILY_ACQUISITION_RUN": {
@@ -570,8 +582,22 @@ def _feature_child_reference(
     *,
     bundle_id: ArtifactId,
     bundle_hash: str,
+    receipt_loader: Callable[[Path], tuple[FeatureMaterializationReceipt, ...]],
 ) -> tuple[str, str]:
-    matches: list[FeatureMaterializationReceipt] = []
+    matches = [
+        receipt
+        for receipt in receipt_loader(output_root)
+        if receipt.bundle_id == bundle_id and receipt.bundle_hash == bundle_hash
+    ]
+    if len(matches) != 1:
+        raise ValueError("Controlled replay Feature child Receipt is ambiguous")
+    return matches[0].command_hash, matches[0].content_hash
+
+
+def _sqlite_feature_receipts(
+    output_root: Path,
+) -> tuple[FeatureMaterializationReceipt, ...]:
+    receipts: list[FeatureMaterializationReceipt] = []
     database_path = output_root / "materialization-run.sqlite3"
     if database_path.exists():
         connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
@@ -587,11 +613,8 @@ def _feature_child_reference(
             if not isinstance(payload, dict):
                 raise ValueError("Controlled replay Feature Receipt JSON is invalid")
             receipt = FeatureMaterializationReceipt.from_canonical_dict(payload)
-            if receipt.bundle_id == bundle_id and receipt.bundle_hash == bundle_hash:
-                matches.append(receipt)
-    if len(matches) != 1:
-        raise ValueError("Controlled replay Feature child Receipt is ambiguous")
-    return matches[0].command_hash, matches[0].content_hash
+            receipts.append(receipt)
+    return tuple(receipts)
 
 
 def _single_ref(

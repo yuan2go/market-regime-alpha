@@ -12,8 +12,10 @@ from time import perf_counter, sleep
 from typing import Callable, NoReturn
 
 from market_regime_alpha.application.controlled_operation.canonical_bridge import (
+    CanonicalRepositoryFactory,
     ControlledCanonicalDeadlineExceeded,
     run_controlled_canonical_lifecycle,
+    sqlite_controlled_canonical_repository,
 )
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     AfterStageHook,
@@ -21,9 +23,6 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
 )
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleObjectType,
-)
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunType,
@@ -48,6 +47,7 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
     load_controlled_trading_calendar,
 )
 from market_regime_alpha.application.controlled_operation.longitudinal_index import (
+    LongitudinalOperationalIndex,
     LongitudinalOperationalRecord,
     SQLiteLongitudinalOperationalIndex,
 )
@@ -55,6 +55,7 @@ from market_regime_alpha.application.controlled_operation.journal import (
     ChildRunReferenceKind,
     ClaimedDecisionTimeOperationStage,
     ControlledOperationCommand,
+    DecisionTimeOperationJournal,
     DecisionTimeOperationReceipt,
     DecisionTimeOperationRunSnapshot,
     DecisionTimeOperationRunStatus,
@@ -87,9 +88,6 @@ from market_regime_alpha.application.controlled_operation.outcome_source_archive
 )
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
-)
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
-    SQLiteDecisionTimeOperationJournal,
 )
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
     load_verified_supplemental_research_evidence,
@@ -233,12 +231,16 @@ class ControlledDecisionTimeOperationRunner:
     def __init__(
         self,
         *,
-        journal: SQLiteDecisionTimeOperationJournal,
+        journal: DecisionTimeOperationJournal,
         output_root: Path,
         clock: Clock = _utc_now,
         minute_client_factory: MinuteClientFactory | None = None,
         sleeper: Sleeper = sleep,
         canonical_after_stage_hook: AfterStageHook | None = None,
+        longitudinal_index: LongitudinalOperationalIndex | None = None,
+        canonical_repository_factory: CanonicalRepositoryFactory = (
+            sqlite_controlled_canonical_repository
+        ),
     ) -> None:
         self._journal = journal
         self._output_root = output_root.resolve()
@@ -246,6 +248,13 @@ class ControlledDecisionTimeOperationRunner:
         self._minute_client_factory = minute_client_factory
         self._sleeper = sleeper
         self._canonical_after_stage_hook = canonical_after_stage_hook
+        self._longitudinal_index = longitudinal_index or (
+            SQLiteLongitudinalOperationalIndex(
+                self._output_root / "longitudinal-operational-index.sqlite3",
+                clock=self._clock,
+            )
+        )
+        self._canonical_repository_factory = canonical_repository_factory
 
     def prepare(
         self,
@@ -739,6 +748,7 @@ class ControlledDecisionTimeOperationRunner:
                 overlay_path=overlay_path,
                 hard_cutoff=hard_cutoff,
                 after_stage_hook=self._canonical_after_stage_hook,
+                repository_factory=self._canonical_repository_factory,
             )
         except LifecycleStageExecutionError as exc:
             if exc.exception_type != ControlledCanonicalDeadlineExceeded.__name__:
@@ -1074,10 +1084,7 @@ class ControlledDecisionTimeOperationRunner:
             settled_path = run_root / "operation-packages" / str(settled.package_id)
             outcome_path = _evidence_path(run_root, settled, "OUTCOME_OBSERVATION")
             outcome = load_trade_horizon_outcome_evidence(outcome_path)
-            longitudinal_record = SQLiteLongitudinalOperationalIndex(
-                self._output_root / "longitudinal-operational-index.sqlite3",
-                clock=self._clock,
-            ).append(
+            longitudinal_record = self._longitudinal_index.append(
                 package=settled,
                 package_locator=settled_path.relative_to(self._output_root).as_posix(),
             )
@@ -1228,12 +1235,11 @@ class ControlledDecisionTimeOperationRunner:
                 raise ValueError("settled package supersession lineage mismatch")
             settled_path = run_root / "operation-packages" / str(settled.package_id)
 
-        index = SQLiteLongitudinalOperationalIndex(
-            self._output_root / "longitudinal-operational-index.sqlite3",
-            clock=self._clock,
-        )
         locator = settled_path.relative_to(self._output_root).as_posix()
-        longitudinal_record = index.append(package=settled, package_locator=locator)
+        longitudinal_record = self._longitudinal_index.append(
+            package=settled,
+            package_locator=locator,
+        )
         return ControlledOperationSettlementResult(
             snapshot=self._journal.get(command.run_id),
             outcome=outcome,
@@ -1676,10 +1682,8 @@ class ControlledDecisionTimeOperationRunner:
         if not required.issubset(completed):
             return False
         database_path = self._run_root(command) / "canonical-lifecycle.sqlite3"
-        if not database_path.is_file():
-            return False
         try:
-            repository = SQLiteLifecycleRunRepository(database_path, read_only=True)
+            repository = self._canonical_repository_factory(database_path, True)
             child_run = repository.get_run_by_idempotency_key(
                 f"{command.idempotency_key}:canonical-controlled-v2"
             )

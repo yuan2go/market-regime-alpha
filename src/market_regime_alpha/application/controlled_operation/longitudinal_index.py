@@ -8,7 +8,7 @@ import json
 from pathlib import Path, PurePosixPath
 import sqlite3
 from threading import Lock
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Protocol
 
 from market_regime_alpha.application.controlled_operation.evidence_package import (
     ControlledOperationalEvidencePackage,
@@ -70,6 +70,15 @@ class LongitudinalOperationalRecord:
             raise ValueError("Longitudinal package locator must be relative")
         if self.outcome_status not in {"OUTCOME_PENDING", "SETTLED"}:
             raise ValueError("Longitudinal Outcome status is invalid")
+
+
+class LongitudinalOperationalIndex(Protocol):
+    def append(
+        self,
+        *,
+        package: ControlledOperationalEvidencePackage,
+        package_locator: str,
+    ) -> LongitudinalOperationalRecord: ...
 
 
 class SQLiteLongitudinalOperationalIndex:

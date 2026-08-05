@@ -27,6 +27,8 @@ from .sqlite_journal import (
     ControlledOperationConflict,
     SQLiteDecisionTimeOperationJournal,
 )
+from .postgres_journal import PostgresDecisionTimeOperationJournal
+from .postgres_longitudinal_index import PostgresLongitudinalOperationalIndex
 if TYPE_CHECKING:
     from .replay import (
         ControlledOperationReplayReport,
@@ -90,6 +92,8 @@ __all__ = [
     "DecisionWindowState",
     "OperationArtifactReference",
     "OperationChildRunReference",
+    "PostgresDecisionTimeOperationJournal",
+    "PostgresLongitudinalOperationalIndex",
     "SQLiteDecisionTimeOperationJournal",
     "default_decision_time_operation_policy",
     "replay_controlled_operation",
