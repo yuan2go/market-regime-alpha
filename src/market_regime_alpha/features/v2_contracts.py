@@ -302,7 +302,11 @@ class FeatureArtifactV2:
             validation_status=definition.validation_status,
             limitations=limitations,
         )
-        result.verify_identity()
+        # ``content_hash`` was computed from ``semantic`` immediately above.
+        # Compare the constructed projection directly so creation does not
+        # serialize and hash the same large source-Bar lineage a second time.
+        if result.semantic_payload() != semantic:
+            raise ValueError("Feature Artifact V2 creation projection mismatch")
         return result
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -668,8 +672,13 @@ class FeatureBundleArtifact:
         selected_symbols: tuple[str, ...],
         created_at: datetime,
         code_revision: str,
+        _membership: _VerifiedDatasetMembership | None = None,
+        _artifacts_verified: bool = False,
     ) -> FeatureBundleArtifact:
-        dataset.verify_identity()
+        if _membership is None:
+            dataset.verify_identity()
+        elif _membership.dataset is not dataset:
+            raise ValueError("Feature Bundle membership Dataset object mismatch")
         feature_set.verify_identity()
         selected_symbols = tuple(sorted(selected_symbols))
         ordered_artifacts = tuple(
@@ -706,6 +715,7 @@ class FeatureBundleArtifact:
             feature_set=feature_set,
             artifacts=ordered_artifacts,
             selected_symbols=selected_symbols,
+            verify_artifacts=not _artifacts_verified,
         )
         limitations = tuple(
             sorted(
@@ -803,7 +813,10 @@ class FeatureBundleArtifact:
             raise ValueError("Feature Bundle identity mismatch")
 
     def verify_materialized_projection(
-        self, artifacts: tuple[FeatureArtifactV2, ...]
+        self,
+        artifacts: tuple[FeatureArtifactV2, ...],
+        *,
+        artifacts_verified: bool = False,
     ) -> None:
         ordered = tuple(
             sorted(
@@ -824,7 +837,6 @@ class FeatureBundleArtifact:
             artifacts=ordered,
         )
         for item in ordered:
-            item.verify_identity()
             if (
                 item.dataset_id != self.dataset_id
                 or item.dataset_hash != self.dataset_hash
@@ -835,6 +847,7 @@ class FeatureBundleArtifact:
             feature_set=self.feature_set,
             artifacts=ordered,
             selected_symbols=self.symbols,
+            verify_artifacts=not artifacts_verified,
         )
         if (
             references != self.feature_artifact_references
@@ -1388,13 +1401,28 @@ def _derive_bundle_projection(
     feature_set: FeatureSetConfiguration,
     artifacts: tuple[FeatureArtifactV2, ...],
     selected_symbols: tuple[str, ...],
+    verify_artifacts: bool = True,
 ) -> tuple[
     tuple[FeatureArtifactReferenceV2, ...],
     FeatureBundleCoverage,
     str,
     FeatureBundleState,
 ]:
-    references = tuple(FeatureArtifactReferenceV2.from_artifact(item) for item in artifacts)
+    references = tuple(
+        FeatureArtifactReferenceV2.from_artifact(item)
+        if verify_artifacts
+        else FeatureArtifactReferenceV2(
+            artifact_id=item.artifact_id,
+            content_hash=item.content_hash,
+            feature_id=item.feature_id,
+            symbol=item.symbol,
+            timeframe=item.timeframe,
+            state=item.state,
+            available_at=item.available_at,
+            locator=f"feature-artifacts/{item.artifact_id}",
+        )
+        for item in artifacts
+    )
     available_count = sum(
         value.state is FeatureValueState.AVAILABLE
         for item in artifacts

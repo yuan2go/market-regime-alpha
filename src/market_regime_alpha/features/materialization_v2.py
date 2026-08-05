@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import shutil
 import tempfile
+from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from market_regime_alpha.evidence.canonical import (
@@ -25,6 +26,7 @@ from market_regime_alpha.features.spine import (
     FeatureSetConfiguration,
 )
 from market_regime_alpha.features.materialization_run import (
+    DEFAULT_FEATURE_TASK_LEASE,
     FeatureMaterializationExecutionMode,
     FeatureMaterializationTaskSpec,
     SQLiteFeatureMaterializationRunRepository,
@@ -107,17 +109,26 @@ class FeatureComputationFailedError(RuntimeError):
     """A valid Feature computation failed rather than lacking market evidence."""
 
 
+class FeatureMaterializationHardCrash(BaseException):
+    """Testable process-death boundary that deliberately skips graceful settlement."""
+
+
 def publish_feature_artifact_v2(
     *,
     root: Path,
     artifact: FeatureArtifactV2,
     failure_injector: FailureInjector | None = None,
     encoding_version: str = FEATURE_ARTIFACT_ENCODING_V2,
+    identity_verified: bool = False,
 ) -> Path:
     if encoding_version == FEATURE_ARTIFACT_ENCODING_V2:
         if failure_injector is not None:
             raise ValueError("Feature Artifact Encoding V2 has no artifact-level injector")
-        return publish_feature_artifact_encoding_v2(root=root, artifact=artifact)
+        return publish_feature_artifact_encoding_v2(
+            root=root,
+            artifact=artifact,
+            identity_verified=identity_verified,
+        )
     if encoding_version != "feature-artifact-package-json-v1":
         raise ValueError("unsupported Feature Artifact physical encoding")
     return _publish_feature_artifact_json_v1(
@@ -230,20 +241,29 @@ def publish_feature_bundle_v2(
     root: Path,
     artifact_root: Path,
     bundle: FeatureBundleArtifact,
+    materialized_artifacts: tuple[FeatureArtifactV2, ...] | None = None,
+    materialized_artifacts_verified: bool = False,
     failure_injector: FailureInjector | None = None,
     encoding_version: str = FEATURE_BUNDLE_ENCODING_V2,
 ) -> Path:
     if encoding_version == FEATURE_BUNDLE_ENCODING_V2:
-        artifacts = tuple(
-            load_verified_feature_artifact_v2(
-                artifact_root / str(reference.artifact_id)
-            ).artifact
-            for reference in bundle.feature_artifact_references
-        )
+        if materialized_artifacts is None:
+            artifacts = tuple(
+                load_verified_feature_artifact_v2(
+                    artifact_root / str(reference.artifact_id)
+                ).artifact
+                for reference in bundle.feature_artifact_references
+            )
+        else:
+            artifacts = tuple(materialized_artifacts)
+            for artifact in artifacts:
+                if not (artifact_root / str(artifact.artifact_id)).is_dir():
+                    raise ValueError("referenced Feature Artifact is missing")
         return publish_feature_bundle_encoding_v2(
             root=root,
             bundle=bundle,
             artifacts=artifacts,
+            artifacts_verified=materialized_artifacts_verified,
             failure_injector=failure_injector,
         )
     if encoding_version != "feature-bundle-package-json-v1":
@@ -392,13 +412,85 @@ def _load_verified_feature_bundle_v2(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedFeatureExecutionContext:
+    """One verified immutable input projection reused by every task batch."""
+
+    verified_dataset: VerifiedMarketDataDataset
+    feature_set: FeatureSetConfiguration
+    selected_symbols: tuple[str, ...]
+    definitions: Mapping[str, FeatureDefinitionV2]
+    configurations: Mapping[str, FeatureConfiguration]
+    bars_by_scope: Mapping[tuple[str, Timeframe], tuple[CanonicalMarketBar, ...]]
+    task_input_scopes: Mapping[str, tuple[str, Timeframe]]
+    task_specs: tuple[FeatureMaterializationTaskSpec, ...]
+    dataset_membership: Any
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        verified_dataset: VerifiedMarketDataDataset,
+        feature_set: FeatureSetConfiguration,
+        selected_symbols: tuple[str, ...],
+    ) -> PreparedFeatureExecutionContext:
+        feature_set.verify_identity()
+        dataset = verified_dataset.artifact
+        membership = _verified_dataset_membership(dataset)
+        selected = tuple(sorted(selected_symbols))
+        if not selected or len(selected) != len(set(selected)):
+            raise ValueError("selected symbols must be non-empty and unique")
+        if not set(selected).issubset(dataset.coverage.observed_symbols):
+            raise ValueError("selected symbols are not covered by Market Data Dataset")
+        definitions = {item.feature_id: item for item in feature_set.definitions}
+        configurations = {
+            item.feature_id: item for item in feature_set.configurations
+        }
+        grouped: dict[tuple[str, Timeframe], list[CanonicalMarketBar]] = {}
+        for bar in verified_dataset.bars:
+            grouped.setdefault((bar.symbol, bar.timeframe), []).append(bar)
+        bars_by_scope = {
+            key: tuple(values) for key, values in grouped.items()
+        }
+        task_specs = FeatureMaterializationRunner._task_specs(
+            feature_set=feature_set,
+            selected_symbols=selected,
+        )
+        task_input_scopes = {
+            item.task_key: (item.symbol, item.timeframe) for item in task_specs
+        }
+        return cls(
+            verified_dataset=verified_dataset,
+            feature_set=feature_set,
+            selected_symbols=selected,
+            definitions=MappingProxyType(definitions),
+            configurations=MappingProxyType(configurations),
+            bars_by_scope=MappingProxyType(bars_by_scope),
+            task_input_scopes=MappingProxyType(task_input_scopes),
+            task_specs=task_specs,
+            dataset_membership=membership,
+        )
+
+
 class FeatureMaterializationRunner:
     """Materialize a controlled Feature Set without network or execution access."""
 
-    def __init__(self, *, max_workers: int = 1) -> None:
+    def __init__(
+        self,
+        *,
+        max_workers: int = 1,
+        task_batch_size: int = 256,
+        clock: Callable[[], datetime] | None = None,
+        lease_duration: timedelta = DEFAULT_FEATURE_TASK_LEASE,
+    ) -> None:
         if isinstance(max_workers, bool) or not 1 <= max_workers <= 8:
             raise ValueError("max_workers must be between one and eight")
+        if isinstance(task_batch_size, bool) or not 1 <= task_batch_size <= 256:
+            raise ValueError("task_batch_size must be between one and 256")
         self._max_workers = max_workers
+        self._task_batch_size = task_batch_size
+        self._clock = clock
+        self._lease_duration = lease_duration
 
     def run(
         self,
@@ -414,6 +506,7 @@ class FeatureMaterializationRunner:
         execution_mode: FeatureMaterializationExecutionMode,
         artifact_encoding_version: str = FEATURE_ARTIFACT_ENCODING_V2,
         bundle_encoding_version: str = FEATURE_BUNDLE_ENCODING_V2,
+        failure_injector: FailureInjector | None = None,
     ) -> FeatureMaterializationReceipt:
         if not isinstance(decision_time, datetime) or not isinstance(created_at, datetime):
             raise TypeError("decision_time and created_at must be datetime")
@@ -435,7 +528,6 @@ class FeatureMaterializationRunner:
             raise ValueError("unsupported Feature Bundle physical encoding")
         feature_set.verify_identity()
         dataset = verified_dataset.artifact
-        dataset.verify_identity()
         if decision_time != dataset.decision_time:
             raise ValueError("Feature materialization DecisionTime differs from dataset")
         selected_symbols = tuple(sorted(selected_symbols))
@@ -462,8 +554,14 @@ class FeatureMaterializationRunner:
             feature_set=feature_set,
             selected_symbols=selected_symbols,
         )
+        repository_options: dict[str, Any] = {
+            "lease_duration": self._lease_duration,
+        }
+        if self._clock is not None:
+            repository_options["clock"] = self._clock
         repository = SQLiteFeatureMaterializationRunRepository(
-            output_root / "materialization-run.sqlite3"
+            output_root / "materialization-run.sqlite3",
+            **repository_options,
         )
         snapshot = repository.prepare(
             idempotency_key=idempotency_key,
@@ -479,23 +577,28 @@ class FeatureMaterializationRunner:
                 output_root=output_root,
             )
             return snapshot.receipt
+        context = PreparedFeatureExecutionContext.create(
+            verified_dataset=verified_dataset,
+            feature_set=feature_set,
+            selected_symbols=selected_symbols,
+        )
         artifact_root = output_root / "feature-artifacts"
+        completed_in_process: dict[str, FeatureArtifactV2] = {}
         while True:
-            claims = tuple(
-                claim
-                for _ in range(self._max_workers)
-                if (claim := repository.claim_next(run_id=snapshot.run_id)) is not None
+            claims = repository.claim_batch(
+                run_id=snapshot.run_id,
+                limit=self._task_batch_size,
             )
             if not claims:
                 break
+            if failure_injector is not None:
+                failure_injector("AFTER_TASK_CLAIMED")
             outstanding = list(claims)
             try:
                 computed = self._compute_artifacts(
-                    verified_dataset=verified_dataset,
-                    feature_set=feature_set,
+                    context=context,
                     decision_time=decision_time,
                     created_at=created_at,
-                    selected_symbols=selected_symbols,
                     task_scope=tuple(
                         (item.symbol, item.feature_id) for item in claims
                     ),
@@ -503,35 +606,66 @@ class FeatureMaterializationRunner:
                 by_scope = {
                     (item.symbol, item.feature_id): item for item in computed
                 }
-                for claim in claims:
-                    artifact = by_scope[(claim.symbol, claim.feature_id)]
+                publication_scope = tuple(
+                    (claim, by_scope[(claim.symbol, claim.feature_id)])
+                    for claim in claims
+                )
+
+                def publish(
+                    item: tuple[Any, FeatureArtifactV2],
+                ) -> tuple[Any, FeatureArtifactV2, bool]:
+                    claim, artifact = item
                     if artifact.timeframe is not claim.timeframe:
                         raise ValueError("materialization task timeframe changed")
+                    artifact_path = artifact_root / str(artifact.artifact_id)
+                    publication_reused = artifact_path.is_dir()
                     publish_feature_artifact_v2(
                         root=artifact_root,
                         artifact=artifact,
                         encoding_version=artifact_encoding_version,
+                        identity_verified=True,
                     )
+                    if failure_injector is not None:
+                        failure_injector("AFTER_ARTIFACT_PUBLISHED")
+                    return claim, artifact, publication_reused
+
+                if self._max_workers == 1:
+                    published = tuple(publish(item) for item in publication_scope)
+                else:
+                    with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+                        published = tuple(executor.map(publish, publication_scope))
+                for claim, artifact, publication_reused in published:
                     repository.complete_task(
                         claim,
                         artifact_id=str(artifact.artifact_id),
                         artifact_hash=artifact.content_hash,
+                        publication_reused=publication_reused,
                     )
+                    completed_in_process[str(artifact.artifact_id)] = artifact
                     outstanding.remove(claim)
+                    if failure_injector is not None:
+                        failure_injector("AFTER_TASK_COMPLETED")
+            except FeatureMaterializationHardCrash:
+                raise
             except Exception as exc:
                 for claim in outstanding:
                     repository.fail_task(claim, error_message=f"{type(exc).__name__}:{exc}")
                 raise
-        artifacts = tuple(
-            load_verified_feature_artifact_v2(artifact_root / artifact_id).artifact
-            for artifact_id, artifact_hash in repository.completed_artifacts(snapshot.run_id)
-            if _verified_artifact_hash(
-                artifact_root / artifact_id,
-                expected_hash=artifact_hash,
-            )
-        )
+        recovered_artifacts: list[FeatureArtifactV2] = []
+        for artifact_id, artifact_hash in repository.completed_artifacts(snapshot.run_id):
+            recovered = completed_in_process.get(artifact_id)
+            if recovered is None:
+                recovered = load_verified_feature_artifact_v2(
+                    artifact_root / artifact_id
+                ).artifact
+            if recovered.content_hash != artifact_hash:
+                raise ValueError("Feature Artifact durable hash mismatch")
+            recovered_artifacts.append(recovered)
+        artifacts = tuple(recovered_artifacts)
         if len(artifacts) != len(task_specs):
             raise ValueError("Feature materialization durable task projection is incomplete")
+        if failure_injector is not None:
+            failure_injector("BEFORE_BUNDLE_PUBLICATION")
         bundle = FeatureBundleArtifact.create(
             dataset=dataset,
             feature_set=feature_set,
@@ -539,13 +673,24 @@ class FeatureMaterializationRunner:
             selected_symbols=selected_symbols,
             created_at=created_at,
             code_revision=code_revision,
+            _membership=context.dataset_membership,
+            _artifacts_verified=True,
         )
         publish_feature_bundle_v2(
             root=output_root / "feature-bundles",
             artifact_root=artifact_root,
             bundle=bundle,
+            materialized_artifacts=artifacts,
+            materialized_artifacts_verified=True,
             encoding_version=bundle_encoding_version,
         )
+        repository.record_bundle_published(
+            run_id=snapshot.run_id,
+            bundle_id=str(bundle.bundle_id),
+            bundle_hash=bundle.content_hash,
+        )
+        if failure_injector is not None:
+            failure_injector("AFTER_BUNDLE_PUBLISHED")
         receipt = FeatureMaterializationReceipt.create(
             command_hash=command_hash,
             bundle=bundle,
@@ -585,38 +730,24 @@ class FeatureMaterializationRunner:
     def _compute_artifacts(
         self,
         *,
-        verified_dataset: VerifiedMarketDataDataset,
-        feature_set: FeatureSetConfiguration,
+        context: PreparedFeatureExecutionContext,
         decision_time: datetime,
         created_at: datetime,
-        selected_symbols: tuple[str, ...],
         task_scope: tuple[tuple[str, str], ...] | None = None,
     ) -> tuple[FeatureArtifactV2, ...]:
-        definitions = {item.feature_id: item for item in feature_set.definitions}
-        configurations = {
-            item.feature_id: item for item in feature_set.configurations
-        }
-        membership = _verified_dataset_membership(verified_dataset.artifact)
-        bars_by_scope: dict[
-            tuple[str, Timeframe], tuple[CanonicalMarketBar, ...]
-        ] = {}
-        grouped: dict[tuple[str, Timeframe], list[CanonicalMarketBar]] = {}
-        for bar in verified_dataset.bars:
-            grouped.setdefault((bar.symbol, bar.timeframe), []).append(bar)
-        bars_by_scope = {
-            key: tuple(values) for key, values in grouped.items()
-        }
+        definitions = context.definitions
+        configurations = context.configurations
         tasks = (
             tuple(
                 (symbol, feature_id)
-                for symbol in selected_symbols
+                for symbol in context.selected_symbols
                 for feature_id in sorted(definitions)
             )
             if task_scope is None
             else tuple(task_scope)
         )
         if len(tasks) != len(set(tasks)) or any(
-            symbol not in selected_symbols or feature_id not in definitions
+            symbol not in context.selected_symbols or feature_id not in definitions
             for symbol, feature_id in tasks
         ):
             raise ValueError("Feature materialization task scope is invalid")
@@ -636,7 +767,7 @@ class FeatureMaterializationRunner:
                 raise FeatureConfigurationInvalidError(
                     f"invalid configuration for {feature_id}"
                 ) from exc
-            input_bars = bars_by_scope.get((symbol, timeframe), ())
+            input_bars = context.bars_by_scope.get((symbol, timeframe), ())
             output_ids = tuple(item.output_id for item in definition.output_schema)
             if not input_bars:
                 computation = missing_technical_feature_computation(
@@ -667,11 +798,11 @@ class FeatureMaterializationRunner:
             return FeatureArtifactV2.create(
                 definition=definition,
                 configuration=configuration,
-                dataset=verified_dataset.artifact,
+                dataset=context.verified_dataset.artifact,
                 computation=computation,
                 input_bars=input_bars,
                 created_at=created_at,
-                _membership=membership,
+                _membership=context.dataset_membership,
             )
 
         if self._max_workers == 1:
@@ -758,12 +889,15 @@ def recompute_feature_bundle_v2(
         or original.dataset_hash != verified_dataset.artifact.content_hash
     ):
         raise ValueError("Feature replay Market Data Dataset mismatch")
-    replayed_artifacts = FeatureMaterializationRunner(max_workers=1)._compute_artifacts(
+    context = PreparedFeatureExecutionContext.create(
         verified_dataset=verified_dataset,
         feature_set=original.feature_set,
+        selected_symbols=original.symbols,
+    )
+    replayed_artifacts = FeatureMaterializationRunner(max_workers=1)._compute_artifacts(
+        context=context,
         decision_time=original.decision_time,
         created_at=original.created_at,
-        selected_symbols=original.symbols,
     )
     replayed_bundle = FeatureBundleArtifact.create(
         dataset=verified_dataset.artifact,
@@ -1011,7 +1145,9 @@ def _fsync_directory(path: Path) -> None:
 __all__ = [
     "FeatureBundleState",
     "FeatureMaterializationRunner",
+    "FeatureMaterializationHardCrash",
     "FeatureMaterializationStatus",
+    "PreparedFeatureExecutionContext",
     "FeatureConfigurationInvalidError",
     "FeatureComputationFailedError",
     "FeatureReplayDivergenceError",
