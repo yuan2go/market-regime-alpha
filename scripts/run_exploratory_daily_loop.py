@@ -25,7 +25,6 @@ from market_regime_alpha.application.daily_loop import (
     DailyRunCommand,
     DailyRunId,
     RunMode,
-    SQLiteDailyRunRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
@@ -39,6 +38,11 @@ from market_regime_alpha.data.providers.public_composite import (
     TencentCurrentQuoteClient,
 )
 from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -53,7 +57,7 @@ DEFAULT_CONFIGURATION_ID = ArtifactId(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--journal", type=Path)
+    add_database_arguments(parser, legacy_sqlite_flag="--journal")
     commands = parser.add_subparsers(dest="operation", required=True)
 
     run = commands.add_parser("run", help="run one LIVE or archive-backed day")
@@ -135,12 +139,8 @@ def _add_daily_arguments(
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     output_root = args.output_root.resolve()
-    journal = (
-        args.journal.resolve()
-        if args.journal is not None
-        else output_root / "runtime-journal.sqlite3"
-    )
-    repository = SQLiteDailyRunRepository(journal)
+    repositories = RepositoryFactory(settings_from_namespace(args))
+    repository = repositories.daily()
     live_profile = None
     if args.operation in {
         "run",

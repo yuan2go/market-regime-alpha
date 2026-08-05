@@ -47,7 +47,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = build_parser().parse_args(argv)
         command = command_from_prepare_args(args)
         run_id = str(command.run_id)
-        runner, _ = runner_and_journal(args)
+        runner, _, repositories = runner_and_journal(args)
+        repositories.bind_runtime(
+            "CONTROLLED_OPERATION",
+            str(command.run_id),
+        )
         result = runner.prepare(
             command=command,
             policy=default_decision_time_operation_policy(),

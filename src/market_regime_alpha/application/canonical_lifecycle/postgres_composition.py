@@ -11,8 +11,8 @@ from market_regime_alpha.application.canonical_lifecycle.commands import (
 from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
     CanonicalLifecycleInputManifest,
 )
-from market_regime_alpha.application.canonical_lifecycle.postgres_repository import (
-    PostgresLifecycleRunRepository,
+from market_regime_alpha.application.canonical_lifecycle.repositories import (
+    LifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     CanonicalDecisionLifecycleRunner,
@@ -72,7 +72,7 @@ Clock = Callable[[], datetime]
 
 def build_postgres_lifecycle_runner(
     *,
-    repository: PostgresLifecycleRunRepository,
+    repository: LifecycleRunRepository,
     factory: PostgresConnectionFactory,
     command: CanonicalLifecycleCommand,
     manifest: CanonicalLifecycleInputManifest | None,

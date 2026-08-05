@@ -746,7 +746,17 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
     assert not replay.broker_invoked
     assert not replay.manual_trade_created
     assert not replay.fill_created
-    assert replay_cli(["--package", str(settlement.package_path)]) == 0
+    assert (
+        replay_cli(
+            [
+                "--package",
+                str(settlement.package_path),
+                "--sqlite-database",
+                str(tmp_path / "controlled-operation.sqlite3"),
+            ]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["replay_status"] == "STABLE"
     assert (
         report_cli(

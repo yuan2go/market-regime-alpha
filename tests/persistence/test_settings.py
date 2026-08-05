@@ -68,6 +68,19 @@ def test_explicit_sqlite_path_selects_compatibility_backend(tmp_path: Path) -> N
     assert settings.database_url is None
 
 
+def test_explicit_sqlite_path_overrides_environment_default(tmp_path: Path) -> None:
+    sqlite_path = tmp_path / "compatibility.sqlite3"
+
+    settings = DatabaseSettings.from_sources(
+        database_url=None,
+        sqlite_path=sqlite_path,
+        environ={"MARKET_REGIME_ALPHA_DATABASE_URL": POSTGRES_URL},
+    )
+
+    assert settings.backend is DatabaseBackend.SQLITE
+    assert settings.require_sqlite_path() == sqlite_path.resolve()
+
+
 def test_postgres_and_sqlite_cannot_be_selected_together(tmp_path: Path) -> None:
     with pytest.raises(
         DatabaseConfigurationError,

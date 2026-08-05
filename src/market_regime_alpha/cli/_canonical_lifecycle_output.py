@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sqlite3
 from typing import Any
 
+import psycopg
+
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
+    LifecycleRunRepository,
     LifecycleRepositoryError,
 )
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
@@ -21,8 +23,12 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
     LifecycleRunResult,
     LifecycleStageExecutionError,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    settings_from_namespace,
+)
+from market_regime_alpha.persistence.postgres.connection import (
+    PostgresConnectionUnavailable,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunStatus,
@@ -62,14 +68,16 @@ def result_payload(result: LifecycleRunResult) -> dict[str, Any]:
 
 
 def print_history_failure(
-    repository: SQLiteLifecycleRunRepository,
+    repository: LifecycleRunRepository,
     exc: LifecycleStageExecutionError,
 ) -> None:
     try:
         history = repository.history(exc.run_id)
     except (
         LifecycleRepositoryError,
+        PostgresConnectionUnavailable,
         OSError,
+        psycopg.Error,
         sqlite3.Error,
         TypeError,
         ValueError,
@@ -175,24 +183,16 @@ def _manual_trade_reference(
 
 def repository_from_args(
     args: argparse.Namespace | None,
-) -> SQLiteLifecycleRunRepository | None:
+) -> LifecycleRunRepository | None:
     if args is None:
         return None
-    output_directory = (
-        args.output_dir.resolve()
-        if args.output_dir is not None
-        else Path("artifacts/canonical-lifecycle").resolve()
-    )
-    database = (
-        args.database.resolve()
-        if args.database is not None
-        else output_directory / "lifecycle-runtime.sqlite3"
-    )
     try:
-        return SQLiteLifecycleRunRepository(database)
+        return RepositoryFactory(settings_from_namespace(args)).lifecycle()
     except (
         LifecycleRepositoryError,
+        PostgresConnectionUnavailable,
         OSError,
+        psycopg.Error,
         sqlite3.Error,
         TypeError,
         ValueError,

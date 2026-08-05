@@ -21,8 +21,8 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
 from market_regime_alpha.application.canonical_lifecycle.runtime_configuration import (
     RuntimeConfigurationSet,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from market_regime_alpha.application.canonical_lifecycle.repositories import (
+    LifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.assessment import (
     ExitAssessmentStageHandler,
@@ -100,7 +100,7 @@ Clock = Callable[[], datetime]
 
 def build_sqlite_lifecycle_runner(
     *,
-    repository: SQLiteLifecycleRunRepository,
+    repository: LifecycleRunRepository,
     command: CanonicalLifecycleCommand,
     manifest: CanonicalLifecycleInputManifest | None,
     configurations: RuntimeConfigurationSet,

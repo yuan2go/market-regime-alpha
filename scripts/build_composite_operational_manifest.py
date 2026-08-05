@@ -15,8 +15,10 @@ from market_regime_alpha.application.operational_research.composite_manifest imp
 from market_regime_alpha.application.operational_research.composite_service import (
     CompositeOperationalEvidenceApplicationService,
 )
-from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
-    SQLiteCompositeOperationalRepository,
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
 )
 
 
@@ -25,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daily-artifact", type=Path, required=True)
     parser.add_argument("--supplemental-artifact", type=Path, required=True)
     parser.add_argument("--composition-policy", type=Path, required=True)
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--created-at", required=True)
     parser.add_argument("--idempotency-key", required=True)
@@ -34,21 +36,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    repository = SQLiteCompositeOperationalRepository(args.database)
-    result = CompositeOperationalEvidenceApplicationService(
-        repository
-    ).build_and_publish(
-        daily_package_path=args.daily_artifact,
-        supplemental_package_path=args.supplemental_artifact,
-        composition_policy=(
-            CompositeOperationalCompositionPolicy.from_canonical_dict(
-                _read_object(args.composition_policy)
-            )
-        ),
-        package_root=args.output_root,
-        created_at=datetime.fromisoformat(str(args.created_at)),
-        idempotency_key=str(args.idempotency_key),
-    )
+    with RepositoryFactory(settings_from_namespace(args)) as repositories:
+        result = CompositeOperationalEvidenceApplicationService(
+            repositories.composite()
+        ).build_and_publish(
+            daily_package_path=args.daily_artifact,
+            supplemental_package_path=args.supplemental_artifact,
+            composition_policy=(
+                CompositeOperationalCompositionPolicy.from_canonical_dict(
+                    _read_object(args.composition_policy)
+                )
+            ),
+            package_root=args.output_root,
+            created_at=datetime.fromisoformat(str(args.created_at)),
+            idempotency_key=str(args.idempotency_key),
+        )
     manifest = result.manifest
     print(
         json.dumps(

@@ -107,6 +107,7 @@ from market_regime_alpha.features import (
     FeatureMaterializationRunner,
 )
 from market_regime_alpha.features.materialization_v2 import (
+    FeatureRunRepositoryFactory,
     VerifiedFeatureBundleV2,
     load_verified_feature_bundle_v2,
 )
@@ -241,6 +242,7 @@ class ControlledDecisionTimeOperationRunner:
         canonical_repository_factory: CanonicalRepositoryFactory = (
             sqlite_controlled_canonical_repository
         ),
+        feature_repository_factory: FeatureRunRepositoryFactory | None = None,
     ) -> None:
         self._journal = journal
         self._output_root = output_root.resolve()
@@ -255,6 +257,7 @@ class ControlledDecisionTimeOperationRunner:
             )
         )
         self._canonical_repository_factory = canonical_repository_factory
+        self._feature_repository_factory = feature_repository_factory
 
     def prepare(
         self,
@@ -354,6 +357,7 @@ class ControlledDecisionTimeOperationRunner:
             output_root=run_root / "static-features",
             idempotency_key=f"{command.idempotency_key}:static",
             max_workers=configuration.feature_max_workers,
+            repository_factory=self._feature_repository_factory,
         )
         static_features = load_verified_feature_bundle_v2(
             run_root / "static-features" / static_receipt.bundle_locator,
@@ -641,6 +645,7 @@ class ControlledDecisionTimeOperationRunner:
             output_root=run_root / "intraday-features",
             idempotency_key=f"{command.idempotency_key}:intraday",
             max_workers=configuration.feature_max_workers,
+            repository_factory=self._feature_repository_factory,
         )
         intraday_features = load_verified_feature_bundle_v2(
             run_root / "intraday-features" / intraday_receipt.bundle_locator,
@@ -1782,8 +1787,12 @@ def _run_feature_materialization(
     output_root: Path,
     idempotency_key: str,
     max_workers: int,
+    repository_factory: FeatureRunRepositoryFactory | None,
 ) -> FeatureMaterializationReceipt:
-    runner = FeatureMaterializationRunner(max_workers=max_workers)
+    runner = FeatureMaterializationRunner(
+        max_workers=max_workers,
+        repository_factory=repository_factory,
+    )
     common = {
         "verified_dataset": verified_dataset,
         "feature_set": feature_set,
@@ -1794,8 +1803,11 @@ def _run_feature_materialization(
         "output_root": output_root,
         "idempotency_key": idempotency_key,
     }
-    if not (output_root / "materialization-run.sqlite3").exists():
+    try:
         return runner.run(**common, execution_mode=FeatureMaterializationExecutionMode.START_NEW)  # type: ignore[arg-type]
+    except ValueError as exc:
+        if "already exists" not in str(exc):
+            raise
     try:
         return runner.run(**common, execution_mode=FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE)  # type: ignore[arg-type]
     except ValueError as exc:

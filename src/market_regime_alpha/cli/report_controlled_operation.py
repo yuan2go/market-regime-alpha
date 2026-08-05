@@ -33,7 +33,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
         run_id = args.run_id
-        _, journal = runner_and_journal(args)
+        _, journal, repositories = runner_and_journal(args)
+        repositories.assert_runtime_binding("CONTROLLED_OPERATION", run_id)
         output_root, _ = repository_paths(args)
         snapshot = load_snapshot(journal, run_id)
         package_root = output_root / run_id / "operation-packages"

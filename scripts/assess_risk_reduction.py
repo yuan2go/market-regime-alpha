@@ -16,7 +16,11 @@ from market_regime_alpha.portfolio import (
     RiskReducingDecisionState,
     RiskReducingGateConfiguration,
     RiskRouteApplicationService,
-    SQLiteRiskRouteRepository,
+)
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
 )
 from market_regime_alpha.position import PositionSnapshot
 
@@ -67,7 +71,7 @@ def _string(value: object, *, name: str) -> str:
     return value
 
 
-def _assess(database: Path, request: dict[str, Any]) -> dict[str, object]:
+def _assess(repository: Any, request: dict[str, Any]) -> dict[str, object]:
     position = PositionSnapshot.from_canonical_dict(
         _object(request["position_snapshot"], name="position_snapshot")
     )
@@ -78,7 +82,7 @@ def _assess(database: Path, request: dict[str, Any]) -> dict[str, object]:
         _object(request["configuration"], name="configuration")
     )
     decision = RiskRouteApplicationService(
-        SQLiteRiskRouteRepository(database)
+        repository
     ).assess_reducing(
         action=RiskChangeKind(_string(request["action"], name="action")),
         position=position,
@@ -121,10 +125,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Assess and persist one reducing-risk decision only"
     )
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     parser.add_argument("--request", type=Path, required=True)
     args = parser.parse_args(argv)
-    result = _assess(args.database, _read_request(args.request))
+    with RepositoryFactory(settings_from_namespace(args)) as repositories:
+        result = _assess(repositories.risk_route(), _read_request(args.request))
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

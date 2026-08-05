@@ -22,9 +22,12 @@ from market_regime_alpha.portfolio import (
     PortfolioAccountSnapshot,
     PortfolioOutputMode,
     RiskBudget,
-    SQLiteCompleteAccountPortfolioRiskRepository,
-    SQLitePortfolioDecisionRepository,
     ThesisAllocationRequest,
+)
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
 )
 
 
@@ -45,10 +48,10 @@ def _array(value: object) -> list[object]:
     return value
 
 
-def _run(database: Path, payload: dict[str, Any]):
+def _run(repository: Any, payload: dict[str, Any]):
     account = _object(payload["account_snapshot"])
     service = PortfolioRiskApplicationService(
-        SQLitePortfolioDecisionRepository(database)
+        repository
     )
     return service.run(
         theses=tuple(
@@ -85,9 +88,9 @@ def _run(database: Path, payload: dict[str, Any]):
     )
 
 
-def _run_full_account(database: Path, payload: dict[str, Any]):
+def _run_full_account(repository: Any, payload: dict[str, Any]):
     service = CompleteAccountPortfolioRiskApplicationService(
-        SQLiteCompleteAccountPortfolioRiskRepository(database)
+        repository
     )
     return service.run(
         theses=tuple(
@@ -140,7 +143,7 @@ def _position(payload: dict[str, Any]) -> CurrentPositionInput:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Portfolio and independent Risk CLI")
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     subparsers = parser.add_subparsers(dest="command", required=True)
     run = subparsers.add_parser("run")
     run.add_argument("--request", type=Path, required=True)
@@ -151,28 +154,29 @@ def main() -> int:
     show_full = subparsers.add_parser("show-full-account-risk")
     show_full.add_argument("--risk-decision-id", required=True)
     args = parser.parse_args()
-    if args.command == "run":
-        portfolio, risk = _run(args.database, _read(args.request))
-        result = {
-            "portfolio": portfolio.to_canonical_dict(),
-            "risk": risk.to_canonical_dict(),
-        }
-    elif args.command == "run-full-account":
-        portfolio, risk = _run_full_account(args.database, _read(args.request))
-        result = {
-            "portfolio": portfolio.to_canonical_dict(),
-            "risk": risk.to_canonical_dict(),
-        }
-    elif args.command == "show-full-account-risk":
-        result = SQLiteCompleteAccountPortfolioRiskRepository(
-            args.database
-        ).get_complete_account_risk(
-            RiskDecisionId(args.risk_decision_id)
-        ).to_canonical_dict()
-    else:
-        result = SQLitePortfolioDecisionRepository(args.database).get_risk(
-            RiskDecisionId(args.risk_decision_id)
-        ).to_canonical_dict()
+    with RepositoryFactory(settings_from_namespace(args)) as repositories:
+        if args.command == "run":
+            portfolio, risk = _run(repositories.portfolio(), _read(args.request))
+            result = {
+                "portfolio": portfolio.to_canonical_dict(),
+                "risk": risk.to_canonical_dict(),
+            }
+        elif args.command == "run-full-account":
+            portfolio, risk = _run_full_account(
+                repositories.complete_account_portfolio(), _read(args.request)
+            )
+            result = {
+                "portfolio": portfolio.to_canonical_dict(),
+                "risk": risk.to_canonical_dict(),
+            }
+        elif args.command == "show-full-account-risk":
+            result = repositories.complete_account_portfolio().get_complete_account_risk(
+                RiskDecisionId(args.risk_decision_id)
+            ).to_canonical_dict()
+        else:
+            result = repositories.portfolio().get_risk(
+                RiskDecisionId(args.risk_decision_id)
+            ).to_canonical_dict()
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

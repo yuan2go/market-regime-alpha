@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date
+from datetime import date, datetime, timezone
 from enum import IntEnum
 import json
 from pathlib import Path
 import sqlite3
 from typing import Any, NoReturn
+
+import psycopg
 
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     load_controlled_runtime_configuration,
@@ -17,6 +19,7 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
 from market_regime_alpha.application.controlled_operation.journal import (
     ControlledOperationCommand,
     DecisionTimeOperationRunSnapshot,
+    DecisionTimeOperationJournal,
 )
 from market_regime_alpha.application.controlled_operation.policy import (
     default_decision_time_operation_policy,
@@ -28,10 +31,15 @@ from market_regime_alpha.application.controlled_operation.runner import (
     ControlledOperationPreparation,
     ControlledOperationSettlementResult,
 )
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
-    SQLiteDecisionTimeOperationJournal,
-)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
+from market_regime_alpha.persistence.postgres.connection import (
+    PostgresConnectionUnavailable,
+)
 
 
 class ControlledExitCode(IntEnum):
@@ -59,26 +67,45 @@ class StructuredParser(argparse.ArgumentParser):
 
 def add_repository_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--database", type=Path)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
 
 
 def repository_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     output_root = args.output_root.resolve()
-    database = args.database.resolve() if args.database is not None else output_root / "controlled-operation.sqlite3"
+    settings = settings_from_namespace(args)
+    database = (
+        settings.require_sqlite_path()
+        if settings.backend.value == "sqlite"
+        else output_root / "postgresql-authority"
+    )
     return output_root, database
 
 
 def runner_and_journal(
     args: argparse.Namespace,
-) -> tuple[ControlledDecisionTimeOperationRunner, SQLiteDecisionTimeOperationJournal]:
-    output_root, database = repository_paths(args)
-    journal = SQLiteDecisionTimeOperationJournal(database)
-    return (
-        ControlledDecisionTimeOperationRunner(
-            journal=journal,
-            output_root=output_root,
+) -> tuple[
+    ControlledDecisionTimeOperationRunner,
+    DecisionTimeOperationJournal,
+    RepositoryFactory,
+]:
+    output_root, _ = repository_paths(args)
+    repositories = RepositoryFactory(settings_from_namespace(args))
+    journal = repositories.controlled_operation(clock=_utc_now)
+    runner = ControlledDecisionTimeOperationRunner(
+        journal=journal,
+        output_root=output_root,
+        longitudinal_index=repositories.longitudinal(clock=_utc_now),
+        canonical_repository_factory=(
+            repositories.controlled_canonical_repository
         ),
+        feature_repository_factory=(
+            repositories.feature_materialization_for_path
+        ),
+    )
+    return (
+        runner,
         journal,
+        repositories,
     )
 
 
@@ -131,7 +158,9 @@ def frozen_input_paths(output_root: Path, run_id: ArtifactId) -> ControlledOpera
     )
 
 
-def load_snapshot(journal: SQLiteDecisionTimeOperationJournal, run_id: str) -> DecisionTimeOperationRunSnapshot:
+def load_snapshot(
+    journal: DecisionTimeOperationJournal, run_id: str
+) -> DecisionTimeOperationRunSnapshot:
     return journal.get(ArtifactId(run_id))
 
 
@@ -218,7 +247,14 @@ def emit_error(
 
 
 def repository_exception(exc: Exception) -> bool:
-    return isinstance(exc, (sqlite3.Error, OSError))
+    return isinstance(
+        exc,
+        (sqlite3.Error, psycopg.Error, PostgresConnectionUnavailable, OSError),
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def _one_directory(root: Path) -> Path:

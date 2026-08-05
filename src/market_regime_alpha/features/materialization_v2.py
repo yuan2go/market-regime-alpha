@@ -95,6 +95,10 @@ class VerifiedFeatureBundleV2:
 
 
 FailureInjector = Callable[[str], None]
+FeatureRunRepositoryFactory = Callable[
+    [Path, Callable[[], datetime] | None, timedelta],
+    Any,
+]
 
 
 class FeatureReplayDivergenceError(ValueError):
@@ -482,6 +486,7 @@ class FeatureMaterializationRunner:
         task_batch_size: int = 256,
         clock: Callable[[], datetime] | None = None,
         lease_duration: timedelta = DEFAULT_FEATURE_TASK_LEASE,
+        repository_factory: FeatureRunRepositoryFactory | None = None,
     ) -> None:
         if isinstance(max_workers, bool) or not 1 <= max_workers <= 8:
             raise ValueError("max_workers must be between one and eight")
@@ -491,6 +496,7 @@ class FeatureMaterializationRunner:
         self._task_batch_size = task_batch_size
         self._clock = clock
         self._lease_duration = lease_duration
+        self._repository_factory = repository_factory
 
     def run(
         self,
@@ -559,10 +565,17 @@ class FeatureMaterializationRunner:
         }
         if self._clock is not None:
             repository_options["clock"] = self._clock
-        repository = SQLiteFeatureMaterializationRunRepository(
-            output_root / "materialization-run.sqlite3",
-            **repository_options,
-        )
+        if self._repository_factory is None:
+            repository = SQLiteFeatureMaterializationRunRepository(
+                output_root / "materialization-run.sqlite3",
+                **repository_options,
+            )
+        else:
+            repository = self._repository_factory(
+                output_root / "materialization-run.sqlite3",
+                self._clock,
+                self._lease_duration,
+            )
         snapshot = repository.prepare(
             idempotency_key=idempotency_key,
             command_hash=command_hash,

@@ -64,11 +64,8 @@ class DatabaseSettings:
     ) -> DatabaseSettings:
         environment = os.environ if environ is None else environ
         explicit_url = _optional_text(database_url)
-        selected_url = explicit_url or _optional_text(
-            environment.get(DATABASE_URL_ENV)
-        )
         selected_path = Path(sqlite_path) if sqlite_path is not None else None
-        if selected_url is not None and selected_path is not None:
+        if explicit_url is not None and selected_path is not None:
             raise DatabaseConfigurationError(
                 "select exactly one database authority; PostgreSQL and SQLite "
                 "were both supplied"
@@ -78,6 +75,9 @@ class DatabaseSettings:
                 backend=DatabaseBackend.SQLITE,
                 sqlite_path=selected_path,
             )
+        selected_url = explicit_url or _optional_text(
+            environment.get(DATABASE_URL_ENV)
+        )
         if selected_url is None:
             raise DatabaseConfigurationError(
                 "PostgreSQL configuration is required through --database-url "

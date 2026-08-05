@@ -200,12 +200,12 @@ def test_module_cli_repository_error_has_distinct_stable_exit_and_safety_payload
 ) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
-    def unavailable_repository(_path: Path) -> object:
+    def unavailable_repository(_factory: object) -> object:
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(
-        "market_regime_alpha.cli.create_manual_trade_from_risk_decision."
-        "SQLiteRiskReductionManualIntentRepository",
+        "market_regime_alpha.persistence.repository_factory."
+        "RepositoryFactory.risk_reduction_manual_intent",
         unavailable_repository,
     )
 

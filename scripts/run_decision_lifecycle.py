@@ -14,7 +14,11 @@ from market_regime_alpha.core.identity import OpportunityId, ThesisId
 from market_regime_alpha.decision import (
     DecisionEvidenceReference,
     InvalidationCondition,
-    SQLiteDecisionLifecycleRepository,
+)
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
 )
 from market_regime_alpha.forecasting.contracts import PathForecast
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
@@ -38,12 +42,12 @@ def _array(value: object, label: str) -> list[object]:
     return value
 
 
-def _service(database: Path) -> DecisionLifecycleService:
-    return DecisionLifecycleService(SQLiteDecisionLifecycleRepository(database))
+def _service(repository: Any) -> DecisionLifecycleService:
+    return DecisionLifecycleService(repository)
 
 
-def _create(database: Path, payload: dict[str, Any]):
-    return _service(database).create_opportunity(
+def _create(repository: Any, payload: dict[str, Any]):
+    return _service(repository).create_opportunity(
         candidate_set=CandidateSet.from_canonical_dict(
             _object(payload["candidate_set"], "candidate_set")
         ),
@@ -61,8 +65,8 @@ def _create(database: Path, payload: dict[str, Any]):
     )
 
 
-def _confirm(database: Path, payload: dict[str, Any]):
-    return _service(database).confirm_opportunity(
+def _confirm(repository: Any, payload: dict[str, Any]):
+    return _service(repository).confirm_opportunity(
         OpportunityId(str(payload["opportunity_id"])),
         expected_version=int(payload["expected_version"]),
         supporting_evidence=tuple(
@@ -84,9 +88,9 @@ def _confirm(database: Path, payload: dict[str, Any]):
 
 
 def _transition_opportunity(
-    database: Path, payload: dict[str, Any], *, expire: bool
+    repository: Any, payload: dict[str, Any], *, expire: bool
 ):
-    service = _service(database)
+    service = _service(repository)
     common = {
         "expected_version": int(payload["expected_version"]),
         "actor": str(payload["actor"]),
@@ -107,8 +111,8 @@ def _transition_opportunity(
     )
 
 
-def _invalidate_thesis(database: Path, payload: dict[str, Any]):
-    return _service(database).invalidate_thesis(
+def _invalidate_thesis(repository: Any, payload: dict[str, Any]):
+    return _service(repository).invalidate_thesis(
         ThesisId(str(payload["thesis_id"])),
         expected_version=int(payload["expected_version"]),
         actor=str(payload["actor"]),
@@ -120,7 +124,7 @@ def _invalidate_thesis(database: Path, payload: dict[str, Any]):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Production decision lifecycle CLI")
-    parser.add_argument("--database", type=Path, required=True)
+    add_database_arguments(parser, legacy_sqlite_flag="--database")
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in (
         "create-opportunity",
@@ -136,30 +140,32 @@ def main() -> int:
     show_thesis = subparsers.add_parser("show-thesis")
     show_thesis.add_argument("--thesis-id", required=True)
     args = parser.parse_args()
-    if args.command == "create-opportunity":
-        result = _create(args.database, _read(args.request)).to_canonical_dict()
-    elif args.command == "confirm-opportunity":
-        result = _confirm(args.database, _read(args.request)).to_canonical_dict()
-    elif args.command == "reject-opportunity":
-        result = _transition_opportunity(
-            args.database, _read(args.request), expire=False
-        ).to_canonical_dict()
-    elif args.command == "expire-opportunity":
-        result = _transition_opportunity(
-            args.database, _read(args.request), expire=True
-        ).to_canonical_dict()
-    elif args.command == "invalidate-thesis":
-        result = _invalidate_thesis(
-            args.database, _read(args.request)
-        ).to_canonical_dict()
-    elif args.command == "show-opportunity":
-        result = SQLiteDecisionLifecycleRepository(args.database).get_opportunity(
-            OpportunityId(args.opportunity_id)
-        ).to_canonical_dict()
-    else:
-        result = SQLiteDecisionLifecycleRepository(args.database).get_thesis(
-            ThesisId(args.thesis_id)
-        ).to_canonical_dict()
+    with RepositoryFactory(settings_from_namespace(args)) as repositories:
+        repository = repositories.decision()
+        if args.command == "create-opportunity":
+            result = _create(repository, _read(args.request)).to_canonical_dict()
+        elif args.command == "confirm-opportunity":
+            result = _confirm(repository, _read(args.request)).to_canonical_dict()
+        elif args.command == "reject-opportunity":
+            result = _transition_opportunity(
+                repository, _read(args.request), expire=False
+            ).to_canonical_dict()
+        elif args.command == "expire-opportunity":
+            result = _transition_opportunity(
+                repository, _read(args.request), expire=True
+            ).to_canonical_dict()
+        elif args.command == "invalidate-thesis":
+            result = _invalidate_thesis(
+                repository, _read(args.request)
+            ).to_canonical_dict()
+        elif args.command == "show-opportunity":
+            result = repository.get_opportunity(
+                OpportunityId(args.opportunity_id)
+            ).to_canonical_dict()
+        else:
+            result = repository.get_thesis(
+                ThesisId(args.thesis_id)
+            ).to_canonical_dict()
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 
