@@ -8,6 +8,9 @@ from typing import Callable
 from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
 )
+from market_regime_alpha.application.canonical_lifecycle.composition import (
+    build_lifecycle_stage_handlers,
+)
 from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
     CanonicalLifecycleInputManifest,
 )
@@ -19,9 +22,6 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
 )
 from market_regime_alpha.application.canonical_lifecycle.runtime_configuration import (
     RuntimeConfigurationSet,
-)
-from market_regime_alpha.application.canonical_lifecycle.sqlite_composition import (
-    _build_handlers,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.assessment import (
     ThesisHealthStageHandler,
@@ -81,7 +81,7 @@ def build_postgres_lifecycle_runner(
 ) -> CanonicalDecisionLifecycleRunner:
     """Build the 16-stage graph with one PostgreSQL authority schema."""
 
-    base_handlers = _build_handlers(
+    base_handlers = build_lifecycle_stage_handlers(
         command=command,
         manifest=manifest,
         configurations=configurations,
@@ -114,15 +114,9 @@ def postgres_lifecycle_stage_handlers(
     execution_repository = PostgresRiskReductionManualIntentRepository(factory)
     thesis_health_repository = PostgresThesisHealthRepository(factory)
     composite_repository = PostgresCompositeOperationalRepository(factory)
-    handlers[LifecycleStageName.OPPORTUNITY] = OpportunityStageHandler(
-        repository=decision_repository
-    )
-    handlers[LifecycleStageName.THESIS] = ThesisStageHandler(
-        repository=decision_repository
-    )
-    handlers[LifecycleStageName.PORTFOLIO_RISK] = PortfolioRiskStageHandler(
-        repository=portfolio_repository
-    )
+    handlers[LifecycleStageName.OPPORTUNITY] = OpportunityStageHandler(repository=decision_repository)
+    handlers[LifecycleStageName.THESIS] = ThesisStageHandler(repository=decision_repository)
+    handlers[LifecycleStageName.PORTFOLIO_RISK] = PortfolioRiskStageHandler(repository=portfolio_repository)
     handlers[LifecycleStageName.RISK_REDUCTION] = RiskReductionStageHandler(
         risk_repository=risk_repository,
         execution_repository=execution_repository,
@@ -130,18 +124,10 @@ def postgres_lifecycle_stage_handlers(
         thesis_health_repository=thesis_health_repository,
         composite_repository=composite_repository,
     )
-    handlers[LifecycleStageName.MANUAL_CONFIRMATION] = (
-        ManualConfirmationStageHandler(repository=execution_repository)
-    )
-    handlers[LifecycleStageName.MANUAL_TRADE] = ManualTradeStageHandler(
-        repository=execution_repository
-    )
-    handlers[LifecycleStageName.FILL_POSITION] = FillPositionStageHandler(
-        repository=execution_repository
-    )
-    handlers[LifecycleStageName.THESIS_HEALTH] = ThesisHealthStageHandler(
-        repository=thesis_health_repository
-    )
+    handlers[LifecycleStageName.MANUAL_CONFIRMATION] = ManualConfirmationStageHandler(repository=execution_repository)
+    handlers[LifecycleStageName.MANUAL_TRADE] = ManualTradeStageHandler(repository=execution_repository)
+    handlers[LifecycleStageName.FILL_POSITION] = FillPositionStageHandler(repository=execution_repository)
+    handlers[LifecycleStageName.THESIS_HEALTH] = ThesisHealthStageHandler(repository=thesis_health_repository)
     return tuple(handlers[stage] for stage in LIFECYCLE_STAGE_ORDER)
 
 

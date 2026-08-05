@@ -37,13 +37,13 @@
 - Produces: retry metrics from `PostgresConnectionFactory.transaction(...)`.
 - Produces: PostgreSQL feature claims selected with row locking and fencing.
 
-- [ ] Extract backend-neutral stage construction from `sqlite_composition.py`; both PostgreSQL and explicit compatibility roots import the neutral module.
-- [ ] Add a failing architecture test that rejects SQLite imports or constructors in PostgreSQL/production composition modules.
-- [ ] Add deterministic PostgreSQL retry classification for SQLSTATE `40001` and `40P01`; reject retries for integrity, validation, and application errors.
-- [ ] Replace silent `BEGIN IMMEDIATE -> BEGIN` weakening with a stable transaction-scoped advisory lock and expose lock/retry counters.
-- [ ] Select Feature tasks with `FOR UPDATE SKIP LOCKED`, retain version/claim-token/epoch CAS, and test two concurrent workers receive disjoint tasks.
-- [ ] Run `uv run pytest -q tests/persistence/postgres/test_runtime_concurrency.py tests/architecture/test_postgres_runtime_boundaries.py` and require PASS.
-- [ ] Commit with `fix(db): enforce postgres runtime concurrency semantics`.
+- [x] Extract backend-neutral stage construction from `sqlite_composition.py`; both PostgreSQL and explicit compatibility roots import the neutral module.
+- [x] Add a failing architecture test that rejects SQLite imports or constructors in PostgreSQL/production composition modules.
+- [x] Add deterministic PostgreSQL retry classification for SQLSTATE `40001` and `40P01`; reject retries for integrity, validation, and application errors.
+- [x] Replace silent `BEGIN IMMEDIATE -> BEGIN` weakening with a stable transaction-scoped advisory lock and expose lock/retry counters.
+- [x] Select Feature tasks with `FOR UPDATE SKIP LOCKED`, retain version/claim-token/epoch CAS, and test two concurrent workers receive disjoint tasks.
+- [x] Run `uv run pytest -q tests/persistence/postgres/test_runtime_concurrency.py tests/architecture/test_postgres_runtime_boundaries.py` and require PASS.
+- [x] Commit with `fix(db): enforce postgres runtime concurrency semantics`.
 
 ### Task 2: Metadata-complete free-data source archive
 

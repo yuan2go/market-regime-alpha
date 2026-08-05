@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 import re
+from threading import Lock
+import time
 from typing import Any
 
 import psycopg
@@ -25,6 +28,47 @@ _SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 class PostgresConnectionUnavailable(RuntimeError):
     """Raised without credentials when the configured database is unavailable."""
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresRuntimeMetrics:
+    """Credential-free process metrics for PostgreSQL transaction coordination."""
+
+    transaction_attempts: int
+    transaction_retries: int
+    compatibility_advisory_locks: int
+    compatibility_lock_wait_seconds: float
+
+
+class _MutablePostgresRuntimeMetrics:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._transaction_attempts = 0
+        self._transaction_retries = 0
+        self._compatibility_advisory_locks = 0
+        self._compatibility_lock_wait_seconds = 0.0
+
+    def record_transaction_attempt(self) -> None:
+        with self._lock:
+            self._transaction_attempts += 1
+
+    def record_transaction_retry(self) -> None:
+        with self._lock:
+            self._transaction_retries += 1
+
+    def record_compatibility_lock(self, wait_seconds: float) -> None:
+        with self._lock:
+            self._compatibility_advisory_locks += 1
+            self._compatibility_lock_wait_seconds += max(0.0, wait_seconds)
+
+    def snapshot(self) -> PostgresRuntimeMetrics:
+        with self._lock:
+            return PostgresRuntimeMetrics(
+                transaction_attempts=self._transaction_attempts,
+                transaction_retries=self._transaction_retries,
+                compatibility_advisory_locks=self._compatibility_advisory_locks,
+                compatibility_lock_wait_seconds=self._compatibility_lock_wait_seconds,
+            )
 
 
 class PostgresConnectionFactory:
@@ -53,12 +97,11 @@ class PostgresConnectionFactory:
         ):
             if isinstance(value, bool) or value <= 0:
                 raise ValueError(f"{label} must be positive")
-        if not isinstance(application_schema, str) or not _SCHEMA_NAME.fullmatch(
-            application_schema
-        ):
+        if not isinstance(application_schema, str) or not _SCHEMA_NAME.fullmatch(application_schema):
             raise ValueError("application_schema must be a lowercase SQL identifier")
         self._database_url = database_url
         self.application_schema = application_schema
+        self._runtime_metrics = _MutablePostgresRuntimeMetrics()
         self._pool = ConnectionPool(
             conninfo=database_url,
             min_size=min_size,
@@ -88,9 +131,7 @@ class PostgresConnectionFactory:
             connection = self._pool.getconn()
         except (psycopg.Error, PoolTimeout, OSError) as exc:
             locator = redact_database_url(self._database_url)
-            raise PostgresConnectionUnavailable(
-                f"PostgreSQL database is unavailable: {locator}"
-            ) from exc
+            raise PostgresConnectionUnavailable(f"PostgreSQL database is unavailable: {locator}") from exc
         try:
             connection.read_only = read_only
             yield connection
@@ -108,6 +149,45 @@ class PostgresConnectionFactory:
 
     def close(self) -> None:
         self._pool.close()
+
+    @property
+    def runtime_metrics(self) -> PostgresRuntimeMetrics:
+        """Return a stable snapshot suitable for structured operational output."""
+
+        return self._runtime_metrics.snapshot()
+
+    def record_compatibility_lock(self, wait_seconds: float) -> None:
+        """Record one inherited critical section without exposing SQL or secrets."""
+
+        self._runtime_metrics.record_compatibility_lock(wait_seconds)
+
+    def run_transaction(
+        self,
+        operation: Callable[[psycopg.Connection[Any]], Any],
+        *,
+        max_attempts: int = 3,
+        retry_backoff_seconds: float = 0.01,
+    ) -> Any:
+        """Run one short unit of work with bounded PostgreSQL-native retries."""
+
+        if not callable(operation):
+            raise TypeError("operation must be callable")
+        if isinstance(max_attempts, bool) or not 1 <= max_attempts <= 8:
+            raise ValueError("max_attempts must be between one and eight")
+        if isinstance(retry_backoff_seconds, bool) or retry_backoff_seconds < 0 or retry_backoff_seconds > 1:
+            raise ValueError("retry_backoff_seconds must be between zero and one")
+        for attempt in range(1, max_attempts + 1):
+            self._runtime_metrics.record_transaction_attempt()
+            try:
+                with self.connection() as connection:
+                    return operation(connection)
+            except psycopg.Error as exc:
+                if attempt == max_attempts or not is_retryable_transaction_error(exc):
+                    raise
+                self._runtime_metrics.record_transaction_retry()
+                if retry_backoff_seconds:
+                    time.sleep(retry_backoff_seconds * attempt)
+        raise AssertionError("unreachable transaction retry state")
 
     def __enter__(self) -> PostgresConnectionFactory:
         return self
@@ -133,3 +213,19 @@ def _configure_connection(
         for name, value in settings.items():
             cursor.execute("SELECT set_config(%s, %s, false)", (name, value))
     connection.commit()
+
+
+def is_retryable_transaction_error(error: BaseException) -> bool:
+    """Identify only PostgreSQL serialization/deadlock failures as retryable."""
+
+    return isinstance(error, psycopg.Error) and error.sqlstate in {"40001", "40P01"}
+
+
+__all__ = [
+    "APPLICATION_NAME",
+    "APPLICATION_SCHEMA",
+    "PostgresConnectionFactory",
+    "PostgresConnectionUnavailable",
+    "PostgresRuntimeMetrics",
+    "is_retryable_transaction_error",
+]

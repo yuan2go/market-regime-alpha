@@ -6,6 +6,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, datetime, timezone
 import re
 import sqlite3
+from time import perf_counter
 from typing import Any, overload
 
 import psycopg
@@ -28,6 +29,7 @@ _DECLARED_CONFLICT_TARGETS = {
 _DECLARED_GENERATED_IDENTITIES = {
     "feature_materialization_run": "run_id",
 }
+_COMPATIBILITY_LOCK_NAMESPACE = "market-regime-alpha:sqlite-algorithm-compatibility"
 
 
 class _InstantIsoString(str):
@@ -132,9 +134,11 @@ class PostgresDBAPIConnection:
         connection: psycopg.Connection[tuple[Any, ...]],
         *,
         release_manager: Any | None = None,
+        compatibility_lock_recorder: Any | None = None,
     ) -> None:
         self._connection = connection
         self._release_manager = release_manager
+        self._compatibility_lock_recorder = compatibility_lock_recorder
         self._closed = False
 
     @classmethod
@@ -146,7 +150,11 @@ class PostgresDBAPIConnection:
     ) -> PostgresDBAPIConnection:
         manager = factory.connection(read_only=read_only)
         connection = manager.__enter__()
-        return cls(connection, release_manager=manager)
+        return cls(
+            connection,
+            release_manager=manager,
+            compatibility_lock_recorder=factory.record_compatibility_lock,
+        )
 
     def execute(
         self,
@@ -155,7 +163,16 @@ class PostgresDBAPIConnection:
     ) -> PostgresDBAPICursor:
         normalized = statement.strip().rstrip(";")
         if normalized.upper() == "BEGIN IMMEDIATE":
-            normalized = "BEGIN"
+            self._connection.execute("BEGIN", prepare=False)
+            started = perf_counter()
+            cursor = self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(current_schema()))",
+                (_COMPATIBILITY_LOCK_NAMESPACE,),
+                prepare=False,
+            )
+            if self._compatibility_lock_recorder is not None:
+                self._compatibility_lock_recorder(perf_counter() - started)
+            return PostgresDBAPICursor(cursor)
         if normalized.upper().startswith("PRAGMA"):
             raise ValueError("SQLite PRAGMA is not available in PostgreSQL")
         normalized = _rewrite_declared_conflict(normalized)
