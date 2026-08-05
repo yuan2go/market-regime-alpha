@@ -81,15 +81,15 @@
 - Produces: `FreeDataPreparedInputs` containing verified paths for calendar, universe, source stage/manifest, supplemental evidence, and runtime configuration.
 - Consumes: `AcquiredReplaySource`, verified source-stage artifacts, and PostgreSQL repository factories.
 
-- [ ] Expose a public DailyLoop source-freeze result so free-data preparation reuses journal recovery without running B0/B1 decisions.
-- [ ] Build an explicit calendar only from archived provider session evidence; reject inferred weekdays.
-- [ ] Materialize all requested Universe records with listing/ST/suspension/history/liquidity evidence and exclusion reasons.
-- [ ] Normalize included assets through Canonical Market Data and use Decimal/SHARES/CNY contracts.
-- [ ] Derive market and symbol observable proxies only from verified canonical bars.
-- [ ] Emit typed `MissingEvidence` for absent theme membership, ETF mapping, or capital inputs and allow Controlled research to return `DATA_INSUFFICIENT` instead of raising during input construction.
-- [ ] Publish an idempotent prepared-input manifest whose identities and hashes bind every child artifact.
-- [ ] Run `uv run pytest -q tests/application/free_data_operation/test_builders.py tests/universe/test_operational_universe.py tests/market_data` and require PASS.
-- [ ] Commit with `feat(data): materialize free operational inputs`.
+- [x] Expose a public DailyLoop source-freeze result so free-data preparation reuses journal recovery without running B0/B1 decisions.
+- [x] Build an explicit calendar only from archived provider session evidence; reject inferred weekdays.
+- [x] Materialize all requested Universe records with listing/ST/suspension/history/liquidity evidence and exclusion reasons.
+- [x] Normalize included assets through Canonical Market Data and use Decimal/SHARES/CNY contracts.
+- [x] Derive market and symbol observable proxies only from verified canonical bars.
+- [x] Emit typed `MissingEvidence` for absent theme membership, ETF mapping, or capital inputs and allow Controlled research to return `DATA_INSUFFICIENT` instead of raising during input construction.
+- [x] Publish an idempotent prepared-input manifest whose identities and hashes bind every child artifact.
+- [x] Run `uv run pytest -q tests/application/free_data_operation/test_builders.py tests/universe/test_operational_universe.py tests/market_data` and require PASS.
+- [x] Commit with `feat(data): materialize free operational inputs`.
 
 ### Task 4: Existing Runtime composition and CLI facade
 

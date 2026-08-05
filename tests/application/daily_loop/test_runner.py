@@ -332,6 +332,14 @@ def test_live_stages_are_independent_idempotent_and_finalize_without_clients(
     assert acquiring.freeze_decision_quote(command) == quote_receipt
     assert (history.calls, status.calls, current.calls) == (1, 1, 1)
 
+    frozen = acquiring.freeze_sources(command)
+    assert frozen.record.status is DailyRunStatus.SOURCE_FROZEN
+    assert len(frozen.acquired.provider_result.raw_payloads) == 6
+    repeated = acquiring.freeze_sources(command)
+    assert repeated.source_archive_path == frozen.source_archive_path
+    assert repeated.acquired == frozen.acquired
+    assert (history.calls, status.calls, current.calls) == (1, 1, 1)
+
     finalized = DailyLoopRunner(
         repository=repository,
         code_revision=CODE_REVISION,

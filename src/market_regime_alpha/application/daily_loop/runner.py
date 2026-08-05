@@ -155,6 +155,15 @@ class DailyLoopRunResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyLoopSourceFreezeResult:
+    """Verified raw Source Archive bound to durable Runtime identity."""
+
+    record: DailyRunRecord
+    source_archive_path: Path
+    acquired: AcquiredReplaySource
+
+
+@dataclass(frozen=True, slots=True)
 class DailyLoopSettlementResult:
     """Append-only settlement result over immutable T-day evidence."""
 
@@ -249,6 +258,53 @@ class DailyLoopRunner:
                 PublicSourceAcquisitionStage.SECURITY_STATUS_SOURCE_FROZEN,
             ),
             acquire=lambda profile, request: profile.acquire_current(request),
+        )
+
+    def freeze_sources(
+        self,
+        command: DailyRunCommand,
+        *,
+        replay_archive_path: Path | None = None,
+    ) -> DailyLoopSourceFreezeResult:
+        """Freeze and bind sources without entering the Legacy research path."""
+
+        self._validate_command(command)
+        if command.run_mode is RunMode.LIVE:
+            self.prepare_history(command)
+            self.freeze_security_status(command)
+            self.freeze_decision_quote(command)
+        record = self._repository.create_or_get(
+            command,
+            created_at=self._now(),
+        )
+        if record.status is DailyRunStatus.FAILED:
+            record = self._repository.resume_failed(
+                record.run_request_id,
+                changed_at=self._now(),
+            )
+        try:
+            acquired, source_archive_path, record = self._freeze_source(
+                command=command,
+                record=record,
+                replay_archive_path=replay_archive_path,
+                allow_live_failure_fallback=False,
+            )
+        except Exception as exc:
+            current = self._repository.get(record.run_request_id)
+            if current.status not in {
+                DailyRunStatus.DATA_BLOCKED,
+                DailyRunStatus.REVIEW_PUBLISHED,
+            }:
+                self._repository.mark_failed(
+                    current.run_request_id,
+                    reason=f"{type(exc).__name__}:{exc}",
+                    changed_at=self._now(),
+                )
+            raise
+        return DailyLoopSourceFreezeResult(
+            record=record,
+            source_archive_path=source_archive_path,
+            acquired=acquired,
         )
 
     def finalize_run(

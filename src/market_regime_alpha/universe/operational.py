@@ -278,8 +278,8 @@ class OperationalUniverseArtifact:
         symbols = tuple(item.symbol for item in self.records)
         if not self.records or symbols != tuple(sorted(set(symbols))):
             raise ValueError("Operational Universe records must be non-empty and sorted")
-        if not 1 <= len(self.symbols) <= 300:
-            raise ValueError("Operational Universe included scope must be 1 to 300 Symbols")
+        if not 0 <= len(self.symbols) <= 300:
+            raise ValueError("Operational Universe included scope must be 0 to 300 Symbols")
         refs = tuple((str(item), digest) for item, digest in self.source_artifact_references)
         if not refs or refs != tuple(sorted(set(refs))):
             raise ValueError("Operational Universe sources must be non-empty and sorted")

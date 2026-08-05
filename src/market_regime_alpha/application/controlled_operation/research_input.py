@@ -79,8 +79,6 @@ class ControlledOperationalResearchInput:
         bundle = supplemental_evidence.bundle
         operational_universe.verify_identity()
         static_feature_bundle.verify_identity()
-        if bundle.missing_evidence:
-            raise ValueError("Controlled Research supplemental evidence is incomplete")
         lineage: dict[ArtifactId, str] = {
             ArtifactId(str(operational_universe.universe_id)): operational_universe.content_hash,
             static_feature_bundle.artifact_id: static_feature_bundle.content_hash,
@@ -195,15 +193,37 @@ class ControlledOperationalResearchInput:
         ):
             raise ValueError("Controlled Research DecisionTime binding mismatch")
         symbols = set(universe.symbols)
-        if (
-            {item.symbol for item in supplemental.symbol_observations} != symbols
-            or {item.symbol for item in supplemental.theme_memberships} != symbols
+        observed_symbols = {item.symbol for item in supplemental.symbol_observations}
+        membership_symbols = {item.symbol for item in supplemental.theme_memberships}
+        if observed_symbols != symbols or not membership_symbols.issubset(symbols):
+            raise ValueError("Controlled Research evidence exceeds or omits Universe scope")
+        missing_keys = {
+            (item.evidence_kind, item.key) for item in supplemental.missing_evidence
+        }
+        if any(
+            ("THEME_MEMBERSHIP", symbol) not in missing_keys
+            for symbol in symbols - membership_symbols
         ):
-            raise ValueError("Controlled Research evidence does not cover Operational Universe")
+            raise ValueError("missing Theme Membership requires typed missing evidence")
         themes = {item.theme_id for item in supplemental.theme_observations}
         capital = {item.theme_id for item in supplemental.capital_observations}
-        if not themes or themes != capital:
+        if themes != capital:
             raise ValueError("Controlled Research Theme/Capital scope mismatch")
+        if not themes and not {
+            ("THEME_OBSERVATION", "ALL_THEMES"),
+            ("CAPITAL_OBSERVATION", "ALL_THEMES"),
+        }.issubset(missing_keys):
+            raise ValueError("empty Theme/Capital scope requires typed missing evidence")
+        referenced_themes = {
+            theme_id
+            for membership in supplemental.theme_memberships
+            for theme_id in (
+                membership.primary_theme_id,
+                *membership.supporting_theme_ids,
+            )
+        }
+        if not referenced_themes.issubset(themes):
+            raise ValueError("Theme Membership references missing Theme evidence")
         if supplemental.data_eligibility is not DataEligibility.EXPLORATORY:
             raise ValueError("Controlled Research cannot increase DataEligibility")
 

@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from market_regime_alpha.application.daily_loop.runner import (
         DailyLoopRunner,
         DailyLoopRunResult,
+        DailyLoopSourceFreezeResult,
         DailyLoopSettlementResult,
     )
 
@@ -33,6 +34,7 @@ __all__ = [
     "DailyRunCommand",
     "DailyLoopRunResult",
     "DailyLoopRunner",
+    "DailyLoopSourceFreezeResult",
     "DailyLoopSettlementResult",
     "DailyRunId",
     "DailyRunIdentity",
@@ -53,6 +55,7 @@ def __getattr__(name: str) -> Any:
         "DAILY_B0_B1_MODEL_SET_ID",
         "DailyLoopRunner",
         "DailyLoopRunResult",
+        "DailyLoopSourceFreezeResult",
         "DailyLoopSettlementResult",
     }:
         from market_regime_alpha.application.daily_loop import runner
