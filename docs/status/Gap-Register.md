@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Ordered gap and dependency register  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-05
+> **Last Updated:** 2026-08-06
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
@@ -33,10 +33,12 @@
 | H4.5 operator authentication | P1 | Confirmation policy and attempts explicitly emit `OPERATOR_AUTHENTICATION_NOT_ESTABLISHED`; actor is audit text only | Authentication/RBAC design | Confirmation binds an authenticated principal/role and verifiable audit identity without rewriting historical attempts |
 | Manual invalidation authentication | P1 | H5 ManualInvalidationEvidence binds actor/reason/time and content identity but actor authentication is not established | Authentication/RBAC design | Evidence carries authenticated principal/role and verifiable audit identity without changing historical V1/V2 content |
 | H8 sustained Shadow operations | P1 | The development branch has a single-run Lifecycle owner, migration-011 stage receipts, one-snapshot history reads, retry/resume and captured-source durable replay; it has no scheduler/control plane, lease owner, deadlines, operator acknowledgement, metrics, alerts or sustained run evidence | Canonical runtime plus H7 | A scheduled Shadow operation proves consecutive runs, operator deadlines/acknowledgements, metrics/alerts, recovery drills and replay without changing authority ceilings |
+| Continuous Runtime production operation | P1-EVIDENCE | WP-CRR-01 implements PostgreSQL run/tick Lease, fencing, Attempt/Evidence isolation, material reuse and bounded recovery with engineering fixtures | qualified Provider composition, authenticated scheduler and operating environment | consecutive bounded real-data runs recover from drills, preserve last-valid Evidence and never raise Entry/Broker authority |
+| Continuous Daily Decision Summary | DEFERRED | `DECISION_WINDOW_OPEN` exists for 14:30–14:55, but no `DailyDecisionWindowSummary` producer or authority exists | separate summary work package after runtime evidence stabilizes | immutable summary contract/Reader/replay is approved and implemented without changing historical fixed-14:55 identities |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
 | Feature package storage efficiency | DELIVERED_WP_SIG_01A_LOCAL_BENCHMARK_PASS | Encoding V2 separates logical hashes from compressed/columnar physical files, shares definition/configuration data and supports selective read; the required 100-symbol fixture reduced bytes by 85.8937% and selective read time by 99.7085% with stable Bundle/Signal hashes | Sustained operational profiling | Observe real Shadow-scale packages without changing logical identities or V1 compatibility |
-| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–019 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
+| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–020 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
 
 ## 3. Data and operational evidence gaps
 
@@ -126,7 +128,7 @@ The following are not open implementation gaps, although their operating/model e
 - append-only manual Fill ledger;
 - exploratory Holding/Exit, TradeOutcome and rolling diagnostics;
 - PostgreSQL-default settings/composition, bounded Repository parity, migrations
-  001–019, credential-free runtime bindings, explicit SQLite compatibility and
+  001–020, credential-free runtime bindings, explicit SQLite compatibility and
   a schema-only `0 -> 0` local import report.
 
 Delivered mechanics must not be upgraded to production, Alpha or trading-authority claims without the separate exit conditions above.

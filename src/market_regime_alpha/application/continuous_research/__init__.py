@@ -27,12 +27,18 @@ from market_regime_alpha.application.continuous_research.scope import (
     ContinuousResearchScopeRecord,
     prepare_continuous_research_scope,
 )
+from market_regime_alpha.application.continuous_research.runner import (
+    ContinuousResearchTickRunner,
+    ContinuousTickExecutionResult,
+)
 
 __all__ = [
     "ChangeDecision",
     "ContinuousChildReference",
     "ContinuousResearchScope",
     "ContinuousResearchScopeRecord",
+    "ContinuousResearchTickRunner",
+    "ContinuousTickExecutionResult",
     "CurrentEvidenceSnapshot",
     "EvidenceCommit",
     "EvidenceCommitResult",

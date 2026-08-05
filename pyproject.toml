@@ -31,6 +31,7 @@ resume-free-data-operation = "market_regime_alpha.cli.free_data_operation:resume
 replay-free-data-operation = "market_regime_alpha.cli.free_data_operation:replay_main"
 report-free-data-operation = "market_regime_alpha.cli.free_data_operation:report_main"
 inspect-free-data-operation = "market_regime_alpha.cli.free_data_operation:inspect_main"
+continuous-research = "market_regime_alpha.cli.continuous_research:main"
 
 [project.optional-dependencies]
 postgres = []

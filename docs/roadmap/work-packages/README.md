@@ -45,6 +45,7 @@ exploratory mechanics are not reopened by that work.
 - [WP-PAV2 — Platform Architecture V2 and Research Layer MVP](WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL — Production Decision Lifecycle](WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING — Production Lifecycle Hardening and Shadow Readiness](WP-PDL-Hardening-and-Shadow-Readiness.md)
+- [WP-CRR-01 — Continuous Research Runtime](WP-CRR-01-Continuous-Research-Runtime.md)
 
 WP-PAV2 reuses delivered Phase D evidence and Candidate identities. WP-PDL
 delivered the dependency-ordered engineering chain from operational evidence

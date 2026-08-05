@@ -89,6 +89,7 @@ class PostgresContinuousResearchJournal:
         clock: Clock = _utc_now,
         lease_duration: timedelta = DEFAULT_CONTINUOUS_TICK_LEASE,
         claim_id_factory: ClaimIdFactory | None = None,
+        apply_migrations: bool = True,
     ) -> None:
         if not isinstance(factory, PostgresConnectionFactory):
             raise TypeError("factory must be a PostgresConnectionFactory")
@@ -98,13 +99,16 @@ class PostgresContinuousResearchJournal:
             raise ValueError("lease_duration must be positive")
         if claim_id_factory is not None and not callable(claim_id_factory):
             raise TypeError("claim_id_factory must be callable")
+        if not isinstance(apply_migrations, bool):
+            raise TypeError("apply_migrations must be bool")
         self._factory = factory
         self._clock = clock
         self._lease_duration = lease_duration
         self._claim_id_factory = claim_id_factory or (
             lambda: f"continuous-claim-{uuid4().hex}"
         )
-        PostgresMigrator().apply_all(factory)
+        if apply_migrations:
+            PostgresMigrator().apply_all(factory)
         with factory.connection(read_only=True) as connection:
             verify_postgres_authority_schema(connection)
 
@@ -1113,6 +1117,38 @@ class PostgresContinuousResearchJournal:
             _json_object(row[0], "evidence_json")
         )
 
+    def get_prior_evidence_commit(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+        evidence_scope: str,
+    ) -> EvidenceCommit | None:
+        require_text("evidence_scope", evidence_scope)
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT e.evidence_json
+                FROM continuous_evidence_commit e
+                JOIN continuous_runtime_tick prior_tick
+                  ON prior_tick.run_id = e.run_id
+                 AND prior_tick.tick_id = e.tick_id
+                JOIN continuous_runtime_tick current_tick
+                  ON current_tick.run_id = prior_tick.run_id
+                WHERE e.run_id = %s AND current_tick.tick_id = %s
+                  AND e.evidence_scope = %s
+                  AND prior_tick.tick_sequence < current_tick.tick_sequence
+                ORDER BY prior_tick.tick_sequence DESC, e.created_at DESC
+                LIMIT 1
+                """,
+                (str(run_id), str(tick_id), evidence_scope),
+            ).fetchone()
+        if row is None:
+            return None
+        return EvidenceCommit.from_canonical_dict(
+            _json_object(row[0], "evidence_json")
+        )
+
     def get_current_evidence(
         self, run_id: ArtifactId, evidence_scope: str
     ) -> CurrentEvidenceSnapshot | None:
@@ -1544,6 +1580,36 @@ class PostgresContinuousResearchJournal:
             )
             for row in rows
         )
+
+    def get_latest_child_references(
+        self, *, run_id: ArtifactId, before_tick_sequence: int
+    ) -> tuple[ContinuousChildReference, ...]:
+        if (
+            isinstance(before_tick_sequence, bool)
+            or not isinstance(before_tick_sequence, int)
+            or before_tick_sequence < 1
+        ):
+            raise ValueError("before_tick_sequence must be positive")
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT ON (child.child_kind)
+                       child.child_reference_json
+                FROM continuous_child_run child
+                JOIN continuous_runtime_tick tick
+                  ON tick.run_id = child.run_id AND tick.tick_id = child.tick_id
+                WHERE child.run_id = %s AND tick.tick_sequence < %s
+                ORDER BY child.child_kind, tick.tick_sequence DESC
+                """,
+                (str(run_id), before_tick_sequence),
+            ).fetchall()
+        references = tuple(
+            ContinuousChildReference.from_canonical_dict(
+                _json_object(row[0], "child_reference_json")
+            )
+            for row in rows
+        )
+        return tuple(sorted(references, key=lambda item: item.child_kind.value))
 
     def resume(self, run_id: ArtifactId) -> ContinuousRunSnapshot:
         now = self._now()

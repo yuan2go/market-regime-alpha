@@ -135,7 +135,14 @@ class ChangeDecision:
         if self.decision_type is ChangeDecisionType.INITIAL_EVIDENCE:
             if self.previous_evidence_commit_id is not None:
                 raise ValueError("INITIAL_EVIDENCE cannot have previous Evidence")
-        elif self.previous_evidence_commit_id is None:
+        elif (
+            self.decision_type
+            in {
+                ChangeDecisionType.MATERIAL_CHANGE,
+                ChangeDecisionType.NO_MATERIAL_CHANGE,
+            }
+            and self.previous_evidence_commit_id is None
+        ):
             raise ValueError("non-initial Change Decision requires previous Evidence")
         if (
             self.decision_type is ChangeDecisionType.NO_MATERIAL_CHANGE

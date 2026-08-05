@@ -182,3 +182,19 @@ def test_change_decision_is_deterministic_and_fail_closed() -> None:
     assert ChangeDecision.from_canonical_dict(blocked.to_canonical_dict()) == blocked
     with pytest.raises(ValueError, match="hash mismatch"):
         replace(blocked, decision_hash=HASHES[8])
+
+
+def test_first_validated_evidence_can_be_data_insufficient() -> None:
+    evidence = _evidence(
+        attempt_id=1, tick_id="tick-insufficient", material_hash=HASHES[6]
+    )
+
+    decision = ChangeDecision.create(
+        evidence=evidence,
+        previous_evidence=None,
+        downstream_contract_satisfied=False,
+        created_at=NOW,
+    )
+
+    assert decision.decision_type is ChangeDecisionType.DATA_INSUFFICIENT
+    assert decision.previous_evidence_commit_id is None

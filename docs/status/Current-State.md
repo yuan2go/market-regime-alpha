@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-05
+> **Last Updated:** 2026-08-06
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
@@ -73,6 +73,16 @@ Tencent raw-minute archive, explicit LOTS-to-SHARES conversion, recoverable
 Feature runs and V2 selective physical encodings without changing logical
 Artifact hashes. Signal V1/V2 remain historical compatibility authorities only.
 
+WP-CRR-01 adds a PostgreSQL-only Continuous Research orchestration checkpoint.
+It owns all-day run/tick state, Provider Attempts, validated Evidence CAS,
+material Change Decisions and references to existing Dataset, Feature,
+Controlled and Canonical child receipts. Its bounded Runner recovers across
+Lease expiry and durable boundaries without creating a second research chain.
+The additive 14:30–14:55 policy exposes `DECISION_WINDOW_OPEN` without changing
+historical fixed-14:55 Target/Reader/Replay semantics. Evidence is local and
+fixture-based; production scheduling, formal PIT, economic validation, Shadow,
+Entry and Broker authority remain absent.
+
 ## 2. Current stage
 
 ```text
@@ -112,6 +122,12 @@ TRADING_SESSION_SIGNAL_FRESHNESS_IMPLEMENTED_ON_FEATURE_BRANCH
 IMMUTABLE_TENCENT_MINUTE_ARCHIVE_IMPLEMENTED_EXPLORATORY
 FEATURE_MATERIALIZATION_RUN_AUTHORITY_POSTGRES_DEFAULT_SQLITE_COMPAT
 FEATURE_AND_MARKET_DATA_ENCODING_V2_IMPLEMENTED_ON_FEATURE_BRANCH
+CONTINUOUS_RESEARCH_RUNTIME_CRR_00_TO_CRR_06_IMPLEMENTED_LOCAL_ENGINEERING_CHECKPOINT
+CONTINUOUS_RESEARCH_POSTGRESQL_JOURNAL_MIGRATION_020_IMPLEMENTED
+CONTINUOUS_PROVIDER_ATTEMPT_AND_LAST_VALID_EVIDENCE_ISOLATION_IMPLEMENTED
+CONTINUOUS_NO_MATERIAL_CHANGE_IDENTITY_REUSE_IMPLEMENTED
+CONTINUOUS_DECISION_WINDOW_1430_TO_1455_ADDITIVE_POLICY_IMPLEMENTED
+DAILY_DECISION_WINDOW_SUMMARY_NOT_IMPLEMENTED
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
@@ -122,7 +138,7 @@ PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 POSTGRESQL_DEFAULT_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
 SQLITE_EXPLICIT_COMPATIBILITY_AND_IMPORT_ONLY
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_019_APPLIED_LOCAL
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_020_APPLIED_LOCAL
 SQLITE_TO_POSTGRES_SCHEMA_ONLY_IMPORT_0_TO_0_VERIFIED
 ```
 
@@ -527,8 +543,8 @@ the same Repository protocols, including Governance, Decision, Portfolio/Risk,
 Manual Execution, Daily, Feature, Canonical Lifecycle, Controlled Operation and
 Longitudinal state. Runtime composition neither dual-writes nor falls back.
 
-PostgreSQL migration versions 001–019 are checksummed, contiguous and serialized
-with an advisory lock. The approved local PostgreSQL 16.14 schema contains 59
+PostgreSQL migration versions 001–020 are checksummed, contiguous and serialized
+with an advisory lock. The approved local PostgreSQL 16.14 schema contains 67
 catalog tables. The initial import manifest discovered no SQLite business source
 and produced a verified schema-only `0 -> 0` report at code checkpoint
 `7366ab326c2333d4f6eaefbe0a443b588d0e15b1`. This does not claim migration of
