@@ -235,6 +235,15 @@ class RepositoryFactory:
             self.settings.require_sqlite_path()
         )
 
+    def free_data_blocked(self):
+        if self._postgres is None:
+            raise ValueError("free-data blocked authority requires PostgreSQL")
+        from market_regime_alpha.application.free_data_operation.postgres_blocked import (
+            PostgresFreeDataBlockedRepository,
+        )
+
+        return PostgresFreeDataBlockedRepository(self._postgres)
+
     def lifecycle(self, *, read_only: bool = False) -> LifecycleRunRepository:
         if self._postgres is not None:
             return PostgresLifecycleRunRepository(

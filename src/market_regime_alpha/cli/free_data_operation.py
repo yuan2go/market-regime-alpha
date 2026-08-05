@@ -112,7 +112,7 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
         time(14, 55),
         tzinfo=_SHANGHAI,
     )
-    if run_decision and now < decision.astimezone(UTC):
+    if now < decision.astimezone(UTC):
         _emit_error("DECISION_TIME_NOT_REACHED", args.output_root)
         return 4
     repositories: RepositoryFactory | None = None

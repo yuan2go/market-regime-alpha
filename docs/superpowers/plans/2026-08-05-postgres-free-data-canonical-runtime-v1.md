@@ -112,7 +112,7 @@
 - Produces: `prepare`, `run`, `resume`, `replay`, `report`, and `inspect` subcommands plus the six requested console-script names.
 - Consumes: `RepositoryFactory`, `ControlledDecisionTimeOperationRunner`, and existing replay/report readers.
 
-- [x] Write CLI contract tests for all required identifiers, redacted database authority, code revision, configuration hash, runtime status, blocker, Artifact root, and safety declarations.
+- [ ] Complete CLI contract tests for all required identifiers across prepare, run, pre-Controlled block, resume, replay, report and inspect. Prepare/run payloads are implemented; four query commands remain Controlled aliases.
 - [x] Compose DailyLoop source freeze, prepared inputs, Controlled parent, Feature runs, and Canonical child without creating another journal.
 - [x] Treat empty CandidateSet, provider failure, missing theme evidence, missed window, Path `DATA_INSUFFICIENT`, and Entry blocker as distinct auditable statuses.
 - [x] Ensure `ENGINEERING_RUN_COMPLETED` and `ENTRY_AUTHORITY_BLOCKED` cannot render as a successful trade decision.

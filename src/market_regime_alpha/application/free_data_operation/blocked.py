@@ -149,8 +149,15 @@ def publish_free_data_blocked(
             canonical_json(checksums) + "\n",
             encoding="utf-8",
         )
-        os.replace(staging, destination)
+        _fsync_directory(staging)
+        try:
+            os.replace(staging, destination)
+        except OSError:
+            if destination.exists() and load_free_data_blocked(destination) == artifact:
+                return destination
+            raise
         installed = True
+        _fsync_directory(root)
     finally:
         if not installed and staging.exists():
             shutil.rmtree(staging)
@@ -210,6 +217,14 @@ def _payload(**values: Any) -> dict[str, Any]:
         "code_revision": values["code_revision"],
         "limitations": list(values["limitations"]),
     }
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 __all__ = [

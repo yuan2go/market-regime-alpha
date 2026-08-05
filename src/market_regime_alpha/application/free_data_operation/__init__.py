@@ -5,6 +5,7 @@ from .blocked import (
     FreeDataBlockedArtifact,
     FreeDataOperationBlocked,
     load_free_data_blocked,
+    publish_free_data_blocked,
 )
 from .contracts import (
     FREE_DATA_PREPARED_MANIFEST_SCHEMA,
@@ -41,5 +42,6 @@ __all__ = [
     "load_free_data_prepared_manifest",
     "load_free_data_blocked",
     "prepare_free_data_inputs",
+    "publish_free_data_blocked",
     "publish_free_data_prepared_manifest",
 ]

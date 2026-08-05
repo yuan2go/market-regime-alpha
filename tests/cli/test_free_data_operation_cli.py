@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
+
+import pytest
 
 from market_regime_alpha.application.free_data_operation.service import (
     FreeDataOperationPreparation,
@@ -18,12 +21,15 @@ from market_regime_alpha.core.identity import ArtifactId
 HASH = "sha256:" + "a" * 64
 
 
-def test_run_cli_before_decision_fails_closed_without_provider_or_database(
-    tmp_path: Path, capsys
+@pytest.mark.parametrize("entrypoint", (prepare_main, run_main))
+def test_free_data_cli_before_decision_fails_closed_without_provider_or_database(
+    tmp_path: Path,
+    capsys,
+    entrypoint: Callable[[list[str]], int],
 ) -> None:
     future = date.today() + timedelta(days=1)
 
-    exit_code = run_main(
+    exit_code = entrypoint(
         [
             "--output-root",
             str(tmp_path / "artifacts"),
@@ -42,30 +48,6 @@ def test_run_cli_before_decision_fails_closed_without_provider_or_database(
     assert '"BROKER_NOT_INVOKED": true' in output
     assert '"NO_ORDER_CREATED": true' in output
     assert '"NO_FILL_CREATED": true' in output
-
-
-def test_prepare_cli_is_not_blocked_by_pre_decision_clock(
-    tmp_path: Path, capsys
-) -> None:
-    future = date.today() + timedelta(days=1)
-
-    exit_code = prepare_main(
-        [
-            "--output-root",
-            str(tmp_path / "artifacts"),
-            "--runtime-configuration",
-            str(tmp_path / "missing-configuration"),
-            "--decision-date",
-            future.isoformat(),
-            "--idempotency-key",
-            "future-prepare",
-        ]
-    )
-
-    assert exit_code == 11
-    output = capsys.readouterr().out
-    assert "DECISION_TIME_NOT_REACHED" not in output
-    assert '"runtime_status": "FAILED_CLOSED"' in output
 
 
 def test_payload_names_engineering_and_authority_boundaries(tmp_path: Path) -> None:

@@ -6,6 +6,9 @@ import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import psycopg
+import pytest
+
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     publish_controlled_runtime_configuration,
 )
@@ -17,12 +20,14 @@ from market_regime_alpha.application.controlled_operation.runtime_configuration 
     ControlledOperationRuntimeConfiguration,
 )
 from market_regime_alpha.application.free_data_operation import (
+    FreeDataBlockedArtifact,
     FreeDataInstrument,
     FreeDataOperationScale,
     FreeDataPreparationRequest,
     FreeDataOperationService,
+    publish_free_data_blocked,
 )
-from market_regime_alpha.core.identity import DatasetId, ModelId
+from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId
 from market_regime_alpha.data.providers.public_composite import (
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     TencentFreeOperationalProfile,
@@ -56,6 +61,7 @@ from tests.application.daily_loop.test_runner import _qualified_stage_clients
 
 UTC = timezone.utc
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+HASH = "sha256:" + "a" * 64
 
 
 def test_postgres_free_data_prepare_is_idempotent_and_never_writes_sqlite(
@@ -183,6 +189,48 @@ def test_postgres_free_data_prepare_is_idempotent_and_never_writes_sqlite(
         "FREE_DATA_OPERATION",
     ]
     assert feature_runs is not None and int(feature_runs[0]) == 1
+
+
+def test_postgres_blocked_projection_is_idempotent_and_append_only(
+    tmp_path: Path,
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    repositories = RepositoryFactory(
+        DatabaseSettings.from_sources(
+            database_url=os.environ["MARKET_REGIME_ALPHA_TEST_DATABASE_URL"],
+            sqlite_path=None,
+            environ={},
+        ),
+        postgres_factory=postgres_factory,
+    )
+    repositories.bind_runtime("FREE_DATA_OPERATION", HASH)
+    artifact = FreeDataBlockedArtifact.create(
+        command_hash=HASH,
+        source_archive_id=ArtifactId("source-replay-test"),
+        source_manifest_id=ArtifactId("source-manifest-test"),
+        source_manifest_hash=HASH,
+        provider_result_hash=HASH,
+        reason_code="DATA_AVAILABLE_AFTER_DECISION_TIME",
+        error_type="ValueError",
+        created_at=datetime(2026, 8, 5, 7, 0, tzinfo=UTC),
+        code_revision="test-revision",
+    )
+    path = publish_free_data_blocked(root=tmp_path, artifact=artifact)
+    repository = repositories.free_data_blocked()
+
+    first = repository.record(artifact=artifact, locator=path)
+    repeated = repository.record(artifact=artifact, locator=path)
+
+    assert repeated == first
+    assert repository.get(HASH) == first
+    with pytest.raises(psycopg.IntegrityError):
+        with postgres_factory.connection() as connection:
+            connection.execute(
+                "UPDATE free_data_operation_blocked SET reason_code = 'changed'"
+            )
+    with pytest.raises(psycopg.IntegrityError):
+        with postgres_factory.connection() as connection:
+            connection.execute("DELETE FROM free_data_operation_blocked")
 
 
 def _path_config() -> PathForecastConfig:

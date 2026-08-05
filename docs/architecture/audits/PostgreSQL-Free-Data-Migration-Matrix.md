@@ -30,7 +30,7 @@ transaction-scoped advisory lock; Feature task claims additionally use
 
 | Module | CLI / composition call chain | Current Repository | PostgreSQL state | SQLite reachable on active path | Current fact authority | Recommendation |
 |---|---|---|---|---|---|---|
-| Free-data composition | six free-data CLIs -> `FreeDataOperationService` -> `RepositoryFactory` | Daily + Controlled + Feature + Canonical PostgreSQL repositories | migration 018 binds `FREE_DATA_OPERATION` and `DAILY_LOOP` | No; constructor rejects SQLite | PostgreSQL state plus immutable source/prepared/blocked packages | Keep as composition facade; do not add another journal |
+| Free-data composition | prepare/run facade -> `FreeDataOperationService` -> `RepositoryFactory` | Daily + Controlled + Feature + Canonical PostgreSQL repositories | migration 018 binds `FREE_DATA_OPERATION` and `DAILY_LOOP`; migration 019 records immutable blocked references | No; constructor rejects SQLite | PostgreSQL state/projection plus immutable source/prepared/blocked packages | Split decision quote from static prepare; complete free-data resume/replay/report/inspect projection |
 | Daily source freeze | free-data service -> `DailyLoopRunner.freeze_sources` -> `daily()` | `PostgresDailyRunRepository` | migration 016 | No physical SQLite connection | PostgreSQL journal; raw archive is immutable evidence | Retain explicit compatibility adapter for old replay/tests |
 | Controlled operation | free-data service -> Controlled runner -> `controlled_operation()` | `PostgresDecisionTimeOperationJournal` | migrations 014, 017, 018 | No physical SQLite connection | PostgreSQL parent state | Preserve typed blocked terminals and exact parent bindings |
 | Canonical lifecycle | Controlled bridge -> `controlled_canonical_repository()` | `PostgresLifecycleRunRepository` | migrations 011, 017 | No physical SQLite connection | PostgreSQL child state | Continue pure/replay Reader expansion without execution authority |
@@ -59,6 +59,7 @@ transaction-scoped advisory lock; Feature task claims additionally use
 | Compatibility serialization | Implemented | Former `BEGIN IMMEDIATE` sections acquire a stable transaction advisory lock |
 | Append-only events | Implemented | migrations and mutation/tamper tests across bounded repositories |
 | Parent/child binding | Implemented | migrations 014, 017, 018 and PostgreSQL free-data integration test |
+| Blocked Artifact reference authority | Implemented | migration 019 stores command, Artifact ID/hash/locator, source hashes, reason and code revision; UPDATE/DELETE are rejected |
 | Artifact published before database receipt | Recoverable in bounded publishers | Content-addressed identity is verified before a missing receipt is repaired |
 | Database receipt with missing artifact | Fail closed | Readers/replay require the bound locator and hash |
 | Cross-file/database atomic transaction | Not implemented | PostgreSQL and files cannot form one ACID transaction; recovery protocol is the authority |

@@ -122,7 +122,7 @@ PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 POSTGRESQL_DEFAULT_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
 SQLITE_EXPLICIT_COMPATIBILITY_AND_IMPORT_ONLY
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_018_APPLIED_LOCAL
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_019_APPLIED_LOCAL
 SQLITE_TO_POSTGRES_SCHEMA_ONLY_IMPORT_0_TO_0_VERIFIED
 ```
 
@@ -496,11 +496,12 @@ blocked, and Shadow/Production/Trading Authority remain `NO`.
 
 The current development branch adds `TENCENT_FREE_OPERATIONAL_V1` as an
 explicit no-fallback profile and composes existing authorities rather than
-creating another runtime. `prepare-free-data-operation` may freeze static
-evidence before the decision instant; `run-free-data-decision-window` is gated
-until 14:55 and idempotently reuses the frozen Daily source receipt. The same
-request then owns a PostgreSQL Controlled parent, Feature run and, when
-Candidate inputs are complete, a PostgreSQL Canonical child.
+creating another runtime. Both prepare/run CLIs currently fail closed before
+14:55, while the composed Daily source freeze groups History, Status and quote
+and the Controlled static deadline remains 14:50. A safe two-phase operating
+schedule therefore remains incomplete. When invoked with admissible recorded
+timing, the same request owns a PostgreSQL Controlled parent, Feature run and,
+when Candidate inputs are complete, a PostgreSQL Canonical child.
 
 New source writes retain raw BaoStock/Tencent bytes with request, timing,
 content, scope, encoding, byte-count and hash metadata. The preparation layer
@@ -526,8 +527,8 @@ the same Repository protocols, including Governance, Decision, Portfolio/Risk,
 Manual Execution, Daily, Feature, Canonical Lifecycle, Controlled Operation and
 Longitudinal state. Runtime composition neither dual-writes nor falls back.
 
-PostgreSQL migration versions 001–018 are checksummed, contiguous and serialized
-with an advisory lock. The approved local PostgreSQL 16.14 schema contains 58
+PostgreSQL migration versions 001–019 are checksummed, contiguous and serialized
+with an advisory lock. The approved local PostgreSQL 16.14 schema contains 59
 catalog tables. The initial import manifest discovered no SQLite business source
 and produced a verified schema-only `0 -> 0` report at code checkpoint
 `7366ab326c2333d4f6eaefbe0a443b588d0e15b1`. This does not claim migration of
@@ -548,6 +549,7 @@ PostgreSQL adapters preserve idempotency, command hashes, compare-and-swap,
 fencing, append-only events, immutable identities, reconstruction and replay.
 Migration 017 records credential-free runtime backend/database/schema bindings;
 Migration 018 admits `DAILY_LOOP` and `FREE_DATA_OPERATION` binding scopes;
+Migration 019 records append-only free-data Blocked Artifact references;
 resume/replay rejects a missing or mismatched PostgreSQL binding.
 
 This is local PostgreSQL engineering evidence. It is not multi-instance or

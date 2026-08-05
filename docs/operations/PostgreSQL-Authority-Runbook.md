@@ -49,9 +49,11 @@ uv run python scripts/apply_postgres_migrations.py --verify-only
 
 Both commands must report the packaged migration count, latest version, server version, schema and catalog table count without rendering the DSN.
 
-The current package contains migrations 001–018. Migration 018 extends the
+The current package contains migrations 001–019. Migration 018 extends the
 credential-free authority binding constraint to `DAILY_LOOP` and
-`FREE_DATA_OPERATION`; it creates no second content authority.
+`FREE_DATA_OPERATION`. Migration 019 adds an append-only terminal projection
+for Blocked Artifact ID/hash/locator references; it does not copy Artifact
+content or create another runtime state machine.
 
 ## 3. Stop SQLite writers and inventory sources
 
@@ -109,10 +111,11 @@ Ordinary CLIs load PostgreSQL from `.env` or `MARKET_REGIME_ALPHA_DATABASE_URL`.
 
 Missing or conflicting configuration fails closed. A stored PostgreSQL run binding records backend plus a credential-free database/schema locator. Resume and replay reject missing or mismatched bindings.
 
-The free-data facade uses two scheduled phases. `prepare` is permitted before
-14:55 so static source/Universe/Feature receipts can be frozen before the
-Controlled static deadline. `run` refuses a pre-decision clock and reuses the
-same request identity; it must not reacquire a completed source stage.
+The six command names are installed, but V1 does not yet provide an admissible
+two-phase schedule. Both prepare/run fail closed before 14:55, while source
+freeze groups History, Status and Tencent quote and the Controlled static
+deadline is 14:50. Operators must classify real 14:55 admission as blocked
+until static prepare and decision-stage quote have separate durable receipts.
 
 ```bash
 prepare-free-data-operation --help

@@ -44,7 +44,7 @@ provider-result hash and code revision.
 | Provider identity | public composite profile did not fully bind raw request metadata | `TENCENT_FREE_OPERATIONAL_V1`, no fallback, raw metadata/hash/size/time/encoding/limitations |
 | Universe | final pool could hide excluded requests | exact 20/100/300 records with inclusion and exclusion reasons |
 | Failure after source freeze | exception could leave only source stage evidence | content-addressed, tamper-evident blocked artifact |
-| CLI | separate low-level runtime commands | six explicit free-data operation entries; prepare is allowed before 14:55, run is gated |
+| CLI | separate low-level runtime commands | six names exist and prepare/run fail closed before 14:55; a true pre-window prepare/decision-stage run split remains incomplete |
 | Legacy boundary | PostgreSQL adapters reused old algorithms ambiguously | migration matrix distinguishes code reuse from physical SQLite authority; architecture guard blocks active imports |
 
 ## 3. File inventory
@@ -54,7 +54,7 @@ provider-result hash and code revision.
 - free-data contracts, builders, service and blocked-evidence package;
 - six-command CLI facade and explicit live-smoke wrapper;
 - backend-neutral Canonical composition;
-- PostgreSQL migration 018;
+- PostgreSQL migrations 018 and 019;
 - source metadata, recorded 20/100/300, PostgreSQL integration, concurrency,
   architecture and CLI tests;
 - design, implementation plan, migration audit and this delivery record.
@@ -72,7 +72,9 @@ provider-result hash and code revision.
 ### Migrated
 
 - migration 018 extends credential-free runtime authority bindings to
-  `DAILY_LOOP` and `FREE_DATA_OPERATION`.
+  `DAILY_LOOP` and `FREE_DATA_OPERATION`;
+- migration 019 adds an append-only PostgreSQL projection for immutable Blocked
+  Artifact references.
 
 ### Frozen
 
@@ -108,8 +110,8 @@ Feature, longitudinal evidence, governance, decision, Portfolio/Risk, manual
 execution, thesis health and review/index repositories. The complete call-chain
 and retained compatibility classifications are in the migration matrix.
 
-PostgreSQL migration count is 18. The local approved server is PostgreSQL 16.14.
-Migration 018 is forward-only; applied migration checksum changes are forbidden.
+PostgreSQL migration count is 19. The local approved server is PostgreSQL 16.14.
+Migrations are forward-only; applied migration checksum changes are forbidden.
 
 ## 6. Verification protocol
 
@@ -139,6 +141,13 @@ own future Git object ID. Remote CI is separate evidence and is not pre-claimed.
 
 ### P1
 
+- The current service bundles History, Status and Tencent quote in one source
+  freeze, while both prepare/run CLIs reject a pre-14:55 clock. A true
+  pre-window static prepare plus durable decision-stage quote receipt is not
+  implemented; the current commands must not be reported as real 14:55 proof.
+- `resume`, `replay`, `report` and `inspect` currently delegate to Controlled
+  operation commands and cannot reconstruct pre-Controlled blocked/source state;
+  the six names exist, but the complete free-data query facade is partial.
 - Built-in free data does not provide qualified theme membership, ETF mapping or
   capital evidence; a full Candidate/Signal path requires an explicit immutable
   supplemental producer.
@@ -156,9 +165,9 @@ own future Git object ID. Remote CI is separate evidence and is not pre-claimed.
 ## 8. Capability boundary
 
 ```text
-free_data_operational_chain = RECORDED_AND_POSTGRES_PROVEN_LIVE_AFTER_WINDOW_BLOCKED
+free_data_operational_chain = PARTIAL_RECORDED_AND_POSTGRES_PROVEN_LIVE_AFTER_WINDOW_BLOCKED
 postgres_authority_converged = ACTIVE_RUNTIME_PATHS_TRUE
-canonical_runtime_proven = FIXTURE_AND_RECORDED_TRUE_REAL_1455_FALSE
+canonical_runtime_proven = FIXTURE_AND_RECORDED_PARTIAL_REAL_1455_FALSE
 real_tencent_run_proven = RAW_ARCHIVE_TRUE_DECISION_CHAIN_FALSE
 formal_pit = false
 formal_oos_alpha = false

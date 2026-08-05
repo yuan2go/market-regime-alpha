@@ -82,6 +82,8 @@ def test_repository_factory_keeps_sqlite_explicit_and_path_bound(
         lifecycle = repositories.lifecycle()
         model_registry = repositories.model_registry()
         experiment_governance = repositories.experiment_governance()
+        with pytest.raises(ValueError, match="requires PostgreSQL"):
+            repositories.free_data_blocked()
 
     assert isinstance(decision, SQLiteDecisionLifecycleRepository)
     assert isinstance(lifecycle, SQLiteLifecycleRunRepository)

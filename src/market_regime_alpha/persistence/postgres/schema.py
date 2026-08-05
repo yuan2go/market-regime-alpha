@@ -68,6 +68,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "acquisition_stage_receipts",
         "stage_receipts",
         "runtime_database_bindings",
+        "free_data_operation_blocked",
     }
 )
 
@@ -119,6 +120,8 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("manual_fills", "manual_fills_no_update"),
         ("runtime_database_bindings", "runtime_database_bindings_no_delete"),
         ("runtime_database_bindings", "runtime_database_bindings_no_update"),
+        ("free_data_operation_blocked", "free_data_operation_blocked_no_delete"),
+        ("free_data_operation_blocked", "free_data_operation_blocked_no_update"),
         ("operational_exit_directives", "operational_exit_directives_no_delete"),
         ("operational_exit_directives", "operational_exit_directives_no_update"),
         ("risk_reducing_commands", "risk_reducing_commands_no_delete"),

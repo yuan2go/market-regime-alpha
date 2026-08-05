@@ -201,12 +201,16 @@ class FreeDataOperationService:
                 provider_result_hash=source.acquired.provider_result.content_hash,
                 reason_code=_preparation_reason(exc),
                 error_type=type(exc).__name__,
-                created_at=self._clock(),
+                created_at=materialization_request.created_at,
                 code_revision=self._code_revision,
             )
             blocked_path = publish_free_data_blocked(
                 root=operation_root / "blocked_operations",
                 artifact=blocked,
+            )
+            self._repositories.free_data_blocked().record(
+                artifact=blocked,
+                locator=blocked_path,
             )
             raise FreeDataOperationBlocked(blocked, blocked_path) from exc
         active_configuration_path = prepared.paths.runtime_configuration

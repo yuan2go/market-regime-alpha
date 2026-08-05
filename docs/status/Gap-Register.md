@@ -36,7 +36,7 @@
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
 | Feature package storage efficiency | DELIVERED_WP_SIG_01A_LOCAL_BENCHMARK_PASS | Encoding V2 separates logical hashes from compressed/columnar physical files, shares definition/configuration data and supports selective read; the required 100-symbol fixture reduced bytes by 85.8937% and selective read time by 99.7085% with stable Bundle/Signal hashes | Sustained operational profiling | Observe real Shadow-scale packages without changing logical identities or V1 compatibility |
-| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–018 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
+| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–019 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
 
 ## 3. Data and operational evidence gaps
 
@@ -44,6 +44,8 @@
 |---|---|---|---|---|
 | Controlled 14:55 public runtime | P0-EXTERNAL | Complete controlled runner/package/outcome/index/replay mechanics pass a 100-Universe/5-Candidate offline Fixture; no real 14:55 operation was observed | Controlled scheduling and Provider availability | Sustained real exact-window archives reach `OUTCOME_PENDING`, settle and replay with stable hashes |
 | Free-data on-window operation | P0-EXTERNAL | 20-symbol real BaoStock/Tencent raw evidence was frozen after the window and correctly blocked; recorded 20/100/300 plus real PostgreSQL tests pass | trading-day scheduling and Provider availability | Exact-SHA 14:55 operation publishes a verified terminal package without late data or fallback |
+| Free-data two-phase acquisition | P1 | both CLIs reject a pre-14:55 clock, source freeze groups History/Status/quote, and Controlled static deadline is 14:50 | split static preparation from decision-stage acquisition | static inputs are durably prepared before 14:50; quote is fetched once in the permitted decision window and reused idempotently |
+| Free-data query facade | P1 | resume/replay/report/inspect are Controlled aliases and cannot reconstruct pre-Controlled source/prepared/blocked state | unified read projection over Daily, free-data block, Controlled and Canonical references | all six commands return the documented IDs/statuses for every reachable terminal |
 | Qualified minute-source authority | P0-EXTERNAL | Tencent exact-byte archive/normalizer/resampler is implemented but explicitly `EXPLORATORY`; recorded fixtures prove engineering replay only | Controlled DecisionTime acquisition and qualified formal Provider | Repeated real archives establish availability, units, coverage and PIT limits without promoting Tencent cache rows |
 | Qualified Xuntou V4 input | P0-EXTERNAL | Adapter/preflight/evidence contracts exist; no qualified real XtQuant bundle has passed | Windows XtQuant exporter and source inventory | Real bundle passes qualification and same-pipeline comparison without authority promotion |
 | Qualified PIT Operational stock Universe | P1-EXTERNAL | Versioned 100–300-symbol exploratory artifact is implemented; the fixed 20-symbol pool is isolated to Smoke compatibility | Approved effective-dated PIT membership/liquidity/status source | Repeated qualified Universes account for every inclusion/exclusion with availability evidence and `PIT_CORRECT_FOR_DECLARED_SCOPE` |
@@ -124,7 +126,7 @@ The following are not open implementation gaps, although their operating/model e
 - append-only manual Fill ledger;
 - exploratory Holding/Exit, TradeOutcome and rolling diagnostics;
 - PostgreSQL-default settings/composition, bounded Repository parity, migrations
-  001–018, credential-free runtime bindings, explicit SQLite compatibility and
+  001–019, credential-free runtime bindings, explicit SQLite compatibility and
   a schema-only `0 -> 0` local import report.
 
 Delivered mechanics must not be upgraded to production, Alpha or trading-authority claims without the separate exit conditions above.
