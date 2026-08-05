@@ -10,6 +10,13 @@ from uuid import uuid4
 
 import psycopg
 
+from market_regime_alpha.application.continuous_research.change_detection import (
+    ChangeDecision,
+    RecordedChangeDecision,
+)
+from market_regime_alpha.application.continuous_research.children import (
+    ContinuousChildReference,
+)
 from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
     RuntimeTickCommand,
@@ -1132,6 +1139,410 @@ class PostgresContinuousResearchJournal:
             version=int(row[3]),
             last_accepted_fencing_token=int(row[4]),
             updated_at=_datetime(row[5]),
+        )
+
+    def record_change_decision(
+        self,
+        *,
+        claim: ClaimedRuntimeTick,
+        decision: ChangeDecision,
+    ) -> RecordedChangeDecision:
+        self._require_claim(claim)
+        if not isinstance(decision, ChangeDecision):
+            raise TypeError("decision must be a ChangeDecision")
+        decision.verify_identity()
+        if decision.run_id != claim.run_id or decision.tick_id != claim.tick_id:
+            raise ContinuousResearchConflict(
+                "Change Decision does not belong to the claimed tick"
+            )
+        now = self._now()
+
+        def operation(connection: psycopg.Connection[Any]) -> int:
+            active = connection.execute(
+                """
+                SELECT version, change_decision_id
+                FROM continuous_runtime_tick
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s
+                  AND lease_expires_at > %s
+                FOR UPDATE
+                """,
+                (
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    now,
+                ),
+            ).fetchone()
+            if active is None:
+                raise ContinuousResearchClaimRejected(
+                    "Change Decision rejected by fencing"
+                )
+            active_version = int(active[0])
+            if active[1] is not None:
+                if (
+                    str(active[1]) == str(decision.decision_id)
+                    and active_version in {claim.tick_version, claim.tick_version + 1}
+                ):
+                    return active_version
+                raise ContinuousResearchConflict(
+                    "tick already has a different Change Decision"
+                )
+            if active_version != claim.tick_version:
+                raise ContinuousResearchClaimRejected(
+                    "Change Decision rejected by tick version fencing"
+                )
+            evidence_row = connection.execute(
+                """
+                SELECT commit_hash, attempt_id, material_identity_hash,
+                       evidence_scope
+                FROM continuous_evidence_commit
+                WHERE evidence_commit_id = %s AND run_id = %s AND tick_id = %s
+                FOR SHARE
+                """,
+                (
+                    str(decision.evidence_commit_id),
+                    str(decision.run_id),
+                    str(decision.tick_id),
+                ),
+            ).fetchone()
+            if (
+                evidence_row is None
+                or str(evidence_row[0]) != decision.evidence_commit_hash
+                or int(evidence_row[1]) != decision.provider_attempt_id
+                or str(evidence_row[2])
+                != decision.current_material_identity_hash
+            ):
+                raise ContinuousResearchConflict(
+                    "Change Decision current Evidence lineage is not durable"
+                )
+            if decision.previous_evidence_commit_id is not None:
+                previous_row = connection.execute(
+                    """
+                    SELECT commit_hash, material_identity_hash
+                    FROM continuous_evidence_commit
+                    WHERE evidence_commit_id = %s AND run_id = %s
+                    FOR SHARE
+                    """,
+                    (
+                        str(decision.previous_evidence_commit_id),
+                        str(decision.run_id),
+                    ),
+                ).fetchone()
+                if (
+                    previous_row is None
+                    or str(previous_row[0])
+                    != decision.previous_evidence_commit_hash
+                    or str(previous_row[1])
+                    != decision.previous_material_identity_hash
+                ):
+                    raise ContinuousResearchConflict(
+                        "Change Decision previous Evidence lineage is not durable"
+                    )
+            current_row = connection.execute(
+                """
+                SELECT evidence_commit_id, material_identity_hash
+                FROM continuous_current_evidence
+                WHERE run_id = %s AND evidence_scope = %s
+                FOR SHARE
+                """,
+                (str(decision.run_id), str(evidence_row[3])),
+            ).fetchone()
+            if current_row is None:
+                raise ContinuousResearchConflict(
+                    "Change Decision requires current validated Evidence"
+                )
+            if decision.decision_type.value == "NO_MATERIAL_CHANGE":
+                if (
+                    str(current_row[0])
+                    != str(decision.previous_evidence_commit_id)
+                    or str(current_row[1])
+                    != decision.current_material_identity_hash
+                ):
+                    raise ContinuousResearchConflict(
+                        "NO_MATERIAL_CHANGE must preserve the previous Evidence pointer"
+                    )
+            elif str(current_row[1]) != decision.current_material_identity_hash:
+                raise ContinuousResearchConflict(
+                    "Change Decision material identity differs from current Evidence"
+                )
+            connection.execute(
+                """
+                INSERT INTO continuous_change_decision(
+                    decision_id, decision_hash, run_id, tick_id,
+                    provider_attempt_id, evidence_commit_id,
+                    previous_evidence_commit_id, decision_type,
+                    previous_material_identity_hash,
+                    current_material_identity_hash,
+                    reason_codes_json, decision_json, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (run_id, tick_id) DO NOTHING
+                """,
+                (
+                    str(decision.decision_id),
+                    decision.decision_hash,
+                    str(decision.run_id),
+                    str(decision.tick_id),
+                    decision.provider_attempt_id,
+                    str(decision.evidence_commit_id),
+                    (
+                        None
+                        if decision.previous_evidence_commit_id is None
+                        else str(decision.previous_evidence_commit_id)
+                    ),
+                    decision.decision_type.value,
+                    decision.previous_material_identity_hash,
+                    decision.current_material_identity_hash,
+                    _json_array(decision.reason_codes),
+                    canonical_json(decision.to_canonical_dict()),
+                    decision.created_at,
+                ),
+            )
+            durable = connection.execute(
+                """
+                SELECT decision_id, decision_hash
+                FROM continuous_change_decision
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (str(decision.run_id), str(decision.tick_id)),
+            ).fetchone()
+            if (
+                durable is None
+                or str(durable[0]) != str(decision.decision_id)
+                or str(durable[1]) != decision.decision_hash
+            ):
+                raise ContinuousResearchConflict(
+                    "Change Decision tick idempotency conflict"
+                )
+            tick = connection.execute(
+                """
+                UPDATE continuous_runtime_tick
+                SET change_decision_id = %s, version = version + 1,
+                    updated_at = %s
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                RETURNING version
+                """,
+                (
+                    str(decision.decision_id),
+                    now,
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+            if tick is None:
+                raise ContinuousResearchClaimRejected(
+                    "Change Decision pointer rejected by fencing"
+                )
+            self._insert_event(
+                connection,
+                run_id=claim.run_id,
+                tick_id=claim.tick_id,
+                event_type="CHANGE_DECIDED",
+                event_time=now,
+                fencing_token=claim.fencing_token,
+                payload={
+                    "decision_id": str(decision.decision_id),
+                    "decision_type": decision.decision_type.value,
+                },
+            )
+            return int(tick[0])
+
+        tick_version = self._factory.run_transaction(operation)
+        return RecordedChangeDecision(
+            decision=self.get_change_decision(decision.decision_id),
+            claim=replace(claim, tick_version=tick_version),
+        )
+
+    def get_change_decision(self, decision_id: ArtifactId) -> ChangeDecision:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT decision_json
+                FROM continuous_change_decision
+                WHERE decision_id = %s
+                """,
+                (str(decision_id),),
+            ).fetchone()
+        if row is None:
+            raise ContinuousResearchNotFound(str(decision_id))
+        return ChangeDecision.from_canonical_dict(
+            _json_object(row[0], "decision_json")
+        )
+
+    def record_child_reference(
+        self,
+        *,
+        claim: ClaimedRuntimeTick,
+        reference: ContinuousChildReference,
+    ) -> ContinuousChildReference:
+        self._require_claim(claim)
+        if not isinstance(reference, ContinuousChildReference):
+            raise TypeError("reference must be a ContinuousChildReference")
+        reference.verify_identity()
+        if reference.run_id != claim.run_id or reference.tick_id != claim.tick_id:
+            raise ContinuousResearchConflict(
+                "Child Reference does not belong to the claimed tick"
+            )
+        if reference.tick_sequence != claim.tick_sequence:
+            raise ContinuousResearchConflict(
+                "Child Reference tick sequence does not match the claim"
+            )
+        now = self._now()
+
+        def operation(connection: psycopg.Connection[Any]) -> None:
+            active = connection.execute(
+                """
+                SELECT 1
+                FROM continuous_runtime_tick
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                FOR UPDATE
+                """,
+                (
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+            if active is None:
+                raise ContinuousResearchClaimRejected(
+                    "Child Reference rejected by fencing"
+                )
+            lineage = connection.execute(
+                """
+                SELECT d.decision_hash, d.provider_attempt_id,
+                       e.commit_hash, e.source_manifest_id,
+                       e.source_manifest_hash
+                FROM continuous_change_decision d
+                JOIN continuous_evidence_commit e
+                  ON e.evidence_commit_id = d.evidence_commit_id
+                 AND e.run_id = d.run_id AND e.tick_id = d.tick_id
+                WHERE d.decision_id = %s AND d.run_id = %s AND d.tick_id = %s
+                FOR SHARE OF d, e
+                """,
+                (
+                    str(reference.decision_id),
+                    str(reference.run_id),
+                    str(reference.tick_id),
+                ),
+            ).fetchone()
+            if (
+                lineage is None
+                or str(lineage[0]) != reference.decision_hash
+                or int(lineage[1]) != reference.provider_attempt_id
+                or str(lineage[2]) != reference.evidence_commit_hash
+                or str(lineage[3]) != str(reference.source_manifest_id)
+                or str(lineage[4]) != reference.source_manifest_hash
+            ):
+                raise ContinuousResearchConflict(
+                    "Child Reference parent lineage is not durable"
+                )
+            connection.execute(
+                """
+                INSERT INTO continuous_child_run(
+                    run_id, tick_id, decision_id, child_kind,
+                    reference_disposition, child_run_id, child_receipt_id,
+                    child_receipt_hash, child_artifact_id, child_artifact_hash,
+                    source_manifest_id, source_manifest_hash,
+                    aggregate_input_hash, configuration_set_hash,
+                    child_reference_json, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (run_id, tick_id, child_kind) DO NOTHING
+                """,
+                (
+                    str(reference.run_id),
+                    str(reference.tick_id),
+                    str(reference.decision_id),
+                    reference.child_kind.value,
+                    reference.reference_disposition.value,
+                    str(reference.child_run_id),
+                    str(reference.child_receipt_id),
+                    reference.child_receipt_hash,
+                    (
+                        None
+                        if reference.child_artifact_id is None
+                        else str(reference.child_artifact_id)
+                    ),
+                    reference.child_artifact_hash,
+                    str(reference.source_manifest_id),
+                    reference.source_manifest_hash,
+                    reference.aggregate_input_hash,
+                    reference.configuration_set_hash,
+                    canonical_json(reference.to_canonical_dict()),
+                    reference.created_at,
+                ),
+            )
+            durable = connection.execute(
+                """
+                SELECT child_reference_json
+                FROM continuous_child_run
+                WHERE run_id = %s AND tick_id = %s AND child_kind = %s
+                """,
+                (
+                    str(reference.run_id),
+                    str(reference.tick_id),
+                    reference.child_kind.value,
+                ),
+            ).fetchone()
+            if durable is None or _json_object(
+                durable[0], "child_reference_json"
+            ) != reference.to_canonical_dict():
+                raise ContinuousResearchConflict(
+                    "Child Reference tick/kind idempotency conflict"
+                )
+            self._insert_event(
+                connection,
+                run_id=claim.run_id,
+                tick_id=claim.tick_id,
+                event_type="CHILD_RECORDED",
+                event_time=now,
+                fencing_token=claim.fencing_token,
+                payload={
+                    "child_kind": reference.child_kind.value,
+                    "disposition": reference.reference_disposition.value,
+                },
+            )
+
+        self._factory.run_transaction(operation)
+        return reference
+
+    def get_child_references(
+        self, run_id: ArtifactId, tick_id: ArtifactId
+    ) -> tuple[ContinuousChildReference, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT child_reference_json
+                FROM continuous_child_run
+                WHERE run_id = %s AND tick_id = %s
+                ORDER BY child_kind
+                """,
+                (str(run_id), str(tick_id)),
+            ).fetchall()
+        return tuple(
+            ContinuousChildReference.from_canonical_dict(
+                _json_object(row[0], "child_reference_json")
+            )
+            for row in rows
         )
 
     def resume(self, run_id: ArtifactId) -> ContinuousRunSnapshot:

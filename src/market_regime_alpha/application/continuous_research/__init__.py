@@ -14,13 +14,25 @@ from market_regime_alpha.application.continuous_research.evidence import (
     ProviderAttemptSnapshot,
     StartedProviderAttempt,
 )
+from market_regime_alpha.application.continuous_research.change_detection import (
+    ChangeDecision,
+    MaterialIdentityInput,
+    RecordedChangeDecision,
+)
+from market_regime_alpha.application.continuous_research.children import (
+    ContinuousChildReference,
+)
 
 __all__ = [
+    "ChangeDecision",
+    "ContinuousChildReference",
     "CurrentEvidenceSnapshot",
     "EvidenceCommit",
     "EvidenceCommitResult",
     "EvidenceQualityStatus",
+    "MaterialIdentityInput",
     "ProviderAttemptOutcome",
     "ProviderAttemptSnapshot",
+    "RecordedChangeDecision",
     "StartedProviderAttempt",
 ]
