@@ -18,6 +18,9 @@ from market_regime_alpha.decision.repositories import (
 from market_regime_alpha.decision.sqlite_repository import (
     SQLiteDecisionLifecycleRepository,
 )
+from market_regime_alpha.decision.postgres_repository import (
+    PostgresDecisionLifecycleRepository,
+)
 from market_regime_alpha.decision.thesis import (
     InvalidationCondition,
     InvalidationKind,
@@ -34,6 +37,7 @@ __all__ = [
     "InvalidationCondition",
     "InvalidationKind",
     "OpportunityState",
+    "PostgresDecisionLifecycleRepository",
     "SQLiteDecisionLifecycleRepository",
     "ThesisState",
     "TradeDecision",

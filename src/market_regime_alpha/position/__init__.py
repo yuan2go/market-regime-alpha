@@ -50,6 +50,9 @@ from market_regime_alpha.position.thesis_health import (
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
 )
+from market_regime_alpha.position.postgres_thesis_health import (
+    PostgresThesisHealthRepository,
+)
 
 __all__ = [
     "ExitDecision",
@@ -81,6 +84,7 @@ __all__ = [
     "MarketStateInRule",
     "PriceAboveRule",
     "PriceBelowRule",
+    "PostgresThesisHealthRepository",
     "SignalStateInRule",
     "SQLiteThesisHealthRepository",
     "ThesisHealthRuleConfiguration",

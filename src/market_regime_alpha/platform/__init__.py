@@ -57,6 +57,10 @@ from market_regime_alpha.platform.sqlite_governance import (
     SQLiteExperimentGovernanceRepository,
     SQLiteModelRegistryRepository,
 )
+from market_regime_alpha.platform.postgres_governance import (
+    PostgresExperimentGovernanceRepository,
+    PostgresModelRegistryRepository,
+)
 
 __all__ = [
     "CompositeCandidateModelSpec",
@@ -81,6 +85,8 @@ __all__ = [
     "ObservableId",
     "PredictionDisposition",
     "PredictionRun",
+    "PostgresExperimentGovernanceRepository",
+    "PostgresModelRegistryRepository",
     "PersistentExperimentGovernance",
     "PersistentModelRegistry",
     "PREDICTION_RUN_ARTIFACT_FILES",

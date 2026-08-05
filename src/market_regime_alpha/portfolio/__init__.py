@@ -66,6 +66,11 @@ from market_regime_alpha.portfolio.sqlite_account_authority import (
 from market_regime_alpha.portfolio.sqlite_risk_routes import (
     SQLiteRiskRouteRepository,
 )
+from market_regime_alpha.portfolio.postgres_repository import (
+    PostgresCompleteAccountPortfolioRiskRepository,
+    PostgresPortfolioDecisionRepository,
+    PostgresRiskRouteRepository,
+)
 
 __all__ = [
     "ACCOUNT_PORTFOLIO_SNAPSHOT_SCHEMA",
@@ -95,6 +100,9 @@ __all__ = [
     "PortfolioDecisionRepository",
     "PortfolioDecisionState",
     "PortfolioOutputMode",
+    "PostgresCompleteAccountPortfolioRiskRepository",
+    "PostgresPortfolioDecisionRepository",
+    "PostgresRiskRouteRepository",
     "PositionAuthorityAccountSnapshotBuilder",
     "PositionRiskValuationInput",
     "PositionPlan",

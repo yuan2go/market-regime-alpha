@@ -39,6 +39,9 @@ from market_regime_alpha.application.trading_lifecycle.operational_assessment_v2
     OperationalPositionAssessmentServiceV2,
     OperationalPositionAssessmentV2,
 )
+from market_regime_alpha.application.trading_lifecycle.postgres_risk_reduction import (
+    PostgresRiskReductionManualIntentRepository,
+)
 
 __all__ = [
     "CompleteAccountPortfolioRiskApplicationService",
@@ -48,6 +51,7 @@ __all__ = [
     "ManualExecutionApplicationService",
     "PortfolioRiskApplicationService",
     "PositionAuthoritativePortfolioRiskApplicationService",
+    "PostgresRiskReductionManualIntentRepository",
     "OperationalPositionAssessmentServiceV2",
     "OperationalPositionAssessmentV2",
     "RiskRouteApplicationService",
