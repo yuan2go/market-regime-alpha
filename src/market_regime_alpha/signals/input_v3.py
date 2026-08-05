@@ -19,6 +19,10 @@ from market_regime_alpha.evidence.canonical import (
     require_unique_text,
 )
 from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
+from market_regime_alpha.features.operational_overlay import (
+    CandidateIntradayFeatureOverlay,
+    StaticUniverseFeatureBundle,
+)
 from market_regime_alpha.features.technical.catalog import (
     CAPITAL_VOLUME_FEATURE_ID,
     MOVING_AVERAGE_FEATURE_ID,
@@ -36,6 +40,7 @@ from market_regime_alpha.market_data.contracts import (
 )
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.signals.candidate_view import CandidateFeatureView
+from market_regime_alpha.signals.candidate_view_v2 import CandidateFeatureViewV2
 from market_regime_alpha.signals.input_assembly import SignalFactorName
 from market_regime_alpha.signals.policies import (
     FactorFreshnessState,
@@ -401,7 +406,7 @@ class SignalObservationV3:
         symbol: str,
         decision_time: datetime,
         candidate_set: CandidateSet,
-        candidate_feature_view: CandidateFeatureView,
+        candidate_feature_view: CandidateFeatureView | CandidateFeatureViewV2,
         mapping_configuration: SignalInputMappingConfigurationV2,
         requirement_policy: SignalFactorRequirementPolicy,
         freshness_policy: SignalFactorFreshnessPolicy,
@@ -572,9 +577,13 @@ class SignalInputAssemblerV3:
         self,
         *,
         candidate_set: CandidateSet,
-        candidate_feature_view: CandidateFeatureView,
+        candidate_feature_view: CandidateFeatureView | CandidateFeatureViewV2,
         feature_bundle: VerifiedFeatureBundleV2,
         verified_dataset: VerifiedMarketDataDataset,
+        static_bundle: StaticUniverseFeatureBundle | None = None,
+        intraday_overlay: CandidateIntradayFeatureOverlay | None = None,
+        intraday_feature_bundle: VerifiedFeatureBundleV2 | None = None,
+        minute_dataset: VerifiedMarketDataDataset | None = None,
         mapping_configuration: SignalInputMappingConfigurationV2,
         requirement_policy: SignalFactorRequirementPolicy,
         freshness_policy: SignalFactorFreshnessPolicy,
@@ -585,24 +594,68 @@ class SignalInputAssemblerV3:
         mapping_configuration.validate_requirement_policy(requirement_policy)
         freshness_policy.verify_identity()
         candidate_feature_view.verify_identity()
-        expected_view = CandidateFeatureView.create(
-            candidate_set=candidate_set,
-            feature_bundle=feature_bundle,
-            verified_dataset=verified_dataset,
-            minimum_data_eligibility=candidate_set.envelope.data_eligibility,
-        )
+        source_bundles: tuple[VerifiedFeatureBundleV2, ...]
+        if isinstance(candidate_feature_view, CandidateFeatureViewV2):
+            if (
+                static_bundle is None
+                or intraday_overlay is None
+                or intraday_feature_bundle is None
+                or minute_dataset is None
+            ):
+                raise ValueError("Candidate Feature View V2 composition is incomplete")
+            if (
+                static_bundle.feature_bundle_id != feature_bundle.artifact.bundle_id
+                or static_bundle.feature_bundle_hash
+                != feature_bundle.artifact.content_hash
+                or static_bundle.daily_dataset_id != verified_dataset.artifact.dataset_id
+                or static_bundle.daily_dataset_hash
+                != verified_dataset.artifact.content_hash
+                or intraday_overlay.intraday_feature_bundle_id
+                != intraday_feature_bundle.artifact.bundle_id
+                or intraday_overlay.intraday_feature_bundle_hash
+                != intraday_feature_bundle.artifact.content_hash
+                or intraday_overlay.minute_dataset_id
+                != minute_dataset.artifact.dataset_id
+                or intraday_overlay.minute_dataset_hash
+                != minute_dataset.artifact.content_hash
+                or intraday_overlay.trading_calendar_id != trading_calendar.artifact_id
+                or intraday_overlay.trading_calendar_hash != trading_calendar.content_hash
+            ):
+                raise ValueError("Candidate Feature View V2 authority binding mismatch")
+            expected_view: CandidateFeatureView | CandidateFeatureViewV2 = (
+                CandidateFeatureViewV2.create(
+                    candidate_set=candidate_set,
+                    static_bundle=static_bundle,
+                    intraday_overlay=intraday_overlay,
+                )
+            )
+            source_bundles = (feature_bundle, intraday_feature_bundle)
+        else:
+            expected_view = CandidateFeatureView.create(
+                candidate_set=candidate_set,
+                feature_bundle=feature_bundle,
+                verified_dataset=verified_dataset,
+                minimum_data_eligibility=candidate_set.envelope.data_eligibility,
+            )
+            source_bundles = (feature_bundle,)
         if expected_view != candidate_feature_view:
             raise ValueError("Candidate Feature View is not reconstructible")
         if mapping_configuration.effective_from > decision_time.value:
             raise ValueError("Signal Input Mapping V2 is not effective at DecisionTime")
         if feature_bundle.artifact.data_eligibility not in mapping_configuration.allowed_data_eligibility:
             raise ValueError("Feature Bundle Data Eligibility is not allowed")
+        if any(
+            bundle.artifact.data_eligibility
+            not in mapping_configuration.allowed_data_eligibility
+            for bundle in source_bundles
+        ):
+            raise ValueError("Feature Bundle Data Eligibility is not allowed")
         observations = tuple(
             self._assemble_symbol(
                 symbol=symbol,
                 candidate_set=candidate_set,
                 candidate_feature_view=candidate_feature_view,
-                feature_bundle=feature_bundle,
+                source_bundles=source_bundles,
                 mapping_configuration=mapping_configuration,
                 requirement_policy=requirement_policy,
                 freshness_policy=freshness_policy,
@@ -620,8 +673,8 @@ class SignalInputAssemblerV3:
         *,
         symbol: str,
         candidate_set: CandidateSet,
-        candidate_feature_view: CandidateFeatureView,
-        feature_bundle: VerifiedFeatureBundleV2,
+        candidate_feature_view: CandidateFeatureView | CandidateFeatureViewV2,
+        source_bundles: tuple[VerifiedFeatureBundleV2, ...],
         mapping_configuration: SignalInputMappingConfigurationV2,
         requirement_policy: SignalFactorRequirementPolicy,
         freshness_policy: SignalFactorFreshnessPolicy,
@@ -636,7 +689,8 @@ class SignalInputAssemblerV3:
         for mapping in mapping_configuration.mappings:
             artifacts = tuple(
                 item.artifact
-                for item in feature_bundle.artifacts
+                for bundle in source_bundles
+                for item in bundle.artifacts
                 if item.artifact.artifact_id in allowed_ids
                 and item.artifact.symbol == symbol
                 and item.artifact.feature_id == mapping.source_feature_id

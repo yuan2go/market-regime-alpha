@@ -17,9 +17,17 @@ from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
+from market_regime_alpha.features.operational_overlay import (
+    CandidateIntradayFeatureOverlay,
+    StaticUniverseFeatureBundle,
+)
 from market_regime_alpha.market_data import VerifiedMarketDataDataset
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.signals.candidate_view import CandidateFeatureView
+from market_regime_alpha.signals.candidate_view_v2 import (
+    CANDIDATE_FEATURE_VIEW_V2_SCHEMA,
+    CandidateFeatureViewV2,
+)
 from market_regime_alpha.signals.decimal_model import (
     CanonicalSignalModelV2,
     CanonicalSignalSnapshotV3,
@@ -45,7 +53,7 @@ SIGNAL_RUN_V3_FILES = ("SHA256SUMS.json", "artifact.json", "manifest.json")
 class SignalRunArtifactV3:
     envelope: ArtifactEnvelope
     candidate_set: CandidateSet
-    candidate_feature_view: CandidateFeatureView
+    candidate_feature_view: CandidateFeatureView | CandidateFeatureViewV2
     feature_bundle_id: ArtifactId
     feature_bundle_hash: str
     market_data_dataset_id: ArtifactId
@@ -143,7 +151,7 @@ class SignalRunArtifactV3:
         return cls(
             envelope=ArtifactEnvelope.from_canonical_dict(_object(payload["envelope"], "envelope")),
             candidate_set=CandidateSet.from_canonical_dict(_object(payload["candidate_set"], "candidate_set")),
-            candidate_feature_view=CandidateFeatureView.from_canonical_dict(
+            candidate_feature_view=_candidate_view(
                 _object(payload["candidate_feature_view"], "candidate_feature_view")
             ),
             feature_bundle_id=ArtifactId(str(payload["feature_bundle_id"])),
@@ -186,7 +194,7 @@ class VerifiedSignalRunArtifactV3:
 def run_signal_model_v3(
     *,
     candidate_set: CandidateSet,
-    candidate_feature_view: CandidateFeatureView,
+    candidate_feature_view: CandidateFeatureView | CandidateFeatureViewV2,
     feature_bundle: VerifiedFeatureBundleV2,
     verified_dataset: VerifiedMarketDataDataset,
     mapping_configuration: SignalInputMappingConfigurationV2,
@@ -227,6 +235,16 @@ def run_signal_model_v3(
         freshness_policy.policy_id: freshness_policy.policy_hash,
         trading_calendar.artifact_id: trading_calendar.content_hash,
     }
+    if isinstance(candidate_feature_view, CandidateFeatureViewV2):
+        input_pairs[candidate_feature_view.static_bundle_id] = (
+            candidate_feature_view.static_bundle_hash
+        )
+        input_pairs[candidate_feature_view.intraday_overlay_id] = (
+            candidate_feature_view.intraday_overlay_hash
+        )
+        input_pairs[ArtifactId(str(candidate_feature_view.minute_dataset_id))] = (
+            candidate_feature_view.minute_dataset_hash
+        )
     for observation in ordered_observations:
         input_pairs[observation.observation_id] = observation.content_hash
         for factor in observation.factors:
@@ -357,14 +375,27 @@ def replay_signal_run_v3(
     feature_bundle: VerifiedFeatureBundleV2,
     verified_dataset: VerifiedMarketDataDataset,
     trading_calendar: TradingCalendarArtifact,
+    static_bundle: StaticUniverseFeatureBundle | None = None,
+    intraday_overlay: CandidateIntradayFeatureOverlay | None = None,
+    intraday_feature_bundle: VerifiedFeatureBundleV2 | None = None,
+    minute_dataset: VerifiedMarketDataDataset | None = None,
 ) -> VerifiedSignalRunArtifactV3:
     original = load_verified_signal_run_v3(path).artifact
-    view = CandidateFeatureView.create(
-        candidate_set=original.candidate_set,
-        feature_bundle=feature_bundle,
-        verified_dataset=verified_dataset,
-        minimum_data_eligibility=original.candidate_feature_view.data_eligibility,
-    )
+    if isinstance(original.candidate_feature_view, CandidateFeatureViewV2):
+        if static_bundle is None or intraday_overlay is None:
+            raise ValueError("Signal V3 V2-view replay composition is incomplete")
+        view: CandidateFeatureView | CandidateFeatureViewV2 = CandidateFeatureViewV2.create(
+            candidate_set=original.candidate_set,
+            static_bundle=static_bundle,
+            intraday_overlay=intraday_overlay,
+        )
+    else:
+        view = CandidateFeatureView.create(
+            candidate_set=original.candidate_set,
+            feature_bundle=feature_bundle,
+            verified_dataset=verified_dataset,
+            minimum_data_eligibility=original.candidate_feature_view.data_eligibility,
+        )
     if view != original.candidate_feature_view:
         raise ValueError("Signal V3 replay Candidate Feature View mismatch")
     observations = SignalInputAssemblerV3().assemble(
@@ -377,6 +408,10 @@ def replay_signal_run_v3(
         freshness_policy=original.freshness_policy,
         trading_calendar=trading_calendar,
         decision_time=original.envelope.decision_time,
+        static_bundle=static_bundle,
+        intraday_overlay=intraday_overlay,
+        intraday_feature_bundle=intraday_feature_bundle,
+        minute_dataset=minute_dataset,
     )
     replayed = run_signal_model_v3(
         candidate_set=original.candidate_set,
@@ -401,7 +436,7 @@ def replay_signal_run_v3(
 def _artifact_payload(
     *,
     candidate_set: CandidateSet,
-    candidate_feature_view: CandidateFeatureView,
+    candidate_feature_view: CandidateFeatureView | CandidateFeatureViewV2,
     feature_bundle_id: ArtifactId,
     feature_bundle_hash: str,
     market_data_dataset_id: ArtifactId,
@@ -437,6 +472,14 @@ def _artifact_payload(
         "observations": [item.to_canonical_dict() for item in observations],
         "snapshots": [item.to_canonical_dict() for item in snapshots],
     }
+
+
+def _candidate_view(
+    payload: Mapping[str, Any],
+) -> CandidateFeatureView | CandidateFeatureViewV2:
+    if payload.get("schema_version") == CANDIDATE_FEATURE_VIEW_V2_SCHEMA:
+        return CandidateFeatureViewV2.from_canonical_dict(payload)
+    return CandidateFeatureView.from_canonical_dict(payload)
 
 
 def _manifest(artifact: SignalRunArtifactV3) -> dict[str, Any]:

@@ -312,6 +312,78 @@ def canonical_technical_feature_set(
     )
 
 
+def static_technical_feature_set(
+    *, effective_from: datetime
+) -> FeatureSetConfiguration:
+    """Daily-only feature authority prepared before the decision window."""
+
+    canonical = canonical_technical_feature_set(effective_from=effective_from)
+    selected_ids = {
+        PRICE_ACTION_FEATURE_ID,
+        MOVING_AVERAGE_FEATURE_ID,
+        MACD_FEATURE_ID,
+        CAPITAL_VOLUME_FEATURE_ID,
+        OVERHEAT_FEATURE_ID,
+    }
+    return FeatureSetConfiguration.create(
+        feature_set_version="pre-decision-static-features-v1",
+        definitions=tuple(
+            item for item in canonical.definitions if item.feature_id in selected_ids
+        ),
+        configurations=tuple(
+            item
+            for item in canonical.configurations
+            if item.feature_id in selected_ids
+        ),
+        required_feature_ids=tuple(sorted(selected_ids)),
+        optional_feature_ids=(),
+        timeframe_policy=canonical.timeframe_policy,
+        coverage_policy=canonical.coverage_policy,
+        minimum_required_coverage=canonical.minimum_required_coverage,
+        missingness_policy=canonical.missingness_policy,
+        validation_status=canonical.validation_status,
+        limitations=tuple(
+            sorted({*canonical.limitations, "PRE_DECISION_STATIC_FEATURES"})
+        ),
+    )
+
+
+def intraday_overlay_feature_set(
+    *, effective_from: datetime
+) -> FeatureSetConfiguration:
+    """Candidate-only minute Feature authority; never a Universe authority."""
+
+    canonical = canonical_technical_feature_set(effective_from=effective_from)
+    selected_ids = {INTRADAY_PRICE_ACTION_FEATURE_ID, VWAP_FEATURE_ID}
+    return FeatureSetConfiguration.create(
+        feature_set_version="candidate-intraday-overlay-v1",
+        definitions=tuple(
+            item for item in canonical.definitions if item.feature_id in selected_ids
+        ),
+        configurations=tuple(
+            item
+            for item in canonical.configurations
+            if item.feature_id in selected_ids
+        ),
+        required_feature_ids=tuple(sorted(selected_ids)),
+        optional_feature_ids=(),
+        timeframe_policy=canonical.timeframe_policy,
+        coverage_policy=canonical.coverage_policy,
+        minimum_required_coverage=canonical.minimum_required_coverage,
+        missingness_policy=canonical.missingness_policy,
+        validation_status=canonical.validation_status,
+        limitations=tuple(
+            sorted(
+                {
+                    *canonical.limitations,
+                    "CANDIDATE_ONLY_INTRADAY_OVERLAY",
+                    "NO_STATIC_FEATURE_DUPLICATION",
+                }
+            )
+        ),
+    )
+
+
 def _definition(
     *,
     feature_id: str,

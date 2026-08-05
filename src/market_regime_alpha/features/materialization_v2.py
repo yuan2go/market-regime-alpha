@@ -440,7 +440,7 @@ class PreparedFeatureExecutionContext:
         selected = tuple(sorted(selected_symbols))
         if not selected or len(selected) != len(set(selected)):
             raise ValueError("selected symbols must be non-empty and unique")
-        if not set(selected).issubset(dataset.coverage.observed_symbols):
+        if not set(selected).issubset(dataset.coverage.expected_symbols):
             raise ValueError("selected symbols are not covered by Market Data Dataset")
         definitions = {item.feature_id: item for item in feature_set.definitions}
         configurations = {
@@ -533,7 +533,7 @@ class FeatureMaterializationRunner:
         selected_symbols = tuple(sorted(selected_symbols))
         if not selected_symbols or len(selected_symbols) != len(set(selected_symbols)):
             raise ValueError("selected symbols must be non-empty and unique")
-        if not set(selected_symbols).issubset(dataset.coverage.observed_symbols):
+        if not set(selected_symbols).issubset(dataset.coverage.expected_symbols):
             raise ValueError("selected symbols are not covered by Market Data Dataset")
         command_hash = canonical_hash(
             {

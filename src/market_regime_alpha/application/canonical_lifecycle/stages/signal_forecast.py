@@ -179,9 +179,12 @@ class SignalStageHandler:
     def execute(self, context: LifecycleStageContext) -> StageExecutionResult:
         inputs = self._inputs(context)
         artifact = self._compute(context, *inputs[1::2])
+        view = artifact.candidate_feature_view
+        if not isinstance(view, CandidateFeatureView):
+            raise TypeError("Canonical Lifecycle compatibility stage requires Candidate Feature View V1")
         view_path = publish_candidate_feature_view(
             root=self._output_root / "candidate-feature-views",
-            view=artifact.candidate_feature_view,
+            view=view,
         )
         signal_path = publish_signal_run_v3(root=self._output_root, artifact=artifact)
         verified = load_verified_signal_run_v3(signal_path)
