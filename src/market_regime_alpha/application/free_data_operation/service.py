@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -35,8 +35,14 @@ from market_regime_alpha.application.daily_loop import (
     DailyRunCommand,
     RunMode,
 )
+from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.application.free_data_operation.builders import (
     prepare_free_data_inputs,
+)
+from market_regime_alpha.application.free_data_operation.blocked import (
+    FreeDataBlockedArtifact,
+    FreeDataOperationBlocked,
+    publish_free_data_blocked,
 )
 from market_regime_alpha.application.free_data_operation.contracts import (
     FreeDataPreparationRequest,
@@ -166,16 +172,43 @@ class FreeDataOperationService:
         )
         if history_receipt is None:
             raise ValueError("PostgreSQL DailyRun lacks frozen History receipt")
-        prepared = prepare_free_data_inputs(
-            request=request,
-            history_source=load_verified_public_source_stage_artifact(
-                Path(history_receipt.locator)
+        materialization_request = replace(
+            request,
+            created_at=max(
+                source.record.created_at,
+                request.decision_time.value,
             ),
-            provider_result=source.acquired.provider_result,
-            full_source_manifest=source.acquired.source_manifest,
-            output_root=operation_root,
-            runtime_configuration_path=configuration_path,
         )
+        try:
+            prepared = prepare_free_data_inputs(
+                request=materialization_request,
+                history_source=load_verified_public_source_stage_artifact(
+                    Path(history_receipt.locator)
+                ),
+                provider_result=source.acquired.provider_result,
+                full_source_manifest=source.acquired.source_manifest,
+                output_root=operation_root,
+                runtime_configuration_path=configuration_path,
+            )
+        except Exception as exc:
+            blocked = FreeDataBlockedArtifact.create(
+                command_hash=materialization_request.command_hash,
+                source_archive_id=ArtifactId(source.acquired.archive_id),
+                source_manifest_id=(
+                    source.acquired.source_manifest.source_manifest_id
+                ),
+                source_manifest_hash=source.acquired.source_manifest.content_hash,
+                provider_result_hash=source.acquired.provider_result.content_hash,
+                reason_code=_preparation_reason(exc),
+                error_type=type(exc).__name__,
+                created_at=self._clock(),
+                code_revision=self._code_revision,
+            )
+            blocked_path = publish_free_data_blocked(
+                root=operation_root / "blocked_operations",
+                artifact=blocked,
+            )
+            raise FreeDataOperationBlocked(blocked, blocked_path) from exc
         active_configuration_path = prepared.paths.runtime_configuration
         if active_configuration_path is None:
             raise ValueError("prepared inputs omit active Runtime configuration")
@@ -320,6 +353,15 @@ def _terminal_package(
         if path.is_dir() and not path.name.startswith(".")
     )
     return packages[-1] if packages else None
+
+
+def _preparation_reason(exc: Exception) -> str:
+    message = str(exc)
+    if "available after DecisionTime" in message:
+        return "DATA_AVAILABLE_AFTER_DECISION_TIME"
+    if "DECISION_DATE_NOT_IN_TRADING_CALENDAR" in message:
+        return "DECISION_DATE_NOT_IN_EXPLICIT_TRADING_CALENDAR"
+    return "FREE_DATA_PREPARATION_FAILED_CLOSED"
 
 
 __all__ = [

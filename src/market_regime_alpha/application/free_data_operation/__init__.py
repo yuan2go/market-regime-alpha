@@ -1,6 +1,11 @@
 """PostgreSQL-oriented facade contracts for free-data operation composition."""
 
 from .builders import prepare_free_data_inputs
+from .blocked import (
+    FreeDataBlockedArtifact,
+    FreeDataOperationBlocked,
+    load_free_data_blocked,
+)
 from .contracts import (
     FREE_DATA_PREPARED_MANIFEST_SCHEMA,
     FreeDataInstrument,
@@ -22,6 +27,8 @@ from .service import (
 __all__ = [
     "FREE_DATA_PREPARED_MANIFEST_SCHEMA",
     "FreeDataInstrument",
+    "FreeDataBlockedArtifact",
+    "FreeDataOperationBlocked",
     "FreeDataOperationScale",
     "FreeDataOperationExecution",
     "FreeDataOperationPreparation",
@@ -32,6 +39,7 @@ __all__ = [
     "FreeDataPreparedPaths",
     "PreparedArtifactReference",
     "load_free_data_prepared_manifest",
+    "load_free_data_blocked",
     "prepare_free_data_inputs",
     "publish_free_data_prepared_manifest",
 ]

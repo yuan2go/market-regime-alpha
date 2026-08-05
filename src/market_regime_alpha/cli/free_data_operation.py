@@ -22,6 +22,9 @@ from market_regime_alpha.application.free_data_operation.contracts import (
     FreeDataOperationScale,
     FreeDataPreparationRequest,
 )
+from market_regime_alpha.application.free_data_operation.blocked import (
+    FreeDataOperationBlocked,
+)
 from market_regime_alpha.application.free_data_operation.service import (
     FreeDataOperationExecution,
     FreeDataOperationPreparation,
@@ -109,43 +112,44 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
         time(14, 55),
         tzinfo=_SHANGHAI,
     )
-    if now < decision.astimezone(UTC):
+    if run_decision and now < decision.astimezone(UTC):
         _emit_error("DECISION_TIME_NOT_REACHED", args.output_root)
         return 4
-    symbols = _load_symbols(args.symbols_file)
-    configuration = load_controlled_runtime_configuration(
-        args.runtime_configuration.resolve()
-    )
-    request = FreeDataPreparationRequest(
-        scale=FreeDataOperationScale.from_symbol_count(len(symbols)),
-        provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        decision_time=DecisionTime(decision),
-        created_at=now,
-        instruments=tuple(
-            FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
-            for symbol in symbols
-        ),
-        membership_source=f"OPERATOR_APPROVED_FREE_DATA_{len(symbols)}",
-        minimum_history_sessions=args.minimum_history_sessions,
-        liquidity_lookback_sessions=args.liquidity_lookback_sessions,
-        minimum_median_daily_amount=args.minimum_median_daily_amount,
-        configuration_hash=configuration.configuration_hash,
-    )
-    repositories = RepositoryFactory(settings_from_namespace(args))
-    profile = TencentFreeOperationalProfile(
-        history_client=BaoStockHistoryClient(
-            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        ),
-        security_status_client=BaoStockSecurityStatusClient(
-            timeout_seconds=args.provider_timeout_seconds,
-            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        ),
-        current_client=TencentCurrentQuoteClient(
-            timeout_seconds=args.provider_timeout_seconds,
-            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        ),
-    )
+    repositories: RepositoryFactory | None = None
     try:
+        symbols = _load_symbols(args.symbols_file)
+        configuration = load_controlled_runtime_configuration(
+            args.runtime_configuration.resolve()
+        )
+        request = FreeDataPreparationRequest(
+            scale=FreeDataOperationScale.from_symbol_count(len(symbols)),
+            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+            decision_time=DecisionTime(decision),
+            created_at=now,
+            instruments=tuple(
+                FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
+                for symbol in symbols
+            ),
+            membership_source=f"OPERATOR_APPROVED_FREE_DATA_{len(symbols)}",
+            minimum_history_sessions=args.minimum_history_sessions,
+            liquidity_lookback_sessions=args.liquidity_lookback_sessions,
+            minimum_median_daily_amount=args.minimum_median_daily_amount,
+            configuration_hash=configuration.configuration_hash,
+        )
+        repositories = RepositoryFactory(settings_from_namespace(args))
+        profile = TencentFreeOperationalProfile(
+            history_client=BaoStockHistoryClient(
+                provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+            ),
+            security_status_client=BaoStockSecurityStatusClient(
+                timeout_seconds=args.provider_timeout_seconds,
+                provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+            ),
+            current_client=TencentCurrentQuoteClient(
+                timeout_seconds=args.provider_timeout_seconds,
+                provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+            ),
+        )
         service = FreeDataOperationService(
             repositories=repositories,
             output_root=args.output_root,
@@ -174,6 +178,24 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
         if isinstance(result, FreeDataOperationExecution) and result.blocked_reason:
             return 6
         return 0
+    except FreeDataOperationBlocked as exc:
+        print(
+            json.dumps(
+                {
+                    "runtime_status": "DATA_BLOCKED",
+                    "blocked_reason": exc.artifact.reason_code,
+                    "blocked_artifact_id": str(exc.artifact.artifact_id),
+                    "blocked_artifact": str(exc.path),
+                    "source_manifest_id": str(exc.artifact.source_manifest_id),
+                    "code_revision": exc.artifact.code_revision,
+                    "artifact_root": str(args.output_root.resolve()),
+                    **_safety_declarations(),
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            )
+        )
+        return 6
     except Exception as exc:
         print(
             json.dumps(
@@ -189,7 +211,8 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
         )
         return 11
     finally:
-        repositories.close()
+        if repositories is not None:
+            repositories.close()
 
 
 def free_data_operation_payload(

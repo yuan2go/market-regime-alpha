@@ -103,6 +103,14 @@ from market_regime_alpha.position.postgres_thesis_health import (
 from market_regime_alpha.position.sqlite_thesis_health import (
     SQLiteThesisHealthRepository,
 )
+from market_regime_alpha.platform.postgres_governance import (
+    PostgresExperimentGovernanceRepository,
+    PostgresModelRegistryRepository,
+)
+from market_regime_alpha.platform.sqlite_governance import (
+    SQLiteExperimentGovernanceRepository,
+    SQLiteModelRegistryRepository,
+)
 
 
 Clock = Callable[[], datetime]
@@ -212,6 +220,18 @@ class RepositoryFactory:
         if self._postgres is not None:
             return PostgresCompositeOperationalRepository(self._postgres)
         return SQLiteCompositeOperationalRepository(
+            self.settings.require_sqlite_path()
+        )
+
+    def model_registry(self):
+        if self._postgres is not None:
+            return PostgresModelRegistryRepository(self._postgres)
+        return SQLiteModelRegistryRepository(self.settings.require_sqlite_path())
+
+    def experiment_governance(self):
+        if self._postgres is not None:
+            return PostgresExperimentGovernanceRepository(self._postgres)
+        return SQLiteExperimentGovernanceRepository(
             self.settings.require_sqlite_path()
         )
 

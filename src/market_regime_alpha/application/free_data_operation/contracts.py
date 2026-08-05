@@ -118,7 +118,6 @@ class FreeDataPreparationRequest:
             "scale": self.scale.name,
             "provider_profile_id": self.provider_profile_id,
             "decision_time": self.decision_time.isoformat(),
-            "created_at": self.created_at.isoformat(),
             "instruments": [item.to_canonical_dict() for item in self.instruments],
             "membership_source": self.membership_source,
             "minimum_history_sessions": self.minimum_history_sessions,

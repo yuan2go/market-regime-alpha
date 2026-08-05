@@ -415,7 +415,10 @@ def _build_universe(
         item.artifact_id: item.content_hash
         for item in full_source_manifest.source_artifacts
     }
-    statuses = _current_statuses(full_source_manifest)
+    statuses = _current_statuses(
+        full_source_manifest,
+        decision_time=request.decision_time.value,
+    )
     records: list[OperationalUniverseRecord] = []
     for instrument in request.instruments:
         symbol = instrument.symbol
@@ -533,14 +536,21 @@ def _build_universe(
 
 def _current_statuses(
     source_manifest: SourceManifest,
+    *,
+    decision_time: datetime,
 ) -> dict[str, dict[CriticalSourceFact, SourceManifestField]]:
     result: dict[str, dict[CriticalSourceFact, SourceManifestField]] = {}
     for item in source_manifest.fields:
-        if item.symbol is None or item.critical_fact not in {
+        if (
+            item.symbol is None
+            or item.available_time is None
+            or item.available_time.value > decision_time
+            or item.critical_fact not in {
             CriticalSourceFact.LISTING_STATUS,
             CriticalSourceFact.ST_STATUS,
             CriticalSourceFact.TRADING_STATUS,
-        }:
+            }
+        ):
             continue
         result.setdefault(item.symbol, {})[item.critical_fact] = item
     return result

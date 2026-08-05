@@ -25,6 +25,14 @@ from market_regime_alpha.persistence.settings import (
     DatabaseBackend,
     DatabaseSettings,
 )
+from market_regime_alpha.platform.postgres_governance import (
+    PostgresExperimentGovernanceRepository,
+    PostgresModelRegistryRepository,
+)
+from market_regime_alpha.platform.sqlite_governance import (
+    SQLiteExperimentGovernanceRepository,
+    SQLiteModelRegistryRepository,
+)
 from tests.persistence.postgres.conftest import (
     TEST_DATABASE_URL_ENV,
     postgres_factory,
@@ -44,10 +52,17 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
     ) as repositories:
         decision = repositories.decision()
         lifecycle = repositories.lifecycle()
+        model_registry = repositories.model_registry()
+        experiment_governance = repositories.experiment_governance()
         binding = repositories.binding
 
     assert isinstance(decision, PostgresDecisionLifecycleRepository)
     assert isinstance(lifecycle, PostgresLifecycleRunRepository)
+    assert isinstance(model_registry, PostgresModelRegistryRepository)
+    assert isinstance(
+        experiment_governance,
+        PostgresExperimentGovernanceRepository,
+    )
     assert binding.backend is DatabaseBackend.POSTGRES
     assert "***" in binding.locator
     assert configured.require_database_url() not in binding.locator
@@ -65,9 +80,16 @@ def test_repository_factory_keeps_sqlite_explicit_and_path_bound(
     with RepositoryFactory(settings) as repositories:
         decision = repositories.decision()
         lifecycle = repositories.lifecycle()
+        model_registry = repositories.model_registry()
+        experiment_governance = repositories.experiment_governance()
 
     assert isinstance(decision, SQLiteDecisionLifecycleRepository)
     assert isinstance(lifecycle, SQLiteLifecycleRunRepository)
+    assert isinstance(model_registry, SQLiteModelRegistryRepository)
+    assert isinstance(
+        experiment_governance,
+        SQLiteExperimentGovernanceRepository,
+    )
     assert repositories.binding.backend is DatabaseBackend.SQLITE
     assert repositories.binding.locator == str(path.resolve())
 

@@ -36,13 +36,14 @@
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
 | Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
 | Feature package storage efficiency | DELIVERED_WP_SIG_01A_LOCAL_BENCHMARK_PASS | Encoding V2 separates logical hashes from compressed/columnar physical files, shares definition/configuration data and supports selective read; the required 100-symbol fixture reduced bytes by 85.8937% and selective read time by 99.7085% with stable Bundle/Signal hashes | Sustained operational profiling | Observe real Shadow-scale packages without changing logical identities or V1 compatibility |
-| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–017 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
+| PostgreSQL repository parity | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | PostgreSQL is the default runtime through contract-tested bounded adapters; migrations 001–018 and schema-only `0 -> 0` import passed locally; SQLite is explicit compatibility/import only | CI PostgreSQL service and Repository protocols | Preserve exact-SHA parity in CI; production admission remains separate |
 
 ## 3. Data and operational evidence gaps
 
 | Gap | Priority | Current state | Dependency | Exit condition |
 |---|---|---|---|---|
 | Controlled 14:55 public runtime | P0-EXTERNAL | Complete controlled runner/package/outcome/index/replay mechanics pass a 100-Universe/5-Candidate offline Fixture; no real 14:55 operation was observed | Controlled scheduling and Provider availability | Sustained real exact-window archives reach `OUTCOME_PENDING`, settle and replay with stable hashes |
+| Free-data on-window operation | P0-EXTERNAL | 20-symbol real BaoStock/Tencent raw evidence was frozen after the window and correctly blocked; recorded 20/100/300 plus real PostgreSQL tests pass | trading-day scheduling and Provider availability | Exact-SHA 14:55 operation publishes a verified terminal package without late data or fallback |
 | Qualified minute-source authority | P0-EXTERNAL | Tencent exact-byte archive/normalizer/resampler is implemented but explicitly `EXPLORATORY`; recorded fixtures prove engineering replay only | Controlled DecisionTime acquisition and qualified formal Provider | Repeated real archives establish availability, units, coverage and PIT limits without promoting Tencent cache rows |
 | Qualified Xuntou V4 input | P0-EXTERNAL | Adapter/preflight/evidence contracts exist; no qualified real XtQuant bundle has passed | Windows XtQuant exporter and source inventory | Real bundle passes qualification and same-pipeline comparison without authority promotion |
 | Qualified PIT Operational stock Universe | P1-EXTERNAL | Versioned 100–300-symbol exploratory artifact is implemented; the fixed 20-symbol pool is isolated to Smoke compatibility | Approved effective-dated PIT membership/liquidity/status source | Repeated qualified Universes account for every inclusion/exclusion with availability evidence and `PIT_CORRECT_FOR_DECLARED_SCOPE` |
@@ -50,6 +51,7 @@
 | PIT theme membership | P1 | Bridge requires full membership coverage, but no qualified daily producer exists | Theme taxonomy and effective-dated source | Every symbol’s primary/supporting membership is available by DecisionTime and versioned |
 | Theme/ETF mapping | P1 | Supplemental contract requires exact mapping coverage; no operational producer exists | ETF Universe and theme taxonomy | Every proxy mapping has effective time, source lineage and deterministic Reader |
 | Theme and Capital observations | P1 | V0 models run from typed fixtures/supplemental artifacts | Qualified market/ETF/symbol history | Daily materializer produces complete decision-time observations with missingness and coverage reports |
+| Free-data supplemental producer | P1 | Built-in Tencent/BaoStock profile emits typed missing theme, ETF and capital evidence and therefore blocks Candidate Discovery | effective-dated taxonomy, ETF mapping and observable-proxy sources | Immutable supplemental artifact passes coverage/availability/lineage validation without claiming institutional intent |
 | External account authority | P1 | H1 snapshots and H3 positions are based on explicit/manual evidence | Broker statement/import boundary | Complete cash/position statement is authenticated, versioned and reconciled before Risk |
 | Fill reconciliation | P1 | Fill is append-only human-recorded evidence, not broker truth | External execution statement and operator roles | Every manual Fill is matched, disputed or corrected through an append-only reconciliation workflow |
 
@@ -100,16 +102,16 @@ The following are not open implementation gaps, although their operating/model e
 - recoverable exploratory DailyLoop;
 - Market/Theme/Capital/Candidate research mechanics;
 - Signal and uncalibrated PathForecast mechanics;
-- SQLite Opportunity/Thesis lifecycle;
+- PostgreSQL-default Opportunity/Thesis lifecycle with explicit SQLite compatibility;
 - H1 complete-account Portfolio/Risk;
 - H2 Thesis-scoped authority trace;
 - H3 Fill/calendar-derived T+1 Position;
-- H4 reducing-risk domain, SQLite persistence, idempotency, strict restoration and decision-only CLI;
+- H4 reducing-risk domain, PostgreSQL-default persistence, idempotency, strict restoration and decision-only CLI;
 - H4.5 ManualTrade V3 route authority, immutable Directive/Policy/Attempt,
   migration 010, unified atomic confirmation, H5/H6 lineage validation,
   T+1/Gate recheck, reducing Fill compatibility and reference-only CLI;
-- H5 typed invalidation rules, verified current-evidence Builder, V2 Observation, migration 008, SQLite replay, V2-only CLI and thin operational assessment adapter;
-- H6 typed composition policy/manifest, exact immutable package, migration 009, append-only SQLite replay index, V2-only operational research route and H5 integration;
+- H5 typed invalidation rules, verified current-evidence Builder, V2 Observation, migration 008, PostgreSQL-default replay, V2-only CLI and thin operational assessment adapter;
+- H6 typed composition policy/manifest, exact immutable package, migration 009, append-only PostgreSQL-default replay index, V2-only operational research route and H5 integration;
 - canonical 16-stage Runner, migration-011 Lifecycle Runtime Journal,
   idempotent/recoverable stage receipts, single-snapshot history reads and
   captured-source durable replay with pure model recomputation and read-only
@@ -122,7 +124,7 @@ The following are not open implementation gaps, although their operating/model e
 - append-only manual Fill ledger;
 - exploratory Holding/Exit, TradeOutcome and rolling diagnostics;
 - PostgreSQL-default settings/composition, bounded Repository parity, migrations
-  001–017, credential-free runtime bindings, explicit SQLite compatibility and
+  001–018, credential-free runtime bindings, explicit SQLite compatibility and
   a schema-only `0 -> 0` local import report.
 
 Delivered mechanics must not be upgraded to production, Alpha or trading-authority claims without the separate exit conditions above.

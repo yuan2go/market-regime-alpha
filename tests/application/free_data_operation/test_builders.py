@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -291,3 +292,47 @@ def test_scale_contracts_are_exact() -> None:
     assert FreeDataOperationScale.from_symbol_count(20) is FreeDataOperationScale.SMOKE
     assert FreeDataOperationScale.from_symbol_count(100) is FreeDataOperationScale.STANDARD
     assert FreeDataOperationScale.from_symbol_count(300) is FreeDataOperationScale.STRESS
+
+
+def test_request_identity_excludes_nonsemantic_invocation_timestamp() -> None:
+    first = _request()
+    second = replace(first, created_at=first.created_at + timedelta(minutes=1))
+
+    assert second.command_hash == first.command_hash
+
+
+def test_status_retrieved_after_decision_cannot_enter_operational_universe(
+    tmp_path: Path,
+) -> None:
+    stage_path, result, manifest = _source_inputs(tmp_path)
+    late = DECISION.value + timedelta(minutes=1)
+    late_manifest = replace(
+        manifest,
+        fields=tuple(
+            replace(
+                item,
+                available_time=AvailabilityTime(late),
+                retrieved_time=RetrievedAt(late),
+            )
+            for item in manifest.fields
+        ),
+    )
+
+    prepared = prepare_free_data_inputs(
+        request=_request(),
+        history_source=load_verified_public_source_stage_artifact(stage_path),
+        provider_result=result,
+        full_source_manifest=late_manifest,
+        output_root=tmp_path,
+    )
+
+    universe = load_operational_universe(prepared.paths.operational_universe)
+    assert universe.symbols == ()
+    assert all(
+        {
+            "LISTING_STATUS_UNKNOWN",
+            "ST_STATUS_UNKNOWN",
+            "SUSPENSION_STATUS_UNKNOWN",
+        }.issubset(record.exclusion_reasons)
+        for record in universe.records
+    )

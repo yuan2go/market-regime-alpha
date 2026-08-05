@@ -49,6 +49,10 @@ uv run python scripts/apply_postgres_migrations.py --verify-only
 
 Both commands must report the packaged migration count, latest version, server version, schema and catalog table count without rendering the DSN.
 
+The current package contains migrations 001–018. Migration 018 extends the
+credential-free authority binding constraint to `DAILY_LOOP` and
+`FREE_DATA_OPERATION`; it creates no second content authority.
+
 ## 3. Stop SQLite writers and inventory sources
 
 Before a non-empty import:
@@ -104,6 +108,24 @@ These tests cover migrations, Governance, Decision, Portfolio/Risk, manual execu
 Ordinary CLIs load PostgreSQL from `.env` or `MARKET_REGIME_ALPHA_DATABASE_URL`. `--database-url` is an explicit PostgreSQL override. SQLite requires `--sqlite-database /absolute/path.sqlite3`; old `--database`/`--journal` flags remain hidden compatibility aliases and never identify PostgreSQL.
 
 Missing or conflicting configuration fails closed. A stored PostgreSQL run binding records backend plus a credential-free database/schema locator. Resume and replay reject missing or mismatched bindings.
+
+The free-data facade uses two scheduled phases. `prepare` is permitted before
+14:55 so static source/Universe/Feature receipts can be frozen before the
+Controlled static deadline. `run` refuses a pre-decision clock and reuses the
+same request identity; it must not reacquire a completed source stage.
+
+```bash
+prepare-free-data-operation --help
+run-free-data-decision-window --help
+resume-free-data-operation --help
+replay-free-data-operation --help
+report-free-data-operation --help
+inspect-free-data-operation --help
+```
+
+The profile is `TENCENT_FREE_OPERATIONAL_V1`. A Tencent or BaoStock error,
+missing supplemental input, late availability or missed deadline yields an
+auditable blocked state. No static sample or alternate Provider is selected.
 
 ## 8. Rollback and forward repair
 

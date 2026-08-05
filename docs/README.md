@@ -77,7 +77,12 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Canonical Market Data and Feature Spine](architecture/13-Canonical-Market-Data-and-Feature-Spine.md)
 - [Canonical Signal Authority and Operational Feature Handoff](architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md)
 - [Controlled 14:55 Decision-Time Operation](architecture/15-Controlled-Decision-Time-Operation.md)
+- [PostgreSQL Free-Data Migration Matrix](architecture/audits/PostgreSQL-Free-Data-Migration-Matrix.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
+
+### Current delivery evidence
+
+- [PostgreSQL Free-Data Canonical Runtime V1](delivery/PostgreSQL-Free-Data-Canonical-Runtime-V1.md)
 
 ### Current research
 
@@ -118,6 +123,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Canonical Runtime and Legacy Model Migration Infrastructure Design](superpowers/specs/2026-08-04-canonical-runtime-and-legacy-migration-design.md)
 - [Canonical Runtime and Legacy Model Migration Implementation Plan](superpowers/plans/2026-08-04-canonical-runtime-and-legacy-migration.md)
 - [Canonical Feature Spine and Signal Inputs Design](superpowers/specs/2026-08-04-canonical-feature-spine-and-signal-inputs-design.md)
+- [PostgreSQL Free-Data Canonical Runtime V1 Design](superpowers/specs/2026-08-05-postgres-free-data-canonical-runtime-v1-design.md)
+- [PostgreSQL Free-Data Canonical Runtime V1 Plan](superpowers/plans/2026-08-05-postgres-free-data-canonical-runtime-v1.md)
 - [Canonical Feature Spine and Signal Inputs Implementation Plan](superpowers/plans/2026-08-04-canonical-feature-spine-and-signal-inputs.md)
 - [Controlled 14:55 Operational Evidence Design](superpowers/specs/2026-08-05-controlled-1455-operational-evidence-design.md)
 - [Controlled 14:55 Operational Evidence Implementation Plan](superpowers/plans/2026-08-05-controlled-1455-operational-evidence.md)

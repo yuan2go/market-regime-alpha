@@ -56,6 +56,7 @@ Candidate Prediction
 - 历史 `daily_research` V1 的 immutable DailyResearchSnapshot、CandidateRecommendation、EntryAssessment、Artifact Publisher 和 Semantic Reader 已实现并有测试，但它是 frozen compatibility layer，不是 Canonical Phase D Runtime。
 - 真实 Xuntou/XtQuant v4 输入在当前环境不可用，因此正式 PIT replication 仍为 `BLOCKED_EXTERNAL_INPUT`。
 - 真实 public LIVE 运行仍因 Decision-window 与资格状态数据不足而 `DATA_BLOCKED`；正式 PIT、OOS Alpha 与模型赢家均未建立。
+- `TENCENT_FREE_OPERATIONAL_V1` 现可通过 PostgreSQL Daily source freeze、不可变 BaoStock/Tencent 原始 Archive、完整 Operational Universe、Canonical Market Data、Feature 和现有 Controlled/Canonical Runtime 运行到诚实 blocker；缺少主题/ETF/资金证据或错过 DecisionTime 会发布/返回 `DATA_BLOCKED`，不会使用静态 fallback。
 - 当前不做真实 QMT/PTrade 自动委托、自动撤改单、无人值守实盘、自动再平衡或依赖逐笔 Level-2 的高频系统。
 
 唯一当前实现状态入口：[`docs/status/Current-State.md`](docs/status/Current-State.md)。
@@ -96,6 +97,8 @@ Candidate Prediction
 - [Capability Matrix](docs/status/Capability-Matrix.md)
 - [Gap Register](docs/status/Gap-Register.md)
 - [PostgreSQL Authority Runbook](docs/operations/PostgreSQL-Authority-Runbook.md)
+- [PostgreSQL Free-Data Migration Matrix](docs/architecture/audits/PostgreSQL-Free-Data-Migration-Matrix.md)
+- [PostgreSQL Free-Data Runtime Delivery](docs/delivery/PostgreSQL-Free-Data-Canonical-Runtime-V1.md)
 - [Phase D Daily Decision Engine](docs/architecture/05-Phase-D-Daily-Decision-Engine-V1.md)
 - [Detailed Work Packages](docs/roadmap/work-packages/README.md)
 
@@ -104,12 +107,13 @@ Candidate Prediction
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --frozen --extra dev --extra postgres
 uv run python scripts/apply_postgres_migrations.py --verify-only
-python scripts/check_docs_links.py
-python -m pytest -q
-python -m ruff check .
-python -m mypy
+uv run python scripts/check_docs_links.py
+uv run pytest -q
+uv run ruff check .
+uv run mypy
+uv run python -m build
 ```
 
 数据库运行默认从 Git 忽略的 `.env` 读取 `MARKET_REGIME_ALPHA_DATABASE_URL`。本地 bootstrap、备份、SQLite 导入、回滚和 forward-repair 流程见 [PostgreSQL Authority Runbook](docs/operations/PostgreSQL-Authority-Runbook.md)。缺少 PostgreSQL 配置会 fail closed；SQLite 必须通过 `--sqlite-database` 显式选择。

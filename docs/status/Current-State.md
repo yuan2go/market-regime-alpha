@@ -81,8 +81,8 @@ IMMUTABLE_RESEARCH_EVIDENCE_IMPLEMENTED
 EXPLORATORY_DAILY_LOOP_IMPLEMENTED
 PLATFORM_V2_RESEARCH_LAYER_IMPLEMENTED_EXPLORATORY
 PRODUCTION_DECISION_LIFECYCLE_PHASES_0_TO_7_ENGINEERING_COMPLETE_ON_PRIOR_CHECKPOINT
-H1_COMPLETE_ACCOUNT_PORTFOLIO_RISK_IMPLEMENTED_SQLITE
-H2_THESIS_TO_OUTCOME_TRACE_IMPLEMENTED_SQLITE
+H1_COMPLETE_ACCOUNT_PORTFOLIO_RISK_POSTGRES_DEFAULT_SQLITE_COMPAT
+H2_THESIS_TO_OUTCOME_TRACE_POSTGRES_DEFAULT_SQLITE_COMPAT
 H3_FILL_CALENDAR_DERIVED_T_PLUS_ONE_IMPLEMENTED
 H4_REDUCING_RISK_ROUTE_IMPLEMENTED_AND_VERIFIED
 H4_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
@@ -110,7 +110,7 @@ UNIVERSE_FEATURE_HANDOFF_AND_CANDIDATE_VIEW_IMPLEMENTED_ON_FEATURE_BRANCH
 CANONICAL_DECIMAL_SIGNAL_V3_IMPLEMENTED_ON_FEATURE_BRANCH
 TRADING_SESSION_SIGNAL_FRESHNESS_IMPLEMENTED_ON_FEATURE_BRANCH
 IMMUTABLE_TENCENT_MINUTE_ARCHIVE_IMPLEMENTED_EXPLORATORY
-FEATURE_MATERIALIZATION_RUN_AUTHORITY_IMPLEMENTED_SQLITE
+FEATURE_MATERIALIZATION_RUN_AUTHORITY_POSTGRES_DEFAULT_SQLITE_COMPAT
 FEATURE_AND_MARKET_DATA_ENCODING_V2_IMPLEMENTED_ON_FEATURE_BRANCH
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
@@ -122,7 +122,7 @@ PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 POSTGRESQL_DEFAULT_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
 SQLITE_EXPLICIT_COMPATIBILITY_AND_IMPORT_ONLY
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_017_APPLIED_LOCAL
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_018_APPLIED_LOCAL
 SQLITE_TO_POSTGRES_SCHEMA_ONLY_IMPORT_0_TO_0_VERIFIED
 ```
 
@@ -492,6 +492,31 @@ observed at real wall-clock 14:55. Tencent remains exploratory, formal PIT and
 OOS Alpha are not established, PathForecast has no Sample Authority, Entry is
 blocked, and Shadow/Production/Trading Authority remain `NO`.
 
+### 3.9 PostgreSQL free-data canonical composition
+
+The current development branch adds `TENCENT_FREE_OPERATIONAL_V1` as an
+explicit no-fallback profile and composes existing authorities rather than
+creating another runtime. `prepare-free-data-operation` may freeze static
+evidence before the decision instant; `run-free-data-decision-window` is gated
+until 14:55 and idempotently reuses the frozen Daily source receipt. The same
+request then owns a PostgreSQL Controlled parent, Feature run and, when
+Candidate inputs are complete, a PostgreSQL Canonical child.
+
+New source writes retain raw BaoStock/Tencent bytes with request, timing,
+content, scope, encoding, byte-count and hash metadata. The preparation layer
+materializes exact 20/100/300 Operational Universes including excluded symbols,
+explicit provider-derived sessions, canonical daily bars and static Features.
+Missing theme membership, ETF mapping or capital observations are typed missing
+evidence; they are never replaced by neutral constants. A post-freeze
+normalization error publishes a content-addressed `FreeDataBlockedArtifact`.
+
+Recorded 20/100/300 replay and real PostgreSQL integration prove deterministic
+identities, single acquisition/materialization and no SQLite file write. A real
+20-symbol network attempt after the 2026-08-05 decision window froze BaoStock
+history/status, Tencent quote and the SourceManifest, then correctly blocked
+with `DATA_AVAILABLE_AFTER_DECISION_TIME`. This is live source evidence, not a
+successful controlled 14:55 run.
+
 ## 4. Persistence, transactions and consistency
 
 PostgreSQL is now the default authority selected through
@@ -501,7 +526,7 @@ the same Repository protocols, including Governance, Decision, Portfolio/Risk,
 Manual Execution, Daily, Feature, Canonical Lifecycle, Controlled Operation and
 Longitudinal state. Runtime composition neither dual-writes nor falls back.
 
-PostgreSQL migration versions 001–017 are checksummed, contiguous and serialized
+PostgreSQL migration versions 001–018 are checksummed, contiguous and serialized
 with an advisory lock. The approved local PostgreSQL 16.14 schema contains 58
 catalog tables. The initial import manifest discovered no SQLite business source
 and produced a verified schema-only `0 -> 0` report at code checkpoint
@@ -522,6 +547,7 @@ The retained explicit SQLite repositories generally use:
 PostgreSQL adapters preserve idempotency, command hashes, compare-and-swap,
 fencing, append-only events, immutable identities, reconstruction and replay.
 Migration 017 records credential-free runtime backend/database/schema bindings;
+Migration 018 admits `DAILY_LOOP` and `FREE_DATA_OPERATION` binding scopes;
 resume/replay rejects a missing or mismatched PostgreSQL binding.
 
 This is local PostgreSQL engineering evidence. It is not multi-instance or

@@ -1,5 +1,12 @@
 # PostgreSQL Free-Data Canonical Runtime V1 Design
 
+> **Status:** CURRENT_SPECIFICATION
+> **Authority:** Approved implementation design for the free-data canonical runtime work package
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-05
+> **Related Documents:** ../../plans/2026-08-05-postgres-free-data-canonical-runtime-v1.md, ../../../delivery/PostgreSQL-Free-Data-Canonical-Runtime-V1.md
+> **Code Evidence:** Design baseline `dbdd72cc55a5e13fecf0113e3fad3ac694917ff2`; implementation evidence is listed in the delivery record.
+
 ## Status and authority
 
 This design implements the approved `PostgreSQL-backed, Tencent-centered,

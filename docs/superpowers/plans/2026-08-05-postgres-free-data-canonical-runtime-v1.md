@@ -1,5 +1,12 @@
 # PostgreSQL Free-Data Canonical Runtime V1 Implementation Plan
 
+> **Status:** CURRENT_SPECIFICATION
+> **Authority:** Execution plan for the free-data canonical runtime work package
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-05
+> **Related Documents:** ../specs/2026-08-05-postgres-free-data-canonical-runtime-v1-design.md, ../../delivery/PostgreSQL-Free-Data-Canonical-Runtime-V1.md
+> **Code Evidence:** Task checkpoint commits and final delivery record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a PostgreSQL-backed, Tencent-centered free-data composition that prepares and runs the existing Controlled parent and Canonical child to the honest Entry blocker.
