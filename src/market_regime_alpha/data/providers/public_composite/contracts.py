@@ -156,13 +156,14 @@ class RawSourceRequestMetadata:
             raise ValueError("request_parameters must have unique ordered keys")
         _require_aware("requested_at", self.requested_at)
         _require_aware("decision_time", self.decision_time)
-        for label, value in (
+        optional_times: tuple[tuple[str, datetime | None], ...] = (
             ("provider_timestamp", self.provider_timestamp),
             ("event_time", self.event_time),
             ("available_at", self.available_at),
-        ):
-            if value is not None:
-                _require_aware(label, value)
+        )
+        for label, optional_time in optional_times:
+            if optional_time is not None:
+                _require_aware(label, optional_time)
         if self.http_status is not None and (
             isinstance(self.http_status, bool) or not 100 <= self.http_status <= 599
         ):
@@ -303,7 +304,7 @@ class AcquiredSourcePayload:
                 raise ValueError("request metadata requested_at exceeds retrieved_time")
         raw_hash = f"sha256:{sha256(self.raw_payload).hexdigest()}"
         object.__setattr__(self, "raw_hash", raw_hash)
-        semantic = {
+        semantic: dict[str, Any] = {
             "provider_id": str(self.provider_id),
             "product": self.product,
             "locator": self.locator,
