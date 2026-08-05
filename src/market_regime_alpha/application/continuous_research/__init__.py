@@ -22,10 +22,17 @@ from market_regime_alpha.application.continuous_research.change_detection import
 from market_regime_alpha.application.continuous_research.children import (
     ContinuousChildReference,
 )
+from market_regime_alpha.application.continuous_research.scope import (
+    ContinuousResearchScope,
+    ContinuousResearchScopeRecord,
+    prepare_continuous_research_scope,
+)
 
 __all__ = [
     "ChangeDecision",
     "ContinuousChildReference",
+    "ContinuousResearchScope",
+    "ContinuousResearchScopeRecord",
     "CurrentEvidenceSnapshot",
     "EvidenceCommit",
     "EvidenceCommitResult",
@@ -35,4 +42,5 @@ __all__ = [
     "ProviderAttemptSnapshot",
     "RecordedChangeDecision",
     "StartedProviderAttempt",
+    "prepare_continuous_research_scope",
 ]
