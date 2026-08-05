@@ -3,6 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from market_regime_alpha.application.controlled_operation.research_config import (
+        ControlledResearchPipelineConfig,
+    )
+    from market_regime_alpha.application.controlled_operation.research_input import (
+        ControlledOperationalResearchInput,
+    )
+    from market_regime_alpha.application.controlled_operation.research_runner import (
+        VerifiedControlledResearchArtifact,
+    )
+    from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
 
 from market_regime_alpha.research.platform_v2.artifact import (
     ResearchLayerArtifact,
@@ -28,6 +41,29 @@ from market_regime_alpha.research.platform_v2.replay import (
 
 
 class PlatformResearchRunner:
+    def run_controlled(
+        self,
+        *,
+        inputs: ControlledOperationalResearchInput,
+        static_feature_bundle: VerifiedFeatureBundleV2,
+        configuration: ControlledResearchPipelineConfig,
+        output_root: Path,
+        code_revision: str,
+    ) -> VerifiedControlledResearchArtifact:
+        """Run the versioned no-B0/B1 Controlled research path."""
+
+        from market_regime_alpha.application.controlled_operation.research_runner import (
+            ControlledPlatformResearchRunner,
+        )
+
+        return ControlledPlatformResearchRunner().run(
+            inputs=inputs,
+            static_feature_bundle=static_feature_bundle,
+            configuration=configuration,
+            output_root=output_root,
+            code_revision=code_revision,
+        )
+
     def run(
         self,
         *,

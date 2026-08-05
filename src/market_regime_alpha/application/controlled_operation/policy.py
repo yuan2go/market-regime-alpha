@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from enum import Enum
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -291,6 +291,20 @@ class DecisionTimeOperationPolicy:
         if available_at.tzinfo is None or available_at.utcoffset() is None:
             raise ValueError("available_at must be timezone-aware")
         return available_at <= self._instant(decision_date, self.decision_time)
+
+    def decision_instant(self, decision_date: date) -> datetime:
+        """Return the configured DecisionTime as a canonical UTC instant."""
+
+        return self._instant(decision_date, self.decision_time).astimezone(
+            timezone.utc
+        )
+
+    def hard_cutoff_instant(self, decision_date: date) -> datetime:
+        """Return the configured hard cutoff as a canonical UTC instant."""
+
+        return self._instant(decision_date, self.hard_cutoff).astimezone(
+            timezone.utc
+        )
 
     def _assessment(
         self,

@@ -301,7 +301,22 @@ class CandidateIntradayFeatureOverlay:
             candidate_set.envelope.source_manifest_id,
             candidate_set.envelope.source_manifest_hash,
         )
-        if candidate_source not in static_bundle.source_manifest_references:
+        candidate_inputs = dict(
+            zip(
+                candidate_set.envelope.input_artifact_ids,
+                candidate_set.envelope.input_content_hashes,
+                strict=True,
+            )
+        )
+        controlled_static_binding = (
+            candidate_set.envelope.artifact_type == "CONTROLLED_CANDIDATE_SET"
+            and candidate_inputs.get(static_bundle.feature_bundle_id)
+            == static_bundle.feature_bundle_hash
+        )
+        if (
+            candidate_source not in static_bundle.source_manifest_references
+            and not controlled_static_binding
+        ):
             raise ValueError("CandidateSet and static Feature SourceManifest mismatch")
         if bundle.symbols != selected:
             raise ValueError("Intraday Feature Bundle must exactly cover Candidates")

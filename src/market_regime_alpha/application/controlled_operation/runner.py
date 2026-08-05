@@ -1,0 +1,1032 @@
+"""Application orchestration for one Controlled A-share Decision-Time operation."""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+import shutil
+from time import perf_counter
+from typing import Callable
+
+from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
+    LifecycleAuthorityCeiling,
+)
+from market_regime_alpha.application.canonical_lifecycle.stages.signal_forecast import (
+    EntryAssessmentStageHandler,
+    PathForecastStageHandler,
+    SignalStageHandler,
+)
+from market_regime_alpha.application.controlled_operation.evidence_package import (
+    ControlledEvidenceReference,
+    ControlledOperationalEvidencePackage,
+    ControlledOperationalEvidenceStatus,
+    StageRuntimeLatency,
+    load_controlled_operation_package,
+    publish_controlled_operation_package,
+)
+from market_regime_alpha.application.controlled_operation.input_artifacts import (
+    load_controlled_runtime_configuration,
+    load_controlled_source_manifest,
+    load_controlled_trading_calendar,
+)
+from market_regime_alpha.application.controlled_operation.journal import (
+    ChildRunReferenceKind,
+    ClaimedDecisionTimeOperationStage,
+    ControlledOperationCommand,
+    DecisionTimeOperationReceipt,
+    DecisionTimeOperationRunSnapshot,
+    DecisionTimeOperationRunStatus,
+    DecisionTimeOperationStageName,
+    DecisionTimeOperationStageStatus,
+    OperationArtifactReference,
+    OperationChildRunReference,
+)
+from market_regime_alpha.application.controlled_operation.policy import (
+    DecisionTimeOperationPolicy,
+    DecisionWindowState,
+)
+from market_regime_alpha.application.controlled_operation.research_input import (
+    ControlledOperationalResearchInput,
+)
+from market_regime_alpha.application.controlled_operation.research_runner import (
+    VerifiedControlledResearchArtifact,
+)
+from market_regime_alpha.application.controlled_operation.runtime_configuration import (
+    ControlledOperationRuntimeConfiguration,
+)
+from market_regime_alpha.application.controlled_operation.sqlite_journal import (
+    SQLiteDecisionTimeOperationJournal,
+)
+from market_regime_alpha.application.operational_research.supplemental_artifact import (
+    load_verified_supplemental_research_evidence,
+)
+from market_regime_alpha.application.research_layer.runner import PlatformResearchRunner
+from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.data.providers.public_composite import (
+    load_verified_public_source_stage_artifact,
+)
+from market_regime_alpha.data.providers.public_composite.stage_artifact import (
+    PublicSourceAcquisitionStage,
+)
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
+from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.features import (
+    FeatureMaterializationExecutionMode,
+    FeatureMaterializationRunner,
+)
+from market_regime_alpha.features.materialization_v2 import (
+    VerifiedFeatureBundleV2,
+    load_verified_feature_bundle_v2,
+)
+from market_regime_alpha.features.operational_overlay import (
+    CandidateIntradayFeatureOverlay,
+    StaticUniverseFeatureBundle,
+    publish_candidate_intraday_feature_overlay,
+    publish_static_universe_feature_bundle,
+)
+from market_regime_alpha.features.v2_contracts import FeatureMaterializationReceipt
+from market_regime_alpha.forecasting.artifact import VerifiedPathForecastArtifact
+from market_regime_alpha.market_data import (
+    AssetType,
+    VerifiedMarketDataDataset,
+    load_verified_market_data_dataset,
+    normalize_public_history_stage,
+    publish_market_data_dataset,
+)
+from market_regime_alpha.market_data.minute_batch import (
+    CandidateMinuteAcquisitionCommand,
+    CandidateMinuteBatchAcquirer,
+    MinuteAcquisitionCoverageArtifact,
+    MinuteClientFactory,
+    MinuteCoverageState,
+    load_minute_acquisition_coverage,
+)
+from market_regime_alpha.market_data.minute_source import (
+    CanonicalVolumeUnitPolicy,
+    RawMinuteSourceReader,
+    minute_normalizations_to_dataset,
+    normalize_tencent_minute_source,
+)
+from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
+from market_regime_alpha.signals.v3 import VerifiedSignalRunArtifactV3
+from market_regime_alpha.universe import (
+    OperationalUniverseArtifact,
+    load_operational_universe,
+)
+
+
+Clock = Callable[[], datetime]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+class ControlledOperationDataBlocked(ValueError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledOperationInputPaths:
+    trading_calendar: Path
+    operational_universe: Path
+    daily_source_stage: Path
+    daily_source_manifest: Path
+    supplemental_research_evidence: Path
+    runtime_configuration: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledOperationPreparation:
+    snapshot: DecisionTimeOperationRunSnapshot
+    calendar: TradingCalendarArtifact
+    universe: OperationalUniverseArtifact
+    daily_dataset: VerifiedMarketDataDataset
+    daily_dataset_path: Path
+    static_feature_bundle: VerifiedFeatureBundleV2
+    static_feature_receipt: FeatureMaterializationReceipt
+    static_bundle: StaticUniverseFeatureBundle
+    static_bundle_path: Path
+    input_paths: ControlledOperationInputPaths
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledOperationDecisionResult:
+    snapshot: DecisionTimeOperationRunSnapshot
+    research: VerifiedControlledResearchArtifact
+    candidate_set: CandidateSet
+    minute_coverage: MinuteAcquisitionCoverageArtifact
+    minute_dataset: VerifiedMarketDataDataset
+    minute_dataset_path: Path
+    intraday_feature_bundle: VerifiedFeatureBundleV2
+    intraday_feature_receipt: FeatureMaterializationReceipt
+    overlay: CandidateIntradayFeatureOverlay
+    overlay_path: Path
+    signal: VerifiedSignalRunArtifactV3
+    forecasts: tuple[VerifiedPathForecastArtifact, ...]
+    entry_blocker_path: Path
+    package: ControlledOperationalEvidencePackage
+    package_path: Path
+
+
+class ControlledDecisionTimeOperationRunner:
+    """Compose existing bounded contexts; never create execution authority."""
+
+    def __init__(
+        self,
+        *,
+        journal: SQLiteDecisionTimeOperationJournal,
+        output_root: Path,
+        clock: Clock = _utc_now,
+        minute_client_factory: MinuteClientFactory | None = None,
+    ) -> None:
+        self._journal = journal
+        self._output_root = output_root.resolve()
+        self._clock = clock
+        self._minute_client_factory = minute_client_factory
+
+    def prepare(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        policy: DecisionTimeOperationPolicy,
+        inputs: ControlledOperationInputPaths,
+    ) -> ControlledOperationPreparation:
+        run_root = self._run_root(command)
+        run_root.mkdir(parents=True, exist_ok=True)
+        inputs = _freeze_input_paths(run_root=run_root, inputs=inputs)
+        calendar = load_controlled_trading_calendar(inputs.trading_calendar)
+        universe = load_operational_universe(inputs.operational_universe)
+        configuration = load_controlled_runtime_configuration(inputs.runtime_configuration)
+        self._validate_command(command, policy, calendar, configuration)
+        if not calendar.contains(command.decision_date):
+            raise ControlledOperationDataBlocked("DECISION_DATE_NOT_IN_TRADING_CALENDAR")
+        if universe.decision_date != command.decision_date:
+            raise ValueError("Operational Universe DecisionDate mismatch")
+        self._journal.create_or_get(command)
+        latencies: dict[str, int] = {}
+
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.CALENDAR_UNIVERSE_FREEZE,
+            run_status=DecisionTimeOperationRunStatus.WAITING_FOR_STATIC_INPUTS,
+            inputs=(),
+            outputs=(
+                _reference("TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash),
+                _reference("OPERATIONAL_UNIVERSE", universe.universe_id, universe.content_hash),
+            ),
+            reasons=("CALENDAR_AND_OPERATIONAL_UNIVERSE_VERIFIED",),
+            latency_sink=latencies,
+        )
+
+        source = load_verified_public_source_stage_artifact(inputs.daily_source_stage)
+        source_manifest = load_controlled_source_manifest(inputs.daily_source_manifest)
+        if source.stage is not PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN:
+            raise ValueError("Controlled preparation requires frozen daily source history")
+        if source_manifest.decision_time.value != command.decision_time:
+            raise ValueError("Controlled daily SourceManifest DecisionTime mismatch")
+        if any(
+            item.retrieved_at.value > command.decision_time
+            for item in source_manifest.source_artifacts
+        ):
+            raise ControlledOperationDataBlocked("DAILY_SOURCE_AVAILABLE_AFTER_DECISION_TIME")
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.DAILY_SOURCE_FREEZE,
+            run_status=DecisionTimeOperationRunStatus.WAITING_FOR_STATIC_INPUTS,
+            inputs=(),
+            outputs=(
+                _reference("DAILY_SOURCE_ARCHIVE", source.artifact_id, source.content_hash),
+                _reference(
+                    "DAILY_SOURCE_MANIFEST",
+                    source_manifest.source_manifest_id,
+                    source_manifest.content_hash,
+                ),
+            ),
+            child_runs=(
+                OperationChildRunReference(
+                    ChildRunReferenceKind.DAILY_ACQUISITION_RUN,
+                    source.acquisition_key or str(source.artifact_id),
+                    source.checksums_hash,
+                ),
+            ),
+            reasons=("DAILY_SOURCE_ARCHIVE_VERIFIED",),
+            latency_sink=latencies,
+        )
+
+        daily_artifact = normalize_public_history_stage(
+            verified=source,
+            decision_time=command.decision_time,
+            created_at=command.decision_time,
+            expected_symbols=universe.symbols,
+            source_manifest=source_manifest,
+            asset_types={item: AssetType.A_SHARE for item in universe.symbols},
+        )
+        daily_path = publish_market_data_dataset(
+            root=run_root / "daily-datasets", artifact=daily_artifact
+        )
+        daily = load_verified_market_data_dataset(daily_path)
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.DAILY_DATASET,
+            run_status=DecisionTimeOperationRunStatus.WAITING_FOR_STATIC_INPUTS,
+            inputs=(
+                _reference("DAILY_SOURCE_ARCHIVE", source.artifact_id, source.content_hash),
+                _reference("DAILY_SOURCE_MANIFEST", source_manifest.source_manifest_id, source_manifest.content_hash),
+            ),
+            outputs=(_reference("DAILY_DATASET", daily.artifact.dataset_id, daily.artifact.content_hash),),
+            reasons=("DAILY_CANONICAL_DATASET_PUBLISHED",),
+            latency_sink=latencies,
+        )
+
+        feature_start = perf_counter()
+        static_receipt = _run_feature_materialization(
+            verified_dataset=daily,
+            feature_set=configuration.static_feature_set,
+            selected_symbols=universe.symbols,
+            code_revision=command.code_revision,
+            output_root=run_root / "static-features",
+            idempotency_key=f"{command.idempotency_key}:static",
+            max_workers=configuration.feature_max_workers,
+        )
+        static_features = load_verified_feature_bundle_v2(
+            run_root / "static-features" / static_receipt.bundle_locator,
+            artifact_root=run_root / "static-features" / "feature-artifacts",
+        )
+        static_bundle = StaticUniverseFeatureBundle.create(
+            universe=universe,
+            daily_dataset=daily,
+            feature_bundle=static_features,
+            run_receipt=static_receipt,
+            code_revision=command.code_revision,
+        )
+        static_path = publish_static_universe_feature_bundle(
+            root=run_root / "static-bundles", artifact=static_bundle
+        )
+        latencies[DecisionTimeOperationStageName.STATIC_FEATURES.value] = int(
+            (perf_counter() - feature_start) * 1000
+        )
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.STATIC_FEATURES,
+            run_status=DecisionTimeOperationRunStatus.STATIC_READY,
+            inputs=(_reference("DAILY_DATASET", daily.artifact.dataset_id, daily.artifact.content_hash),),
+            outputs=(
+                _reference("STATIC_FEATURE_BUNDLE", static_bundle.artifact_id, static_bundle.content_hash),
+            ),
+            child_runs=(
+                OperationChildRunReference(
+                    ChildRunReferenceKind.STATIC_FEATURE_RUN,
+                    static_receipt.command_hash,
+                    static_receipt.content_hash,
+                ),
+            ),
+            reasons=("PRE_DECISION_STATIC_FEATURES_READY",),
+            latency_sink=latencies,
+            premeasured=True,
+        )
+        snapshot = self._journal.get(command.run_id)
+        return ControlledOperationPreparation(
+            snapshot=snapshot,
+            calendar=calendar,
+            universe=universe,
+            daily_dataset=daily,
+            daily_dataset_path=daily_path,
+            static_feature_bundle=static_features,
+            static_feature_receipt=static_receipt,
+            static_bundle=static_bundle,
+            static_bundle_path=static_path,
+            input_paths=inputs,
+        )
+
+    def run_decision_window(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        policy: DecisionTimeOperationPolicy,
+        inputs: ControlledOperationInputPaths,
+    ) -> ControlledOperationDecisionResult:
+        preparation = self.prepare(command=command, policy=policy, inputs=inputs)
+        run_root = self._run_root(command)
+        inputs = preparation.input_paths
+        configuration = load_controlled_runtime_configuration(inputs.runtime_configuration)
+        observed_at = self._now()
+        assessment = policy.assess(
+            decision_date=command.decision_date,
+            observed_at=observed_at,
+            calendar=preparation.calendar,
+            expected_calendar_hash=command.trading_calendar_hash,
+            static_inputs_ready=True,
+        )
+        if assessment.state is not DecisionWindowState.DECISION_WINDOW_RUNNING:
+            status = (
+                DecisionTimeOperationRunStatus.DEADLINE_MISSED
+                if assessment.state is DecisionWindowState.DEADLINE_MISSED
+                else DecisionTimeOperationRunStatus.DATA_BLOCKED
+            )
+            snapshot = self._journal.get(command.run_id)
+            self._journal.set_run_status(
+                run_id=command.run_id,
+                expected_version=snapshot.version,
+                status=status,
+                reason=assessment.reason_codes[0],
+            )
+            raise ControlledOperationDataBlocked(assessment.reason_codes[0])
+        if not assessment.accepts_signal_evidence:
+            raise ControlledOperationDataBlocked("DECISION_TIME_EVIDENCE_WINDOW_CLOSED")
+        latencies: dict[str, int] = {}
+
+        supplemental = load_verified_supplemental_research_evidence(
+            inputs.supplemental_research_evidence
+        )
+        research_inputs = ControlledOperationalResearchInput.create(
+            operational_universe=preparation.universe,
+            static_feature_bundle=preparation.static_bundle,
+            supplemental_evidence=supplemental,
+        )
+        started = perf_counter()
+        research = PlatformResearchRunner().run_controlled(
+            inputs=research_inputs,
+            static_feature_bundle=preparation.static_feature_bundle,
+            configuration=configuration.research,
+            output_root=run_root / "research",
+            code_revision=command.code_revision,
+        )
+        latencies[DecisionTimeOperationStageName.OPERATIONAL_RESEARCH.value] = int(
+            (perf_counter() - started) * 1000
+        )
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.OPERATIONAL_RESEARCH,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=(_reference("STATIC_FEATURE_BUNDLE", preparation.static_bundle.artifact_id, preparation.static_bundle.content_hash),),
+            outputs=(_reference("CONTROLLED_RESEARCH", research.artifact.artifact_id, research.artifact.content_hash),),
+            reasons=("CONTROLLED_RESEARCH_WITHOUT_B0_B1_COMPLETED",),
+            latency_sink=latencies,
+            premeasured=True,
+        )
+        candidates = research.artifact.candidate_set
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.CANDIDATE_SET,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=(_reference("CONTROLLED_RESEARCH", research.artifact.artifact_id, research.artifact.content_hash),),
+            outputs=(_reference("CANDIDATE_SET", candidates.envelope.artifact_id, candidates.envelope.content_hash),),
+            reasons=("CANDIDATE_SET_DERIVED_FROM_CONTROLLED_RESEARCH",),
+            latency_sink=latencies,
+        )
+        if not candidates.selected:
+            raise ControlledOperationDataBlocked("CONTROLLED_CANDIDATE_SET_EMPTY")
+
+        minute_command = CandidateMinuteAcquisitionCommand.create(
+            candidate_set=candidates,
+            decision_time=command.decision_time,
+            provider_profile_id=configuration.provider_profile_id,
+            concurrency_limit=configuration.minute_concurrency_limit,
+            per_request_timeout_seconds=configuration.minute_per_request_timeout_seconds,
+            max_attempts=configuration.minute_max_attempts,
+            retry_backoff_seconds=configuration.minute_retry_backoff_seconds,
+            hard_cutoff=policy.hard_cutoff_instant(command.decision_date),
+        )
+        started = perf_counter()
+        existing_minute_receipt = _completed_receipt(
+            self._journal.get(command.run_id),
+            DecisionTimeOperationStageName.CANDIDATE_MINUTE_ACQUISITION,
+        )
+        if existing_minute_receipt is None:
+            coverage = CandidateMinuteBatchAcquirer(
+                client_factory=self._minute_client_factory,
+                clock=self._clock,
+            ).run(command=minute_command, output_root=run_root / "minute-acquisition")
+        else:
+            reference = next(
+                item
+                for item in existing_minute_receipt.output_references
+                if item.reference_type == "MINUTE_ACQUISITION_COVERAGE"
+            )
+            coverage = load_minute_acquisition_coverage(
+                run_root / "minute-acquisition" / "coverage" / str(reference.object_id)
+            )
+            if coverage.content_hash != reference.content_hash:
+                raise ValueError("recovered minute Coverage Receipt mismatch")
+        latencies[DecisionTimeOperationStageName.CANDIDATE_MINUTE_ACQUISITION.value] = int(
+            (perf_counter() - started) * 1000
+        )
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.CANDIDATE_MINUTE_ACQUISITION,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=(_reference("CANDIDATE_SET", candidates.envelope.artifact_id, candidates.envelope.content_hash),),
+            outputs=(_reference("MINUTE_ACQUISITION_COVERAGE", coverage.artifact_id, coverage.content_hash),),
+            child_runs=(
+                OperationChildRunReference(
+                    ChildRunReferenceKind.MINUTE_ACQUISITION_BATCH,
+                    str(minute_command.command_id),
+                    coverage.content_hash,
+                ),
+            ),
+            reasons=coverage.reason_codes,
+            latency_sink=latencies,
+            premeasured=True,
+        )
+        if coverage.coverage_state in {MinuteCoverageState.FAILED, MinuteCoverageState.DEADLINE_MISSED}:
+            raise ControlledOperationDataBlocked("CANDIDATE_MINUTE_ACQUISITION_HAS_NO_USABLE_SOURCE")
+
+        normalized_sources = []
+        source_reader = RawMinuteSourceReader()
+        for source_id, expected_hash in coverage.accepted_source_references:
+            source = source_reader.read(run_root / "minute-acquisition" / "sources" / str(source_id))
+            if source.content_hash != expected_hash or source.response_received_at > command.decision_time:
+                raise ControlledOperationDataBlocked("MINUTE_SOURCE_AUTHORITY_OR_DECISION_TIME_CONFLICT")
+            normalized_sources.append(
+                (
+                    normalize_tencent_minute_source(
+                        artifact=source,
+                        asset_type=AssetType.A_SHARE,
+                        volume_policy=CanonicalVolumeUnitPolicy.a_share_v1(),
+                    ),
+                    source,
+                )
+            )
+        minute_artifact = minute_normalizations_to_dataset(
+            normalized_sources=tuple(normalized_sources),
+            expected_symbols=tuple(sorted(item.symbol for item in candidates.selected)),
+            decision_time=command.decision_time,
+            created_at=command.decision_time,
+        )
+        minute_path = publish_market_data_dataset(
+            root=run_root / "minute-datasets", artifact=minute_artifact
+        )
+        minute = load_verified_market_data_dataset(minute_path)
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.INTRADAY_DATASET,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=(_reference("MINUTE_ACQUISITION_COVERAGE", coverage.artifact_id, coverage.content_hash),),
+            outputs=(_reference("MINUTE_DATASET", minute.artifact.dataset_id, minute.artifact.content_hash),),
+            reasons=("CANDIDATE_INTRADAY_CANONICAL_DATASET_PUBLISHED",),
+            latency_sink=latencies,
+        )
+
+        started = perf_counter()
+        intraday_receipt = _run_feature_materialization(
+            verified_dataset=minute,
+            feature_set=configuration.intraday_feature_set,
+            selected_symbols=tuple(sorted(item.symbol for item in candidates.selected)),
+            code_revision=command.code_revision,
+            output_root=run_root / "intraday-features",
+            idempotency_key=f"{command.idempotency_key}:intraday",
+            max_workers=configuration.feature_max_workers,
+        )
+        intraday_features = load_verified_feature_bundle_v2(
+            run_root / "intraday-features" / intraday_receipt.bundle_locator,
+            artifact_root=run_root / "intraday-features" / "feature-artifacts",
+        )
+        overlay = CandidateIntradayFeatureOverlay.create(
+            candidate_set=candidates,
+            static_bundle=preparation.static_bundle,
+            minute_dataset=minute,
+            intraday_feature_bundle=intraday_features,
+            trading_calendar=preparation.calendar,
+        )
+        overlay_path = publish_candidate_intraday_feature_overlay(
+            root=run_root / "intraday-overlays", artifact=overlay
+        )
+        latencies[DecisionTimeOperationStageName.INTRADAY_FEATURE_OVERLAY.value] = int(
+            (perf_counter() - started) * 1000
+        )
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.INTRADAY_FEATURE_OVERLAY,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=(_reference("MINUTE_DATASET", minute.artifact.dataset_id, minute.artifact.content_hash),),
+            outputs=(_reference("INTRADAY_FEATURE_OVERLAY", overlay.artifact_id, overlay.content_hash),),
+            child_runs=(
+                OperationChildRunReference(
+                    ChildRunReferenceKind.INTRADAY_FEATURE_RUN,
+                    intraday_receipt.command_hash,
+                    intraday_receipt.content_hash,
+                ),
+            ),
+            reasons=("CANDIDATE_INTRADAY_FEATURE_OVERLAY_PUBLISHED",),
+            latency_sink=latencies,
+            premeasured=True,
+        )
+
+        started = perf_counter()
+        signal_output = SignalStageHandler(
+            configuration=configuration.signal_model,
+            output_root=run_root / "signals",
+            mapping_configuration=configuration.signal_mapping,
+            feature_set_configuration=configuration.static_feature_set,
+            requirement_policy=configuration.signal_requirement,
+            freshness_policy=configuration.signal_freshness,
+        ).run_controlled_v2(
+            candidate_set=candidates,
+            static_bundle=preparation.static_bundle,
+            static_feature_bundle=preparation.static_feature_bundle,
+            daily_dataset=preparation.daily_dataset,
+            intraday_overlay=overlay,
+            intraday_feature_bundle=intraday_features,
+            minute_dataset=minute,
+            trading_calendar=preparation.calendar,
+            decision_time=DecisionTime(command.decision_time),
+            created_at=command.decision_time,
+            code_revision=command.code_revision,
+        )
+        latencies[DecisionTimeOperationStageName.SIGNAL.value] = int(
+            (perf_counter() - started) * 1000
+        )
+        canonical_segment_hash = canonical_hash({
+            "candidate_feature_view_id": str(signal_output.candidate_view.view_id),
+            "candidate_feature_view_hash": signal_output.candidate_view.content_hash,
+            "signal_id": str(signal_output.signal.artifact.artifact_id),
+            "signal_hash": signal_output.signal.artifact.envelope.content_hash,
+        })
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.SIGNAL,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=(_reference("INTRADAY_FEATURE_OVERLAY", overlay.artifact_id, overlay.content_hash),),
+            outputs=(
+                _reference("CANDIDATE_FEATURE_VIEW_V2", signal_output.candidate_view.view_id, signal_output.candidate_view.content_hash),
+                _reference("SIGNAL_V3", signal_output.signal.artifact.artifact_id, signal_output.signal.artifact.envelope.content_hash),
+            ),
+            child_runs=(
+                OperationChildRunReference(
+                    ChildRunReferenceKind.CANONICAL_LIFECYCLE_RUN,
+                    f"controlled-canonical-v2:{command.run_id}",
+                    canonical_segment_hash,
+                ),
+            ),
+            reasons=("CANONICAL_SIGNAL_V3_FROM_CANDIDATE_VIEW_V2",),
+            latency_sink=latencies,
+            premeasured=True,
+        )
+
+        started = perf_counter()
+        path_output = PathForecastStageHandler(
+            configuration=configuration.path_forecast,
+            output_root=run_root / "path-forecasts",
+        ).run_controlled(signal=signal_output.signal)
+        latencies[DecisionTimeOperationStageName.PATH_FORECAST.value] = int(
+            (perf_counter() - started) * 1000
+        )
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.PATH_FORECAST,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=(_reference("SIGNAL_V3", signal_output.signal.artifact.artifact_id, signal_output.signal.artifact.envelope.content_hash),),
+            outputs=tuple(
+                _reference("PATH_FORECAST", item.artifact.artifact_id, item.artifact.forecast.envelope.content_hash)
+                for item in path_output.forecasts
+            ),
+            reasons=("PATH_FORECAST_SAMPLE_AUTHORITY_UNAVAILABLE", "PATH_FORECAST_DATA_INSUFFICIENT"),
+            latency_sink=latencies,
+            premeasured=True,
+        )
+
+        entry, entry_path = EntryAssessmentStageHandler(
+            authority_ceiling=LifecycleAuthorityCeiling()
+        ).run_controlled(
+            signal=signal_output.signal,
+            forecasts=path_output.forecasts,
+            output_root=run_root / "entry-blockers",
+            created_at=command.decision_time,
+        )
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.ENTRY_ASSESSMENT,
+            run_status=DecisionTimeOperationRunStatus.DECISION_WINDOW_RUNNING,
+            inputs=tuple(
+                _reference("PATH_FORECAST", item.artifact.artifact_id, item.artifact.forecast.envelope.content_hash)
+                for item in path_output.forecasts
+            ),
+            outputs=(_reference("ENTRY_BLOCKER", entry.artifact_id, entry.content_hash),),
+            reasons=entry.reason_codes,
+            latency_sink=latencies,
+        )
+
+        package_root = run_root / "operation-packages"
+        package = _find_operation_package(package_root, command.run_id)
+        if package is None:
+            snapshot = self._journal.get(command.run_id)
+            package = ControlledOperationalEvidencePackage.create(
+                command=command,
+                policy=policy,
+                status=ControlledOperationalEvidenceStatus.OUTCOME_PENDING,
+                evidence_references=self._package_references(
+                    run_root=run_root,
+                    inputs=inputs,
+                    preparation=preparation,
+                    research=research,
+                    candidates=candidates,
+                    coverage=coverage,
+                    minute_path=minute_path,
+                    minute=minute,
+                    overlay_path=overlay_path,
+                    overlay=overlay,
+                    candidate_view_path=signal_output.candidate_view_path,
+                    candidate_view_id=signal_output.candidate_view.view_id,
+                    candidate_view_hash=signal_output.candidate_view.content_hash,
+                    signal=signal_output.signal,
+                    forecasts=path_output.forecasts,
+                    entry_path=entry_path,
+                    entry_id=entry.artifact_id,
+                    entry_hash=entry.content_hash,
+                ),
+                stage_receipts=tuple(
+                    item.receipt
+                    for item in snapshot.stages
+                    if item.receipt is not None
+                    and item.stage_name is not DecisionTimeOperationStageName.OPERATION_PACKAGE
+                ),
+                code_revision=command.code_revision,
+                feature_set_id=configuration.static_feature_set.feature_set_id,
+                signal_model_id=str(configuration.signal_model.model_id),
+                signal_model_version=configuration.signal_model.model_version,
+                configuration_hashes=configuration.configuration_hashes,
+                universe_count=len(preparation.universe.symbols),
+                candidate_count=len(candidates.selected),
+                minute_success_count=coverage.succeeded_count,
+                minute_failure_count=coverage.failed_count,
+                signal_state_counts=tuple(
+                    sorted(Counter(item.signal_state.value for item in signal_output.signal.artifact.snapshots).items())
+                ),
+                stage_latencies=tuple(
+                    StageRuntimeLatency(name, value) for name, value in sorted(latencies.items())
+                ),
+                deadline_status=("ON_TIME" if not assessment.late_run else "LATE_RUN"),
+                created_at=command.decision_time,
+                authority_ceiling=(
+                    "BROKER_NOT_INVOKED",
+                    "ENTRY_MODEL_EMPIRICALLY_VALIDATED_FALSE",
+                    "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+                    "NO_FILL_CREATED",
+                    "NO_ORDER_CREATED",
+                    "TRADING_AUTHORITY_NOT_GRANTED",
+                ),
+                limitations=(
+                    "FORMAL_PIT_NOT_ESTABLISHED",
+                    "OPERATIONAL_EXPLORATORY_ARCHIVE",
+                    "OUTCOME_PENDING",
+                    *(("PARTIAL_PROVIDER_FAILURE",) if coverage.failed_count else ()),
+                ),
+            )
+            package_path = publish_controlled_operation_package(root=package_root, artifact=package)
+        else:
+            package_path = package_root / str(package.package_id)
+        self._execute_stage(
+            command=command,
+            stage=DecisionTimeOperationStageName.OPERATION_PACKAGE,
+            run_status=DecisionTimeOperationRunStatus.OUTCOME_PENDING,
+            inputs=(_reference("ENTRY_BLOCKER", entry.artifact_id, entry.content_hash),),
+            outputs=(_reference("OPERATION_PACKAGE", package.package_id, package.content_hash),),
+            reasons=("CONTROLLED_OPERATION_PACKAGE_OUTCOME_PENDING",),
+            latency_sink=latencies,
+        )
+        return ControlledOperationDecisionResult(
+            snapshot=self._journal.get(command.run_id),
+            research=research,
+            candidate_set=candidates,
+            minute_coverage=coverage,
+            minute_dataset=minute,
+            minute_dataset_path=minute_path,
+            intraday_feature_bundle=intraday_features,
+            intraday_feature_receipt=intraday_receipt,
+            overlay=overlay,
+            overlay_path=overlay_path,
+            signal=signal_output.signal,
+            forecasts=path_output.forecasts,
+            entry_blocker_path=entry_path,
+            package=package,
+            package_path=package_path,
+        )
+
+    def resume(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        policy: DecisionTimeOperationPolicy,
+        inputs: ControlledOperationInputPaths,
+    ) -> ControlledOperationDecisionResult:
+        self._journal.resume(command.run_id)
+        return self.run_decision_window(command=command, policy=policy, inputs=inputs)
+
+    def _execute_stage(
+        self,
+        *,
+        command: ControlledOperationCommand,
+        stage: DecisionTimeOperationStageName,
+        run_status: DecisionTimeOperationRunStatus,
+        inputs: tuple[OperationArtifactReference, ...],
+        outputs: tuple[OperationArtifactReference, ...],
+        reasons: tuple[str, ...],
+        latency_sink: dict[str, int],
+        child_runs: tuple[OperationChildRunReference, ...] = (),
+        premeasured: bool = False,
+    ) -> DecisionTimeOperationReceipt:
+        snapshot = self._journal.get(command.run_id)
+        stage_snapshot = next(item for item in snapshot.stages if item.stage_name is stage)
+        if stage_snapshot.status is DecisionTimeOperationStageStatus.COMPLETED:
+            assert stage_snapshot.receipt is not None
+            return stage_snapshot.receipt
+        started = perf_counter()
+        claim = self._journal.claim_stage(run_id=command.run_id, stage_name=stage)
+        try:
+            receipt = DecisionTimeOperationReceipt.create(
+                run_id=command.run_id,
+                stage_name=stage,
+                attempt_number=claim.attempt_number,
+                input_references=inputs,
+                output_references=outputs,
+                child_run_references=child_runs,
+                reason_codes=reasons,
+                created_at=self._now(),
+            )
+            self._journal.complete_stage(claim=claim, receipt=receipt, run_status=run_status)
+        except Exception as exc:
+            self._fail_claim(claim, exc)
+            raise
+        if not premeasured:
+            latency_sink[stage.value] = int((perf_counter() - started) * 1000)
+        return receipt
+
+    def _fail_claim(self, claim: ClaimedDecisionTimeOperationStage, exc: Exception) -> None:
+        try:
+            self._journal.fail_stage(claim=claim, error=f"{type(exc).__name__}:{exc}")
+        except Exception:
+            pass
+
+    def _package_references(
+        self,
+        *,
+        run_root: Path,
+        inputs: ControlledOperationInputPaths,
+        preparation: ControlledOperationPreparation,
+        research: VerifiedControlledResearchArtifact,
+        candidates: CandidateSet,
+        coverage: MinuteAcquisitionCoverageArtifact,
+        minute_path: Path,
+        minute: VerifiedMarketDataDataset,
+        overlay_path: Path,
+        overlay: CandidateIntradayFeatureOverlay,
+        candidate_view_path: Path,
+        candidate_view_id: ArtifactId,
+        candidate_view_hash: str,
+        signal: VerifiedSignalRunArtifactV3,
+        forecasts: tuple[VerifiedPathForecastArtifact, ...],
+        entry_path: Path,
+        entry_id: ArtifactId,
+        entry_hash: str,
+    ) -> tuple[ControlledEvidenceReference, ...]:
+        source_manifest = load_controlled_source_manifest(inputs.daily_source_manifest)
+        items = [
+            _evidence("TRADING_CALENDAR", preparation.calendar.artifact_id, preparation.calendar.content_hash, inputs.trading_calendar, run_root),
+            _evidence("OPERATIONAL_UNIVERSE", preparation.universe.universe_id, preparation.universe.content_hash, inputs.operational_universe, run_root),
+            _evidence("DAILY_SOURCE_MANIFEST", source_manifest.source_manifest_id, source_manifest.content_hash, inputs.daily_source_manifest, run_root),
+            _evidence("DAILY_DATASET", preparation.daily_dataset.artifact.dataset_id, preparation.daily_dataset.artifact.content_hash, preparation.daily_dataset_path, run_root),
+            _evidence("STATIC_FEATURE_BUNDLE", preparation.static_bundle.artifact_id, preparation.static_bundle.content_hash, preparation.static_bundle_path, run_root),
+            _evidence("CONTROLLED_RESEARCH", research.artifact.artifact_id, research.artifact.content_hash, research.root, run_root),
+            _evidence("CANDIDATE_SET", candidates.envelope.artifact_id, candidates.envelope.content_hash, research.root, run_root),
+            _evidence("MINUTE_ACQUISITION_COVERAGE", coverage.artifact_id, coverage.content_hash, run_root / "minute-acquisition" / "coverage" / str(coverage.artifact_id), run_root),
+            _evidence("MINUTE_DATASET", minute.artifact.dataset_id, minute.artifact.content_hash, minute_path, run_root),
+            _evidence("INTRADAY_FEATURE_OVERLAY", overlay.artifact_id, overlay.content_hash, overlay_path, run_root),
+            _evidence("CANDIDATE_FEATURE_VIEW_V2", candidate_view_id, candidate_view_hash, candidate_view_path, run_root),
+            _evidence("SIGNAL_V3", signal.artifact.artifact_id, signal.artifact.envelope.content_hash, signal.root, run_root),
+            _evidence("ENTRY_BLOCKER", entry_id, entry_hash, entry_path, run_root),
+        ]
+        items.extend(
+            _evidence("PATH_FORECAST", item.artifact.artifact_id, item.artifact.forecast.envelope.content_hash, item.root, run_root)
+            for item in forecasts
+        )
+        return tuple(sorted(items, key=lambda item: (item.reference_type, str(item.object_id))))
+
+    def _validate_command(
+        self,
+        command: ControlledOperationCommand,
+        policy: DecisionTimeOperationPolicy,
+        calendar: TradingCalendarArtifact,
+        configuration: ControlledOperationRuntimeConfiguration,
+    ) -> None:
+        command.verify_identity()
+        policy.verify_identity()
+        configuration.verify_identity()
+        if command.decision_time != policy.decision_instant(command.decision_date):
+            raise ValueError("Controlled command DecisionTime differs from policy")
+        if (
+            command.policy_id != policy.policy_id
+            or command.policy_hash != policy.content_hash
+            or command.trading_calendar_id != calendar.artifact_id
+            or command.trading_calendar_hash != calendar.content_hash
+            or command.configuration_manifest_id != configuration.configuration_id
+            or command.configuration_manifest_hash != configuration.configuration_hash
+            or command.model_manifest_id != configuration.model_manifest_id
+            or command.model_manifest_hash != configuration.model_manifest_hash
+        ):
+            raise ValueError("Controlled command authority binding mismatch")
+        if (
+            configuration.signal_freshness.trading_calendar_id != calendar.artifact_id
+            or configuration.signal_freshness.trading_calendar_hash != calendar.content_hash
+        ):
+            raise ValueError("Controlled Signal Freshness Calendar mismatch")
+        expected_path_time = policy.decision_time.strftime("%H:%M")
+        if configuration.path_forecast.decision_time_local != expected_path_time:
+            raise ValueError("Controlled PathForecast DecisionTime profile mismatch")
+
+    def _run_root(self, command: ControlledOperationCommand) -> Path:
+        return self._output_root / str(command.run_id)
+
+    def _now(self) -> datetime:
+        value = self._clock()
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Controlled operation clock must be timezone-aware")
+        return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def _run_feature_materialization(
+    *,
+    verified_dataset: VerifiedMarketDataDataset,
+    feature_set: object,
+    selected_symbols: tuple[str, ...],
+    code_revision: str,
+    output_root: Path,
+    idempotency_key: str,
+    max_workers: int,
+) -> FeatureMaterializationReceipt:
+    runner = FeatureMaterializationRunner(max_workers=max_workers)
+    common = {
+        "verified_dataset": verified_dataset,
+        "feature_set": feature_set,
+        "decision_time": verified_dataset.artifact.decision_time,
+        "created_at": verified_dataset.artifact.created_at,
+        "selected_symbols": selected_symbols,
+        "code_revision": code_revision,
+        "output_root": output_root,
+        "idempotency_key": idempotency_key,
+    }
+    if not (output_root / "materialization-run.sqlite3").exists():
+        return runner.run(**common, execution_mode=FeatureMaterializationExecutionMode.START_NEW)  # type: ignore[arg-type]
+    try:
+        return runner.run(**common, execution_mode=FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE)  # type: ignore[arg-type]
+    except ValueError as exc:
+        if "not complete" not in str(exc):
+            raise
+    return runner.run(**common, execution_mode=FeatureMaterializationExecutionMode.RESUME_EXISTING)  # type: ignore[arg-type]
+
+
+def _reference(reference_type: str, object_id: object, content_hash: str) -> OperationArtifactReference:
+    return OperationArtifactReference(
+        reference_type=reference_type,
+        object_id=ArtifactId(str(object_id)),
+        content_hash=content_hash,
+    )
+
+
+def _evidence(
+    reference_type: str,
+    object_id: object,
+    content_hash: str,
+    path: Path,
+    run_root: Path,
+) -> ControlledEvidenceReference:
+    try:
+        locator = path.resolve().relative_to(run_root.resolve()).as_posix()
+    except ValueError:
+        locator = (Path("external-inputs") / reference_type.lower() / str(object_id)).as_posix()
+    return ControlledEvidenceReference(
+        reference_type=reference_type,
+        object_id=ArtifactId(str(object_id)),
+        content_hash=content_hash,
+        locator=locator,
+    )
+
+
+def _find_operation_package(
+    root: Path, run_id: ArtifactId
+) -> ControlledOperationalEvidencePackage | None:
+    if not root.exists():
+        return None
+    matches = tuple(
+        artifact
+        for path in sorted(root.iterdir())
+        if path.is_dir() and not path.name.startswith(".")
+        for artifact in (load_controlled_operation_package(path),)
+        if artifact.command.run_id == run_id
+    )
+    if len(matches) > 1:
+        raise ValueError("multiple Controlled operation packages bind one run")
+    return matches[0] if matches else None
+
+
+def _completed_receipt(
+    snapshot: DecisionTimeOperationRunSnapshot,
+    stage: DecisionTimeOperationStageName,
+) -> DecisionTimeOperationReceipt | None:
+    item = next(value for value in snapshot.stages if value.stage_name is stage)
+    return item.receipt if item.status is DecisionTimeOperationStageStatus.COMPLETED else None
+
+
+def _freeze_input_paths(
+    *, run_root: Path, inputs: ControlledOperationInputPaths
+) -> ControlledOperationInputPaths:
+    frozen_root = run_root / "input-freeze"
+    return ControlledOperationInputPaths(
+        trading_calendar=_install_input(
+            source=inputs.trading_calendar,
+            destination=frozen_root / "trading-calendar" / inputs.trading_calendar.name,
+        ),
+        operational_universe=_install_input(
+            source=inputs.operational_universe,
+            destination=frozen_root / "operational-universe" / inputs.operational_universe.name,
+        ),
+        daily_source_stage=_install_input(
+            source=inputs.daily_source_stage,
+            destination=frozen_root / "daily-source-stage" / inputs.daily_source_stage.name,
+        ),
+        daily_source_manifest=_install_input(
+            source=inputs.daily_source_manifest,
+            destination=frozen_root / "daily-source-manifest" / inputs.daily_source_manifest.name,
+        ),
+        supplemental_research_evidence=_install_input(
+            source=inputs.supplemental_research_evidence,
+            destination=(
+                frozen_root
+                / "supplemental-research-evidence"
+                / inputs.supplemental_research_evidence.name
+            ),
+        ),
+        runtime_configuration=_install_input(
+            source=inputs.runtime_configuration,
+            destination=frozen_root / "runtime-configuration" / inputs.runtime_configuration.name,
+        ),
+    )
+
+
+def _install_input(*, source: Path, destination: Path) -> Path:
+    if not source.is_dir():
+        raise ValueError(f"Controlled input package is missing: {source}")
+    if destination.exists():
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    stage = destination.parent / f".{destination.name}.staging"
+    if stage.exists():
+        shutil.rmtree(stage)
+    shutil.copytree(source, stage, symlinks=False)
+    try:
+        stage.rename(destination)
+    except FileExistsError:
+        shutil.rmtree(stage)
+    return destination
+
+
+__all__ = [
+    "ControlledDecisionTimeOperationRunner",
+    "ControlledOperationDataBlocked",
+    "ControlledOperationDecisionResult",
+    "ControlledOperationInputPaths",
+    "ControlledOperationPreparation",
+]

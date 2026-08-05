@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 import json
 from enum import Enum
 from pathlib import Path
@@ -36,6 +38,10 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleStageName,
     LifecycleStageStatus,
 )
+from market_regime_alpha.application.controlled_operation.entry_blocker import (
+    ControlledEntryAssessmentBlocker,
+    publish_controlled_entry_blocker,
+)
 from market_regime_alpha.forecasting.artifact import (
     VerifiedPathForecastArtifact,
     load_verified_path_forecast,
@@ -59,6 +65,10 @@ from market_regime_alpha.features.materialization_v2 import (
     VerifiedFeatureBundleV2,
     load_verified_feature_bundle_v2,
 )
+from market_regime_alpha.features.operational_overlay import (
+    CandidateIntradayFeatureOverlay,
+    StaticUniverseFeatureBundle,
+)
 from market_regime_alpha.features.spine import FeatureSetConfiguration
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.core.time import DecisionTime
@@ -69,6 +79,7 @@ from market_regime_alpha.market_data import (
 from market_regime_alpha.research.platform_v2.reader import (
     VerifiedResearchLayerArtifact,
 )
+from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.research.platform_v2.reader_registry import (
     load_verified_research_artifact,
 )
@@ -100,6 +111,10 @@ from market_regime_alpha.signals.candidate_view import (
     CandidateFeatureView,
     publish_candidate_feature_view,
 )
+from market_regime_alpha.signals.candidate_view_v2 import (
+    CandidateFeatureViewV2,
+    publish_candidate_feature_view_v2,
+)
 from market_regime_alpha.signals.decimal_model import SignalModelConfigurationV2
 from market_regime_alpha.signals.input_v3 import (
     SignalInputAssemblerV3,
@@ -123,6 +138,19 @@ _H6_PATH_LIMITATION = "H6_PATH_FORECAST_SAMPLES_NOT_AVAILABLE"
 _VerifiedSignalRun: TypeAlias = VerifiedSignalRunArtifact | VerifiedSignalRunArtifactV2 | VerifiedSignalRunArtifactV3
 _SignalRun: TypeAlias = SignalRunArtifact | SignalRunArtifactV2 | SignalRunArtifactV3
 _HistoricalSignalRun: TypeAlias = SignalRunArtifact | SignalRunArtifactV2
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledSignalStageOutput:
+    signal: VerifiedSignalRunArtifactV3
+    candidate_view: CandidateFeatureViewV2
+    candidate_view_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledPathForecastStageOutput:
+    forecasts: tuple[VerifiedPathForecastArtifact, ...]
+    sample_batches: tuple[PathForecastSampleBatch, ...]
 
 
 class HistoricalSignalProductionContext(str, Enum):
@@ -191,6 +219,79 @@ class SignalStageHandler:
         if verified.artifact != artifact:
             raise ValueError("published Canonical Signal V3 semantic mismatch")
         return self._result(inputs=inputs[::2], verified=verified, view_path=view_path)
+
+    def run_controlled_v2(
+        self,
+        *,
+        candidate_set: CandidateSet,
+        static_bundle: StaticUniverseFeatureBundle,
+        static_feature_bundle: VerifiedFeatureBundleV2,
+        daily_dataset: VerifiedMarketDataDataset,
+        intraday_overlay: CandidateIntradayFeatureOverlay,
+        intraday_feature_bundle: VerifiedFeatureBundleV2,
+        minute_dataset: VerifiedMarketDataDataset,
+        trading_calendar: TradingCalendarArtifact,
+        decision_time: DecisionTime,
+        created_at: datetime,
+        code_revision: str,
+    ) -> ControlledSignalStageOutput:
+        """Publish the Controlled Candidate View V2 and Canonical Signal V3."""
+
+        if static_feature_bundle.artifact.feature_set != self._feature_set_configuration:
+            raise ValueError("Controlled Signal Static Feature Set mismatch")
+        if (
+            trading_calendar.artifact_id != self._freshness_policy.trading_calendar_id
+            or trading_calendar.content_hash != self._freshness_policy.trading_calendar_hash
+        ):
+            raise ValueError("Controlled Signal TradingCalendar mismatch")
+        view = CandidateFeatureViewV2.create(
+            candidate_set=candidate_set,
+            static_bundle=static_bundle,
+            intraday_overlay=intraday_overlay,
+        )
+        observations = SignalInputAssemblerV3().assemble(
+            candidate_set=candidate_set,
+            candidate_feature_view=view,
+            feature_bundle=static_feature_bundle,
+            verified_dataset=daily_dataset,
+            static_bundle=static_bundle,
+            intraday_overlay=intraday_overlay,
+            intraday_feature_bundle=intraday_feature_bundle,
+            minute_dataset=minute_dataset,
+            mapping_configuration=self._mapping_configuration,
+            requirement_policy=self._requirement_policy,
+            freshness_policy=self._freshness_policy,
+            trading_calendar=trading_calendar,
+            decision_time=decision_time,
+        )
+        artifact = run_signal_model_v3(
+            candidate_set=candidate_set,
+            candidate_feature_view=view,
+            feature_bundle=static_feature_bundle,
+            verified_dataset=daily_dataset,
+            mapping_configuration=self._mapping_configuration,
+            requirement_policy=self._requirement_policy,
+            freshness_policy=self._freshness_policy,
+            trading_calendar=trading_calendar,
+            signal_configuration=self._configuration,
+            observations=observations,
+            decision_time=decision_time,
+            created_at=created_at,
+            code_revision=code_revision,
+        )
+        view_path = publish_candidate_feature_view_v2(
+            root=self._output_root / "candidate-feature-views-v2",
+            view=view,
+        )
+        signal_path = publish_signal_run_v3(root=self._output_root, artifact=artifact)
+        verified = load_verified_signal_run_v3(signal_path)
+        if verified.artifact != artifact:
+            raise ValueError("published Controlled Signal V3 semantic mismatch")
+        return ControlledSignalStageOutput(
+            signal=verified,
+            candidate_view=view,
+            candidate_view_path=view_path,
+        )
 
     def _inputs(
         self, context: LifecycleStageContext
@@ -704,6 +805,47 @@ class PathForecastStageHandler:
             tuple(item[1] for item in computed),
         )
 
+    def run_controlled(
+        self,
+        *,
+        signal: VerifiedSignalRunArtifactV3,
+    ) -> ControlledPathForecastStageOutput:
+        """Publish fail-closed forecasts using the configured Sample authority."""
+
+        artifact = signal.artifact
+        computed = tuple(
+            (
+                build_path_forecast(
+                    signal_snapshot=snapshot,
+                    configuration=self._configuration,
+                    samples=batch.samples,
+                    decision_time=artifact.envelope.decision_time,
+                    created_at=artifact.envelope.created_at,
+                    code_revision=artifact.envelope.code_revision,
+                ),
+                batch,
+            )
+            for snapshot in artifact.snapshots
+            for batch in (
+                self._sample_provider.load_samples(
+                    signal_snapshot=snapshot,
+                    configuration=self._configuration,
+                    decision_time=artifact.envelope.decision_time,
+                ),
+            )
+        )
+        verified: list[VerifiedPathForecastArtifact] = []
+        for forecast, _ in computed:
+            path = publish_path_forecast(root=self._output_root, artifact=forecast)
+            restored = load_verified_path_forecast(path)
+            if restored.artifact != forecast:
+                raise ValueError("published Controlled PathForecast semantic mismatch")
+            verified.append(restored)
+        return ControlledPathForecastStageOutput(
+            forecasts=tuple(verified),
+            sample_batches=tuple(item[1] for item in computed),
+        )
+
     def _validate_command_bindings(self, context: LifecycleStageContext) -> None:
         require_configuration_binding(
             context.run,
@@ -868,6 +1010,26 @@ class EntryAssessmentStageHandler:
             reason_codes=tuple(sorted(reasons)),
             blocker_reason=("Entry cannot advance: the empirical Entry validation authority has not been established"),
         )
+
+    def run_controlled(
+        self,
+        *,
+        signal: VerifiedSignalRunArtifactV3,
+        forecasts: tuple[VerifiedPathForecastArtifact, ...],
+        output_root: Path,
+        created_at: datetime,
+    ) -> tuple[ControlledEntryAssessmentBlocker, Path]:
+        """Publish a durable blocker; this method cannot create execution objects."""
+
+        if self._authority_ceiling.entry_model_empirically_validated:
+            raise ValueError("current LifecycleAuthorityCeiling cannot grant Entry validation")
+        artifact = ControlledEntryAssessmentBlocker.create(
+            signal=signal,
+            forecasts=forecasts,
+            created_at=created_at,
+        )
+        path = publish_controlled_entry_blocker(root=output_root, artifact=artifact)
+        return artifact, path
 
 
 def _load_research(
