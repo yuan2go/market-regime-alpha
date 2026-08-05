@@ -33,9 +33,11 @@ ControlledDecisionTimeOperationRunner.run_decision_window
 -> SignalRunArtifactV3
 -> PathForecast DATA_INSUFFICIENT
 -> ControlledEntryAssessmentBlocker BLOCKED
+-> immutable Canonical Lifecycle child-run Receipt
 -> ControlledOperationalEvidencePackage OUTCOME_PENDING
 
 ControlledDecisionTimeOperationRunner.settle
+-> verified raw T+1 Outcome Source Archive
 -> T+1 verified canonical Dataset
 -> 5 factual TradeHorizonOutcomeObservation records
 -> superseding SETTLED package
@@ -61,7 +63,7 @@ membership, scope indexes, definitions/configurations and lineage once.
 Planning, batch compute, publication and Task settlement are independent. The
 after profile entered `_compute_artifacts` three times, built membership once
 and reduced profile time to 25.819 seconds. Final standard wall-time measurement
-was 56.801836 seconds with tracemalloc enabled, satisfying the ≤60-second
+was 57.986357 seconds with tracemalloc enabled, satisfying the ≤60-second
 target. The earlier 584.626303-second result remains historical comparison,
 not a fabricated rerun.
 
@@ -69,20 +71,22 @@ not a fabricated rerun.
 
 | Metric | Before | Final |
 |---|---:|---:|
-| 100-symbol cold V2 | 584.626303 s historical / 234.789293 s exact profile | 56.801836 s |
-| 100-symbol peak memory | 179,542,034 B earlier trace | 46,454,251 B |
-| 100-symbol output | 18,704,356 B earlier trace | 16,115,423 B |
+| 100-symbol cold V2 | 584.626303 s historical / 234.789293 s exact profile | 57.986357 s |
+| 100-symbol peak memory | 179,542,034 B earlier trace | 46,604,431 B |
+| 100-symbol output | 18,704,356 B earlier trace | 16,121,164 B |
 | 100-symbol files | 2,326 | 2,326 |
-| 300-symbol cold V2 | not applicable | 173.300481 s |
-| 300-symbol peak/output/files | not applicable | 141,079,830 B / 48,119,784 B / 6,926 |
-| Candidate minute acquisition | not applicable | 8 ms |
-| Candidate minute normalization + Dataset | not applicable | 57 ms |
-| Candidate intraday overlay | not applicable | 50 ms |
+| 300-static/10-Candidate cold V2 | not applicable | 161.981241 s |
+| 300-static/10-Candidate peak/output/files | not applicable | 125,667,134 B / 40,019,491 B / 4,908 |
+| Candidate minute acquisition | not applicable | 7 ms |
+| Candidate minute normalization + Dataset | not applicable | 56 ms |
+| Candidate intraday overlay | not applicable | 43 ms |
 | Signal V3 | not applicable | 33 ms |
-| Required decision increment | not applicable | 148 ms ≤ 30,000 ms |
+| Required decision increment | not applicable | 139 ms ≤ 30,000 ms |
 
-The 300-symbol value is a research measurement with no absolute CI Gate. The
-100-symbol and decision-increment targets passed on deterministic, offline,
+The 300-symbol value is a real two-stage research measurement: five static
+families cover all 300 Symbols while two intraday families and 480 five-minute
+Bars cover exactly 10 Candidates. It has no absolute CI Gate. The 100-symbol
+and decision-increment targets passed on deterministic, offline,
 synthetic/recorded Fixtures.
 
 ## Database authority
@@ -100,7 +104,8 @@ Migration 014 adds parent operation Run, Stage, Attempt, Receipt, Event,
 artifact-reference and child-run-reference tables with the same CHECK,
 append-only, lease, fencing, CAS and transaction discipline. It references
 Daily acquisition, static/intraday Feature, minute batch, canonical lifecycle
-segment and Outcome runs without copying their state.
+and Outcome runs without copying their state. The Canonical child reference is
+backed by an independently published Run Receipt, not a composed placeholder.
 
 Migration 015 adds an append-only longitudinal package index with date/model/
 configuration/outcome indexes and database triggers rejecting update/delete.
@@ -118,7 +123,9 @@ Feature crash tests cover:
 
 Parent journal tests cover start/resume/idempotency/conflict, child references,
 completed Stage immutability, append-only Event/Receipt, leases/fencing, crash
-injection, package publication, settlement and index rebuild. Content-addressed
+injection, package publication, settlement and index rebuild. Resume also
+compares frozen input bytes and all completed-stage Receipt references before
+reuse. Content-addressed
 publication makes a published-but-unsettled artifact reusable without creating
 a conflicting second artifact or Receipt.
 
@@ -131,10 +138,12 @@ Universe: 100
 Candidates: 5
 Recorded Tencent responses: 5 / 5
 Deadline status: ON_TIME under injected Fixture Clock
-Pending package: controlled-package-3be67e0dcee3b6902b6169a2
-Settled package: controlled-package-ea9da378bf213eb8f1aa2cc4
+Canonical child run: controlled-canonical-run-892c8c83e1b0f725149b3e31
+Pending package: controlled-package-dbacd45b9f44606b9163164e
+Settled package: controlled-package-aa9790472b2488380af2196a
 Replay: STABLE
 Outcome observations: 5 factual records
+T+1 raw source archive: exact-file/hash verified and Dataset replayed from source
 ```
 
 This was not a real 14:55 execution. It is `ENGINEERING_FIXTURE` evidence.

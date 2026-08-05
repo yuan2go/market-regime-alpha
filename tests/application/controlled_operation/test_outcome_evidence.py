@@ -53,7 +53,13 @@ from tests.features.test_operational_overlay import _composition
 UTC = timezone.utc
 
 
-def _settlement_dataset(tmp_path: Path):
+def _settlement_dataset(
+    tmp_path: Path,
+    *,
+    minute_count: int = 60,
+    include_daily: bool = True,
+    name: str = "settlement-dataset",
+):
     session_date = DECISION_TIME.date() + timedelta(days=1)
     minute_start = datetime.combine(session_date, datetime.min.time(), tzinfo=UTC) + timedelta(
         hours=1, minutes=30
@@ -84,7 +90,7 @@ def _settlement_dataset(tmp_path: Path):
             source_artifact_id=ArtifactId("t1-minute-source"),
             source_content_hash=HASH,
         )
-        for index in range(60)
+        for index in range(minute_count)
     )
     daily = CanonicalMarketBar.create(
         symbol="600000.SH",
@@ -114,7 +120,7 @@ def _settlement_dataset(tmp_path: Path):
     artifact = MarketDataDatasetArtifact.create(
         decision_time=daily.available_at,
         created_at=daily.available_at,
-        bars=(*minutes, daily),
+        bars=(*minutes, *((daily,) if include_daily else ())),
         expected_symbols=("600000.SH",),
         expected_timeframes=(Timeframe.DAILY, Timeframe.MINUTE_1),
         adjustment_policy=PriceAdjustmentPolicy.create(
@@ -128,7 +134,7 @@ def _settlement_dataset(tmp_path: Path):
         formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
         limitations=("OUTCOME_FIXTURE",),
     )
-    path = publish_market_data_dataset(root=tmp_path / "settlement-dataset", artifact=artifact)
+    path = publish_market_data_dataset(root=tmp_path / name, artifact=artifact)
     return load_verified_market_data_dataset(path)
 
 
@@ -206,3 +212,43 @@ def test_t1_outcome_is_factual_complete_immutable_and_replayable(tmp_path: Path)
     assert "NOT_A_FORMAL_H9_LABEL" in observation.limitations
     assert load_trade_horizon_outcome_evidence(path) == evidence
     assert replay_trade_horizon_outcome_evidence(path) == evidence
+
+    missing_interval = build_trade_horizon_outcome_evidence(
+        operation_package=package,
+        candidate_set=candidates,
+        signal=signal,
+        forecasts=forecasts,
+        decision_dataset=daily,
+        settlement_dataset=_settlement_dataset(
+            tmp_path,
+            minute_count=59,
+            name="settlement-missing-minute",
+        ),
+        next_session_date=DECISION_TIME.date() + timedelta(days=1),
+        horizon=TradeHorizonDefinition.create(),
+        created_at=settlement.artifact.created_at,
+    ).observations[0]
+    missing_close = build_trade_horizon_outcome_evidence(
+        operation_package=package,
+        candidate_set=candidates,
+        signal=signal,
+        forecasts=forecasts,
+        decision_dataset=daily,
+        settlement_dataset=_settlement_dataset(
+            tmp_path,
+            include_daily=False,
+            name="settlement-missing-close",
+        ),
+        next_session_date=DECISION_TIME.date() + timedelta(days=1),
+        horizon=TradeHorizonDefinition.create(),
+        created_at=settlement.artifact.created_at,
+    ).observations[0]
+
+    assert missing_interval.completeness is OutcomeCompleteness.DATA_INCOMPLETE
+    assert "MORNING_MINUTE_INTERVALS_INCOMPLETE" in missing_interval.reason_codes
+    assert missing_interval.mfe is not None
+    assert missing_interval.mae is not None
+    assert missing_close.completeness is OutcomeCompleteness.DATA_INCOMPLETE
+    assert missing_close.gross_return is not None
+    assert missing_close.mfe is not None
+    assert missing_close.mae is not None

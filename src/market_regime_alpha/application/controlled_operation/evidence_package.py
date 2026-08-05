@@ -302,6 +302,7 @@ class ControlledOperationalEvidencePackage:
             "SIGNAL_V3",
             "PATH_FORECAST",
             "ENTRY_BLOCKER",
+            "CANONICAL_LIFECYCLE_RUN",
         }
         if self.status in {
             ControlledOperationalEvidenceStatus.OPERATIONAL_EXPLORATORY_ARCHIVE,
@@ -312,6 +313,7 @@ class ControlledOperationalEvidencePackage:
             raise ValueError(f"Controlled package required evidence is missing: {missing}")
         if self.status is ControlledOperationalEvidenceStatus.SETTLED:
             settlement_required = {
+                "OUTCOME_SOURCE_ARCHIVE",
                 "OUTCOME_SOURCE_MANIFEST",
                 "OUTCOME_DATASET",
                 "OUTCOME_OBSERVATION",

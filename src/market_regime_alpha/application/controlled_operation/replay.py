@@ -10,6 +10,11 @@ from market_regime_alpha.application.controlled_operation.entry_blocker import (
     ControlledEntryAssessmentBlocker,
     load_controlled_entry_blocker,
 )
+from market_regime_alpha.application.controlled_operation.canonical_segment import (
+    CanonicalLifecycleRunObjectReference,
+    ControlledCanonicalLifecycleRunReceipt,
+    load_controlled_canonical_lifecycle_run,
+)
 from market_regime_alpha.application.controlled_operation.evidence_package import (
     ControlledEvidenceReference,
     ControlledOperationalEvidencePackage,
@@ -24,6 +29,10 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
 from market_regime_alpha.application.controlled_operation.outcome_evidence import (
     build_trade_horizon_outcome_evidence,
     replay_trade_horizon_outcome_evidence,
+)
+from market_regime_alpha.application.controlled_operation.outcome_source_archive import (
+    load_outcome_settlement_source_archive,
+    replay_outcome_dataset_from_source_archive,
 )
 from market_regime_alpha.application.controlled_operation.research_runner import (
     ControlledPlatformResearchRunner,
@@ -262,11 +271,94 @@ def replay_controlled_operation(
     if replayed_entry != entry:
         raise ValueError("Controlled replay Entry blocker divergence")
     components.append(("ENTRY_BLOCKER", entry.content_hash))
+    canonical_run = _load_ref(
+        run_root,
+        package,
+        "CANONICAL_LIFECYCLE_RUN",
+        load_controlled_canonical_lifecycle_run,
+    )
+    replayed_canonical_run = ControlledCanonicalLifecycleRunReceipt.create(
+        parent_operation_run_id=package.command.run_id,
+        parent_operation_command_hash=package.command.command_hash,
+        decision_time=package.command.decision_time,
+        code_revision=package.code_revision,
+        configuration_manifest_hash=package.configuration_manifest_hash,
+        model_manifest_hash=package.model_manifest_hash,
+        input_references=(
+            CanonicalLifecycleRunObjectReference(
+                "CANDIDATE_FEATURE_VIEW_V2",
+                view.view_id,
+                view.content_hash,
+            ),
+        ),
+        output_references=(
+            CanonicalLifecycleRunObjectReference(
+                "SIGNAL_V3",
+                signal.artifact.artifact_id,
+                signal.artifact.envelope.content_hash,
+            ),
+            *(
+                CanonicalLifecycleRunObjectReference(
+                    "PATH_FORECAST",
+                    item.artifact.artifact_id,
+                    item.artifact.forecast.envelope.content_hash,
+                )
+                for item in forecasts
+            ),
+            CanonicalLifecycleRunObjectReference(
+                "ENTRY_BLOCKER",
+                entry.artifact_id,
+                entry.content_hash,
+            ),
+        ),
+        created_at=package.command.decision_time,
+    )
+    if replayed_canonical_run != canonical_run:
+        raise ValueError("Controlled replay Canonical child-run divergence")
+    _validate_stage_receipt_bindings(package, canonical_run)
+    components.append(("CANONICAL_LIFECYCLE_RUN", canonical_run.content_hash))
 
     if package.status is ControlledOperationalEvidenceStatus.SETTLED:
+        outcome_source_archive = _load_ref(
+            run_root,
+            package,
+            "OUTCOME_SOURCE_ARCHIVE",
+            load_outcome_settlement_source_archive,
+        )
+        outcome_source_manifest = _load_ref(
+            run_root,
+            package,
+            "OUTCOME_SOURCE_MANIFEST",
+            load_controlled_source_manifest,
+        )
+        if (
+            outcome_source_archive.source_manifest_id
+            != outcome_source_manifest.source_manifest_id
+            or outcome_source_archive.source_manifest_hash
+            != outcome_source_manifest.content_hash
+        ):
+            raise ValueError("Controlled replay Outcome source lineage divergence")
         outcome_path = _single_ref_path(run_root, package, "OUTCOME_OBSERVATION")
         outcome = replay_trade_horizon_outcome_evidence(outcome_path)
         settlement = replay_market_data_dataset(_single_ref_path(run_root, package, "OUTCOME_DATASET"))
+        if (
+            outcome_source_manifest.source_manifest_id,
+            outcome_source_manifest.content_hash,
+        ) not in settlement.artifact.source_manifest_references:
+            raise ValueError("Controlled replay Outcome Dataset lineage divergence")
+        if outcome_source_archive.next_session_date != outcome.observations[0].next_session_date:
+            raise ValueError("Controlled replay Outcome source session divergence")
+        replayed_settlement = replay_outcome_dataset_from_source_archive(
+            archive_path=_single_ref_path(
+                run_root,
+                package,
+                "OUTCOME_SOURCE_ARCHIVE",
+            ),
+            source_manifest=outcome_source_manifest,
+            expected_dataset=settlement,
+        )
+        if replayed_settlement.to_canonical_dict() != settlement.artifact.to_canonical_dict():
+            raise ValueError("Controlled replay Outcome Dataset source divergence")
         pending_path = package_path.parent / str(package.supersedes_package_id)
         pending = load_controlled_operation_package(pending_path)
         replayed_outcome = build_trade_horizon_outcome_evidence(
@@ -282,6 +374,9 @@ def replay_controlled_operation(
         )
         if replayed_outcome != outcome:
             raise ValueError("Controlled replay T+1 Outcome divergence")
+        components.append(
+            ("OUTCOME_SOURCE_ARCHIVE", outcome_source_archive.content_hash)
+        )
         components.append(("OUTCOME_OBSERVATION", outcome.content_hash))
 
     component_hashes = tuple(sorted(components))
@@ -325,6 +420,7 @@ def _identity(value: object) -> tuple[ArtifactId, str]:
         ("artifact_id", "content_hash"),
         ("universe_id", "content_hash"),
         ("source_manifest_id", "content_hash"),
+        ("run_id", "content_hash"),
     ):
         if hasattr(value, id_name) and hasattr(value, hash_name):
             return (
@@ -339,6 +435,37 @@ def _identity(value: object) -> tuple[ArtifactId, str]:
             str(getattr(value, "content_hash")),
         )
     raise TypeError(f"unsupported Controlled replay identity: {type(value).__name__}")
+
+
+def _validate_stage_receipt_bindings(
+    package: ControlledOperationalEvidencePackage,
+    canonical_run: ControlledCanonicalLifecycleRunReceipt,
+) -> None:
+    evidence = {
+        (item.reference_type, str(item.object_id)): item.content_hash
+        for item in package.evidence_references
+    }
+    for receipt in package.stage_receipts:
+        for reference in receipt.output_references:
+            expected = evidence.get(
+                (reference.reference_type, str(reference.object_id))
+            )
+            if (
+                expected is None
+                and reference.reference_type == "OPERATION_PACKAGE"
+                and package.supersedes_package_id == reference.object_id
+            ):
+                expected = package.supersedes_package_hash
+            if expected is None or expected != reference.content_hash:
+                raise ValueError(
+                    f"Controlled replay stage Receipt output divergence: {receipt.stage_name.value}"
+                )
+        for child in receipt.child_run_references:
+            if child.reference_kind.value == "CANONICAL_LIFECYCLE_RUN" and (
+                child.child_run_id != str(canonical_run.run_id)
+                or child.child_receipt_hash != canonical_run.content_hash
+            ):
+                raise ValueError("Controlled replay Canonical child Receipt divergence")
 
 
 def _single_ref(

@@ -29,6 +29,14 @@ from market_regime_alpha.application.controlled_operation.research_config import
 from market_regime_alpha.application.controlled_operation.replay import (
     replay_controlled_operation,
 )
+from market_regime_alpha.application.controlled_operation.outcome_source_archive import (
+    OutcomeRawSourcePayload,
+    OutcomeSettlementSourceArchive,
+    RECORDED_OUTCOME_BARS_SOURCE_KIND,
+    decode_recorded_outcome_bars,
+    encode_recorded_outcome_bars,
+    publish_outcome_settlement_source_archive,
+)
 from market_regime_alpha.application.controlled_operation.runner import (
     ControlledDecisionTimeOperationRunner,
     ControlledOperationInputPaths,
@@ -164,17 +172,6 @@ def _settlement_inputs(
         retrieved_time=RetrievedAt(available_at),
         limitations=("ENGINEERING_FIXTURE",),
     )
-    manifest = SourceManifest(
-        provider_profile_id="recorded-outcome-controlled-v1",
-        decision_time=DecisionTime(available_at),
-        source_artifacts=(raw.reference,),
-        fields=(),
-        source_conflicts=(),
-        limitations=("ENGINEERING_FIXTURE", "FACTUAL_OUTCOME_ONLY"),
-        data_eligibility=DataEligibility.EXPLORATORY,
-        schema_version=SourceManifest.SCHEMA_V2,
-    )
-    manifest_path = publish_controlled_source_manifest(root=tmp_path / "outcome-manifests", artifact=manifest)
     minute_bars = tuple(
         CanonicalMarketBar.create(
             symbol=symbol,
@@ -232,10 +229,62 @@ def _settlement_inputs(
         )
         for symbol in symbols
     )
+    recorded_payload = encode_recorded_outcome_bars((*minute_bars, *daily_bars))
+    raw = AcquiredSourcePayload(
+        provider_id=ProviderId("recorded-outcome-provider"),
+        product="t-plus-one-minute-and-daily",
+        locator="fixture://controlled/t-plus-one",
+        raw_payload=recorded_payload,
+        retrieved_time=RetrievedAt(available_at),
+        limitations=("ENGINEERING_FIXTURE",),
+    )
+    recorded_bars = decode_recorded_outcome_bars(
+        recorded_payload,
+        source_artifact_id=raw.source_artifact_id,
+        source_content_hash=raw.raw_hash,
+    )
+    manifest = SourceManifest(
+        provider_profile_id="recorded-outcome-controlled-v1",
+        decision_time=DecisionTime(available_at),
+        source_artifacts=(raw.reference,),
+        fields=(),
+        source_conflicts=(),
+        limitations=("ENGINEERING_FIXTURE", "FACTUAL_OUTCOME_ONLY"),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        schema_version=SourceManifest.SCHEMA_V2,
+    )
+    manifest_path = publish_controlled_source_manifest(
+        root=tmp_path / "outcome-manifests",
+        artifact=manifest,
+    )
+    archive_payloads = (
+        OutcomeRawSourcePayload(
+            source_artifact_id=raw.source_artifact_id,
+            source_kind=RECORDED_OUTCOME_BARS_SOURCE_KIND,
+            media_type="application/json",
+            payload=raw.raw_payload,
+        ),
+    )
+    archive = OutcomeSettlementSourceArchive.create(
+        source_manifest=manifest,
+        next_session_date=session_date,
+        raw_payloads=archive_payloads,
+        created_at=available_at,
+        limitations=(
+            "ENGINEERING_FIXTURE",
+            "FACTUAL_OUTCOME_SOURCE_ONLY",
+            "PROVIDER_NOT_QUALIFIED",
+        ),
+    )
+    archive_path = publish_outcome_settlement_source_archive(
+        root=tmp_path / "outcome-source-archives",
+        artifact=archive,
+        raw_payloads=archive_payloads,
+    )
     dataset = MarketDataDatasetArtifact.create(
         decision_time=available_at,
         created_at=available_at,
-        bars=(*minute_bars, *daily_bars),
+        bars=recorded_bars,
         expected_symbols=symbols,
         expected_timeframes=(Timeframe.DAILY, Timeframe.MINUTE_1),
         adjustment_policy=PriceAdjustmentPolicy.create(
@@ -251,6 +300,7 @@ def _settlement_inputs(
     )
     dataset_path = publish_market_data_dataset(root=tmp_path / "outcome-datasets", artifact=dataset)
     return ControlledOperationSettlementInputPaths(
+        outcome_source_archive=archive_path,
         outcome_source_manifest=manifest_path,
         outcome_dataset=dataset_path,
     )
@@ -575,6 +625,8 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
                 str(command.run_id),
                 "--outcome-source-manifest",
                 str(settlement_inputs.outcome_source_manifest),
+                "--outcome-source-archive",
+                str(settlement_inputs.outcome_source_archive),
                 "--outcome-dataset",
                 str(settlement_inputs.outcome_dataset),
             ]

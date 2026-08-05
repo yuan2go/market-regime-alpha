@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
 from hashlib import sha256
@@ -209,21 +209,42 @@ class TradeHorizonOutcomeObservation:
             raise ValueError("Outcome source references must be unique and sorted")
         for _, digest in self.source_artifact_references:
             require_sha256("source artifact hash", digest)
-        values = (
-            self.next_open,
-            self.next_1030_price,
-            self.morning_high,
-            self.morning_low,
-            self.session_close,
-            self.gross_return,
-            self.mfe,
-            self.mae,
-        )
         if self.completeness is OutcomeCompleteness.COMPLETE:
-            if any(item is None for item in values) or self.availability_time is None:
+            required_values: tuple[object, ...] = (
+                self.next_open,
+                self.next_1030_price,
+                self.morning_high,
+                self.morning_low,
+                self.availability_time,
+            )
+            if self.horizon.include_session_close:
+                required_values = (*required_values, self.session_close)
+            if any(item is None for item in required_values):
                 raise ValueError("complete Outcome observation has missing values")
-        elif any(item is not None for item in (self.gross_return, self.mfe, self.mae)):
-            raise ValueError("incomplete Outcome cannot carry derived metrics")
+        expected_gross = (
+            (self.next_1030_price - self.decision_reference_price)
+            / self.decision_reference_price
+            if self.next_1030_price is not None
+            else None
+        )
+        expected_mfe = (
+            (self.morning_high - self.decision_reference_price)
+            / self.decision_reference_price
+            if self.morning_high is not None
+            else None
+        )
+        expected_mae = (
+            (self.morning_low - self.decision_reference_price)
+            / self.decision_reference_price
+            if self.morning_low is not None
+            else None
+        )
+        if (self.gross_return, self.mfe, self.mae) != (
+            expected_gross,
+            expected_mfe,
+            expected_mae,
+        ):
+            raise ValueError("Outcome derived metrics do not match observed prices")
         for label, items in (
             ("price_limit_observations", self.price_limit_observations),
             ("feasibility_observations", self.feasibility_observations),
@@ -232,8 +253,8 @@ class TradeHorizonOutcomeObservation:
         ):
             if not items or items != tuple(sorted(set(items))):
                 raise ValueError(f"Outcome {label} must be non-empty and sorted")
-        for required in ("FACTUAL_OBSERVATION_ONLY", "NOT_A_FORMAL_H9_LABEL"):
-            if required not in self.limitations:
+        for required_limit in ("FACTUAL_OBSERVATION_ONLY", "NOT_A_FORMAL_H9_LABEL"):
+            if required_limit not in self.limitations:
                 raise ValueError("Outcome authority ceiling is incomplete")
         self.verify_identity()
 
@@ -534,11 +555,21 @@ def _build_observation(
     ]
     daily = next((item for item in bars if item.timeframe is Timeframe.DAILY), None)
     next_open = morning[0].open if morning else None
-    price_1030 = morning[-1].close if morning else None
+    reaches_observation = bool(morning) and (
+        morning[-1].event_end.astimezone(zone).time().replace(tzinfo=None)
+        == horizon.observation_time
+    )
+    price_1030 = morning[-1].close if reaches_observation else None
     high = max((item.high for item in morning), default=None)
     low = min((item.low for item in morning), default=None)
     close = daily.close if daily is not None else None
-    complete = all(item is not None for item in (next_open, price_1030, high, low, close))
+    complete_morning = _has_complete_minute_window(
+        morning,
+        zone=zone,
+        start=horizon.morning_start,
+        end=horizon.observation_time,
+    )
+    complete = complete_morning and (daily is not None or not horizon.include_session_close)
     completeness = OutcomeCompleteness.COMPLETE if complete else OutcomeCompleteness.DATA_INCOMPLETE
     availability = (
         max(item.available_at for item in (*morning, *((daily,) if daily is not None else ())))
@@ -559,7 +590,8 @@ def _build_observation(
     reasons = {
         "OUTCOME_COMPLETE" if complete else "OUTCOME_DATA_INCOMPLETE",
         *(("MORNING_MINUTE_DATA_MISSING",) if not morning else ()),
-        *(("SESSION_CLOSE_MISSING",) if daily is None else ()),
+        *(("MORNING_MINUTE_INTERVALS_INCOMPLETE",) if morning and not complete_morning else ()),
+        *(("SESSION_CLOSE_MISSING",) if horizon.include_session_close and daily is None else ()),
     }
     values: dict[str, Any] = {
         "symbol": symbol,
@@ -585,9 +617,9 @@ def _build_observation(
         "morning_high": high,
         "morning_low": low,
         "session_close": close,
-        "gross_return": ((price_1030 - reference) / reference if complete and price_1030 is not None else None),
-        "mfe": ((high - reference) / reference if complete and high is not None else None),
-        "mae": ((low - reference) / reference if complete and low is not None else None),
+        "gross_return": ((price_1030 - reference) / reference if price_1030 is not None else None),
+        "mfe": ((high - reference) / reference if high is not None else None),
+        "mae": ((low - reference) / reference if low is not None else None),
         "suspended": suspended,
         "price_limit_observations": limits,
         "availability_time": availability,
@@ -602,6 +634,34 @@ def _build_observation(
         observation_id=ArtifactId(f"trade-horizon-outcome-{digest.split(':', 1)[1][:24]}"),
         content_hash=digest,
         **values,
+    )
+
+
+def _has_complete_minute_window(
+    bars: list[CanonicalMarketBar],
+    *,
+    zone: ZoneInfo,
+    start: time,
+    end: time,
+) -> bool:
+    expected_count = int(
+        (
+            datetime.combine(date.min, end)
+            - datetime.combine(date.min, start)
+        ).total_seconds()
+        // 60
+    )
+    if len(bars) != expected_count:
+        return False
+    expected_start = datetime.combine(
+        bars[0].event_start.astimezone(zone).date(),
+        start,
+        tzinfo=zone,
+    )
+    return all(
+        item.event_start.astimezone(zone) == expected_start + timedelta(minutes=index)
+        and item.event_end.astimezone(zone) == expected_start + timedelta(minutes=index + 1)
+        for index, item in enumerate(bars)
     )
 
 

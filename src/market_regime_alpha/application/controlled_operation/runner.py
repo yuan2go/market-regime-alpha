@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 import shutil
 from time import perf_counter
@@ -17,6 +18,11 @@ from market_regime_alpha.application.canonical_lifecycle.stages.signal_forecast 
     EntryAssessmentStageHandler,
     PathForecastStageHandler,
     SignalStageHandler,
+)
+from market_regime_alpha.application.controlled_operation.canonical_segment import (
+    CanonicalLifecycleRunObjectReference,
+    ControlledCanonicalLifecycleRunReceipt,
+    publish_controlled_canonical_lifecycle_run,
 )
 from market_regime_alpha.application.controlled_operation.evidence_package import (
     ControlledEvidenceReference,
@@ -64,6 +70,9 @@ from market_regime_alpha.application.controlled_operation.outcome_evidence impor
     build_trade_horizon_outcome_evidence,
     load_trade_horizon_outcome_evidence,
     publish_trade_horizon_outcome_evidence,
+)
+from market_regime_alpha.application.controlled_operation.outcome_source_archive import (
+    load_outcome_settlement_source_archive,
 )
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
@@ -159,6 +168,7 @@ class ControlledOperationInputPaths:
 
 @dataclass(frozen=True, slots=True)
 class ControlledOperationSettlementInputPaths:
+    outcome_source_archive: Path
     outcome_source_manifest: Path
     outcome_dataset: Path
 
@@ -643,14 +653,6 @@ class ControlledDecisionTimeOperationRunner:
             code_revision=command.code_revision,
         )
         latencies[DecisionTimeOperationStageName.SIGNAL.value] = int((perf_counter() - started) * 1000)
-        canonical_segment_hash = canonical_hash(
-            {
-                "candidate_feature_view_id": str(signal_output.candidate_view.view_id),
-                "candidate_feature_view_hash": signal_output.candidate_view.content_hash,
-                "signal_id": str(signal_output.signal.artifact.artifact_id),
-                "signal_hash": signal_output.signal.artifact.envelope.content_hash,
-            }
-        )
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.SIGNAL,
@@ -659,13 +661,6 @@ class ControlledDecisionTimeOperationRunner:
             outputs=(
                 _reference("CANDIDATE_FEATURE_VIEW_V2", signal_output.candidate_view.view_id, signal_output.candidate_view.content_hash),
                 _reference("SIGNAL_V3", signal_output.signal.artifact.artifact_id, signal_output.signal.artifact.envelope.content_hash),
-            ),
-            child_runs=(
-                OperationChildRunReference(
-                    ChildRunReferenceKind.CANONICAL_LIFECYCLE_RUN,
-                    f"controlled-canonical-v2:{command.run_id}",
-                    canonical_segment_hash,
-                ),
             ),
             reasons=("CANONICAL_SIGNAL_V3_FROM_CANDIDATE_VIEW_V2",),
             latency_sink=latencies,
@@ -700,6 +695,46 @@ class ControlledDecisionTimeOperationRunner:
             output_root=run_root / "entry-blockers",
             created_at=command.decision_time,
         )
+        canonical_run = ControlledCanonicalLifecycleRunReceipt.create(
+            parent_operation_run_id=command.run_id,
+            parent_operation_command_hash=command.command_hash,
+            decision_time=command.decision_time,
+            code_revision=command.code_revision,
+            configuration_manifest_hash=command.configuration_manifest_hash,
+            model_manifest_hash=command.model_manifest_hash,
+            input_references=(
+                CanonicalLifecycleRunObjectReference(
+                    "CANDIDATE_FEATURE_VIEW_V2",
+                    signal_output.candidate_view.view_id,
+                    signal_output.candidate_view.content_hash,
+                ),
+            ),
+            output_references=(
+                CanonicalLifecycleRunObjectReference(
+                    "SIGNAL_V3",
+                    signal_output.signal.artifact.artifact_id,
+                    signal_output.signal.artifact.envelope.content_hash,
+                ),
+                *(
+                    CanonicalLifecycleRunObjectReference(
+                        "PATH_FORECAST",
+                        item.artifact.artifact_id,
+                        item.artifact.forecast.envelope.content_hash,
+                    )
+                    for item in path_output.forecasts
+                ),
+                CanonicalLifecycleRunObjectReference(
+                    "ENTRY_BLOCKER",
+                    entry.artifact_id,
+                    entry.content_hash,
+                ),
+            ),
+            created_at=command.decision_time,
+        )
+        canonical_run_path = publish_controlled_canonical_lifecycle_run(
+            root=run_root / "canonical-lifecycle-runs",
+            artifact=canonical_run,
+        )
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.ENTRY_ASSESSMENT,
@@ -709,6 +744,13 @@ class ControlledDecisionTimeOperationRunner:
                 for item in path_output.forecasts
             ),
             outputs=(_reference("ENTRY_BLOCKER", entry.artifact_id, entry.content_hash),),
+            child_runs=(
+                OperationChildRunReference(
+                    ChildRunReferenceKind.CANONICAL_LIFECYCLE_RUN,
+                    str(canonical_run.run_id),
+                    canonical_run.content_hash,
+                ),
+            ),
             reasons=entry.reason_codes,
             latency_sink=latencies,
         )
@@ -740,6 +782,8 @@ class ControlledDecisionTimeOperationRunner:
                     entry_path=entry_path,
                     entry_id=entry.artifact_id,
                     entry_hash=entry.content_hash,
+                    canonical_run=canonical_run,
+                    canonical_run_path=canonical_run_path,
                 ),
                 stage_receipts=tuple(
                     item.receipt
@@ -842,8 +886,16 @@ class ControlledDecisionTimeOperationRunner:
             status=ControlledOperationalEvidenceStatus.SETTLED,
         )
         inputs = _freeze_settlement_input_paths(run_root=run_root, inputs=inputs)
+        source_archive = load_outcome_settlement_source_archive(
+            inputs.outcome_source_archive
+        )
         source_manifest = load_controlled_source_manifest(inputs.outcome_source_manifest)
         settlement_dataset = load_verified_market_data_dataset(inputs.outcome_dataset)
+        if (
+            source_archive.source_manifest_id != source_manifest.source_manifest_id
+            or source_archive.source_manifest_hash != source_manifest.content_hash
+        ):
+            raise ValueError("Outcome source Archive and SourceManifest lineage mismatch")
         if (
             source_manifest.source_manifest_id,
             source_manifest.content_hash,
@@ -855,9 +907,12 @@ class ControlledDecisionTimeOperationRunner:
             if settled.supersedes_package_id != pending.package_id or settled.supersedes_package_hash != pending.content_hash:
                 raise ValueError("settled package supersession lineage mismatch")
             source_ref = next(item for item in settled.evidence_references if item.reference_type == "OUTCOME_SOURCE_MANIFEST")
+            archive_ref = next(item for item in settled.evidence_references if item.reference_type == "OUTCOME_SOURCE_ARCHIVE")
             dataset_ref = next(item for item in settled.evidence_references if item.reference_type == "OUTCOME_DATASET")
             if (
-                source_ref.object_id != source_manifest.source_manifest_id
+                archive_ref.object_id != source_archive.artifact_id
+                or archive_ref.content_hash != source_archive.content_hash
+                or source_ref.object_id != source_manifest.source_manifest_id
                 or source_ref.content_hash != source_manifest.content_hash
                 or dataset_ref.object_id != ArtifactId(str(settlement_dataset.artifact.dataset_id))
                 or dataset_ref.content_hash != settlement_dataset.artifact.content_hash
@@ -887,6 +942,8 @@ class ControlledDecisionTimeOperationRunner:
         if not next_sessions:
             raise ControlledOperationDataBlocked("NEXT_TRADING_SESSION_UNAVAILABLE")
         next_session_date = min(next_sessions)
+        if source_archive.next_session_date != next_session_date:
+            raise ValueError("Outcome source Archive next-session mismatch")
         if settlement_dataset.artifact.decision_time < source_manifest.decision_time.value:
             raise ValueError("Outcome Dataset predates its SourceManifest authority")
 
@@ -917,6 +974,11 @@ class ControlledDecisionTimeOperationRunner:
             inputs=(
                 _reference("OPERATION_PACKAGE", pending.package_id, pending.content_hash),
                 _reference(
+                    "OUTCOME_SOURCE_ARCHIVE",
+                    source_archive.artifact_id,
+                    source_archive.content_hash,
+                ),
+                _reference(
                     "OUTCOME_SOURCE_MANIFEST",
                     source_manifest.source_manifest_id,
                     source_manifest.content_hash,
@@ -942,6 +1004,13 @@ class ControlledDecisionTimeOperationRunner:
         if settled is None:
             evidence = (
                 *pending.evidence_references,
+                _evidence(
+                    "OUTCOME_SOURCE_ARCHIVE",
+                    source_archive.artifact_id,
+                    source_archive.content_hash,
+                    inputs.outcome_source_archive,
+                    run_root,
+                ),
                 _evidence(
                     "OUTCOME_SOURCE_MANIFEST",
                     source_manifest.source_manifest_id,
@@ -1038,6 +1107,25 @@ class ControlledDecisionTimeOperationRunner:
         stage_snapshot = next(item for item in snapshot.stages if item.stage_name is stage)
         if stage_snapshot.status is DecisionTimeOperationStageStatus.COMPLETED:
             assert stage_snapshot.receipt is not None
+            expected_inputs = tuple(
+                sorted(inputs, key=lambda item: (item.reference_type, str(item.object_id)))
+            )
+            expected_outputs = tuple(
+                sorted(outputs, key=lambda item: (item.reference_type, str(item.object_id)))
+            )
+            expected_children = tuple(
+                sorted(
+                    child_runs,
+                    key=lambda item: (item.reference_kind.value, item.child_run_id),
+                )
+            )
+            if (
+                stage_snapshot.receipt.input_references != expected_inputs
+                or stage_snapshot.receipt.output_references != expected_outputs
+                or stage_snapshot.receipt.child_run_references != expected_children
+                or stage_snapshot.receipt.reason_codes != tuple(sorted(set(reasons)))
+            ):
+                raise ValueError(f"completed {stage.value} Receipt conflicts with replayed evidence")
             return stage_snapshot.receipt
         started = perf_counter()
         claim = self._journal.claim_stage(run_id=command.run_id, stage_name=stage)
@@ -1087,6 +1175,8 @@ class ControlledDecisionTimeOperationRunner:
         entry_path: Path,
         entry_id: ArtifactId,
         entry_hash: str,
+        canonical_run: ControlledCanonicalLifecycleRunReceipt,
+        canonical_run_path: Path,
     ) -> tuple[ControlledEvidenceReference, ...]:
         daily_source = load_verified_public_source_stage_artifact(inputs.daily_source_stage)
         source_manifest = load_controlled_source_manifest(inputs.daily_source_manifest)
@@ -1143,6 +1233,13 @@ class ControlledDecisionTimeOperationRunner:
             _evidence("CANDIDATE_FEATURE_VIEW_V2", candidate_view_id, candidate_view_hash, candidate_view_path, run_root),
             _evidence("SIGNAL_V3", signal.artifact.artifact_id, signal.artifact.envelope.content_hash, signal.root, run_root),
             _evidence("ENTRY_BLOCKER", entry_id, entry_hash, entry_path, run_root),
+            _evidence(
+                "CANONICAL_LIFECYCLE_RUN",
+                canonical_run.run_id,
+                canonical_run.content_hash,
+                canonical_run_path,
+                run_root,
+            ),
         ]
         items.extend(
             _evidence("PATH_FORECAST", item.artifact.artifact_id, item.artifact.forecast.envelope.content_hash, item.root, run_root)
@@ -1490,6 +1587,14 @@ def _freeze_settlement_input_paths(
 ) -> ControlledOperationSettlementInputPaths:
     frozen_root = run_root / "input-freeze"
     return ControlledOperationSettlementInputPaths(
+        outcome_source_archive=_install_input(
+            source=inputs.outcome_source_archive,
+            destination=(
+                frozen_root
+                / "outcome-source-archive"
+                / inputs.outcome_source_archive.name
+            ),
+        ),
         outcome_source_manifest=_install_input(
             source=inputs.outcome_source_manifest,
             destination=(frozen_root / "outcome-source-manifest" / inputs.outcome_source_manifest.name),
@@ -1505,6 +1610,8 @@ def _install_input(*, source: Path, destination: Path) -> Path:
     if not source.is_dir():
         raise ValueError(f"Controlled input package is missing: {source}")
     if destination.exists():
+        if _directory_fingerprint(source) != _directory_fingerprint(destination):
+            raise ValueError(f"Controlled frozen input identity conflict: {destination.parent.name}")
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     stage = destination.parent / f".{destination.name}.staging"
@@ -1516,6 +1623,16 @@ def _install_input(*, source: Path, destination: Path) -> Path:
     except FileExistsError:
         shutil.rmtree(stage)
     return destination
+
+
+def _directory_fingerprint(root: Path) -> str:
+    files = tuple(sorted(item for item in root.rglob("*") if item.is_file()))
+    return canonical_hash(
+        {
+            "exact_file_set": [item.relative_to(root).as_posix() for item in files],
+            "sha256": [sha256(item.read_bytes()).hexdigest() for item in files],
+        }
+    )
 
 
 __all__ = [

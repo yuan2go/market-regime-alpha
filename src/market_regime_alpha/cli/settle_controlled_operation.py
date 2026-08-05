@@ -27,6 +27,7 @@ def build_parser() -> StructuredParser:
     parser = StructuredParser(description=__doc__)
     add_repository_arguments(parser)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--outcome-source-archive", type=Path, required=True)
     parser.add_argument("--outcome-source-manifest", type=Path, required=True)
     parser.add_argument("--outcome-dataset", type=Path, required=True)
     return parser
@@ -42,6 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = runner.settle(
             command=command,
             inputs=ControlledOperationSettlementInputPaths(
+                outcome_source_archive=args.outcome_source_archive.resolve(),
                 outcome_source_manifest=args.outcome_source_manifest.resolve(),
                 outcome_dataset=args.outcome_dataset.resolve(),
             ),

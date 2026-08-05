@@ -23,6 +23,12 @@ pending operation package and supersede it with a new settled package after T+1
 factual evidence. Index immutable package references in a rebuildable,
 append-only SQLite longitudinal index.
 
+Publish the Signal/Path/Entry segment as a separately readable Canonical child
+Run Receipt and bind that real identity/hash from the parent journal. Freeze T+1
+provider bytes in an exact-file Outcome Source Archive, require its raw hashes
+to match the SourceManifest, and reconstruct the Outcome Dataset from that
+archive during offline replay.
+
 Use database-enforced leases, CAS and monotonic fencing epochs for Feature and
 parent operation claims. Reject post-DecisionTime source data and stop retry at
 the hard cutoff. Keep PathForecast without samples and Entry blocked.
@@ -37,6 +43,8 @@ the hard cutoff. Keep PathForecast without samples and Entry blocked.
   `DATA_INSUFFICIENT` Signals; total failure produces a terminal evidence
   package.
 - Replay is local and side-effect-free.
+- Resume compares frozen input bytes and completed-stage Receipt references;
+  immutable history cannot be silently combined with changed evidence.
 - This decision does not implement H7, H8 scheduling, H9 validation,
   PostgreSQL, RBAC, frontend, Broker, order or Entry authority.
 

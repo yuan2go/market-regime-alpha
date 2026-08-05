@@ -32,6 +32,8 @@ from market_regime_alpha.features import (
 )
 from market_regime_alpha.features.technical.catalog import (
     canonical_technical_feature_set,
+    intraday_overlay_feature_set,
+    static_technical_feature_set,
 )
 from market_regime_alpha.market_data import (
     AdjustmentMode,
@@ -99,8 +101,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--symbols must be between 1 and 300")
     if args.daily_sessions < 60:
         raise SystemExit("--daily-sessions must be at least 60")
-    if not 0 <= args.minute_bars_per_symbol <= 72:
-        raise SystemExit("--minute-bars-per-symbol must be between 0 and 72")
+    if not 0 <= args.minute_bars_per_symbol <= 48:
+        raise SystemExit("--minute-bars-per-symbol must be between 0 and 48")
     if args.candidate_count is None:
         args.candidate_count = min(10, args.symbols)
     if not 1 <= args.candidate_count <= args.symbols:
@@ -123,6 +125,14 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
     decision_time = datetime(2026, 8, 4, 7, 30, tzinfo=UTC)
     created_at = decision_time + timedelta(minutes=1)
     symbols = tuple(f"{600000 + index:06d}.SH" for index in range(args.symbols))
+    if args.columnar_v2_only:
+        return _benchmark_research_scale_two_stage(
+            args=args,
+            root=root,
+            symbols=symbols,
+            decision_time=decision_time,
+            created_at=created_at,
+        )
     bars = _bars(
         symbols=symbols,
         sessions=args.daily_sessions,
@@ -148,9 +158,7 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         limitations=("OFFLINE_SYNTHETIC_PERFORMANCE_FIXTURE",),
     )
     feature_set = canonical_technical_feature_set(effective_from=decision_time - timedelta(days=365))
-    if args.columnar_v2_only:
-        v1 = None
-    elif args.reuse_json_v1_root is not None:
+    if args.reuse_json_v1_root is not None:
         v1 = _reuse_json_v1_baseline(
             root=args.reuse_json_v1_root.resolve(),
             metrics_path=args.reuse_json_v1_metrics.resolve(),
@@ -182,37 +190,6 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         artifact_encoding=FEATURE_ARTIFACT_ENCODING_V2,
         bundle_encoding=FEATURE_BUNDLE_ENCODING_V2,
     )
-    if v1 is None:
-        peak_value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        process_peak_bytes = peak_value if sys.platform == "darwin" else peak_value * 1024
-        return {
-            "status": "MEASURED",
-            "benchmark_scope": "RESEARCH_SCALE_COLUMNAR_V2_ONLY",
-            "symbols": len(symbols),
-            "candidate_count": args.candidate_count,
-            "daily_sessions": args.daily_sessions,
-            "minute_bars": args.minute_bars_per_symbol * len(symbols),
-            "market_bar_count": len(bars),
-            "feature_family_count": len(feature_set.definitions),
-            "feature_artifact_count": v2["feature_artifact_count"],
-            "cold_run_seconds": v2["cold_materialization_seconds"],
-            "cached_run_seconds": v2["cached_receipt_seconds"],
-            "peak_memory_bytes": v2["peak_memory_bytes"],
-            "process_peak_memory_bytes": process_peak_bytes,
-            "output_bytes": v2["output_bytes"],
-            "file_count": v2["artifact_file_count"],
-            "feature_bundle_id": v2["feature_bundle_id"],
-            "feature_bundle_hash": v2["feature_bundle_hash"],
-            "deterministic_cached_receipt": v2["deterministic_cached_receipt"],
-            "network_used": False,
-            "absolute_ci_gate_applied": False,
-            "limitations": [
-                "OFFLINE_SYNTHETIC_PERFORMANCE_FIXTURE",
-                "RESEARCH_SCALE_ABSOLUTE_CI_GATE_NOT_APPLIED",
-                "NOT_A_MODEL_QUALITY_BENCHMARK",
-                "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
-            ],
-        }
     if v1["feature_bundle_hash"] != v2["feature_bundle_hash"]:
         raise RuntimeError("Feature logical hash differs between physical encodings")
     signal_hash_v1 = _signal_hash(
@@ -274,6 +251,162 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
             "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
         ],
     }
+
+
+def _benchmark_research_scale_two_stage(
+    *,
+    args: argparse.Namespace,
+    root: Path,
+    symbols: tuple[str, ...],
+    decision_time: datetime,
+    created_at: datetime,
+) -> dict[str, object]:
+    candidate_symbols = symbols[: args.candidate_count]
+    static_bars = _bars(
+        symbols=symbols,
+        sessions=args.daily_sessions,
+        minute_count=0,
+        decision_time=decision_time,
+    )
+    minute_bars = _bars(
+        symbols=candidate_symbols,
+        sessions=0,
+        minute_count=args.minute_bars_per_symbol,
+        decision_time=decision_time,
+    )
+    static_dataset = _benchmark_dataset(
+        bars=static_bars,
+        symbols=symbols,
+        expected_timeframes=(Timeframe.DAILY,),
+        decision_time=decision_time,
+        created_at=created_at,
+        limitation="RESEARCH_SCALE_STATIC_UNIVERSE_FIXTURE",
+    )
+    intraday_dataset = _benchmark_dataset(
+        bars=minute_bars,
+        symbols=candidate_symbols,
+        expected_timeframes=(Timeframe.MINUTE_5,),
+        decision_time=decision_time,
+        created_at=created_at,
+        limitation="RESEARCH_SCALE_CANDIDATE_INTRADAY_FIXTURE",
+    )
+    static = _benchmark_encoding(
+        root=root / "static-columnar-v2",
+        dataset=static_dataset,
+        feature_set=static_technical_feature_set(
+            effective_from=decision_time - timedelta(days=365)
+        ),
+        symbols=symbols,
+        decision_time=decision_time,
+        created_at=created_at,
+        max_workers=args.max_workers,
+        market_encoding="market-data-package-encoding-v2",
+        artifact_encoding=FEATURE_ARTIFACT_ENCODING_V2,
+        bundle_encoding=FEATURE_BUNDLE_ENCODING_V2,
+        selective_output_id="return_1",
+        selective_timeframe=Timeframe.DAILY,
+    )
+    intraday = _benchmark_encoding(
+        root=root / "candidate-intraday-columnar-v2",
+        dataset=intraday_dataset,
+        feature_set=intraday_overlay_feature_set(
+            effective_from=decision_time - timedelta(days=365)
+        ),
+        symbols=candidate_symbols,
+        decision_time=decision_time,
+        created_at=created_at,
+        max_workers=args.max_workers,
+        market_encoding="market-data-package-encoding-v2",
+        artifact_encoding=FEATURE_ARTIFACT_ENCODING_V2,
+        bundle_encoding=FEATURE_BUNDLE_ENCODING_V2,
+        selective_output_id="price_vs_vwap_return",
+        selective_timeframe=Timeframe.MINUTE_5,
+    )
+    static.pop("_verified_bundle")
+    static.pop("_verified_dataset")
+    intraday.pop("_verified_bundle")
+    intraday.pop("_verified_dataset")
+    peak_value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    process_peak_bytes = peak_value if sys.platform == "darwin" else peak_value * 1024
+    return {
+        "status": "MEASURED",
+        "benchmark_scope": "RESEARCH_SCALE_STATIC_PLUS_CANDIDATE_OVERLAY_V2",
+        "symbols": len(symbols),
+        "static_symbol_count": len(symbols),
+        "candidate_count": len(candidate_symbols),
+        "intraday_symbol_count": len(candidate_symbols),
+        "daily_sessions": args.daily_sessions,
+        "minute_bars": len(minute_bars),
+        "market_bar_count": len(static_bars) + len(minute_bars),
+        "feature_family_count": 7,
+        "static_feature_family_count": 5,
+        "intraday_feature_family_count": 2,
+        "feature_artifact_count": cast(int, static["feature_artifact_count"])
+        + cast(int, intraday["feature_artifact_count"]),
+        "cold_run_seconds": round(
+            cast(float, static["cold_materialization_seconds"])
+            + cast(float, intraday["cold_materialization_seconds"]),
+            6,
+        ),
+        "cached_run_seconds": round(
+            cast(float, static["cached_receipt_seconds"])
+            + cast(float, intraday["cached_receipt_seconds"]),
+            6,
+        ),
+        "peak_memory_bytes": max(
+            cast(int, static["peak_memory_bytes"]),
+            cast(int, intraday["peak_memory_bytes"]),
+        ),
+        "process_peak_memory_bytes": process_peak_bytes,
+        "output_bytes": cast(int, static["output_bytes"])
+        + cast(int, intraday["output_bytes"]),
+        "file_count": cast(int, static["artifact_file_count"])
+        + cast(int, intraday["artifact_file_count"]),
+        "deterministic_cached_receipt": bool(
+            static["deterministic_cached_receipt"]
+            and intraday["deterministic_cached_receipt"]
+        ),
+        "static": static,
+        "candidate_intraday": intraday,
+        "network_used": False,
+        "absolute_ci_gate_applied": False,
+        "limitations": [
+            "OFFLINE_SYNTHETIC_PERFORMANCE_FIXTURE",
+            "RESEARCH_SCALE_ABSOLUTE_CI_GATE_NOT_APPLIED",
+            "NOT_A_MODEL_QUALITY_BENCHMARK",
+            "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+        ],
+    }
+
+
+def _benchmark_dataset(
+    *,
+    bars: tuple[CanonicalMarketBar, ...],
+    symbols: tuple[str, ...],
+    expected_timeframes: tuple[Timeframe, ...],
+    decision_time: datetime,
+    created_at: datetime,
+    limitation: str,
+) -> MarketDataDatasetArtifact:
+    return MarketDataDatasetArtifact.create(
+        decision_time=decision_time,
+        created_at=created_at,
+        bars=bars,
+        expected_symbols=symbols,
+        expected_timeframes=expected_timeframes,
+        adjustment_policy=PriceAdjustmentPolicy.create(
+            policy_version="benchmark-raw-v1",
+            mode=AdjustmentMode.RAW,
+            factors=(),
+            limitations=(),
+        ),
+        source_manifest_references=(
+            (ArtifactId("benchmark-source-manifest"), MANIFEST_HASH),
+        ),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
+        limitations=("OFFLINE_SYNTHETIC_PERFORMANCE_FIXTURE", limitation),
+    )
 
 
 def _reuse_json_v1_baseline(
@@ -339,6 +472,8 @@ def _benchmark_encoding(
     market_encoding: str,
     artifact_encoding: str,
     bundle_encoding: str,
+    selective_output_id: str = "price_vs_vwap_return",
+    selective_timeframe: Timeframe = Timeframe.MINUTE_5,
 ) -> dict[str, object]:
     dataset_path = publish_market_data_dataset(
         root=root / "market-data",
@@ -393,15 +528,15 @@ def _benchmark_encoding(
             read_feature_values_v2(
                 bundle_path,
                 symbols=(symbols[0],),
-                output_ids=("price_vs_vwap_return",),
-                timeframes=(Timeframe.MINUTE_5,),
+                output_ids=(selective_output_id,),
+                timeframes=(selective_timeframe,),
             ).rows
         )
     else:
         selected_count = sum(
             item.artifact.symbol == symbols[0]
-            and item.artifact.timeframe is Timeframe.MINUTE_5
-            and any(value.output_id == "price_vs_vwap_return" for value in item.artifact.values)
+            and item.artifact.timeframe is selective_timeframe
+            and any(value.output_id == selective_output_id for value in item.artifact.values)
             for item in load_verified_feature_bundle_v2(bundle_path, artifact_root=artifact_root).artifacts
         )
     selective_seconds = wall_time.perf_counter() - selective_started
@@ -574,9 +709,18 @@ def _bars(
                 )
             )
             previous = close
-        minute_start = datetime.combine(decision_time.date(), time(1, 30), tzinfo=UTC)
         for minute_index in range(minute_count):
-            event_start = minute_start + timedelta(minutes=5 * minute_index)
+            if minute_index < 24:
+                session_start = datetime.combine(
+                    decision_time.date(), time(1, 30), tzinfo=UTC
+                )
+                session_index = minute_index
+            else:
+                session_start = datetime.combine(
+                    decision_time.date(), time(5), tzinfo=UTC
+                )
+                session_index = minute_index - 24
+            event_start = session_start + timedelta(minutes=5 * session_index)
             event_end = event_start + timedelta(minutes=5)
             close = base + Decimal(minute_index) / Decimal("10000")
             volume = Decimal(1000 + minute_index * 10 + symbol_index)

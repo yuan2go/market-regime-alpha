@@ -472,10 +472,12 @@ Implemented on the Controlled 14:55 operation branch:
   journal and an append-only longitudinal index, including leases, monotonic
   fencing epochs, CAS and database triggers;
 - immutable pending/settled operational packages, factual T+1 Outcome evidence,
-  full offline semantic replay and six JSON CLIs;
-- a 100-symbol cold Feature result of 56.801836 seconds against the 60-second
-  engineering target, a 300-symbol research measurement of 173.300481 seconds,
-  and a 100-Universe/5-Candidate decision increment of 0.148 seconds.
+  a raw Outcome Source Archive, an independently published Canonical child-run
+  Receipt, full offline semantic replay and six JSON CLIs;
+- a 100-symbol cold Feature result of 57.986357 seconds against the 60-second
+  engineering target, a 300-static/10-Candidate two-stage research measurement
+  of 161.981241 seconds, and a 100-Universe/5-Candidate decision increment of
+  0.139 seconds.
 
 These are local engineering Fixtures. No operation in WP-DATA-OPS-01 was
 observed at real wall-clock 14:55. Tencent remains exploratory, formal PIT and

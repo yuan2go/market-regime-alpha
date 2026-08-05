@@ -38,9 +38,11 @@ runner.run_decision_window
   -> SignalStageHandler.run_controlled_v2
   -> PathForecastStageHandler.run_controlled
   -> EntryAssessmentStageHandler.run_controlled
+  -> ControlledCanonicalLifecycleRunReceipt.create/publish
   -> ControlledOperationalEvidencePackage.create
 
 runner.settle
+  -> load_outcome_settlement_source_archive
   -> load_verified_market_data_dataset
   -> build_trade_horizon_outcome_evidence
   -> ControlledOperationalEvidencePackage.create(SETTLED)
@@ -117,12 +119,18 @@ Migration 014 adds the parent `DecisionTimeOperationRun`, Stage, Attempt,
 Receipt, Event, artifact-reference and child-run-reference tables. Completed
 Stages and Events/Receipts are immutable. Stage claims use leases, monotonic
 epochs and CAS. The parent records child Receipt hashes and never copies child
-domain state. Migration 015 adds a rebuildable append-only longitudinal index.
+domain state. Signal, Path and Entry publish a separately readable
+`ControlledCanonicalLifecycleRunReceipt`; the parent references its actual Run
+ID and Receipt hash, never a locally composed placeholder. Migration 015 adds a
+rebuildable append-only longitudinal index.
 
 Crash tests cover failure before Feature publication, after publication before
 repository settlement, after Task completion before Bundle, and after Bundle
 before Receipt. Resume reuses matching content-addressed output, rejects stale
-workers and never creates two conflicting Receipts.
+workers and never creates two conflicting Receipts. A completed parent Stage is
+accepted only when recomputed input, output, child-run and reason references
+exactly equal its immutable Receipt. Frozen input directories are compared by
+exact relative file set and SHA-256 before reuse.
 
 ## 6. Operational Evidence Package and longitudinal archive
 
@@ -131,7 +139,8 @@ atomic publication and strict Reader. It binds command, policy, Calendar,
 Universe, daily source archive/manifest/Dataset, static Features, controlled
 research, CandidateSet, minute coverage/Dataset, overlay, Candidate View V2,
 Signal V3, PathForecast, Entry blocker, stage Receipts, code/config/model
-manifests, coverage, latency, deadline and authority ceiling.
+manifests, the real Canonical child-run Receipt, coverage, latency, deadline and
+authority ceiling.
 
 Allowed states are `OPERATIONAL_EXPLORATORY_ARCHIVE`, `DATA_BLOCKED`,
 `DEADLINE_MISSED`, `OUTCOME_PENDING` and `SETTLED`. A settled package is a new
@@ -145,8 +154,12 @@ unverified profitability conclusion.
 
 ## 7. T+1 Outcome Evidence
 
-Settlement accepts a verified subsequent SourceManifest and canonical Dataset
-covering Candidate 09:30–10:30 minute Bars plus daily close evidence.
+Settlement accepts an exact-file, SHA-verified raw Outcome Source Archive, its
+subsequent SourceManifest and the canonical Dataset covering Candidate
+09:30–10:30 minute Bars plus daily close evidence. The archive requires every
+SourceManifest raw hash to equal the archived bytes. Offline replay reconstructs
+the canonical Outcome Dataset from the recorded bar-source payload before
+recomputing factual observations.
 `TradeHorizonOutcomeObservation` records reference price, next open, 10:30,
 morning high/low, close, gross return, MFE, MAE, suspension, limits,
 completeness, feasibility observations, availability and source lineage.
@@ -158,8 +171,9 @@ win-rate claim, model approval or Entry authorization.
 `replay_controlled_operation` reads only immutable local packages. It rebuilds
 daily Dataset semantics from the daily source archive, recomputes both Feature
 Bundles, controlled research/CandidateSet, minute normalization/Dataset,
-Overlay, Candidate View V2, Signal V3, PathForecast, Entry blocker and optional
-Outcome, then compares package and Receipt fingerprints. It performs no
+Overlay, Candidate View V2, Signal V3, PathForecast, Entry blocker, Canonical
+child-run Receipt and optional raw-source-derived Outcome, then compares package
+and Receipt fingerprints. It performs no
 network, current-time, Broker, ManualTrade, Fill, approval or model-promotion
 action.
 
@@ -187,13 +201,13 @@ The frozen offline synthetic benchmark on 2026-08-05 produced:
 |---|---:|
 | Historical V2 cold baseline | 584.626303 s |
 | Exact pre-fix profiled run | 234.789293 s |
-| Final 100-symbol V2 cold run | 56.801836 s |
-| Final 100-symbol tracemalloc peak | 46,454,251 B |
-| Final 100-symbol output / files | 16,115,423 B / 2,326 |
-| 300-symbol V2 research run | 173.300481 s |
-| 300-symbol tracemalloc peak | 141,079,830 B |
-| 300-symbol output / files | 48,119,784 B / 6,926 |
-| 100-Universe/5-Candidate decision increment | 0.148 s |
+| Final 100-symbol V2 cold run | 57.986357 s |
+| Final 100-symbol tracemalloc peak | 46,604,431 B |
+| Final 100-symbol output / files | 16,121,164 B / 2,326 |
+| 300-static/10-Candidate two-stage V2 research run | 161.981241 s |
+| 300-static/10-Candidate tracemalloc peak | 125,667,134 B |
+| 300-static/10-Candidate output / files | 40,019,491 B / 4,908 |
+| 100-Universe/5-Candidate decision increment | 0.139 s |
 
 The 100-symbol target passed and the Candidate increment passed. The 300-symbol
 number is measurement only, not an absolute CI gate. All values are engineering
