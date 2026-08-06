@@ -250,6 +250,9 @@ def _replay(
         idempotency_key=idempotency_key,
         clock=replay_clock,
         output_directory=output_directory,
+        manual_trade_loader=(
+            repositories.risk_reduction_manual_intent().get_manual_trade
+        ),
     )
     repositories.bind_runtime(
         "CANONICAL_LIFECYCLE",
@@ -261,6 +264,9 @@ def _replay(
         idempotency_key=idempotency_key,
         clock=replay_clock,
         output_directory=output_directory,
+        manual_trade_loader=(
+            repositories.risk_reduction_manual_intent().get_manual_trade
+        ),
     )
     stable = (
         first.replay_run.run_id == second.replay_run.run_id
@@ -338,7 +344,6 @@ def _start(
         model_references=manifest.model_references,
         stop_after_stage=stop_after_stage,
         output_directory=output_directory,
-        authority_database_locator=None,
     )
     repository = repositories.lifecycle()
     runner = _build_runner(

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import timedelta
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.application.trading_lifecycle.manual_execution import (
     ManualExecutionApplicationService,
@@ -31,7 +31,7 @@ def test_confirmed_risk_reduction_query_is_read_only_and_restart_safe(
         fixture.repository.get_fill_derived_position(fixture.decision_id)
         is None
     )
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         counts_before = tuple(
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (
@@ -42,12 +42,12 @@ def test_confirmed_risk_reduction_query_is_read_only_and_restart_safe(
         )
 
     observed = fixture.repository.get_confirmed_risk_reduction(fixture.decision_id)
-    restarted = SQLiteRiskReductionManualIntentRepository(fixture.repository.path)
+    restarted = PostgresRiskReductionManualIntentRepository(fixture.repository.path)
     replayed = restarted.get_confirmed_risk_reduction(fixture.decision_id)
 
     assert observed == confirmed
     assert replayed == confirmed
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         counts_after = tuple(
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (
@@ -65,13 +65,16 @@ def test_confirmed_risk_reduction_query_detects_trade_lineage_tamper(
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     confirmed = fixture.repository.confirm_risk_reduction(fixture.command)
     assert confirmed.manual_trade is not None
-    with sqlite3.connect(fixture.repository.path) as connection:
-        connection.execute("DROP TRIGGER risk_reducing_manual_trade_bindings_no_update")
+    with postgres_connection(fixture.repository.path) as connection:
+        connection.execute(
+            "DROP TRIGGER risk_reducing_manual_trade_bindings_no_update "
+            "ON risk_reducing_manual_trade_bindings"
+        )
         connection.execute(
             """
             UPDATE risk_reducing_manual_trade_bindings
-            SET risk_reducing_decision_hash = ?
-            WHERE manual_trade_id = ?
+            SET risk_reducing_decision_hash = %s
+            WHERE manual_trade_id = %s
             """,
             (
                 "sha256:" + "f" * 64,

@@ -34,12 +34,8 @@ class FreeDataPreparationInvocation:
     idempotency_key: str
 
 
-FreeDataInvocationBuilder = Callable[
-    [ProviderAcquisitionRequest], FreeDataPreparationInvocation
-]
-FreeDataPreparationTranslator = Callable[
-    [FreeDataOperationPreparation], ProviderAcquisitionResult
-]
+FreeDataInvocationBuilder = Callable[[ProviderAcquisitionRequest], FreeDataPreparationInvocation]
+FreeDataPreparationTranslator = Callable[[FreeDataOperationPreparation], ProviderAcquisitionResult]
 
 
 class FreeDataPreparationProviderAdapter:
@@ -58,9 +54,7 @@ class FreeDataPreparationProviderAdapter:
         self._invocation_builder = invocation_builder
         self._translator = translator
 
-    def acquire(
-        self, request: ProviderAcquisitionRequest
-    ) -> ProviderAcquisitionResult:
+    def acquire(self, request: ProviderAcquisitionRequest) -> ProviderAcquisitionResult:
         invocation = self._invocation_builder(request)
         if invocation.request.command_hash != request.request_hash:
             raise ValueError("FreeData invocation does not bind the provider request")
@@ -78,9 +72,7 @@ class FreeDataPreparationProviderAdapter:
 class ExistingChildServiceDelegate(Protocol):
     child_kind: ContinuousChildKind
 
-    def lookup(
-        self, request: ChildExecutionRequest
-    ) -> ChildExecutionResult | None: ...
+    def lookup(self, request: ChildExecutionRequest) -> ChildExecutionResult | None: ...
 
     def execute(self, request: ChildExecutionRequest) -> ChildExecutionResult: ...
 
@@ -88,9 +80,7 @@ class ExistingChildServiceDelegate(Protocol):
 class ExistingResearchServiceComposition:
     """Call existing Dataset/Feature/Controlled/Canonical owners exactly once."""
 
-    def __init__(
-        self, *, delegates: Mapping[ContinuousChildKind, ExistingChildServiceDelegate]
-    ) -> None:
+    def __init__(self, *, delegates: Mapping[ContinuousChildKind, ExistingChildServiceDelegate]) -> None:
         expected = set(ContinuousChildKind)
         if set(delegates) != expected:
             raise ValueError("composition requires every existing child service")
@@ -99,9 +89,7 @@ class ExistingResearchServiceComposition:
                 raise ValueError("child service delegate kind mismatch")
         self._delegates = dict(delegates)
 
-    def lookup_children(
-        self, request: ChildExecutionRequest
-    ) -> tuple[ChildExecutionResult, ...] | None:
+    def lookup_children(self, request: ChildExecutionRequest) -> tuple[ChildExecutionResult, ...] | None:
         results: list[ChildExecutionResult] = []
         stage_request = request
         for kind in CONTINUOUS_CHILD_ORDER:
@@ -113,9 +101,7 @@ class ExistingResearchServiceComposition:
             stage_request = _with_upstream_result(stage_request, result)
         return tuple(results)
 
-    def execute_children(
-        self, request: ChildExecutionRequest
-    ) -> tuple[ChildExecutionResult, ...]:
+    def execute_children(self, request: ChildExecutionRequest) -> tuple[ChildExecutionResult, ...]:
         results: list[ChildExecutionResult] = []
         stage_request = request
         for kind in CONTINUOUS_CHILD_ORDER:
@@ -135,6 +121,7 @@ CONTINUOUS_CHILD_ORDER = (
     ContinuousChildKind.STATE_SYSTEM,
     ContinuousChildKind.CONTROLLED_OPERATION,
     ContinuousChildKind.CANONICAL_LIFECYCLE,
+    ContinuousChildKind.DECISION_SYSTEM,
 )
 
 
@@ -144,16 +131,8 @@ def _with_upstream_result(
 ) -> ChildExecutionRequest:
     reference = RuntimeArtifactReference(
         reference_kind=f"{result.child_kind.value}_OUTPUT",
-        artifact_id=(
-            result.child_receipt_id
-            if result.child_artifact_id is None
-            else result.child_artifact_id
-        ),
-        content_hash=(
-            result.child_receipt_hash
-            if result.child_artifact_hash is None
-            else result.child_artifact_hash
-        ),
+        artifact_id=(result.child_receipt_id if result.child_artifact_id is None else result.child_artifact_id),
+        content_hash=(result.child_receipt_hash if result.child_artifact_hash is None else result.child_artifact_hash),
     )
     return replace(
         request,
@@ -170,9 +149,7 @@ def _with_upstream_result(
     )
 
 
-def _require_kind(
-    expected: ContinuousChildKind, result: ChildExecutionResult
-) -> None:
+def _require_kind(expected: ContinuousChildKind, result: ChildExecutionResult) -> None:
     if result.child_kind is not expected:
         raise ValueError("existing child service returned a different kind")
 

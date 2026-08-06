@@ -20,8 +20,8 @@ from market_regime_alpha.persistence.postgres.migrator import (
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 24))
-    assert len({item.name for item in migrations}) == 23
+    assert tuple(item.version for item in migrations) == tuple(range(1, 26))
+    assert len({item.name for item in migrations}) == 25
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -43,13 +43,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 24))
+    assert tuple(item.version for item in first) == tuple(range(1, 26))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
-        rows = connection.execute(
-            "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
-        ).fetchall()
-    assert len(rows) == 23
+        rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
+    assert len(rows) == 25
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -74,9 +72,7 @@ def test_failed_migration_does_not_record_version(
     with pytest.raises(Exception):
         PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
     with postgres_factory.connection(read_only=True) as connection:
-        rows = connection.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        rows = connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         durable = connection.execute("SELECT to_regclass('durable_one')").fetchone()
     assert rows == [(1,)]
     assert durable == ("durable_one",)
@@ -95,9 +91,7 @@ def test_concurrent_migrators_are_serialized(
     migrator = PostgresMigrator(migrations=migrations)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = tuple(
-            executor.map(lambda _: migrator.apply_all(postgres_factory), range(2))
-        )
+        results = tuple(executor.map(lambda _: migrator.apply_all(postgres_factory), range(2)))
 
     assert sorted(len(result) for result in results) == [0, 1]
 
@@ -114,6 +108,8 @@ def test_migration_021_upgrades_an_existing_020_authority(
         (21, "continuous_runtime_schedule"),
         (22, "state_system_dynamic_pool"),
         (23, "state_system_runtime_child"),
+        (24, "postgres_only_authority"),
+        (25, "decision_system"),
     )
 
 
@@ -128,6 +124,8 @@ def test_migration_022_upgrades_an_existing_021_authority(
     assert tuple((item.version, item.name) for item in upgraded) == (
         (22, "state_system_dynamic_pool"),
         (23, "state_system_runtime_child"),
+        (24, "postgres_only_authority"),
+        (25, "decision_system"),
     )
 
 
@@ -141,4 +139,25 @@ def test_migration_023_upgrades_an_existing_022_authority(
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (23, "state_system_runtime_child"),
+        (24, "postgres_only_authority"),
+        (25, "decision_system"),
     )
+
+
+def test_migrations_024_and_025_upgrade_existing_023_authority(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:23]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (24, "postgres_only_authority"),
+        (25, "decision_system"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        latest = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
+        decision_table = connection.execute("SELECT to_regclass('daily_decision_summary')").fetchone()
+    assert latest == (25, "decision_system")
+    assert decision_table == ("daily_decision_summary",)

@@ -12,7 +12,6 @@ from market_regime_alpha.application.daily_loop import (
     DailyLoopRunner,
     DailyRunCommand,
     RunMode,
-    SQLiteDailyRunRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.providers.public_composite import (
@@ -21,6 +20,10 @@ from market_regime_alpha.data.providers.public_composite import (
 )
 from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
 from tests.application.daily_loop.public_fixture import DECISION, public_fixture
+from tests.postgres_path_repositories import (
+    PostgresDailyRunRepository,
+    postgres_cli_arguments,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -48,7 +51,7 @@ def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
         replay_source_manifest_id=source_manifest.source_manifest_id,
     )
     runner = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
     )
     completed = runner.run(command, replay_archive_path=archive)
@@ -60,8 +63,7 @@ def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
             str(SCRIPT),
             "--output-root",
             str(command.output_root),
-            "--journal",
-            str(tmp_path / "runtime.sqlite3"),
+            *postgres_cli_arguments(tmp_path / "runtime.postgres-scope"),
             "replay",
             "--run-id",
             str(completed.record.daily_run_id),
@@ -139,8 +141,7 @@ def test_finalize_cli_does_not_construct_live_clients(
             (
                 "--output-root",
                 str(tmp_path / "runtime"),
-                "--journal",
-                str(tmp_path / "runtime.sqlite3"),
+                *postgres_cli_arguments(tmp_path / "runtime.postgres-scope"),
                 "finalize-run",
                 "--decision-date",
                 "2025-02-03",

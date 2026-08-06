@@ -9,9 +9,6 @@ from market_regime_alpha.application.state_system.repository import (
     StateSystemConflict,
     StateSystemIntegrityError,
 )
-from market_regime_alpha.application.state_system.sqlite_repository import (
-    SQLiteStateSystemRepository,
-)
 from market_regime_alpha.application.state_system.runtime import (
     OrderedStateResearchPipeline,
     StateResearchPipelineResult,
@@ -22,7 +19,6 @@ from market_regime_alpha.application.state_system.runtime import (
 
 __all__ = [
     "PostgresStateSystemRepository",
-    "SQLiteStateSystemRepository",
     "StateSystemConflict",
     "StateSystemIntegrityError",
     "OrderedStateResearchPipeline",

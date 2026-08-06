@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import sqlite3
+import psycopg
 
 import pytest
 
@@ -22,6 +22,10 @@ from market_regime_alpha.dividend_t.brokers import (
 )
 from tests.execution.risk_reduction_confirmation_support import (
     build_confirmation_fixture,
+)
+from tests.postgres_path_repositories import (
+    postgres_cli_arguments,
+    postgres_connection,
 )
 
 
@@ -56,8 +60,7 @@ def _arguments(root: Path, fixture) -> tuple[str, ...]:
     )
     command = fixture.command
     return (
-        "--database",
-        str(fixture.repository.path),
+        *postgres_cli_arguments(fixture.repository.path),
         "--risk-reducing-decision-id",
         str(command.risk_reducing_decision_id),
         "--risk-reducing-decision-hash",
@@ -128,7 +131,7 @@ def test_module_cli_creates_only_one_manual_trade_and_invokes_no_broker(
 
     for adapter in (PaperBrokerAdapter, QMTAdapter, PTradeAdapter):
         monkeypatch.setattr(adapter, "place_order", unexpected_broker_call)
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         fill_count_before = connection.execute(
             "SELECT COUNT(*) FROM manual_fills"
         ).fetchone()[0]
@@ -141,7 +144,7 @@ def test_module_cli_creates_only_one_manual_trade_and_invokes_no_broker(
     assert payload["MANUAL_INTENT_CREATED"] is True
     assert payload["manual_trade_id"]
     assert broker_calls == 0
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM manual_fills"
         ).fetchone()[0] == fill_count_before
@@ -153,8 +156,9 @@ def test_module_cli_creates_only_one_manual_trade_and_invokes_no_broker(
         ).fetchone()[0] == 1
         assert connection.execute(
             """
-            SELECT COUNT(*) FROM sqlite_master
-            WHERE type = 'table' AND lower(name) LIKE '%broker%order%'
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND lower(table_name) LIKE '%broker%order%'
             """
         ).fetchone()[0] == 0
 
@@ -201,7 +205,7 @@ def test_module_cli_repository_error_has_distinct_stable_exit_and_safety_payload
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
     def unavailable_repository(_factory: object) -> object:
-        raise sqlite3.OperationalError("database is locked")
+        raise psycopg.OperationalError("database is unavailable")
 
     monkeypatch.setattr(
         "market_regime_alpha.persistence.repository_factory."
@@ -224,7 +228,7 @@ def test_module_cli_idempotency_conflict_has_distinct_stable_exit(
 ) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     arguments = _arguments(tmp_path, fixture)
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         fill_count_before = connection.execute(
             "SELECT COUNT(*) FROM manual_fills"
         ).fetchone()[0]
@@ -241,7 +245,7 @@ def test_module_cli_idempotency_conflict_has_distinct_stable_exit(
     assert payload["attempt_id"] is None
     assert payload["manual_trade_id"] is None
     assert payload["reason_codes"] == ["IDEMPOTENCY_KEY_CONFLICT"]
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         assert connection.execute(
             """
             SELECT COUNT(*) FROM manual_trade_records
@@ -291,7 +295,7 @@ def test_module_cli_rejects_adjacent_decimal_prices_that_collapse_to_one_float(
         "10.0000000000000002",
     )
     assert float(adjacent_prices[0]) == float(adjacent_prices[1])
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         trade_count_before = connection.execute(
             "SELECT COUNT(*) FROM manual_trade_records"
         ).fetchone()[0]
@@ -312,7 +316,7 @@ def test_module_cli_rejects_adjacent_decimal_prices_that_collapse_to_one_float(
         assert payload["reason_codes"] == ["COMMAND_VALIDATION_FAILED"]
         assert "losslessly" in payload["error"]
 
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM manual_trade_records"
         ).fetchone()[0] == trade_count_before

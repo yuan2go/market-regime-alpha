@@ -23,8 +23,8 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
     LifecycleHandlerRegistrationError,
     LifecycleStageExecutionError,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.contracts import (
     LifecycleStageContext,
@@ -123,7 +123,6 @@ def _command(
         model_references=(),
         stop_after_stage=stop_after_stage,
         output_directory=Path("artifacts/lifecycle-tests"),
-        authority_database_locator=None,
     )
 
 
@@ -202,7 +201,6 @@ def _risk_command() -> CanonicalLifecycleCommand:
         model_references=(),
         stop_after_stage=LifecycleStageName.RISK_REDUCTION,
         output_directory=Path("artifacts/lifecycle-tests"),
-        authority_database_locator=None,
     )
 
 
@@ -285,7 +283,7 @@ def _runner(
     clock: TickClock | None = None,
 ) -> CanonicalDecisionLifecycleRunner:
     return CanonicalDecisionLifecycleRunner(
-        repository=SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3"),
+        repository=PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope"),
         handlers=handlers,
         clock=clock or TickClock(),
     )
@@ -517,8 +515,8 @@ def test_runner_journals_invalid_completion_cursor_as_failure(
             blocker_reason=None,
         )
 
-    repository = SQLiteLifecycleRunRepository(
-        tmp_path / f"invalid-{stage_name.value}.sqlite3"
+    repository = PostgresLifecycleRunRepository(
+        tmp_path / f"invalid-{stage_name.value}.postgres-scope"
     )
     calls: list[tuple[str, LifecycleStageName]] = []
     handlers = _handlers(calls, overrides={stage_name: invalid_completion})

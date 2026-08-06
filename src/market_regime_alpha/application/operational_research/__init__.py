@@ -35,9 +35,6 @@ from market_regime_alpha.application.operational_research.composite_repository i
 from market_regime_alpha.application.operational_research.composite_service import (
     CompositeOperationalEvidenceApplicationService,
 )
-from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
-    SQLiteCompositeOperationalRepository,
-)
 from market_regime_alpha.application.operational_research.postgres_composite_repository import (
     PostgresCompositeOperationalRepository,
 )
@@ -59,7 +56,6 @@ __all__ = [
     "CompositeOperationalEvidenceApplicationService",
     "OperationalResearchRunner",
     "PostgresCompositeOperationalRepository",
-    "SQLiteCompositeOperationalRepository",
     "SupplementalResearchEvidenceBundle",
     "VerifiedCompositeOperationalManifest",
     "adapt_legacy_operational_research_inputs",

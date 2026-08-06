@@ -29,7 +29,6 @@ from market_regime_alpha.features.materialization_run import (
     DEFAULT_FEATURE_TASK_LEASE,
     FeatureMaterializationExecutionMode,
     FeatureMaterializationTaskSpec,
-    SQLiteFeatureMaterializationRunRepository,
 )
 from market_regime_alpha.features.encoding_v2 import (
     FEATURE_ARTIFACT_ENCODING_V2,
@@ -96,7 +95,7 @@ class VerifiedFeatureBundleV2:
 
 FailureInjector = Callable[[str], None]
 FeatureRunRepositoryFactory = Callable[
-    [Path, Callable[[], datetime] | None, timedelta],
+    [Callable[[], datetime] | None, timedelta],
     Any,
 ]
 
@@ -560,22 +559,14 @@ class FeatureMaterializationRunner:
             feature_set=feature_set,
             selected_symbols=selected_symbols,
         )
-        repository_options: dict[str, Any] = {
-            "lease_duration": self._lease_duration,
-        }
-        if self._clock is not None:
-            repository_options["clock"] = self._clock
         if self._repository_factory is None:
-            repository = SQLiteFeatureMaterializationRunRepository(
-                output_root / "materialization-run.sqlite3",
-                **repository_options,
+            raise RuntimeError(
+                "DATABASE_UNAVAILABLE: PostgreSQL Feature repository is required"
             )
-        else:
-            repository = self._repository_factory(
-                output_root / "materialization-run.sqlite3",
-                self._clock,
-                self._lease_duration,
-            )
+        repository = self._repository_factory(
+            self._clock,
+            self._lease_duration,
+        )
         snapshot = repository.prepare(
             idempotency_key=idempotency_key,
             command_hash=command_hash,

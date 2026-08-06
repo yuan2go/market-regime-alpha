@@ -77,7 +77,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Canonical Market Data and Feature Spine](architecture/13-Canonical-Market-Data-and-Feature-Spine.md)
 - [Canonical Signal Authority and Operational Feature Handoff](architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md)
 - [Controlled 14:55 Decision-Time Operation](architecture/15-Controlled-Decision-Time-Operation.md)
-- [PostgreSQL Free-Data Migration Matrix](architecture/audits/PostgreSQL-Free-Data-Migration-Matrix.md)
+- [Historical PostgreSQL Free-Data Migration Matrix](architecture/audits/PostgreSQL-Free-Data-Migration-Matrix.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
 
 ### Current delivery evidence
@@ -138,6 +138,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [PostgreSQL-Only Decision Closure Implementation Plan](superpowers/plans/2026-08-06-wp-pgsql-decision-closure.md)
 - [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
 - [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
+- [WP-PGSQL-01 PostgreSQL Authority Only](roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md)
+- [WP-DECISION-01 Daily Research Decision Closure](roadmap/work-packages/WP-DECISION-01-Daily-Decision-Closure.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
@@ -146,6 +148,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 
 - [Production Decision Lifecycle Runbook](operations/Production-Decision-Lifecycle-Runbook.md)
 - [PostgreSQL Authority Runbook](operations/PostgreSQL-Authority-Runbook.md)
+- [Daily Decision System Runbook](operations/Daily-Decision-System-Runbook.md)
 - [Continuous Research Runtime Runbook](runbooks/Continuous-Research-Runtime.md)
 - [Stateful Research Runtime Runbook](runbooks/Stateful-Research-Runtime.md)
 - [Claude Code Production Decision Lifecycle Master Prompt](prompts/Claude-Code-Production-Decision-Lifecycle.md)

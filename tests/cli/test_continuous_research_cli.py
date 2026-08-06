@@ -5,6 +5,7 @@ import os
 
 from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
+    DATABASE_ERROR,
     SUCCESS,
     main,
 )
@@ -88,17 +89,19 @@ def test_cli_requires_explicit_postgres_and_never_echoes_credentials(capsys) -> 
         main(
             [
                 "--database-url",
-                f"sqlite://user:{secret}@localhost/database",
+                f"postgresql://user:{secret}@localhost/database",
                 "report",
                 "--run-id",
                 "missing-run",
             ]
         )
-        == ARGUMENT_ERROR
+        == DATABASE_ERROR
     )
     output = capsys.readouterr().out
     assert secret not in output
-    assert json.loads(output)["status"] == "FAILED"
+    failed = json.loads(output)
+    assert failed["status"] == "FAILED"
+    assert failed["reason_code"] == "POSTGRESQL_OPERATION_FAILED"
 
 
 def test_cli_schedules_and_reserves_a_due_tick(

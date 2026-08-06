@@ -19,6 +19,7 @@ from tests.application.operational_research.test_composite_manifest_builder impo
     _policy,
 )
 from tests.daily_decision.conftest import DailyDecisionFixture
+from tests.postgres_path_repositories import postgres_cli_arguments
 
 
 def test_build_composite_cli_persists_and_replays_decision_only_manifest(
@@ -45,8 +46,7 @@ def test_build_composite_cli_persists_and_replays_decision_only_manifest(
         str(supplemental),
         "--composition-policy",
         str(policy_path),
-        "--database",
-        str(tmp_path / "h6.sqlite3"),
+        *postgres_cli_arguments(tmp_path / "h6.postgres-scope"),
         "--output-root",
         str(tmp_path / "composite"),
         "--created-at",

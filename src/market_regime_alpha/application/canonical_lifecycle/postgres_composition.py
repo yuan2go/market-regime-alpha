@@ -85,7 +85,6 @@ def build_postgres_lifecycle_runner(
         command=command,
         manifest=manifest,
         configurations=configurations,
-        authority_binder=None,
     )
     handlers = postgres_lifecycle_stage_handlers(
         factory=factory,
@@ -103,7 +102,7 @@ def postgres_lifecycle_stage_handlers(
     factory: PostgresConnectionFactory,
     base_handlers: tuple[LifecycleStageHandler, ...],
 ) -> tuple[LifecycleStageHandler, ...]:
-    """Bind domain-authority stages without a SQLite compatibility path."""
+    """Bind domain-authority stages directly to PostgreSQL repositories."""
 
     if len(base_handlers) != len(LIFECYCLE_STAGE_ORDER):
         raise ValueError("base_handlers must cover the canonical 16-stage graph")

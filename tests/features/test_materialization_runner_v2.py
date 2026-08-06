@@ -5,7 +5,10 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import (
+    feature_repository_factory,
+    postgres_connection,
+)
 
 import pytest
 
@@ -32,7 +35,9 @@ from market_regime_alpha.features.materialization_run import (
     FeatureMaterializationRunStatus,
     FeatureMaterializationTaskSpec,
     FeatureMaterializationTaskStatus,
-    SQLiteFeatureMaterializationRunRepository,
+)
+from tests.postgres_path_repositories import (
+    PostgresFeatureMaterializationRunRepository,
 )
 from market_regime_alpha.features.spine import (
     FeatureConfiguration,
@@ -214,7 +219,13 @@ def _run(
     feature_set = feature_set or canonical_technical_feature_set(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
     )
-    receipt = FeatureMaterializationRunner(max_workers=max_workers).run(
+    receipt = FeatureMaterializationRunner(
+        max_workers=max_workers,
+        repository_factory=feature_repository_factory(
+            tmp_path / "run.postgres-scope",
+            fallback_clock=lambda: CREATED_AT,
+        ),
+    ).run(
         verified_dataset=dataset,
         feature_set=feature_set,
         decision_time=DECISION_TIME,
@@ -358,7 +369,14 @@ def test_prepared_feature_execution_context_is_built_once_per_run(
     feature_set = canonical_technical_feature_set(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
     )
-    FeatureMaterializationRunner(max_workers=4, task_batch_size=2).run(
+    FeatureMaterializationRunner(
+        max_workers=4,
+        task_batch_size=2,
+        repository_factory=feature_repository_factory(
+            tmp_path / "prepared.postgres-scope",
+            fallback_clock=lambda: CREATED_AT,
+        ),
+    ).run(
         verified_dataset=dataset,
         feature_set=feature_set,
         decision_time=DECISION_TIME,
@@ -626,7 +644,13 @@ def test_concurrent_start_new_has_one_winner_and_one_explicit_conflict(
 
     def run() -> object:
         try:
-            return FeatureMaterializationRunner(max_workers=1).run(
+            return FeatureMaterializationRunner(
+                max_workers=1,
+                repository_factory=feature_repository_factory(
+                    tmp_path / "concurrent.postgres-scope",
+                    fallback_clock=lambda: CREATED_AT,
+                ),
+            ).run(
                 verified_dataset=dataset,
                 feature_set=feature_set,
                 decision_time=DECISION_TIME,
@@ -664,7 +688,12 @@ def test_arithmetic_failure_is_not_mislabeled_as_missing_data(
         fail,
     )
     with pytest.raises(FeatureComputationFailedError, match="computation failed"):
-        FeatureMaterializationRunner().run(
+        FeatureMaterializationRunner(
+            repository_factory=feature_repository_factory(
+                tmp_path / "failure.postgres-scope",
+                fallback_clock=lambda: CREATED_AT,
+            )
+        ).run(
             verified_dataset=dataset,
             feature_set=feature_set,
             decision_time=DECISION_TIME,
@@ -706,8 +735,8 @@ def test_failed_materialization_resumes_exact_tasks_without_republishing_complet
         FeatureMaterializationStatus.COMPLETE,
         FeatureMaterializationStatus.PARTIAL_COVERAGE,
     }
-    repository = SQLiteFeatureMaterializationRunRepository(
-        tmp_path / "features" / "materialization-run.sqlite3"
+    repository = PostgresFeatureMaterializationRunRepository(
+        tmp_path / "run.postgres-scope"
     )
     snapshot = repository.snapshot(1)
     assert snapshot.status is FeatureMaterializationRunStatus.COMPLETE
@@ -722,8 +751,8 @@ def test_failed_materialization_resumes_exact_tasks_without_republishing_complet
 def test_materialization_repository_claim_cas_stale_recovery_and_history(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "run.sqlite3"
-    repository = SQLiteFeatureMaterializationRunRepository(path)
+    path = tmp_path / "run.postgres-scope"
+    repository = PostgresFeatureMaterializationRunRepository(path)
     tasks = (
         FeatureMaterializationTaskSpec(
             symbol="600000.SH", feature_id="feature-a", timeframe=Timeframe.DAILY
@@ -751,10 +780,10 @@ def test_materialization_repository_claim_cas_stale_recovery_and_history(
             first, artifact_id="artifact-a", artifact_hash=MANIFEST_HASH
         )
 
-    with sqlite3.connect(path) as connection:
+    with postgres_connection(path) as connection:
         connection.execute(
-            "UPDATE feature_materialization_task SET claimed_at = ? "
-            "WHERE run_id = ? AND task_key = ?",
+            "UPDATE feature_materialization_task SET claimed_at = %s "
+            "WHERE run_id = %s AND task_key = %s",
             ("2000-01-01T00:00:00+00:00", snapshot.run_id, second.task_key),
         )
     recovered = repository.claim_next(
@@ -769,7 +798,7 @@ def test_materialization_repository_claim_cas_stale_recovery_and_history(
     repository.complete_task(
         recovered, artifact_id="artifact-b", artifact_hash=MANIFEST_HASH
     )
-    rebuilt = SQLiteFeatureMaterializationRunRepository(path).snapshot(snapshot.run_id)
+    rebuilt = PostgresFeatureMaterializationRunRepository(path).snapshot(snapshot.run_id)
     assert all(
         status is FeatureMaterializationTaskStatus.COMPLETE
         for _, status, _, _ in rebuilt.tasks

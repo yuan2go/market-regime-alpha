@@ -30,6 +30,11 @@ from market_regime_alpha.migration.comparison import (
     compare_technical_observables,
     publish_technical_comparison,
 )
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -46,12 +51,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbols", action="append", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--code-revision", required=True)
+    add_database_arguments(parser)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    repositories: RepositoryFactory | None = None
     try:
         args = build_parser().parse_args(argv)
+        repositories = RepositoryFactory(settings_from_namespace(args))
         symbols = parse_symbols(args.symbols)
         feature_set = load_feature_set(args.feature_set_config)
         requested = parse_symbols(args.feature_id)
@@ -69,7 +77,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             else canonical_technical_comparison_policy()
         )
         output_root = args.output_dir.resolve()
-        receipt = FeatureMaterializationRunner(max_workers=1).run(
+        receipt = FeatureMaterializationRunner(
+            max_workers=1,
+            repository_factory=repositories.feature_materialization_for_path,
+        ).run(
             verified_dataset=dataset,
             feature_set=feature_set,
             decision_time=dataset.artifact.decision_time,
@@ -110,6 +121,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (TypeError, ValueError) as exc:
         emit_error(status="REJECTED", reason_code="LEGACY_COMPARISON_INPUT_REJECTED", error=exc)
         return EXIT_INPUT_TAMPERED if "hash" in str(exc).lower() else EXIT_ARGUMENT_ERROR
+    finally:
+        if repositories is not None:
+            repositories.close()
 
     regression = any(item.canonical_regression for item in reports)
     emit(

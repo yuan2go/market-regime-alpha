@@ -41,30 +41,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = build_parser().parse_args(argv)
         package_path = args.package.resolve()
         package = load_controlled_operation_package(package_path)
-        repositories = RepositoryFactory(settings_from_namespace(args))
-        repositories.assert_runtime_binding(
-            "CONTROLLED_OPERATION",
-            str(package.command.run_id),
-        )
-        feature_repository = repositories.feature_materialization(
-            clock=_utc_now,
-        )
+        with RepositoryFactory(settings_from_namespace(args)) as repositories:
+            repositories.assert_runtime_binding(
+                "CONTROLLED_OPERATION",
+                str(package.command.run_id),
+            )
+            feature_repository = repositories.feature_materialization(
+                clock=_utc_now,
+            )
 
-        def load_feature_receipts(
-            _path: Path,
-        ) -> tuple[FeatureMaterializationReceipt, ...]:
-            return feature_repository.receipts()
+            def load_feature_receipts(
+                _path: Path,
+            ) -> tuple[FeatureMaterializationReceipt, ...]:
+                return feature_repository.receipts()
 
-        feature_receipt_loader: Callable[
-            [Path], tuple[FeatureMaterializationReceipt, ...]
-        ] = load_feature_receipts
-        report = replay_controlled_operation(
-            package_path,
-            canonical_repository_factory=(
-                repositories.controlled_canonical_repository
-            ),
-            feature_receipt_loader=feature_receipt_loader,
-        )
+            feature_receipt_loader: Callable[
+                [Path], tuple[FeatureMaterializationReceipt, ...]
+            ] = load_feature_receipts
+            report = replay_controlled_operation(
+                package_path,
+                canonical_repository_factory=(
+                    repositories.controlled_canonical_repository
+                ),
+                feature_receipt_loader=feature_receipt_loader,
+            )
         emit({**report.to_canonical_dict(), **safety_declarations()})
         return ControlledExitCode.SUCCESS
     except ControlledCLIError as exc:

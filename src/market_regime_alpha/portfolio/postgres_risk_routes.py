@@ -22,6 +22,7 @@ from market_regime_alpha.persistence.postgres.native_repository import (
     NativePostgresRepository,
     PostgresConnection,
     acquire_scope_lock,
+    aware_datetime,
 )
 
 class PostgresRiskRouteRepository(NativePostgresRepository):
@@ -86,7 +87,7 @@ class PostgresRiskRouteRepository(NativePostgresRepository):
                             _json(execution_observation.to_canonical_dict()),
                             _json(configuration.to_canonical_dict()),
                             _json(decision.to_canonical_dict()),
-                            decision.assessed_at.isoformat(),
+                            decision.assessed_at,
                         ),
                     )
                 else:
@@ -108,7 +109,7 @@ class PostgresRiskRouteRepository(NativePostgresRepository):
                         idempotency_key,
                         command_hash,
                         str(decision.decision_id),
-                        decision.assessed_at.isoformat(),
+                        decision.assessed_at,
                     ),
                 )
                 stored_decision = _load_reducing_decision(
@@ -220,7 +221,8 @@ def _restore_bundle(
         or row["action"] != decision.action.value
         or row["state"] != decision.state.value
         or row["content_hash"] != decision.content_hash
-        or row["assessed_at"] != decision.assessed_at.isoformat()
+        or aware_datetime(row["assessed_at"], label="assessed_at")
+        != decision.assessed_at
     ):
         raise ValueError("risk-reducing decision projection is invalid")
     if (

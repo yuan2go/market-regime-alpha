@@ -12,6 +12,7 @@ from market_regime_alpha.features.materialization_run import (
     FeatureMaterializationExecutionMode,
 )
 from market_regime_alpha.features.materialization_v2 import (
+    FeatureRunRepositoryFactory,
     FeatureMaterializationRunner,
     VerifiedFeatureBundleV2,
     load_verified_feature_bundle_v2,
@@ -40,8 +41,16 @@ class UniverseFeatureHandoff:
 class OperationalFeatureHandoffRunner:
     """Materialize the full governed universe before Candidate Discovery."""
 
-    def __init__(self, *, max_workers: int = 1) -> None:
-        self._runner = FeatureMaterializationRunner(max_workers=max_workers)
+    def __init__(
+        self,
+        *,
+        repository_factory: FeatureRunRepositoryFactory,
+        max_workers: int = 1,
+    ) -> None:
+        self._runner = FeatureMaterializationRunner(
+            max_workers=max_workers,
+            repository_factory=repository_factory,
+        )
 
     def materialize_universe(
         self,

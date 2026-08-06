@@ -53,10 +53,6 @@ from market_regime_alpha.platform.target_evaluation import (
     TargetKind,
     TargetProtocol,
 )
-from market_regime_alpha.platform.sqlite_governance import (
-    SQLiteExperimentGovernanceRepository,
-    SQLiteModelRegistryRepository,
-)
 from market_regime_alpha.platform.postgres_governance import (
     PostgresExperimentGovernanceRepository,
     PostgresModelRegistryRepository,
@@ -96,8 +92,6 @@ __all__ = [
     "ResearchHypothesisId",
     "ReturnBasis",
     "SingleFeatureCandidateModelSpec",
-    "SQLiteExperimentGovernanceRepository",
-    "SQLiteModelRegistryRepository",
     "TargetKind",
     "TargetProtocol",
     "TheoryDefinition",

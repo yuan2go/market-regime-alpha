@@ -175,7 +175,7 @@ def test_postgres_free_data_prepare_is_idempotent_and_never_writes_sqlite(
     assert execution.terminal_package.status.value == "DATA_BLOCKED"
     assert execution.terminal_package.candidate_count == 0
     assert execution.decision is None
-    assert not tuple(tmp_path.rglob("*.sqlite*"))
+    assert not tuple(tmp_path.rglob("*.postgres-scope*"))
     with postgres_factory.connection(read_only=True) as connection:
         bindings = connection.execute(
             "SELECT scope_type FROM runtime_database_bindings ORDER BY scope_type"

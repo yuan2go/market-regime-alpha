@@ -15,8 +15,8 @@ from market_regime_alpha.application.daily_loop.repositories import (
     AcquisitionStageReceipt,
     StageReceipt,
 )
-from market_regime_alpha.application.daily_loop.sqlite_repository import (
-    SQLiteDailyRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresDailyRunRepository,
 )
 from market_regime_alpha.application.daily_loop.state import (
     DailyRunStatus,
@@ -156,12 +156,12 @@ def test_daily_run_state_machine_distinguishes_blocked_failed_and_reviewed() -> 
     )
 
 
-def test_sqlite_journal_is_idempotent_and_preserves_request_primary_key(
+def test_postgres_journal_is_idempotent_and_preserves_request_primary_key(
     tmp_path: Path,
 ) -> None:
-    journal = tmp_path / "runtime.sqlite"
+    journal = tmp_path / "runtime.postgres-scope"
     command = _command(tmp_path / "runs")
-    repository = SQLiteDailyRunRepository(journal)
+    repository = PostgresDailyRunRepository(journal)
     now = datetime(2026, 7, 24, 14, 54, tzinfo=SHANGHAI)
 
     created = repository.create_or_get(command, created_at=now)
@@ -185,7 +185,7 @@ def test_sqlite_journal_is_idempotent_and_preserves_request_primary_key(
             changed_at=now,
         )
 
-    restarted = SQLiteDailyRunRepository(journal)
+    restarted = PostgresDailyRunRepository(journal)
     acquiring = restarted.get(command.run_request_id)
     assert acquiring.status is DailyRunStatus.SOURCE_ACQUIRING
     identity = _identity(command)
@@ -211,10 +211,10 @@ def test_sqlite_journal_is_idempotent_and_preserves_request_primary_key(
         )
 
 
-def test_sqlite_journal_recovers_failed_stage_after_restart(tmp_path: Path) -> None:
-    journal = tmp_path / "runtime.sqlite"
+def test_postgres_journal_recovers_failed_stage_after_restart(tmp_path: Path) -> None:
+    journal = tmp_path / "runtime.postgres-scope"
     command = _command(tmp_path / "runs")
-    repository = SQLiteDailyRunRepository(journal)
+    repository = PostgresDailyRunRepository(journal)
     now = datetime(2026, 7, 24, 14, 54, tzinfo=SHANGHAI)
     repository.create_or_get(command, created_at=now)
     repository.begin_source_acquisition(command.run_request_id, changed_at=now)
@@ -231,7 +231,7 @@ def test_sqlite_journal_recovers_failed_stage_after_restart(tmp_path: Path) -> N
 
     assert failed.status is DailyRunStatus.FAILED
     assert failed.resume_status is DailyRunStatus.SOURCE_FROZEN
-    restarted = SQLiteDailyRunRepository(journal)
+    restarted = PostgresDailyRunRepository(journal)
     resumed = restarted.resume_failed(
         command.run_request_id,
         changed_at=now,
@@ -241,11 +241,11 @@ def test_sqlite_journal_recovers_failed_stage_after_restart(tmp_path: Path) -> N
     assert resumed.resume_status is None
 
 
-def test_sqlite_stage_receipts_are_idempotent_and_conflict_checked(
+def test_postgres_stage_receipts_are_idempotent_and_conflict_checked(
     tmp_path: Path,
 ) -> None:
     command = _command(tmp_path / "runs")
-    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite")
+    repository = PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope")
     now = datetime(2026, 7, 24, 14, 54, tzinfo=SHANGHAI)
     repository.create_or_get(command, created_at=now)
     receipt = StageReceipt(
@@ -259,7 +259,7 @@ def test_sqlite_stage_receipts_are_idempotent_and_conflict_checked(
     assert repository.record_stage_receipt(receipt) == receipt
     assert repository.record_stage_receipt(receipt) == receipt
     assert (
-        SQLiteDailyRunRepository(tmp_path / "runtime.sqlite").get_stage_receipt(
+        PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope").get_stage_receipt(
             command.run_request_id,
             DailyRunStatus.SOURCE_ACQUIRING,
         )
@@ -277,10 +277,10 @@ def test_sqlite_stage_receipts_are_idempotent_and_conflict_checked(
         )
 
 
-def test_sqlite_acquisition_receipts_survive_restart(tmp_path: Path) -> None:
+def test_postgres_acquisition_receipts_survive_restart(tmp_path: Path) -> None:
     command = _command(tmp_path / "runs")
-    journal = tmp_path / "runtime.sqlite"
-    repository = SQLiteDailyRunRepository(journal)
+    journal = tmp_path / "runtime.postgres-scope"
+    repository = PostgresDailyRunRepository(journal)
     now = datetime(2026, 7, 24, 14, 54, tzinfo=SHANGHAI)
     repository.create_or_get(command, created_at=now)
     receipt = AcquisitionStageReceipt(
@@ -295,7 +295,7 @@ def test_sqlite_acquisition_receipts_survive_restart(tmp_path: Path) -> None:
     assert repository.record_acquisition_receipt(receipt) == receipt
     assert repository.record_acquisition_receipt(receipt) == receipt
     assert (
-        SQLiteDailyRunRepository(journal).get_acquisition_receipt(
+        PostgresDailyRunRepository(journal).get_acquisition_receipt(
             command.run_request_id,
             PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
         )

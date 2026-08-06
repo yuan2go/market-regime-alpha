@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import os
+import re
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
 DATABASE_URL_ENV = "MARKET_REGIME_ALPHA_DATABASE_URL"
+DATABASE_SCHEMA_ENV = "MARKET_REGIME_ALPHA_DATABASE_SCHEMA"
 POSTGRES_SCHEMES = frozenset({"postgres", "postgresql"})
+_SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 class DatabaseConfigurationError(ValueError):
@@ -21,17 +24,26 @@ class DatabaseSettings:
     """The only supported database authority: one PostgreSQL URL."""
 
     database_url: str = field(repr=False)
+    application_schema: str = "market_regime_alpha"
 
     def __post_init__(self) -> None:
         if not isinstance(self.database_url, str):
             raise TypeError("database_url must be a string")
         _validate_postgres_url(self.database_url)
+        if (
+            not isinstance(self.application_schema, str)
+            or not _SCHEMA_NAME.fullmatch(self.application_schema)
+        ):
+            raise DatabaseConfigurationError(
+                "PostgreSQL application schema must be a lowercase SQL identifier"
+            )
 
     @classmethod
     def from_sources(
         cls,
         *,
         database_url: str | None,
+        application_schema: str | None = None,
         environ: Mapping[str, str] | None = None,
     ) -> DatabaseSettings:
         environment = os.environ if environ is None else environ
@@ -44,14 +56,23 @@ class DatabaseSettings:
                 "PostgreSQL configuration is required through --database-url "
                 f"or {DATABASE_URL_ENV}"
             )
-        return cls(database_url=selected_url)
+        selected_schema = _optional_text(application_schema) or _optional_text(
+            environment.get(DATABASE_SCHEMA_ENV)
+        )
+        return cls(
+            database_url=selected_url,
+            application_schema=selected_schema or "market_regime_alpha",
+        )
 
     def require_database_url(self) -> str:
         return self.database_url
 
     def __repr__(self) -> str:
         authority = redact_database_url(self.database_url)
-        return f"DatabaseSettings(authority={authority!r})"
+        return (
+            "DatabaseSettings("
+            f"authority={authority!r}, application_schema={self.application_schema!r})"
+        )
 
 
 def redact_database_url(value: str) -> str:

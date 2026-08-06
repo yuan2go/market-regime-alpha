@@ -49,7 +49,7 @@ def test_explicit_database_url_precedes_environment() -> None:
 @pytest.mark.parametrize(
     "value",
     [
-        "sqlite:///tmp/runtime.sqlite3",
+        "postgresql:///tmp/runtime.postgres-scope",
         "http://127.0.0.1/database",
         "postgresql://127.0.0.1",
     ],

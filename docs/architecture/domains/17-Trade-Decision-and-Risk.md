@@ -168,7 +168,9 @@ Events are append-only audit facts. Before any service extraction, database comm
 - `StrategyPauseRepository`;
 - `AuditEventRepository`.
 
-Local implementation may use SQLite. Production operational authority may use PostgreSQL after repository-contract parity and migration tests exist.
+PostgreSQL 16 is the only durable local database implementation. Repository
+contract and migration tests run against isolated PostgreSQL schemas; production
+operational admission remains a separate evidence gate.
 
 ## Interactions
 

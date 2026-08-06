@@ -90,8 +90,9 @@ does not advance a pointer or resume a run.
 7. Verify the stale worker cannot update a current pointer or publish a receipt.
 8. Use the content-validating Reader for every Pool recovered from storage.
 
-SQLite may replay/read explicitly selected compatibility data. It is not the
-Continuous all-day authority and cannot prove PostgreSQL Lease/fencing safety.
+Replay and recovery use an isolated PostgreSQL database or schema. They must
+validate the same Claim, Lease, fencing and CAS behavior as the runtime; a
+file-backed persistence substitute is prohibited.
 
 ## 6. Incident checks
 

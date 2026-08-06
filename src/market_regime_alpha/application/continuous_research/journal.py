@@ -61,6 +61,7 @@ class ContinuousChildKind(str, Enum):
     STATE_SYSTEM = "STATE_SYSTEM"
     CONTROLLED_OPERATION = "CONTROLLED_OPERATION"
     CANONICAL_LIFECYCLE = "CANONICAL_LIFECYCLE"
+    DECISION_SYSTEM = "DECISION_SYSTEM"
 
 
 class ChildReferenceDisposition(str, Enum):
@@ -86,9 +87,7 @@ class RuntimeArtifactReference:
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> RuntimeArtifactReference:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> RuntimeArtifactReference:
         if set(payload) != {"reference_kind", "artifact_id", "content_hash"}:
             raise ValueError("Runtime Artifact reference fields mismatch")
         return cls(
@@ -116,11 +115,7 @@ class ClaimedRuntimeTick:
             ("fencing_token", self.fencing_token),
             ("tick_version", self.tick_version),
         ):
-            if (
-                isinstance(integer_value, bool)
-                or not isinstance(integer_value, int)
-                or integer_value < 1
-            ):
+            if isinstance(integer_value, bool) or not isinstance(integer_value, int) or integer_value < 1:
                 raise ValueError(f"{label} must be a positive integer")
         require_text("claim_id", self.claim_id)
         for label, timestamp in (
@@ -166,10 +161,7 @@ class RuntimeTickReceipt:
             ("input", self.input_references),
             ("output", self.output_references),
         ):
-            keys = tuple(
-                (item.reference_kind, str(item.artifact_id), item.content_hash)
-                for item in references
-            )
+            keys = tuple((item.reference_kind, str(item.artifact_id), item.content_hash) for item in references)
             if keys != tuple(sorted(set(keys))):
                 raise ValueError(f"{label} references must be unique and sorted")
         require_unique_text("receipt reason", self.reason_codes)
@@ -221,9 +213,7 @@ class RuntimeTickReceipt:
         digest = canonical_hash(_receipt_payload(**values))
         return cls(
             schema_version=RUNTIME_TICK_RECEIPT_SCHEMA,
-            receipt_id=ArtifactId(
-                f"continuous-tick-receipt-{digest.split(':', 1)[1][:24]}"
-            ),
+            receipt_id=ArtifactId(f"continuous-tick-receipt-{digest.split(':', 1)[1][:24]}"),
             receipt_hash=digest,
             **values,
         )
@@ -283,12 +273,8 @@ class RuntimeTickReceipt:
             tick_sequence=_integer(payload["tick_sequence"], "tick_sequence"),
             claim_id=str(payload["claim_id"]),
             fencing_token=_integer(payload["fencing_token"], "fencing_token"),
-            input_references=_references(
-                payload["input_references"], "input_references"
-            ),
-            output_references=_references(
-                payload["output_references"], "output_references"
-            ),
+            input_references=_references(payload["input_references"], "input_references"),
+            output_references=_references(payload["output_references"], "output_references"),
             reason_codes=_strings(payload["reason_codes"], "reason_codes"),
             created_at=parse_utc_second("created_at", payload["created_at"]),
         )
@@ -342,9 +328,7 @@ class ContinuousRunSnapshot:
 
 
 class ContinuousResearchJournal(Protocol):
-    def create_or_get(
-        self, command: ContinuousResearchCommand
-    ) -> ContinuousRunSnapshot: ...
+    def create_or_get(self, command: ContinuousResearchCommand) -> ContinuousRunSnapshot: ...
 
     def admit_tick(
         self,
@@ -355,9 +339,7 @@ class ContinuousResearchJournal(Protocol):
 
     def claim_next(self, run_id: ArtifactId) -> ClaimedRuntimeTick: ...
 
-    def claim_tick(
-        self, *, run_id: ArtifactId, tick_id: ArtifactId
-    ) -> ClaimedRuntimeTick: ...
+    def claim_tick(self, *, run_id: ArtifactId, tick_id: ArtifactId) -> ClaimedRuntimeTick: ...
 
     def heartbeat(self, claim: ClaimedRuntimeTick) -> ClaimedRuntimeTick: ...
 
@@ -382,9 +364,7 @@ class ContinuousResearchJournal(Protocol):
 
     def get_run(self, run_id: ArtifactId) -> ContinuousRunSnapshot: ...
 
-    def get_tick(
-        self, run_id: ArtifactId, tick_id: ArtifactId
-    ) -> ContinuousTickSnapshot: ...
+    def get_tick(self, run_id: ArtifactId, tick_id: ArtifactId) -> ContinuousTickSnapshot: ...
 
 
 def _receipt_payload(**values: Any) -> dict[str, Any]:
@@ -395,12 +375,8 @@ def _receipt_payload(**values: Any) -> dict[str, Any]:
         "tick_sequence": values["tick_sequence"],
         "claim_id": values["claim_id"],
         "fencing_token": values["fencing_token"],
-        "input_references": [
-            item.to_canonical_dict() for item in values["input_references"]
-        ],
-        "output_references": [
-            item.to_canonical_dict() for item in values["output_references"]
-        ],
+        "input_references": [item.to_canonical_dict() for item in values["input_references"]],
+        "output_references": [item.to_canonical_dict() for item in values["output_references"]],
         "reason_codes": list(values["reason_codes"]),
         "created_at": canonical_datetime(values["created_at"]),
     }

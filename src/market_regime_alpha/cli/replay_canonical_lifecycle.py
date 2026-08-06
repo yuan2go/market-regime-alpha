@@ -88,6 +88,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             idempotency_key=idempotency_key,
             clock=clock,
             output_directory=args.output_dir,
+            manual_trade_loader=(
+                repositories.risk_reduction_manual_intent().get_manual_trade
+            ),
         )
         repositories.bind_runtime(
             "CANONICAL_LIFECYCLE",
@@ -99,6 +102,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             idempotency_key=idempotency_key,
             clock=clock,
             output_directory=args.output_dir,
+            manual_trade_loader=(
+                repositories.risk_reduction_manual_intent().get_manual_trade
+            ),
         )
         hash_stable = (
             first.replay_run.run_id == second.replay_run.run_id

@@ -55,14 +55,14 @@ def test_cli_selection_requires_postgres_and_rejects_sqlite_inputs(
         settings_from_namespace(missing, dotenv_path=tmp_path / "missing.env")
 
     for arguments in (
-        ["--sqlite-database", str(tmp_path / "compatibility.sqlite3")],
-        ["--database", str(tmp_path / "compatibility.sqlite3")],
+        ["--sqlite-database", str(tmp_path / "compatibility.postgres-scope")],
+        ["--database", str(tmp_path / "compatibility.postgres-scope")],
     ):
         with pytest.raises(SystemExit):
             _parser().parse_args(arguments)
 
     sqlite_url = _parser().parse_args(
-        ["--database-url", "sqlite:///tmp/compatibility.sqlite3"]
+        ["--database-url", "postgresql:///tmp/compatibility.postgres-scope"]
     )
     with pytest.raises(DatabaseConfigurationError, match="PostgreSQL URL"):
         settings_from_namespace(

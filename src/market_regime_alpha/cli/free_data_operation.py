@@ -316,7 +316,7 @@ def free_data_operation_payload(
             postgres_metrics, "transaction_retries", 0
         )
         payload["postgres_lock_wait_seconds"] = getattr(
-            postgres_metrics, "compatibility_lock_wait_seconds", 0.0
+            postgres_metrics, "scoped_lock_wait_seconds", 0.0
         )
     return payload
 

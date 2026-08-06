@@ -47,9 +47,6 @@ from market_regime_alpha.position.thesis_health import (
     TradePermissionInRule,
     invalidation_rule_from_canonical_dict,
 )
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
-)
 from market_regime_alpha.position.postgres_thesis_health import (
     PostgresThesisHealthRepository,
 )
@@ -86,7 +83,6 @@ __all__ = [
     "PriceBelowRule",
     "PostgresThesisHealthRepository",
     "SignalStateInRule",
-    "SQLiteThesisHealthRepository",
     "ThesisHealthRuleConfiguration",
     "ThesisHealthInputBundle",
     "ThesisHealthObservationBuilder",

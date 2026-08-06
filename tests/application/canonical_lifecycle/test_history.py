@@ -4,8 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 import json
 from pathlib import Path
-import sqlite3
+import psycopg
+from tests.postgres_path_repositories import postgres_connection
 from threading import Event
+from typing import Any
 
 import pytest
 
@@ -17,8 +19,8 @@ from market_regime_alpha.application.canonical_lifecycle.contracts import (
     LifecycleRun,
     LifecycleRunId,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunStatus,
@@ -26,11 +28,11 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
 )
 from market_regime_alpha.evidence.canonical import canonical_json
 
-from .test_sqlite_repository import T0, _claimed_started, _command, _transition
+from .test_postgres_repository import T0, _claimed_started, _command, _transition
 
 
 def _settled_run(
-    repository: SQLiteLifecycleRunRepository,
+    repository: PostgresLifecycleRunRepository,
     tmp_path: Path,
     *,
     idempotency_key: str = "history-run",
@@ -45,7 +47,7 @@ def _settled_run(
 def test_history_is_complete_deterministic_and_retains_hashed_event_payloads(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope")
     run, transition = _settled_run(repository, tmp_path)
     first = repository.history(run.run_id)
     second = repository.history(run.run_id)
@@ -68,22 +70,19 @@ def test_history_uses_one_snapshot_while_concurrent_writer_commits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "journal.sqlite3"
-    reader = SQLiteLifecycleRunRepository(path)
+    path = tmp_path / "journal.postgres-scope"
+    reader = PostgresLifecycleRunRepository(path)
     command = _command(tmp_path, idempotency_key="history-snapshot")
     created = reader.create_or_get(command, created_at=T0)
-    with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
-
-    writer = SQLiteLifecycleRunRepository(path)
+    writer = PostgresLifecycleRunRepository(path)
     run_selected = Event()
     writer_committed = Event()
     original_select_run = reader._select_run
 
     def select_run_then_pause(
-        connection: sqlite3.Connection,
+        connection: Any,
         run_id: LifecycleRunId,
-    ) -> sqlite3.Row:
+    ) -> Any:
         row = original_select_run(connection, run_id)
         run_selected.set()
         if not writer_committed.wait(timeout=5):
@@ -118,21 +117,23 @@ def test_history_uses_one_snapshot_while_concurrent_writer_commits(
 
 
 def test_history_fails_closed_on_event_payload_tamper(tmp_path: Path) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope")
     run, _transition_record = _settled_run(repository, tmp_path)
-    with sqlite3.connect(repository.path) as connection:
-        connection.execute("DROP TRIGGER lifecycle_events_no_update")
+    with postgres_connection(repository.path) as connection:
+        connection.execute(
+            "DROP TRIGGER lifecycle_events_no_update ON lifecycle_events"
+        )
         row = connection.execute(
             """
             SELECT event_id, payload_json FROM lifecycle_events
-            WHERE run_id = ? AND event_type = 'ATTEMPT_FINISHED'
+            WHERE run_id = %s AND event_type = 'ATTEMPT_FINISHED'
             """,
             (str(run.run_id),),
         ).fetchone()
         payload = json.loads(str(row[1]))
         payload["extra"]["result"] = "WAITING"
         connection.execute(
-            "UPDATE lifecycle_events SET payload_json = ? WHERE event_id = ?",
+            "UPDATE lifecycle_events SET payload_json = %s WHERE event_id = %s",
             (canonical_json(payload), str(row[0])),
         )
     with pytest.raises(LifecycleJournalIntegrityError, match="payload hash"):
@@ -140,21 +141,23 @@ def test_history_fails_closed_on_event_payload_tamper(tmp_path: Path) -> None:
 
 
 def test_history_fails_closed_on_json_projection_tamper(tmp_path: Path) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope")
     run, _transition_record = _settled_run(repository, tmp_path)
-    with sqlite3.connect(repository.path) as connection:
-        connection.execute("DROP TRIGGER lifecycle_events_no_update")
+    with postgres_connection(repository.path) as connection:
+        connection.execute(
+            "DROP TRIGGER lifecycle_events_no_update ON lifecycle_events"
+        )
         row = connection.execute(
             """
             SELECT event_id, event_json FROM lifecycle_events
-            WHERE run_id = ? ORDER BY sequence_number DESC LIMIT 1
+            WHERE run_id = %s ORDER BY sequence_number DESC LIMIT 1
             """,
             (str(run.run_id),),
         ).fetchone()
         event = json.loads(str(row[1]))
         event["claim_token"] += 1
         connection.execute(
-            "UPDATE lifecycle_events SET event_json = ? WHERE event_id = ?",
+            "UPDATE lifecycle_events SET event_json = %s WHERE event_id = %s",
             (canonical_json(event), str(row[0])),
         )
     with pytest.raises(LifecycleJournalIntegrityError, match="projection mismatch"):
@@ -162,11 +165,11 @@ def test_history_fails_closed_on_json_projection_tamper(tmp_path: Path) -> None:
 
 
 def test_history_fails_closed_on_run_projection_tamper(tmp_path: Path) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope")
     run, _transition_record = _settled_run(repository, tmp_path)
-    with sqlite3.connect(repository.path) as connection:
+    with postgres_connection(repository.path) as connection:
         connection.execute(
-            "UPDATE lifecycle_runs SET status = 'POSITION_OPEN' WHERE run_id = ?",
+            "UPDATE lifecycle_runs SET status = 'POSITION_OPEN' WHERE run_id = %s",
             (str(run.run_id),),
         )
     with pytest.raises(LifecycleJournalIntegrityError, match="projection mismatch"):
@@ -174,17 +177,17 @@ def test_history_fails_closed_on_run_projection_tamper(tmp_path: Path) -> None:
 
 
 def test_history_fails_closed_on_run_json_projection_tamper(tmp_path: Path) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope")
     run, _transition_record = _settled_run(repository, tmp_path)
-    with sqlite3.connect(repository.path) as connection:
+    with postgres_connection(repository.path) as connection:
         row = connection.execute(
-            "SELECT run_json FROM lifecycle_runs WHERE run_id = ?",
+            "SELECT run_json FROM lifecycle_runs WHERE run_id = %s",
             (str(run.run_id),),
         ).fetchone()
         payload = json.loads(str(row[0]))
         payload["current_stage"] = LifecycleStageName.SIGNAL.value
         connection.execute(
-            "UPDATE lifecycle_runs SET run_json = ? WHERE run_id = ?",
+            "UPDATE lifecycle_runs SET run_json = %s WHERE run_id = %s",
             (canonical_json(payload), str(run.run_id)),
         )
     with pytest.raises(LifecycleJournalIntegrityError, match="projection mismatch"):
@@ -192,14 +195,16 @@ def test_history_fails_closed_on_run_json_projection_tamper(tmp_path: Path) -> N
 
 
 def test_get_command_fails_closed_on_command_json_rebinding(tmp_path: Path) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope")
     command = _command(tmp_path)
     run = repository.create_or_get(command, created_at=T0)
     other = _command(tmp_path, input_hash="sha256:" + "f" * 64)
-    with sqlite3.connect(repository.path) as connection:
-        connection.execute("DROP TRIGGER lifecycle_runs_identity_immutable")
+    with postgres_connection(repository.path) as connection:
         connection.execute(
-            "UPDATE lifecycle_runs SET command_json = ? WHERE run_id = ?",
+            "DROP TRIGGER lifecycle_runs_identity_immutable ON lifecycle_runs"
+        )
+        connection.execute(
+            "UPDATE lifecycle_runs SET command_json = %s WHERE run_id = %s",
             (canonical_json(other.to_canonical_dict()), str(run.run_id)),
         )
     with pytest.raises(LifecycleJournalIntegrityError, match="does not bind"):
@@ -209,7 +214,7 @@ def test_get_command_fails_closed_on_command_json_rebinding(tmp_path: Path) -> N
 def test_event_receipt_foreign_key_rejects_cross_run_stage_linkage(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope")
     first, _first_transition = _settled_run(
         repository, tmp_path, idempotency_key="receipt-run-1"
     )
@@ -217,20 +222,19 @@ def test_event_receipt_foreign_key_rejects_cross_run_stage_linkage(
         repository, tmp_path, idempotency_key="receipt-run-2"
     )
     assert first.run_id != second.run_id
-    with sqlite3.connect(repository.path) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
+    with postgres_connection(repository.path) as connection:
         sequence = connection.execute(
-            "SELECT MAX(sequence_number) + 1 FROM lifecycle_events WHERE run_id = ?",
+            "SELECT MAX(sequence_number) + 1 FROM lifecycle_events WHERE run_id = %s",
             (str(first.run_id),),
         ).fetchone()[0]
-        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        with pytest.raises(psycopg.IntegrityError, match="foreign key"):
             connection.execute(
                 """
                 INSERT INTO lifecycle_events(
                     event_id, run_id, sequence_number, event_type, stage_name,
                     attempt_id, receipt_id, event_json, payload_json,
                     payload_hash, created_at, claim_token
-                ) VALUES (?, ?, ?, 'RECEIPT_RECORDED', ?, NULL, ?, '{}', '{}', ?, ?, ?)
+                ) VALUES (%s, %s, %s, 'RECEIPT_RECORDED', %s, NULL, %s, '{}', '{}', %s, %s, %s)
                 """,
                 (
                     "cross-run-receipt-event",

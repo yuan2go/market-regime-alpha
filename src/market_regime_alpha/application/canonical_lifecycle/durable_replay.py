@@ -31,7 +31,6 @@ from market_regime_alpha.application.canonical_lifecycle.replay import (
     publish_lifecycle_replay_report,
     receipt_semantic_fingerprint,
     verify_lifecycle_replay,
-    verify_replay_reference,
 )
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleHistory,
@@ -54,10 +53,12 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleStageName,
     LifecycleStageStatus,
 )
+from market_regime_alpha.core.identity import ManualTradeId
 from market_regime_alpha.evidence.canonical import require_sha256
 
 
 Clock = Callable[[], datetime]
+ManualTradeLoader = Callable[[ManualTradeId], object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +102,7 @@ def run_durable_lifecycle_replay(
     idempotency_key: str,
     clock: Clock,
     output_directory: Path | None = None,
+    manual_trade_loader: ManualTradeLoader | None = None,
 ) -> DurableLifecycleReplayResult:
     """Create or reuse an audit-only replay run for one captured source view."""
 
@@ -119,6 +121,7 @@ def run_durable_lifecycle_replay(
         report = _build_durable_report(
             source_command=source_command,
             source_history=source_history,
+            manual_trade_loader=manual_trade_loader,
         )
         if report.journal_hash != source_history_hash:
             raise LifecycleJournalIntegrityError(
@@ -270,7 +273,6 @@ def _build_replay_command(
         model_references=source_command.model_references,
         stop_after_stage=None,
         output_directory=replay_root,
-        authority_database_locator=source_command.authority_database_locator,
         source_run_id=source_run_id,
         source_command_hash=source_command.command_hash,
         source_history_hash=source_history_hash,
@@ -356,25 +358,16 @@ def _build_durable_report(
     *,
     source_command: CanonicalLifecycleCommand,
     source_history: LifecycleHistory,
+    manual_trade_loader: ManualTradeLoader | None,
 ) -> LifecycleReplayReport:
     base = verify_lifecycle_replay(
         repository=_HistoryBoundRepository(source_command, source_history),
         run_id=source_history.run.run_id,
+        manual_trade_loader=manual_trade_loader,
     )
     checks_by_subject = {item.subject: item for item in base.checks}
     if len(checks_by_subject) != len(base.checks):
         raise LifecycleJournalIntegrityError("replay checks have duplicate subjects")
-    if source_command.authority_database_locator is not None:
-        for reference in _all_references(source_command, source_history):
-            if reference.object_type.value != "MANUAL_TRADE":
-                continue
-            check = verify_replay_reference(
-                reference,
-                authority_database_locator=(
-                    source_command.authority_database_locator
-                ),
-            )
-            checks_by_subject[check.subject] = check
     receipt_checks = tuple(
         _receipt_check(
             source_command=source_command,

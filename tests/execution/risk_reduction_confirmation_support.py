@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 
 from market_regime_alpha.application.operational_research.composite_repository import (
     composite_operational_command_hash,
 )
-from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
-    SQLiteCompositeOperationalRepository,
+from tests.postgres_path_repositories import (
+    PostgresCompositeOperationalRepository,
 )
 from market_regime_alpha.application.research_layer.runner import (
     PlatformResearchRunner,
@@ -46,8 +46,8 @@ from market_regime_alpha.decision.opportunity import (
     TRADING_OPPORTUNITY_SCHEMA,
     transition_opportunity,
 )
-from market_regime_alpha.decision.sqlite_repository import (
-    SQLiteDecisionLifecycleRepository,
+from tests.postgres_path_repositories import (
+    PostgresDecisionLifecycleRepository,
 )
 from market_regime_alpha.decision.thesis import (
     TRADING_THESIS_SCHEMA,
@@ -74,8 +74,8 @@ from market_regime_alpha.execution.risk_reduction import (
 from market_regime_alpha.application.trading_lifecycle.risk_reduction_lineage import (
     build_operational_exit_directive_v2,
 )
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.forecasting import (
     CalibrationStatus,
@@ -89,16 +89,16 @@ from market_regime_alpha.portfolio.risk_routes import (
     RiskReducingExecutionGate,
     RiskReducingGateConfiguration,
 )
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    SQLiteRiskRouteRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskRouteRepository,
 )
 from market_regime_alpha.position.authority import (
     PositionProjector,
     SymbolTradingSessionStatus,
     SymbolTradingState,
 )
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
+from tests.postgres_path_repositories import (
+    PostgresThesisHealthRepository,
 )
 from market_regime_alpha.position.thesis_health import (
     ThesisHealthInputBundle,
@@ -132,7 +132,7 @@ from tests.research.platform_v2.test_composite_input_v2 import _v2_inputs
 
 @dataclass(frozen=True)
 class ConfirmationFixture:
-    repository: SQLiteRiskReductionManualIntentRepository
+    repository: PostgresRiskReductionManualIntentRepository
     command: RiskReductionConfirmationCommand
     directive: OperationalExitDirectiveV2
     book: PositionBook
@@ -151,8 +151,8 @@ def build_confirmation_fixture(
         ExecutionConstraintState.EXECUTABLE
     ),
 ) -> ConfirmationFixture:
-    database = root / "lifecycle.sqlite3"
-    repository = SQLiteRiskReductionManualIntentRepository(database)
+    database = root / "lifecycle.postgres-scope"
+    repository = PostgresRiskReductionManualIntentRepository(database)
     inputs, _, composite = _v2_inputs(root / "h6", daily_decision_fixture)
     research = PlatformResearchRunner().run(
         inputs=inputs,
@@ -251,7 +251,7 @@ def build_confirmation_fixture(
             reason="invalidation requires EXIT",
             changed_at=confirmed_opportunity.updated_at + timedelta(seconds=1),
         )
-        SQLiteDecisionLifecycleRepository(database).transition_thesis(
+        PostgresDecisionLifecycleRepository(database).transition_thesis(
             invalidated,
             expected_version=thesis.version,
             idempotency_key="h4-5-thesis-invalidated",
@@ -282,7 +282,7 @@ def build_confirmation_fixture(
         reason="operational H5 exit observation",
     )
     health = ThesisHealthObservationBuilder().build(health_input)
-    SQLiteThesisHealthRepository(database).save_observation(
+    PostgresThesisHealthRepository(database).save_observation(
         health,
         input_bundle=health_input,
         idempotency_key="h4-5-health",
@@ -334,7 +334,7 @@ def build_confirmation_fixture(
         reason="confirmed H4 exit",
         assessed_at=assessed_at,
     )
-    SQLiteRiskRouteRepository(database).save_reducing_decision(
+    PostgresRiskRouteRepository(database).save_reducing_decision(
         risk_decision,
         position=position,
         execution_observation=execution_observation,
@@ -361,10 +361,10 @@ def build_confirmation_fixture(
         exit_assessment.unrealized_return,
         health.missing_reason_codes,
     )
-    risk_bundle = SQLiteRiskRouteRepository(
+    risk_bundle = PostgresRiskRouteRepository(
         database
     ).get_verified_reducing_decision_bundle(risk_decision.decision_id)
-    health_bundle = SQLiteThesisHealthRepository(
+    health_bundle = PostgresThesisHealthRepository(
         database
     ).get_verified_thesis_health_bundle(health.observation_id)
     directive = build_operational_exit_directive_v2(
@@ -533,7 +533,7 @@ def _save_decision_authority(
     confirmed: TradingOpportunity,
     thesis: TradingThesis,
 ) -> None:
-    repository = SQLiteDecisionLifecycleRepository(database)
+    repository = PostgresDecisionLifecycleRepository(database)
     repository.create_opportunity(
         initial,
         idempotency_key="h4-5-opportunity-create",
@@ -568,7 +568,7 @@ def _save_composite(database: Path, root: Path, composite) -> None:
     supplemental = load_verified_supplemental_research_evidence(
         supplemental_path
     )
-    SQLiteCompositeOperationalRepository(database).save_manifest(
+    PostgresCompositeOperationalRepository(database).save_manifest(
         composite,
         daily_package_path=daily_path,
         supplemental_package_path=supplemental_path,
@@ -679,14 +679,13 @@ def _seed_execution_authority(
         updated_at=fill.recorded_at,
         last_reason=fill.reason,
     )
-    with sqlite3.connect(database) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
+    with postgres_connection(database) as connection:
         connection.execute(
             """
             INSERT INTO position_books(
                 position_book_id, account_id, symbol, opportunity_id,
                 thesis_id, state, version, aggregate_json, opened_at, closed_at
-            ) VALUES (?, ?, ?, ?, ?, 'OPEN', 0, ?, ?, NULL)
+            ) VALUES (%s, %s, %s, %s, %s, 'OPEN', 0, %s, %s, NULL)
             """,
             (
                 str(book.position_book_id),
@@ -703,7 +702,7 @@ def _seed_execution_authority(
             INSERT INTO position_book_events(
                 position_book_id, sequence, state, aggregate_json,
                 idempotency_key, created_at
-            ) VALUES (?, 0, 'OPEN', ?, 'h4-5-book-open', ?)
+            ) VALUES (%s, 0, 'OPEN', %s, 'h4-5-book-open', %s)
             """,
             (
                 str(book.position_book_id),
@@ -718,8 +717,8 @@ def _seed_execution_authority(
                 risk_reducing_decision_id,
                 risk_reduction_confirmation_id, account_id, symbol, side,
                 state, filled_quantity, aggregate_json, version
-            ) VALUES (?, 'INCREASING', ?, NULL, NULL, ?, ?, 'BUY',
-                      'FILLED', 100, ?, 1)
+            ) VALUES (%s, 'INCREASING', %s, NULL, NULL, %s, %s, 'BUY',
+                      'FILLED', 100, %s, 1)
             """,
             (
                 str(filled.manual_trade_id),
@@ -735,7 +734,7 @@ def _seed_execution_authority(
                 INSERT INTO manual_trade_events(
                     manual_trade_id, sequence, state, aggregate_json,
                     idempotency_key, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     str(trade.manual_trade_id),
@@ -753,7 +752,7 @@ def _seed_execution_authority(
                 portfolio_decision_id, risk_decision_id,
                 post_trade_snapshot_id, post_trade_snapshot_hash,
                 target_delta_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 str(filled.manual_trade_id),
@@ -774,7 +773,7 @@ def _seed_execution_authority(
                 fill_id, external_fill_id, manual_trade_id, account_id,
                 symbol, fill_kind, correction_of_fill_id, fill_json,
                 recorded_at, idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, 'EXECUTION', NULL, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, 'EXECUTION', NULL, %s, %s, %s)
             """,
             (
                 str(fill.fill_id),

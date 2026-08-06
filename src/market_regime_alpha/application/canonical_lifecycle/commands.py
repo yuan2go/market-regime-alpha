@@ -86,7 +86,6 @@ class CanonicalLifecycleCommand:
     model_references: tuple[LifecycleModelVersionReference, ...]
     stop_after_stage: LifecycleStageName | None
     output_directory: Path
-    authority_database_locator: Path | None
     resume_run_id: LifecycleRunId | None = None
     resume_command_hash: str | None = None
     source_run_id: LifecycleRunId | None = None
@@ -254,14 +253,6 @@ class CanonicalLifecycleCommand:
         if not isinstance(self.output_directory, Path):
             raise TypeError("output_directory must be a Path")
         object.__setattr__(self, "output_directory", self.output_directory.resolve())
-        if self.authority_database_locator is not None:
-            if not isinstance(self.authority_database_locator, Path):
-                raise TypeError("authority_database_locator must be a Path or None")
-            object.__setattr__(
-                self,
-                "authority_database_locator",
-                self.authority_database_locator.resolve(),
-            )
         if (self.resume_run_id is None) != (self.resume_command_hash is None):
             raise ValueError("resume run identity and original command hash must be paired")
         if self.resume_run_id is not None and not isinstance(
@@ -344,11 +335,7 @@ class CanonicalLifecycleCommand:
                 item.to_canonical_dict() for item in self.model_references
             ],
             "model_version_manifest_hash": self.model_version_manifest_hash,
-            "authority_database_locator": (
-                str(self.authority_database_locator)
-                if self.authority_database_locator is not None
-                else None
-            ),
+            "authority_database_locator": None,
         }
         if self.schema_version == self.SCHEMA_VERSION:
             payload.update(
@@ -436,9 +423,8 @@ class CanonicalLifecycleCommand:
         stop_after_stage = _optional_text(payload, "stop_after_stage")
         resume_run_id = _optional_text(payload, "resume_run_id")
         input_manifest_locator = _optional_text(payload, "input_manifest_locator")
-        authority_database_locator = _optional_text(
-            payload, "authority_database_locator"
-        )
+        if payload["authority_database_locator"] is not None:
+            raise ValueError("database authority locators are no longer supported")
         source_run_id = (
             _optional_text(payload, "source_run_id")
             if schema_version == cls.SCHEMA_VERSION
@@ -487,11 +473,6 @@ class CanonicalLifecycleCommand:
                 LifecycleStageName(stop_after_stage) if stop_after_stage else None
             ),
             output_directory=Path(_text(payload, "output_directory")),
-            authority_database_locator=(
-                Path(authority_database_locator)
-                if authority_database_locator
-                else None
-            ),
             resume_run_id=LifecycleRunId(resume_run_id) if resume_run_id else None,
             resume_command_hash=_optional_text(payload, "resume_command_hash"),
             source_run_id=(

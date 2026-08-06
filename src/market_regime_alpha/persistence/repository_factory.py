@@ -33,6 +33,9 @@ from market_regime_alpha.application.continuous_research.postgres_journal import
 from market_regime_alpha.application.daily_loop.postgres_repository import (
     PostgresDailyRunRepository,
 )
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    PostgresDecisionSystemRepository,
+)
 from market_regime_alpha.application.operational_research.postgres_composite_repository import (
     PostgresCompositeOperationalRepository,
 )
@@ -99,7 +102,10 @@ class RepositoryFactory:
             raise TypeError("settings must be DatabaseSettings")
         self.settings = settings
         self._owns_postgres = postgres_factory is None
-        self._postgres = postgres_factory or PostgresConnectionFactory(settings)
+        self._postgres = postgres_factory or PostgresConnectionFactory(
+            settings,
+            application_schema=settings.application_schema,
+        )
 
     @property
     def binding(self) -> DatabaseBinding:
@@ -115,6 +121,12 @@ class RepositoryFactory:
 
     def daily(self):
         return PostgresDailyRunRepository(self._postgres)
+
+    def decision_system(self, *, clock: Clock | None = None):
+        return PostgresDecisionSystemRepository(
+            self._postgres,
+            clock=clock or _utc_now,
+        )
 
     def decision(self):
         return PostgresDecisionLifecycleRepository(self._postgres)
@@ -176,7 +188,6 @@ class RepositoryFactory:
 
     def feature_materialization_for_path(
         self,
-        path: Path,
         clock: Clock | None,
         lease_duration: timedelta,
     ):
@@ -219,7 +230,6 @@ class RepositoryFactory:
 
     def controlled_canonical_repository(
         self,
-        path: Path,
         read_only: bool,
     ) -> LifecycleRunRepository:
         return PostgresLifecycleRunRepository(
@@ -300,6 +310,7 @@ def add_database_arguments(
 ) -> None:
     parser.allow_abbrev = False
     parser.add_argument("--database-url")
+    parser.add_argument("--database-schema")
 
 
 def settings_from_namespace(
@@ -314,6 +325,7 @@ def settings_from_namespace(
             environment[DATABASE_URL_ENV] = value
     return DatabaseSettings.from_sources(
         database_url=getattr(args, "database_url", None),
+        application_schema=getattr(args, "database_schema", None),
         environ=environment,
     )
 

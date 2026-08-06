@@ -13,11 +13,13 @@ from market_regime_alpha.application.daily_loop import (
     DailyRunCommand,
     DailyRunStatus,
     RunMode,
-    SQLiteDailyRunRepository,
     StageReceipt,
 )
 from market_regime_alpha.application.daily_loop.errors import (
     OutcomeNotReadyError,
+)
+from market_regime_alpha.application.daily_loop.postgres_repository import (
+    PostgresDailyRunRepository as NativePostgresDailyRunRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId, ProviderId
 from market_regime_alpha.core.time import AvailabilityTime, DecisionTime, RetrievedAt
@@ -56,6 +58,10 @@ from tests.application.daily_loop.public_fixture import (
     DECISION,
     public_fixture,
     public_v2_fixture,
+)
+from tests.postgres_path_repositories import (
+    PostgresDailyRunRepository,
+    postgres_factory,
 )
 
 
@@ -241,7 +247,7 @@ def test_replay_run_publishes_one_verified_daily_decision(
         replay_source_manifest_id=source_manifest.source_manifest_id,
     )
     runner = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
     )
@@ -312,7 +318,7 @@ def test_live_stages_are_independent_idempotent_and_finalize_without_clients(
         configuration_identity=ArtifactId("independent-stage-config-v1"),
         output_root=tmp_path / "runtime",
     )
-    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3")
+    repository = PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope")
     acquiring = DailyLoopRunner(
         repository=repository,
         code_revision=CODE_REVISION,
@@ -372,7 +378,7 @@ def test_staged_live_fixture_reaches_outcome_pending_from_provider_status(
     )
 
     result = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
             history_client=history,
@@ -422,7 +428,7 @@ def test_qualified_source_archive_replay_preserves_features_and_rankings(
         output_root=tmp_path / "live-runtime",
     )
     live = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "live.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "live.postgres-scope"),
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
             history_client=history,
@@ -445,7 +451,7 @@ def test_qualified_source_archive_replay_preserves_features_and_rankings(
         ),
     )
     replay_runner = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "replay.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "replay.postgres-scope"),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
     )
@@ -588,7 +594,7 @@ def test_five_independent_symbol_failures_preserve_remaining_population(
     )
 
     result = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
             history_client=_CountingStageClient(history_batch),
@@ -658,7 +664,7 @@ def test_security_status_failure_reuses_history_on_retry(tmp_path: Path) -> None
         output_root=tmp_path / "runtime",
     )
     runner = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
             history_client=history,
@@ -712,7 +718,7 @@ def test_status_and_quote_orphans_are_claimed_without_reacquisition(
         )
     )
 
-    class CrashReceiptRepository(SQLiteDailyRunRepository):
+    class CrashReceiptRepository(NativePostgresDailyRunRepository):
         crashed = False
 
         def record_acquisition_receipt(self, receipt):
@@ -735,7 +741,9 @@ def test_status_and_quote_orphans_are_claimed_without_reacquisition(
         output_root=tmp_path / "runtime",
     )
     runner = DailyLoopRunner(
-        repository=CrashReceiptRepository(tmp_path / "runtime.sqlite3"),
+        repository=CrashReceiptRepository(
+            postgres_factory(tmp_path / "runtime.postgres-scope")
+        ),
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
             history_client=history,
@@ -794,7 +802,7 @@ def test_public_daily_history_preserves_b0_b1_ranking_equivalence(
             replay_source_manifest_id=manifest.source_manifest_id,
         )
         return DailyLoopRunner(
-            repository=SQLiteDailyRunRepository(tmp_path / f"{name}.sqlite3"),
+            repository=PostgresDailyRunRepository(tmp_path / f"{name}.postgres-scope"),
             code_revision=CODE_REVISION,
             clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
         ).run(command, replay_archive_path=archive)
@@ -924,7 +932,7 @@ def test_failure_after_source_freeze_resumes_without_provider_access(
     tmp_path: Path,
 ) -> None:
     _, command, archive = _replay_runner(tmp_path)
-    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3")
+    repository = PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope")
 
     def fail_after_freeze(status: DailyRunStatus) -> None:
         if status is DailyRunStatus.SOURCE_FROZEN:
@@ -958,9 +966,9 @@ def test_crash_between_source_binding_and_receipt_recovers_without_acquisition(
 ) -> None:
     _, command, archive = _replay_runner(tmp_path)
 
-    class ReceiptCrashRepository(SQLiteDailyRunRepository):
+    class ReceiptCrashRepository(NativePostgresDailyRunRepository):
         def __init__(self, path: Path) -> None:
-            super().__init__(path)
+            super().__init__(postgres_factory(path))
             self.crashed = False
 
         def record_stage_receipt(self, receipt: StageReceipt) -> StageReceipt:
@@ -972,7 +980,7 @@ def test_crash_between_source_binding_and_receipt_recovers_without_acquisition(
                 raise RuntimeError("CRASH_BEFORE_SOURCE_RECEIPT")
             return super().record_stage_receipt(receipt)
 
-    journal = tmp_path / "runtime.sqlite3"
+    journal = tmp_path / "runtime.postgres-scope"
     interrupted_repository = ReceiptCrashRepository(journal)
     with pytest.raises(RuntimeError, match="CRASH_BEFORE_SOURCE_RECEIPT"):
         DailyLoopRunner(
@@ -985,7 +993,7 @@ def test_crash_between_source_binding_and_receipt_recovers_without_acquisition(
     assert failed.resume_status is DailyRunStatus.SOURCE_FROZEN
 
     resumed = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(journal),
+        repository=PostgresDailyRunRepository(journal),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 1, tzinfo=SHANGHAI),
     ).run(command)
@@ -1011,7 +1019,7 @@ def test_provider_invariant_failure_is_failed_not_data_blocked(
         configuration_identity=ArtifactId("daily-loop-test-config-v1"),
         output_root=tmp_path / "runtime",
     )
-    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3")
+    repository = PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope")
     runner = DailyLoopRunner(
         repository=repository,
         code_revision=CODE_REVISION,
@@ -1046,7 +1054,7 @@ def test_missing_price_is_a_verified_data_blocked_terminal(
         source_manifest_id=source_manifest.source_manifest_id,
     )
     result = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
     ).run(command, replay_archive_path=archive)
@@ -1077,7 +1085,7 @@ def test_global_provider_failure_blocks_run(
     )
 
     result = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
     ).run(command)
@@ -1110,7 +1118,7 @@ def test_live_never_uses_local_archive_fallback(tmp_path: Path) -> None:
     (local_archive / "fixture.json").write_text("{}", encoding="utf-8")
 
     result = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
     ).run(command)
@@ -1169,7 +1177,7 @@ def test_live_current_failure_preserves_frozen_history_and_status_for_retry(
         configuration_identity=ArtifactId("daily-loop-test-config-v1"),
         output_root=tmp_path / "runtime",
     )
-    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3")
+    repository = PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope")
     runner = DailyLoopRunner(
         repository=repository,
         code_revision=CODE_REVISION,
@@ -1276,7 +1284,7 @@ def test_history_freeze_is_reused_after_quote_failure(
         output_root=tmp_path / "runtime",
     )
     runner = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
             history_client=history_client,
@@ -1343,7 +1351,7 @@ def test_receipt_write_before_crash_recovers_orphan_without_reacquisition(
             self.calls += 1
             return self.batch
 
-    class FailFirstReceiptRepository(SQLiteDailyRunRepository):
+    class FailFirstReceiptRepository(NativePostgresDailyRunRepository):
         fail_first_receipt = True
 
         def record_acquisition_receipt(self, receipt):
@@ -1368,7 +1376,7 @@ def test_receipt_write_before_crash_recovers_orphan_without_reacquisition(
     )
     runner = DailyLoopRunner(
         repository=FailFirstReceiptRepository(
-            tmp_path / "runtime.sqlite3"
+            postgres_factory(tmp_path / "runtime.postgres-scope")
         ),
         code_revision=CODE_REVISION,
         live_profile=PublicCompositeLiveProfile(
@@ -1429,7 +1437,7 @@ def test_ten_session_replay_is_unique_replayable_and_settleable(
     tmp_path: Path,
 ) -> None:
     policy = smoke_pool_policy_v1()
-    repository = SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3")
+    repository = PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope")
     runner = DailyLoopRunner(
         repository=repository,
         code_revision=CODE_REVISION,
@@ -1697,7 +1705,7 @@ def _replay_runner(
         source_manifest_id=source_manifest.source_manifest_id,
     )
     runner = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
     )
@@ -1720,7 +1728,7 @@ def _run_fixture(
         source_manifest_id=source_manifest.source_manifest_id,
     )
     return DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
         clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
     ).run(command, replay_archive_path=archive)

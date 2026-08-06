@@ -114,8 +114,8 @@ positive-return probability. Missing sample authority returns
 Migration 022 adds 17 explicit tables: Observation/State/Transition for four
 domains, one current-pointer table, Pool/version/member/change tables and a
 State Runtime receipt. Migration 023 registers `STATE_SYSTEM` as the fifth
-ordered Continuous child. PostgreSQL is the default writer. SQLite is an
-explicit compatibility/replay adapter.
+ordered Continuous child. PostgreSQL is the only database writer and replay
+authority.
 
 PostgreSQL writes validate the active Tick Claim, Lease, fencing token and Tick
 version before final commit. History is append-only; current pointers use CAS.

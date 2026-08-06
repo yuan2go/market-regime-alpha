@@ -14,9 +14,6 @@ from market_regime_alpha.application.daily_loop.repositories import (
     DailyRunRepository,
     StageReceipt,
 )
-from market_regime_alpha.application.daily_loop.sqlite_repository import (
-    SQLiteDailyRunRepository,
-)
 from market_regime_alpha.application.daily_loop.postgres_repository import (
     PostgresDailyRunRepository,
 )
@@ -44,7 +41,6 @@ __all__ = [
     "RunMode",
     "RunRequestId",
     "PostgresDailyRunRepository",
-    "SQLiteDailyRunRepository",
     "StageReceipt",
     "DAILY_B0_B1_MODEL_SET_ID",
 ]

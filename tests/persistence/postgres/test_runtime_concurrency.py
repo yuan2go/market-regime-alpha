@@ -18,7 +18,6 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
     is_retryable_transaction_error,
 )
-from market_regime_alpha.persistence.postgres.dbapi import PostgresDBAPIConnection
 
 
 COMMAND_HASH = "sha256:" + "a" * 64
@@ -32,24 +31,20 @@ def _task(symbol: str) -> FeatureMaterializationTaskSpec:
     )
 
 
-def test_begin_immediate_uses_explicit_transaction_advisory_lock(
+def test_scoped_advisory_lock_is_transaction_bound(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
-    connection = PostgresDBAPIConnection.acquire(postgres_factory)
-    try:
-        connection.execute("BEGIN IMMEDIATE")
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            ("runtime-concurrency:test-scope",),
+        )
         held = connection.execute(
-            "SELECT COUNT(*) AS held FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted"
+            "SELECT COUNT(*) FROM pg_locks WHERE pid = pg_backend_pid() "
+            "AND locktype = 'advisory' AND granted"
         ).fetchone()
         assert held is not None
-        assert held["held"] == 1
-        connection.rollback()
-    finally:
-        connection.close()
-
-    metrics = postgres_factory.runtime_metrics
-    assert metrics.compatibility_advisory_locks == 1
-    assert metrics.compatibility_lock_wait_seconds >= 0
+        assert int(held[0]) == 1
 
 
 def test_transaction_retries_only_postgres_retryable_errors(

@@ -15,8 +15,8 @@ from market_regime_alpha.application.canonical_lifecycle.stages.contracts import
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleStageName,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
 from market_regime_alpha.application.controlled_operation.canonical_bridge import (
     ControlledCanonicalDeadlineExceeded,
@@ -31,8 +31,9 @@ from market_regime_alpha.application.controlled_operation.journal import (
 from market_regime_alpha.application.controlled_operation.runner import (
     ControlledDecisionTimeOperationRunner,
 )
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
-    SQLiteDecisionTimeOperationJournal,
+from tests.postgres_path_repositories import (
+    PostgresDecisionTimeOperationJournal,
+    controlled_runner_dependencies,
 )
 from market_regime_alpha.core.identity import ArtifactId
 
@@ -148,12 +149,16 @@ def test_resume_admission_rejects_migrated_database_without_child_run(
     )
     journal = SimpleNamespace(get=lambda _run_id: snapshot)
     output_root = tmp_path / "operations"
-    database_path = output_root / str(command.run_id) / "canonical-lifecycle.sqlite3"
-    SQLiteLifecycleRunRepository(database_path)
+    database_path = output_root / str(command.run_id) / "canonical-lifecycle.postgres-scope"
+    PostgresLifecycleRunRepository(database_path)
     runner = ControlledDecisionTimeOperationRunner(
-        journal=cast(SQLiteDecisionTimeOperationJournal, journal),
+        journal=cast(PostgresDecisionTimeOperationJournal, journal),
         output_root=output_root,
         clock=lambda: decision_time + timedelta(seconds=10),
+        **controlled_runner_dependencies(
+            database_path,
+            clock=lambda: decision_time + timedelta(seconds=10),
+        ),
     )
 
     assert not runner._canonical_child_was_admitted(

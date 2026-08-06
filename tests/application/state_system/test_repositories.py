@@ -3,10 +3,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
-from pathlib import Path
-import sqlite3
-
 import psycopg
+
 import pytest
 
 from market_regime_alpha.application.continuous_research.policy import ContinuousSessionPhase
@@ -21,9 +19,6 @@ from market_regime_alpha.application.state_system.repository import (
     StateDomain,
     StateSystemConflict,
     StateSystemIntegrityError,
-)
-from market_regime_alpha.application.state_system.sqlite_repository import (
-    SQLiteStateSystemRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId
 from market_regime_alpha.evidence.canonical import canonical_hash
@@ -271,34 +266,41 @@ def test_postgres_pool_history_is_append_only(
             )
 
 
-def test_sqlite_is_explicit_replay_compatibility_and_survives_restart(
-    tmp_path: Path,
+def test_postgres_authority_survives_repository_restart(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     clock = MutableClock(NOW)
     _journal, claim = _active_claim(postgres_factory, clock)
     pool = _pool(claim)
-    path = tmp_path / "state-replay.sqlite3"
-    repository = SQLiteStateSystemRepository(path)
+    repository = PostgresStateSystemRepository(postgres_factory, clock=clock)
 
-    repository.append_pool(pool, expected_previous_pool_id=None)
-    restarted = SQLiteStateSystemRepository(path)
+    repository.append_pool(
+        pool,
+        claim=claim,
+        expected_previous_pool_id=None,
+    )
+    restarted = PostgresStateSystemRepository(postgres_factory, clock=clock)
 
-    assert restarted.runtime_authority is False
+    assert restarted.runtime_authority is True
     assert restarted.read_pool(pool.pool_id)["pool_id"] == str(pool.pool_id)
 
 
-def test_sqlite_reader_rejects_tampered_pool_content(
-    tmp_path: Path,
+def test_postgres_reader_rejects_tampered_pool_content(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     clock = MutableClock(NOW)
     _journal, claim = _active_claim(postgres_factory, clock)
     pool = _pool(claim)
-    path = tmp_path / "tampered-state.sqlite3"
-    repository = SQLiteStateSystemRepository(path)
-    repository.append_pool(pool, expected_previous_pool_id=None)
-    with sqlite3.connect(path) as connection:
+    repository = PostgresStateSystemRepository(postgres_factory, clock=clock)
+    repository.append_pool(
+        pool,
+        claim=claim,
+        expected_previous_pool_id=None,
+    )
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            "DROP TRIGGER dynamic_stock_pool_no_update ON dynamic_stock_pool"
+        )
         connection.execute(
             "UPDATE dynamic_stock_pool SET pool_json = replace(pool_json, '600000.SH', '600999.SH')"
         )
@@ -307,18 +309,19 @@ def test_sqlite_reader_rejects_tampered_pool_content(
         repository.read_pool(pool.pool_id)
 
 
-def test_sqlite_state_history_supports_explicit_restart_replay(
-    tmp_path: Path,
+def test_postgres_state_history_supports_explicit_restart_replay(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     clock = MutableClock(NOW)
     _journal, claim = _active_claim(postgres_factory, clock)
     write = _state_write(claim, StateDomain.MARKET_REGIME)
-    path = tmp_path / "state-history.sqlite3"
-
-    assert SQLiteStateSystemRepository(path).append_state(
-        write, expected_previous_state_id=None
+    assert PostgresStateSystemRepository(postgres_factory, clock=clock).append_state(
+        write,
+        claim=claim,
+        expected_previous_state_id=None,
     ) == write.state_id
-    assert SQLiteStateSystemRepository(path).append_state(
-        write, expected_previous_state_id=None
+    assert PostgresStateSystemRepository(postgres_factory, clock=clock).append_state(
+        write,
+        claim=claim,
+        expected_previous_state_id=None,
     ) == write.state_id

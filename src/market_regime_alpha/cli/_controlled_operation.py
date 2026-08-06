@@ -7,7 +7,6 @@ from datetime import date, datetime, timezone
 from enum import IntEnum
 import json
 from pathlib import Path
-import sqlite3
 from typing import Any, NoReturn
 
 import psycopg
@@ -243,7 +242,7 @@ def emit_error(
 def repository_exception(exc: Exception) -> bool:
     return isinstance(
         exc,
-        (sqlite3.Error, psycopg.Error, PostgresConnectionUnavailable, OSError),
+        (psycopg.Error, PostgresConnectionUnavailable, OSError),
     )
 
 

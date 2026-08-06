@@ -35,6 +35,7 @@ def build_parser() -> StructuredParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     run_id: str | None = None
+    repositories = None
     try:
         args = build_parser().parse_args(argv)
         run_id = args.run_id
@@ -62,6 +63,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if repository_exception(exc):
             return ControlledExitCode.REPOSITORY_ERROR
         return ControlledExitCode.RUN_CONFLICT
+    finally:
+        if repositories is not None:
+            repositories.close()
 
 
 if __name__ == "__main__":

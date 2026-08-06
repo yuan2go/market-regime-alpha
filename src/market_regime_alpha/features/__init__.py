@@ -58,7 +58,6 @@ from market_regime_alpha.features.materialization_run import (
     FeatureMaterializationExecutionMode,
     FeatureMaterializationRunStatus,
     FeatureMaterializationTaskStatus,
-    SQLiteFeatureMaterializationRunRepository,
 )
 from market_regime_alpha.features.postgres_materialization_run import (
     PostgresFeatureMaterializationRunRepository,
@@ -93,7 +92,6 @@ __all__ = [
     "MissingnessPolicy",
     "PostgresFeatureMaterializationRunRepository",
     "RequiredFeatureCoveragePolicy",
-    "SQLiteFeatureMaterializationRunRepository",
     "TimeframePolicy",
     "ValueType",
     "load_verified_feature_artifact_v2",

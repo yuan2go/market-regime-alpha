@@ -1,10 +1,14 @@
 # WP-STATE-01 Acceptance Evidence
 
-> **Status:** CURRENT_STATUS
+> **Status:** HISTORICAL
 > **Authority:** Local implementation and pre-final verification record
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-06
 > **Related Documents:** ../roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md, ../runbooks/Stateful-Research-Runtime.md, ../audit/WP-CRR-01-Final-Review.md
+
+This records the original WP-STATE-01 checkpoint. WP-PGSQL-01 later removed its
+file-database repository/replay path; current database authority is documented
+in [PostgreSQL Authority Only evidence](PostgreSQL-Authority-Migration-Evidence.md).
 
 ## 1. Implementation checkpoints
 

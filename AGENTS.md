@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Repository execution contract for coding and research agents  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-04
+> **Last Updated:** 2026-08-06
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** CLAUDE.md, docs/README.md, docs/status/Current-State.md, docs/architecture/10-Production-Decision-Lifecycle.md, docs/roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md  
@@ -63,7 +63,7 @@ Never use a plan or design document to overrule executable evidence. Never chang
 
 ## Current implementation boundary
 
-Implemented and tested on the current repository baseline include stable identity and semantic-time contracts, Provider and SourceManifest boundaries, PIT Universe and Eligibility contracts, Feature and Candidate datasets, B0/B1 PredictionRuns, Entry Path Target infrastructure, immutable Artifacts and Readers, the recoverable exploratory Daily Runtime Journal, public exploratory acquisition and replay, Platform V2 research, the Operational Research Bridge, durable SQLite Model Registry and Experiment Governance adapters, Signal and uncalibrated PathForecast research, durable Opportunity/Thesis and Portfolio/Risk decisions, a manual Fill ledger, Fill-derived PositionSnapshot, independent Holding/Exit assessment models and complete-trade diagnostic evaluation/replay.
+Implemented and tested on the current repository baseline include stable identity and semantic-time contracts, Provider and SourceManifest boundaries, PIT Universe and Eligibility contracts, Feature and Candidate datasets, B0/B1 PredictionRuns, Entry Path Target infrastructure, immutable Artifacts and Readers, the recoverable exploratory Daily Runtime Journal, public exploratory acquisition and replay, Platform V2 research, the Operational Research Bridge, durable PostgreSQL Model Registry and Experiment Governance adapters, Signal and uncalibrated PathForecast research, durable Opportunity/Thesis and Portfolio/Risk decisions, a manual Fill ledger, Fill-derived PositionSnapshot, independent Holding/Exit assessment models and complete-trade diagnostic evaluation/replay. PostgreSQL 16 is the only persistent Runtime, Journal, Repository, Replay, account, Position and Risk database; database unavailability fails closed.
 
 These Phase 0–7 mechanics are not production-qualified. H1 complete-account
 Portfolio/Risk, H2 Thesis-to-Outcome trace, H3 Fill-derived A-share T+1
@@ -72,6 +72,12 @@ operational evidence and H4.5 reducing-risk-to-manual-intent mechanics are now
 implemented and locally verified engineering checkpoints. Durable H7 assessment
 state, H8 sustained Shadow operation, H9 formal validation, authenticated
 operators and the operator workbench remain unimplemented.
+
+The existing Continuous Runtime also owns one `DECISION_SYSTEM` child for a
+14:30–14:55 Daily Summary, append-only Manual Account Observation,
+Fill-derived Reconciliation, research-only Portfolio Proposal and independently
+reloaded Risk Decision. These mechanics do not create Order, Fill or Position
+changes and do not raise Entry or Broker authority.
 
 External or evidence blockers remain for qualified formal data, operational PIT theme mappings, formal OOS Alpha, calibrated model probabilities and any live broker authority.
 

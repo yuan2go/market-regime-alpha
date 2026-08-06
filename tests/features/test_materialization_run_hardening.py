@@ -3,14 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sqlite3
+import psycopg
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
 from market_regime_alpha.features.materialization_run import (
     FeatureMaterializationExecutionMode,
     FeatureMaterializationTaskSpec,
-    SQLiteFeatureMaterializationRunRepository,
+)
+from tests.postgres_path_repositories import (
+    PostgresFeatureMaterializationRunRepository,
 )
 from market_regime_alpha.market_data import Timeframe
 
@@ -40,7 +43,7 @@ def _task() -> FeatureMaterializationTaskSpec:
 
 
 def _prepare(
-    repository: SQLiteFeatureMaterializationRunRepository,
+    repository: PostgresFeatureMaterializationRunRepository,
     *,
     mode: FeatureMaterializationExecutionMode,
 ) -> int:
@@ -56,8 +59,8 @@ def test_expired_lease_is_recovered_with_monotonic_fencing_epoch(
     tmp_path: Path,
 ) -> None:
     clock = MutableClock(datetime(2026, 8, 5, 6, 40, tzinfo=UTC))
-    repository = SQLiteFeatureMaterializationRunRepository(
-        tmp_path / "run.sqlite3",
+    repository = PostgresFeatureMaterializationRunRepository(
+        tmp_path / "run.postgres-scope",
         clock=clock,
         lease_duration=timedelta(seconds=30),
     )
@@ -90,7 +93,7 @@ def test_expired_lease_is_recovered_with_monotonic_fencing_epoch(
     snapshot = repository.snapshot(run_id)
     event_types = tuple(item[1] for item in snapshot.events)
     assert "LEASE_EXPIRED" in event_types
-    with sqlite3.connect(tmp_path / "run.sqlite3") as connection:
+    with postgres_connection(tmp_path / "run.postgres-scope") as connection:
         attempts = tuple(
             connection.execute(
                 "SELECT claim_epoch, status FROM feature_materialization_attempt "
@@ -104,8 +107,8 @@ def test_active_lease_cannot_be_stolen_and_heartbeat_extends_it(
     tmp_path: Path,
 ) -> None:
     clock = MutableClock(datetime(2026, 8, 5, 6, 40, tzinfo=UTC))
-    repository = SQLiteFeatureMaterializationRunRepository(
-        tmp_path / "run.sqlite3",
+    repository = PostgresFeatureMaterializationRunRepository(
+        tmp_path / "run.postgres-scope",
         clock=clock,
         lease_duration=timedelta(seconds=30),
     )
@@ -131,21 +134,21 @@ def test_active_lease_cannot_be_stolen_and_heartbeat_extends_it(
 def test_migration_013_enforces_checks_indexes_and_append_only_history(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "run.sqlite3"
-    repository = SQLiteFeatureMaterializationRunRepository(path)
+    path = tmp_path / "run.postgres-scope"
+    repository = PostgresFeatureMaterializationRunRepository(path)
     run_id = _prepare(repository, mode=FeatureMaterializationExecutionMode.START_NEW)
     claim = repository.claim_next(run_id=run_id)
     assert claim is not None
 
-    with sqlite3.connect(path) as connection:
+    with postgres_connection(path) as connection:
         migration = connection.execute(
-            "SELECT version FROM feature_materialization_schema_migration "
-            "WHERE version = 13"
+            "SELECT version FROM schema_migrations WHERE version = 13"
         ).fetchone()
         indexes = {
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index'"
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname = current_schema()"
             )
         }
         assert migration == (13,)
@@ -155,66 +158,64 @@ def test_migration_013_enforces_checks_indexes_and_append_only_history(
             "feature_materialization_attempt_task_idx",
             "feature_materialization_event_run_idx",
         }.issubset(indexes)
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
+        rejected = (
+            (
                 "UPDATE feature_materialization_run SET status = 'UNKNOWN' "
-                "WHERE run_id = ?",
+                "WHERE run_id = %s",
                 (run_id,),
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                "UPDATE feature_materialization_run SET command_hash = ? WHERE run_id = ?",
+            ),
+            (
+                "UPDATE feature_materialization_run SET command_hash = %s "
+                "WHERE run_id = %s",
                 (ARTIFACT_HASH, run_id),
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
+            ),
+            (
                 "UPDATE feature_materialization_task SET claim_token = 'stolen' "
-                "WHERE run_id = ? AND task_key = ?",
+                "WHERE run_id = %s AND task_key = %s",
                 (run_id, claim.task_key),
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
+            ),
+            (
                 "UPDATE feature_materialization_event SET payload_json = '{}' "
-                "WHERE run_id = ?",
+                "WHERE run_id = %s",
                 (run_id,),
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                "DELETE FROM feature_materialization_event WHERE run_id = ?",
+            ),
+            (
+                "DELETE FROM feature_materialization_event WHERE run_id = %s",
                 (run_id,),
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
+            ),
+            (
                 "INSERT INTO feature_materialization_event "
                 "(run_id, task_key, event_type, event_time, payload_json) "
-                "VALUES (?, NULL, 'INVALID_JSON', ?, 'not-json')",
-                (run_id, datetime(2026, 8, 5, tzinfo=UTC).isoformat()),
-            )
+                "VALUES (%s, NULL, 'INVALID_JSON', %s, 'not-json')",
+                (run_id, datetime(2026, 8, 5, tzinfo=UTC)),
+            ),
+        )
+        for statement, parameters in rejected:
+            with pytest.raises(psycopg.Error):
+                with connection.transaction():
+                    connection.execute(statement, parameters)
 
     repository.fail_task(claim, error_message="expected test failure")
-    with sqlite3.connect(path) as connection:
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                "UPDATE feature_materialization_attempt SET error_message = 'changed' "
-                "WHERE run_id = ?",
-                (run_id,),
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                "DELETE FROM feature_materialization_run WHERE run_id = ?",
-                (run_id,),
-            )
+    with postgres_connection(path) as connection:
+        for statement in (
+            "UPDATE feature_materialization_attempt SET error_message = 'changed' "
+            "WHERE run_id = %s",
+            "DELETE FROM feature_materialization_run WHERE run_id = %s",
+        ):
+            with pytest.raises(psycopg.Error):
+                with connection.transaction():
+                    connection.execute(statement, (run_id,))
 
 
 def test_migration_013_is_applied_once_across_repository_reopen(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "run.sqlite3"
-    SQLiteFeatureMaterializationRunRepository(path)
-    SQLiteFeatureMaterializationRunRepository(path)
+    path = tmp_path / "run.postgres-scope"
+    PostgresFeatureMaterializationRunRepository(path)
+    PostgresFeatureMaterializationRunRepository(path)
 
-    with sqlite3.connect(path) as connection:
+    with postgres_connection(path) as connection:
         assert connection.execute(
-            "SELECT COUNT(*) FROM feature_materialization_schema_migration "
+            "SELECT COUNT(*) FROM schema_migrations "
             "WHERE version = 13"
         ).fetchone() == (1,)

@@ -17,6 +17,7 @@ from market_regime_alpha.features.technical.catalog import (
     canonical_technical_feature_set,
 )
 from tests.features.test_materialization_runner_v2 import _verified_dataset
+from tests.postgres_path_repositories import postgres_cli_arguments
 
 
 def _inputs(tmp_path: Path, *, daily_count: int = 70) -> tuple[Path, Path]:
@@ -53,6 +54,7 @@ def _materialize_args(
         "test-revision",
         "--execution-mode",
         execution_mode,
+        *postgres_cli_arguments(output / "authority.postgres-scope"),
     ]
 
 
@@ -116,6 +118,9 @@ def test_legacy_comparison_cli_publishes_evidence_without_signal_authority(tmp_p
             str(tmp_path / "comparison-output"),
             "--code-revision",
             "test-revision",
+            *postgres_cli_arguments(
+                tmp_path / "comparison-output" / "authority.postgres-scope"
+            ),
         ]
     )
     payload = json.loads(capsys.readouterr().out)

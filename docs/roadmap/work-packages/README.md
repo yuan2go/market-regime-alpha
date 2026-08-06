@@ -1,12 +1,12 @@
 # Detailed Phase D Work Packages
 
-> **Status:** ROADMAP  
-> **Authority:** Dependency-ordered implementation packages with explicit evidence and stop conditions  
-> **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-01  
-> **Supersedes:** None  
-> **Superseded By:** None  
-> **Related Documents:** ../Phase-D-Work-Packages.md, ../../status/Gap-Register.md  
+> **Status:** ROADMAP
+> **Authority:** Dependency-ordered implementation packages with explicit evidence and stop conditions
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-06
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../Phase-D-Work-Packages.md, ../../status/Gap-Register.md
 > **Code Evidence:** No implementation claim; each package records evidence after delivery
 
 ## Ordered packages
@@ -47,6 +47,8 @@ exploratory mechanics are not reopened by that work.
 - [WP-PDL-HARDENING — Production Lifecycle Hardening and Shadow Readiness](WP-PDL-Hardening-and-Shadow-Readiness.md)
 - [WP-CRR-01 — Continuous Research Runtime](WP-CRR-01-Continuous-Research-Runtime.md)
 - [WP-STATE-01 — Stateful Research System and Dynamic Stock Pool](WP-STATE-01-Stateful-Research-System.md)
+- [WP-PGSQL-01 — PostgreSQL Authority Only](WP-PGSQL-01-PostgreSQL-Authority-Only.md)
+- [WP-DECISION-01 — Daily Research Decision Closure](WP-DECISION-01-Daily-Decision-Closure.md)
 
 WP-PAV2 reuses delivered Phase D evidence and Candidate identities. WP-PDL
 delivered the dependency-ordered engineering chain from operational evidence

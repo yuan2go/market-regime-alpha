@@ -17,12 +17,12 @@ def test_postgres_runbook_references_existing_repository_commands() -> None:
     assert {
         "scripts/bootstrap_postgres.py",
         "scripts/apply_postgres_migrations.py",
-        "scripts/migrate_sqlite_to_postgres.py",
         "scripts/check_docs_links.py",
     } <= scripts
     assert all((ROOT / relative).is_file() for relative in scripts)
-    assert "--sqlite-database /absolute/verified-source.sqlite3" in text
-    assert "NO_DUAL_WRITE" not in text or "never dual-writes" in text
+    assert "scripts/migrate_sqlite_to_postgres.py" not in text
+    assert "--sqlite-database" not in text
+    assert "PostgreSQL Authority Only" in text
 
 
 def test_ci_provides_postgres_only_to_test_step() -> None:
@@ -30,9 +30,7 @@ def test_ci_provides_postgres_only_to_test_step() -> None:
 
     assert "image: postgres:16.14-bookworm" in workflow
     assert "MARKET_REGIME_ALPHA_TEST_DATABASE_URL" in workflow
-    assert workflow.index("MARKET_REGIME_ALPHA_TEST_DATABASE_URL") > workflow.index(
-        "- name: Run tests"
-    )
+    assert workflow.index("MARKET_REGIME_ALPHA_TEST_DATABASE_URL") > workflow.index("- name: Run tests")
     assert "MARKET_REGIME_ALPHA_DATABASE_URL" not in workflow
 
 

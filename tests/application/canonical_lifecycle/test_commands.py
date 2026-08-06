@@ -67,7 +67,6 @@ def _command(
     models: tuple[LifecycleModelVersionReference, ...] | None = None,
     stop_after_stage: LifecycleStageName | None = None,
     output_directory: Path = Path("artifacts/lifecycle"),
-    authority_database_locator: Path | None = None,
     resume_run_id: object = None,
     resume_command_hash: str | None = None,
     source_run_id: object = None,
@@ -108,7 +107,6 @@ def _command(
         model_references=(_model(),) if models is None else models,
         stop_after_stage=stop_after_stage,
         output_directory=output_directory,
-        authority_database_locator=authority_database_locator,
         resume_run_id=resume_run_id,
         resume_command_hash=resume_command_hash,
         source_run_id=source_run_id,
@@ -236,7 +234,6 @@ def _risk_command(
         model_references=(),
         stop_after_stage=None,
         output_directory=Path("artifacts/lifecycle"),
-        authority_database_locator=None,
     )
 
 
@@ -289,7 +286,6 @@ def _controlled_command(
         model_references=(_model(),),
         stop_after_stage=None,
         output_directory=Path("artifacts/controlled-lifecycle"),
-        authority_database_locator=None,
     )
 
 
@@ -354,7 +350,6 @@ def test_semantic_fields_each_change_command_hash() -> None:
         ),
         _command(configurations=(_configuration("8"),)),
         _command(models=(_model("7"),)),
-        _command(authority_database_locator=Path("authority/domain.sqlite3")),
     )
     assert all(item.command_hash != original.command_hash for item in variants)
 

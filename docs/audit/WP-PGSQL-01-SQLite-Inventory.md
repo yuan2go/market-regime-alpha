@@ -123,3 +123,18 @@ lease/fencing checks and central forward migrations.
 - Research Portfolio and Independent Risk decisions never create Order,
   ManualTrade, Fill or Broker calls.
 - Entry remains blocked and model parameters remain frozen.
+
+## Delivered disposition
+
+Every `Planned result` in the matrix was executed. The executable repositories,
+factory branches, bridge, importer, local schemas/migrations, replay path,
+CLI/environment switches and database integration tests were removed or ported
+to native PostgreSQL. No one-time importer was retained because discovery found
+no business source data. Immutable file Artifact Readers and historical 14:55
+identities remain; they are not database backends.
+
+Migration 024 supersedes the historical migration-017 backend vocabulary
+without changing that published migration's checksum. Migration 025 adds the
+Decision System authorities. Current runtime code, integration tests and built
+packages contain no executable file-database repository or compatibility
+bridge.

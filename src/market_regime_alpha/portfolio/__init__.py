@@ -57,15 +57,6 @@ from market_regime_alpha.portfolio.services import (
     IndependentRiskService,
     PortfolioConstructionService,
 )
-from market_regime_alpha.portfolio.sqlite_repository import (
-    SQLitePortfolioDecisionRepository,
-)
-from market_regime_alpha.portfolio.sqlite_account_authority import (
-    SQLiteCompleteAccountPortfolioRiskRepository,
-)
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    SQLiteRiskRouteRepository,
-)
 from market_regime_alpha.portfolio.postgres_repository import (
     PostgresCompleteAccountPortfolioRiskRepository,
     PostgresPortfolioDecisionRepository,
@@ -120,9 +111,6 @@ __all__ = [
     "PostTradePortfolioSnapshot",
     "PostTradePosition",
     "ProposedTradeDelta",
-    "SQLiteCompleteAccountPortfolioRiskRepository",
-    "SQLitePortfolioDecisionRepository",
-    "SQLiteRiskRouteRepository",
     "TargetPosition",
     "ThesisAllocationRequest",
 ]
