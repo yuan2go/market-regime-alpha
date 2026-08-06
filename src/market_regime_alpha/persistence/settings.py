@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import Enum
 import os
-from pathlib import Path
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
@@ -18,101 +16,42 @@ class DatabaseConfigurationError(ValueError):
     """Raised when database authority selection is absent or ambiguous."""
 
 
-class DatabaseBackend(str, Enum):
-    POSTGRES = "postgres"
-    SQLITE = "sqlite"
-
-
 @dataclass(frozen=True, repr=False)
 class DatabaseSettings:
-    """Exactly one PostgreSQL or explicit SQLite authority selection."""
+    """The only supported database authority: one PostgreSQL URL."""
 
-    backend: DatabaseBackend
-    database_url: str | None = field(default=None, repr=False)
-    sqlite_path: Path | None = None
+    database_url: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.backend, DatabaseBackend):
-            raise TypeError("backend must be a DatabaseBackend")
-        selected = int(self.database_url is not None) + int(
-            self.sqlite_path is not None
-        )
-        if selected != 1:
-            raise DatabaseConfigurationError(
-                "select exactly one database authority"
-            )
-        if self.backend is DatabaseBackend.POSTGRES:
-            if self.database_url is None or self.sqlite_path is not None:
-                raise DatabaseConfigurationError(
-                    "PostgreSQL backend requires only a PostgreSQL URL"
-                )
-            _validate_postgres_url(self.database_url)
-        else:
-            if self.sqlite_path is None or self.database_url is not None:
-                raise DatabaseConfigurationError(
-                    "SQLite compatibility requires only a SQLite path"
-                )
-            object.__setattr__(self, "sqlite_path", self.sqlite_path.resolve())
+        if not isinstance(self.database_url, str):
+            raise TypeError("database_url must be a string")
+        _validate_postgres_url(self.database_url)
 
     @classmethod
     def from_sources(
         cls,
         *,
         database_url: str | None,
-        sqlite_path: str | Path | None,
         environ: Mapping[str, str] | None = None,
     ) -> DatabaseSettings:
         environment = os.environ if environ is None else environ
         explicit_url = _optional_text(database_url)
-        selected_path = Path(sqlite_path) if sqlite_path is not None else None
-        if explicit_url is not None and selected_path is not None:
-            raise DatabaseConfigurationError(
-                "select exactly one database authority; PostgreSQL and SQLite "
-                "were both supplied"
-            )
-        if selected_path is not None:
-            return cls(
-                backend=DatabaseBackend.SQLITE,
-                sqlite_path=selected_path,
-            )
         selected_url = explicit_url or _optional_text(
             environment.get(DATABASE_URL_ENV)
         )
         if selected_url is None:
             raise DatabaseConfigurationError(
                 "PostgreSQL configuration is required through --database-url "
-                f"or {DATABASE_URL_ENV}; SQLite is explicit compatibility only"
+                f"or {DATABASE_URL_ENV}"
             )
-        return cls(
-            backend=DatabaseBackend.POSTGRES,
-            database_url=selected_url,
-        )
+        return cls(database_url=selected_url)
 
     def require_database_url(self) -> str:
-        if self.backend is not DatabaseBackend.POSTGRES:
-            raise DatabaseConfigurationError(
-                "PostgreSQL URL requested from SQLite settings"
-            )
-        assert self.database_url is not None
         return self.database_url
 
-    def require_sqlite_path(self) -> Path:
-        if self.backend is not DatabaseBackend.SQLITE:
-            raise DatabaseConfigurationError(
-                "SQLite path requested from PostgreSQL settings"
-            )
-        assert self.sqlite_path is not None
-        return self.sqlite_path
-
     def __repr__(self) -> str:
-        if self.database_url is not None:
-            authority = redact_database_url(self.database_url)
-        else:
-            authority = str(self.sqlite_path)
-        return (
-            "DatabaseSettings("
-            f"backend={self.backend.value!r}, authority={authority!r})"
-        )
+        authority = redact_database_url(self.database_url)
+        return f"DatabaseSettings(authority={authority!r})"
 
 
 def redact_database_url(value: str) -> str:

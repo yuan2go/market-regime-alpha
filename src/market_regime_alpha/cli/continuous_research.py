@@ -82,7 +82,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError("explicit --database-url is required")
         settings = DatabaseSettings.from_sources(
             database_url=args.database_url,
-            sqlite_path=None,
             environ={},
         )
         factory = PostgresConnectionFactory(

@@ -32,7 +32,6 @@ def postgres_factory() -> Iterator[PostgresConnectionFactory]:
         )
     settings = DatabaseSettings.from_sources(
         database_url=database_url,
-        sqlite_path=None,
         environ={},
     )
     factory = PostgresConnectionFactory(

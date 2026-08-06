@@ -115,7 +115,6 @@ def test_postgres_free_data_prepare_is_idempotent_and_never_writes_sqlite(
     )
     settings = DatabaseSettings.from_sources(
         database_url=os.environ["MARKET_REGIME_ALPHA_TEST_DATABASE_URL"],
-        sqlite_path=None,
         environ={},
     )
     repositories = RepositoryFactory(
@@ -199,7 +198,6 @@ def test_postgres_blocked_projection_is_idempotent_and_append_only(
     repositories = RepositoryFactory(
         DatabaseSettings.from_sources(
             database_url=os.environ["MARKET_REGIME_ALPHA_TEST_DATABASE_URL"],
-            sqlite_path=None,
             environ={},
         ),
         postgres_factory=postgres_factory,

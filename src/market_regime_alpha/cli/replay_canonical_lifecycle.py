@@ -29,7 +29,6 @@ from market_regime_alpha.persistence.repository_factory import (
     add_database_arguments,
     settings_from_namespace,
 )
-from market_regime_alpha.persistence.settings import DatabaseBackend
 
 
 EXIT_STABLE = 0
@@ -57,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Runner and all execution services remain disabled."
         )
     )
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--idempotency-key")
     parser.add_argument("--output-dir", type=Path)
@@ -68,13 +67,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
         repositories = RepositoryFactory(settings_from_namespace(args))
-        if (
-            repositories.settings.backend is DatabaseBackend.SQLITE
-            and not repositories.settings.require_sqlite_path().is_file()
-        ):
-            raise _CLIValidationError(
-                "replay requires an existing lifecycle database"
-            )
         repository = repositories.lifecycle()
         source_run_id = LifecycleRunId(args.run_id)
         source_history = repository.history(source_run_id)

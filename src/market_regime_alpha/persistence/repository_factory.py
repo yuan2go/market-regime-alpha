@@ -1,4 +1,4 @@
-"""PostgreSQL-default repository composition with explicit SQLite compatibility."""
+"""PostgreSQL-only repository composition."""
 
 from __future__ import annotations
 
@@ -16,22 +16,15 @@ from market_regime_alpha.application.canonical_lifecycle.postgres_repository imp
 from market_regime_alpha.application.canonical_lifecycle.repositories import (
     LifecycleRunRepository,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
-)
 from market_regime_alpha.application.controlled_operation.longitudinal_index import (
     LongitudinalOperationalIndex,
-    SQLiteLongitudinalOperationalIndex,
 )
 from market_regime_alpha.application.controlled_operation.postgres_journal import (
+    DEFAULT_CONTROLLED_OPERATION_LEASE,
     PostgresDecisionTimeOperationJournal,
 )
 from market_regime_alpha.application.controlled_operation.postgres_longitudinal_index import (
     PostgresLongitudinalOperationalIndex,
-)
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
-    DEFAULT_CONTROLLED_OPERATION_LEASE,
-    SQLiteDecisionTimeOperationJournal,
 )
 from market_regime_alpha.application.continuous_research.postgres_journal import (
     DEFAULT_CONTINUOUS_TICK_LEASE,
@@ -40,40 +33,21 @@ from market_regime_alpha.application.continuous_research.postgres_journal import
 from market_regime_alpha.application.daily_loop.postgres_repository import (
     PostgresDailyRunRepository,
 )
-from market_regime_alpha.application.daily_loop.sqlite_repository import (
-    SQLiteDailyRunRepository,
-)
 from market_regime_alpha.application.operational_research.postgres_composite_repository import (
     PostgresCompositeOperationalRepository,
-)
-from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
-    SQLiteCompositeOperationalRepository,
 )
 from market_regime_alpha.application.trading_lifecycle.postgres_risk_reduction import (
     PostgresRiskReductionManualIntentRepository,
 )
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
-)
 from market_regime_alpha.decision.postgres_repository import (
     PostgresDecisionLifecycleRepository,
-)
-from market_regime_alpha.decision.sqlite_repository import (
-    SQLiteDecisionLifecycleRepository,
 )
 from market_regime_alpha.execution.postgres_repository import (
     PostgresManualExecutionRepository,
     PostgresTraceableManualExecutionRepository,
 )
-from market_regime_alpha.execution.sqlite_repository import (
-    SQLiteManualExecutionRepository,
-)
-from market_regime_alpha.execution.sqlite_traceability import (
-    SQLiteTraceableManualExecutionRepository,
-)
 from market_regime_alpha.features.materialization_run import (
     DEFAULT_FEATURE_TASK_LEASE,
-    SQLiteFeatureMaterializationRunRepository,
 )
 from market_regime_alpha.features.postgres_materialization_run import (
     PostgresFeatureMaterializationRunRepository,
@@ -84,7 +58,6 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.persistence.settings import (
     DATABASE_URL_ENV,
-    DatabaseBackend,
     DatabaseSettings,
 )
 from market_regime_alpha.portfolio.postgres_repository import (
@@ -92,28 +65,12 @@ from market_regime_alpha.portfolio.postgres_repository import (
     PostgresPortfolioDecisionRepository,
     PostgresRiskRouteRepository,
 )
-from market_regime_alpha.portfolio.sqlite_account_authority import (
-    SQLiteCompleteAccountPortfolioRiskRepository,
-)
-from market_regime_alpha.portfolio.sqlite_repository import (
-    SQLitePortfolioDecisionRepository,
-)
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    SQLiteRiskRouteRepository,
-)
 from market_regime_alpha.position.postgres_thesis_health import (
     PostgresThesisHealthRepository,
-)
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
 )
 from market_regime_alpha.platform.postgres_governance import (
     PostgresExperimentGovernanceRepository,
     PostgresModelRegistryRepository,
-)
-from market_regime_alpha.platform.sqlite_governance import (
-    SQLiteExperimentGovernanceRepository,
-    SQLiteModelRegistryRepository,
 )
 
 
@@ -122,7 +79,6 @@ Clock = Callable[[], datetime]
 
 @dataclass(frozen=True, slots=True)
 class DatabaseBinding:
-    backend: DatabaseBackend
     locator: str
 
 
@@ -131,7 +87,7 @@ class DatabaseBindingError(ValueError):
 
 
 class RepositoryFactory:
-    """Own backend resources and construct repositories for one authority."""
+    """Own PostgreSQL resources and construct native bounded repositories."""
 
     def __init__(
         self,
@@ -142,106 +98,58 @@ class RepositoryFactory:
         if not isinstance(settings, DatabaseSettings):
             raise TypeError("settings must be DatabaseSettings")
         self.settings = settings
-        if (
-            postgres_factory is not None
-            and settings.backend is not DatabaseBackend.POSTGRES
-        ):
-            raise ValueError("PostgreSQL factory cannot back SQLite settings")
         self._owns_postgres = postgres_factory is None
-        self._postgres = postgres_factory
-        if self._postgres is None and settings.backend is DatabaseBackend.POSTGRES:
-            self._postgres = PostgresConnectionFactory(settings)
+        self._postgres = postgres_factory or PostgresConnectionFactory(settings)
 
     @property
     def binding(self) -> DatabaseBinding:
-        if self.settings.backend is DatabaseBackend.POSTGRES:
-            locator = _postgres_binding_locator(
-                self.settings.require_database_url(),
-                application_schema=self.postgres_factory.application_schema,
-            )
-        else:
-            locator = str(self.settings.require_sqlite_path())
-        return DatabaseBinding(self.settings.backend, locator)
+        locator = _postgres_binding_locator(
+            self.settings.require_database_url(),
+            application_schema=self.postgres_factory.application_schema,
+        )
+        return DatabaseBinding(locator)
 
     @property
     def postgres_factory(self) -> PostgresConnectionFactory:
-        if self._postgres is None:
-            raise ValueError("PostgreSQL factory requested for SQLite compatibility")
         return self._postgres
 
     def daily(self):
-        if self._postgres is not None:
-            return PostgresDailyRunRepository(self._postgres)
-        return SQLiteDailyRunRepository(self.settings.require_sqlite_path())
+        return PostgresDailyRunRepository(self._postgres)
 
     def decision(self):
-        if self._postgres is not None:
-            return PostgresDecisionLifecycleRepository(self._postgres)
-        return SQLiteDecisionLifecycleRepository(self.settings.require_sqlite_path())
+        return PostgresDecisionLifecycleRepository(self._postgres)
 
     def portfolio(self):
-        if self._postgres is not None:
-            return PostgresPortfolioDecisionRepository(self._postgres)
-        return SQLitePortfolioDecisionRepository(self.settings.require_sqlite_path())
+        return PostgresPortfolioDecisionRepository(self._postgres)
 
     def complete_account_portfolio(self):
-        if self._postgres is not None:
-            return PostgresCompleteAccountPortfolioRiskRepository(self._postgres)
-        return SQLiteCompleteAccountPortfolioRiskRepository(
-            self.settings.require_sqlite_path()
-        )
+        return PostgresCompleteAccountPortfolioRiskRepository(self._postgres)
 
     def risk_route(self):
-        if self._postgres is not None:
-            return PostgresRiskRouteRepository(self._postgres)
-        return SQLiteRiskRouteRepository(self.settings.require_sqlite_path())
+        return PostgresRiskRouteRepository(self._postgres)
 
     def manual_execution(self):
-        if self._postgres is not None:
-            return PostgresManualExecutionRepository(self._postgres)
-        return SQLiteManualExecutionRepository(self.settings.require_sqlite_path())
+        return PostgresManualExecutionRepository(self._postgres)
 
     def traceable_execution(self):
-        if self._postgres is not None:
-            return PostgresTraceableManualExecutionRepository(self._postgres)
-        return SQLiteTraceableManualExecutionRepository(
-            self.settings.require_sqlite_path()
-        )
+        return PostgresTraceableManualExecutionRepository(self._postgres)
 
     def risk_reduction_manual_intent(self):
-        if self._postgres is not None:
-            return PostgresRiskReductionManualIntentRepository(self._postgres)
-        return SQLiteRiskReductionManualIntentRepository(
-            self.settings.require_sqlite_path()
-        )
+        return PostgresRiskReductionManualIntentRepository(self._postgres)
 
     def thesis_health(self):
-        if self._postgres is not None:
-            return PostgresThesisHealthRepository(self._postgres)
-        return SQLiteThesisHealthRepository(self.settings.require_sqlite_path())
+        return PostgresThesisHealthRepository(self._postgres)
 
     def composite(self):
-        if self._postgres is not None:
-            return PostgresCompositeOperationalRepository(self._postgres)
-        return SQLiteCompositeOperationalRepository(
-            self.settings.require_sqlite_path()
-        )
+        return PostgresCompositeOperationalRepository(self._postgres)
 
     def model_registry(self):
-        if self._postgres is not None:
-            return PostgresModelRegistryRepository(self._postgres)
-        return SQLiteModelRegistryRepository(self.settings.require_sqlite_path())
+        return PostgresModelRegistryRepository(self._postgres)
 
     def experiment_governance(self):
-        if self._postgres is not None:
-            return PostgresExperimentGovernanceRepository(self._postgres)
-        return SQLiteExperimentGovernanceRepository(
-            self.settings.require_sqlite_path()
-        )
+        return PostgresExperimentGovernanceRepository(self._postgres)
 
     def free_data_blocked(self):
-        if self._postgres is None:
-            raise ValueError("free-data blocked authority requires PostgreSQL")
         from market_regime_alpha.application.free_data_operation.postgres_blocked import (
             PostgresFreeDataBlockedRepository,
         )
@@ -249,13 +157,8 @@ class RepositoryFactory:
         return PostgresFreeDataBlockedRepository(self._postgres)
 
     def lifecycle(self, *, read_only: bool = False) -> LifecycleRunRepository:
-        if self._postgres is not None:
-            return PostgresLifecycleRunRepository(
-                self._postgres,
-                read_only=read_only,
-            )
-        return SQLiteLifecycleRunRepository(
-            self.settings.require_sqlite_path(),
+        return PostgresLifecycleRunRepository(
+            self._postgres,
             read_only=read_only,
         )
 
@@ -265,14 +168,8 @@ class RepositoryFactory:
         clock: Clock,
         lease_duration: timedelta = DEFAULT_FEATURE_TASK_LEASE,
     ):
-        if self._postgres is not None:
-            return PostgresFeatureMaterializationRunRepository(
-                self._postgres,
-                clock=clock,
-                lease_duration=lease_duration,
-            )
-        return SQLiteFeatureMaterializationRunRepository(
-            self.settings.require_sqlite_path(),
+        return PostgresFeatureMaterializationRunRepository(
+            self._postgres,
             clock=clock,
             lease_duration=lease_duration,
         )
@@ -284,14 +181,8 @@ class RepositoryFactory:
         lease_duration: timedelta,
     ):
         resolved_clock = clock or _utc_now
-        if self._postgres is not None:
-            return PostgresFeatureMaterializationRunRepository(
-                self._postgres,
-                clock=resolved_clock,
-                lease_duration=lease_duration,
-            )
-        return SQLiteFeatureMaterializationRunRepository(
-            path,
+        return PostgresFeatureMaterializationRunRepository(
+            self._postgres,
             clock=resolved_clock,
             lease_duration=lease_duration,
         )
@@ -302,14 +193,8 @@ class RepositoryFactory:
         clock: Clock,
         lease_duration: timedelta = DEFAULT_CONTROLLED_OPERATION_LEASE,
     ):
-        if self._postgres is not None:
-            return PostgresDecisionTimeOperationJournal(
-                self._postgres,
-                clock=clock,
-                lease_duration=lease_duration,
-            )
-        return SQLiteDecisionTimeOperationJournal(
-            self.settings.require_sqlite_path(),
+        return PostgresDecisionTimeOperationJournal(
+            self._postgres,
             clock=clock,
             lease_duration=lease_duration,
         )
@@ -320,8 +205,6 @@ class RepositoryFactory:
         clock: Clock,
         lease_duration: timedelta = DEFAULT_CONTINUOUS_TICK_LEASE,
     ) -> PostgresContinuousResearchJournal:
-        if self._postgres is None:
-            raise ValueError("continuous research authority requires PostgreSQL")
         return PostgresContinuousResearchJournal(
             self._postgres,
             clock=clock,
@@ -329,13 +212,8 @@ class RepositoryFactory:
         )
 
     def longitudinal(self, *, clock: Clock) -> LongitudinalOperationalIndex:
-        if self._postgres is not None:
-            return PostgresLongitudinalOperationalIndex(
-                self._postgres,
-                clock=clock,
-            )
-        return SQLiteLongitudinalOperationalIndex(
-            self.settings.require_sqlite_path(),
+        return PostgresLongitudinalOperationalIndex(
+            self._postgres,
             clock=clock,
         )
 
@@ -344,25 +222,20 @@ class RepositoryFactory:
         path: Path,
         read_only: bool,
     ) -> LifecycleRunRepository:
-        if self._postgres is not None:
-            return PostgresLifecycleRunRepository(
-                self._postgres,
-                read_only=read_only,
-            )
-        return SQLiteLifecycleRunRepository(path, read_only=read_only)
+        return PostgresLifecycleRunRepository(
+            self._postgres,
+            read_only=read_only,
+        )
 
     def bind_runtime(self, scope_type: str, scope_id: str) -> DatabaseBinding:
         """Persist one immutable PostgreSQL run-to-authority binding.
 
-        SQLite compatibility is already physically path-bound: selecting another
-        file cannot retrieve the run. PostgreSQL needs an explicit row because
-        multiple authorities can share the same connection interface.
+        Multiple schemas can share one connection interface, so the binding is
+        persisted explicitly without credentials.
         """
 
         _validate_runtime_binding_key(scope_type, scope_id)
         binding = self.binding
-        if self._postgres is None:
-            return binding
         PostgresMigrator().apply_all(self._postgres)
         with self._postgres.connection() as connection:
             connection.execute(
@@ -372,7 +245,7 @@ class RepositoryFactory:
                 ) VALUES (%s, %s, %s, %s, now())
                 ON CONFLICT (scope_type, scope_id) DO NOTHING
                 """,
-                (scope_type, scope_id, binding.backend.value, binding.locator),
+                (scope_type, scope_id, "postgres", binding.locator),
             )
             row = connection.execute(
                 """
@@ -396,8 +269,6 @@ class RepositoryFactory:
 
         _validate_runtime_binding_key(scope_type, scope_id)
         binding = self.binding
-        if self._postgres is None:
-            return binding
         PostgresMigrator().apply_all(self._postgres)
         with self._postgres.connection(read_only=True) as connection:
             row = connection.execute(
@@ -414,7 +285,7 @@ class RepositoryFactory:
         return binding
 
     def close(self) -> None:
-        if self._postgres is not None and self._owns_postgres:
+        if self._owns_postgres:
             self._postgres.close()
 
     def __enter__(self) -> RepositoryFactory:
@@ -426,18 +297,9 @@ class RepositoryFactory:
 
 def add_database_arguments(
     parser: argparse.ArgumentParser,
-    *,
-    legacy_sqlite_flag: str | None = None,
 ) -> None:
+    parser.allow_abbrev = False
     parser.add_argument("--database-url")
-    parser.add_argument("--sqlite-database", type=Path)
-    if legacy_sqlite_flag is not None:
-        parser.add_argument(
-            legacy_sqlite_flag,
-            dest="legacy_sqlite_database",
-            type=Path,
-            help=argparse.SUPPRESS,
-        )
 
 
 def settings_from_namespace(
@@ -445,11 +307,6 @@ def settings_from_namespace(
     *,
     dotenv_path: Path = Path(".env"),
 ) -> DatabaseSettings:
-    sqlite_path = getattr(args, "sqlite_database", None)
-    legacy_path = getattr(args, "legacy_sqlite_database", None)
-    if sqlite_path is not None and legacy_path is not None:
-        raise ValueError("select only one explicit SQLite compatibility path")
-    selected_path = sqlite_path if sqlite_path is not None else legacy_path
     environment = dict(os.environ)
     if DATABASE_URL_ENV not in environment:
         value = _read_dotenv_value(dotenv_path, DATABASE_URL_ENV)
@@ -457,7 +314,6 @@ def settings_from_namespace(
             environment[DATABASE_URL_ENV] = value
     return DatabaseSettings.from_sources(
         database_url=getattr(args, "database_url", None),
-        sqlite_path=selected_path,
         environ=environment,
     )
 
@@ -527,7 +383,7 @@ def _assert_database_binding(
     stored_locator: str,
 ) -> None:
     if (
-        stored_backend != expected.backend.value
+        stored_backend != "postgres"
         or stored_locator != expected.locator
     ):
         raise DatabaseBindingError(

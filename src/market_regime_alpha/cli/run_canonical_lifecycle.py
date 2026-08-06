@@ -6,7 +6,6 @@ import argparse
 from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
-import sqlite3
 import sys
 from typing import NoReturn, Sequence, cast
 
@@ -45,9 +44,6 @@ from market_regime_alpha.application.canonical_lifecycle.runtime_configuration i
     RuntimeConfigurationReader,
     RuntimeConfigurationSet,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_composition import (
-    build_sqlite_lifecycle_runner,
-)
 from market_regime_alpha.application.canonical_lifecycle.postgres_composition import (
     build_postgres_lifecycle_runner,
 )
@@ -72,7 +68,6 @@ from market_regime_alpha.persistence.repository_factory import (
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionUnavailable,
 )
-from market_regime_alpha.persistence.settings import DatabaseBackend
 
 
 EXIT_SUCCESS = 0
@@ -118,8 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
     )
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
-    parser.add_argument("--authority-database", type=Path)
+    add_database_arguments(parser)
     return parser
 
 
@@ -195,7 +189,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_STAGE_FAILED
     except (
         LifecycleRepositoryError,
-        sqlite3.Error,
         psycopg.Error,
         PostgresConnectionUnavailable,
     ) as exc:
@@ -225,7 +218,6 @@ def _replay(
             "input_manifest",
             "decision_date",
             "as_of",
-            "authority_database",
             "stop_after_stage",
         )
         if getattr(args, name) is not None
@@ -322,19 +314,6 @@ def _start(
         raise CLIValidationError(
             "new run requires " + ", ".join(f"--{name.replace('_', '-')}" for name in missing)
         )
-    if repositories.settings.backend is DatabaseBackend.POSTGRES and (
-        args.authority_database is not None
-    ):
-        raise CLIValidationError(
-            "PostgreSQL runtime uses its configured schema for domain authority"
-        )
-    if (
-        args.authority_database is not None
-        and not args.authority_database.resolve().is_file()
-    ):
-        raise CLIValidationError(
-            "authority database must be an existing explicitly supplied file"
-        )
     manifest_path = cast(Path, args.input_manifest).resolve()
     manifest = CanonicalLifecycleInputManifestReader().read(manifest_path)
     decision_date = _date(str(args.decision_date))
@@ -359,11 +338,7 @@ def _start(
         model_references=manifest.model_references,
         stop_after_stage=stop_after_stage,
         output_directory=output_directory,
-        authority_database_locator=(
-            args.authority_database.resolve()
-            if args.authority_database is not None
-            else None
-        ),
+        authority_database_locator=None,
     )
     repository = repositories.lifecycle()
     runner = _build_runner(
@@ -404,32 +379,6 @@ def _resume(
         str(run_id),
     )
     command = repository.get_command(run_id)
-    requested_authority = (
-        args.authority_database.resolve()
-        if args.authority_database is not None
-        else None
-    )
-    if (
-        repositories.settings.backend is DatabaseBackend.POSTGRES
-        and requested_authority is not None
-    ):
-        raise CLIResumeRejected(
-            "PostgreSQL resume uses the configured authority schema"
-        )
-    if (
-        requested_authority is not None
-        and requested_authority != command.authority_database_locator
-    ):
-        raise CLIResumeRejected(
-            "resume authority database must match the stored command binding"
-        )
-    if (
-        command.authority_database_locator is not None
-        and not command.authority_database_locator.is_file()
-    ):
-        raise CLIResumeRejected(
-            "stored authority database binding is no longer available"
-        )
     if (
         requested_output_directory is not None
         and requested_output_directory != command.output_directory
@@ -511,17 +460,9 @@ def _build_runner(
     manifest: CanonicalLifecycleInputManifest | None,
     configurations: RuntimeConfigurationSet,
 ) -> CanonicalDecisionLifecycleRunner:
-    if repositories.settings.backend is DatabaseBackend.POSTGRES:
-        return build_postgres_lifecycle_runner(
-            repository=repository,
-            factory=repositories.postgres_factory,
-            command=command,
-            manifest=manifest,
-            configurations=configurations,
-            clock=_utc_now,
-        )
-    return build_sqlite_lifecycle_runner(
+    return build_postgres_lifecycle_runner(
         repository=repository,
+        factory=repositories.postgres_factory,
         command=command,
         manifest=manifest,
         configurations=configurations,

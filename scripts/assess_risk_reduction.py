@@ -125,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Assess and persist one reducing-risk decision only"
     )
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     parser.add_argument("--request", type=Path, required=True)
     args = parser.parse_args(argv)
     with RepositoryFactory(settings_from_namespace(args)) as repositories:

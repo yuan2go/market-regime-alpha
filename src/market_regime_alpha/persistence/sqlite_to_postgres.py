@@ -38,10 +38,7 @@ from market_regime_alpha.persistence.postgres.schema import (
     EXPECTED_AUTHORITY_TABLES,
     verify_postgres_authority_schema,
 )
-from market_regime_alpha.persistence.settings import (
-    DatabaseBackend,
-    DatabaseSettings,
-)
+from market_regime_alpha.persistence.settings import DatabaseSettings
 
 
 FaultInjector = Callable[[str], None]
@@ -99,8 +96,6 @@ class SQLiteToPostgresMigrator:
         manifest: SQLiteMigrationManifest,
         settings: DatabaseSettings,
     ) -> MigrationPlan:
-        if settings.backend is not DatabaseBackend.POSTGRES:
-            raise ValueError("SQLite import target must be PostgreSQL")
         planned = tuple(
             PlannedSQLiteSource(
                 source=source,
@@ -124,8 +119,6 @@ class SQLiteToPostgresMigrator:
         return MigrationPlan(manifest=manifest, settings=settings, sources=planned)
 
     def execute(self, plan: MigrationPlan, output_root: Path) -> MigrationReport:
-        if plan.settings.backend is not DatabaseBackend.POSTGRES:
-            raise ValueError("SQLite import target must be PostgreSQL")
         owns_factory = self._factory is None
         factory = self._factory or PostgresConnectionFactory(plan.settings)
         try:

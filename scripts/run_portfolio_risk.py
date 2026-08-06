@@ -143,7 +143,7 @@ def _position(payload: dict[str, Any]) -> CurrentPositionInput:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Portfolio and independent Risk CLI")
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
     run = subparsers.add_parser("run")
     run.add_argument("--request", type=Path, required=True)

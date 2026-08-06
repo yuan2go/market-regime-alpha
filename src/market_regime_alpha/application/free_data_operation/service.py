@@ -55,7 +55,6 @@ from market_regime_alpha.data.providers.public_composite import (
     load_verified_public_source_stage_artifact,
 )
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
-from market_regime_alpha.persistence.settings import DatabaseBackend
 from market_regime_alpha.universe.daily_exploratory import DailyUniversePolicy
 
 
@@ -109,8 +108,6 @@ class FreeDataOperationService:
         clock: Clock,
         live_profile: PublicCompositeLiveProfile | None = None,
     ) -> None:
-        if repositories.settings.backend is not DatabaseBackend.POSTGRES:
-            raise ValueError("free-data Canonical Runtime requires PostgreSQL authority")
         if not code_revision or code_revision != code_revision.strip():
             raise ValueError("code_revision must be a non-empty trimmed value")
         self._repositories = repositories

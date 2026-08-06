@@ -25,7 +25,6 @@ from tests.persistence.postgres.conftest import TEST_DATABASE_URL_ENV
 def _settings() -> DatabaseSettings:
     return DatabaseSettings.from_sources(
         database_url=os.environ[TEST_DATABASE_URL_ENV],
-        sqlite_path=None,
         environ={},
     )
 

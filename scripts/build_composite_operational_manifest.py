@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daily-artifact", type=Path, required=True)
     parser.add_argument("--supplemental-artifact", type=Path, required=True)
     parser.add_argument("--composition-policy", type=Path, required=True)
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--created-at", required=True)
     parser.add_argument("--idempotency-key", required=True)

@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Create an H4.5 manual SELL intent; never create Fill or broker order."
         )
     )
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     parser.add_argument("--risk-reducing-decision-id", required=True)
     parser.add_argument("--risk-reducing-decision-hash", required=True)
     parser.add_argument("--exit-directive-id", required=True)

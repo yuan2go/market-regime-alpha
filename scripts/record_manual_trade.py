@@ -32,7 +32,7 @@ def _object(value: object) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Record manual trade intent only")
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     parser.add_argument("--request", type=Path, required=True)
     args = parser.parse_args()
     request = _object(json.loads(args.request.read_text(encoding="utf-8")))
