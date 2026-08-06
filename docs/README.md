@@ -174,6 +174,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-CRR-01 CRR-00 Baseline and Write Authority](audit/WP-CRR-01-CRR-00-Baseline.md)
 - [WP-CRR-01 Final Review](audit/WP-CRR-01-Final-Review.md)
 - [WP-PGSQL-01 SQLite and Compatibility Inventory](audit/WP-PGSQL-01-SQLite-Inventory.md)
+- [WP-PGSQL-01 / WP-DECISION-01 Delivery Evidence](audit/WP-PGSQL-01-WP-DECISION-01-Delivery.md)
 - [WP-CRR-01 Acceptance Evidence](evidence/WP-CRR-01-Acceptance.md)
 - [WP-STATE-01 Acceptance Evidence](evidence/WP-STATE-01-Acceptance.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
