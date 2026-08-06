@@ -78,7 +78,6 @@ class MaterialIdentityInput:
             "normalized_content_hash": self.normalized_content_hash,
             "source_manifest_semantic_hash": self.source_manifest_semantic_hash,
             "request_scope_hash": self.request_scope_hash,
-            "as_of_time": canonical_datetime(self.as_of_time),
             "configuration_references": [
                 item.to_canonical_dict() for item in self.configuration_references
             ],

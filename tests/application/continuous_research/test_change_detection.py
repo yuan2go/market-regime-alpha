@@ -57,7 +57,6 @@ def _material(**overrides: object) -> MaterialIdentityInput:
         ("normalized_content_hash", HASHES[6]),
         ("source_manifest_semantic_hash", HASHES[6]),
         ("request_scope_hash", HASHES[6]),
-        ("as_of_time", NOW + timedelta(minutes=1)),
         (
             "configuration_references",
             (
@@ -80,6 +79,7 @@ def test_semantic_inputs_change_material_identity(field: str, value: object) -> 
     ("field", "value"),
     (
         ("retrieved_at", NOW + timedelta(minutes=2)),
+        ("as_of_time", NOW + timedelta(minutes=1)),
         ("attempt_id", 99),
         ("retry_count", 8),
         ("fencing_token", 7),

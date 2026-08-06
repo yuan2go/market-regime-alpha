@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -13,6 +14,7 @@ from market_regime_alpha.application.continuous_research.contracts import (
 )
 from market_regime_alpha.application.continuous_research.policy import (
     ContinuousSessionPhase,
+    default_continuous_decision_window_policy,
 )
 from market_regime_alpha.application.continuous_research.postgres_journal import (
     PostgresContinuousResearchJournal,
@@ -22,6 +24,9 @@ from market_regime_alpha.application.continuous_research.replay import (
 )
 from market_regime_alpha.application.continuous_research.report import (
     build_continuous_research_report,
+)
+from market_regime_alpha.application.continuous_research.scheduler import (
+    TradingDayAssessment,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.persistence.postgres.connection import (
@@ -56,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(item.value for item in ContinuousSessionPhase),
         required=True,
     )
+    schedule = subparsers.add_parser("schedule")
+    schedule.add_argument("--run-command", type=Path, required=True)
+    schedule.add_argument("--trading-day-assessment", type=Path, required=True)
+    schedule.add_argument("--at", required=True)
+    reserve = subparsers.add_parser("reserve-due-tick")
+    reserve.add_argument("--run-command", type=Path, required=True)
+    reserve.add_argument("--at", required=True)
     for operation in ("resume", "report", "replay"):
         command = subparsers.add_parser(operation)
         command.add_argument("--run-id", required=True)
@@ -98,31 +110,71 @@ def _dispatch(
     args: argparse.Namespace, journal: PostgresContinuousResearchJournal
 ) -> dict[str, Any]:
     if args.operation == "prepare":
-        command = ContinuousResearchCommand.from_canonical_dict(
+        run_command = ContinuousResearchCommand.from_canonical_dict(
             _load_json_object(args.run_command)
         )
-        snapshot = journal.create_or_get(command)
+        snapshot = journal.create_or_get(run_command)
         return {
             "status": snapshot.status.value,
             "operation": "PREPARE",
-            "run_id": str(command.run_id),
-            "command_hash": command.command_hash,
+            "run_id": str(run_command.run_id),
+            "command_hash": run_command.command_hash,
             **_authority_ceiling(),
         }
     if args.operation == "admit-tick":
-        command = RuntimeTickCommand.from_canonical_dict(
+        tick_command = RuntimeTickCommand.from_canonical_dict(
             _load_json_object(args.tick_command)
         )
         tick = journal.admit_tick(
-            command,
+            tick_command,
             session_phase=ContinuousSessionPhase(args.session_phase),
         )
         return {
             "status": tick.status.value,
             "operation": "ADMIT_TICK",
-            "run_id": str(command.run_id),
-            "tick_id": str(command.tick_id),
+            "run_id": str(tick_command.run_id),
+            "tick_id": str(tick_command.tick_id),
             "tick_sequence": tick.tick_sequence,
+            **_authority_ceiling(),
+        }
+    if args.operation == "schedule":
+        schedule_command = ContinuousResearchCommand.from_canonical_dict(
+            _load_json_object(args.run_command)
+        )
+        trading_day = TradingDayAssessment.from_canonical_dict(
+            _load_json_object(args.trading_day_assessment)
+        )
+        journal.create_or_get(schedule_command)
+        schedule = journal.initialize_schedule(
+            run_command=schedule_command,
+            policy=default_continuous_decision_window_policy(),
+            trading_day=trading_day,
+            initial_tick_at=_instant(args.at),
+        )
+        return {
+            "operation": "SCHEDULE",
+            **schedule.to_canonical_dict(),
+            **_authority_ceiling(),
+        }
+    if args.operation == "reserve-due-tick":
+        reserve_command = ContinuousResearchCommand.from_canonical_dict(
+            _load_json_object(args.run_command)
+        )
+        reserved_tick = journal.reserve_due_tick(
+            run_command=reserve_command,
+            policy=default_continuous_decision_window_policy(),
+            now=_instant(args.at),
+        )
+        return {
+            "operation": "RESERVE_DUE_TICK",
+            "status": "NOT_DUE" if reserved_tick is None else "PENDING",
+            "run_id": str(reserve_command.run_id),
+            "tick_id": (
+                None if reserved_tick is None else str(reserved_tick.command.tick_id)
+            ),
+            "tick_sequence": (
+                None if reserved_tick is None else reserved_tick.tick_sequence
+            ),
             **_authority_ceiling(),
         }
     run_id = ArtifactId(args.run_id)
@@ -147,6 +199,15 @@ def _load_json_object(path: Path) -> Mapping[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("command file must contain a JSON object")
     return payload
+
+
+def _instant(value: str) -> datetime:
+    instant = datetime.fromisoformat(value)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("--at must be timezone-aware")
+    if instant.microsecond:
+        raise ValueError("--at must use whole-second precision")
+    return instant
 
 
 def _authority_ceiling() -> dict[str, bool]:

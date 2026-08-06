@@ -30,6 +30,7 @@ full baseline with a credential-bearing test-only DSN passed 2,266 tests; all
 | Crash recovery | PASS | recovery after Evidence CAS and child receipts skipped Provider/child republication; partial CRR lineage filled only missing rows |
 | Request scope and Orderability | PASS | exact request partition retained; missing Eligibility/Orderability evidence failed closed |
 | Structured CLI/replay | PASS | explicit PostgreSQL/schema, credential-free errors, read-only report/replay |
+| Free live-data rehearsal | EXTERNAL_PROVIDER_BLOCKED | existing Tencent client, `510300.SH` plus `600000.SH`; TLS handshake timed out before valid Evidence |
 | Ruff | PASS | CRR-06 focused run passed |
 | mypy | PASS | 355 configured source files passed |
 
@@ -41,11 +42,11 @@ not pre-claim a later commit as tested.
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Sole all-day owner | Runner plus existing-service ports/composition; no second research engine | PASS |
+| Sole all-day owner | Runner plus PostgreSQL schedule and existing-service ports/composition; no second research engine | IN_REVIEW_FINAL_GATE |
 | 14:30–14:55 window | boundary and no-exact-tick policy tests | PASS |
 | Historical 14:55 compatibility | unchanged existing policy/Target/Reader/Replay plus regression tests in final gate | PENDING_FINAL_GATE |
 | PostgreSQL-only writes | RepositoryFactory rejects SQLite CRR authority | PASS |
-| Lease/fencing/CAS/idempotency | PostgreSQL Journal tests | PASS |
+| Lease/fencing/CAS/idempotency | PostgreSQL Journal plus migration 021 schedule tests | PASS |
 | Provider Attempt/Evidence separation | contract and restart tests | PASS |
 | Last valid Evidence isolation | five terminal failure classes plus expired Claim | PASS |
 | Material identity/reuse | semantic/non-semantic hash tests and call counters | PASS |
@@ -56,7 +57,8 @@ not pre-claim a later commit as tested.
 ## 4. Explicit evidence ceiling
 
 This evidence is based on engineering fixtures and a local isolated PostgreSQL
-instance. It does not establish production scheduling, sustained operation,
+instance. It establishes durable schedule mechanics, not a deployed process
+supervisor or sustained operation,
 formal PIT, Provider qualification, calibrated probabilities, economic value,
 Shadow readiness, authenticated operators, Entry authority, Opportunity/Order,
 real Fill, Position mutation or Broker authority.

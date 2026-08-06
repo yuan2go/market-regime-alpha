@@ -31,14 +31,25 @@ from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
     ContinuousTickExecutionResult,
 )
+from market_regime_alpha.application.continuous_research.scheduler import (
+    ContinuousResearchScheduleRunner,
+    ContinuousScheduleRunResult,
+    ContinuousScheduleSnapshot,
+    ContinuousScheduleStatus,
+    TradingDayAssessment,
+)
 
 __all__ = [
     "ChangeDecision",
     "ContinuousChildReference",
     "ContinuousResearchScope",
     "ContinuousResearchScopeRecord",
+    "ContinuousResearchScheduleRunner",
     "ContinuousResearchTickRunner",
     "ContinuousTickExecutionResult",
+    "ContinuousScheduleRunResult",
+    "ContinuousScheduleSnapshot",
+    "ContinuousScheduleStatus",
     "CurrentEvidenceSnapshot",
     "EvidenceCommit",
     "EvidenceCommitResult",
@@ -48,5 +59,6 @@ __all__ = [
     "ProviderAttemptSnapshot",
     "RecordedChangeDecision",
     "StartedProviderAttempt",
+    "TradingDayAssessment",
     "prepare_continuous_research_scope",
 ]

@@ -77,6 +77,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "continuous_change_decision",
         "continuous_child_run",
         "continuous_runtime_event",
+        "continuous_runtime_schedule",
     }
 )
 
@@ -118,6 +119,8 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("continuous_child_run", "continuous_child_run_no_delete"),
         ("continuous_runtime_event", "continuous_runtime_event_no_update"),
         ("continuous_runtime_event", "continuous_runtime_event_no_delete"),
+        ("continuous_runtime_schedule", "continuous_runtime_schedule_identity_immutable"),
+        ("continuous_runtime_schedule", "continuous_runtime_schedule_no_delete"),
         ("feature_materialization_attempt", "feature_materialization_attempt_transition_guard"),
         ("feature_materialization_attempt", "feature_materialization_attempts_no_delete"),
         ("feature_materialization_event", "feature_materialization_events_no_delete"),

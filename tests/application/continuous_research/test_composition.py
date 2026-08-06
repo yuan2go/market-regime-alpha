@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -28,6 +28,10 @@ def _request() -> ChildExecutionRequest:
         run_id=ArtifactId("composition-run"),
         tick_id=ArtifactId("composition-tick"),
         tick_sequence=1,
+        claim_id="composition-claim",
+        fencing_token=1,
+        tick_version=2,
+        lease_expires_at=datetime(2026, 8, 6, 7, 0, tzinfo=timezone.utc),
         provider_attempt_id=1,
         source_manifest_id=ArtifactId("composition-manifest"),
         source_manifest_hash=HASH,

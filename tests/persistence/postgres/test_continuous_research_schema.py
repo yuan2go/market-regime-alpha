@@ -21,6 +21,7 @@ CONTINUOUS_TABLES = {
     "continuous_change_decision",
     "continuous_child_run",
     "continuous_runtime_event",
+    "continuous_runtime_schedule",
 }
 
 
@@ -47,7 +48,7 @@ def test_migration_020_adds_exact_continuous_runtime_authorities(
         ).fetchone()
 
     assert tables == CONTINUOUS_TABLES
-    assert migration == (20, "continuous_research_runtime")
+    assert migration == (21, "continuous_runtime_schedule")
 
 
 def test_migration_020_extends_runtime_binding_scope_without_weakening_it(
@@ -116,4 +117,6 @@ def test_continuous_history_tables_have_mutation_guards(
         ("continuous_child_run", "continuous_child_run_no_delete"),
         ("continuous_runtime_event", "continuous_runtime_event_no_update"),
         ("continuous_runtime_event", "continuous_runtime_event_no_delete"),
+        ("continuous_runtime_schedule", "continuous_runtime_schedule_identity_immutable"),
+        ("continuous_runtime_schedule", "continuous_runtime_schedule_no_delete"),
     }

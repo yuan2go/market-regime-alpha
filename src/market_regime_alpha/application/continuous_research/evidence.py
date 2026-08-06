@@ -261,6 +261,8 @@ class EvidenceCommit:
             require_utc_second(label, timestamp)
         if self.available_at < self.effective_at or self.retrieved_at < self.effective_at:
             raise ValueError("Evidence cannot be available/retrieved before effective_at")
+        if self.available_at > self.as_of_time:
+            raise ValueError("Evidence AvailableAt cannot exceed AsOfTime")
         require_text("evidence_qualification", self.evidence_qualification)
         require_unique_text("Evidence limitation", self.limitations)
         if self.limitations != tuple(sorted(self.limitations)):

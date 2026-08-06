@@ -31,7 +31,7 @@ Replay contracts.
 | CRR-03 | append-only Provider Attempts, immutable Evidence Commits, last-valid Evidence CAS | failed/timeout/invalid attempts never replace valid Evidence |
 | CRR-04 | canonical material hash, Change Decision, Child lineage and identity reuse | no-change makes zero child-service calls |
 | CRR-05 | thin exact-time Eligibility and research Orderability scope adapter | missing evidence becomes `UNKNOWN`; Entry remains blocked |
-| CRR-06 | bounded one-tick Runner, existing-service ports/composition, crash recovery, CLI report/replay | local engineering fixtures only; no production scheduler |
+| CRR-06 | bounded one-tick Runner, durable schedule reservation, existing-service ports/composition, crash recovery, CLI schedule/report/replay | local engineering fixtures only; no sustained production operation |
 
 ## 3. Core invariants
 
@@ -48,7 +48,7 @@ Replay contracts.
 
 ## 4. PostgreSQL authority
 
-Migration 020 adds eight tables:
+Migrations 020 and 021 add nine tables:
 
 - `continuous_research_run`;
 - `continuous_runtime_tick`;
@@ -57,7 +57,8 @@ Migration 020 adds eight tables:
 - `continuous_current_evidence`;
 - `continuous_change_decision`;
 - `continuous_child_run`; and
-- `continuous_runtime_event`.
+- `continuous_runtime_event`; and
+- `continuous_runtime_schedule`.
 
 The migration extends `runtime_database_bindings` with the
 `CONTINUOUS_RESEARCH` scope. Immutable tables reject update/delete. Mutable
@@ -81,7 +82,7 @@ only missing CRR lineage rows.
 The following are not delivered: `DailyDecisionWindowSummary`, stateful
 Market/Theme/Capital machines, Dynamic Stock Pool, Daily Summary, Manual
 Account, Reconciliation, Model Registry Selector, economic validation, Shadow
-Runtime, production scheduling, authenticated operators, formal PIT
+Runtime process supervision, authenticated operators, formal PIT
 qualification, qualified Alpha, Opportunity/Order creation, QMT/PTrade/Broker
 integration, real Fill or Position mutation.
 

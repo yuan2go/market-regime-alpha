@@ -15,7 +15,6 @@ from market_regime_alpha.application.continuous_research.journal import (
 )
 from market_regime_alpha.application.continuous_research.policy import (
     ContinuousRunState,
-    ContinuousSessionPhase,
     default_continuous_decision_window_policy,
 )
 from market_regime_alpha.application.continuous_research.ports import (
@@ -165,13 +164,16 @@ def test_first_evidence_runs_each_existing_child_once_and_completes(
     provider = ScriptedProvider([_provider_result(HASHES[8])])
     children = CountingChildren()
     runner = ContinuousResearchTickRunner(
-        journal=journal, provider=provider, children=children, clock=lambda: NOW
+        journal=journal,
+        provider=provider,
+        children=children,
+        policy=default_continuous_decision_window_policy(),
+        clock=lambda: NOW,
     )
 
     result = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 
@@ -193,12 +195,15 @@ def test_no_material_change_reuses_children_without_calling_them(
     )
     children = CountingChildren()
     runner = ContinuousResearchTickRunner(
-        journal=journal, provider=provider, children=children, clock=lambda: NOW
+        journal=journal,
+        provider=provider,
+        children=children,
+        policy=default_continuous_decision_window_policy(),
+        clock=lambda: NOW,
     )
     runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.AFTERNOON_SESSION,
         provider_request=_request(),
     )
     baseline_calls = children.calls.copy()
@@ -206,7 +211,6 @@ def test_no_material_change_reuses_children_without_calling_them(
     result = runner.execute(
         run_command=command,
         tick_command=_tick(command, 1),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 
@@ -239,12 +243,15 @@ def test_provider_failure_records_attempt_and_preserves_current_evidence(
     )
     children = CountingChildren()
     runner = ContinuousResearchTickRunner(
-        journal=journal, provider=provider, children=children, clock=lambda: NOW
+        journal=journal,
+        provider=provider,
+        children=children,
+        policy=default_continuous_decision_window_policy(),
+        clock=lambda: NOW,
     )
     first = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.AFTERNOON_SESSION,
         provider_request=_request(),
     )
     assert first.evidence is not None
@@ -253,7 +260,6 @@ def test_provider_failure_records_attempt_and_preserves_current_evidence(
     failed = runner.execute(
         run_command=command,
         tick_command=_tick(command, 1),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 
@@ -285,13 +291,16 @@ def test_data_insufficient_first_evidence_completes_without_children(
     )
     children = CountingChildren()
     runner = ContinuousResearchTickRunner(
-        journal=journal, provider=provider, children=children, clock=lambda: NOW
+        journal=journal,
+        provider=provider,
+        children=children,
+        policy=default_continuous_decision_window_policy(),
+        clock=lambda: NOW,
     )
 
     result = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 
@@ -300,3 +309,76 @@ def test_data_insufficient_first_evidence_completes_without_children(
     assert result.decision.decision_type.value == "DATA_INSUFFICIENT"
     assert result.child_references == ()
     assert children.calls == Counter()
+
+
+def test_future_evidence_is_recorded_as_invalid_attempt_and_not_consumed(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    command = _command()
+    journal = PostgresContinuousResearchJournal(postgres_factory, clock=lambda: NOW)
+    acquired = _provider_result(HASHES[8])
+    assert acquired.evidence is not None
+    future = NOW + timedelta(minutes=1)
+    provider = ScriptedProvider(
+        [
+            replace(
+                acquired,
+                completed_at=future,
+                evidence=replace(
+                    acquired.evidence,
+                    effective_at=future,
+                    retrieved_at=future,
+                    available_at=future,
+                    as_of_time=future,
+                ),
+            )
+        ]
+    )
+    runner = ContinuousResearchTickRunner(
+        journal=journal,
+        provider=provider,
+        children=CountingChildren(),
+        policy=default_continuous_decision_window_policy(),
+        clock=lambda: NOW,
+    )
+
+    result = runner.execute(
+        run_command=command,
+        tick_command=_tick(command, 0),
+        provider_request=_request(),
+    )
+
+    assert result.tick.status is ContinuousTickStatus.FAILED
+    assert result.evidence is None
+    attempt = journal.get_provider_attempt(result.tick.provider_attempt_id or 0)
+    assert attempt.status is ProviderAttemptStatus.INVALID_RESPONSE
+    assert journal.get_current_evidence(command.run_id, "A_SHARE_MINUTE_SCOPE") is None
+
+
+def test_provider_exception_is_recorded_as_failed_attempt(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    class RaisingProvider:
+        def acquire(self, request: ProviderAcquisitionRequest) -> ProviderAcquisitionResult:
+            raise TimeoutError("secret provider detail")
+
+    command = _command()
+    journal = PostgresContinuousResearchJournal(postgres_factory, clock=lambda: NOW)
+    runner = ContinuousResearchTickRunner(
+        journal=journal,
+        provider=RaisingProvider(),
+        children=CountingChildren(),
+        policy=default_continuous_decision_window_policy(),
+        clock=lambda: NOW,
+    )
+
+    result = runner.execute(
+        run_command=command,
+        tick_command=_tick(command, 0),
+        provider_request=_request(),
+    )
+
+    attempt = journal.get_provider_attempt(result.tick.provider_attempt_id or 0)
+    assert attempt.status is ProviderAttemptStatus.FAILED
+    assert attempt.error_message == "TimeoutError"
+    assert result.evidence is None

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from market_regime_alpha.application.continuous_research.policy import (
-    ContinuousSessionPhase,
+    default_continuous_decision_window_policy,
 )
 from market_regime_alpha.application.continuous_research.postgres_journal import (
     PostgresContinuousResearchJournal,
@@ -42,7 +42,11 @@ def _runtime(postgres_factory: PostgresConnectionFactory):
     provider = ScriptedProvider([_provider_result(HASHES[8])])
     children = CountingChildren()
     runner = ContinuousResearchTickRunner(
-        journal=journal, provider=provider, children=children, clock=clock
+        journal=journal,
+        provider=provider,
+        children=children,
+        policy=default_continuous_decision_window_policy(),
+        clock=clock,
     )
 
     def expire() -> None:
@@ -69,7 +73,6 @@ def test_recovery_after_evidence_cas_skips_provider_republication(
         runner.execute(
             run_command=command,
             tick_command=_tick(command, 0),
-            session_phase=ContinuousSessionPhase.DECISION_WINDOW,
             provider_request=_request(),
         )
     tick = journal.get_tick(command.run_id, _tick(command, 0).tick_id)
@@ -81,7 +84,6 @@ def test_recovery_after_evidence_cas_skips_provider_republication(
     recovered = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 
@@ -107,7 +109,6 @@ def test_recovery_after_child_receipts_uses_durable_child_lookup(
         runner.execute(
             run_command=command,
             tick_command=_tick(command, 0),
-            session_phase=ContinuousSessionPhase.DECISION_WINDOW,
             provider_request=_request(),
         )
     assert sum(children.calls.values()) == 4
@@ -117,7 +118,6 @@ def test_recovery_after_child_receipts_uses_durable_child_lookup(
     recovered = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 
@@ -150,7 +150,6 @@ def test_recovery_after_partial_crr_child_lineage_only_fills_missing_rows(
         runner.execute(
             run_command=command,
             tick_command=_tick(command, 0),
-            session_phase=ContinuousSessionPhase.DECISION_WINDOW,
             provider_request=_request(),
         )
     assert len(
@@ -162,7 +161,6 @@ def test_recovery_after_partial_crr_child_lineage_only_fills_missing_rows(
     recovered = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 
@@ -180,7 +178,6 @@ def test_completed_tick_replay_is_read_only(
     first = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
     calls = (provider.call_count, children.calls.copy())
@@ -188,7 +185,6 @@ def test_completed_tick_replay_is_read_only(
     replayed = runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
 

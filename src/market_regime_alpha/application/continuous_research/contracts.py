@@ -217,8 +217,6 @@ class RuntimeTickCommand:
             raise ValueError("unsupported Runtime Tick command schema")
         require_text("idempotency_key", self.idempotency_key)
         require_utc_second("observed_at", self.observed_at)
-        if self.observed_at.date() != self.trading_date:
-            raise ValueError("observed_at UTC date must match trading_date")
         for label, value in (
             ("tick_hash", self.tick_hash),
             ("request_scope_hash", self.request_scope_hash),

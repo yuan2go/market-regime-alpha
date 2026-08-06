@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -283,6 +283,26 @@ class ContinuousDecisionWindowPolicy:
             decision_window_open=window_open,
             reason_codes=reasons,
         )
+
+    def next_tick_after(
+        self,
+        *,
+        trading_date: date,
+        observed_at: datetime,
+    ) -> datetime | None:
+        assessment = self.assess(
+            trading_date=trading_date,
+            observed_at=observed_at,
+        )
+        if assessment.session_phase is ContinuousSessionPhase.MARKET_CLOSED:
+            return None
+        zone = ZoneInfo(self.timezone_name)
+        local = observed_at.astimezone(zone)
+        candidate = local + timedelta(seconds=self.polling_interval_seconds)
+        close = datetime.combine(trading_date, self.market_close, tzinfo=zone)
+        if candidate >= close:
+            candidate = close
+        return candidate.astimezone(observed_at.tzinfo)
 
 
 def default_continuous_decision_window_policy() -> ContinuousDecisionWindowPolicy:

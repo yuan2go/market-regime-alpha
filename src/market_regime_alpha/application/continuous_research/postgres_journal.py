@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import uuid4
 
 import psycopg
@@ -56,6 +56,12 @@ from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.persistence.postgres.schema import (
     verify_postgres_authority_schema,
 )
+
+if TYPE_CHECKING:
+    from market_regime_alpha.application.continuous_research.scheduler import (
+        ContinuousScheduleSnapshot,
+        TradingDayAssessment,
+    )
 
 
 Clock = Callable[[], datetime]
@@ -120,6 +126,26 @@ class PostgresContinuousResearchJournal:
         now = self._now()
 
         def operation(connection: psycopg.Connection[Any]) -> None:
+            same_date = connection.execute(
+                """
+                SELECT run_id, command_hash, idempotency_key
+                FROM continuous_research_run
+                WHERE trading_date = %s
+                FOR UPDATE
+                """,
+                (command.trading_date,),
+            ).fetchone()
+            if (
+                same_date is not None
+                and str(same_date[2]) != command.idempotency_key
+                and (
+                    str(same_date[0]) != str(command.run_id)
+                    or str(same_date[1]) != command.command_hash
+                )
+            ):
+                raise ContinuousResearchConflict(
+                    "only one Continuous parent is allowed per trading date"
+                )
             inserted = connection.execute(
                 """
                 INSERT INTO continuous_research_run(
@@ -179,6 +205,333 @@ class PostgresContinuousResearchJournal:
 
         self._factory.run_transaction(operation)
         return self.get_run(command.run_id)
+
+    def initialize_schedule(
+        self,
+        *,
+        run_command: ContinuousResearchCommand,
+        policy: object,
+        trading_day: TradingDayAssessment,
+        initial_tick_at: datetime,
+    ) -> ContinuousScheduleSnapshot:
+        from market_regime_alpha.application.continuous_research.policy import (
+            ContinuousDecisionWindowPolicy,
+        )
+        from market_regime_alpha.application.continuous_research.scheduler import (
+            ContinuousScheduleStatus,
+            TradingDayAssessment as TradingDayAssessmentContract,
+            schedule_identity,
+        )
+
+        if not isinstance(policy, ContinuousDecisionWindowPolicy):
+            raise TypeError("policy must be ContinuousDecisionWindowPolicy")
+        if not isinstance(trading_day, TradingDayAssessmentContract):
+            raise TypeError("trading_day must be TradingDayAssessment")
+        require_utc_second("initial_tick_at", initial_tick_at)
+        if (
+            run_command.policy_id != policy.policy_id
+            or run_command.policy_hash != policy.content_hash
+            or run_command.trading_date != trading_day.trading_date
+            or run_command.trading_calendar_id != trading_day.trading_calendar_id
+            or run_command.trading_calendar_hash != trading_day.trading_calendar_hash
+        ):
+            raise ContinuousResearchConflict(
+                "Continuous schedule inputs do not match the parent run"
+            )
+        schedule_id, schedule_hash = schedule_identity(
+            run_command=run_command,
+            policy=policy,
+            trading_day=trading_day,
+        )
+        now = self._now()
+        status = (
+            ContinuousScheduleStatus.ACTIVE
+            if trading_day.is_trading_day
+            else ContinuousScheduleStatus.NON_TRADING_DAY
+        )
+
+        def operation(connection: psycopg.Connection[Any]) -> None:
+            connection.execute(
+                """
+                INSERT INTO continuous_runtime_schedule(
+                    schedule_id, schedule_hash, run_id, policy_id, policy_hash,
+                    trading_calendar_id, trading_calendar_hash, status,
+                    next_tick_at, last_reserved_tick_id, last_reserved_at,
+                    version, created_at, updated_at, closed_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    NULL, NULL, 1, %s, %s, NULL
+                )
+                ON CONFLICT (run_id) DO NOTHING
+                """,
+                (
+                    str(schedule_id),
+                    schedule_hash,
+                    str(run_command.run_id),
+                    str(policy.policy_id),
+                    policy.content_hash,
+                    str(trading_day.trading_calendar_id),
+                    trading_day.trading_calendar_hash,
+                    status.value,
+                    initial_tick_at if trading_day.is_trading_day else None,
+                    now,
+                    now,
+                ),
+            )
+            durable = connection.execute(
+                """
+                SELECT schedule_id, schedule_hash
+                FROM continuous_runtime_schedule
+                WHERE run_id = %s
+                FOR UPDATE
+                """,
+                (str(run_command.run_id),),
+            ).fetchone()
+            if (
+                durable is None
+                or str(durable[0]) != str(schedule_id)
+                or str(durable[1]) != schedule_hash
+            ):
+                raise ContinuousResearchConflict(
+                    "Continuous schedule identity conflict"
+                )
+
+        self._factory.run_transaction(operation)
+        return self.get_schedule(run_command.run_id)
+
+    def reserve_due_tick(
+        self,
+        *,
+        run_command: ContinuousResearchCommand,
+        policy: object,
+        now: datetime,
+    ) -> ContinuousTickSnapshot | None:
+        from market_regime_alpha.application.continuous_research.policy import (
+            ContinuousDecisionWindowPolicy,
+        )
+        from market_regime_alpha.application.continuous_research.scheduler import (
+            ContinuousScheduleStatus,
+        )
+
+        if not isinstance(policy, ContinuousDecisionWindowPolicy):
+            raise TypeError("policy must be ContinuousDecisionWindowPolicy")
+        require_utc_second("now", now)
+        reserved_tick_id: ArtifactId | None = None
+
+        def operation(connection: psycopg.Connection[Any]) -> None:
+            nonlocal reserved_tick_id
+            schedule = connection.execute(
+                """
+                SELECT status, next_tick_at, version
+                FROM continuous_runtime_schedule
+                WHERE run_id = %s
+                FOR UPDATE
+                """,
+                (str(run_command.run_id),),
+            ).fetchone()
+            if schedule is None:
+                raise ContinuousResearchNotFound(
+                    f"schedule:{run_command.run_id}"
+                )
+            status = ContinuousScheduleStatus(str(schedule[0]))
+            scheduled_at = _optional_datetime(schedule[1])
+            schedule_version = int(schedule[2])
+            if (
+                status is not ContinuousScheduleStatus.ACTIVE
+                or scheduled_at is None
+                or scheduled_at > now
+            ):
+                return
+            assessment = policy.assess(
+                trading_date=run_command.trading_date,
+                observed_at=scheduled_at,
+            )
+            command = RuntimeTickCommand.create(
+                idempotency_key=(
+                    f"scheduled:{run_command.run_id}:"
+                    f"{scheduled_at.isoformat()}"
+                ),
+                run_id=run_command.run_id,
+                trading_date=run_command.trading_date,
+                observed_at=scheduled_at,
+                request_scope_hash=run_command.request_scope_hash,
+                provider_configuration_id=run_command.provider_configuration_id,
+                provider_configuration_hash=(
+                    run_command.provider_configuration_hash
+                ),
+                research_configuration_id=run_command.research_configuration_id,
+                research_configuration_hash=(
+                    run_command.research_configuration_hash
+                ),
+            )
+            run = connection.execute(
+                """
+                SELECT current_tick_sequence
+                FROM continuous_research_run
+                WHERE run_id = %s
+                FOR UPDATE
+                """,
+                (str(run_command.run_id),),
+            ).fetchone()
+            if run is None:
+                raise ContinuousResearchNotFound(str(run_command.run_id))
+            sequence = int(run[0]) + 1
+            connection.execute(
+                """
+                INSERT INTO continuous_runtime_tick(
+                    run_id, tick_id, idempotency_key, tick_hash, tick_json,
+                    tick_sequence, observed_at, session_phase, status, version,
+                    fencing_token, created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    'PENDING', 1, 0, %s, %s
+                )
+                """,
+                (
+                    str(command.run_id),
+                    str(command.tick_id),
+                    command.idempotency_key,
+                    command.tick_hash,
+                    canonical_json(command.to_canonical_dict()),
+                    sequence,
+                    command.observed_at,
+                    assessment.session_phase.value,
+                    now,
+                    now,
+                ),
+            )
+            run_state = _state_for_phase(assessment.session_phase)
+            connection.execute(
+                """
+                UPDATE continuous_research_run
+                SET status = %s, current_tick_sequence = %s,
+                    version = version + 1, updated_at = %s,
+                    closed_at = CASE
+                        WHEN %s = 'MARKET_CLOSED' THEN COALESCE(closed_at, %s)
+                        ELSE closed_at
+                    END
+                WHERE run_id = %s
+                """,
+                (
+                    run_state.value,
+                    sequence,
+                    now,
+                    run_state.value,
+                    now,
+                    str(run_command.run_id),
+                ),
+            )
+            next_tick_at = policy.next_tick_after(
+                trading_date=run_command.trading_date,
+                observed_at=scheduled_at,
+            )
+            next_status = (
+                ContinuousScheduleStatus.CLOSED
+                if next_tick_at is None
+                else ContinuousScheduleStatus.ACTIVE
+            )
+            connection.execute(
+                """
+                UPDATE continuous_runtime_schedule
+                SET status = %s, next_tick_at = %s,
+                    last_reserved_tick_id = %s, last_reserved_at = %s,
+                    version = version + 1, updated_at = %s,
+                    closed_at = CASE WHEN %s = 'CLOSED' THEN %s ELSE NULL END
+                WHERE run_id = %s AND version = %s
+                """,
+                (
+                    next_status.value,
+                    next_tick_at,
+                    str(command.tick_id),
+                    now,
+                    now,
+                    next_status.value,
+                    now,
+                    str(run_command.run_id),
+                    schedule_version,
+                ),
+            )
+            self._insert_event(
+                connection,
+                run_id=run_command.run_id,
+                tick_id=command.tick_id,
+                event_type="TICK_ADMITTED",
+                event_time=now,
+                fencing_token=None,
+                payload={
+                    "session_phase": assessment.session_phase.value,
+                    "tick_hash": command.tick_hash,
+                    "tick_sequence": sequence,
+                    "scheduled": True,
+                },
+            )
+            reserved_tick_id = command.tick_id
+
+        self._factory.run_transaction(operation)
+        if reserved_tick_id is None:
+            return None
+        return self.get_tick(run_command.run_id, reserved_tick_id)
+
+    def get_schedule(self, run_id: ArtifactId) -> ContinuousScheduleSnapshot:
+        from market_regime_alpha.application.continuous_research.scheduler import (
+            ContinuousScheduleSnapshot,
+            ContinuousScheduleStatus,
+        )
+
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT schedule_id, schedule_hash, run_id, status,
+                       next_tick_at, last_reserved_tick_id, last_reserved_at,
+                       version, created_at, updated_at, closed_at
+                FROM continuous_runtime_schedule
+                WHERE run_id = %s
+                """,
+                (str(run_id),),
+            ).fetchone()
+        if row is None:
+            raise ContinuousResearchNotFound(f"schedule:{run_id}")
+        return ContinuousScheduleSnapshot(
+            schedule_id=ArtifactId(str(row[0])),
+            schedule_hash=str(row[1]),
+            run_id=ArtifactId(str(row[2])),
+            status=ContinuousScheduleStatus(str(row[3])),
+            next_tick_at=_optional_datetime(row[4]),
+            last_reserved_tick_id=(
+                None if row[5] is None else ArtifactId(str(row[5]))
+            ),
+            last_reserved_at=_optional_datetime(row[6]),
+            version=int(row[7]),
+            created_at=_datetime(row[8]),
+            updated_at=_datetime(row[9]),
+            closed_at=_optional_datetime(row[10]),
+        )
+
+    def get_recoverable_tick(
+        self,
+        run_id: ArtifactId,
+        *,
+        now: datetime,
+    ) -> ContinuousTickSnapshot | None:
+        require_utc_second("now", now)
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT tick_id
+                FROM continuous_runtime_tick
+                WHERE run_id = %s
+                  AND (
+                    (status = 'PENDING' AND (retry_at IS NULL OR retry_at <= %s))
+                    OR (status = 'IN_PROGRESS' AND lease_expires_at <= %s)
+                  )
+                ORDER BY tick_sequence
+                LIMIT 1
+                """,
+                (str(run_id), now, now),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_tick(run_id, ArtifactId(str(row[0])))
 
     def admit_tick(
         self,
@@ -455,6 +808,35 @@ class PostgresContinuousResearchJournal:
             )
 
         return self._factory.run_transaction(operation)
+
+    def assert_claim_active(self, claim: ClaimedRuntimeTick) -> None:
+        """Authorize a child final-write transaction against the active fence."""
+
+        self._require_claim(claim)
+        now = self._now()
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM continuous_runtime_tick
+                WHERE run_id = %s AND tick_id = %s
+                  AND status = 'IN_PROGRESS'
+                  AND claim_id = %s AND fencing_token = %s AND version = %s
+                  AND lease_expires_at > %s
+                """,
+                (
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    now,
+                ),
+            ).fetchone()
+        if row is None:
+            raise ContinuousResearchClaimRejected(
+                "child final write rejected by Continuous fencing"
+            )
 
     def complete_tick(
         self,

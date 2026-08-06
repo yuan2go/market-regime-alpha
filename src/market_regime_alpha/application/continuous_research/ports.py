@@ -76,6 +76,8 @@ class ValidatedEvidencePayload:
             ("as_of_time", self.as_of_time),
         ):
             require_utc_second(label, timestamp)
+        if self.available_at > self.as_of_time:
+            raise ValueError("Evidence AvailableAt cannot exceed AsOfTime")
         require_text("evidence_qualification", self.evidence_qualification)
         require_unique_text("Evidence limitation", self.limitations)
         if self.limitations != tuple(sorted(self.limitations)):
@@ -227,6 +229,10 @@ class ChildExecutionRequest:
     run_id: ArtifactId
     tick_id: ArtifactId
     tick_sequence: int
+    claim_id: str
+    fencing_token: int
+    tick_version: int
+    lease_expires_at: datetime
     provider_attempt_id: int
     source_manifest_id: ArtifactId
     source_manifest_hash: str
@@ -241,9 +247,13 @@ class ChildExecutionRequest:
         for label, value in (
             ("tick_sequence", self.tick_sequence),
             ("provider_attempt_id", self.provider_attempt_id),
+            ("fencing_token", self.fencing_token),
+            ("tick_version", self.tick_version),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{label} must be positive")
+        require_text("claim_id", self.claim_id)
+        require_utc_second("lease_expires_at", self.lease_expires_at)
         for label, content_hash in (
             ("source_manifest_hash", self.source_manifest_hash),
             ("evidence_commit_hash", self.evidence_commit_hash),

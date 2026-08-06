@@ -110,3 +110,15 @@ def test_policy_rejects_naive_or_wrong_date_observation() -> None:
             trading_date=TRADING_DATE,
             observed_at=datetime(2026, 8, 7, 14, 30, tzinfo=SHANGHAI),
         )
+
+
+def test_policy_uses_market_local_date_not_utc_date() -> None:
+    policy = default_continuous_decision_window_policy()
+    local_pre_market = datetime(2026, 8, 6, 7, 30, tzinfo=SHANGHAI)
+
+    result = policy.assess(
+        trading_date=TRADING_DATE,
+        observed_at=local_pre_market.astimezone(ZoneInfo("UTC")),
+    )
+
+    assert result.session_phase is ContinuousSessionPhase.PRE_MARKET

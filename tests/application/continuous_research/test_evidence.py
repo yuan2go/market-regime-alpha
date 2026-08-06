@@ -127,3 +127,29 @@ def test_evidence_identity_rejects_tamper() -> None:
 
     with pytest.raises(ValueError, match="hash mismatch"):
         replace(evidence, commit_hash="sha256:" + "0" * 64)
+
+
+def test_evidence_available_after_as_of_time_is_rejected() -> None:
+    attempt = _attempt()
+
+    with pytest.raises(ValueError, match="AvailableAt"):
+        EvidenceCommit.create(
+            attempt=attempt,
+            evidence_scope="A_SHARE_MINUTE_SCOPE",
+            trading_date=date(2026, 8, 6),
+            request_scope_hash=HASH_1,
+            raw_artifact_id=ArtifactId("raw-artifact-future"),
+            raw_artifact_hash=HASH_2,
+            evidence_artifact_id=ArtifactId("evidence-artifact-future"),
+            evidence_artifact_hash=HASH_3,
+            material_identity_hash=HASH_3,
+            provider_configuration_id=ArtifactId("provider-config-future"),
+            provider_configuration_hash=HASH_1,
+            effective_at=NOW,
+            retrieved_at=NOW,
+            available_at=NOW.replace(minute=43),
+            as_of_time=NOW,
+            quality_status=EvidenceQualityStatus.PIT_INCOMPLETE,
+            evidence_qualification="FREE_DATA_EXPLORATORY",
+            limitations=("FORMAL_PIT_NOT_ESTABLISHED", "NO_TRADING_AUTHORITY"),
+        )

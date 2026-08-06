@@ -8,6 +8,10 @@ from market_regime_alpha.cli.continuous_research import (
     SUCCESS,
     main,
 )
+from market_regime_alpha.application.continuous_research.scheduler import (
+    TradingDayAssessment,
+)
+from tests.application.continuous_research.test_runner import NOW
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -95,3 +99,54 @@ def test_cli_requires_explicit_postgres_and_never_echoes_credentials(capsys) -> 
     output = capsys.readouterr().out
     assert secret not in output
     assert json.loads(output)["status"] == "FAILED"
+
+
+def test_cli_schedules_and_reserves_a_due_tick(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path,
+    capsys,
+) -> None:
+    command = _command()
+    trading_day = TradingDayAssessment(
+        trading_calendar_id=command.trading_calendar_id,
+        trading_calendar_hash=command.trading_calendar_hash,
+        trading_date=command.trading_date,
+        is_trading_day=True,
+        reason_codes=("TRADING_DAY",),
+    )
+    command_path = tmp_path / "schedule-run.json"
+    trading_day_path = tmp_path / "trading-day.json"
+    command_path.write_text(json.dumps(command.to_canonical_dict()), encoding="utf-8")
+    trading_day_path.write_text(
+        json.dumps(trading_day.to_canonical_dict()), encoding="utf-8"
+    )
+    authority = _authority_args(postgres_factory)
+
+    assert main(
+        [
+            *authority,
+            "schedule",
+            "--run-command",
+            str(command_path),
+            "--trading-day-assessment",
+            str(trading_day_path),
+            "--at",
+            NOW.isoformat(),
+        ]
+    ) == SUCCESS
+    scheduled = json.loads(capsys.readouterr().out)
+    assert scheduled["status"] == "ACTIVE"
+
+    assert main(
+        [
+            *authority,
+            "reserve-due-tick",
+            "--run-command",
+            str(command_path),
+            "--at",
+            NOW.isoformat(),
+        ]
+    ) == SUCCESS
+    reserved = json.loads(capsys.readouterr().out)
+    assert reserved["status"] == "PENDING"
+    assert reserved["entry_authority_granted"] is False

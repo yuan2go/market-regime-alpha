@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from market_regime_alpha.application.continuous_research.policy import (
-    ContinuousSessionPhase,
+    default_continuous_decision_window_policy,
 )
 from market_regime_alpha.application.continuous_research.postgres_journal import (
     PostgresContinuousResearchJournal,
@@ -37,12 +37,12 @@ def test_replay_is_deterministic_and_read_only(
         journal=journal,
         provider=ScriptedProvider([_provider_result(HASHES[8])]),
         children=CountingChildren(),
+        policy=default_continuous_decision_window_policy(),
         clock=lambda: NOW,
     )
     runner.execute(
         run_command=command,
         tick_command=_tick(command, 0),
-        session_phase=ContinuousSessionPhase.DECISION_WINDOW,
         provider_request=_request(),
     )
     before = journal.get_run(command.run_id)

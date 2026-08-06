@@ -52,10 +52,14 @@ class MutableClock:
         self.value += delta
 
 
-def _command(*, code_revision: str = "baseline-head") -> ContinuousResearchCommand:
+def _command(
+    *,
+    code_revision: str = "baseline-head",
+    idempotency_key: str = "continuous-2026-08-06",
+) -> ContinuousResearchCommand:
     policy = default_continuous_decision_window_policy()
     return ContinuousResearchCommand.create(
-        idempotency_key="continuous-2026-08-06",
+        idempotency_key=idempotency_key,
         trading_date=date(2026, 8, 6),
         requested_symbols=("000001.SZ", "600000.SH"),
         trading_calendar_id=ArtifactId("calendar-fixture"),
@@ -125,6 +129,8 @@ def test_run_and_tick_creation_are_idempotent_and_conflicts_fail_closed(
     assert journal.get_run(command.run_id).status is ContinuousRunState.DECISION_WINDOW_OPEN
     with pytest.raises(ContinuousResearchConflict, match="idempotency conflict"):
         journal.create_or_get(_command(code_revision="different-head"))
+    with pytest.raises(ContinuousResearchConflict, match="one Continuous parent"):
+        journal.create_or_get(_command(idempotency_key="second-parent"))
 
 
 def test_claim_heartbeat_complete_and_restart_are_durable(
@@ -189,6 +195,9 @@ def test_expired_lease_is_recovered_and_stale_worker_is_fenced(
     assert recovered.ticks[0].status is ContinuousTickStatus.PENDING
     assert recovered.ticks[0].last_error == "LEASE_EXPIRED"
     assert fresh.fencing_token == stale.fencing_token + 1
+    with pytest.raises(ContinuousResearchClaimRejected, match="child final write"):
+        journal.assert_claim_active(stale)
+    journal.assert_claim_active(fresh)
     with pytest.raises(ContinuousResearchClaimRejected, match="fencing"):
         journal.complete_tick(
             claim=stale,

@@ -29,7 +29,7 @@ connection.
 
 ## 3. CLI operations
 
-The CLI performs bounded Journal administration. Run commands are canonical
+The CLI performs bounded Journal and durable-schedule administration. Run commands are canonical
 JSON produced by `ContinuousResearchCommand.to_canonical_dict()`; tick commands
 use `RuntimeTickCommand.to_canonical_dict()`.
 
@@ -49,9 +49,26 @@ uv run continuous-research \
   --database-url "$CRR_DATABASE_URL" \
   --application-schema "$CRR_SCHEMA" \
   resume --run-id continuous-research-run-...
+
+uv run continuous-research \
+  --database-url "$CRR_DATABASE_URL" \
+  --application-schema "$CRR_SCHEMA" \
+  schedule --run-command /absolute/path/run-command.json \
+  --trading-day-assessment /absolute/path/trading-day.json \
+  --at 2026-08-06T01:30:00+00:00
+
+uv run continuous-research \
+  --database-url "$CRR_DATABASE_URL" \
+  --application-schema "$CRR_SCHEMA" \
+  reserve-due-tick --run-command /absolute/path/run-command.json \
+  --at 2026-08-06T01:30:00+00:00
 ```
 
-`prepare`, `admit-tick` and `resume` are mutations. `report` and `replay` open
+`schedule` stores the one versioned schedule for the Trading Date;
+`reserve-due-tick` atomically appends at most one due Tick and advances the
+next time. Concurrent callers cannot reserve the same schedule position.
+`prepare`, `admit-tick`, `schedule`, `reserve-due-tick` and `resume` are
+mutations. `report` and `replay` open
 the existing schema without applying migrations:
 
 ```bash
@@ -78,10 +95,15 @@ Construct `ContinuousResearchTickRunner` with:
 - `PostgresContinuousResearchJournal`;
 - a `ProviderAcquisitionPort` implemented by the existing FreeData preparation adapter; and
 - `ExistingResearchServiceComposition` delegates for Daily Dataset, Feature Materialization, Controlled Operation and Canonical Lifecycle.
+- the exact content-addressed `ContinuousDecisionWindowPolicy` selected by the run.
 
 Invoke one `execute(...)` call for one admitted tick. Do not wrap external
 calls in a database transaction. Existing child delegates must provide durable
 idempotent lookup before execution.
+The Runner derives session phase from policy and Tick time. A child final-write
+path must validate the Claim ID, fencing token, Tick version and unexpired
+Lease supplied in `ChildExecutionRequest`; those recovery values do not change
+the child's semantic idempotency key.
 
 ## 5. Incident and recovery procedure
 

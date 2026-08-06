@@ -16,7 +16,10 @@ from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
     RuntimeTickCommand,
 )
-from market_regime_alpha.application.continuous_research.evidence import EvidenceCommit
+from market_regime_alpha.application.continuous_research.evidence import (
+    EvidenceCommit,
+    ProviderAttemptOutcome,
+)
 from market_regime_alpha.application.continuous_research.journal import (
     ChildReferenceDisposition,
     ClaimedRuntimeTick,
@@ -24,10 +27,12 @@ from market_regime_alpha.application.continuous_research.journal import (
     ContinuousChildKind,
     ContinuousTickSnapshot,
     ContinuousTickStatus,
+    ProviderAttemptStatus,
     RuntimeArtifactReference,
     RuntimeTickReceipt,
 )
 from market_regime_alpha.application.continuous_research.policy import (
+    ContinuousDecisionWindowPolicy,
     ContinuousRunState,
     ContinuousSessionPhase,
 )
@@ -74,15 +79,19 @@ class ContinuousResearchTickRunner:
         journal: PostgresContinuousResearchJournal,
         provider: ProviderAcquisitionPort,
         children: ContinuousResearchChildPort,
+        policy: ContinuousDecisionWindowPolicy,
         clock: Clock = _utc_now,
     ) -> None:
         if not isinstance(journal, PostgresContinuousResearchJournal):
             raise TypeError("journal must be PostgresContinuousResearchJournal")
         if not callable(clock):
             raise TypeError("clock must be callable")
+        if not isinstance(policy, ContinuousDecisionWindowPolicy):
+            raise TypeError("policy must be a ContinuousDecisionWindowPolicy")
         self._journal = journal
         self._provider = provider
         self._children = children
+        self._policy = policy
         self._clock = clock
 
     def execute(
@@ -90,11 +99,20 @@ class ContinuousResearchTickRunner:
         *,
         run_command: ContinuousResearchCommand,
         tick_command: RuntimeTickCommand,
-        session_phase: ContinuousSessionPhase,
         provider_request: ProviderAcquisitionRequest,
     ) -> ContinuousTickExecutionResult:
         if tick_command.run_id != run_command.run_id:
             raise ValueError("tick command does not belong to run command")
+        if (
+            run_command.policy_id != self._policy.policy_id
+            or run_command.policy_hash != self._policy.content_hash
+        ):
+            raise ValueError("run command does not bind the selected Runtime policy")
+        assessment = self._policy.assess(
+            trading_date=run_command.trading_date,
+            observed_at=tick_command.observed_at,
+        )
+        session_phase = assessment.session_phase
         self._journal.create_or_get(run_command)
         admitted = self._journal.admit_tick(
             tick_command, session_phase=session_phase
@@ -124,7 +142,30 @@ class ContinuousResearchTickRunner:
             active_claim = started.claim
 
             # External acquisition is deliberately outside every Journal transaction.
-            acquired = self._provider.acquire(provider_request)
+            try:
+                acquired = self._provider.acquire(provider_request)
+            except Exception as exc:
+                return self._record_provider_exception(
+                    run_command=run_command,
+                    claim=active_claim,
+                    attempt_id=started.attempt.attempt_id,
+                    error=exc,
+                )
+            if acquired.evidence is not None:
+                try:
+                    _validate_evidence_time(
+                        acquired.evidence,
+                        tick_command=tick_command,
+                        session_phase=session_phase,
+                    )
+                except (TypeError, ValueError) as exc:
+                    return self._record_invalid_evidence(
+                        run_command=run_command,
+                        claim=active_claim,
+                        attempt_id=started.attempt.attempt_id,
+                        raw_response_hash=acquired.raw_response_hash,
+                        error=exc,
+                    )
             attempt = self._journal.complete_provider_attempt(
                 claim=active_claim,
                 attempt_id=started.attempt.attempt_id,
@@ -204,7 +245,7 @@ class ContinuousResearchTickRunner:
             )
             decision = recorded.decision
             active_claim = recorded.claim
-        child_references = self._resolve_children(
+        child_references, active_claim = self._resolve_children(
             run_command=run_command,
             claim=active_claim,
             evidence=evidence,
@@ -234,6 +275,85 @@ class ContinuousResearchTickRunner:
             reason_codes=receipt.reason_codes,
         )
 
+    def _record_provider_exception(
+        self,
+        *,
+        run_command: ContinuousResearchCommand,
+        claim: ClaimedRuntimeTick,
+        attempt_id: int,
+        error: Exception,
+    ) -> ContinuousTickExecutionResult:
+        reason = f"PROVIDER_EXCEPTION_{type(error).__name__.upper()}"
+        self._journal.complete_provider_attempt(
+            claim=claim,
+            attempt_id=attempt_id,
+            outcome=ProviderAttemptOutcome.create(
+                status=ProviderAttemptStatus.FAILED,
+                completed_at=self._now(),
+                raw_response_hash=None,
+                source_manifest_id=None,
+                source_manifest_hash=None,
+                error_code="PROVIDER_EXCEPTION",
+                error_message=type(error).__name__,
+                reason_codes=(reason,),
+                retry_at=None,
+            ),
+        )
+        tick = self._journal.fail_tick(
+            claim=claim,
+            error=reason,
+            retryable=False,
+            retry_at=None,
+        )
+        return ContinuousTickExecutionResult(
+            tick=tick,
+            run_state=self._journal.get_run(run_command.run_id).status,
+            evidence=None,
+            decision=None,
+            child_references=(),
+            reason_codes=("ENTRY_BLOCKED", reason),
+        )
+
+    def _record_invalid_evidence(
+        self,
+        *,
+        run_command: ContinuousResearchCommand,
+        claim: ClaimedRuntimeTick,
+        attempt_id: int,
+        raw_response_hash: str | None,
+        error: Exception,
+    ) -> ContinuousTickExecutionResult:
+        reason = "INVALID_EVIDENCE_TIME"
+        self._journal.complete_provider_attempt(
+            claim=claim,
+            attempt_id=attempt_id,
+            outcome=ProviderAttemptOutcome.create(
+                status=ProviderAttemptStatus.INVALID_RESPONSE,
+                completed_at=self._now(),
+                raw_response_hash=raw_response_hash,
+                source_manifest_id=None,
+                source_manifest_hash=None,
+                error_code=reason,
+                error_message=type(error).__name__,
+                reason_codes=(reason,),
+                retry_at=None,
+            ),
+        )
+        tick = self._journal.fail_tick(
+            claim=claim,
+            error=reason,
+            retryable=False,
+            retry_at=None,
+        )
+        return ContinuousTickExecutionResult(
+            tick=tick,
+            run_state=self._journal.get_run(run_command.run_id).status,
+            evidence=None,
+            decision=None,
+            child_references=(),
+            reason_codes=("ENTRY_BLOCKED", reason),
+        )
+
     def _resolve_children(
         self,
         *,
@@ -241,16 +361,16 @@ class ContinuousResearchTickRunner:
         claim: ClaimedRuntimeTick,
         evidence: EvidenceCommit,
         decision: ChangeDecision,
-    ) -> tuple[ContinuousChildReference, ...]:
+    ) -> tuple[tuple[ContinuousChildReference, ...], ClaimedRuntimeTick]:
         existing = self._journal.get_child_references(claim.run_id, claim.tick_id)
         if len(existing) == len(ContinuousChildKind):
-            return existing
+            return existing, claim
         if decision.decision_type in {
             ChangeDecisionType.NO_MATERIAL_CHANGE,
             ChangeDecisionType.DATA_INSUFFICIENT,
         }:
             if decision.decision_type is ChangeDecisionType.DATA_INSUFFICIENT:
-                return ()
+                return (), claim
             prior = self._journal.get_latest_child_references(
                 run_id=run_command.run_id,
                 before_tick_sequence=claim.tick_sequence,
@@ -277,6 +397,7 @@ class ContinuousResearchTickRunner:
                 for item in prior
             )
         else:
+            claim = self._journal.heartbeat(claim)
             request = _child_request(
                 run_command=run_command,
                 claim=claim,
@@ -290,6 +411,7 @@ class ContinuousResearchTickRunner:
                 # remain responsible for their own idempotent receipts.
                 results = self._children.execute_children(request)
                 disposition = ChildReferenceDisposition.CREATED
+            claim = self._journal.heartbeat(claim)
             _require_complete_child_set(results)
             references = tuple(
                 _child_reference(
@@ -310,7 +432,7 @@ class ContinuousResearchTickRunner:
             self._journal.record_child_reference(
                 claim=claim, reference=reference
             )
-        return self._journal.get_child_references(claim.run_id, claim.tick_id)
+        return self._journal.get_child_references(claim.run_id, claim.tick_id), claim
 
     def _completed_result(
         self,
@@ -360,6 +482,10 @@ def _child_request(
         run_id=claim.run_id,
         tick_id=claim.tick_id,
         tick_sequence=claim.tick_sequence,
+        claim_id=claim.claim_id,
+        fencing_token=claim.fencing_token,
+        tick_version=claim.tick_version,
+        lease_expires_at=claim.lease_expires_at,
         provider_attempt_id=evidence.attempt_id,
         source_manifest_id=evidence.source_manifest_id,
         source_manifest_hash=evidence.source_manifest_hash,
@@ -514,6 +640,29 @@ def _downstream_contract_satisfied(evidence: EvidenceCommit) -> bool:
             "Runner Evidence must persist exactly one downstream contract marker"
         )
     return satisfied
+
+
+def _validate_evidence_time(
+    evidence: object,
+    *,
+    tick_command: RuntimeTickCommand,
+    session_phase: ContinuousSessionPhase,
+) -> None:
+    from market_regime_alpha.application.continuous_research.ports import (
+        ValidatedEvidencePayload,
+    )
+
+    if not isinstance(evidence, ValidatedEvidencePayload):
+        raise TypeError("provider Evidence must be a ValidatedEvidencePayload")
+    if evidence.as_of_time > tick_command.observed_at:
+        raise ValueError("Evidence AsOfTime cannot exceed Runtime Tick observed_at")
+    if evidence.available_at > tick_command.observed_at:
+        raise ValueError("future Evidence is not consumable by the Runtime Tick")
+    if (
+        session_phase is ContinuousSessionPhase.DECISION_WINDOW
+        and "COMPLETE_DAILY_BAR" in evidence.limitations
+    ):
+        raise ValueError("Decision Window cannot consume a complete daily bar")
 
 
 __all__ = ["ContinuousResearchTickRunner", "ContinuousTickExecutionResult"]
