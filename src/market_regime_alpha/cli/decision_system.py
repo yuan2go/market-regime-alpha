@@ -20,18 +20,27 @@ from market_regime_alpha.application.continuous_research.ports import (
 from market_regime_alpha.application.decision_system.contracts import (
     DecisionLineage,
     DecisionRiskConfiguration,
-    FillDerivedPositionReference,
     ManualAccountObservation,
     ManualPositionObservation,
     ReconciliationTolerance,
     SummaryCandidate,
 )
+from market_regime_alpha.application.decision_system.authority import (
+    PositionSettlementEvidence,
+)
 from market_regime_alpha.application.decision_system.reconciliation import (
     reconcile_account,
+)
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    DecisionSystemConflict,
+    DecisionSystemIntegrityError,
 )
 from market_regime_alpha.application.decision_system.runtime import (
     DecisionRuntimeInputs,
     DecisionSystemRuntimeService,
+)
+from market_regime_alpha.application.decision_system.window import (
+    DecisionWindowBlocked,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.persistence.postgres.connection import (
@@ -92,14 +101,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             output = _dispatch(args, repositories)
         _emit({**output, **_authority_ceiling()})
         return SUCCESS
-    except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        _emit_error("DECISION_COMMAND_VALIDATION_FAILED", exc)
-        return VALIDATION_ERROR
     except PostgresConnectionUnavailable as exc:
-        _emit_error("DATABASE_UNAVAILABLE", exc)
+        _emit_error("DBAUTH-001", "DATABASE_UNAVAILABLE", exc)
         return DATABASE_ERROR
+    except DecisionWindowBlocked as exc:
+        _emit_error("DECSYS-002", "DECISION_WINDOW_BLOCKED", exc)
+        return VALIDATION_ERROR
+    except DecisionSystemConflict as exc:
+        _emit_error("DECSYS-003", "DECISION_CONFLICT", exc)
+        return VALIDATION_ERROR
+    except DecisionSystemIntegrityError as exc:
+        _emit_error("DECSYS-001", "DECISION_INPUT_BLOCKED", exc)
+        return VALIDATION_ERROR
+    except KeyError as exc:
+        _emit_error("DOCON-005", "REFERENCE_NOT_FOUND", exc)
+        return VALIDATION_ERROR
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        _emit_error("DOCON-002", "INVALID_TYPE", exc)
+        return VALIDATION_ERROR
     except Exception as exc:
-        _emit_error("POSTGRESQL_OPERATION_FAILED", exc)
+        _emit_error("DBAUTH-002", "POSTGRESQL_OPERATION_FAILED", exc)
         return DATABASE_ERROR
 
 
@@ -128,16 +149,56 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
         }
     if operation == "reconcile-account":
         payload = _object(_read_json(args.input))
+        _fields(
+            payload,
+            {
+                "manual_observation_id", "claim", "tolerance", "as_of_time",
+                "revision", "previous_reconciliation_id", "idempotency_key",
+                "created_at", "position_settlement_evidence",
+            },
+            "reconcile-account input",
+            optional={"position_settlement_evidence"},
+        )
         account = repository.get_manual_observation(ArtifactId(_text(payload, "manual_observation_id")))
+        claim = _claim(_object(payload["claim"]))
+        tolerance = ReconciliationTolerance.from_canonical_dict(
+            _object(payload["tolerance"])
+        )
+        tolerance = repository.record_reconciliation_tolerance(
+            tolerance,
+            claim=claim,
+        )
+        settlement_payload = payload.get("position_settlement_evidence")
+        settlement_evidence = (
+            None
+            if settlement_payload is None
+            else PositionSettlementEvidence.from_canonical_dict(
+                _object(settlement_payload)
+            )
+        )
+        if settlement_evidence is not None:
+            settlement_evidence = repository.record_position_settlement_evidence(
+                settlement_evidence,
+                claim=claim,
+            )
+        fill_authority = repository.load_fill_derived_account_authority(
+            account_id=account.account_id,
+            as_of_time=_instant(payload["as_of_time"]),
+            settlement_evidence=settlement_evidence,
+        )
+        fill_authority = repository.record_fill_derived_account_authority(
+            fill_authority,
+            claim=claim,
+        )
         report = reconcile_account(
             observation=account,
-            positions=tuple(_fill_position(_object(item)) for item in _array(payload, "positions")),
-            fill_ledger_head=_text(payload, "fill_ledger_head"),
-            fill_ledger_complete=_boolean(payload, "fill_ledger_complete"),
-            tolerance=_tolerance(_object(payload["tolerance"])),
-            authoritative_total_equity=_optional_decimal(payload.get("authoritative_total_equity")),
-            authoritative_available_cash=_optional_decimal(payload.get("authoritative_available_cash")),
-            authoritative_frozen_cash=_optional_decimal(payload.get("authoritative_frozen_cash")),
+            positions=fill_authority.positions,
+            fill_ledger_head=fill_authority.fill_ledger_head,
+            fill_ledger_complete=fill_authority.fill_ledger_complete,
+            tolerance=tolerance,
+            authoritative_total_equity=None,
+            authoritative_available_cash=None,
+            authoritative_frozen_cash=None,
             as_of_time=_instant(payload["as_of_time"]),
             revision=_integer(payload, "revision"),
             previous_reconciliation_id=_optional_artifact(payload.get("previous_reconciliation_id")),
@@ -146,7 +207,7 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
         )
         recorded = repository.save_reconciliation(
             report,
-            claim=_claim(_object(payload["claim"])),
+            claim=claim,
         )
         return {
             "operation": "RECONCILE_ACCOUNT",
@@ -161,6 +222,7 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
         }
     if operation in {"preview-daily-decision", "finalize-daily-decision"}:
         payload = _object(_read_json(args.input))
+        _fields(payload, {"request", "inputs"}, "Decision Runtime input")
         request = _runtime_request(_object(payload["request"]))
         inputs = _runtime_inputs(
             _object(payload["inputs"]),
@@ -197,6 +259,17 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
 
 
 def _manual_observation(payload: Mapping[str, Any]) -> ManualAccountObservation:
+    _fields(
+        payload,
+        {
+            "schema_version", "account_id", "trading_date", "as_of_time",
+            "total_equity", "available_cash", "frozen_cash", "source",
+            "actor", "reason", "notes", "idempotency_key", "revision",
+            "previous_observation_id", "positions", "created_at",
+        },
+        "Manual Account Observation",
+        optional={"schema_version"},
+    )
     return ManualAccountObservation.create(
         account_id=_text(payload, "account_id"),
         trading_date=date.fromisoformat(_text(payload, "trading_date")),
@@ -217,6 +290,14 @@ def _manual_observation(payload: Mapping[str, Any]) -> ManualAccountObservation:
 
 
 def _manual_position(payload: Mapping[str, Any]) -> ManualPositionObservation:
+    _fields(
+        payload,
+        {
+            "symbol", "total_quantity", "available_quantity", "frozen_quantity",
+            "average_cost", "observed_market_value", "notes",
+        },
+        "Manual Position Observation",
+    )
     return ManualPositionObservation(
         symbol=_text(payload, "symbol"),
         total_quantity=_integer(payload, "total_quantity"),
@@ -228,54 +309,31 @@ def _manual_position(payload: Mapping[str, Any]) -> ManualPositionObservation:
     )
 
 
-def _fill_position(payload: Mapping[str, Any]) -> FillDerivedPositionReference:
-    return FillDerivedPositionReference(
-        snapshot_id=ArtifactId(_text(payload, "snapshot_id")),
-        snapshot_hash=_text(payload, "snapshot_hash"),
-        account_id=_text(payload, "account_id"),
-        symbol=_text(payload, "symbol"),
-        as_of_time=_instant(payload["as_of_time"]),
-        total_quantity=_integer(payload, "total_quantity"),
-        available_quantity=_optional_integer(payload.get("available_quantity")),
-        frozen_quantity=_optional_integer(payload.get("frozen_quantity")),
-        average_cost=_optional_decimal(payload.get("average_cost")),
-        source_fill_ids=tuple(str(item) for item in _array(payload, "source_fill_ids")),
-        complete=_boolean(payload, "complete"),
-    )
-
-
 def _tolerance(payload: Mapping[str, Any]) -> ReconciliationTolerance:
-    return ReconciliationTolerance(
-        configuration_id=ArtifactId(_text(payload, "configuration_id")),
-        configuration_hash=_text(payload, "configuration_hash"),
-        equity_tolerance=_decimal(payload["equity_tolerance"]),
-        cash_tolerance=_decimal(payload["cash_tolerance"]),
-        average_cost_tolerance=_decimal(payload["average_cost_tolerance"]),
-    )
+    return ReconciliationTolerance.from_canonical_dict(payload)
 
 
 def _risk_configuration(payload: Mapping[str, Any]) -> DecisionRiskConfiguration:
-    return DecisionRiskConfiguration(
-        configuration_id=ArtifactId(_text(payload, "configuration_id")),
-        configuration_hash=_text(payload, "configuration_hash"),
-        maximum_observation_age_seconds=_integer(payload, "maximum_observation_age_seconds"),
-        maximum_data_age_seconds=_integer(payload, "maximum_data_age_seconds"),
-        maximum_single_symbol_weight=_decimal(payload["maximum_single_symbol_weight"]),
-        maximum_theme_weight=_decimal(payload["maximum_theme_weight"]),
-        minimum_liquidity=_decimal(payload["minimum_liquidity"]),
-        daily_loss_limit=_optional_decimal(payload.get("daily_loss_limit")),
-    )
+    return DecisionRiskConfiguration.from_canonical_dict(payload)
 
 
 def _runtime_inputs(payload: Mapping[str, Any], *, finalize: bool) -> DecisionRuntimeInputs:
+    _fields(
+        payload,
+        {
+            "manual_observation_id", "reconciliation_tolerance",
+            "reconciliation_revision", "previous_reconciliation_id",
+            "strategy_configuration_id", "strategy_configuration_hash",
+            "lineage", "candidates", "summary_revision",
+            "previous_summary_id", "correction_of_summary_id",
+            "risk_configuration", "uses_complete_close_bar",
+            "position_settlement_evidence",
+        },
+        "Decision Runtime inputs",
+        optional={"uses_complete_close_bar", "position_settlement_evidence"},
+    )
     return DecisionRuntimeInputs(
         manual_observation_id=ArtifactId(_text(payload, "manual_observation_id")),
-        positions=tuple(_fill_position(_object(item)) for item in _array(payload, "positions")),
-        fill_ledger_head=_text(payload, "fill_ledger_head"),
-        fill_ledger_complete=_boolean(payload, "fill_ledger_complete"),
-        authoritative_total_equity=_optional_decimal(payload.get("authoritative_total_equity")),
-        authoritative_available_cash=_optional_decimal(payload.get("authoritative_available_cash")),
-        authoritative_frozen_cash=_optional_decimal(payload.get("authoritative_frozen_cash")),
         reconciliation_tolerance=_tolerance(_object(payload["reconciliation_tolerance"])),
         reconciliation_revision=_integer(payload, "reconciliation_revision"),
         previous_reconciliation_id=_optional_artifact(payload.get("previous_reconciliation_id")),
@@ -289,11 +347,29 @@ def _runtime_inputs(payload: Mapping[str, Any], *, finalize: bool) -> DecisionRu
         risk_configuration=_risk_configuration(_object(payload["risk_configuration"])),
         finalize=finalize,
         uses_complete_close_bar=_optional_boolean(payload.get("uses_complete_close_bar"), default=False),
-        daily_loss=_optional_decimal(payload.get("daily_loss")),
+        position_settlement_evidence=(
+            None
+            if payload.get("position_settlement_evidence") is None
+            else PositionSettlementEvidence.from_canonical_dict(
+                _object(payload["position_settlement_evidence"])
+            )
+        ),
     )
 
 
 def _runtime_request(payload: Mapping[str, Any]) -> ChildExecutionRequest:
+    _fields(
+        payload,
+        {
+            "trading_date", "as_of_time", "run_id", "tick_id",
+            "tick_sequence", "claim_id", "fencing_token", "tick_version",
+            "lease_expires_at", "provider_attempt_id", "source_manifest_id",
+            "source_manifest_hash", "evidence_commit_id",
+            "evidence_commit_hash", "decision_id", "decision_hash",
+            "input_references", "configuration_references",
+        },
+        "Decision Runtime request",
+    )
     return ChildExecutionRequest(
         trading_date=date.fromisoformat(_text(payload, "trading_date")),
         as_of_time=_instant(payload["as_of_time"]),
@@ -321,6 +397,15 @@ def _reference(payload: Mapping[str, Any]) -> RuntimeArtifactReference:
 
 
 def _claim(payload: Mapping[str, Any]) -> ClaimedRuntimeTick:
+    _fields(
+        payload,
+        {
+            "run_id", "tick_id", "tick_sequence", "claim_id",
+            "fencing_token", "tick_version", "lease_acquired_at",
+            "lease_expires_at", "heartbeat_at",
+        },
+        "Runtime claim",
+    )
     return ClaimedRuntimeTick(
         run_id=ArtifactId(_text(payload, "run_id")),
         tick_id=ArtifactId(_text(payload, "tick_id")),
@@ -388,6 +473,22 @@ def _object(value: object) -> Mapping[str, Any]:
     return value
 
 
+def _fields(
+    payload: Mapping[str, Any],
+    expected: set[str],
+    label: str,
+    *,
+    optional: set[str] | None = None,
+) -> None:
+    allowed_optional = optional or set()
+    missing = (expected - allowed_optional) - set(payload)
+    extra = set(payload) - expected
+    if missing or extra:
+        raise _CLIError(
+            f"{label} fields mismatch: missing={sorted(missing)} extra={sorted(extra)}"
+        )
+
+
 def _array(payload: Mapping[str, Any], name: str) -> tuple[object, ...]:
     value = payload.get(name)
     if not isinstance(value, list):
@@ -413,12 +514,6 @@ def _integer(payload: Mapping[str, Any], name: str) -> int:
     return parsed
 
 
-def _optional_integer(value: object) -> int | None:
-    if value is None:
-        return None
-    return _integer({"value": value}, "value")
-
-
 def _decimal(value: object) -> Decimal:
     if isinstance(value, float) or isinstance(value, bool):
         raise _CLIError("Decimal values must be encoded as strings or integers")
@@ -435,13 +530,6 @@ def _optional_decimal(value: object) -> Decimal | None:
     return None if value is None or value == "" else _decimal(value)
 
 
-def _boolean(payload: Mapping[str, Any], name: str) -> bool:
-    value = payload.get(name)
-    if not isinstance(value, bool):
-        raise _CLIError(f"{name} must be a boolean")
-    return value
-
-
 def _optional_boolean(value: object, *, default: bool) -> bool:
     if value is None:
         return default
@@ -451,11 +539,17 @@ def _optional_boolean(value: object, *, default: bool) -> bool:
 
 
 def _optional_artifact(value: object) -> ArtifactId | None:
-    return None if value is None or value == "" else ArtifactId(str(value))
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise _CLIError("optional Artifact ID must be text")
+    return ArtifactId(value)
 
 
 def _instant(value: object) -> datetime:
-    instant = datetime.fromisoformat(str(value))
+    if not isinstance(value, str):
+        raise _CLIError("timestamp must be text")
+    instant = datetime.fromisoformat(value)
     if instant.tzinfo is None or instant.utcoffset() is None:
         raise _CLIError("timestamp must be timezone-aware")
     return instant
@@ -476,10 +570,11 @@ def _emit(payload: Mapping[str, Any]) -> None:
     print(json.dumps(dict(payload), ensure_ascii=True, sort_keys=True, separators=(",", ":")))
 
 
-def _emit_error(reason_code: str, exc: BaseException) -> None:
+def _emit_error(error_code: str, reason_code: str, exc: BaseException) -> None:
     _emit(
         {
             "status": "FAILED",
+            "error_code": error_code,
             "reason_code": reason_code,
             "error_type": type(exc).__name__,
             "message": "Decision System command failed closed",

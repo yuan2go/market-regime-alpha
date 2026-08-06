@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
@@ -16,11 +17,23 @@ from market_regime_alpha.application.continuous_research.journal import (
 from market_regime_alpha.application.decision_system.contracts import (
     AccountReconciliationReport,
     DailyDecisionWindowSummary,
+    DecisionRiskConfiguration,
     IndependentRiskDecision,
     ManualAccountObservation,
+    ReconciliationTolerance,
     ResearchPortfolioProposal,
 )
+from market_regime_alpha.application.decision_system.authority import (
+    DecisionStateAuthorityContext,
+    FillDerivedAccountAuthority,
+    PostgresFillDerivedAccountAuthorityReader,
+    PositionSettlementEvidence,
+)
+from market_regime_alpha.application.state_system.bundles import (
+    scoped_state_stage_bundle_identity,
+)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -28,6 +41,7 @@ from market_regime_alpha.persistence.postgres.native_repository import (
     NativePostgresRepository,
     PostgresConnection,
     acquire_scope_lock,
+    aware_datetime,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +77,622 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             raise TypeError("clock must be callable")
         self._clock = clock
         super().__init__(factory)
+
+    def record_reconciliation_tolerance(
+        self,
+        configuration: ReconciliationTolerance,
+        *,
+        claim: ClaimedRuntimeTick,
+    ) -> ReconciliationTolerance:
+        def operation(connection: PostgresConnection) -> ReconciliationTolerance:
+            self._assert_claim(connection, claim)
+            connection.execute(
+                """
+                INSERT INTO reconciliation_tolerance_configuration(
+                    configuration_id, configuration_hash, payload_json, created_at
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (configuration_id) DO NOTHING
+                """,
+                (
+                    str(configuration.configuration_id),
+                    configuration.configuration_hash,
+                    Jsonb(configuration.to_canonical_dict()),
+                    self._clock(),
+                ),
+            )
+            return self._load_reconciliation_tolerance(
+                connection,
+                configuration.configuration_id,
+            )
+
+        return cast(ReconciliationTolerance, self._run(operation))
+
+    def get_reconciliation_tolerance(
+        self,
+        configuration_id: ArtifactId,
+    ) -> ReconciliationTolerance:
+        with self._connect() as connection:
+            return self._load_reconciliation_tolerance(
+                connection,
+                configuration_id,
+            )
+
+    def record_risk_configuration(
+        self,
+        configuration: DecisionRiskConfiguration,
+        *,
+        claim: ClaimedRuntimeTick,
+    ) -> DecisionRiskConfiguration:
+        def operation(connection: PostgresConnection) -> DecisionRiskConfiguration:
+            self._assert_claim(connection, claim)
+            connection.execute(
+                """
+                INSERT INTO decision_risk_configuration(
+                    configuration_id, configuration_hash, payload_json, created_at
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (configuration_id) DO NOTHING
+                """,
+                (
+                    str(configuration.configuration_id),
+                    configuration.configuration_hash,
+                    Jsonb(configuration.to_canonical_dict()),
+                    self._clock(),
+                ),
+            )
+            return self._load_risk_configuration(
+                connection,
+                configuration.configuration_id,
+            )
+
+        return cast(DecisionRiskConfiguration, self._run(operation))
+
+    def get_risk_configuration(
+        self,
+        configuration_id: ArtifactId,
+    ) -> DecisionRiskConfiguration:
+        with self._connect() as connection:
+            return self._load_risk_configuration(connection, configuration_id)
+
+    def load_fill_derived_account_authority(
+        self,
+        *,
+        account_id: str,
+        as_of_time: datetime,
+        settlement_evidence: PositionSettlementEvidence | None = None,
+    ) -> FillDerivedAccountAuthority:
+        return PostgresFillDerivedAccountAuthorityReader(
+            self._postgres_factory
+        ).load(
+            account_id=account_id,
+            as_of_time=as_of_time,
+            settlement_evidence=settlement_evidence,
+        )
+
+    def record_position_settlement_evidence(
+        self,
+        evidence: PositionSettlementEvidence,
+        *,
+        claim: ClaimedRuntimeTick,
+    ) -> PositionSettlementEvidence:
+        def operation(connection: PostgresConnection) -> PositionSettlementEvidence:
+            self._assert_claim(connection, claim)
+            acquire_scope_lock(
+                connection,
+                namespace="decision-position-settlement-evidence",
+                identity=(
+                    f"{evidence.account_id}:"
+                    f"{canonical_datetime(evidence.as_of_time)}"
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO decision_position_settlement_evidence(
+                    evidence_id, content_hash, account_id, as_of_time,
+                    run_id, tick_id, claim_id, fencing_token, tick_version,
+                    payload_json, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (evidence_id) DO NOTHING
+                """,
+                (
+                    str(evidence.evidence_id), evidence.content_hash,
+                    evidence.account_id, evidence.as_of_time,
+                    str(claim.run_id), str(claim.tick_id), claim.claim_id,
+                    claim.fencing_token, claim.tick_version,
+                    Jsonb(evidence.to_canonical_dict()), self._clock(),
+                ),
+            )
+            restored = self._load_position_settlement_evidence(
+                connection,
+                evidence.evidence_id,
+            )
+            if restored != evidence:
+                raise DecisionSystemConflict(
+                    "Position settlement evidence identity conflict"
+                )
+            return restored
+
+        return cast(PositionSettlementEvidence, self._run(operation))
+
+    def get_position_settlement_evidence(
+        self,
+        evidence_id: ArtifactId,
+    ) -> PositionSettlementEvidence:
+        with self._connect() as connection:
+            return self._load_position_settlement_evidence(
+                connection,
+                evidence_id,
+            )
+
+    def record_fill_derived_account_authority(
+        self,
+        authority: FillDerivedAccountAuthority,
+        *,
+        claim: ClaimedRuntimeTick,
+    ) -> FillDerivedAccountAuthority:
+        """Freeze one Fill-derived account view for a Decision as-of scope."""
+
+        def operation(connection: PostgresConnection) -> FillDerivedAccountAuthority:
+            self._assert_claim(connection, claim)
+            acquire_scope_lock(
+                connection,
+                namespace="decision-fill-account-authority",
+                identity=f"{authority.account_id}:{canonical_datetime(authority.as_of_time)}",
+            )
+            connection.execute(
+                """
+                INSERT INTO decision_fill_account_authority(
+                    authority_id, content_hash, account_id, as_of_time,
+                    fill_ledger_head, fill_ledger_complete, run_id, tick_id,
+                    claim_id, fencing_token, tick_version, payload_json, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (authority_id) DO NOTHING
+                """,
+                (
+                    str(authority.authority_id), authority.content_hash,
+                    authority.account_id, authority.as_of_time,
+                    authority.fill_ledger_head, authority.fill_ledger_complete,
+                    str(claim.run_id), str(claim.tick_id), claim.claim_id,
+                    claim.fencing_token, claim.tick_version,
+                    Jsonb(authority.to_canonical_dict()), self._clock(),
+                ),
+            )
+            restored = self._load_recorded_fill_authority(
+                connection,
+                account_id=authority.account_id,
+                as_of_time=authority.as_of_time,
+            )
+            if restored != authority:
+                raise DecisionSystemConflict(
+                    "Decision Fill authority as-of identity conflict"
+                )
+            return restored
+
+        return cast(FillDerivedAccountAuthority, self._run(operation))
+
+    def get_recorded_fill_derived_account_authority(
+        self,
+        *,
+        account_id: str,
+        as_of_time: datetime,
+    ) -> FillDerivedAccountAuthority:
+        with self._connect() as connection:
+            return self._load_recorded_fill_authority(
+                connection,
+                account_id=account_id,
+                as_of_time=as_of_time,
+            )
+
+    def get_decision_state_context(
+        self,
+        summary: DailyDecisionWindowSummary,
+    ) -> DecisionStateAuthorityContext:
+        self.validate_summary_authority(summary)
+        lineage = summary.lineage
+        with self._connect() as connection:
+            market = connection.execute(
+                "SELECT effective_state FROM market_regime_state WHERE state_id = %s",
+                (str(lineage.market_state_id),),
+            ).fetchone()
+            capital = connection.execute(
+                "SELECT effective_state FROM capital_state WHERE state_id = %s",
+                (str(lineage.capital_state_id),),
+            ).fetchone()
+            etf_rows = connection.execute(
+                """
+                SELECT scope_key, effective_state
+                FROM etf_rotation_state
+                WHERE state_id = ANY(%s)
+                ORDER BY scope_key, state_id
+                """,
+                ([str(item) for item in lineage.etf_state_ids],),
+            ).fetchall()
+            theme_rows = connection.execute(
+                """
+                SELECT scope_key, effective_state
+                FROM theme_rotation_state
+                WHERE state_id = ANY(%s)
+                ORDER BY scope_key, state_id
+                """,
+                ([str(item) for item in lineage.theme_state_ids],),
+            ).fetchall()
+            availability_rows = connection.execute(
+                """
+                SELECT available_at
+                FROM state_research_stage_authority
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (str(lineage.continuous_operation_id), str(lineage.runtime_tick_id)),
+            ).fetchall()
+        if market is None or capital is None or not availability_rows:
+            raise DecisionSystemIntegrityError(
+                "PostgreSQL Decision State context is incomplete"
+            )
+        return DecisionStateAuthorityContext(
+            market_state=str(market["effective_state"]),
+            etf_states=tuple(
+                (str(row["scope_key"]), str(row["effective_state"]))
+                for row in etf_rows
+            ),
+            theme_states=tuple(
+                (str(row["scope_key"]), str(row["effective_state"]))
+                for row in theme_rows
+            ),
+            capital_state=str(capital["effective_state"]),
+            oldest_available_at=min(
+                aware_datetime(row["available_at"], label="stage available_at")
+                for row in availability_rows
+            ),
+        )
+
+    def get_market_state(self, state_id: ArtifactId) -> str:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT state_hash, effective_state, artifact_json
+                FROM market_regime_state
+                WHERE state_id = %s
+                """,
+                (str(state_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(state_id))
+        raw = row["artifact_json"]
+        payload = raw if isinstance(raw, dict) else json.loads(str(raw))
+        if not isinstance(payload, dict) or canonical_hash(payload) != str(
+            row["state_hash"]
+        ):
+            raise DecisionSystemIntegrityError(
+                "stored Market State failed canonical verification"
+            )
+        if str(payload.get("effective_state")) != str(row["effective_state"]):
+            raise DecisionSystemIntegrityError(
+                "stored Market State projection mismatch"
+            )
+        return str(row["effective_state"])
+
+    def get_daily_loss(
+        self,
+        *,
+        account_id: str,
+        trading_date: object,
+        as_of_time: datetime,
+    ) -> Decimal | None:
+        """No caller-authored PnL is accepted; no current PG daily-loss authority exists."""
+
+        del account_id, trading_date, as_of_time
+        return None
+
+    def get_state_stage_authority(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+    ) -> tuple[dict[str, Any], ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT stage, artifact_id, artifact_hash, available_at
+                FROM state_research_stage_authority
+                WHERE run_id = %s AND tick_id = %s
+                ORDER BY stage
+                """,
+                (str(run_id), str(tick_id)),
+            ).fetchall()
+        return tuple(
+            {
+                "stage": str(row["stage"]),
+                "artifact_id": str(row["artifact_id"]),
+                "artifact_hash": str(row["artifact_hash"]),
+                "available_at": canonical_datetime(
+                    aware_datetime(row["available_at"], label="stage available_at")
+                ),
+            }
+            for row in rows
+        )
+
+    def import_replay_artifacts(
+        self,
+        *,
+        replay_session_id: ArtifactId,
+        artifacts: tuple[dict[str, Any], ...],
+    ) -> tuple[dict[str, Any], ...]:
+        """Atomically import an immutable replay bundle into this PG schema."""
+
+        def operation(connection: PostgresConnection) -> tuple[dict[str, Any], ...]:
+            acquire_scope_lock(
+                connection,
+                namespace="decision-replay-import",
+                identity=replay_session_id,
+            )
+            for artifact in artifacts:
+                connection.execute(
+                    """
+                    INSERT INTO decision_replay_import(
+                        replay_session_id, artifact_kind, artifact_id,
+                        content_hash, payload_json, imported_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (replay_session_id, artifact_kind, artifact_id)
+                    DO NOTHING
+                    """,
+                    (
+                        str(replay_session_id), artifact["artifact_kind"],
+                        artifact["artifact_id"], artifact["content_hash"],
+                        Jsonb(artifact["payload"]), self._clock(),
+                    ),
+                )
+            return self._load_replay_artifacts(connection, replay_session_id)
+
+        imported = cast(tuple[dict[str, Any], ...], self._run(operation))
+        if imported != artifacts:
+            raise DecisionSystemConflict("Decision Replay import conflict")
+        return imported
+
+    def get_replay_artifacts(
+        self,
+        replay_session_id: ArtifactId,
+    ) -> tuple[dict[str, Any], ...]:
+        with self._connect() as connection:
+            return self._load_replay_artifacts(connection, replay_session_id)
+
+    def validate_summary_authority(
+        self,
+        summary: DailyDecisionWindowSummary,
+    ) -> None:
+        """Verify every State/Pool/Candidate bundle identity from PostgreSQL."""
+
+        lineage = summary.lineage
+        with self._connect() as connection:
+            state_receipt = connection.execute(
+                """
+                SELECT receipt_hash, run_id, tick_id
+                FROM state_runtime_receipt
+                WHERE receipt_id = %s
+                """,
+                (str(lineage.state_receipt_id),),
+            ).fetchone()
+            if state_receipt is None or (
+                str(state_receipt["receipt_hash"]) != lineage.state_receipt_hash
+                or str(state_receipt["run_id"]) != str(lineage.continuous_operation_id)
+                or str(state_receipt["tick_id"]) != str(lineage.runtime_tick_id)
+            ):
+                raise DecisionSystemIntegrityError(
+                    "PostgreSQL State receipt authority mismatch"
+                )
+            rows = connection.execute(
+                """
+                SELECT stage, artifact_id, artifact_hash, available_at
+                FROM state_research_stage_authority
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (
+                    str(lineage.continuous_operation_id),
+                    str(lineage.runtime_tick_id),
+                ),
+            ).fetchall()
+            by_stage = {str(row["stage"]): row for row in rows}
+            market = connection.execute(
+                "SELECT state_hash FROM market_regime_state WHERE state_id = %s",
+                (str(lineage.market_state_id),),
+            ).fetchone()
+            if market is None:
+                raise DecisionSystemIntegrityError(
+                    "PostgreSQL Market State authority is missing"
+                )
+            expected_stage_artifacts = {
+                "MARKET_REGIME": (
+                    lineage.market_state_id,
+                    str(market["state_hash"]),
+                ),
+                "CANDIDATE": (
+                    lineage.candidate_binding_id,
+                    lineage.candidate_binding_hash,
+                ),
+                "SIGNAL": (lineage.signal_bundle_id, lineage.signal_bundle_hash),
+                "FORECAST": (
+                    lineage.forecast_bundle_id,
+                    lineage.forecast_bundle_hash,
+                ),
+            }
+            for stage, (artifact_id, artifact_hash) in expected_stage_artifacts.items():
+                row = by_stage.get(stage)
+                if row is None or (
+                    str(row["artifact_id"]) != str(artifact_id)
+                    or str(row["artifact_hash"]) != artifact_hash
+                    or aware_datetime(
+                        row["available_at"], label=f"{stage} available_at"
+                    ) > summary.as_of_time
+                ):
+                    raise DecisionSystemIntegrityError(
+                        f"PostgreSQL {stage} authority mismatch"
+                    )
+            scoped_state_specs = (
+                (
+                    "ETF_ROTATION",
+                    "etf_rotation_state",
+                    "etf_rotation_state_observation",
+                    lineage.etf_state_ids,
+                ),
+                (
+                    "THEME_ROTATION",
+                    "theme_rotation_state",
+                    "theme_rotation_state_observation",
+                    lineage.theme_state_ids,
+                ),
+                (
+                    "CAPITAL_STATE",
+                    "capital_state",
+                    "capital_state_observation",
+                    (lineage.capital_state_id,),
+                ),
+            )
+            for stage, state_table, observation_table, expected_ids in scoped_state_specs:
+                if not expected_ids:
+                    raise DecisionSystemIntegrityError(
+                        f"PostgreSQL {stage} lineage is empty"
+                    )
+                state_rows = connection.execute(  # noqa: S608 - fixed allowlist
+                    f"""
+                    SELECT state.state_id, state.state_hash, state.scope_key,
+                           state.effective_state, state.artifact_json,
+                           observation.run_id, observation.tick_id,
+                           observation.available_at
+                    FROM {state_table} AS state
+                    JOIN {observation_table} AS observation
+                      ON observation.observation_id = state.observation_id
+                    WHERE state.state_id = ANY(%s)
+                    """,
+                    ([str(item) for item in expected_ids],),
+                ).fetchall()
+                if {str(row["state_id"]) for row in state_rows} != {
+                    str(item) for item in expected_ids
+                } or any(
+                    str(row["run_id"]) != str(lineage.continuous_operation_id)
+                    or str(row["tick_id"]) != str(lineage.runtime_tick_id)
+                    or aware_datetime(
+                        row["available_at"], label=f"{stage} available_at"
+                    ) > summary.as_of_time
+                    for row in state_rows
+                ):
+                    raise DecisionSystemIntegrityError(
+                        f"PostgreSQL {stage} State authority mismatch"
+                    )
+                for state_row in state_rows:
+                    raw_state = state_row["artifact_json"]
+                    state_payload = (
+                        raw_state
+                        if isinstance(raw_state, dict)
+                        else json.loads(str(raw_state))
+                    )
+                    if (
+                        not isinstance(state_payload, dict)
+                        or canonical_hash(state_payload)
+                        != str(state_row["state_hash"])
+                        or str(state_payload.get("effective_state"))
+                        != str(state_row["effective_state"])
+                    ):
+                        raise DecisionSystemIntegrityError(
+                            f"PostgreSQL {stage} canonical State mismatch"
+                        )
+                expected_scopes = (
+                    {
+                        item.etf
+                        for item in summary.candidates
+                        if item.etf is not None
+                    }
+                    if stage == "ETF_ROTATION"
+                    else {
+                        item.theme
+                        for item in summary.candidates
+                        if item.theme is not None
+                    }
+                    if stage == "THEME_ROTATION"
+                    else None
+                )
+                if expected_scopes is not None and not expected_scopes.issubset(
+                    {str(row["scope_key"]) for row in state_rows}
+                ):
+                    raise DecisionSystemIntegrityError(
+                        f"PostgreSQL {stage} Candidate scope mismatch"
+                    )
+                stage_row = by_stage.get(stage)
+                if stage_row is None or aware_datetime(
+                    stage_row["available_at"], label=f"{stage} stage available_at"
+                ) > summary.as_of_time:
+                    raise DecisionSystemIntegrityError(
+                        f"PostgreSQL {stage} stage authority mismatch"
+                    )
+                if len(state_rows) == 1:
+                    expected_stage_id = ArtifactId(str(state_rows[0]["state_id"]))
+                    expected_stage_hash = str(state_rows[0]["state_hash"])
+                elif stage in {"ETF_ROTATION", "THEME_ROTATION"}:
+                    expected_stage_id, expected_stage_hash = (
+                        scoped_state_stage_bundle_identity(
+                            stage=stage,
+                            members=tuple(
+                                (
+                                    ArtifactId(str(item["state_id"])),
+                                    str(item["state_hash"]),
+                                    str(item["scope_key"]),
+                                )
+                                for item in state_rows
+                            ),
+                        )
+                    )
+                else:
+                    raise DecisionSystemIntegrityError(
+                        f"PostgreSQL {stage} returned multiple singleton States"
+                    )
+                if (
+                    str(stage_row["artifact_id"]) != str(expected_stage_id)
+                    or str(stage_row["artifact_hash"]) != expected_stage_hash
+                ):
+                    raise DecisionSystemIntegrityError(
+                        f"PostgreSQL {stage} identity mismatch"
+                    )
+            pool = connection.execute(
+                """
+                SELECT pool_id, pool_hash, run_id, tick_id, available_at
+                FROM dynamic_stock_pool
+                WHERE pool_id = %s
+                """,
+                (str(lineage.dynamic_pool_id),),
+            ).fetchone()
+            if pool is None or (
+                str(pool["run_id"]) != str(lineage.continuous_operation_id)
+                or str(pool["tick_id"]) != str(lineage.runtime_tick_id)
+                or aware_datetime(pool["available_at"], label="Pool available_at")
+                > summary.as_of_time
+            ):
+                raise DecisionSystemIntegrityError(
+                    "PostgreSQL Dynamic Pool authority mismatch"
+                )
+            dynamic_stage = by_stage.get("DYNAMIC_POOL")
+            if dynamic_stage is None or (
+                str(dynamic_stage["artifact_id"]) != str(lineage.dynamic_pool_id)
+                or str(dynamic_stage["artifact_hash"]) != str(pool["pool_hash"])
+            ):
+                raise DecisionSystemIntegrityError(
+                    "PostgreSQL Dynamic Pool stage authority mismatch"
+                )
+            members = connection.execute(
+                """
+                SELECT symbol, included
+                FROM dynamic_stock_pool_member
+                WHERE pool_id = %s
+                """,
+                (str(lineage.dynamic_pool_id),),
+            ).fetchall()
+            by_symbol = {str(row["symbol"]): row for row in members}
+            for candidate in summary.candidates:
+                member = by_symbol.get(candidate.symbol)
+                if member is None or member["included"] is not True:
+                    raise DecisionSystemIntegrityError(
+                        "PostgreSQL Candidate/Pool membership mismatch"
+                    )
 
     def record_manual_observation(self, observation: ManualAccountObservation) -> ManualAccountObservation:
         payload = observation.to_canonical_dict()
@@ -195,6 +825,14 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             if replay is not None:
                 return self._load_reconciliation(connection, ArtifactId(replay))
             observation = self._load_observation(connection, report.manual_observation_id)
+            tolerance = self._load_reconciliation_tolerance(
+                connection,
+                report.tolerance_configuration_id,
+            )
+            if tolerance.configuration_hash != report.tolerance_configuration_hash:
+                raise DecisionSystemConflict(
+                    "Reconciliation Tolerance authority mismatch"
+                )
             if observation.account_id != report.account_id or observation.trading_date != report.trading_date:
                 raise DecisionSystemConflict("Reconciliation/Observation lineage mismatch")
             previous = connection.execute(
@@ -423,10 +1061,16 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             summary = self._load_summary(connection, proposal.summary_id)
             observation = self._load_observation(connection, proposal.manual_observation_id)
             report = self._load_reconciliation(connection, proposal.reconciliation_id)
+            configuration = self._load_risk_configuration(
+                connection,
+                proposal.risk_configuration_id,
+            )
             if (
                 summary.account_id != proposal.account_id
                 or observation.account_id != proposal.account_id
                 or report.account_id != proposal.account_id
+                or configuration.configuration_hash
+                != proposal.risk_configuration_hash
             ):
                 raise DecisionSystemConflict("Proposal Account lineage mismatch")
             connection.execute(
@@ -514,11 +1158,17 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             if replay is not None:
                 return self._load_risk(connection, ArtifactId(replay))
             proposal = self._load_proposal(connection, decision.proposal_id)
+            configuration = self._load_risk_configuration(
+                connection,
+                decision.risk_configuration_id,
+            )
             if proposal.account_id != decision.account_id or proposal.trading_date != decision.trading_date:
                 raise DecisionSystemConflict("Independent Risk Proposal lineage mismatch")
             if (
                 proposal.risk_configuration_id != decision.risk_configuration_id
                 or proposal.risk_configuration_hash != decision.risk_configuration_hash
+                or configuration.configuration_hash
+                != decision.risk_configuration_hash
             ):
                 raise DecisionSystemConflict("Independent Risk Configuration lineage mismatch")
             connection.execute(
@@ -582,6 +1232,7 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 or receipt.claim_id != claim.claim_id
                 or receipt.fencing_token != claim.fencing_token
                 or receipt.tick_version != claim.tick_version
+                or receipt.lease_expires_at != claim.lease_expires_at
             ):
                 raise DecisionSystemConflict("Decision receipt/fence lineage mismatch")
             prior = connection.execute(
@@ -599,13 +1250,13 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 """
                 INSERT INTO decision_runtime_receipt(
                     receipt_id, receipt_hash, run_id, tick_id, claim_id,
-                    fencing_token, tick_version, state_receipt_id,
+                    fencing_token, tick_version, lease_expires_at, state_receipt_id,
                     state_receipt_hash, reconciliation_id, summary_id,
                     proposal_id, risk_decision_id, status,
                     stage_receipts_json, payload_json, created_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -616,6 +1267,7 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                     receipt.claim_id,
                     receipt.fencing_token,
                     receipt.tick_version,
+                    receipt.lease_expires_at,
                     str(receipt.state_receipt_id),
                     receipt.state_receipt_hash,
                     _id_text(receipt.reconciliation_id),
@@ -662,6 +1314,10 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             "research_portfolio_line",
             "independent_risk_decision",
             "decision_runtime_receipt",
+            "reconciliation_tolerance_configuration",
+            "decision_risk_configuration",
+            "decision_position_settlement_evidence",
+            "decision_fill_account_authority",
         )
         with self._connect() as connection:
             counts: dict[str, int] = {}
@@ -709,6 +1365,139 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             or row["lease_expires_at"] <= now
         ):
             raise DecisionSystemConflict("stale Continuous Tick claim/fence cannot write Decision System")
+
+    def _load_reconciliation_tolerance(
+        self,
+        connection: PostgresConnection,
+        configuration_id: ArtifactId,
+    ) -> ReconciliationTolerance:
+        row = connection.execute(
+            """
+            SELECT payload_json
+            FROM reconciliation_tolerance_configuration
+            WHERE configuration_id = %s
+            """,
+            (str(configuration_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(str(configuration_id))
+        payload = row["payload_json"]
+        if not isinstance(payload, dict):
+            raise DecisionSystemIntegrityError(
+                "stored Reconciliation Tolerance is not an object"
+            )
+        return ReconciliationTolerance.from_canonical_dict(payload)
+
+    def _load_risk_configuration(
+        self,
+        connection: PostgresConnection,
+        configuration_id: ArtifactId,
+    ) -> DecisionRiskConfiguration:
+        row = connection.execute(
+            """
+            SELECT payload_json
+            FROM decision_risk_configuration
+            WHERE configuration_id = %s
+            """,
+            (str(configuration_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(str(configuration_id))
+        payload = row["payload_json"]
+        if not isinstance(payload, dict):
+            raise DecisionSystemIntegrityError(
+                "stored Decision Risk Configuration is not an object"
+            )
+        return DecisionRiskConfiguration.from_canonical_dict(payload)
+
+    def _load_recorded_fill_authority(
+        self,
+        connection: PostgresConnection,
+        *,
+        account_id: str,
+        as_of_time: datetime,
+    ) -> FillDerivedAccountAuthority:
+        row = connection.execute(
+            """
+            SELECT payload_json
+            FROM decision_fill_account_authority
+            WHERE account_id = %s AND as_of_time = %s
+            """,
+            (account_id, as_of_time),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"{account_id}:{canonical_datetime(as_of_time)}"
+            )
+        payload = row["payload_json"]
+        if not isinstance(payload, dict):
+            raise DecisionSystemIntegrityError(
+                "stored Decision Fill authority is not an object"
+            )
+        try:
+            return FillDerivedAccountAuthority.from_canonical_dict(payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DecisionSystemIntegrityError(
+                "stored Decision Fill authority failed canonical verification"
+            ) from exc
+
+    def _load_position_settlement_evidence(
+        self,
+        connection: PostgresConnection,
+        evidence_id: ArtifactId,
+    ) -> PositionSettlementEvidence:
+        row = connection.execute(
+            """
+            SELECT payload_json
+            FROM decision_position_settlement_evidence
+            WHERE evidence_id = %s
+            """,
+            (str(evidence_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(str(evidence_id))
+        payload = row["payload_json"]
+        if not isinstance(payload, dict):
+            raise DecisionSystemIntegrityError(
+                "stored Position settlement evidence is not an object"
+            )
+        try:
+            return PositionSettlementEvidence.from_canonical_dict(payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DecisionSystemIntegrityError(
+                "stored Position settlement evidence failed canonical verification"
+            ) from exc
+
+    def _load_replay_artifacts(
+        self,
+        connection: PostgresConnection,
+        replay_session_id: ArtifactId,
+    ) -> tuple[dict[str, Any], ...]:
+        rows = connection.execute(
+            """
+            SELECT artifact_kind, artifact_id, content_hash, payload_json
+            FROM decision_replay_import
+            WHERE replay_session_id = %s
+            ORDER BY artifact_kind, artifact_id
+            """,
+            (str(replay_session_id),),
+        ).fetchall()
+        artifacts: list[dict[str, Any]] = []
+        for row in rows:
+            payload = row["payload_json"]
+            if not isinstance(payload, dict):
+                raise DecisionSystemIntegrityError(
+                    "stored Decision Replay payload is not an object"
+                )
+            artifacts.append(
+                {
+                    "artifact_kind": str(row["artifact_kind"]),
+                    "artifact_id": str(row["artifact_id"]),
+                    "content_hash": str(row["content_hash"]),
+                    "payload": payload,
+                }
+            )
+        return tuple(artifacts)
 
     def _load_observation(self, connection: PostgresConnection, observation_id: ArtifactId) -> ManualAccountObservation:
         return _load_payload(

@@ -98,7 +98,7 @@ Broker authority remain absent.
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
 database test substitute. Bounded repositories now execute native psycopg SQL
-and PostgreSQL transactions. Central migrations 001–025 are the only database
+and PostgreSQL transactions. Central migrations 001–026 are the only database
 migration authority; an unavailable PostgreSQL connection fails closed.
 
 WP-DECISION-01 adds one ordered `DECISION_SYSTEM` child beneath the same
@@ -595,12 +595,21 @@ PostgreSQL 16 is the only database authority selected through
 backend enumeration, database path, SQL/DB-API translation bridge, automatic
 fallback, persistent test substitute or runtime importer.
 
-PostgreSQL migration versions 001–025 are checksummed, contiguous and
+PostgreSQL migration versions 001–026 are checksummed, contiguous and
 serialized with an advisory lock. Migration 024 constrains the credential-free
 runtime binding to PostgreSQL without changing the published migration-017
 checksum. Migration 025 adds Decision Summary, Manual Account,
 Reconciliation, research Portfolio, Independent Risk and runtime receipt
-authorities. Fresh 001→025 and 023→025 migration paths are tested on PostgreSQL
+authorities. Migration 026 adds lease-bound receipts, immutable State-stage and
+frozen Fill-account references, versioned Decision configurations and isolated
+replay imports. Manual cash/equity values do not self-corroborate; without an
+independent external account-total Reader, reconciliation records
+`DATA_INSUFFICIENT` and OPEN/ADD remains blocked. Basic Fill projection also
+remains incomplete for available/frozen quantities unless explicit,
+content-addressed T+1 calendar/session evidence exists. When supplied at the
+same account/AsOf scope, that evidence is persisted append-only under the active
+fence and the frozen Fill view binds its ID/hash.
+Fresh 001→026 and 023→026 migration paths are tested on PostgreSQL
 16.
 
 Native repositories preserve idempotency, command hashes, compare-and-swap,
@@ -610,7 +619,10 @@ fencing token and Tick version inside the same transaction. Reconciliation,
 Summary, Portfolio and Risk revisions use aggregate-scoped advisory locks and
 CAS; terminal Summary uniqueness uses a partial unique index.
 
-Repository, migration, runtime, concurrency, replay and CLI integration tests
+The isolated replay Risk Reader reloads imported Proposal, Summary, account,
+reconciliation, configuration, frozen Fill and optional settlement evidence
+from PostgreSQL before recomputation. Repository, migration, runtime,
+concurrency, replay and CLI integration tests
 use isolated PostgreSQL schemas. Historical path-shaped test inputs are opaque
 test-scope keys only; they do not create or open a file database. Repository
 discovery found no real file-database business authority requiring a long-lived

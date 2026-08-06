@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone
+import json
+import os
+import uuid
+
+import psycopg
+from psycopg import sql
+import pytest
 
 from market_regime_alpha.application.continuous_research.composition import (
     CONTINUOUS_CHILD_ORDER,
@@ -19,6 +25,7 @@ from market_regime_alpha.application.continuous_research.policy import (
 )
 from market_regime_alpha.application.decision_system.contracts import (
     DecisionWindowState,
+    bind_decision_candidate_evidence,
 )
 from market_regime_alpha.application.decision_system.postgres_repository import (
     PostgresDecisionSystemRepository,
@@ -29,11 +36,19 @@ from market_regime_alpha.application.decision_system.replay import (
 from market_regime_alpha.application.decision_system.runtime import (
     DECISION_RUNTIME_STAGE_ORDER,
     DecisionRuntimeInputs,
+    DecisionRuntimeReceipt,
+    DecisionRuntimeStage,
+    DecisionStageReceipt,
     DecisionSystemDelegate,
     DecisionSystemRuntimeService,
 )
+from market_regime_alpha.application.state_system.bundles import (
+    scoped_state_stage_bundle_identity,
+)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
+from market_regime_alpha.persistence.settings import DatabaseSettings
 from tests.application.decision_system.support import (
     AS_OF,
     HASH_A,
@@ -42,11 +57,13 @@ from tests.application.decision_system.support import (
     candidate,
     lineage,
     observation,
-    position,
     risk_configuration,
     tolerance,
 )
-from tests.persistence.postgres.conftest import postgres_factory as postgres_factory
+from tests.persistence.postgres.conftest import (
+    TEST_DATABASE_URL_ENV,
+    postgres_factory as postgres_factory,
+)
 from tests.persistence.postgres.test_continuous_research_journal import (
     MutableClock,
     _command,
@@ -57,7 +74,96 @@ from tests.persistence.postgres.test_continuous_research_journal import (
 UTC = timezone.utc
 
 
+def test_scoped_state_bundle_binds_exact_multi_scope_members() -> None:
+    full = scoped_state_stage_bundle_identity(
+        stage="ETF_ROTATION",
+        members=(
+            (ArtifactId("etf-state-a"), HASH_A, "510300.SH"),
+            (ArtifactId("etf-state-b"), HASH_B, "510500.SH"),
+        ),
+    )
+    reordered = scoped_state_stage_bundle_identity(
+        stage="ETF_ROTATION",
+        members=(
+            (ArtifactId("etf-state-b"), HASH_B, "510500.SH"),
+            (ArtifactId("etf-state-a"), HASH_A, "510300.SH"),
+        ),
+    )
+    subset = scoped_state_stage_bundle_identity(
+        stage="ETF_ROTATION",
+        members=((ArtifactId("etf-state-a"), HASH_A, "510300.SH"),),
+    )
+
+    assert full == reordered
+    assert full != subset
+
+
+def test_runtime_receipt_producer_rejects_noncanonical_unicode() -> None:
+    with pytest.raises(ValueError, match="Unicode NFC"):
+        DecisionStageReceipt(
+            stage=DecisionRuntimeStage.ACCOUNT_OBSERVATION_LOOKUP,
+            status="BLOCKED",
+            artifact_id=None,
+            artifact_hash=None,
+            reason_codes=("Cafe\u0301",),
+        )
+
+    stage = DecisionStageReceipt(
+        stage=DecisionRuntimeStage.ACCOUNT_OBSERVATION_LOOKUP,
+        status="BLOCKED",
+        artifact_id=None,
+        artifact_hash=None,
+        reason_codes=("INPUT_BLOCKED",),
+    )
+    with pytest.raises(ValueError, match="Unicode NFC"):
+        DecisionRuntimeReceipt.create(
+            run_id=ArtifactId("run-a"),
+            tick_id=ArtifactId("tick-a"),
+            claim_id="Cafe\u0301",
+            fencing_token=1,
+            tick_version=1,
+            lease_expires_at=AS_OF + timedelta(minutes=1),
+            state_receipt_id=ArtifactId("state-receipt-a"),
+            state_receipt_hash=HASH_A,
+            reconciliation_id=None,
+            summary_id=None,
+            proposal_id=None,
+            risk_decision_id=None,
+            status="BLOCKED",
+            stage_receipts=(stage,),
+            created_at=AS_OF,
+        )
+
+
+def _scoped_hash(label: str, claim) -> str:
+    return canonical_hash(
+        {"label": label, "run_id": str(claim.run_id), "tick_id": str(claim.tick_id)}
+    )
+
+
+def _scoped_id(label: str, claim) -> ArtifactId:
+    return ArtifactId(f"{label}-{_scoped_hash(label, claim)[7:31]}")
+
+
+def _runtime_lineage(claim):
+    base = replace(
+        lineage(claim, position_snapshot_ids=()),
+        state_receipt_id=_scoped_id("state-receipt", claim),
+        state_receipt_hash=_scoped_hash("state-receipt", claim),
+        market_state_id=_scoped_id("market-state", claim),
+        etf_state_ids=(_scoped_id("etf-state", claim),),
+        theme_state_ids=(_scoped_id("theme-state", claim),),
+        capital_state_id=_scoped_id("capital-state", claim),
+        dynamic_pool_id=_scoped_id("dynamic-pool", claim),
+    )
+    return bind_decision_candidate_evidence(
+        base,
+        (candidate(dynamic_pool_id=base.dynamic_pool_id, current_quantity=0),),
+    )
+
+
 def _request(claim, *, as_of: datetime = AS_OF) -> ChildExecutionRequest:
+    runtime_lineage = _runtime_lineage(claim)
     return ChildExecutionRequest(
         trading_date=as_of.date(),
         as_of_time=as_of,
@@ -83,8 +189,8 @@ def _request(claim, *, as_of: datetime = AS_OF) -> ChildExecutionRequest:
             ),
             RuntimeArtifactReference(
                 "STATE_SYSTEM_OUTPUT",
-                ArtifactId("state-receipt-a"),
-                HASH_B,
+                runtime_lineage.state_receipt_id,
+                runtime_lineage.state_receipt_hash,
             ),
         ),
         configuration_references=(
@@ -93,32 +199,199 @@ def _request(claim, *, as_of: datetime = AS_OF) -> ChildExecutionRequest:
                 ArtifactId("decision-config-a"),
                 HASH_A,
             ),
+            RuntimeArtifactReference(
+                "CONFIGURATION",
+                ArtifactId("strategy-config-a"),
+                HASH_A,
+            ),
         ),
     )
 
 
 def _inputs(claim, account_id: ArtifactId) -> DecisionRuntimeInputs:
+    runtime_lineage = _runtime_lineage(claim)
     return DecisionRuntimeInputs(
         manual_observation_id=account_id,
-        positions=(position(),),
-        fill_ledger_head="fill-ledger-head-a",
-        fill_ledger_complete=True,
-        authoritative_total_equity=Decimal("100000.120000"),
-        authoritative_available_cash=Decimal("80000.120000"),
-        authoritative_frozen_cash=Decimal("0"),
         reconciliation_tolerance=tolerance(),
         reconciliation_revision=1,
         previous_reconciliation_id=None,
         strategy_configuration_id=ArtifactId("strategy-config-a"),
         strategy_configuration_hash=HASH_A,
-        lineage=lineage(claim),
-        candidates=(candidate(),),
+        lineage=runtime_lineage,
+        candidates=(
+            candidate(
+                dynamic_pool_id=runtime_lineage.dynamic_pool_id,
+                current_quantity=0,
+            ),
+        ),
         summary_revision=1,
         previous_summary_id=None,
         correction_of_summary_id=None,
         risk_configuration=risk_configuration(),
         finalize=True,
     )
+
+
+def _seed_state_authority(
+    factory: PostgresConnectionFactory,
+    claim,
+) -> None:
+    decision_lineage = _runtime_lineage(claim)
+    state_specs = (
+        (
+            "market_regime_state",
+            "market_regime_state_observation",
+            decision_lineage.market_state_id,
+            _scoped_id("market-observation", claim),
+            "NEUTRAL",
+            "A_SHARE",
+        ),
+        (
+            "etf_rotation_state",
+            "etf_rotation_state_observation",
+            decision_lineage.etf_state_ids[0],
+            _scoped_id("etf-observation", claim),
+            "LEADERSHIP_BROAD",
+            "510300.SH",
+        ),
+        (
+            "theme_rotation_state",
+            "theme_rotation_state_observation",
+            decision_lineage.theme_state_ids[0],
+            _scoped_id("theme-observation", claim),
+            "BROADENING",
+            "BANK",
+        ),
+        (
+            "capital_state",
+            "capital_state_observation",
+            decision_lineage.capital_state_id,
+            _scoped_id("capital-observation", claim),
+            "NEUTRAL",
+            "A_SHARE",
+        ),
+    )
+    state_hashes: dict[str, str] = {}
+    with factory.connection() as connection:
+        for (
+            state_table,
+            observation_table,
+            state_id,
+            observation_id,
+            effective,
+            scope_key,
+        ) in state_specs:
+            observation_payload = {
+                "schema_version": "decision-test-state-observation/v1",
+                "observation_id": str(observation_id),
+            }
+            observation_hash = canonical_hash(observation_payload)
+            state_payload = {
+                "schema_version": "decision-test-state/v1",
+                "state_id": str(state_id),
+                "effective_state": effective,
+            }
+            state_hash = canonical_hash(state_payload)
+            state_hashes[state_table] = state_hash
+            connection.execute(  # noqa: S608 - fixed test table allowlist
+                f"""
+                INSERT INTO {observation_table}(
+                    observation_id, observation_hash, run_id, tick_id,
+                    as_of_time, available_at, artifact_json, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    str(observation_id), observation_hash, str(claim.run_id),
+                    str(claim.tick_id), AS_OF, AS_OF,
+                    json.dumps(observation_payload, sort_keys=True), AS_OF,
+                ),
+            )
+            connection.execute(  # noqa: S608 - fixed test table allowlist
+                f"""
+                INSERT INTO {state_table}(
+                    state_id, state_hash, observation_id, previous_state_id,
+                    scope_key, effective_state, artifact_json, created_at
+                ) VALUES (%s, %s, %s, NULL, %s, %s, %s, %s)
+                """,
+                (
+                    str(state_id), state_hash, str(observation_id),
+                    scope_key, effective,
+                    json.dumps(state_payload, sort_keys=True), AS_OF,
+                ),
+            )
+        pool_hash = _scoped_hash("dynamic-pool-content", claim)
+        connection.execute(
+            """
+            INSERT INTO dynamic_stock_pool(
+                pool_id, pool_hash, previous_pool_id, pool_version, run_id,
+                tick_id, claim_id, fencing_token, tick_version, effective_at,
+                available_at, decision_time, material_state_hash,
+                configuration_id, configuration_hash, pool_json, created_at
+            ) VALUES (
+                %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                str(decision_lineage.dynamic_pool_id), pool_hash,
+                claim.tick_sequence, str(claim.run_id), str(claim.tick_id),
+                claim.claim_id, claim.fencing_token, claim.tick_version,
+                AS_OF, AS_OF, AS_OF, _scoped_hash("material-state", claim),
+                "state-config-a", HASH_A,
+                json.dumps({"schema_version": "decision-test-pool/v1"}), AS_OF,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO dynamic_stock_pool_member(
+                pool_id, symbol, included, rank, member_json
+            ) VALUES (%s, %s, TRUE, 1, %s)
+            """,
+            (
+                str(decision_lineage.dynamic_pool_id), "600000.SH",
+                json.dumps({"symbol": "600000.SH", "included": True, "rank": 1}),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO state_runtime_receipt(
+                receipt_id, receipt_hash, run_id, tick_id, pool_id, status,
+                receipt_json, created_at
+            ) VALUES (%s, %s, %s, %s, %s, 'COMPLETED', %s, %s)
+            """,
+            (
+                str(decision_lineage.state_receipt_id),
+                decision_lineage.state_receipt_hash, str(claim.run_id),
+                str(claim.tick_id), str(decision_lineage.dynamic_pool_id),
+                json.dumps({"status": "COMPLETED"}), AS_OF,
+            ),
+        )
+        stage_specs = (
+            ("OBSERVATION", _scoped_id("observation-bundle", claim), _scoped_hash("observation-bundle", claim)),
+            ("MARKET_REGIME", decision_lineage.market_state_id, state_hashes["market_regime_state"]),
+            ("ETF_ROTATION", decision_lineage.etf_state_ids[0], state_hashes["etf_rotation_state"]),
+            ("THEME_ROTATION", decision_lineage.theme_state_ids[0], state_hashes["theme_rotation_state"]),
+            ("CAPITAL_STATE", decision_lineage.capital_state_id, state_hashes["capital_state"]),
+            ("DYNAMIC_POOL", decision_lineage.dynamic_pool_id, pool_hash),
+            ("CANDIDATE", decision_lineage.candidate_binding_id, decision_lineage.candidate_binding_hash),
+            ("SIGNAL", decision_lineage.signal_bundle_id, decision_lineage.signal_bundle_hash),
+            ("FORECAST", decision_lineage.forecast_bundle_id, decision_lineage.forecast_bundle_hash),
+        )
+        for stage, artifact_id, artifact_hash in stage_specs:
+            connection.execute(
+                """
+                INSERT INTO state_research_stage_authority(
+                    run_id, tick_id, state_receipt_id, stage, artifact_id,
+                    artifact_hash, available_at, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    str(claim.run_id), str(claim.tick_id),
+                    str(decision_lineage.state_receipt_id), stage,
+                    str(artifact_id), artifact_hash, AS_OF, AS_OF,
+                ),
+            )
+        connection.commit()
 
 
 def _execution_authority_counts(
@@ -152,9 +425,10 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     clock = MutableClock(AS_OF)
     _, claim = active_claim(postgres_factory, clock)
     repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
-    account = repository.record_manual_observation(observation())
+    account = repository.record_manual_observation(observation(positions=()))
     request = _request(claim)
     inputs = _inputs(claim, account.observation_id)
+    _seed_state_authority(postgres_factory, claim)
     delegate = DecisionSystemDelegate(
         DecisionSystemRuntimeService(repository),
         input_loader=lambda _: inputs,
@@ -169,27 +443,70 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     )
 
     assert replay == result
-    assert receipt.status == "COMPLETED"
+    assert receipt.risk_decision_id is not None
+    persisted_risk = repository.get_risk_decision(receipt.risk_decision_id)
+    assert receipt.status == "BLOCKED", (
+        persisted_risk.result,
+        persisted_risk.reason_codes,
+        tuple(
+            (item.stage, item.status, item.reason_codes)
+            for item in receipt.stage_receipts
+        ),
+    )
     assert tuple(item.stage for item in receipt.stage_receipts) == (DECISION_RUNTIME_STAGE_ORDER)
     assert receipt.summary_id is not None
     final = repository.get_summary(receipt.summary_id)
-    assert final.lifecycle_state is DecisionWindowState.FINALIZED
+    assert final.lifecycle_state is DecisionWindowState.BLOCKED
     assert final.revision == 2
     assert final.previous_summary_id is not None
     assert _execution_authority_counts(postgres_factory) == before
     restarted = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
-    first_replay = replay_decision_system(
-        restarted,
-        run_id=request.run_id,
-        tick_id=request.tick_id,
+    replay_schema = f"test_mra_{uuid.uuid4().hex}"
+    database_url = os.environ[TEST_DATABASE_URL_ENV]
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute(
+            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(replay_schema))
+        )
+    replay_factory = PostgresConnectionFactory(
+        DatabaseSettings.from_sources(database_url=database_url, environ={}),
+        min_size=0,
+        max_size=2,
+        application_schema=replay_schema,
     )
-    second_replay = replay_decision_system(
-        restarted,
-        run_id=request.run_id,
-        tick_id=request.tick_id,
-    )
+    try:
+        replay_repository = PostgresDecisionSystemRepository(
+            replay_factory,
+            clock=clock,
+        )
+        first_replay = replay_decision_system(
+            restarted,
+            run_id=request.run_id,
+            tick_id=request.tick_id,
+            replay_repository=replay_repository,
+        )
+        second_replay = replay_decision_system(
+            restarted,
+            run_id=request.run_id,
+            tick_id=request.tick_id,
+            replay_repository=replay_repository,
+        )
+        with replay_factory.connection(read_only=True) as connection:
+            imported_count = connection.execute(
+                "SELECT count(*) FROM decision_replay_import"
+            ).fetchone()[0]
+    finally:
+        replay_factory.close()
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            connection.execute(
+                sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    sql.Identifier(replay_schema)
+                )
+            )
     assert first_replay == second_replay
-    assert first_replay.verified_authority_count == 6
+    assert imported_count == 11
+    assert first_replay.verified_authority_count == 11
+    assert first_replay.reexecuted_authority_count == 4
+    assert first_replay.postgres_import_verified is True
     assert first_replay.entry_authority_granted is False
     assert first_replay.broker_authority_granted is False
 
@@ -225,7 +542,8 @@ def test_concurrent_finalize_keeps_one_terminal_and_blocks_loser(
     clock = MutableClock(AS_OF)
     journal, first_claim = active_claim(postgres_factory, clock)
     repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
-    account = repository.record_manual_observation(observation())
+    account = repository.record_manual_observation(observation(positions=()))
+    _seed_state_authority(postgres_factory, first_claim)
     first_request = _request(first_claim)
     first_receipt = DecisionSystemRuntimeService(repository).execute(
         request=first_request,
@@ -243,6 +561,7 @@ def test_concurrent_finalize_keeps_one_terminal_and_blocks_loser(
         run_id=command.run_id,
         tick_id=second_tick.command.tick_id,
     )
+    _seed_state_authority(postgres_factory, second_claim)
     second_request = _request(second_claim)
     second_inputs = replace(
         _inputs(second_claim, account.observation_id),
@@ -275,7 +594,8 @@ def test_correction_appends_version_without_overwriting_original_final(
     clock = MutableClock(AS_OF)
     journal, first_claim = active_claim(postgres_factory, clock)
     repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
-    account = repository.record_manual_observation(observation())
+    account = repository.record_manual_observation(observation(positions=()))
+    _seed_state_authority(postgres_factory, first_claim)
     first = DecisionSystemRuntimeService(repository).execute(
         request=_request(first_claim),
         inputs=_inputs(first_claim, account.observation_id),
@@ -293,6 +613,7 @@ def test_correction_appends_version_without_overwriting_original_final(
         run_id=command.run_id,
         tick_id=second_tick.command.tick_id,
     )
+    _seed_state_authority(postgres_factory, second_claim)
     corrected_inputs = replace(
         _inputs(second_claim, account.observation_id),
         reconciliation_revision=2,

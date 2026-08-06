@@ -93,3 +93,52 @@ def test_migration_024_rejects_non_postgres_runtime_binding(
                 )
                 """
             )
+
+
+def test_migration_026_installs_hardened_authority_and_replay_append_guards(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    PostgresMigrator().apply_all(postgres_factory)
+    expected = {
+        "state_research_stage_authority",
+        "reconciliation_tolerance_configuration",
+        "decision_risk_configuration",
+        "decision_position_settlement_evidence",
+        "decision_fill_account_authority",
+        "decision_replay_import",
+    }
+
+    with postgres_factory.connection() as connection:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT tablename FROM pg_catalog.pg_tables
+                WHERE schemaname = current_schema()
+                  AND tablename = ANY(%s)
+                """,
+                (sorted(expected),),
+            ).fetchall()
+        }
+        connection.execute(
+            """
+            INSERT INTO decision_replay_import(
+                replay_session_id, artifact_kind, artifact_id,
+                content_hash, payload_json, imported_at
+            ) VALUES (
+                'replay-test', 'RUNTIME_INPUT', 'input-test',
+                %s, '{}'::jsonb, now()
+            )
+            """,
+            ("sha256:" + "a" * 64,),
+        )
+        with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+            connection.execute(
+                """
+                UPDATE decision_replay_import
+                SET artifact_id = 'mutated'
+                WHERE replay_session_id = 'replay-test'
+                """
+            )
+
+    assert tables == expected

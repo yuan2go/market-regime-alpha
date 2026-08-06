@@ -20,8 +20,8 @@ from market_regime_alpha.persistence.postgres.migrator import (
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 26))
-    assert len({item.name for item in migrations}) == 25
+    assert tuple(item.version for item in migrations) == tuple(range(1, 27))
+    assert len({item.name for item in migrations}) == 26
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -43,11 +43,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 26))
+    assert tuple(item.version for item in first) == tuple(range(1, 27))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 25
+    assert len(rows) == 26
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -110,6 +110,7 @@ def test_migration_021_upgrades_an_existing_020_authority(
         (23, "state_system_runtime_child"),
         (24, "postgres_only_authority"),
         (25, "decision_system"),
+        (26, "decision_authority_hardening"),
     )
 
 
@@ -126,6 +127,7 @@ def test_migration_022_upgrades_an_existing_021_authority(
         (23, "state_system_runtime_child"),
         (24, "postgres_only_authority"),
         (25, "decision_system"),
+        (26, "decision_authority_hardening"),
     )
 
 
@@ -141,10 +143,11 @@ def test_migration_023_upgrades_an_existing_022_authority(
         (23, "state_system_runtime_child"),
         (24, "postgres_only_authority"),
         (25, "decision_system"),
+        (26, "decision_authority_hardening"),
     )
 
 
-def test_migrations_024_and_025_upgrade_existing_023_authority(
+def test_migrations_024_through_026_upgrade_existing_023_authority(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
@@ -155,9 +158,53 @@ def test_migrations_024_and_025_upgrade_existing_023_authority(
     assert tuple((item.version, item.name) for item in upgraded) == (
         (24, "postgres_only_authority"),
         (25, "decision_system"),
+        (26, "decision_authority_hardening"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         latest = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
         decision_table = connection.execute("SELECT to_regclass('daily_decision_summary')").fetchone()
-    assert latest == (25, "decision_system")
+    assert latest == (26, "decision_authority_hardening")
     assert decision_table == ("daily_decision_summary",)
+
+
+def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:25]).apply_all(postgres_factory)
+    digest = "sha256:" + "a" * 64
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO manual_account_observation(
+                observation_id, content_hash, account_id, trading_date,
+                as_of_time, total_equity, available_cash, frozen_cash,
+                source, actor, reason, notes, idempotency_key, command_hash,
+                revision, previous_observation_id, payload_json, created_at
+            ) VALUES (
+                'prerelease-v1-observation', %s, 'account-a', DATE '2026-08-06',
+                TIMESTAMPTZ '2026-08-06 06:45:00+00', 100, 100, 0,
+                'MANUAL', 'tester', 'migration guard', '', 'v1-observation',
+                %s, 1, NULL, '{}'::jsonb, TIMESTAMPTZ '2026-08-06 06:45:00+00'
+            )
+            """,
+            (digest, digest),
+        )
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        applied = connection.execute(
+            "SELECT max(version) FROM schema_migrations"
+        ).fetchone()
+        preserved = connection.execute(
+            """
+            SELECT observation_id FROM manual_account_observation
+            WHERE observation_id = 'prerelease-v1-observation'
+            """
+        ).fetchone()
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (26, "decision_authority_hardening"),
+    )
+    assert applied == (26,)
+    assert preserved == ("prerelease-v1-observation",)

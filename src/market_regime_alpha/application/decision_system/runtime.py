@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
-from decimal import Decimal
 from enum import Enum
 from typing import Any, Callable, Mapping
+import unicodedata
 
 from market_regime_alpha.application.continuous_research.journal import (
     ClaimedRuntimeTick,
@@ -20,19 +20,23 @@ from market_regime_alpha.application.continuous_research.ports import (
 from market_regime_alpha.application.decision_system.contracts import (
     DailyDecisionOutcome,
     DailyDecisionWindowSummary,
+    DecisionModelQualification,
     DecisionLineage,
     DecisionRiskConfiguration,
     DecisionWindowState,
-    FillDerivedPositionReference,
     IndependentRiskResult,
     ReconciliationTolerance,
     SummaryCandidate,
+)
+from market_regime_alpha.application.decision_system.authority import (
+    PositionSettlementEvidence,
 )
 from market_regime_alpha.application.decision_system.portfolio import (
     build_research_portfolio_proposal,
 )
 from market_regime_alpha.application.decision_system.postgres_repository import (
     DecisionSystemConflict,
+    DecisionSystemIntegrityError,
     PostgresDecisionSystemRepository,
 )
 from market_regime_alpha.application.decision_system.reconciliation import (
@@ -44,7 +48,14 @@ from market_regime_alpha.application.decision_system.window import (
     DecisionWindowBlocked,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
+from market_regime_alpha.evidence.canonical import (
+    canonical_datetime,
+    canonical_hash,
+    require_sha256,
+)
+
+
+DECISION_RUNTIME_RECEIPT_SCHEMA = "decision_runtime_receipt/v2"
 
 
 class DecisionRuntimeStage(str, Enum):
@@ -74,6 +85,10 @@ class DecisionStageReceipt:
             raise ValueError("Decision stage Artifact identity must be paired")
         if self.artifact_hash is not None:
             require_sha256("Decision stage artifact_hash", self.artifact_hash)
+        if self.artifact_id is not None:
+            _string(str(self.artifact_id))
+        for reason in self.reason_codes:
+            _string(reason)
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("Decision stage reasons must be sorted and unique")
 
@@ -88,13 +103,17 @@ class DecisionStageReceipt:
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> DecisionStageReceipt:
+        if set(payload) != {
+            "stage", "status", "artifact_id", "artifact_hash", "reason_codes"
+        }:
+            raise ValueError("DecisionStageReceipt fields mismatch")
         artifact_id = payload["artifact_id"]
         return cls(
-            stage=DecisionRuntimeStage(str(payload["stage"])),
-            status=str(payload["status"]),
-            artifact_id=None if artifact_id is None else ArtifactId(str(artifact_id)),
-            artifact_hash=(None if payload["artifact_hash"] is None else str(payload["artifact_hash"])),
-            reason_codes=tuple(str(item) for item in _sequence(payload["reason_codes"])),
+            stage=DecisionRuntimeStage(_string(payload["stage"])),
+            status=_string(payload["status"]),
+            artifact_id=None if artifact_id is None else ArtifactId(_string(artifact_id)),
+            artifact_hash=(None if payload["artifact_hash"] is None else _string(payload["artifact_hash"])),
+            reason_codes=tuple(_string(item) for item in _sequence(payload["reason_codes"])),
         )
 
 
@@ -107,6 +126,7 @@ class DecisionRuntimeReceipt:
     claim_id: str
     fencing_token: int
     tick_version: int
+    lease_expires_at: datetime
     state_receipt_id: ArtifactId
     state_receipt_hash: str
     reconciliation_id: ArtifactId | None
@@ -116,14 +136,42 @@ class DecisionRuntimeReceipt:
     status: str
     stage_receipts: tuple[DecisionStageReceipt, ...]
     created_at: datetime
+    schema_version: str = DECISION_RUNTIME_RECEIPT_SCHEMA
 
     def __post_init__(self) -> None:
+        if self.schema_version != DECISION_RUNTIME_RECEIPT_SCHEMA:
+            raise ValueError("unsupported Decision Runtime receipt schema")
         if self.status not in {"COMPLETED", "BLOCKED"}:
             raise ValueError("invalid Decision Runtime status")
+        for text_value in (
+            str(self.receipt_id), str(self.run_id), str(self.tick_id),
+            self.claim_id, str(self.state_receipt_id),
+        ):
+            _string(text_value)
+        for artifact_value in (
+            self.reconciliation_id, self.summary_id, self.proposal_id,
+            self.risk_decision_id,
+        ):
+            if artifact_value is not None:
+                _string(str(artifact_value))
+        for label, integer_value in (
+            ("fencing_token", self.fencing_token),
+            ("tick_version", self.tick_version),
+        ):
+            if (
+                isinstance(integer_value, bool)
+                or not isinstance(integer_value, int)
+                or integer_value < 1
+            ):
+                raise ValueError(f"Decision Runtime {label} must be a positive integer")
         require_sha256("Decision state receipt hash", self.state_receipt_hash)
         require_sha256("Decision Runtime receipt hash", self.receipt_hash)
         if self.created_at.tzinfo is None:
             raise ValueError("Decision Runtime created_at must be aware")
+        if self.lease_expires_at.tzinfo is None:
+            raise ValueError("Decision Runtime lease_expires_at must be aware")
+        if self.lease_expires_at <= self.created_at:
+            raise ValueError("Decision Runtime receipt requires active bound Lease")
         stages = tuple(item.stage for item in self.stage_receipts)
         if stages != DECISION_RUNTIME_STAGE_ORDER[: len(stages)]:
             raise ValueError("Decision Runtime stages are not an ordered prefix")
@@ -148,6 +196,7 @@ class DecisionRuntimeReceipt:
             claim_id=self.claim_id,
             fencing_token=self.fencing_token,
             tick_version=self.tick_version,
+            lease_expires_at=self.lease_expires_at,
             state_receipt_id=self.state_receipt_id,
             state_receipt_hash=self.state_receipt_hash,
             reconciliation_id=self.reconciliation_id,
@@ -168,35 +217,41 @@ class DecisionRuntimeReceipt:
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> DecisionRuntimeReceipt:
+        expected = {
+            "schema_version", "receipt_id", "receipt_hash", "run_id", "tick_id",
+            "claim_id", "fencing_token", "tick_version", "lease_expires_at",
+            "state_receipt_id", "state_receipt_hash", "reconciliation_id",
+            "summary_id", "proposal_id", "risk_decision_id", "status",
+            "stage_receipts", "created_at",
+        }
+        if set(payload) != expected:
+            raise ValueError("DecisionRuntimeReceipt fields mismatch")
+        if payload["schema_version"] != DECISION_RUNTIME_RECEIPT_SCHEMA:
+            raise ValueError("unsupported Decision Runtime receipt schema")
         return cls(
-            receipt_id=ArtifactId(str(payload["receipt_id"])),
-            receipt_hash=str(payload["receipt_hash"]),
-            run_id=ArtifactId(str(payload["run_id"])),
-            tick_id=ArtifactId(str(payload["tick_id"])),
-            claim_id=str(payload["claim_id"]),
+            receipt_id=ArtifactId(_string(payload["receipt_id"])),
+            receipt_hash=_string(payload["receipt_hash"]),
+            run_id=ArtifactId(_string(payload["run_id"])),
+            tick_id=ArtifactId(_string(payload["tick_id"])),
+            claim_id=_string(payload["claim_id"]),
             fencing_token=_integer(payload["fencing_token"]),
             tick_version=_integer(payload["tick_version"]),
-            state_receipt_id=ArtifactId(str(payload["state_receipt_id"])),
-            state_receipt_hash=str(payload["state_receipt_hash"]),
+            lease_expires_at=_instant(payload["lease_expires_at"]),
+            state_receipt_id=ArtifactId(_string(payload["state_receipt_id"])),
+            state_receipt_hash=_string(payload["state_receipt_hash"]),
             reconciliation_id=_optional_id(payload["reconciliation_id"]),
             summary_id=_optional_id(payload["summary_id"]),
             proposal_id=_optional_id(payload["proposal_id"]),
             risk_decision_id=_optional_id(payload["risk_decision_id"]),
-            status=str(payload["status"]),
+            status=_string(payload["status"]),
             stage_receipts=tuple(DecisionStageReceipt.from_canonical_dict(_mapping(item)) for item in _sequence(payload["stage_receipts"])),
-            created_at=datetime.fromisoformat(str(payload["created_at"])),
+            created_at=_instant(payload["created_at"]),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class DecisionRuntimeInputs:
     manual_observation_id: ArtifactId
-    positions: tuple[FillDerivedPositionReference, ...]
-    fill_ledger_head: str
-    fill_ledger_complete: bool
-    authoritative_total_equity: Decimal | None
-    authoritative_available_cash: Decimal | None
-    authoritative_frozen_cash: Decimal | None
     reconciliation_tolerance: ReconciliationTolerance
     reconciliation_revision: int
     previous_reconciliation_id: ArtifactId | None
@@ -210,7 +265,7 @@ class DecisionRuntimeInputs:
     risk_configuration: DecisionRiskConfiguration
     finalize: bool
     uses_complete_close_bar: bool = False
-    daily_loss: Decimal | None = None
+    position_settlement_evidence: PositionSettlementEvidence | None = None
 
 
 DecisionRuntimeInputLoader = Callable[[ChildExecutionRequest], DecisionRuntimeInputs]
@@ -249,23 +304,60 @@ class DecisionSystemRuntimeService:
         self._validate_inputs(request, inputs, state_reference)
         stages: list[DecisionStageReceipt] = []
         observation = self._repository.get_manual_observation(inputs.manual_observation_id)
-        if observation.account_id != inputs.positions[0].account_id if inputs.positions else False:
-            raise ValueError("Manual Account/Position lineage mismatch")
         if observation.trading_date != request.trading_date:
             raise ValueError("Manual Account TradingDate lineage mismatch")
         if observation.as_of_time > request.as_of_time:
             raise ValueError("Manual Account is later than Decision AsOfTime")
         stages.append(_stage(DecisionRuntimeStage.ACCOUNT_OBSERVATION_LOOKUP, observation.observation_id, observation.content_hash))
 
+        tolerance = self._repository.record_reconciliation_tolerance(
+            inputs.reconciliation_tolerance,
+            claim=claim,
+        )
+        risk_configuration = self._repository.record_risk_configuration(
+            inputs.risk_configuration,
+            claim=claim,
+        )
+        if (
+            tolerance != inputs.reconciliation_tolerance
+            or risk_configuration != inputs.risk_configuration
+        ):
+            raise ValueError("Decision Configuration authority mismatch")
+        settlement_evidence = inputs.position_settlement_evidence
+        if settlement_evidence is not None:
+            if (
+                settlement_evidence.account_id != observation.account_id
+                or settlement_evidence.as_of_time != request.as_of_time
+            ):
+                raise ValueError("Position settlement evidence lineage mismatch")
+            settlement_evidence = (
+                self._repository.record_position_settlement_evidence(
+                    settlement_evidence,
+                    claim=claim,
+                )
+            )
+        fill_authority = self._repository.load_fill_derived_account_authority(
+            account_id=observation.account_id,
+            as_of_time=request.as_of_time,
+            settlement_evidence=settlement_evidence,
+        )
+        fill_authority = self._repository.record_fill_derived_account_authority(
+            fill_authority,
+            claim=claim,
+        )
+        self._validate_authority_inputs(inputs, fill_authority.positions)
+
         reconciliation = reconcile_account(
             observation=observation,
-            positions=inputs.positions,
-            fill_ledger_head=inputs.fill_ledger_head,
-            fill_ledger_complete=inputs.fill_ledger_complete,
-            tolerance=inputs.reconciliation_tolerance,
-            authoritative_total_equity=inputs.authoritative_total_equity,
-            authoritative_available_cash=inputs.authoritative_available_cash,
-            authoritative_frozen_cash=inputs.authoritative_frozen_cash,
+            positions=fill_authority.positions,
+            fill_ledger_head=fill_authority.fill_ledger_head,
+            fill_ledger_complete=fill_authority.fill_ledger_complete,
+            tolerance=tolerance,
+            # Manual observation cannot independently corroborate itself.
+            # No separate cash/equity authority exists in this work package.
+            authoritative_total_equity=None,
+            authoritative_available_cash=None,
+            authoritative_frozen_cash=None,
             as_of_time=request.as_of_time,
             revision=inputs.reconciliation_revision,
             previous_reconciliation_id=inputs.previous_reconciliation_id,
@@ -294,6 +386,7 @@ class DecisionSystemRuntimeService:
             idempotency_key=f"{request.idempotency_key}:summary-preview",
             created_at=request.as_of_time,
         )
+        self._repository.validate_summary_authority(preview)
         preview = self._repository.save_summary(preview, claim=claim)
         stages.append(_stage(DecisionRuntimeStage.SUMMARY_PREVIEW, preview.summary_id, preview.content_hash))
 
@@ -301,7 +394,8 @@ class DecisionSystemRuntimeService:
             summary=preview,
             observation=observation,
             reconciliation=reconciliation,
-            configuration=inputs.risk_configuration,
+            positions=fill_authority.positions,
+            configuration=risk_configuration,
             idempotency_key=f"{request.idempotency_key}:portfolio",
         )
         proposal = self._repository.save_proposal(proposal, claim=claim)
@@ -309,10 +403,8 @@ class DecisionSystemRuntimeService:
 
         risk = IndependentRiskService(self._repository).decide(
             proposal_id=proposal.proposal_id,
-            configuration=inputs.risk_configuration,
             as_of_time=request.as_of_time,
             idempotency_key=f"{request.idempotency_key}:risk",
-            daily_loss=inputs.daily_loss,
         )
         risk = self._repository.save_risk_decision(risk, claim=claim)
         stages.append(_stage(DecisionRuntimeStage.RISK_DECISION, risk.risk_decision_id, risk.content_hash))
@@ -335,13 +427,23 @@ class DecisionSystemRuntimeService:
                 lifecycle_state=(
                     DecisionWindowState.CORRECTED
                     if inputs.correction_of_summary_id is not None
-                    else DecisionWindowState.FINALIZED
+                    else (
+                        DecisionWindowState.FINALIZED
+                        if risk.result in {
+                            IndependentRiskResult.RESEARCH_APPROVED,
+                            IndependentRiskResult.RESEARCH_REDUCED,
+                        }
+                        else DecisionWindowState.BLOCKED
+                    )
                 ),
                 outcome=_risk_outcome(risk.result, preview.outcome),
                 manual_observation_id=preview.manual_observation_id,
                 reconciliation_id=preview.reconciliation_id,
                 lineage=preview.lineage,
-                candidates=tuple(replace(item, risk_result=risk.result.value) for item in preview.candidates),
+                candidates=tuple(
+                    replace(item, risk_result=risk.result)
+                    for item in preview.candidates
+                ),
                 revision=preview.revision + 1,
                 previous_summary_id=preview.summary_id,
                 correction_of_summary_id=inputs.correction_of_summary_id,
@@ -369,6 +471,7 @@ class DecisionSystemRuntimeService:
                     claim_id=request.claim_id,
                     fencing_token=request.fencing_token,
                     tick_version=request.tick_version,
+                    lease_expires_at=request.lease_expires_at,
                     state_receipt_id=state_reference.artifact_id,
                     state_receipt_hash=state_reference.content_hash,
                     reconciliation_id=reconciliation.reconciliation_id,
@@ -406,13 +509,18 @@ class DecisionSystemRuntimeService:
             claim_id=request.claim_id,
             fencing_token=request.fencing_token,
             tick_version=request.tick_version,
+            lease_expires_at=request.lease_expires_at,
             state_receipt_id=state_reference.artifact_id,
             state_receipt_hash=state_reference.content_hash,
             reconciliation_id=reconciliation.reconciliation_id,
             summary_id=output_summary.summary_id,
             proposal_id=proposal.proposal_id,
             risk_decision_id=risk.risk_decision_id,
-            status="COMPLETED",
+            status=(
+                "BLOCKED"
+                if output_summary.lifecycle_state is DecisionWindowState.BLOCKED
+                else "COMPLETED"
+            ),
             stage_receipts=tuple(stages),
             created_at=request.as_of_time,
         )
@@ -431,6 +539,7 @@ class DecisionSystemRuntimeService:
             claim_id=request.claim_id,
             fencing_token=request.fencing_token,
             tick_version=request.tick_version,
+            lease_expires_at=request.lease_expires_at,
             state_receipt_id=state_reference.artifact_id,
             state_receipt_hash=state_reference.content_hash,
             reconciliation_id=None,
@@ -464,6 +573,45 @@ class DecisionSystemRuntimeService:
             raise ValueError("Decision Runtime AsOfTime lineage mismatch")
         if lineage.state_receipt_id != state_reference.artifact_id or lineage.state_receipt_hash != state_reference.content_hash:
             raise ValueError("Decision Runtime State receipt lineage mismatch")
+        required_configurations = {
+            inputs.strategy_configuration_id,
+            inputs.reconciliation_tolerance.configuration_id,
+            inputs.risk_configuration.configuration_id,
+        }
+        if not required_configurations.issubset(set(lineage.configuration_ids)):
+            raise ValueError("Decision Runtime Configuration lineage mismatch")
+        configuration_references = {
+            item.artifact_id: item.content_hash
+            for item in request.configuration_references
+        }
+        if configuration_references.get(inputs.strategy_configuration_id) != (
+            inputs.strategy_configuration_hash
+        ):
+            raise ValueError(
+                "Decision Runtime Strategy Configuration authority mismatch"
+            )
+        if not inputs.candidates and (lineage.signal_ids or lineage.forecast_ids):
+            raise ValueError("Decision Runtime empty Candidate lineage mismatch")
+
+    @staticmethod
+    def _validate_authority_inputs(
+        inputs: DecisionRuntimeInputs,
+        positions: tuple[Any, ...],
+    ) -> None:
+        position_ids = tuple(sorted((item.snapshot_id for item in positions), key=str))
+        if position_ids != inputs.lineage.position_snapshot_ids:
+            raise ValueError("Decision Runtime Fill Position lineage mismatch")
+        by_symbol = {item.symbol: item for item in positions}
+        if any(
+            candidate.current_quantity
+            != (
+                0
+                if candidate.symbol not in by_symbol
+                else by_symbol[candidate.symbol].total_quantity
+            )
+            for candidate in inputs.candidates
+        ):
+            raise ValueError("Decision Candidate current Position mismatch")
 
 
 class DecisionSystemDelegate:
@@ -492,8 +640,24 @@ class DecisionSystemDelegate:
         try:
             inputs = self._input_loader(request)
             receipt = self._service.execute(request=request, inputs=inputs)
-        except (KeyError, DecisionWindowBlocked) as exc:
-            reason = str(exc).strip("'") or "REQUIRED_DECISION_AUTHORITY_UNAVAILABLE"
+        except KeyError:
+            reason = "REQUIRED_DECISION_AUTHORITY_UNAVAILABLE"
+            receipt = self._service.blocked(request=request, reason=reason)
+        except DecisionWindowBlocked as exc:
+            reason = str(exc).strip("'") or "DECISION_WINDOW_BLOCKED"
+            receipt = self._service.blocked(request=request, reason=reason)
+        except DecisionSystemIntegrityError:
+            receipt = self._service.blocked(
+                request=request,
+                reason="POSTGRESQL_AUTHORITY_INTEGRITY_BLOCKED",
+            )
+        except DecisionSystemConflict:
+            receipt = self._service.blocked(
+                request=request,
+                reason="DECISION_AUTHORITY_CONFLICT",
+            )
+        except ValueError:
+            reason = "DECISION_INPUT_LINEAGE_BLOCKED"
             receipt = self._service.blocked(request=request, reason=reason)
         return _child_result(request, receipt)
 
@@ -559,7 +723,10 @@ def _stage(
 def _preview_outcome(inputs: DecisionRuntimeInputs, reconciliation_status: str) -> DailyDecisionOutcome:
     if reconciliation_status != "RECONCILED":
         return DailyDecisionOutcome.RECONCILIATION_REQUIRED
-    if any(item.model_qualification != "QUALIFIED" for item in inputs.candidates):
+    if any(
+        item.model_qualification is not DecisionModelQualification.QUALIFIED
+        for item in inputs.candidates
+    ):
         return DailyDecisionOutcome.MODEL_NOT_QUALIFIED
     if not inputs.candidates:
         return DailyDecisionOutcome.NO_ACTION
@@ -588,11 +755,13 @@ def _runtime_receipt_id(digest: str) -> ArtifactId:
 
 def _runtime_payload(**values: Any) -> dict[str, Any]:
     return {
+        "schema_version": DECISION_RUNTIME_RECEIPT_SCHEMA,
         "run_id": str(values["run_id"]),
         "tick_id": str(values["tick_id"]),
         "claim_id": values["claim_id"],
         "fencing_token": values["fencing_token"],
         "tick_version": values["tick_version"],
+        "lease_expires_at": canonical_datetime(values["lease_expires_at"]),
         "state_receipt_id": str(values["state_receipt_id"]),
         "state_receipt_hash": values["state_receipt_hash"],
         "reconciliation_id": _id_text(values["reconciliation_id"]),
@@ -601,7 +770,7 @@ def _runtime_payload(**values: Any) -> dict[str, Any]:
         "risk_decision_id": _id_text(values["risk_decision_id"]),
         "status": values["status"],
         "stage_receipts": [item.to_canonical_dict() for item in values["stage_receipts"]],
-        "created_at": values["created_at"].isoformat(),
+        "created_at": canonical_datetime(values["created_at"]),
     }
 
 
@@ -610,11 +779,11 @@ def _id_text(value: ArtifactId | None) -> str | None:
 
 
 def _optional_id(value: object) -> ArtifactId | None:
-    return None if value is None else ArtifactId(str(value))
+    return None if value is None else ArtifactId(_string(value))
 
 
 def _sequence(value: object) -> tuple[object, ...]:
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list):
         raise ValueError("expected sequence")
     return tuple(value)
 
@@ -629,6 +798,23 @@ def _integer(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError("expected integer")
     return value
+
+
+def _string(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("expected non-empty string")
+    if value != unicodedata.normalize("NFC", value):
+        raise ValueError("string is not Unicode NFC")
+    return value
+
+
+def _instant(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("expected canonical datetime string")
+    parsed = datetime.fromisoformat(value)
+    if canonical_datetime(parsed) != value:
+        raise ValueError("expected canonical UTC-second datetime")
+    return parsed
 
 
 __all__ = [

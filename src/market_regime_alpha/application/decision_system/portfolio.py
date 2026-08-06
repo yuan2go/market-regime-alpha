@@ -8,6 +8,9 @@ from market_regime_alpha.application.decision_system.contracts import (
     AccountReconciliationReport,
     DailyDecisionWindowSummary,
     DecisionRiskConfiguration,
+    DecisionModelQualification,
+    DecisionOrderability,
+    FillDerivedPositionReference,
     ManualAccountObservation,
     PortfolioProposalLine,
     ProposalStatus,
@@ -25,32 +28,51 @@ def build_research_portfolio_proposal(
     summary: DailyDecisionWindowSummary,
     observation: ManualAccountObservation,
     reconciliation: AccountReconciliationReport,
+    positions: tuple[FillDerivedPositionReference, ...],
     configuration: DecisionRiskConfiguration,
     idempotency_key: str,
 ) -> ResearchPortfolioProposal:
-    _validate_lineage(summary, observation, reconciliation, configuration)
+    _validate_lineage(
+        summary,
+        observation,
+        reconciliation,
+        positions,
+        configuration,
+    )
     reasons: set[str] = set()
     lines: list[PortfolioProposalLine] = []
     status = ProposalStatus.PROPOSED
     if reconciliation.status is not ReconciliationStatus.RECONCILED:
         status = ProposalStatus.RECONCILIATION_REQUIRED
         reasons.add("RECONCILIATION_NOT_RESOLVED")
-    elif any(item.model_qualification != "QUALIFIED" for item in summary.candidates):
+    elif any(
+        item.model_qualification is not DecisionModelQualification.QUALIFIED
+        for item in summary.candidates
+    ):
         status = ProposalStatus.MODEL_NOT_QUALIFIED
         reasons.add("MODEL_NOT_QUALIFIED")
-    elif any(item.orderability != "ORDERABLE" for item in summary.candidates):
+    elif any(
+        item.orderability is not DecisionOrderability.ORDERABLE
+        for item in summary.candidates
+    ):
         status = ProposalStatus.ORDERABILITY_UNKNOWN
         reasons.add("ORDERABILITY_UNKNOWN")
     elif not summary.candidates:
         status = ProposalStatus.NO_ACTION
         reasons.add("NO_RESEARCH_CANDIDATE")
 
-    positions = {item.symbol: item for item in observation.positions}
+    fill_positions = {item.symbol: item for item in positions}
+    observed_positions = {item.symbol: item for item in observation.positions}
     remaining_cash = observation.available_cash
     theme_weights: dict[str, Decimal] = {}
     for candidate in summary.candidates:
-        current_value = positions.get(candidate.symbol)
-        current_market_value = Decimal("0") if current_value is None else current_value.observed_market_value
+        fill_position = fill_positions.get(candidate.symbol)
+        observed_position = observed_positions.get(candidate.symbol)
+        current_market_value = (
+            Decimal("0")
+            if fill_position is None or observed_position is None
+            else observed_position.observed_market_value
+        )
         current_weight = _weight(Decimal("0") if observation.total_equity == 0 else current_market_value / observation.total_equity)
         line_reasons: set[str] = set()
         proposed = current_weight
@@ -136,6 +158,7 @@ def _validate_lineage(
     summary: DailyDecisionWindowSummary,
     observation: ManualAccountObservation,
     reconciliation: AccountReconciliationReport,
+    positions: tuple[FillDerivedPositionReference, ...],
     configuration: DecisionRiskConfiguration,
 ) -> None:
     if not configuration.configuration_hash:
@@ -150,6 +173,21 @@ def _validate_lineage(
         raise ValueError("Portfolio Reconciliation lineage mismatch")
     if reconciliation.manual_observation_id != observation.observation_id:
         raise ValueError("Reconciliation/Observation lineage mismatch")
+    if reconciliation.position_snapshot_ids != tuple(
+        sorted((item.snapshot_id for item in positions), key=str)
+    ):
+        raise ValueError("Portfolio Fill Position lineage mismatch")
+    fill_by_symbol = {item.symbol: item for item in positions}
+    if any(
+        item.current_quantity
+        != (
+            0
+            if item.symbol not in fill_by_symbol
+            else fill_by_symbol[item.symbol].total_quantity
+        )
+        for item in summary.candidates
+    ):
+        raise ValueError("Portfolio current Position lineage mismatch")
     if observation.as_of_time > summary.as_of_time or reconciliation.as_of_time > summary.as_of_time:
         raise ValueError("Portfolio input is later than Summary AsOfTime")
 

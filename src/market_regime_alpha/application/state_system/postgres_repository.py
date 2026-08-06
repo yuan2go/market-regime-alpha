@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import psycopg
 from psycopg import sql
@@ -29,6 +29,11 @@ from market_regime_alpha.evidence.canonical import canonical_json
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
+
+if TYPE_CHECKING:
+    from market_regime_alpha.application.state_system.runtime import (
+        StateResearchStageArtifact,
+    )
 
 
 Clock = Callable[[], datetime]
@@ -203,6 +208,8 @@ class PostgresStateSystemRepository:
         self,
         request: ChildExecutionRequest,
         result: ChildExecutionResult,
+        *,
+        stage_authorities: tuple[StateResearchStageArtifact, ...],
     ) -> ChildExecutionResult:
         if result.child_kind is not ContinuousChildKind.STATE_SYSTEM:
             raise ValueError("State Runtime receipt requires STATE_SYSTEM child kind")
@@ -211,6 +218,7 @@ class PostgresStateSystemRepository:
 
         def operation(connection: psycopg.Connection[Any]) -> ChildExecutionResult:
             self._assert_claim(connection, request)
+            created_at = self._clock()
             connection.execute(
                 """
                 INSERT INTO state_runtime_receipt(
@@ -225,7 +233,7 @@ class PostgresStateSystemRepository:
                     str(request.run_id),
                     str(request.tick_id),
                     serialized,
-                    self._clock(),
+                    created_at,
                 ),
             )
             row = connection.execute(
@@ -239,6 +247,43 @@ class PostgresStateSystemRepository:
             ).fetchone()
             if row is None or str(row[0]) != result.child_receipt_hash:
                 raise StateSystemConflict("State Runtime receipt identity conflict")
+            for authority in stage_authorities:
+                connection.execute(
+                    """
+                    INSERT INTO state_research_stage_authority(
+                        run_id, tick_id, state_receipt_id, stage,
+                        artifact_id, artifact_hash, available_at, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, tick_id, stage) DO NOTHING
+                    """,
+                    (
+                        str(request.run_id),
+                        str(request.tick_id),
+                        str(result.child_receipt_id),
+                        authority.stage.value,
+                        str(authority.artifact_id),
+                        authority.artifact_hash,
+                        authority.available_at,
+                        created_at,
+                    ),
+                )
+                stored = connection.execute(
+                    """
+                    SELECT state_receipt_id, artifact_id, artifact_hash, available_at
+                    FROM state_research_stage_authority
+                    WHERE run_id = %s AND tick_id = %s AND stage = %s
+                    """,
+                    (str(request.run_id), str(request.tick_id), authority.stage.value),
+                ).fetchone()
+                if stored is None or (
+                    str(stored[0]) != str(result.child_receipt_id)
+                    or str(stored[1]) != str(authority.artifact_id)
+                    or str(stored[2]) != authority.artifact_hash
+                    or stored[3] != authority.available_at
+                ):
+                    raise StateSystemConflict(
+                        "State stage authority identity conflict"
+                    )
             return _decode_child_result(str(row[1]))
 
         recorded = self._factory.run_transaction(operation)

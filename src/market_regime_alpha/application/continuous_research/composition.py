@@ -129,16 +129,38 @@ def _with_upstream_result(
     request: ChildExecutionRequest,
     result: ChildExecutionResult,
 ) -> ChildExecutionRequest:
-    reference = RuntimeArtifactReference(
+    references = [RuntimeArtifactReference(
         reference_kind=f"{result.child_kind.value}_OUTPUT",
-        artifact_id=(result.child_receipt_id if result.child_artifact_id is None else result.child_artifact_id),
-        content_hash=(result.child_receipt_hash if result.child_artifact_hash is None else result.child_artifact_hash),
-    )
+        artifact_id=(
+            result.child_receipt_id
+            if result.child_kind is ContinuousChildKind.STATE_SYSTEM
+            or result.child_artifact_id is None
+            else result.child_artifact_id
+        ),
+        content_hash=(
+            result.child_receipt_hash
+            if result.child_kind is ContinuousChildKind.STATE_SYSTEM
+            or result.child_artifact_hash is None
+            else result.child_artifact_hash
+        ),
+    )]
+    if (
+        result.child_kind is ContinuousChildKind.STATE_SYSTEM
+        and result.child_artifact_id is not None
+        and result.child_artifact_hash is not None
+    ):
+        references.append(
+            RuntimeArtifactReference(
+                reference_kind="STATE_SYSTEM_PIPELINE_ARTIFACT",
+                artifact_id=result.child_artifact_id,
+                content_hash=result.child_artifact_hash,
+            )
+        )
     return replace(
         request,
         input_references=tuple(
             sorted(
-                {*request.input_references, reference},
+                {*request.input_references, *references},
                 key=lambda item: (
                     item.reference_kind,
                     str(item.artifact_id),

@@ -65,16 +65,26 @@ Migrations are contiguous PostgreSQL SQL under
 uv run python scripts/apply_postgres_migrations.py
 ```
 
-The current sequence is 001–025:
+The current sequence is 001–026:
 
 - 001–023: historical PostgreSQL authorities through Stateful Research;
 - 024: current runtime binding is constrained to `backend = 'postgres'`;
 - 025: Daily Decision, Manual Account, Reconciliation, Research Portfolio,
   Independent Risk and Decision Runtime receipt authorities.
+- 026: lease-bound Decision receipts, immutable State-stage and frozen
+  Fill-account references, versioned Risk/Tolerance configurations and isolated
+  replay imports.
 
 Published migrations are immutable. Migration 024 supersedes the historical
 binding vocabulary in 017 without editing its checksum. Both an empty-database
-001→025 apply and a 023→025 upgrade must pass.
+001→026 apply and a 023→026 upgrade must pass.
+
+Migration 026 preserves rows written by the prerelease v1 Decision payloads
+without rewriting their immutable identities. Legacy v1 Runtime receipts remain
+archival with a null Lease field; all new receipts require the v2 schema and an
+active Lease window. New configuration foreign keys are `NOT VALID`, preserving
+historical rows while enforcing references for new writes. Both 023→026 and an
+empty 001→026 apply are supported.
 
 ## 4. Transaction and concurrency rules
 
@@ -107,10 +117,14 @@ Replay uses an isolated PostgreSQL database or schema:
 
 ```text
 Immutable Artifact / authority identities
+→ frozen Fill-derived account view at the original as-of
+→ optional content-addressed T+1 calendar/session settlement evidence
 → isolated PostgreSQL schema
-→ apply 001–025
+→ apply 001–026
 → restore/import explicitly bound identities
-→ deterministic replay and hash/lineage verification
+→ re-execute Reconciliation, Portfolio and independent Risk
+→ reload every Risk authority input from the isolated PostgreSQL import
+→ verify terminal identity, hashes and lineage
 → drop isolated schema
 ```
 

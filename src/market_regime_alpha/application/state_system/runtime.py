@@ -203,7 +203,11 @@ class StateSystemRuntimeDelegate:
             input_references=request.input_references,
             configuration_references=request.configuration_references,
         )
-        return self._repository.record_runtime_child(request, result)
+        return self._repository.record_runtime_child(
+            request,
+            result,
+            stage_authorities=pipeline_result.stages,
+        )
 
 
 def require_versioned_stage_service_name(name: str) -> None:

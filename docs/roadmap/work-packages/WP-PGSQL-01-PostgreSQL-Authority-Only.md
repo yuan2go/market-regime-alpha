@@ -14,7 +14,7 @@ database.
 - PostgreSQL-only `DatabaseSettings` and `RepositoryFactory`;
 - native bounded PostgreSQL repositories without SQL translation or DB-API
   bridge;
-- centralized migrations 001–025 and migration 024 PostgreSQL-only binding;
+- centralized migrations 001–026 and migration 024 PostgreSQL-only binding;
 - randomly isolated PostgreSQL schemas for repository, runtime, CLI and replay
   tests;
 - explicit unavailable-database failure;
@@ -26,6 +26,11 @@ database.
 The published PostgreSQL migration 017 remains immutable for checksum-safe
 upgrade. Migration 024 removes its historical backend alternative from the
 current catalog constraint.
+
+Migration 025 is likewise checksum-preserved. Migration 026 applies the receipt
+lease/schema constraints forward while preserving prerelease v1 Decision rows;
+new v2 writes require the Lease-bound canonical schema and configuration FKs.
+Empty 001→026 and 023→026 upgrades are supported release paths.
 
 ## Acceptance boundary
 

@@ -24,12 +24,23 @@ reloaded Risk decision.
 - no uncalibrated probability is emitted;
 - Entry, Order, Fill, Position and Broker authority do not expand.
 
-## Migration 025
+## Migrations 025–026
 
 Migration 025 adds ten append-only authority tables covering Manual Account,
 Reconciliation, Daily Summary/Candidates, Research Portfolio/lines, Independent
 Risk and Decision Runtime receipt. Domain decisions remain in application code;
 database triggers only enforce append-only integrity.
+
+Migration 026 binds the active lease to Runtime receipts, persists immutable
+State-stage authority, optional T+1 calendar/session settlement evidence and
+the exact Fill-derived account view used by the decision, versions
+Reconciliation/Risk configuration, and provides an
+append-only import table for deterministic replay in an isolated PostgreSQL
+schema. Manual cash/equity values are not compared to themselves: until an
+independent account-total Reader exists those dimensions fail closed as
+`DATA_INSUFFICIENT`. Replay reloads strict canonical Readers from the isolated
+PostgreSQL import on every independent Risk read and re-executes Reconciliation,
+Portfolio and Risk before accepting the terminal Summary identity.
 
 ## Non-goals
 

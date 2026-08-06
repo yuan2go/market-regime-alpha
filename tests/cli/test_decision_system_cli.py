@@ -7,6 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    DecisionSystemConflict,
+    DecisionSystemIntegrityError,
+)
+from market_regime_alpha.application.decision_system.window import (
+    DecisionWindowBlocked,
+)
+from market_regime_alpha.cli import decision_system
 from market_regime_alpha.cli.decision_system import build_parser, main
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from tests.application.decision_system.support import observation
@@ -128,7 +136,7 @@ def test_csv_import_preserves_decimal_strings(
     output = json.loads(capsys.readouterr().out)
 
     assert code == 0
-    assert output["observation"]["total_equity"] == "100000.120000"
+    assert output["observation"]["total_equity"] == "100000.12"
     assert output["observation"]["positions"][0]["average_cost"] == "10.123456"
 
 
@@ -171,4 +179,77 @@ def test_cli_rejects_sqlite_dsn_without_opening_a_database(
 
     assert code == 2
     assert output["status"] == "FAILED"
-    assert output["reason_code"] == "DECISION_COMMAND_VALIDATION_FAILED"
+    assert output["error_code"] == "DOCON-002"
+    assert output["reason_code"] == "INVALID_TYPE"
+
+
+def test_json_record_rejects_unknown_fields(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "account-extra.json"
+    payload = observation().semantic_payload()
+    payload["positions_from_caller"] = []
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    code = main(
+        [
+            *_database_arguments(postgres_factory),
+            "record-manual-account",
+            "--input",
+            str(source),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert code == 2
+    assert output["error_code"] == "DOCON-002"
+    assert output["position_mutated"] is False
+
+
+@pytest.mark.parametrize(
+    ("failure", "error_code", "reason_code"),
+    (
+        (
+            DecisionWindowBlocked("WINDOW_NOT_OPEN"),
+            "DECSYS-002",
+            "DECISION_WINDOW_BLOCKED",
+        ),
+        (
+            DecisionSystemConflict("CAS rejected"),
+            "DECSYS-003",
+            "DECISION_CONFLICT",
+        ),
+        (
+            DecisionSystemIntegrityError("lineage mismatch"),
+            "DECSYS-001",
+            "DECISION_INPUT_BLOCKED",
+        ),
+    ),
+)
+def test_cli_preserves_typed_decision_error_catalog_codes(
+    postgres_factory: PostgresConnectionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+    error_code: str,
+    reason_code: str,
+) -> None:
+    def fail(*_: object, **__: object) -> dict[str, object]:
+        raise failure
+
+    monkeypatch.setattr(decision_system, "_dispatch", fail)
+    code = main(
+        [
+            *_database_arguments(postgres_factory),
+            "inspect-manual-account",
+            "--observation-id",
+            "unused",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert code == 2
+    assert output["error_code"] == error_code
+    assert output["reason_code"] == reason_code

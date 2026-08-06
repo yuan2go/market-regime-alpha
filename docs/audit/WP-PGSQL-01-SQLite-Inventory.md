@@ -135,6 +135,8 @@ identities remain; they are not database backends.
 
 Migration 024 supersedes the historical migration-017 backend vocabulary
 without changing that published migration's checksum. Migration 025 adds the
-Decision System authorities. Current runtime code, integration tests and built
+Decision System authorities; migration 026 hardens lease/configuration/stage
+lineage, freezes Decision-time Fill account authority and provides isolated
+PostgreSQL replay import. Current runtime code, integration tests and built
 packages contain no executable file-database repository or compatibility
 bridge.

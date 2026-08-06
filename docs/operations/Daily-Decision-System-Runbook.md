@@ -75,11 +75,22 @@ uv run decision-system --database-url "$DATABASE_URL" \
   reconcile-account --input reconciliation-command.json
 ```
 
-The command explicitly binds the observation, Fill-derived Position snapshots,
-Fill Ledger head/completeness, tolerances and active Runtime Claim. It detects
-equity, cash, quantity, available/frozen quantity, average cost, missing
+The command binds the observation, tolerances and active Runtime Claim. It
+reloads Fill-derived Position snapshots and the Fill Ledger head/completeness
+from PostgreSQL, then freezes that exact as-of view as an append-only Decision
+authority; caller-supplied Position or ledger values are rejected. It detects
+quantity, available/frozen quantity, average cost, missing
 positions, suspected unrecorded trade, suspected corporate action, T+1 and
 insufficient-data differences.
+
+This work package has no independent external cash/equity statement Reader.
+Therefore the Manual Observation cannot corroborate its own `total_equity` or
+cash fields: those dimensions are recorded as `DATA_INSUFFICIENT`, and OPEN/ADD
+remains blocked. An optional `position_settlement_evidence` object binds a
+content-addressed CN A-share calendar plus per-symbol session statuses at the
+same account/AsOf scope. With that evidence, the existing Fill projector derives
+T+1 available/frozen quantities; without it, a non-empty basic Fill projection
+is incomplete rather than being labelled sellability proof.
 
 Any unresolved difference blocks OPEN/ADD research deltas. Resolution requires
 real ManualTrade/Fill correction, Corporate Action adjustment or an explicit
@@ -102,10 +113,19 @@ uv run decision-system --database-url "$DATABASE_URL" \
 ```
 
 The Portfolio output is `ResearchPortfolioProposal`. Independent Risk accepts
-only its ID, reloads Proposal, Summary, Manual Account and Reconciliation from
-PostgreSQL, and revalidates lineage, freshness, model qualification,
+only its ID, reloads Proposal, Summary, Manual Account, Reconciliation, the
+frozen Fill-derived view, current as-of Fill projection, full scoped State
+context and Risk configuration from PostgreSQL, recomputes
+the Portfolio proposal, and revalidates lineage, freshness, model qualification,
 orderability, concentration, liquidity, exposure and available loss limit.
 `RESEARCH_APPROVED` means only that a research proposal passed those checks.
+
+Replay exports the bound immutable authority set, including the frozen Fill
+view, optional settlement evidence and State availability context, imports it
+into a freshly migrated isolated PostgreSQL schema, and re-executes
+Reconciliation, Portfolio and independent Risk. The Risk replay Reader reloads
+every authority object from PostgreSQL and applies strict versioned Readers. It
+does not use a file database or treat row inspection alone as replay proof.
 
 ## Inspection
 

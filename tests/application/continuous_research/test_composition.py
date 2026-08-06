@@ -97,6 +97,17 @@ def test_composition_delegates_to_each_existing_service_and_reuses_receipts() ->
     assert "STATE_SYSTEM_OUTPUT" in delegates[
         ContinuousChildKind.CONTROLLED_OPERATION
     ].seen_input_kinds
+    controlled = delegates[ContinuousChildKind.CONTROLLED_OPERATION].durable
+    assert controlled is not None
+    state_output = next(
+        item
+        for item in controlled.input_references
+        if item.reference_kind == "STATE_SYSTEM_OUTPUT"
+    )
+    assert state_output.artifact_id == ArtifactId("STATE_SYSTEM-receipt")
+    assert "STATE_SYSTEM_PIPELINE_ARTIFACT" in delegates[
+        ContinuousChildKind.CONTROLLED_OPERATION
+    ].seen_input_kinds
 
 
 def test_composition_rejects_a_parallel_partial_chain() -> None:
