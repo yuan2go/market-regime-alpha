@@ -168,3 +168,46 @@ def test_theme_transition_has_confirmation_hysteresis_and_replay() -> None:
     assert first.effective_state is starting.effective_state
     assert second.effective_state is ThemeRotationState.STRENGTHENING
     assert second.state_id == replay.state_id
+
+
+def test_theme_lifecycle_can_lead_weaken_and_fail_without_generic_etf_state() -> None:
+    selected = config(confirmations=1, dwell=0)
+    starting = evaluate(observation(selected=selected), selected=selected)
+    strengthening = evaluate(
+        observation(
+            etf_strength="0.90", breadth="0.90", participation="0.90",
+            leader="0.90", seconds=1, suffix="2", selected=selected,
+        ),
+        starting,
+        selected,
+    )
+    leading = evaluate(
+        observation(
+            etf_strength="0.90", breadth="0.90", participation="0.90",
+            leader="0.90", seconds=2, suffix="3", selected=selected,
+        ),
+        strengthening,
+        selected,
+    )
+    weakening = evaluate(
+        observation(
+            etf_strength="0.05", breadth="0.05", participation="0.05",
+            leader="0.05", concentration="0.95", seconds=3, suffix="4",
+            selected=selected,
+        ),
+        leading,
+        selected,
+    )
+    failed = evaluate(
+        observation(
+            etf_strength="0.00", breadth="0.00", participation="0.00",
+            leader="0.00", concentration="1.00", seconds=4, suffix="5",
+            selected=selected,
+        ),
+        weakening,
+        selected,
+    )
+
+    assert leading.effective_state is ThemeRotationState.LEADING
+    assert weakening.effective_state is ThemeRotationState.WEAKENING
+    assert failed.effective_state is ThemeRotationState.FAILED

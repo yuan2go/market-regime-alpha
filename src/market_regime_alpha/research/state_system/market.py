@@ -249,6 +249,16 @@ def evaluate_market_state(
         transitioned = True
         entered = observation.lineage.as_of_time
         reasons.add("INITIAL_STATE")
+    elif proposed is MarketRegimeState.DATA_INSUFFICIENT:
+        effective = proposed
+        confirmation = 1
+        transitioned = proposed is not previous.effective_state
+        entered = (
+            observation.lineage.as_of_time
+            if transitioned
+            else previous.state_entered_at
+        )
+        reasons.add("MARKET_STATE_FAIL_CLOSED")
     else:
         same_proposal = previous.proposed_state is proposed and proposed is not previous.effective_state
         confirmation = previous.confirmation_count + 1 if same_proposal else (1 if proposed is not previous.effective_state else 0)
@@ -364,8 +374,11 @@ def _propose(
             return MarketRegimeState.OVERHEATED
         if current is MarketRegimeState.RISK_OFF and score <= -thresholds.exit_threshold:
             return MarketRegimeState.RISK_OFF
-        if current is MarketRegimeState.DEFENSIVE and score <= -thresholds.exit_threshold:
-            return MarketRegimeState.DEFENSIVE
+        if current is MarketRegimeState.DEFENSIVE:
+            if score <= -thresholds.enter_threshold:
+                return MarketRegimeState.RISK_OFF
+            if score <= -thresholds.exit_threshold:
+                return MarketRegimeState.DEFENSIVE
     if score >= Decimal("0.85"):
         proposed = MarketRegimeState.OVERHEATED
     elif score >= thresholds.enter_threshold:

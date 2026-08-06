@@ -227,6 +227,70 @@ def test_insufficient_coverage_fails_closed_and_late_evidence_is_new_version() -
     assert corrected.previous_state_id == insufficient.state_id
 
 
+def test_missing_data_after_effective_state_fails_closed_immediately() -> None:
+    neutral = evaluate_market_state(
+        observation("0.10"), previous=None, configuration=config()
+    ).state
+
+    insufficient = evaluate_market_state(
+        observation(
+            "0.10",
+            at=NOW + timedelta(seconds=1),
+            coverage="0.20",
+            suffix="2",
+        ),
+        previous=neutral,
+        configuration=config(),
+    ).state
+
+    assert insufficient.effective_state is MarketRegimeState.DATA_INSUFFICIENT
+    assert insufficient.transitioned is True
+
+
+def test_market_state_path_reaches_defensive_risk_off_risk_on_and_overheated() -> None:
+    selected = config(confirmations=1, dwell=0)
+    neutral = evaluate_market_state(
+        observation("0.10", configuration=selected),
+        previous=None,
+        configuration=selected,
+    ).state
+    defensive = evaluate_market_state(
+        observation("-0.80", at=NOW + timedelta(seconds=1), suffix="2", configuration=selected),
+        previous=neutral,
+        configuration=selected,
+    ).state
+    risk_off = evaluate_market_state(
+        observation("-0.80", at=NOW + timedelta(seconds=2), suffix="3", configuration=selected),
+        previous=defensive,
+        configuration=selected,
+    ).state
+    defensive_again = evaluate_market_state(
+        observation("0.10", at=NOW + timedelta(seconds=3), suffix="4", configuration=selected),
+        previous=risk_off,
+        configuration=selected,
+    ).state
+    neutral_again = evaluate_market_state(
+        observation("0.10", at=NOW + timedelta(seconds=4), suffix="5", configuration=selected),
+        previous=defensive_again,
+        configuration=selected,
+    ).state
+    risk_on = evaluate_market_state(
+        observation("0.80", at=NOW + timedelta(seconds=5), suffix="6", configuration=selected),
+        previous=neutral_again,
+        configuration=selected,
+    ).state
+    overheated = evaluate_market_state(
+        observation("0.95", at=NOW + timedelta(seconds=6), suffix="7", configuration=selected),
+        previous=risk_on,
+        configuration=selected,
+    ).state
+
+    assert defensive.effective_state is MarketRegimeState.DEFENSIVE
+    assert risk_off.effective_state is MarketRegimeState.RISK_OFF
+    assert risk_on.effective_state is MarketRegimeState.RISK_ON
+    assert overheated.effective_state is MarketRegimeState.OVERHEATED
+
+
 def test_observation_rejects_lineage_configuration_mismatch() -> None:
     with pytest.raises(ValueError, match="configuration"):
         evaluate_market_state(

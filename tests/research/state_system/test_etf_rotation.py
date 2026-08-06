@@ -111,6 +111,18 @@ def test_single_etf_pulse_cannot_enter_leading() -> None:
     assert state.effective_state is EtfRotationState.STARTING
 
 
+def test_weak_initial_etf_observation_is_dormant() -> None:
+    state = evaluate(
+        observation(
+            "-0.90",
+            diffusion="0.10",
+            amount_persistence="0.10",
+        )
+    )
+
+    assert state.effective_state is EtfRotationState.DORMANT
+
+
 def test_multi_observation_resonance_and_amount_persistence_reach_leading() -> None:
     selected = config(confirmations=1, dwell=0)
     starting = evaluate(observation("0.35", selected=selected), selected=selected)
