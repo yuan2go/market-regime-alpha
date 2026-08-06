@@ -50,6 +50,19 @@ from market_regime_alpha.research.state_system.pool import (
     PoolEligibilityObservation,
     evaluate_dynamic_pool,
 )
+from market_regime_alpha.research.state_system.research_integration import (
+    EmpiricalForecastBias,
+    EmpiricalForecastStatus,
+    FeatureExposureAudit,
+    SignalV4State,
+    StateBoundCandidateSet,
+    StateBoundEmpiricalForecastV2,
+    StateBoundSignalV4,
+    audit_feature_exposures,
+    bind_candidate_set,
+    project_empirical_forecast_v2,
+    project_signal_v4,
+)
 
 __all__ = [
     "CapitalStateConfiguration",
@@ -67,6 +80,9 @@ __all__ = [
     "EtfRotationObservation",
     "EtfRotationState",
     "EtfRotationTransition",
+    "EmpiricalForecastBias",
+    "EmpiricalForecastStatus",
+    "FeatureExposureAudit",
     "MarketStateConfiguration",
     "MarketRegimeObservation",
     "MarketRegimeState",
@@ -74,8 +90,12 @@ __all__ = [
     "MarketStateEvaluation",
     "MissingDataPolicy",
     "PoolEligibilityObservation",
+    "SignalV4State",
     "StateLineage",
     "StatefulMarketRegime",
+    "StateBoundCandidateSet",
+    "StateBoundEmpiricalForecastV2",
+    "StateBoundSignalV4",
     "StatefulEtfRotation",
     "StatefulCapitalState",
     "StatefulThemeRotation",
@@ -90,4 +110,8 @@ __all__ = [
     "evaluate_capital_state",
     "evaluate_dynamic_pool",
     "evaluate_theme_rotation",
+    "audit_feature_exposures",
+    "bind_candidate_set",
+    "project_empirical_forecast_v2",
+    "project_signal_v4",
 ]
