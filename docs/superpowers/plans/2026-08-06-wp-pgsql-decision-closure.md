@@ -247,4 +247,3 @@
 - [ ] Review standards and correctness; fix all High/Medium findings and rerun affected gates.
 - [ ] Record evidence levels and explicit remaining gaps.
 - [ ] Commit `docs(decision): add decision closure runbook and evidence` without push or PR.
-

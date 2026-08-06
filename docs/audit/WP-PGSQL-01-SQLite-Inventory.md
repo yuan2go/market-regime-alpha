@@ -123,4 +123,3 @@ lease/fencing checks and central forward migrations.
 - Research Portfolio and Independent Risk decisions never create Order,
   ManualTrade, Fill or Broker calls.
 - Entry remains blocked and model parameters remain frozen.
-

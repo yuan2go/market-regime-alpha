@@ -204,4 +204,3 @@ The work does not modify Market/ETF/Theme/Capital thresholds, Dynamic Pool
 policy, Candidate weights, Signal rules, Forecast algorithm/horizon, Model
 Registry status, historical 14:55 identities, Entry blocker or trading
 authority.
-
