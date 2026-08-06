@@ -1,38 +1,14 @@
-"""PostgreSQL Portfolio/Risk authority adapters."""
+"""Native PostgreSQL Portfolio and Risk repository exports."""
 
-from market_regime_alpha.persistence.postgres.adapter import (
-    PostgresRepositoryAdapter,
+from market_regime_alpha.portfolio.postgres_account_authority import (
+    PostgresCompleteAccountPortfolioRiskRepository,
 )
-from market_regime_alpha.portfolio.sqlite_account_authority import (
-    SQLiteCompleteAccountPortfolioRiskRepository,
+from market_regime_alpha.portfolio.postgres_decision_repository import (
+    PostgresPortfolioDecisionRepository,
 )
-from market_regime_alpha.portfolio.sqlite_repository import (
-    SQLitePortfolioDecisionRepository,
+from market_regime_alpha.portfolio.postgres_risk_routes import (
+    PostgresRiskRouteRepository,
 )
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    SQLiteRiskRouteRepository,
-)
-
-
-class PostgresPortfolioDecisionRepository(
-    PostgresRepositoryAdapter,
-    SQLitePortfolioDecisionRepository,
-):
-    """PostgreSQL implementation of PortfolioDecisionRepository."""
-
-
-class PostgresCompleteAccountPortfolioRiskRepository(
-    PostgresRepositoryAdapter,
-    SQLiteCompleteAccountPortfolioRiskRepository,
-):
-    """PostgreSQL implementation of complete-account Portfolio/Risk."""
-
-
-class PostgresRiskRouteRepository(
-    PostgresRepositoryAdapter,
-    SQLiteRiskRouteRepository,
-):
-    """PostgreSQL implementation of RiskRouteRepository."""
 
 
 __all__ = [
