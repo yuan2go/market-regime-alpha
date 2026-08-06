@@ -1,5 +1,13 @@
 """Deterministic stateful research contracts for WP-STATE-01."""
 
+from market_regime_alpha.research.state_system.capital import (
+    CapitalObservation,
+    CapitalState,
+    CapitalStateEvaluation,
+    CapitalTransition,
+    StatefulCapitalState,
+    evaluate_capital_state,
+)
 from market_regime_alpha.research.state_system.common import StateLineage
 from market_regime_alpha.research.state_system.configuration import (
     CapitalStateConfiguration,
@@ -36,6 +44,10 @@ from market_regime_alpha.research.state_system.theme_rotation import (
 
 __all__ = [
     "CapitalStateConfiguration",
+    "CapitalObservation",
+    "CapitalState",
+    "CapitalStateEvaluation",
+    "CapitalTransition",
     "EtfRotationConfiguration",
     "EtfRotationEvaluation",
     "EtfRotationObservation",
@@ -50,6 +62,7 @@ __all__ = [
     "StateLineage",
     "StatefulMarketRegime",
     "StatefulEtfRotation",
+    "StatefulCapitalState",
     "StatefulThemeRotation",
     "ThemeRotationConfiguration",
     "ThemeRotationEvaluation",
@@ -59,5 +72,6 @@ __all__ = [
     "TransitionThresholds",
     "evaluate_market_state",
     "evaluate_etf_rotation",
+    "evaluate_capital_state",
     "evaluate_theme_rotation",
 ]
