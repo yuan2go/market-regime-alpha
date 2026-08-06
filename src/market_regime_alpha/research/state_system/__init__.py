@@ -9,13 +9,27 @@ from market_regime_alpha.research.state_system.configuration import (
     ThemeRotationConfiguration,
     TransitionThresholds,
 )
+from market_regime_alpha.research.state_system.market import (
+    MarketRegimeObservation,
+    MarketRegimeState,
+    MarketRegimeTransition,
+    MarketStateEvaluation,
+    StatefulMarketRegime,
+    evaluate_market_state,
+)
 
 __all__ = [
     "CapitalStateConfiguration",
     "EtfRotationConfiguration",
     "MarketStateConfiguration",
+    "MarketRegimeObservation",
+    "MarketRegimeState",
+    "MarketRegimeTransition",
+    "MarketStateEvaluation",
     "MissingDataPolicy",
     "StateLineage",
+    "StatefulMarketRegime",
     "ThemeRotationConfiguration",
     "TransitionThresholds",
+    "evaluate_market_state",
 ]
