@@ -245,6 +245,20 @@ class ThemeRotationTransition:
     reason_codes: tuple[str, ...]
     lineage: StateLineage
 
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "schema": "theme_rotation_transition/v1",
+            "state_id": str(self.state_id),
+            "previous_state_id": None if self.previous_state_id is None else str(self.previous_state_id),
+            "from_state": None if self.from_state is None else self.from_state.value,
+            "proposed_state": self.proposed_state.value,
+            "to_state": self.to_state.value,
+            "observation_id": str(self.observation_id),
+            "transitioned": self.transitioned,
+            "reason_codes": list(self.reason_codes),
+            "lineage": self.lineage.identity_payload(),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class ThemeRotationEvaluation:

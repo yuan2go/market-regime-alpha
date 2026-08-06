@@ -186,3 +186,76 @@ class ThemeRotationConfiguration(VersionedStateConfiguration):
 @dataclass(frozen=True, slots=True)
 class CapitalStateConfiguration(VersionedStateConfiguration):
     DOMAIN: ClassVar[str] = "CAPITAL_STATE"
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicPoolConfiguration:
+    configuration_id: ArtifactId
+    configuration_version: str
+    configuration_hash: str
+    allowed_etf_states: tuple[str, ...]
+    allowed_theme_states: tuple[str, ...]
+    minimum_state_dwell_seconds: int
+    minimum_evidence_coverage: Decimal
+    material_change_threshold: Decimal
+
+    def __post_init__(self) -> None:
+        require_text("configuration_version", self.configuration_version)
+        require_sha256("configuration_hash", self.configuration_hash)
+        for label, values in (
+            ("allowed_etf_states", self.allowed_etf_states),
+            ("allowed_theme_states", self.allowed_theme_states),
+        ):
+            if not values or values != tuple(sorted(set(values))):
+                raise ValueError(f"{label} must be non-empty, unique and sorted")
+        if self.minimum_state_dwell_seconds < 0:
+            raise ValueError("minimum_state_dwell_seconds must be non-negative")
+        _fraction("minimum_evidence_coverage", self.minimum_evidence_coverage)
+        _fraction("material_change_threshold", self.material_change_threshold)
+        if self.configuration_hash != canonical_hash(self.identity_payload()):
+            raise ValueError("configuration_hash does not match Dynamic Pool content")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "domain": "DYNAMIC_STOCK_POOL",
+            "configuration_id": str(self.configuration_id),
+            "configuration_version": self.configuration_version,
+            "allowed_etf_states": list(self.allowed_etf_states),
+            "allowed_theme_states": list(self.allowed_theme_states),
+            "minimum_state_dwell_seconds": self.minimum_state_dwell_seconds,
+            "minimum_evidence_coverage": str(self.minimum_evidence_coverage),
+            "material_change_threshold": str(self.material_change_threshold),
+        }
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        configuration_id: ArtifactId,
+        configuration_version: str,
+        allowed_etf_states: tuple[str, ...],
+        allowed_theme_states: tuple[str, ...],
+        minimum_state_dwell_seconds: int,
+        minimum_evidence_coverage: Decimal,
+        material_change_threshold: Decimal,
+    ) -> DynamicPoolConfiguration:
+        identity = {
+            "domain": "DYNAMIC_STOCK_POOL",
+            "configuration_id": str(configuration_id),
+            "configuration_version": configuration_version,
+            "allowed_etf_states": list(allowed_etf_states),
+            "allowed_theme_states": list(allowed_theme_states),
+            "minimum_state_dwell_seconds": minimum_state_dwell_seconds,
+            "minimum_evidence_coverage": str(minimum_evidence_coverage),
+            "material_change_threshold": str(material_change_threshold),
+        }
+        return cls(
+            configuration_id=configuration_id,
+            configuration_version=configuration_version,
+            configuration_hash=canonical_hash(identity),
+            allowed_etf_states=allowed_etf_states,
+            allowed_theme_states=allowed_theme_states,
+            minimum_state_dwell_seconds=minimum_state_dwell_seconds,
+            minimum_evidence_coverage=minimum_evidence_coverage,
+            material_change_threshold=material_change_threshold,
+        )

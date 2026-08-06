@@ -20,8 +20,8 @@ from market_regime_alpha.persistence.postgres.migrator import (
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 22))
-    assert len({item.name for item in migrations}) == 21
+    assert tuple(item.version for item in migrations) == tuple(range(1, 23))
+    assert len({item.name for item in migrations}) == 22
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -43,13 +43,13 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 22))
+    assert tuple(item.version for item in first) == tuple(range(1, 23))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute(
             "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert len(rows) == 21
+    assert len(rows) == 22
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -112,4 +112,18 @@ def test_migration_021_upgrades_an_existing_020_authority(
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (21, "continuous_runtime_schedule"),
+        (22, "state_system_dynamic_pool"),
+    )
+
+
+def test_migration_022_upgrades_an_existing_021_authority(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:21]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (22, "state_system_dynamic_pool"),
     )

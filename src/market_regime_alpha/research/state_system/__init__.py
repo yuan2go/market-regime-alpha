@@ -11,6 +11,7 @@ from market_regime_alpha.research.state_system.capital import (
 from market_regime_alpha.research.state_system.common import StateLineage
 from market_regime_alpha.research.state_system.configuration import (
     CapitalStateConfiguration,
+    DynamicPoolConfiguration,
     EtfRotationConfiguration,
     MarketStateConfiguration,
     MissingDataPolicy,
@@ -41,6 +42,14 @@ from market_regime_alpha.research.state_system.theme_rotation import (
     ThemeRotationTransition,
     evaluate_theme_rotation,
 )
+from market_regime_alpha.research.state_system.pool import (
+    DynamicPoolEvaluation,
+    DynamicPoolEvaluationStatus,
+    DynamicPoolStateContext,
+    DynamicStockPoolVersion,
+    PoolEligibilityObservation,
+    evaluate_dynamic_pool,
+)
 
 __all__ = [
     "CapitalStateConfiguration",
@@ -49,6 +58,11 @@ __all__ = [
     "CapitalStateEvaluation",
     "CapitalTransition",
     "EtfRotationConfiguration",
+    "DynamicPoolConfiguration",
+    "DynamicPoolEvaluation",
+    "DynamicPoolEvaluationStatus",
+    "DynamicPoolStateContext",
+    "DynamicStockPoolVersion",
     "EtfRotationEvaluation",
     "EtfRotationObservation",
     "EtfRotationState",
@@ -59,6 +73,7 @@ __all__ = [
     "MarketRegimeTransition",
     "MarketStateEvaluation",
     "MissingDataPolicy",
+    "PoolEligibilityObservation",
     "StateLineage",
     "StatefulMarketRegime",
     "StatefulEtfRotation",
@@ -73,5 +88,6 @@ __all__ = [
     "evaluate_market_state",
     "evaluate_etf_rotation",
     "evaluate_capital_state",
+    "evaluate_dynamic_pool",
     "evaluate_theme_rotation",
 ]
