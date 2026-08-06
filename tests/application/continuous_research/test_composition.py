@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from market_regime_alpha.application.continuous_research.composition import (
+    CONTINUOUS_CHILD_ORDER,
     ExistingResearchServiceComposition,
 )
 from market_regime_alpha.application.continuous_research.journal import (
@@ -25,6 +26,7 @@ HASH = "sha256:" + "1" * 64
 def _request() -> ChildExecutionRequest:
     return ChildExecutionRequest(
         trading_date=date(2026, 8, 6),
+        as_of_time=datetime(2026, 8, 6, 6, 42, tzinfo=timezone.utc),
         run_id=ArtifactId("composition-run"),
         tick_id=ArtifactId("composition-tick"),
         tick_sequence=1,
@@ -55,12 +57,16 @@ class Delegate:
     child_kind: ContinuousChildKind
     call_count: int = 0
     durable: ChildExecutionResult | None = None
+    seen_input_kinds: tuple[str, ...] = ()
 
     def lookup(self, request: ChildExecutionRequest) -> ChildExecutionResult | None:
         return self.durable
 
     def execute(self, request: ChildExecutionRequest) -> ChildExecutionResult:
         self.call_count += 1
+        self.seen_input_kinds = tuple(
+            reference.reference_kind for reference in request.input_references
+        )
         self.durable = ChildExecutionResult(
             child_kind=self.child_kind,
             child_run_id=ArtifactId(f"{self.child_kind.value}-run"),
@@ -84,6 +90,13 @@ def test_composition_delegates_to_each_existing_service_and_reuses_receipts() ->
     assert first == second
     assert all(delegate.call_count == 1 for delegate in delegates.values())
     assert composition.lookup_children(_request()) == first
+    assert tuple(result.child_kind for result in first) == CONTINUOUS_CHILD_ORDER
+    assert "FEATURE_MATERIALIZATION_OUTPUT" in delegates[
+        ContinuousChildKind.STATE_SYSTEM
+    ].seen_input_kinds
+    assert "STATE_SYSTEM_OUTPUT" in delegates[
+        ContinuousChildKind.CONTROLLED_OPERATION
+    ].seen_input_kinds
 
 
 def test_composition_rejects_a_parallel_partial_chain() -> None:

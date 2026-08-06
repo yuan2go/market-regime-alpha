@@ -9,6 +9,14 @@ import psycopg
 from psycopg import sql
 
 from market_regime_alpha.application.continuous_research.journal import ClaimedRuntimeTick
+from market_regime_alpha.application.continuous_research.journal import (
+    ContinuousChildKind,
+    RuntimeArtifactReference,
+)
+from market_regime_alpha.application.continuous_research.ports import (
+    ChildExecutionRequest,
+    ChildExecutionResult,
+)
 from market_regime_alpha.application.state_system.repository import (
     StateArtifactWrite,
     StateDomain,
@@ -177,6 +185,67 @@ class PostgresStateSystemRepository:
             raise StateSystemIntegrityError("State write returned invalid identity")
         return result
 
+    def lookup_runtime_child(
+        self, request: ChildExecutionRequest
+    ) -> ChildExecutionResult | None:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT receipt_json
+                FROM state_runtime_receipt
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (str(request.run_id), str(request.tick_id)),
+            ).fetchone()
+        return None if row is None else _decode_child_result(str(row[0]))
+
+    def record_runtime_child(
+        self,
+        request: ChildExecutionRequest,
+        result: ChildExecutionResult,
+    ) -> ChildExecutionResult:
+        if result.child_kind is not ContinuousChildKind.STATE_SYSTEM:
+            raise ValueError("State Runtime receipt requires STATE_SYSTEM child kind")
+        payload = _encode_child_result(result)
+        serialized = canonical_json(payload)
+
+        def operation(connection: psycopg.Connection[Any]) -> ChildExecutionResult:
+            self._assert_claim(connection, request)
+            connection.execute(
+                """
+                INSERT INTO state_runtime_receipt(
+                    receipt_id, receipt_hash, run_id, tick_id,
+                    pool_id, status, receipt_json, created_at
+                ) VALUES (%s, %s, %s, %s, NULL, 'COMPLETED', %s, %s)
+                ON CONFLICT (tick_id) DO NOTHING
+                """,
+                (
+                    str(result.child_receipt_id),
+                    result.child_receipt_hash,
+                    str(request.run_id),
+                    str(request.tick_id),
+                    serialized,
+                    self._clock(),
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT receipt_hash, receipt_json
+                FROM state_runtime_receipt
+                WHERE run_id = %s AND tick_id = %s
+                FOR UPDATE
+                """,
+                (str(request.run_id), str(request.tick_id)),
+            ).fetchone()
+            if row is None or str(row[0]) != result.child_receipt_hash:
+                raise StateSystemConflict("State Runtime receipt identity conflict")
+            return _decode_child_result(str(row[1]))
+
+        recorded = self._factory.run_transaction(operation)
+        if not isinstance(recorded, ChildExecutionResult):
+            raise StateSystemIntegrityError("State Runtime receipt decode failed")
+        return recorded
+
     def append_pool(
         self,
         pool: DynamicStockPoolVersion,
@@ -314,7 +383,7 @@ class PostgresStateSystemRepository:
     def _assert_claim(
         self,
         connection: psycopg.Connection[Any],
-        claim: ClaimedRuntimeTick,
+        claim: ClaimedRuntimeTick | ChildExecutionRequest,
     ) -> None:
         row = connection.execute(
             """
@@ -463,3 +532,54 @@ class PostgresStateSystemRepository:
         ).rowcount
         if updated != 1:
             raise StateSystemConflict("State CAS update lost a concurrent race")
+
+
+def _encode_child_result(result: ChildExecutionResult) -> dict[str, Any]:
+    return {
+        "schema": "state_runtime_child_receipt/v1",
+        "child_kind": result.child_kind.value,
+        "child_run_id": str(result.child_run_id),
+        "child_receipt_id": str(result.child_receipt_id),
+        "child_receipt_hash": result.child_receipt_hash,
+        "child_artifact_id": None if result.child_artifact_id is None else str(result.child_artifact_id),
+        "child_artifact_hash": result.child_artifact_hash,
+        "input_references": [value.to_canonical_dict() for value in result.input_references],
+        "configuration_references": [
+            value.to_canonical_dict() for value in result.configuration_references
+        ],
+    }
+
+
+def _decode_child_result(serialized: str) -> ChildExecutionResult:
+    import json
+
+    try:
+        payload = json.loads(serialized)
+    except json.JSONDecodeError as exc:
+        raise StateSystemIntegrityError("State Runtime receipt JSON is invalid") from exc
+    if not isinstance(payload, dict) or payload.get("schema") != "state_runtime_child_receipt/v1":
+        raise StateSystemIntegrityError("State Runtime receipt schema is invalid")
+    inputs = payload.get("input_references")
+    configurations = payload.get("configuration_references")
+    if not isinstance(inputs, list) or not isinstance(configurations, list):
+        raise StateSystemIntegrityError("State Runtime receipt references are invalid")
+    artifact_id = payload.get("child_artifact_id")
+    artifact_hash = payload.get("child_artifact_hash")
+    return ChildExecutionResult(
+        child_kind=ContinuousChildKind(str(payload["child_kind"])),
+        child_run_id=ArtifactId(str(payload["child_run_id"])),
+        child_receipt_id=ArtifactId(str(payload["child_receipt_id"])),
+        child_receipt_hash=str(payload["child_receipt_hash"]),
+        child_artifact_id=None if artifact_id is None else ArtifactId(str(artifact_id)),
+        child_artifact_hash=None if artifact_hash is None else str(artifact_hash),
+        input_references=tuple(
+            RuntimeArtifactReference.from_canonical_dict(value)
+            for value in inputs
+            if isinstance(value, dict)
+        ),
+        configuration_references=tuple(
+            RuntimeArtifactReference.from_canonical_dict(value)
+            for value in configurations
+            if isinstance(value, dict)
+        ),
+    )

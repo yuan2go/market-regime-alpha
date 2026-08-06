@@ -226,6 +226,7 @@ class ProviderAcquisitionPort(Protocol):
 @dataclass(frozen=True, slots=True)
 class ChildExecutionRequest:
     trading_date: date
+    as_of_time: datetime
     run_id: ArtifactId
     tick_id: ArtifactId
     tick_sequence: int
@@ -253,6 +254,7 @@ class ChildExecutionRequest:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{label} must be positive")
         require_text("claim_id", self.claim_id)
+        require_utc_second("as_of_time", self.as_of_time)
         require_utc_second("lease_expires_at", self.lease_expires_at)
         for label, content_hash in (
             ("source_manifest_hash", self.source_manifest_hash),
@@ -269,6 +271,7 @@ class ChildExecutionRequest:
             {
                 "schema_version": "continuous-child-execution-request-v1",
                 "trading_date": self.trading_date.isoformat(),
+                "as_of_time": self.as_of_time.isoformat(),
                 "run_id": str(self.run_id),
                 "tick_id": str(self.tick_id),
                 "tick_sequence": self.tick_sequence,

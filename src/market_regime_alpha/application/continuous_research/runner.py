@@ -479,6 +479,7 @@ def _child_request(
 ) -> ChildExecutionRequest:
     return ChildExecutionRequest(
         trading_date=run_command.trading_date,
+        as_of_time=evidence.as_of_time,
         run_id=claim.run_id,
         tick_id=claim.tick_id,
         tick_sequence=claim.tick_sequence,

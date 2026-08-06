@@ -9,6 +9,7 @@ from market_regime_alpha.application.continuous_research.postgres_journal import
 from market_regime_alpha.application.continuous_research.replay import (
     replay_continuous_research,
 )
+from market_regime_alpha.application.continuous_research.journal import ContinuousChildKind
 from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
 )
@@ -54,6 +55,6 @@ def test_replay_is_deterministic_and_read_only(
     assert first.integrity_status == "VERIFIED"
     assert first.evidence_count == 1
     assert first.decision_count == 1
-    assert first.child_reference_count == 4
+    assert first.child_reference_count == len(ContinuousChildKind)
     assert first.entry_authority_granted is False
     assert journal.get_run(command.run_id) == before

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping, Protocol
 
@@ -14,6 +14,9 @@ from market_regime_alpha.application.continuous_research.ports import (
     ChildExecutionResult,
     ProviderAcquisitionRequest,
     ProviderAcquisitionResult,
+)
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
 )
 from market_regime_alpha.application.free_data_operation.contracts import (
     FreeDataPreparationRequest,
@@ -100,26 +103,71 @@ class ExistingResearchServiceComposition:
         self, request: ChildExecutionRequest
     ) -> tuple[ChildExecutionResult, ...] | None:
         results: list[ChildExecutionResult] = []
-        for kind in sorted(ContinuousChildKind, key=lambda item: item.value):
-            result = self._delegates[kind].lookup(request)
+        stage_request = request
+        for kind in CONTINUOUS_CHILD_ORDER:
+            result = self._delegates[kind].lookup(stage_request)
             if result is None:
                 return None
             _require_kind(kind, result)
             results.append(result)
+            stage_request = _with_upstream_result(stage_request, result)
         return tuple(results)
 
     def execute_children(
         self, request: ChildExecutionRequest
     ) -> tuple[ChildExecutionResult, ...]:
         results: list[ChildExecutionResult] = []
-        for kind in sorted(ContinuousChildKind, key=lambda item: item.value):
+        stage_request = request
+        for kind in CONTINUOUS_CHILD_ORDER:
             delegate = self._delegates[kind]
-            result = delegate.lookup(request)
+            result = delegate.lookup(stage_request)
             if result is None:
-                result = delegate.execute(request)
+                result = delegate.execute(stage_request)
             _require_kind(kind, result)
             results.append(result)
+            stage_request = _with_upstream_result(stage_request, result)
         return tuple(results)
+
+
+CONTINUOUS_CHILD_ORDER = (
+    ContinuousChildKind.DAILY_DATASET,
+    ContinuousChildKind.FEATURE_MATERIALIZATION,
+    ContinuousChildKind.STATE_SYSTEM,
+    ContinuousChildKind.CONTROLLED_OPERATION,
+    ContinuousChildKind.CANONICAL_LIFECYCLE,
+)
+
+
+def _with_upstream_result(
+    request: ChildExecutionRequest,
+    result: ChildExecutionResult,
+) -> ChildExecutionRequest:
+    reference = RuntimeArtifactReference(
+        reference_kind=f"{result.child_kind.value}_OUTPUT",
+        artifact_id=(
+            result.child_receipt_id
+            if result.child_artifact_id is None
+            else result.child_artifact_id
+        ),
+        content_hash=(
+            result.child_receipt_hash
+            if result.child_artifact_hash is None
+            else result.child_artifact_hash
+        ),
+    )
+    return replace(
+        request,
+        input_references=tuple(
+            sorted(
+                {*request.input_references, reference},
+                key=lambda item: (
+                    item.reference_kind,
+                    str(item.artifact_id),
+                    item.content_hash,
+                ),
+            )
+        ),
+    )
 
 
 def _require_kind(
@@ -132,6 +180,7 @@ def _require_kind(
 __all__ = [
     "ExistingChildServiceDelegate",
     "ExistingResearchServiceComposition",
+    "CONTINUOUS_CHILD_ORDER",
     "FreeDataPreparationInvocation",
     "FreeDataPreparationProviderAdapter",
 ]

@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from market_regime_alpha.application.continuous_research.journal import (
+    ContinuousChildKind,
+)
 from market_regime_alpha.application.continuous_research.policy import (
     default_continuous_decision_window_policy,
 )
@@ -89,7 +92,7 @@ def test_recovery_after_evidence_cas_skips_provider_republication(
 
     assert recovered.decision is not None
     assert provider.call_count == 1
-    assert sum(children.calls.values()) == 4
+    assert sum(children.calls.values()) == len(ContinuousChildKind)
 
 
 def test_recovery_after_child_receipts_uses_durable_child_lookup(
@@ -111,7 +114,7 @@ def test_recovery_after_child_receipts_uses_durable_child_lookup(
             tick_command=_tick(command, 0),
             provider_request=_request(),
         )
-    assert sum(children.calls.values()) == 4
+    assert sum(children.calls.values()) == len(ContinuousChildKind)
 
     expire()
     monkeypatch.setattr(journal, "record_child_reference", original)
@@ -122,8 +125,8 @@ def test_recovery_after_child_receipts_uses_durable_child_lookup(
     )
 
     assert provider.call_count == 1
-    assert sum(children.calls.values()) == 4
-    assert len(recovered.child_references) == 4
+    assert sum(children.calls.values()) == len(ContinuousChildKind)
+    assert len(recovered.child_references) == len(ContinuousChildKind)
 
 
 def test_recovery_after_partial_crr_child_lineage_only_fills_missing_rows(
@@ -164,9 +167,9 @@ def test_recovery_after_partial_crr_child_lineage_only_fills_missing_rows(
         provider_request=_request(),
     )
 
-    assert len(recovered.child_references) == 4
+    assert len(recovered.child_references) == len(ContinuousChildKind)
     assert provider.call_count == 1
-    assert sum(children.calls.values()) == 4
+    assert sum(children.calls.values()) == len(ContinuousChildKind)
 
 
 def test_completed_tick_replay_is_read_only(
