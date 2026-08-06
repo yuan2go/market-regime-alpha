@@ -67,7 +67,13 @@ def test_migration_025_installs_exact_decision_authority_and_append_guards(
         ).fetchone()
 
     assert tables == DECISION_TABLES
-    assert triggers == {(table, f"{table}_no_{operation}") for table in DECISION_TABLES for operation in ("update", "delete")}
+    assert triggers == {
+        (table, f"{table}_no_{operation}")
+        for table in DECISION_TABLES
+        for operation in ("update", "delete")
+    } | {
+        ("decision_runtime_receipt", "decision_runtime_receipt_v2_insert_guard"),
+    }
     assert final_index is not None
     assert "UNIQUE INDEX" in str(final_index[0])
     assert "FINALIZED" in str(final_index[0])
@@ -142,3 +148,34 @@ def test_migration_026_installs_hardened_authority_and_replay_append_guards(
             )
 
     assert tables == expected
+
+
+def test_migration_026_blocks_prerelease_runtime_receipt_writers(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    PostgresMigrator().apply_all(postgres_factory)
+    digest = "sha256:" + "a" * 64
+
+    with postgres_factory.connection() as connection:
+        with pytest.raises(
+            psycopg.errors.CheckViolation,
+            match="require v2 payload and lease authority",
+        ):
+            connection.execute(
+                """
+                INSERT INTO decision_runtime_receipt(
+                    receipt_id, receipt_hash, run_id, tick_id, claim_id,
+                    fencing_token, tick_version, state_receipt_id,
+                    state_receipt_hash, reconciliation_id, summary_id,
+                    proposal_id, risk_decision_id, status,
+                    stage_receipts_json, payload_json, created_at,
+                    lease_expires_at
+                ) VALUES (
+                    'legacy-receipt', %s, 'legacy-run', 'legacy-tick',
+                    'legacy-claim', 1, 1, 'legacy-state-receipt', %s,
+                    NULL, NULL, NULL, NULL, 'BLOCKED', '[]'::jsonb,
+                    '{}'::jsonb, now(), NULL
+                )
+                """,
+                (digest, digest),
+            )

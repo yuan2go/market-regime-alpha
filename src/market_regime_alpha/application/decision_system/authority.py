@@ -26,6 +26,8 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.position.authority import (
+    PositionSellabilityState,
+    PositionState,
     PositionProjector,
     SymbolTradingSessionStatus,
 )
@@ -482,6 +484,12 @@ class PostgresFillDerivedAccountAuthorityReader:
                     complete=(
                         snapshot.available_quantity is not None
                         and snapshot.frozen_quantity is not None
+                        and snapshot.state is not PositionState.RECONCILIATION_REQUIRED
+                        and snapshot.sellability_state
+                        not in {
+                            PositionSellabilityState.DATA_INSUFFICIENT,
+                            PositionSellabilityState.RECONCILIATION_REQUIRED,
+                        }
                     ),
                 )
             )

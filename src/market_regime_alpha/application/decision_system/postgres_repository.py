@@ -31,6 +31,7 @@ from market_regime_alpha.application.decision_system.authority import (
 )
 from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,
+    state_research_pipeline_identity,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash
@@ -444,12 +445,12 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                         Jsonb(artifact["payload"]), self._clock(),
                     ),
                 )
-            return self._load_replay_artifacts(connection, replay_session_id)
+            imported = self._load_replay_artifacts(connection, replay_session_id)
+            if imported != artifacts:
+                raise DecisionSystemConflict("Decision Replay import conflict")
+            return imported
 
-        imported = cast(tuple[dict[str, Any], ...], self._run(operation))
-        if imported != artifacts:
-            raise DecisionSystemConflict("Decision Replay import conflict")
-        return imported
+        return cast(tuple[dict[str, Any], ...], self._run(operation))
 
     def get_replay_artifacts(
         self,
@@ -468,7 +469,7 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
         with self._connect() as connection:
             state_receipt = connection.execute(
                 """
-                SELECT receipt_hash, run_id, tick_id
+                SELECT receipt_hash, run_id, tick_id, receipt_json
                 FROM state_runtime_receipt
                 WHERE receipt_id = %s
                 """,
@@ -494,6 +495,74 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 ),
             ).fetchall()
             by_stage = {str(row["stage"]): row for row in rows}
+            stage_order = (
+                "OBSERVATION", "MARKET_REGIME", "ETF_ROTATION",
+                "THEME_ROTATION", "CAPITAL_STATE", "DYNAMIC_POOL",
+                "CANDIDATE", "SIGNAL", "FORECAST",
+            )
+            if set(by_stage) != set(stage_order):
+                raise DecisionSystemIntegrityError(
+                    "PostgreSQL State stage authority set mismatch"
+                )
+            pipeline_id, pipeline_hash = state_research_pipeline_identity(
+                run_id=lineage.continuous_operation_id,
+                tick_id=lineage.runtime_tick_id,
+                as_of_time=summary.as_of_time,
+                stages=tuple(
+                    (
+                        stage,
+                        ArtifactId(str(by_stage[stage]["artifact_id"])),
+                        str(by_stage[stage]["artifact_hash"]),
+                        aware_datetime(
+                            by_stage[stage]["available_at"],
+                            label=f"{stage} available_at",
+                        ),
+                    )
+                    for stage in stage_order
+                ),
+            )
+            raw_receipt_json = state_receipt["receipt_json"]
+            stored_receipt = (
+                raw_receipt_json
+                if isinstance(raw_receipt_json, dict)
+                else json.loads(str(raw_receipt_json))
+            )
+            receipt_payload = stored_receipt.get("receipt_payload")
+            expected_stage_references = [
+                {
+                    "reference_kind": f"STATE_RESEARCH_{stage}",
+                    "artifact_id": str(by_stage[stage]["artifact_id"]),
+                    "content_hash": str(by_stage[stage]["artifact_hash"]),
+                }
+                for stage in stage_order
+            ]
+            if (
+                stored_receipt.get("schema") != "state_runtime_child_receipt/v2"
+                or not isinstance(receipt_payload, dict)
+                or canonical_hash(receipt_payload) != lineage.state_receipt_hash
+                or lineage.state_receipt_id
+                != ArtifactId(
+                    f"state-system-receipt:{lineage.state_receipt_hash[7:]}"
+                )
+                or stored_receipt.get("child_kind") != "STATE_SYSTEM"
+                or stored_receipt.get("child_receipt_id")
+                != str(lineage.state_receipt_id)
+                or stored_receipt.get("child_receipt_hash")
+                != lineage.state_receipt_hash
+                or stored_receipt.get("child_artifact_id") != str(pipeline_id)
+                or stored_receipt.get("child_artifact_hash") != pipeline_hash
+                or receipt_payload.get("schema")
+                != "state_system_runtime_receipt/v1"
+                or receipt_payload.get("pipeline_artifact_id") != str(pipeline_id)
+                or receipt_payload.get("pipeline_artifact_hash") != pipeline_hash
+                or receipt_payload.get("stage_references")
+                != expected_stage_references
+                or receipt_payload.get("reason_codes")
+                != ["ENTRY_BLOCKED", "STATE_RESEARCH_CHAIN_COMPLETED"]
+            ):
+                raise DecisionSystemIntegrityError(
+                    "PostgreSQL State receipt composition mismatch"
+                )
             market = connection.execute(
                 "SELECT state_hash FROM market_regime_state WHERE state_id = %s",
                 (str(lineage.market_state_id),),

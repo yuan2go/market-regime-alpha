@@ -2,6 +2,7 @@
 
 from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,
+    state_research_pipeline_identity,
 )
 from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
@@ -32,4 +33,5 @@ __all__ = [
     "StateArtifactWrite",
     "StateDomain",
     "scoped_state_stage_bundle_identity",
+    "state_research_pipeline_identity",
 ]

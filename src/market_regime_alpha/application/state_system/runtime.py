@@ -18,9 +18,11 @@ from market_regime_alpha.application.continuous_research.ports import (
 from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
+from market_regime_alpha.application.state_system.bundles import (
+    state_research_pipeline_identity,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import (
-    canonical_datetime,
     canonical_hash,
     require_sha256,
     require_text,
@@ -121,24 +123,22 @@ class OrderedStateResearchPipeline:
             if artifact.available_at > request.as_of_time:
                 raise ValueError("State Research stage cannot publish future evidence")
             completed.append(artifact)
-        payload = {
-            "schema": "state_research_pipeline_result/v1",
-            "run_id": str(request.run_id),
-            "tick_id": str(request.tick_id),
-            "as_of_time": canonical_datetime(request.as_of_time),
-            "stages": [
-                {
-                    "stage": artifact.stage.value,
-                    "artifact_id": str(artifact.artifact_id),
-                    "artifact_hash": artifact.artifact_hash,
-                    "available_at": canonical_datetime(artifact.available_at),
-                }
+        pipeline_id, digest = state_research_pipeline_identity(
+            run_id=request.run_id,
+            tick_id=request.tick_id,
+            as_of_time=request.as_of_time,
+            stages=tuple(
+                (
+                    artifact.stage.value,
+                    artifact.artifact_id,
+                    artifact.artifact_hash,
+                    artifact.available_at,
+                )
                 for artifact in completed
-            ],
-        }
-        digest = canonical_hash(payload)
+            ),
+        )
         return StateResearchPipelineResult(
-            artifact_id=ArtifactId(f"state-research-chain:{digest[7:]}"),
+            artifact_id=pipeline_id,
             artifact_hash=digest,
             stages=tuple(completed),
             reason_codes=("ENTRY_BLOCKED", "STATE_RESEARCH_CHAIN_COMPLETED"),
@@ -207,6 +207,7 @@ class StateSystemRuntimeDelegate:
             request,
             result,
             stage_authorities=pipeline_result.stages,
+            receipt_payload=receipt_payload,
         )
 
 

@@ -298,3 +298,27 @@ def test_postgres_fill_authority_uses_explicit_t_plus_one_settlement_evidence(
     assert restored.positions[0].available_quantity == 100
     assert restored.positions[0].frozen_quantity == 0
     assert restored.positions[0].complete is True
+
+    unknown_status = SymbolTradingSessionStatus.create(
+        symbol=book.symbol,
+        session_date=AS_OF.date(),
+        state=SymbolTradingState.UNKNOWN,
+        source_artifact_id=ArtifactId("decision-unknown-status-source"),
+        source_artifact_hash=HASH_A,
+        availability_time=AS_OF - timedelta(minutes=1),
+        reason_code="SESSION_STATUS_UNKNOWN",
+    )
+    unknown_settlement = PositionSettlementEvidence.create(
+        account_id=book.account_id,
+        as_of_time=AS_OF,
+        trading_calendar=calendar,
+        symbol_session_statuses=(unknown_status,),
+    )
+    incomplete = repository.load_fill_derived_account_authority(
+        account_id=book.account_id,
+        as_of_time=AS_OF,
+        settlement_evidence=unknown_settlement,
+    )
+    assert incomplete.positions[0].available_quantity == 0
+    assert incomplete.positions[0].frozen_quantity == 100
+    assert incomplete.positions[0].complete is False

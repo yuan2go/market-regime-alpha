@@ -142,6 +142,7 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("daily_summary_candidate", "daily_summary_candidate_no_update"),
         ("decision_runtime_receipt", "decision_runtime_receipt_no_delete"),
         ("decision_runtime_receipt", "decision_runtime_receipt_no_update"),
+        ("decision_runtime_receipt", "decision_runtime_receipt_v2_insert_guard"),
         ("controlled_operation_stage", "controlled_operation_completed_stage_immutable"),
         ("controlled_operation_stage", "controlled_operation_stages_no_delete"),
         ("continuous_research_run", "continuous_research_run_identity_immutable"),

@@ -2,8 +2,52 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
+from market_regime_alpha.evidence.canonical import (
+    canonical_datetime,
+    canonical_hash,
+    require_sha256,
+)
+
+
+def state_research_pipeline_identity(
+    *,
+    run_id: ArtifactId,
+    tick_id: ArtifactId,
+    as_of_time: datetime,
+    stages: tuple[tuple[str, ArtifactId, str, datetime], ...],
+) -> tuple[ArtifactId, str]:
+    """Recompute the exact ordered State pipeline aggregate identity."""
+
+    expected_order = (
+        "OBSERVATION", "MARKET_REGIME", "ETF_ROTATION", "THEME_ROTATION",
+        "CAPITAL_STATE", "DYNAMIC_POOL", "CANDIDATE", "SIGNAL", "FORECAST",
+    )
+    if tuple(item[0] for item in stages) != expected_order:
+        raise ValueError("State pipeline stages must use the canonical order")
+    for _, _, artifact_hash, available_at in stages:
+        require_sha256("State pipeline stage hash", artifact_hash)
+        if available_at > as_of_time:
+            raise ValueError("State pipeline stage cannot be available after AsOfTime")
+    payload = {
+        "schema": "state_research_pipeline_result/v1",
+        "run_id": str(run_id),
+        "tick_id": str(tick_id),
+        "as_of_time": canonical_datetime(as_of_time),
+        "stages": [
+            {
+                "stage": stage,
+                "artifact_id": str(artifact_id),
+                "artifact_hash": artifact_hash,
+                "available_at": canonical_datetime(available_at),
+            }
+            for stage, artifact_id, artifact_hash, available_at in stages
+        ],
+    }
+    digest = canonical_hash(payload)
+    return ArtifactId(f"state-research-chain:{digest[7:]}"), digest
 
 
 def scoped_state_stage_bundle_identity(
@@ -45,4 +89,7 @@ def scoped_state_stage_bundle_identity(
     )
 
 
-__all__ = ["scoped_state_stage_bundle_identity"]
+__all__ = [
+    "scoped_state_stage_bundle_identity",
+    "state_research_pipeline_identity",
+]

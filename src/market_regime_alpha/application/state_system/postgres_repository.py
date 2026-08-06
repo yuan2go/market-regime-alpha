@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 import psycopg
 from psycopg import sql
@@ -24,8 +24,11 @@ from market_regime_alpha.application.state_system.repository import (
     StateSystemIntegrityError,
     decode_and_verify_pool,
 )
+from market_regime_alpha.application.state_system.bundles import (
+    state_research_pipeline_identity,
+)
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_json
+from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
@@ -202,7 +205,16 @@ class PostgresStateSystemRepository:
                 """,
                 (str(request.run_id), str(request.tick_id)),
             ).fetchone()
-        return None if row is None else _decode_child_result(str(row[0]))
+            if row is None:
+                return None
+            result, receipt_payload = _decode_child_result(str(row[0]))
+            self._validate_runtime_receipt_composition(
+                connection,
+                request=request,
+                result=result,
+                receipt_payload=receipt_payload,
+            )
+            return result
 
     def record_runtime_child(
         self,
@@ -210,10 +222,13 @@ class PostgresStateSystemRepository:
         result: ChildExecutionResult,
         *,
         stage_authorities: tuple[StateResearchStageArtifact, ...],
+        receipt_payload: Mapping[str, Any],
     ) -> ChildExecutionResult:
         if result.child_kind is not ContinuousChildKind.STATE_SYSTEM:
             raise ValueError("State Runtime receipt requires STATE_SYSTEM child kind")
-        payload = _encode_child_result(result)
+        if canonical_hash(dict(receipt_payload)) != result.child_receipt_hash:
+            raise ValueError("State Runtime receipt payload/hash mismatch")
+        payload = _encode_child_result(result, receipt_payload=receipt_payload)
         serialized = canonical_json(payload)
 
         def operation(connection: psycopg.Connection[Any]) -> ChildExecutionResult:
@@ -284,12 +299,104 @@ class PostgresStateSystemRepository:
                     raise StateSystemConflict(
                         "State stage authority identity conflict"
                     )
-            return _decode_child_result(str(row[1]))
+            recorded, stored_receipt_payload = _decode_child_result(str(row[1]))
+            self._validate_runtime_receipt_composition(
+                connection,
+                request=request,
+                result=recorded,
+                receipt_payload=stored_receipt_payload,
+            )
+            return recorded
 
         recorded = self._factory.run_transaction(operation)
         if not isinstance(recorded, ChildExecutionResult):
             raise StateSystemIntegrityError("State Runtime receipt decode failed")
         return recorded
+
+    def _validate_runtime_receipt_composition(
+        self,
+        connection: psycopg.Connection[Any],
+        *,
+        request: ChildExecutionRequest,
+        result: ChildExecutionResult,
+        receipt_payload: dict[str, Any] | None,
+    ) -> None:
+        if receipt_payload is None:
+            raise StateSystemIntegrityError(
+                "legacy State Runtime receipt has no recomputable composition"
+            )
+        rows = connection.execute(
+            """
+            SELECT stage, artifact_id, artifact_hash, available_at
+            FROM state_research_stage_authority
+            WHERE run_id = %s AND tick_id = %s
+            """,
+            (str(request.run_id), str(request.tick_id)),
+        ).fetchall()
+        order = {
+            name: index
+            for index, name in enumerate(
+                (
+                    "OBSERVATION", "MARKET_REGIME", "ETF_ROTATION",
+                    "THEME_ROTATION", "CAPITAL_STATE", "DYNAMIC_POOL",
+                    "CANDIDATE", "SIGNAL", "FORECAST",
+                )
+            )
+        }
+        if len(rows) != len(order) or any(str(row[0]) not in order for row in rows):
+            raise StateSystemIntegrityError(
+                "State Runtime receipt stage authority set is incomplete"
+            )
+        ordered = tuple(sorted(rows, key=lambda row: order[str(row[0])]))
+        pipeline_id, pipeline_hash = state_research_pipeline_identity(
+            run_id=request.run_id,
+            tick_id=request.tick_id,
+            as_of_time=request.as_of_time,
+            stages=tuple(
+                (
+                    str(row[0]),
+                    ArtifactId(str(row[1])),
+                    str(row[2]),
+                    row[3],
+                )
+                for row in ordered
+            ),
+        )
+        expected_references = [
+            RuntimeArtifactReference(
+                reference_kind=f"STATE_RESEARCH_{row[0]}",
+                artifact_id=ArtifactId(str(row[1])),
+                content_hash=str(row[2]),
+            ).to_canonical_dict()
+            for row in ordered
+        ]
+        expected_receipt_id = ArtifactId(
+            f"state-system-receipt:{result.child_receipt_hash[7:]}"
+        )
+        expected_child_run_id = ArtifactId(
+            "state-system-run:"
+            f"{request.idempotency_key.removeprefix('continuous-children-')}"
+        )
+        if (
+            result.child_kind is not ContinuousChildKind.STATE_SYSTEM
+            or result.child_run_id != expected_child_run_id
+            or result.child_receipt_id != expected_receipt_id
+            or result.child_artifact_id != pipeline_id
+            or result.child_artifact_hash != pipeline_hash
+            or receipt_payload.get("schema")
+            != "state_system_runtime_receipt/v1"
+            or receipt_payload.get("request_idempotency_key")
+            != request.idempotency_key
+            or receipt_payload.get("pipeline_artifact_id") != str(pipeline_id)
+            or receipt_payload.get("pipeline_artifact_hash") != pipeline_hash
+            or receipt_payload.get("stage_references") != expected_references
+            or receipt_payload.get("reason_codes")
+            != ["ENTRY_BLOCKED", "STATE_RESEARCH_CHAIN_COMPLETED"]
+            or canonical_hash(receipt_payload) != result.child_receipt_hash
+        ):
+            raise StateSystemIntegrityError(
+                "State Runtime receipt composition cannot be reproduced"
+            )
 
     def append_pool(
         self,
@@ -579,9 +686,13 @@ class PostgresStateSystemRepository:
             raise StateSystemConflict("State CAS update lost a concurrent race")
 
 
-def _encode_child_result(result: ChildExecutionResult) -> dict[str, Any]:
+def _encode_child_result(
+    result: ChildExecutionResult,
+    *,
+    receipt_payload: Mapping[str, Any],
+) -> dict[str, Any]:
     return {
-        "schema": "state_runtime_child_receipt/v1",
+        "schema": "state_runtime_child_receipt/v2",
         "child_kind": result.child_kind.value,
         "child_run_id": str(result.child_run_id),
         "child_receipt_id": str(result.child_receipt_id),
@@ -592,17 +703,23 @@ def _encode_child_result(result: ChildExecutionResult) -> dict[str, Any]:
         "configuration_references": [
             value.to_canonical_dict() for value in result.configuration_references
         ],
+        "receipt_payload": dict(receipt_payload),
     }
 
 
-def _decode_child_result(serialized: str) -> ChildExecutionResult:
+def _decode_child_result(
+    serialized: str,
+) -> tuple[ChildExecutionResult, dict[str, Any] | None]:
     import json
 
     try:
         payload = json.loads(serialized)
     except json.JSONDecodeError as exc:
         raise StateSystemIntegrityError("State Runtime receipt JSON is invalid") from exc
-    if not isinstance(payload, dict) or payload.get("schema") != "state_runtime_child_receipt/v1":
+    if not isinstance(payload, dict) or payload.get("schema") not in {
+        "state_runtime_child_receipt/v1",
+        "state_runtime_child_receipt/v2",
+    }:
         raise StateSystemIntegrityError("State Runtime receipt schema is invalid")
     inputs = payload.get("input_references")
     configurations = payload.get("configuration_references")
@@ -610,7 +727,7 @@ def _decode_child_result(serialized: str) -> ChildExecutionResult:
         raise StateSystemIntegrityError("State Runtime receipt references are invalid")
     artifact_id = payload.get("child_artifact_id")
     artifact_hash = payload.get("child_artifact_hash")
-    return ChildExecutionResult(
+    result = ChildExecutionResult(
         child_kind=ContinuousChildKind(str(payload["child_kind"])),
         child_run_id=ArtifactId(str(payload["child_run_id"])),
         child_receipt_id=ArtifactId(str(payload["child_receipt_id"])),
@@ -628,3 +745,15 @@ def _decode_child_result(serialized: str) -> ChildExecutionResult:
             if isinstance(value, dict)
         ),
     )
+    raw_receipt_payload = payload.get("receipt_payload")
+    receipt_payload = (
+        raw_receipt_payload if isinstance(raw_receipt_payload, dict) else None
+    )
+    if payload["schema"] == "state_runtime_child_receipt/v2" and (
+        receipt_payload is None
+        or canonical_hash(receipt_payload) != result.child_receipt_hash
+    ):
+        raise StateSystemIntegrityError(
+            "State Runtime receipt payload failed hash verification"
+        )
+    return result, receipt_payload

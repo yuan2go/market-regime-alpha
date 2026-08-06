@@ -28,6 +28,7 @@ from market_regime_alpha.application.decision_system.contracts import (
     bind_decision_candidate_evidence,
 )
 from market_regime_alpha.application.decision_system.postgres_repository import (
+    DecisionSystemConflict,
     PostgresDecisionSystemRepository,
 )
 from market_regime_alpha.application.decision_system.replay import (
@@ -44,6 +45,7 @@ from market_regime_alpha.application.decision_system.runtime import (
 )
 from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,
+    state_research_pipeline_identity,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
@@ -156,10 +158,117 @@ def _runtime_lineage(claim):
         capital_state_id=_scoped_id("capital-state", claim),
         dynamic_pool_id=_scoped_id("dynamic-pool", claim),
     )
-    return bind_decision_candidate_evidence(
+    bound = bind_decision_candidate_evidence(
         base,
         (candidate(dynamic_pool_id=base.dynamic_pool_id, current_quantity=0),),
     )
+    pipeline_id, pipeline_hash = state_research_pipeline_identity(
+        run_id=claim.run_id,
+        tick_id=claim.tick_id,
+        as_of_time=AS_OF,
+        stages=tuple(
+            (stage, artifact_id, artifact_hash, AS_OF)
+            for stage, artifact_id, artifact_hash in _runtime_stage_specs(
+                claim,
+                bound,
+            )
+        ),
+    )
+    receipt_payload = _state_receipt_payload(
+        pipeline_id=pipeline_id,
+        pipeline_hash=pipeline_hash,
+        stage_specs=_runtime_stage_specs(claim, bound),
+    )
+    receipt_hash = canonical_hash(receipt_payload)
+    return replace(
+        bound,
+        state_receipt_id=ArtifactId(f"state-system-receipt:{receipt_hash[7:]}"),
+        state_receipt_hash=receipt_hash,
+    )
+
+
+def _runtime_stage_specs(claim, decision_lineage):
+    state_values = (
+        ("MARKET_REGIME", decision_lineage.market_state_id, "NEUTRAL"),
+        ("ETF_ROTATION", decision_lineage.etf_state_ids[0], "LEADERSHIP_BROAD"),
+        ("THEME_ROTATION", decision_lineage.theme_state_ids[0], "BROADENING"),
+        ("CAPITAL_STATE", decision_lineage.capital_state_id, "NEUTRAL"),
+    )
+    state_hashes = {
+        stage: canonical_hash(
+            {
+                "schema_version": "decision-test-state/v1",
+                "state_id": str(state_id),
+                "effective_state": effective,
+            }
+        )
+        for stage, state_id, effective in state_values
+    }
+    return (
+        (
+            "OBSERVATION",
+            _scoped_id("observation-bundle", claim),
+            _scoped_hash("observation-bundle", claim),
+        ),
+        (
+            "MARKET_REGIME",
+            decision_lineage.market_state_id,
+            state_hashes["MARKET_REGIME"],
+        ),
+        (
+            "ETF_ROTATION",
+            decision_lineage.etf_state_ids[0],
+            state_hashes["ETF_ROTATION"],
+        ),
+        (
+            "THEME_ROTATION",
+            decision_lineage.theme_state_ids[0],
+            state_hashes["THEME_ROTATION"],
+        ),
+        (
+            "CAPITAL_STATE",
+            decision_lineage.capital_state_id,
+            state_hashes["CAPITAL_STATE"],
+        ),
+        (
+            "DYNAMIC_POOL",
+            decision_lineage.dynamic_pool_id,
+            _scoped_hash("dynamic-pool-content", claim),
+        ),
+        (
+            "CANDIDATE",
+            decision_lineage.candidate_binding_id,
+            decision_lineage.candidate_binding_hash,
+        ),
+        (
+            "SIGNAL",
+            decision_lineage.signal_bundle_id,
+            decision_lineage.signal_bundle_hash,
+        ),
+        (
+            "FORECAST",
+            decision_lineage.forecast_bundle_id,
+            decision_lineage.forecast_bundle_hash,
+        ),
+    )
+
+
+def _state_receipt_payload(*, pipeline_id, pipeline_hash, stage_specs):
+    return {
+        "schema": "state_system_runtime_receipt/v1",
+        "request_idempotency_key": "decision-test-state-request",
+        "pipeline_artifact_id": str(pipeline_id),
+        "pipeline_artifact_hash": pipeline_hash,
+        "stage_references": [
+            {
+                "reference_kind": f"STATE_RESEARCH_{stage}",
+                "artifact_id": str(artifact_id),
+                "content_hash": artifact_hash,
+            }
+            for stage, artifact_id, artifact_hash in stage_specs
+        ],
+        "reason_codes": ["ENTRY_BLOCKED", "STATE_RESEARCH_CHAIN_COMPLETED"],
+    }
 
 
 def _request(claim, *, as_of: datetime = AS_OF) -> ChildExecutionRequest:
@@ -320,6 +429,34 @@ def _seed_state_authority(
                 ),
             )
         pool_hash = _scoped_hash("dynamic-pool-content", claim)
+        stage_specs = _runtime_stage_specs(claim, decision_lineage)
+        pipeline_id, pipeline_hash = state_research_pipeline_identity(
+            run_id=claim.run_id,
+            tick_id=claim.tick_id,
+            as_of_time=AS_OF,
+            stages=tuple(
+                (stage, artifact_id, artifact_hash, AS_OF)
+                for stage, artifact_id, artifact_hash in stage_specs
+            ),
+        )
+        receipt_payload = _state_receipt_payload(
+            pipeline_id=pipeline_id,
+            pipeline_hash=pipeline_hash,
+            stage_specs=stage_specs,
+        )
+        assert canonical_hash(receipt_payload) == decision_lineage.state_receipt_hash
+        receipt_json = {
+            "schema": "state_runtime_child_receipt/v2",
+            "child_kind": "STATE_SYSTEM",
+            "child_run_id": f"state-test-run:{claim.tick_id}",
+            "child_receipt_id": str(decision_lineage.state_receipt_id),
+            "child_receipt_hash": decision_lineage.state_receipt_hash,
+            "child_artifact_id": str(pipeline_id),
+            "child_artifact_hash": pipeline_hash,
+            "input_references": [],
+            "configuration_references": [],
+            "receipt_payload": receipt_payload,
+        }
         connection.execute(
             """
             INSERT INTO dynamic_stock_pool(
@@ -363,19 +500,8 @@ def _seed_state_authority(
                 str(decision_lineage.state_receipt_id),
                 decision_lineage.state_receipt_hash, str(claim.run_id),
                 str(claim.tick_id), str(decision_lineage.dynamic_pool_id),
-                json.dumps({"status": "COMPLETED"}), AS_OF,
+                json.dumps(receipt_json, sort_keys=True), AS_OF,
             ),
-        )
-        stage_specs = (
-            ("OBSERVATION", _scoped_id("observation-bundle", claim), _scoped_hash("observation-bundle", claim)),
-            ("MARKET_REGIME", decision_lineage.market_state_id, state_hashes["market_regime_state"]),
-            ("ETF_ROTATION", decision_lineage.etf_state_ids[0], state_hashes["etf_rotation_state"]),
-            ("THEME_ROTATION", decision_lineage.theme_state_ids[0], state_hashes["theme_rotation_state"]),
-            ("CAPITAL_STATE", decision_lineage.capital_state_id, state_hashes["capital_state"]),
-            ("DYNAMIC_POOL", decision_lineage.dynamic_pool_id, pool_hash),
-            ("CANDIDATE", decision_lineage.candidate_binding_id, decision_lineage.candidate_binding_hash),
-            ("SIGNAL", decision_lineage.signal_bundle_id, decision_lineage.signal_bundle_hash),
-            ("FORECAST", decision_lineage.forecast_bundle_id, decision_lineage.forecast_bundle_hash),
         )
         for stage, artifact_id, artifact_hash in stage_specs:
             connection.execute(
@@ -494,6 +620,39 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             imported_count = connection.execute(
                 "SELECT count(*) FROM decision_replay_import"
             ).fetchone()[0]
+            replay_migration_version = connection.execute(
+                "SELECT max(version) FROM schema_migrations"
+            ).fetchone()[0]
+        imported_artifacts = replay_repository.get_replay_artifacts(
+            first_replay.replay_session_id
+        )
+        conflicting = list(imported_artifacts)
+        conflicting[0] = {
+            **conflicting[0],
+            "content_hash": "sha256:" + "d" * 64,
+        }
+        conflicting.append(
+            {
+                "artifact_kind": "RUNTIME_INPUT",
+                "artifact_id": "rollback-only-artifact",
+                "content_hash": "sha256:" + "c" * 64,
+                "payload": {},
+            }
+        )
+        conflicting_artifacts = tuple(
+            sorted(
+                conflicting,
+                key=lambda item: (item["artifact_kind"], item["artifact_id"]),
+            )
+        )
+        with pytest.raises(DecisionSystemConflict, match="import conflict"):
+            replay_repository.import_replay_artifacts(
+                replay_session_id=first_replay.replay_session_id,
+                artifacts=conflicting_artifacts,
+            )
+        after_conflict_count = len(
+            replay_repository.get_replay_artifacts(first_replay.replay_session_id)
+        )
     finally:
         replay_factory.close()
         with psycopg.connect(database_url, autocommit=True) as connection:
@@ -504,6 +663,8 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             )
     assert first_replay == second_replay
     assert imported_count == 11
+    assert replay_migration_version == 26
+    assert after_conflict_count == imported_count
     assert first_replay.verified_authority_count == 11
     assert first_replay.reexecuted_authority_count == 4
     assert first_replay.postgres_import_verified is True

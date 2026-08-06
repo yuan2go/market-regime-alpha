@@ -4,7 +4,11 @@ from hashlib import sha256
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from psycopg.types.json import Jsonb
 
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    PostgresDecisionSystemRepository,
+)
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -15,6 +19,7 @@ from market_regime_alpha.persistence.postgres.migrator import (
     PostgresMigrator,
     load_packaged_migrations,
 )
+from tests.application.decision_system.support import observation
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
@@ -172,7 +177,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
 ) -> None:
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:25]).apply_all(postgres_factory)
-    digest = "sha256:" + "a" * 64
+    account = observation(positions=())
     with postgres_factory.connection() as connection:
         connection.execute(
             """
@@ -182,13 +187,30 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
                 source, actor, reason, notes, idempotency_key, command_hash,
                 revision, previous_observation_id, payload_json, created_at
             ) VALUES (
-                'prerelease-v1-observation', %s, 'account-a', DATE '2026-08-06',
-                TIMESTAMPTZ '2026-08-06 06:45:00+00', 100, 100, 0,
-                'MANUAL', 'tester', 'migration guard', '', 'v1-observation',
-                %s, 1, NULL, '{}'::jsonb, TIMESTAMPTZ '2026-08-06 06:45:00+00'
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
-            (digest, digest),
+            (
+                str(account.observation_id),
+                account.content_hash,
+                account.account_id,
+                account.trading_date,
+                account.as_of_time,
+                account.total_equity,
+                account.available_cash,
+                account.frozen_cash,
+                account.source,
+                account.actor,
+                account.reason,
+                account.notes,
+                account.idempotency_key,
+                account.content_hash,
+                account.revision,
+                None,
+                Jsonb(account.to_canonical_dict()),
+                account.created_at,
+            ),
         )
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
@@ -197,14 +219,11 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         applied = connection.execute(
             "SELECT max(version) FROM schema_migrations"
         ).fetchone()
-        preserved = connection.execute(
-            """
-            SELECT observation_id FROM manual_account_observation
-            WHERE observation_id = 'prerelease-v1-observation'
-            """
-        ).fetchone()
+    restored = PostgresDecisionSystemRepository(
+        postgres_factory
+    ).get_manual_observation(account.observation_id)
     assert tuple((item.version, item.name) for item in upgraded) == (
         (26, "decision_authority_hardening"),
     )
     assert applied == (26,)
-    assert preserved == ("prerelease-v1-observation",)
+    assert restored == account

@@ -22,6 +22,26 @@ ADD CONSTRAINT decision_runtime_receipt_lease_window_check CHECK (
     )
 );
 
+CREATE FUNCTION enforce_decision_runtime_receipt_v2_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.payload_json->>'schema_version'
+            IS DISTINCT FROM 'decision_runtime_receipt/v2'
+       OR NEW.lease_expires_at IS NULL THEN
+        RAISE EXCEPTION
+            'new Decision Runtime receipts require v2 payload and lease authority'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER decision_runtime_receipt_v2_insert_guard
+BEFORE INSERT ON decision_runtime_receipt
+FOR EACH ROW EXECUTE FUNCTION enforce_decision_runtime_receipt_v2_insert();
+
 ALTER TABLE daily_decision_summary
 DROP CONSTRAINT daily_decision_summary_lifecycle_state_check;
 

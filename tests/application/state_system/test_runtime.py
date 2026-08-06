@@ -13,7 +13,10 @@ from market_regime_alpha.application.continuous_research.ports import ChildExecu
 from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
-from market_regime_alpha.application.state_system.repository import StateSystemConflict
+from market_regime_alpha.application.state_system.repository import (
+    StateSystemConflict,
+    StateSystemIntegrityError,
+)
 from market_regime_alpha.application.state_system.runtime import (
     STATE_RESEARCH_STAGE_ORDER,
     OrderedStateResearchPipeline,
@@ -130,6 +133,60 @@ def test_state_runtime_receipt_is_fenced_after_pipeline_computation(
 
     with pytest.raises(StateSystemConflict, match="stale"):
         delegate.execute(_request(stale))
+
+
+def test_state_runtime_receipt_composition_is_recomputed_from_postgres(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(NOW)
+    _journal, claim = _active_claim(postgres_factory, clock)
+    request = _request(claim)
+    pipeline, _services = _pipeline()
+    delegate = StateSystemRuntimeDelegate(
+        pipeline=pipeline,
+        repository=PostgresStateSystemRepository(postgres_factory, clock=clock),
+    )
+    delegate.execute(request)
+
+    with postgres_factory.connection() as connection:
+        persisted = connection.execute(
+            """
+            SELECT (receipt_json::jsonb)->>'schema', count(stage)
+            FROM state_runtime_receipt AS receipt
+            JOIN state_research_stage_authority AS stage
+              ON stage.state_receipt_id = receipt.receipt_id
+            WHERE receipt.run_id = %s AND receipt.tick_id = %s
+            GROUP BY (receipt_json::jsonb)->>'schema'
+            """,
+            (str(request.run_id), str(request.tick_id)),
+        ).fetchone()
+        assert persisted == ("state_runtime_child_receipt/v2", 9)
+        connection.execute(
+            """
+            ALTER TABLE state_research_stage_authority
+            DISABLE TRIGGER state_research_stage_authority_no_update
+            """
+        )
+        connection.execute(
+            """
+            UPDATE state_research_stage_authority
+            SET artifact_hash = %s
+            WHERE run_id = %s AND tick_id = %s AND stage = 'FORECAST'
+            """,
+            ("sha256:" + "2" * 64, str(request.run_id), str(request.tick_id)),
+        )
+        connection.execute(
+            """
+            ALTER TABLE state_research_stage_authority
+            ENABLE TRIGGER state_research_stage_authority_no_update
+            """
+        )
+
+    with pytest.raises(
+        StateSystemIntegrityError,
+        match="composition cannot be reproduced",
+    ):
+        delegate.lookup(request)
 
 
 def test_state_runtime_rejects_future_stage_artifact() -> None:
