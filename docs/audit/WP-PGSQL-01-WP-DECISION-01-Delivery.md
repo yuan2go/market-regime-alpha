@@ -4,7 +4,7 @@
 > **Authority:** Local implementation and test evidence
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-06
-> **Evidence Commit:** `8b5007b79e83b0988466621cabe4b5557c7b4f1a`
+> **Evidence Commit:** `fbda27d9777a9b5e8ee32a6886bff42fdb30e2d3`
 > **Related Documents:** WP-PGSQL-01-SQLite-Inventory.md, ../operations/PostgreSQL-Authority-Runbook.md, ../operations/Daily-Decision-System-Runbook.md
 
 ## 1. Baseline and final checkpoint
@@ -12,13 +12,13 @@
 | Item | Start | Final implementation checkpoint |
 | --- | --- | --- |
 | Branch | `feat/continuous-research-runtime` | `feat/continuous-research-runtime` |
-| Commit | `547ddfba39df155a8b53611e1ce9200bf789de60` | `8b5007b79e83b0988466621cabe4b5557c7b4f1a` |
+| Commit | `547ddfba39df155a8b53611e1ce9200bf789de60` | `fbda27d9777a9b5e8ee32a6886bff42fdb30e2d3` |
 | Local `origin/main` | `8de820cd149278bfebbaf18f150a90f36380176d` | unchanged |
 | Python under uv | 3.12.2 | 3.12.2 |
 | uv | 0.11.7 | 0.11.7 |
 | PostgreSQL | 16.14 | 16.14 |
 | Packaged migrations | 001–023 | 001–026 |
-| Full pytest | 2,430 passed; 0 skipped; 6 warnings; 8 subtests; 241.18 s | 2,439 passed; 0 failed; 0 skipped; 6 warnings; 8 subtests; 406.61 s |
+| Full pytest | 2,430 passed; 0 skipped; 6 warnings; 8 subtests; 241.18 s | 2,441 passed; 0 failed; 0 skipped; 6 warnings; 8 subtests; 410.46 s |
 
 The database evidence used a dedicated loopback-only PostgreSQL 16 instance
 with UTF-8 encoding and per-test isolated schemas. No unknown local business
@@ -31,7 +31,8 @@ Local checkpoint commits, in order:
 3. `b6adb20` — remove backend/factory branches;
 4. `af79ad3` — replace inherited algorithms with native repositories;
 5. `ac26318` — add the PostgreSQL-only Decision closure;
-6. `8b5007b` — harden lineage, frozen authority, T+1, replay and migration behavior.
+6. `8b5007b` — harden lineage, frozen authority, T+1, replay and migration behavior;
+7. `fbda27d` — close reviewed State receipt, T+1, Replay rollback and migration-writer gaps.
 
 ## 2. SQLite removal disposition
 
@@ -78,8 +79,10 @@ Application / Domain Service
   different content fails closed.
 - Configuration rows are immutable and content-addressed. New Reconciliation,
   Proposal and Risk rows have PostgreSQL-enforced configuration references.
-- Migration 026 preserves populated prerelease v1 rows without rewriting their
-  identities; all new Runtime receipts use lease-bound v2 payloads.
+- Migration 026 preserves strictly readable prerelease account observations
+  without rewriting their identities. A PostgreSQL insert trigger blocks old
+  binaries from writing schema-less or lease-less Runtime receipts after the
+  upgrade; all new Runtime receipts must use lease-bound v2 payloads.
 - Tests use session infrastructure plus a random PostgreSQL schema per test;
   no SQLite transaction or constraint behavior is used as a substitute.
 
@@ -104,13 +107,18 @@ The Continuous composition now passes the State receipt as
 `STATE_SYSTEM_OUTPUT` and preserves the pipeline aggregate under a distinct
 reference. Multi-scope ETF/Theme stages bind the exact ordered State ID/hash/scope
 set through one canonical bundle identity; a subset or superset has a different
-identity.
+identity. The State Runtime persists a v2 receipt containing its canonical
+payload, while State recovery and Decision authority validation independently
+recompute the nine-stage pipeline ID/hash and exact stage references from
+PostgreSQL. Legacy receipts without this reproducible composition fail closed.
 
 `PositionSettlementEvidence` binds the account/AsOf scope, CN A-share trading
 calendar and per-symbol session statuses. The existing Fill projector then
 derives T+1 available/frozen quantities. Missing settlement evidence leaves a
-non-empty basic projection incomplete. It never creates or changes a Fill or
-Position.
+non-empty basic projection incomplete. Unknown or reconciliation-required
+trading-session/sellability state also marks the Fill-derived reference
+incomplete even when quantities are numeric. It never creates or changes a Fill
+or Position.
 
 Independent Risk accepts only the Proposal ID, then reloads and validates the
 Summary, Manual Observation, Reconciliation, Risk configuration, frozen Fill
@@ -120,8 +128,11 @@ authority from PostgreSQL. It recomputes the Proposal before deciding.
 Replay uses a separately migrated PostgreSQL schema. It imports the immutable
 bundle, strictly restores every versioned payload, and the replay Risk Reader
 reloads each authority from PostgreSQL before recomputation. Replay proves
-deterministic identity and local PostgreSQL integration; it is not production
-recovery qualification.
+deterministic identity, migration 026 application, idempotent import and atomic
+rollback on identity conflict. Native Runtime CAS/lease/fencing remain covered
+by PostgreSQL writer and concurrency suites rather than being simulated by
+Replay. This is local PostgreSQL integration, not production recovery
+qualification.
 
 All outputs remain `RESEARCH / MANUAL_DECISION_SUPPORT`. Summary, Manual Account,
 Reconciliation, Portfolio and Risk do not create ManualTrade, Order, Fill,
@@ -133,12 +144,12 @@ Position change or Broker call. The Entry blocker remains in place.
 | --- | --- |
 | Contracts/Readers | Strict versioned Decimal, UTC-second, NFC, identity/hash and lineage Readers for Summary, account, reconciliation, proposal, Risk, Fill authority and settlement evidence. |
 | Migration 025 | Daily Summary/candidates, Manual Account/positions, Reconciliation/differences, Proposal/lines, Risk and Runtime receipt. Its published checksum was not changed. |
-| Migration 026 | Lease-bound receipts, State-stage authority, immutable configuration, T+1 settlement evidence, frozen Fill authority, replay import and forward-only v1 preservation. |
+| Migration 026 | Lease-bound receipts, old-writer insert guard, State-stage authority, immutable configuration, T+1 settlement evidence, frozen Fill authority, replay import and forward-only readable-row preservation. |
 | Repository | Native PostgreSQL CRUD, CAS, scope locking, claim/fence validation, strict reconstruction and configuration authority checks. |
 | Runtime child | Single `DECISION_SYSTEM` child; no second scheduler or Runtime. |
 | CLI | Record/import/inspect Manual Account; reconcile; preview/finalize/inspect Summary; inspect Proposal and Risk; JSON plus CSV account input. |
-| Replay | Isolated PostgreSQL import, strict Reader restoration, deterministic Reconciliation/Portfolio/Risk re-execution and terminal verification. |
-| Tests | Window, append-only observation, reconciliation, portfolio, independent Risk, runtime, stale fence, migration, concurrency, CLI, replay, authority and T+1 PostgreSQL integration. |
+| Replay | Isolated fully migrated PostgreSQL import, strict Reader restoration, deterministic Reconciliation/Portfolio/Risk re-execution, conflict rollback and terminal verification. |
+| Tests | Window, append-only observation, reconciliation, portfolio, independent Risk, runtime, stale fence, State receipt recomputation/tamper rejection, migration, old-writer rejection, concurrency, CLI, replay, authority and T+1 PostgreSQL integration. |
 
 ## 6. Validation record
 
@@ -147,8 +158,8 @@ Position change or Broker call. The Entry blocker remains in place.
 | `uv sync --frozen --extra dev --extra postgres` | PASS |
 | `uv run python scripts/check_docs_links.py` | PASS — documentation authority, links, evidence, supersession and inventory OK |
 | `uv run pytest -q tests/scripts/test_check_docs_links.py` | PASS — 8 passed |
-| PostgreSQL Decision/State/Composition/CLI/Migration/Schema/architecture focused matrix | PASS — 89 passed |
-| `MARKET_REGIME_ALPHA_TEST_DATABASE_URL=… uv run pytest` | PASS — 2,439 passed, 0 failed, 0 skipped, 6 warnings, 8 subtests, 406.61 s |
+| PostgreSQL Decision/State/Composition/CLI/Migration/Schema/architecture focused matrix | PASS — 91 passed |
+| `MARKET_REGIME_ALPHA_TEST_DATABASE_URL=… uv run pytest` | PASS — 2,441 passed, 0 failed, 0 skipped, 6 warnings, 8 subtests, 410.46 s |
 | `uv run ruff check .` | PASS |
 | `uv run mypy` | PASS — 365 source files |
 | `uv run python -m build --outdir <isolated-temp-dir>` | PASS — sdist and wheel |
@@ -157,7 +168,7 @@ Position change or Broker call. The Entry blocker remains in place.
 
 One focused invocation initially named a nonexistent architecture-test path and
 exited before collection. It was corrected to
-`tests/architecture/test_postgres_runtime_boundaries.py`; the resulting 89-test
+`tests/architecture/test_postgres_runtime_boundaries.py`; the final 91-test
 matrix passed. This was an invocation error, not a skipped or failed test.
 
 The six full-suite warnings are existing pandas DataFrame fragmentation
