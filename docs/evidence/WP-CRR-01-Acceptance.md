@@ -63,6 +63,7 @@ formal PIT, Provider qualification, calibrated probabilities, economic value,
 Shadow readiness, authenticated operators, Entry authority, Opportunity/Order,
 real Fill, Position mutation or Broker authority.
 
-`DailyDecisionWindowSummary`, stateful Market/Theme/Capital, Dynamic Stock
-Pool, Daily Summary, Manual Account/Reconciliation, Model Registry Selector,
-economic validation and Shadow Runtime remain not delivered.
+`DailyDecisionWindowSummary`, Daily Summary, Manual Account/Reconciliation,
+Model Registry Selector, economic validation and Shadow Runtime remain not
+delivered. Stateful Market/ETF/Theme/Capital and Dynamic Pool are a later
+WP-STATE-01 child and do not expand CRR's trading authority.

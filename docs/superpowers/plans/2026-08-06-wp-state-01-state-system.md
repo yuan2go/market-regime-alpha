@@ -35,8 +35,8 @@
 - [x] Add failing temporal/provider/scheduler/fencing tests.
 - [x] Derive phase from policy and fail closed on future Evidence.
 - [x] Persist failed/invalid Attempts and durable schedule reservation/recovery.
-- [ ] Run CRR PostgreSQL, SQLite compatibility and exact migration gates.
-- [ ] Commit `audit(crr): harden continuous runtime authority`.
+- [x] Run CRR PostgreSQL, SQLite compatibility and exact migration gates.
+- [x] Commit `audit(crr): harden continuous runtime authority`.
 
 ### Task 2: Versioned state contracts and configuration
 
@@ -44,10 +44,10 @@
 
 **Interfaces:** `StateLineage`, four domain configurations and canonical identity round trips.
 
-- [ ] Write failing round-trip, tamper, future-time and unversioned-threshold tests.
-- [ ] Implement immutable lineage, threshold and policy contracts.
-- [ ] Run focused tests, Ruff and mypy.
-- [ ] Commit `feat(state): add state transition contracts`.
+- [x] Write failing round-trip, tamper, future-time and unversioned-threshold tests.
+- [x] Implement immutable lineage, threshold and policy contracts.
+- [x] Run focused tests, Ruff and mypy.
+- [x] Commit `feat(state): add state transition contracts`.
 
 ### Task 3: Stateful Market Regime
 
@@ -55,10 +55,10 @@
 
 **Interfaces:** `evaluate_market_state(observation, previous, configuration) -> MarketStateEvaluation`.
 
-- [ ] Test initial, pulse, confirmation, dwell, enter/exit, hysteresis, counter evidence, insufficient data and replay.
-- [ ] Implement additive V0-observation adapter and deterministic evaluator.
-- [ ] Verify Market State never grants Entry/Broker authority.
-- [ ] Commit `feat(state): implement stateful market regime`.
+- [x] Test initial, pulse, confirmation, dwell, enter/exit, hysteresis, counter evidence, insufficient data and replay.
+- [x] Implement additive V0-observation adapter and deterministic evaluator.
+- [x] Verify Market State never grants Entry/Broker authority.
+- [x] Commit `feat(state): implement stateful market regime`.
 
 ### Task 4: ETF and Theme Rotation
 
@@ -66,11 +66,11 @@
 
 **Interfaces:** separate `evaluate_etf_rotation` and `evaluate_theme_rotation` functions and domain types.
 
-- [ ] Test ETF pulse/resonance/persistence/liquidity and lifecycle transitions.
-- [ ] Implement ETF observation scoring and transition policy.
-- [ ] Test many-to-many mapping, breadth/leader conflicts, incomplete mapping, hysteresis and replay.
-- [ ] Implement Theme-specific aggregation and transition policy.
-- [ ] Commit `feat(rotation): implement ETF and theme rotation states`.
+- [x] Test ETF pulse/resonance/persistence/liquidity and lifecycle transitions.
+- [x] Implement ETF observation scoring and transition policy.
+- [x] Test many-to-many mapping, breadth/leader conflicts, incomplete mapping, hysteresis and replay.
+- [x] Implement Theme-specific aggregation and transition policy.
+- [x] Commit `feat(rotation): implement ETF and theme rotation states`.
 
 ### Task 5: Capital State
 
@@ -78,10 +78,10 @@
 
 **Interfaces:** `evaluate_capital_state` returning proxy-only state and transition.
 
-- [ ] Test four bias states, counter evidence, coverage and replay.
-- [ ] Test forbidden institutional assertions are absent.
-- [ ] Implement deterministic proxy inference.
-- [ ] Commit `feat(capital): implement stateful capital inference`.
+- [x] Test four bias states, counter evidence, coverage and replay.
+- [x] Test forbidden institutional assertions are absent.
+- [x] Implement deterministic proxy inference.
+- [x] Commit `feat(capital): implement stateful capital inference`.
 
 ### Task 6: Dynamic Stock Pool and persistence
 
@@ -89,12 +89,12 @@
 
 **Interfaces:** `evaluate_dynamic_pool` and repository `append_evaluation/read/latest` seams.
 
-- [ ] Test initial/add/remove/no-change/Eligibility/rotation/materiality/future-state/replay.
-- [ ] Implement immutable Pool and full member/change records.
-- [ ] Add migration 022, schema verification and empty-database/020-upgrade tests.
-- [ ] Implement PostgreSQL fenced CAS and concurrent-create tests.
-- [ ] Implement explicit SQLite parity and restart recovery.
-- [ ] Commit `feat(universe): add dynamic stock pool authority`.
+- [x] Test initial/add/remove/no-change/Eligibility/rotation/materiality/future-state/replay.
+- [x] Implement immutable Pool and full member/change records.
+- [x] Add migration 022, schema verification and empty-database/020-upgrade tests.
+- [x] Implement PostgreSQL fenced CAS and concurrent-create tests.
+- [x] Implement explicit SQLite parity and restart recovery.
+- [x] Commit `feat(universe): add dynamic stock pool authority`.
 
 ### Task 7: Candidate, Signal and Forecast binding
 
@@ -102,11 +102,11 @@
 
 **Interfaces:** `bind_candidate_set`, `project_signal_v4`, `project_empirical_forecast_v2`, and lineage-exposure audit.
 
-- [ ] Test correct Pool/full cross section/identity reuse/AvailableAt gate.
-- [ ] Test new Signal uses `factor_coverage` and legacy Reader remains compatible.
-- [ ] Test Forecast is uncalibrated, probability-free and fail closed without samples.
-- [ ] Implement additive versioned projections around existing services.
-- [ ] Commit `feat(research): bind candidate signal forecast to state and pool`.
+- [x] Test correct Pool/full cross section/identity reuse/AvailableAt gate.
+- [x] Test new Signal uses `factor_coverage` and legacy Reader remains compatible.
+- [x] Test Forecast is uncalibrated, probability-free and fail closed without samples.
+- [x] Implement additive versioned projections around existing services.
+- [x] Commit `feat(research): bind candidate signal forecast to state and pool`.
 
 ### Task 8: Continuous Runtime integration and authority coverage
 
@@ -114,16 +114,16 @@
 
 **Interfaces:** one material-change child call producing a `StateRuntimeReceipt`; no-change returns prior identities without service calls.
 
-- [ ] Test Evidence-to-Forecast order, no-change suppression, restart and stale fence.
-- [ ] Test no Daily Summary/Opportunity/Order/Fill/Position/Broker symbols are invoked.
-- [ ] Run PostgreSQL concurrency, SQLite replay and real free-data smoke attempt.
-- [ ] Commit `test(state): add replay concurrency and authority coverage`.
+- [x] Test Evidence-to-Forecast order, no-change suppression, restart and stale fence.
+- [x] Test no Daily Summary/Opportunity/Order/Fill/Position/Broker symbols are invoked.
+- [x] Run PostgreSQL concurrency, SQLite replay and real free-data smoke attempt.
+- [x] Commit `test(state): add replay concurrency and authority coverage`.
 
 ### Task 9: Documentation and final gate
 
 **Files:** roadmap WP, runbook, Current State, Capability Matrix, Gap Register and delivery evidence.
 
-- [ ] Record actual call/state diagrams, migrations, tests and evidence ceiling.
+- [x] Record actual call/state diagrams, migrations, tests and evidence ceiling.
 - [ ] Run docs, full pytest with PostgreSQL, Ruff, mypy, build and diff checks.
 - [ ] Bind evidence to final local SHA and leave Worktree clean.
 - [ ] Commit `docs(state): add WP-STATE-01 design runbook and evidence`.

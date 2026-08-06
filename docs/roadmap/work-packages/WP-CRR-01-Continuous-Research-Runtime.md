@@ -79,9 +79,10 @@ only missing CRR lineage rows.
 
 ## 6. Explicit non-goals and future packages
 
-The following are not delivered: `DailyDecisionWindowSummary`, stateful
-Market/Theme/Capital machines, Dynamic Stock Pool, Daily Summary, Manual
-Account, Reconciliation, Model Registry Selector, economic validation, Shadow
+WP-CRR-01 itself did not deliver the later WP-STATE-01 state machines; those are
+an additive Continuous child and do not change this package's authority. The
+following remain not delivered: `DailyDecisionWindowSummary`, Daily Summary,
+Manual Account, Reconciliation, Model Registry Selector, economic validation, Shadow
 Runtime process supervision, authenticated operators, formal PIT
 qualification, qualified Alpha, Opportunity/Order creation, QMT/PTrade/Broker
 integration, real Fill or Position mutation.

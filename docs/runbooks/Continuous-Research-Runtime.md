@@ -94,12 +94,15 @@ Construct `ContinuousResearchTickRunner` with:
 
 - `PostgresContinuousResearchJournal`;
 - a `ProviderAcquisitionPort` implemented by the existing FreeData preparation adapter; and
-- `ExistingResearchServiceComposition` delegates for Daily Dataset, Feature Materialization, Controlled Operation and Canonical Lifecycle.
+- `ExistingResearchServiceComposition` delegates for Daily Dataset, Feature Materialization, State System, Controlled Operation and Canonical Lifecycle.
 - the exact content-addressed `ContinuousDecisionWindowPolicy` selected by the run.
 
 Invoke one `execute(...)` call for one admitted tick. Do not wrap external
 calls in a database transaction. Existing child delegates must provide durable
-idempotent lookup before execution.
+idempotent lookup before execution. The ordered State child consumes the
+Feature receipt and publishes State/Pool/Candidate/Signal/Forecast references
+before the Controlled and Canonical delegates. It is not a second scheduler;
+see [Stateful Research Runtime](Stateful-Research-Runtime.md).
 The Runner derives session phase from policy and Tick time. A child final-write
 path must validate the Claim ID, fencing token, Tick version and unexpired
 Lease supplied in `ChildExecutionRequest`; those recovery values do not change

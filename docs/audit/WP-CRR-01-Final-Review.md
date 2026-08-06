@@ -78,6 +78,7 @@ ContinuousResearchSchedule (PostgreSQL projection)
             -> existing root research operation
               -> Dataset receipt
               -> Feature receipt
+              -> State/Pool/Candidate/Signal/Forecast receipt
               -> Controlled receipt
               -> Canonical receipt
             -> RuntimeTickReceipt

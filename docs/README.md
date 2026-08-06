@@ -135,6 +135,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-STATE-01 Stateful Research System Design](superpowers/specs/2026-08-06-wp-state-01-state-system-design.md)
 - [WP-STATE-01 State System Implementation Plan](superpowers/plans/2026-08-06-wp-state-01-state-system.md)
 - [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
+- [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
 - [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
 - [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
@@ -144,6 +145,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Production Decision Lifecycle Runbook](operations/Production-Decision-Lifecycle-Runbook.md)
 - [PostgreSQL Authority Runbook](operations/PostgreSQL-Authority-Runbook.md)
 - [Continuous Research Runtime Runbook](runbooks/Continuous-Research-Runtime.md)
+- [Stateful Research Runtime Runbook](runbooks/Stateful-Research-Runtime.md)
 - [Claude Code Production Decision Lifecycle Master Prompt](prompts/Claude-Code-Production-Decision-Lifecycle.md)
 
 ### Current status
@@ -167,6 +169,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-CRR-01 CRR-00 Baseline and Write Authority](audit/WP-CRR-01-CRR-00-Baseline.md)
 - [WP-CRR-01 Final Review](audit/WP-CRR-01-Final-Review.md)
 - [WP-CRR-01 Acceptance Evidence](evidence/WP-CRR-01-Acceptance.md)
+- [WP-STATE-01 Acceptance Evidence](evidence/WP-STATE-01-Acceptance.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)

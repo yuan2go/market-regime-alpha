@@ -80,8 +80,20 @@ Controlled and Canonical child receipts. Its bounded Runner recovers across
 Lease expiry and durable boundaries without creating a second research chain.
 The additive 14:30–14:55 policy exposes `DECISION_WINDOW_OPEN` without changing
 historical fixed-14:55 Target/Reader/Replay semantics. Evidence is local and
-fixture-based; production scheduling, formal PIT, economic validation, Shadow,
+fixture-based; deployed authenticated scheduling, formal PIT, economic validation, Shadow,
 Entry and Broker authority remain absent.
+
+WP-STATE-01 adds one ordered `STATE_SYSTEM` child beneath that parent. Four
+domain-specific evaluators persist Observation, proposed/effective State and
+Transition Artifacts with versioned thresholds, confirmation, dwell,
+hysteresis, coverage and counter evidence. An immutable Dynamic Stock Pool
+retains the complete included/excluded cross section and is the only Pool fact
+accepted by the new Candidate binding. New Signal writes use
+`factor_coverage`; empirical Forecast remains `NOT_CALIBRATED`. PostgreSQL
+migration 022 provides fenced/CAS State and Pool authority, migration 023 adds
+the child kind, and SQLite remains explicit replay compatibility. All evidence
+is local engineering evidence; live free data, formal PIT/OOS, Shadow, Entry and
+Broker authority remain absent.
 
 ## 2. Current stage
 
@@ -127,6 +139,12 @@ CONTINUOUS_RESEARCH_POSTGRESQL_JOURNAL_MIGRATION_020_IMPLEMENTED
 CONTINUOUS_PROVIDER_ATTEMPT_AND_LAST_VALID_EVIDENCE_ISOLATION_IMPLEMENTED
 CONTINUOUS_NO_MATERIAL_CHANGE_IDENTITY_REUSE_IMPLEMENTED
 CONTINUOUS_DECISION_WINDOW_1430_TO_1455_ADDITIVE_POLICY_IMPLEMENTED
+STATEFUL_MARKET_ETF_THEME_CAPITAL_IMPLEMENTED_LOCAL_ENGINEERING_CHECKPOINT
+DYNAMIC_STOCK_POOL_POSTGRES_DEFAULT_SQLITE_COMPAT_IMPLEMENTED
+STATE_BOUND_CANDIDATE_SIGNAL_FORECAST_IMPLEMENTED_RESEARCH_ONLY
+SIGNAL_V4_FACTOR_COVERAGE_NOT_PREDICTIVE_CONFIDENCE
+PATH_FORECAST_V2_EMPIRICAL_NOT_CALIBRATED
+STATE_SYSTEM_MIGRATIONS_022_AND_023_IMPLEMENTED
 DAILY_DECISION_WINDOW_SUMMARY_NOT_IMPLEMENTED
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
@@ -138,7 +156,7 @@ PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 POSTGRESQL_DEFAULT_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
 SQLITE_EXPLICIT_COMPATIBILITY_AND_IMPORT_ONLY
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_020_APPLIED_LOCAL
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_023_APPLIED_LOCAL
 SQLITE_TO_POSTGRES_SCHEMA_ONLY_IMPORT_0_TO_0_VERIFIED
 ```
 
@@ -508,7 +526,24 @@ observed at real wall-clock 14:55. Tencent remains exploratory, formal PIT and
 OOS Alpha are not established, PathForecast has no Sample Authority, Entry is
 blocked, and Shadow/Production/Trading Authority remain `NO`.
 
-### 3.9 PostgreSQL free-data canonical composition
+### 3.18 Stateful research and Dynamic Stock Pool
+
+The WP-STATE-01 branch preserves V0 snapshots while adding deterministic Market,
+ETF Rotation, Theme Rotation and Capital lifecycle State. Every State binds its
+previous identity, persisted Observation, Model/configuration versions, source
+Artifacts, Continuous parent/Tick and availability time. Theme mapping is
+explicit and many-to-many; Capital language remains observable-proxy inference.
+
+The Dynamic Pool applies Rotation/dwell/coverage/Eligibility/materiality gates,
+stores the full member cross section and reuses identity on no material change.
+Candidate requires that Pool and every effective State ID. New Signal writes
+`factor_coverage`; Forecast remains empirical, uncalibrated and fail closed
+without samples. The ordered State child runs only after canonical Feature
+materialization and before the existing Controlled/Canonical delegates. It owns
+no Provider or scheduler and creates no Opportunity, Order, Fill, Position or
+Broker action.
+
+### 3.19 PostgreSQL free-data canonical composition
 
 The current development branch adds `TENCENT_FREE_OPERATIONAL_V1` as an
 explicit no-fallback profile and composes existing authorities rather than

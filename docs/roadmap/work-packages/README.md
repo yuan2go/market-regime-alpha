@@ -46,6 +46,7 @@ exploratory mechanics are not reopened by that work.
 - [WP-PDL — Production Decision Lifecycle](WP-PDL-Production-Decision-Lifecycle.md)
 - [WP-PDL-HARDENING — Production Lifecycle Hardening and Shadow Readiness](WP-PDL-Hardening-and-Shadow-Readiness.md)
 - [WP-CRR-01 — Continuous Research Runtime](WP-CRR-01-Continuous-Research-Runtime.md)
+- [WP-STATE-01 — Stateful Research System and Dynamic Stock Pool](WP-STATE-01-Stateful-Research-System.md)
 
 WP-PAV2 reuses delivered Phase D evidence and Candidate identities. WP-PDL
 delivered the dependency-ordered engineering chain from operational evidence
