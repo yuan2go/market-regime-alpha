@@ -1,43 +1,50 @@
-"""PostgreSQL Feature Materialization run authority."""
+"""Native PostgreSQL authority for recoverable Feature Materialization runs."""
 
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 import json
-import sqlite3
-from typing import Callable, Iterator, cast
+from typing import Any, Callable, Iterator, Mapping
+from uuid import uuid4
 
+from market_regime_alpha.evidence.canonical import (
+    canonical_json,
+    require_sha256,
+    require_text,
+)
 from market_regime_alpha.features.materialization_run import (
     ClaimedFeatureMaterializationTask,
     DEFAULT_FEATURE_TASK_LEASE,
+    FeatureMaterializationExecutionMode,
+    FeatureMaterializationRunSnapshot,
+    FeatureMaterializationRunStatus,
+    FeatureMaterializationTaskSpec,
     FeatureMaterializationTaskStatus,
-    SQLiteFeatureMaterializationRunRepository,
 )
 from market_regime_alpha.features.v2_contracts import FeatureMaterializationReceipt
+from market_regime_alpha.market_data import Timeframe
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
-from market_regime_alpha.persistence.postgres.dbapi import (
-    PostgresDBAPIConnection,
-)
-from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
-from market_regime_alpha.persistence.postgres.schema import (
-    verify_postgres_authority_schema,
+from market_regime_alpha.persistence.postgres.native_repository import (
+    NativePostgresRepository,
+    PostgresConnection,
+    acquire_scope_lock,
 )
 
 
+FEATURE_MATERIALIZATION_RUN_SCHEMA = "feature-materialization-run-postgres-v1"
 Clock = Callable[[], datetime]
 
 
 def _utc_now() -> datetime:
-    from datetime import timezone
-
     return datetime.now(timezone.utc)
 
 
-class PostgresFeatureMaterializationRunRepository(SQLiteFeatureMaterializationRunRepository):
-    """Feature run/task leases backed by PostgreSQL fencing constraints."""
+class PostgresFeatureMaterializationRunRepository(NativePostgresRepository):
+    """Run/task authority with leases and token/epoch/version fencing."""
 
     def __init__(
         self,
@@ -46,22 +53,135 @@ class PostgresFeatureMaterializationRunRepository(SQLiteFeatureMaterializationRu
         clock: Clock = _utc_now,
         lease_duration: timedelta = DEFAULT_FEATURE_TASK_LEASE,
     ) -> None:
-        if not isinstance(factory, PostgresConnectionFactory):
-            raise TypeError("factory must be a PostgresConnectionFactory")
         if not callable(clock):
             raise TypeError("clock must be callable")
         if not isinstance(lease_duration, timedelta) or lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        self._postgres_factory = factory
         self._clock = clock
         self._lease_duration = lease_duration
-        PostgresMigrator().apply_all(factory)
-        with factory.connection(read_only=True) as connection:
-            verify_postgres_authority_schema(connection)
+        super().__init__(factory)
 
-    def _connect(self) -> sqlite3.Connection:
-        bridge = PostgresDBAPIConnection.acquire(self._postgres_factory)
-        return cast(sqlite3.Connection, bridge)
+    def prepare(
+        self,
+        *,
+        idempotency_key: str,
+        command_hash: str,
+        tasks: tuple[FeatureMaterializationTaskSpec, ...],
+        mode: FeatureMaterializationExecutionMode,
+    ) -> FeatureMaterializationRunSnapshot:
+        require_text("idempotency_key", idempotency_key)
+        require_sha256("command_hash", command_hash)
+        task_keys = tuple(sorted(item.task_key for item in tasks))
+        if not tasks or task_keys != tuple(sorted(set(task_keys))):
+            raise ValueError("materialization tasks must be non-empty and unique")
+        with self._immediate() as connection:
+            acquire_scope_lock(
+                connection,
+                namespace="feature-materialization-run",
+                identity=idempotency_key,
+            )
+            row = connection.execute(
+                "SELECT run_id, command_hash, status FROM feature_materialization_run "
+                "WHERE idempotency_key = %s",
+                (idempotency_key,),
+            ).fetchone()
+            if row is None:
+                if mode is not FeatureMaterializationExecutionMode.START_NEW:
+                    raise ValueError("Feature materialization run does not exist")
+                now = self._now_text()
+                cursor = connection.execute(
+                    "INSERT INTO feature_materialization_run "
+                    "(schema_version, idempotency_key, command_hash, status, version, "
+                    "created_at, updated_at) VALUES (%s, %s, %s, %s, 1, %s, %s) "
+                    "RETURNING run_id",
+                    (
+                        FEATURE_MATERIALIZATION_RUN_SCHEMA,
+                        idempotency_key,
+                        command_hash,
+                        FeatureMaterializationRunStatus.RUNNING.value,
+                        now,
+                        now,
+                    ),
+                )
+                inserted = cursor.fetchone()
+                if inserted is None:
+                    raise RuntimeError(
+                        "Feature materialization run insert returned no identity"
+                    )
+                run_id = int(inserted["run_id"])
+                with connection.cursor() as task_cursor:
+                    task_cursor.executemany(
+                        "INSERT INTO feature_materialization_task "
+                        "(run_id, task_key, symbol, feature_id, timeframe, status, "
+                        "version, claim_epoch) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, 1, 0)",
+                        (
+                            (
+                                run_id,
+                                item.task_key,
+                                item.symbol,
+                                item.feature_id,
+                                item.timeframe.value,
+                                FeatureMaterializationTaskStatus.PENDING.value,
+                            )
+                            for item in tasks
+                        ),
+                    )
+                self._event(
+                    connection,
+                    run_id=run_id,
+                    event_type="RUN_CREATED",
+                    payload={"task_count": len(tasks), "mode": mode.value},
+                )
+            else:
+                run_id = int(row["run_id"])
+                if str(row["command_hash"]) != command_hash:
+                    raise ValueError("idempotency key semantic conflict")
+                if mode is FeatureMaterializationExecutionMode.START_NEW:
+                    raise ValueError("Feature materialization run already exists")
+                stored_keys = tuple(
+                    str(item["task_key"])
+                    for item in connection.execute(
+                        "SELECT task_key FROM feature_materialization_task "
+                        "WHERE run_id = %s ORDER BY task_key",
+                        (run_id,),
+                    )
+                )
+                if stored_keys != task_keys:
+                    raise ValueError("Feature materialization task scope conflict")
+                status = FeatureMaterializationRunStatus(str(row["status"]))
+                if mode is FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE:
+                    if status is not FeatureMaterializationRunStatus.COMPLETE:
+                        raise ValueError("Feature materialization run is not complete")
+                elif status is FeatureMaterializationRunStatus.COMPLETE:
+                    raise ValueError("completed run cannot be resumed")
+                else:
+                    self._recover_expired(connection, run_id=run_id)
+                    connection.execute(
+                        "UPDATE feature_materialization_run SET status = %s, "
+                        "version = version + 1, updated_at = %s WHERE run_id = %s",
+                        (
+                            FeatureMaterializationRunStatus.RUNNING.value,
+                            self._now_text(),
+                            run_id,
+                        ),
+                    )
+                    self._event(
+                        connection,
+                        run_id=run_id,
+                        event_type="RUN_RESUMED",
+                        payload={"mode": mode.value},
+                    )
+        return self.snapshot(run_id)
+
+    def claim_next(
+        self,
+        *,
+        run_id: int,
+        stale_after: timedelta | None = None,
+    ) -> ClaimedFeatureMaterializationTask | None:
+        claims = self.claim_batch(run_id=run_id, limit=1, stale_after=stale_after)
+        return claims[0] if claims else None
 
     def claim_batch(
         self,
@@ -70,13 +190,11 @@ class PostgresFeatureMaterializationRunRepository(SQLiteFeatureMaterializationRu
         limit: int,
         stale_after: timedelta | None = None,
     ) -> tuple[ClaimedFeatureMaterializationTask, ...]:
-        """Claim distinct PostgreSQL queue rows without blocking other workers."""
-
         if isinstance(limit, bool) or not 1 <= limit <= 256:
             raise ValueError("claim batch limit must be between one and 256")
         if stale_after is not None and stale_after <= timedelta(0):
             raise ValueError("stale_after must be positive")
-        with self._postgres_immediate() as connection:
+        with self._immediate() as connection:
             self._recover_expired(
                 connection,
                 run_id=run_id,
@@ -86,8 +204,8 @@ class PostgresFeatureMaterializationRunRepository(SQLiteFeatureMaterializationRu
                 connection.execute(
                     "SELECT task_key, symbol, feature_id, timeframe, version, "
                     "claim_epoch FROM feature_materialization_task "
-                    "WHERE run_id = ? AND status IN (?, ?) "
-                    "ORDER BY task_key LIMIT ? FOR UPDATE SKIP LOCKED",
+                    "WHERE run_id = %s AND status IN (%s, %s) "
+                    "ORDER BY task_key LIMIT %s FOR UPDATE SKIP LOCKED",
                     (
                         run_id,
                         FeatureMaterializationTaskStatus.PENDING.value,
@@ -96,33 +214,593 @@ class PostgresFeatureMaterializationRunRepository(SQLiteFeatureMaterializationRu
                     ),
                 )
             )
-            return tuple(self._claim_row(connection, run_id=run_id, row=row) for row in rows)
+            claims: list[ClaimedFeatureMaterializationTask] = []
+            for row in rows:
+                claims.append(self._claim_row(connection, run_id=run_id, row=row))
+            return tuple(claims)
 
-    @contextmanager
-    def _postgres_immediate(self) -> Iterator[sqlite3.Connection]:
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN")
-            yield connection
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+    def heartbeat(
+        self, claim: ClaimedFeatureMaterializationTask
+    ) -> ClaimedFeatureMaterializationTask:
+        now = self._now()
+        expires = now + self._lease_duration
+        with self._immediate() as connection:
+            cursor = connection.execute(
+                "UPDATE feature_materialization_task SET version = version + 1, "
+                "heartbeat_at = %s, lease_expires_at = %s WHERE run_id = %s "
+                "AND task_key = %s AND status = %s AND claim_token = %s "
+                "AND claim_epoch = %s AND version = %s AND lease_expires_at > %s",
+                (
+                    self._format_time(now),
+                    self._format_time(expires),
+                    claim.run_id,
+                    claim.task_key,
+                    FeatureMaterializationTaskStatus.IN_PROGRESS.value,
+                    claim.claim_token,
+                    claim.claim_epoch,
+                    claim.task_version,
+                    self._format_time(now),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("stale Feature materialization task writer rejected")
+            next_version = claim.task_version + 1
+            attempt = connection.execute(
+                "UPDATE feature_materialization_attempt SET task_version = %s, "
+                "heartbeat_at = %s, lease_expires_at = %s WHERE run_id = %s "
+                "AND task_key = %s AND attempt_number = %s AND claim_token = %s "
+                "AND claim_epoch = %s AND status = 'STARTED'",
+                (
+                    next_version,
+                    self._format_time(now),
+                    self._format_time(expires),
+                    claim.run_id,
+                    claim.task_key,
+                    claim.attempt_number,
+                    claim.claim_token,
+                    claim.claim_epoch,
+                ),
+            )
+            if attempt.rowcount != 1:
+                raise ValueError("Feature materialization attempt CAS failed")
+            self._event(
+                connection,
+                run_id=claim.run_id,
+                task_key=claim.task_key,
+                event_type="TASK_HEARTBEAT",
+                payload={
+                    "claim_epoch": claim.claim_epoch,
+                    "task_version": next_version,
+                    "lease_expires_at": self._format_time(expires),
+                },
+            )
+        return replace(
+            claim,
+            task_version=next_version,
+            heartbeat_at=now,
+            lease_expires_at=expires,
+        )
 
-    def receipts(self) -> tuple[FeatureMaterializationReceipt, ...]:
-        """Return immutable child receipts for network-free replay lookup."""
+    def complete_task(
+        self,
+        claim: ClaimedFeatureMaterializationTask,
+        *,
+        artifact_id: str,
+        artifact_hash: str,
+        publication_reused: bool = False,
+    ) -> None:
+        require_text("artifact_id", artifact_id)
+        require_sha256("artifact_hash", artifact_hash)
+        with self._immediate() as connection:
+            cursor = connection.execute(
+                "UPDATE feature_materialization_task SET status = %s, "
+                "version = version + 1, claim_token = NULL, claimed_at = NULL, "
+                "lease_acquired_at = NULL, lease_expires_at = NULL, heartbeat_at = NULL, "
+                "artifact_id = %s, artifact_hash = %s WHERE run_id = %s AND task_key = %s "
+                "AND status = %s AND claim_token = %s AND claim_epoch = %s AND version = %s",
+                (
+                    FeatureMaterializationTaskStatus.COMPLETE.value,
+                    artifact_id,
+                    artifact_hash,
+                    claim.run_id,
+                    claim.task_key,
+                    FeatureMaterializationTaskStatus.IN_PROGRESS.value,
+                    claim.claim_token,
+                    claim.claim_epoch,
+                    claim.task_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("stale Feature materialization task writer rejected")
+            self._complete_attempt(
+                connection,
+                claim=claim,
+                status="COMPLETE",
+                error=None,
+            )
+            self._event(
+                connection,
+                run_id=claim.run_id,
+                task_key=claim.task_key,
+                event_type="TASK_COMPLETED",
+                payload={
+                    "artifact_id": artifact_id,
+                    "artifact_hash": artifact_hash,
+                    "claim_epoch": claim.claim_epoch,
+                    "task_version": claim.task_version,
+                    "publication_reused": publication_reused,
+                },
+            )
+
+    def fail_task(
+        self,
+        claim: ClaimedFeatureMaterializationTask,
+        *,
+        error_message: str,
+    ) -> None:
+        require_text("error_message", error_message)
+        with self._immediate() as connection:
+            cursor = connection.execute(
+                "UPDATE feature_materialization_task SET status = %s, "
+                "version = version + 1, claim_token = NULL, claimed_at = NULL, "
+                "lease_acquired_at = NULL, lease_expires_at = NULL, heartbeat_at = NULL, "
+                "last_error = %s WHERE run_id = %s AND task_key = %s AND status = %s "
+                "AND claim_token = %s AND claim_epoch = %s AND version = %s",
+                (
+                    FeatureMaterializationTaskStatus.FAILED.value,
+                    error_message,
+                    claim.run_id,
+                    claim.task_key,
+                    FeatureMaterializationTaskStatus.IN_PROGRESS.value,
+                    claim.claim_token,
+                    claim.claim_epoch,
+                    claim.task_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("stale Feature materialization task writer rejected")
+            self._complete_attempt(
+                connection,
+                claim=claim,
+                status="FAILED",
+                error=error_message,
+            )
+            connection.execute(
+                "UPDATE feature_materialization_run SET status = %s, "
+                "version = version + 1, updated_at = %s WHERE run_id = %s",
+                (
+                    FeatureMaterializationRunStatus.FAILED.value,
+                    self._now_text(),
+                    claim.run_id,
+                ),
+            )
+            self._event(
+                connection,
+                run_id=claim.run_id,
+                task_key=claim.task_key,
+                event_type="TASK_FAILED",
+                payload={
+                    "error_message": error_message,
+                    "claim_epoch": claim.claim_epoch,
+                    "task_version": claim.task_version,
+                },
+            )
+
+    def finalize(
+        self,
+        *,
+        run_id: int,
+        receipt: FeatureMaterializationReceipt,
+    ) -> None:
+        receipt.verify_identity()
+        with self._immediate() as connection:
+            incomplete_row = connection.execute(
+                "SELECT COUNT(*) AS count FROM feature_materialization_task "
+                "WHERE run_id = %s AND status != %s",
+                (run_id, FeatureMaterializationTaskStatus.COMPLETE.value),
+            ).fetchone()
+            if incomplete_row is None:
+                raise RuntimeError("Feature materialization count returned no row")
+            incomplete = int(incomplete_row["count"])
+            if incomplete:
+                raise ValueError("Feature materialization run has incomplete tasks")
+            existing = connection.execute(
+                "SELECT receipt_hash FROM feature_materialization_receipt WHERE run_id = %s",
+                (run_id,),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["receipt_hash"]) != receipt.content_hash:
+                    raise ValueError(
+                        "completed Feature materialization receipt is immutable"
+                    )
+                return
+            connection.execute(
+                "INSERT INTO feature_materialization_receipt "
+                "(run_id, receipt_id, receipt_hash, receipt_json, created_at) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (
+                    run_id,
+                    str(receipt.receipt_id),
+                    receipt.content_hash,
+                    canonical_json(receipt.to_canonical_dict()),
+                    self._now_text(),
+                ),
+            )
+            connection.execute(
+                "UPDATE feature_materialization_run SET status = %s, "
+                "version = version + 1, updated_at = %s WHERE run_id = %s",
+                (
+                    FeatureMaterializationRunStatus.COMPLETE.value,
+                    self._now_text(),
+                    run_id,
+                ),
+            )
+            self._event(
+                connection,
+                run_id=run_id,
+                event_type="RUN_COMPLETED",
+                payload={
+                    "receipt_id": str(receipt.receipt_id),
+                    "receipt_hash": receipt.content_hash,
+                },
+            )
+
+    def completed_artifacts(self, run_id: int) -> tuple[tuple[str, str], ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT artifact_id, artifact_hash FROM feature_materialization_task "
+                "WHERE run_id = %s AND status = %s ORDER BY task_key",
+                (run_id, FeatureMaterializationTaskStatus.COMPLETE.value),
+            )
+            return tuple(
+                (str(row["artifact_id"]), str(row["artifact_hash"]))
+                for row in rows
+            )
+
+    def record_bundle_published(
+        self,
+        *,
+        run_id: int,
+        bundle_id: str,
+        bundle_hash: str,
+    ) -> None:
+        require_text("bundle_id", bundle_id)
+        require_sha256("bundle_hash", bundle_hash)
+        with self._immediate() as connection:
+            run = connection.execute(
+                "SELECT status FROM feature_materialization_run WHERE run_id = %s",
+                (run_id,),
+            ).fetchone()
+            if run is None or str(run["status"]) == FeatureMaterializationRunStatus.COMPLETE.value:
+                raise ValueError("Feature materialization run rejects Bundle publication event")
+            self._event(
+                connection,
+                run_id=run_id,
+                event_type="BUNDLE_PUBLISHED",
+                payload={"bundle_id": bundle_id, "bundle_hash": bundle_hash},
+            )
+
+    def snapshot(self, run_id: int) -> FeatureMaterializationRunSnapshot:
+        """Read run, tasks, receipt, and events in one PostgreSQL snapshot."""
 
         with self._connect() as connection:
-            rows = connection.execute("SELECT receipt_json FROM feature_materialization_receipt ORDER BY run_id")
-            receipts = []
-            for row in rows:
-                payload = json.loads(str(row["receipt_json"]))
-                if not isinstance(payload, dict):
-                    raise ValueError("stored Feature materialization receipt is invalid")
-                receipts.append(FeatureMaterializationReceipt.from_canonical_dict(payload))
-            return tuple(receipts)
+            connection.execute("BEGIN")
+            run = connection.execute(
+                "SELECT * FROM feature_materialization_run WHERE run_id = %s",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise ValueError("Feature materialization run does not exist")
+            tasks = tuple(
+                (
+                    str(item["task_key"]),
+                    FeatureMaterializationTaskStatus(str(item["status"])),
+                    str(item["artifact_id"])
+                    if item["artifact_id"] is not None
+                    else None,
+                    str(item["artifact_hash"])
+                    if item["artifact_hash"] is not None
+                    else None,
+                )
+                for item in connection.execute(
+                    "SELECT task_key, status, artifact_id, artifact_hash FROM "
+                    "feature_materialization_task WHERE run_id = %s ORDER BY task_key",
+                    (run_id,),
+                )
+            )
+            receipt_row = connection.execute(
+                "SELECT receipt_json FROM feature_materialization_receipt WHERE run_id = %s",
+                (run_id,),
+            ).fetchone()
+            receipt = (
+                FeatureMaterializationReceipt.from_canonical_dict(
+                    _json_object(str(receipt_row["receipt_json"]))
+                )
+                if receipt_row is not None
+                else None
+            )
+            events = tuple(
+                (
+                    int(item["event_id"]),
+                    str(item["event_type"]),
+                    str(item["task_key"])
+                    if item["task_key"] is not None
+                    else None,
+                    str(item["payload_json"]),
+                )
+                for item in connection.execute(
+                    "SELECT event_id, event_type, task_key, payload_json FROM "
+                    "feature_materialization_event WHERE run_id = %s ORDER BY event_id",
+                    (run_id,),
+                )
+            )
+            connection.rollback()
+        return FeatureMaterializationRunSnapshot(
+            run_id=run_id,
+            idempotency_key=str(run["idempotency_key"]),
+            command_hash=str(run["command_hash"]),
+            status=FeatureMaterializationRunStatus(str(run["status"])),
+            version=int(run["version"]),
+            tasks=tasks,
+            receipt=receipt,
+            events=events,
+        )
+
+    def receipts(self) -> tuple[FeatureMaterializationReceipt, ...]:
+        """Return immutable receipts for PostgreSQL-backed deterministic replay."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT receipt_json FROM feature_materialization_receipt "
+                "ORDER BY run_id"
+            ).fetchall()
+        return tuple(
+            FeatureMaterializationReceipt.from_canonical_dict(
+                _json_object(str(row["receipt_json"]))
+            )
+            for row in rows
+        )
+
+    def _claim_row(
+        self,
+        connection: PostgresConnection,
+        *,
+        run_id: int,
+        row: dict[str, Any],
+    ) -> ClaimedFeatureMaterializationTask:
+        now = self._now()
+        expires = now + self._lease_duration
+        token = uuid4().hex
+        task_key = str(row["task_key"])
+        claim_epoch = int(row["claim_epoch"]) + 1
+        task_version = int(row["version"]) + 1
+        cursor = connection.execute(
+            "UPDATE feature_materialization_task SET status = %s, version = %s, "
+            "claim_token = %s, claim_epoch = %s, claimed_at = %s, lease_acquired_at = %s, "
+            "lease_expires_at = %s, heartbeat_at = %s, last_error = NULL "
+            "WHERE run_id = %s AND task_key = %s AND version = %s AND status IN (%s, %s)",
+            (
+                FeatureMaterializationTaskStatus.IN_PROGRESS.value,
+                task_version,
+                token,
+                claim_epoch,
+                self._format_time(now),
+                self._format_time(now),
+                self._format_time(expires),
+                self._format_time(now),
+                run_id,
+                task_key,
+                int(row["version"]),
+                FeatureMaterializationTaskStatus.PENDING.value,
+                FeatureMaterializationTaskStatus.FAILED.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Feature materialization task CAS claim failed")
+        attempt_row = connection.execute(
+            "SELECT COUNT(*) + 1 AS attempt_number "
+            "FROM feature_materialization_attempt "
+            "WHERE run_id = %s AND task_key = %s",
+            (run_id, task_key),
+        ).fetchone()
+        if attempt_row is None:
+            raise RuntimeError("Feature materialization attempt count returned no row")
+        attempt_number = int(attempt_row["attempt_number"])
+        connection.execute(
+            "INSERT INTO feature_materialization_attempt "
+            "(run_id, task_key, attempt_number, claim_token, claim_epoch, task_version, "
+            "started_at, lease_expires_at, heartbeat_at, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'STARTED')",
+            (
+                run_id,
+                task_key,
+                attempt_number,
+                token,
+                claim_epoch,
+                task_version,
+                self._format_time(now),
+                self._format_time(expires),
+                self._format_time(now),
+            ),
+        )
+        self._event(
+            connection,
+            run_id=run_id,
+            task_key=task_key,
+            event_type="TASK_CLAIMED",
+            payload={
+                "attempt_number": attempt_number,
+                "claim_token": token,
+                "claim_epoch": claim_epoch,
+                "task_version": task_version,
+                "lease_expires_at": self._format_time(expires),
+            },
+        )
+        return ClaimedFeatureMaterializationTask(
+            run_id=run_id,
+            task_key=task_key,
+            symbol=str(row["symbol"]),
+            feature_id=str(row["feature_id"]),
+            timeframe=Timeframe(str(row["timeframe"])),
+            claim_token=token,
+            claim_epoch=claim_epoch,
+            task_version=task_version,
+            attempt_number=attempt_number,
+            lease_acquired_at=now,
+            lease_expires_at=expires,
+            heartbeat_at=now,
+        )
+
+    def _recover_expired(
+        self,
+        connection: PostgresConnection,
+        *,
+        run_id: int,
+        stale_after: timedelta | None = None,
+    ) -> None:
+        now = self._now()
+        if stale_after is None:
+            predicate = "lease_expires_at <= %s"
+            cutoff = self._format_time(now)
+            event_type = "LEASE_EXPIRED"
+        else:
+            predicate = "claimed_at < %s"
+            cutoff = self._format_time(now - stale_after)
+            event_type = "STALE_CLAIM_RECOVERED"
+        stale = tuple(
+            connection.execute(
+                "SELECT task_key, claim_token, claim_epoch, version FROM "
+                "feature_materialization_task WHERE run_id = %s AND status = %s AND "
+                + predicate,
+                (
+                    run_id,
+                    FeatureMaterializationTaskStatus.IN_PROGRESS.value,
+                    cutoff,
+                ),
+            )
+        )
+        for item in stale:
+            token = str(item["claim_token"])
+            epoch = int(item["claim_epoch"])
+            version = int(item["version"])
+            task_key = str(item["task_key"])
+            attempt = connection.execute(
+                "UPDATE feature_materialization_attempt SET status = 'LEASE_EXPIRED', "
+                "completed_at = %s, error_message = 'LEASE_EXPIRED' WHERE run_id = %s "
+                "AND task_key = %s AND claim_token = %s AND claim_epoch = %s "
+                "AND task_version = %s AND status = 'STARTED'",
+                (
+                    self._format_time(now),
+                    run_id,
+                    task_key,
+                    token,
+                    epoch,
+                    version,
+                ),
+            )
+            if attempt.rowcount != 1:
+                raise ValueError("Feature materialization attempt CAS failed")
+            task = connection.execute(
+                "UPDATE feature_materialization_task SET status = 'FAILED', "
+                "version = version + 1, claim_token = NULL, claimed_at = NULL, "
+                "lease_acquired_at = NULL, lease_expires_at = NULL, heartbeat_at = NULL, "
+                "last_error = 'LEASE_EXPIRED' WHERE run_id = %s AND task_key = %s "
+                "AND status = 'IN_PROGRESS' AND claim_token = %s AND claim_epoch = %s "
+                "AND version = %s",
+                (run_id, task_key, token, epoch, version),
+            )
+            if task.rowcount != 1:
+                raise ValueError("stale Feature materialization task recovery rejected")
+            self._event(
+                connection,
+                run_id=run_id,
+                task_key=task_key,
+                event_type=event_type,
+                payload={
+                    "claim_epoch": epoch,
+                    "task_version": version,
+                    "lease_expired_at": self._format_time(now),
+                },
+            )
+
+    def _complete_attempt(
+        self,
+        connection: PostgresConnection,
+        *,
+        claim: ClaimedFeatureMaterializationTask,
+        status: str,
+        error: str | None,
+    ) -> None:
+        cursor = connection.execute(
+            "UPDATE feature_materialization_attempt SET status = %s, completed_at = %s, "
+            "error_message = %s WHERE run_id = %s AND task_key = %s AND attempt_number = %s "
+            "AND claim_token = %s AND claim_epoch = %s AND task_version = %s "
+            "AND status = 'STARTED'",
+            (
+                status,
+                self._now_text(),
+                error,
+                claim.run_id,
+                claim.task_key,
+                claim.attempt_number,
+                claim.claim_token,
+                claim.claim_epoch,
+                claim.task_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("Feature materialization attempt CAS failed")
+
+    def _event(
+        self,
+        connection: PostgresConnection,
+        *,
+        run_id: int,
+        event_type: str,
+        payload: Mapping[str, Any],
+        task_key: str | None = None,
+    ) -> None:
+        connection.execute(
+            "INSERT INTO feature_materialization_event "
+            "(run_id, task_key, event_type, event_time, payload_json) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (
+                run_id,
+                task_key,
+                event_type,
+                self._now_text(),
+                canonical_json(payload),
+            ),
+        )
+
+    @contextmanager
+    def _immediate(self) -> Iterator[PostgresConnection]:
+        with self._connect() as connection:
+            yield connection
+
+    def _now(self) -> datetime:
+        value = self._clock()
+        if not isinstance(value, datetime):
+            raise TypeError("clock must return datetime")
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("clock must return an aware datetime")
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _format_time(value: datetime) -> str:
+        return value.astimezone(timezone.utc).isoformat()
+
+    def _now_text(self) -> str:
+        return self._format_time(self._now())
 
 
-__all__ = ["PostgresFeatureMaterializationRunRepository"]
+def _json_object(value: str) -> dict[str, Any]:
+    payload = json.loads(value)
+    if not isinstance(payload, dict):
+        raise ValueError("stored Feature materialization receipt is invalid")
+    return payload
+
+
+__all__ = [
+    "PostgresFeatureMaterializationRunRepository",
+]

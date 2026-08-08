@@ -37,6 +37,7 @@ from market_regime_alpha.features import (
 )
 from market_regime_alpha.platform.candidate_prediction_adapter import (
     b0_b1_model_definitions,
+    b0_b1_runtime_lineages,
     publish_b0_b1_prediction_runs,
 )
 from market_regime_alpha.platform.contracts import (
@@ -49,13 +50,18 @@ from market_regime_alpha.platform.multi_model_slice import (
     build_default_candidate_slice_specs,
 )
 from market_regime_alpha.platform.prediction_artifacts import (
-    PREDICTION_RUN_ARTIFACT_FILES,
+    GOVERNED_PREDICTION_RUN_ARTIFACT_FILES,
     publish_prediction_run_artifact,
 )
 from market_regime_alpha.platform.prediction_reader import (
     load_verified_prediction_run_artifact,
 )
+from market_regime_alpha.platform.runtime_governance import (
+    ModelSelectionRequest,
+    RuntimePurpose,
+)
 from market_regime_alpha.research.mr1_morning_pop import MR1TargetId
+from tests.application.daily_loop.governance_fixture import FIXTURE_MODEL_SELECTOR
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -305,16 +311,25 @@ def test_prediction_run_identity_is_content_addressed_and_immutable() -> None:
 
 
 def test_prediction_run_publisher_and_reader_verify_semantics(tmp_path: Path) -> None:
-    _, definitions, runs = _adapted_runs()
+    dataset, definitions, runs = _adapted_runs()
     run = runs[0]
+    runtime_lineage, receipt = _governed_binding(dataset, definitions, run)
+    with pytest.raises(ValueError, match="exact Model Selection lineage"):
+        publish_prediction_run_artifact(
+            root=tmp_path,
+            prediction_run=run,
+            model_definition=definitions[run.model_id],
+        )
     output = publish_prediction_run_artifact(
         root=tmp_path,
         prediction_run=run,
         model_definition=definitions[run.model_id],
+        model_selection_receipt=receipt,
+        runtime_model_lineage=runtime_lineage,
     )
 
     assert {item.name for item in output.iterdir()} == set(
-        PREDICTION_RUN_ARTIFACT_FILES
+        GOVERNED_PREDICTION_RUN_ARTIFACT_FILES
     )
     verified = load_verified_prediction_run_artifact(output)
     assert verified.prediction_run == run
@@ -325,18 +340,23 @@ def test_prediction_run_publisher_and_reader_verify_semantics(tmp_path: Path) ->
             root=tmp_path,
             prediction_run=run,
             model_definition=definitions[run.model_id],
+            model_selection_receipt=receipt,
+            runtime_model_lineage=runtime_lineage,
         )
 
 
 def test_prediction_reader_rejects_semantic_tamper_after_checksum_rewrite(
     tmp_path: Path,
 ) -> None:
-    _, definitions, runs = _adapted_runs()
+    dataset, definitions, runs = _adapted_runs()
     run = runs[0]
+    runtime_lineage, receipt = _governed_binding(dataset, definitions, run)
     output = publish_prediction_run_artifact(
         root=tmp_path,
         prediction_run=run,
         model_definition=definitions[run.model_id],
+        model_selection_receipt=receipt,
+        runtime_model_lineage=runtime_lineage,
     )
     payload = json.loads((output / "prediction_run.json").read_text())
     payload["predictions"][0]["model_score"] = 999.0
@@ -356,3 +376,90 @@ def test_prediction_reader_rejects_semantic_tamper_after_checksum_rewrite(
 
     with pytest.raises(ValueError, match="content hash"):
         load_verified_prediction_run_artifact(output)
+
+
+@pytest.mark.parametrize("field", ("dataset_id", "code_revision"))
+def test_governed_prediction_artifact_rejects_cross_run_lineage_splice(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    dataset, definitions, runs = _adapted_runs()
+    run = runs[1]
+    runtime_lineage, receipt = _governed_binding(dataset, definitions, run)
+    forged = replace(
+        run,
+        **(
+            {"dataset_id": DatasetId("forged-candidate-dataset")}
+            if field == "dataset_id"
+            else {"code_revision": "forged-code-revision"}
+        ),
+    )
+
+    with pytest.raises(ValueError, match="exact Model Selection execution lineage"):
+        publish_prediction_run_artifact(
+            root=tmp_path,
+            prediction_run=forged,
+            model_definition=definitions[run.model_id],
+            model_selection_receipt=receipt,
+            runtime_model_lineage=runtime_lineage,
+        )
+
+
+def test_governed_prediction_reader_rejects_valid_rehashed_run_splice(
+    tmp_path: Path,
+) -> None:
+    dataset, definitions, runs = _adapted_runs()
+    run = runs[1]
+    runtime_lineage, receipt = _governed_binding(dataset, definitions, run)
+    output = publish_prediction_run_artifact(
+        root=tmp_path,
+        prediction_run=run,
+        model_definition=definitions[run.model_id],
+        model_selection_receipt=receipt,
+        runtime_model_lineage=runtime_lineage,
+    )
+    forged = replace(
+        run,
+        dataset_id=DatasetId("forged-reader-dataset"),
+        code_revision="forged-reader-code",
+    )
+    (output / "prediction_run.json").write_text(
+        json.dumps(
+            forged.to_canonical_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    checksums = {
+        path.name: f"sha256:{sha256(path.read_bytes()).hexdigest()}"
+        for path in output.iterdir()
+        if path.name != "SHA256SUMS.json"
+    }
+    (output / "SHA256SUMS.json").write_text(
+        json.dumps(checksums, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="execution lineage mismatch"):
+        load_verified_prediction_run_artifact(output)
+
+
+def _governed_binding(dataset, definitions, run):
+    runtime_lineage = b0_b1_runtime_lineages(
+        dataset,
+        model_definitions=definitions,
+        evaluation_protocol_id=run.evaluation_protocol_id,
+        code_revision=run.code_revision,
+    )[run.model_id]
+    request = ModelSelectionRequest.create(
+        runtime_scope="PREDICTION_ARTIFACT_TEST",
+        model_slot="DAILY_B0",
+        purpose=RuntimePurpose.RESEARCH,
+        runtime_lineage=runtime_lineage,
+        selected_at=dataset.decision_time.value,
+        idempotency_key=f"prediction-artifact:{run.model_id}",
+    )
+    return runtime_lineage, FIXTURE_MODEL_SELECTOR.select(request)

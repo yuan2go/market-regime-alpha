@@ -22,12 +22,11 @@ from .policy import (
     DecisionWindowState,
     default_decision_time_operation_policy,
 )
-from .sqlite_journal import (
+from .postgres_journal import (
     ControlledOperationClaimRejected,
     ControlledOperationConflict,
-    SQLiteDecisionTimeOperationJournal,
+    PostgresDecisionTimeOperationJournal,
 )
-from .postgres_journal import PostgresDecisionTimeOperationJournal
 from .postgres_longitudinal_index import PostgresLongitudinalOperationalIndex
 if TYPE_CHECKING:
     from .replay import (
@@ -94,7 +93,6 @@ __all__ = [
     "OperationChildRunReference",
     "PostgresDecisionTimeOperationJournal",
     "PostgresLongitudinalOperationalIndex",
-    "SQLiteDecisionTimeOperationJournal",
     "default_decision_time_operation_policy",
     "replay_controlled_operation",
 ]

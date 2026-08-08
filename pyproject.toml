@@ -31,6 +31,10 @@ resume-free-data-operation = "market_regime_alpha.cli.free_data_operation:resume
 replay-free-data-operation = "market_regime_alpha.cli.free_data_operation:replay_main"
 report-free-data-operation = "market_regime_alpha.cli.free_data_operation:report_main"
 inspect-free-data-operation = "market_regime_alpha.cli.free_data_operation:inspect_main"
+continuous-research = "market_regime_alpha.cli.continuous_research:main"
+state-system = "market_regime_alpha.cli.state_system:main"
+decision-system = "market_regime_alpha.cli.decision_system:main"
+model-governance = "market_regime_alpha.cli.model_governance:main"
 
 [project.optional-dependencies]
 postgres = []
@@ -97,6 +101,8 @@ files = [
     "src/market_regime_alpha/universe/artifacts.py",
     "src/market_regime_alpha/universe/eligibility_artifacts.py",
     "src/market_regime_alpha/universe/eligibility_policy.py",
+    "src/market_regime_alpha/universe/request_scoped.py",
+    "src/market_regime_alpha/universe/orderability.py",
     "src/market_regime_alpha/universe/daily_exploratory.py",
     "src/market_regime_alpha/features/contracts.py",
     "src/market_regime_alpha/features/rehearsal_baselines.py",
@@ -131,6 +137,10 @@ files = [
     "src/market_regime_alpha/platform/candidate_prediction_adapter.py",
     "src/market_regime_alpha/platform/experiment_governance.py",
     "src/market_regime_alpha/platform/model_registry.py",
+    "src/market_regime_alpha/platform/durable_governance.py",
+    "src/market_regime_alpha/platform/postgres_governance.py",
+    "src/market_regime_alpha/platform/runtime_governance.py",
+    "src/market_regime_alpha/platform/postgres_runtime_governance.py",
     "src/market_regime_alpha/platform/multi_model_slice.py",
     "src/market_regime_alpha/platform/prediction_artifacts.py",
     "src/market_regime_alpha/platform/prediction_reader.py",
@@ -154,15 +164,23 @@ files = [
     "src/market_regime_alpha/application/research_layer",
     "src/market_regime_alpha/application/operational_research",
     "src/market_regime_alpha/application/canonical_lifecycle",
+    "src/market_regime_alpha/application/continuous_research",
+    "src/market_regime_alpha/application/state_system",
+    "src/market_regime_alpha/research/state_system",
+    "src/market_regime_alpha/cli/state_system.py",
     "src/market_regime_alpha/application/trading_lifecycle/risk_reduction_lineage.py",
-    "src/market_regime_alpha/application/trading_lifecycle/sqlite_risk_reduction.py",
+    "src/market_regime_alpha/application/trading_lifecycle/postgres_risk_reduction.py",
     "src/market_regime_alpha/application/daily_loop/__init__.py",
     "src/market_regime_alpha/application/daily_loop/commands.py",
     "src/market_regime_alpha/application/daily_loop/errors.py",
     "src/market_regime_alpha/application/daily_loop/repositories.py",
     "src/market_regime_alpha/application/daily_loop/runner.py",
-    "src/market_regime_alpha/application/daily_loop/sqlite_repository.py",
+    "src/market_regime_alpha/application/daily_loop/postgres_repository.py",
     "src/market_regime_alpha/application/daily_loop/state.py",
+    "src/market_regime_alpha/application/decision_system",
+    "src/market_regime_alpha/cli/decision_system.py",
+    "src/market_regime_alpha/cli/model_governance.py",
+    "src/market_regime_alpha/persistence/repository_factory.py",
     "src/market_regime_alpha/daily_decision/__init__.py",
     "src/market_regime_alpha/daily_decision/_support.py",
     "src/market_regime_alpha/daily_decision/snapshot.py",

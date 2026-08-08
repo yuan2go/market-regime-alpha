@@ -15,9 +15,6 @@ from market_regime_alpha.decision.repositories import (
     DecisionLifecycleRepository,
     DecisionVersionConflictError,
 )
-from market_regime_alpha.decision.sqlite_repository import (
-    SQLiteDecisionLifecycleRepository,
-)
 from market_regime_alpha.decision.postgres_repository import (
     PostgresDecisionLifecycleRepository,
 )
@@ -38,7 +35,6 @@ __all__ = [
     "InvalidationKind",
     "OpportunityState",
     "PostgresDecisionLifecycleRepository",
-    "SQLiteDecisionLifecycleRepository",
     "ThesisState",
     "TradeDecision",
     "TradeDecisionState",

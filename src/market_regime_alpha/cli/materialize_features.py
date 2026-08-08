@@ -28,6 +28,11 @@ from market_regime_alpha.features import (
     FeatureMaterializationStatus,
 )
 from market_regime_alpha.market_data import load_verified_market_data_dataset
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -46,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--idempotency-key", required=True)
     parser.add_argument("--code-revision", required=True)
     parser.add_argument("--max-workers", type=int, default=1)
+    add_database_arguments(parser)
     parser.add_argument(
         "--execution-mode",
         choices=[item.value for item in FeatureMaterializationExecutionMode],
@@ -55,8 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    repositories: RepositoryFactory | None = None
     try:
         args = build_parser().parse_args(argv)
+        repositories = RepositoryFactory(settings_from_namespace(args))
         _, decision_time = require_decision_scope(
             decision_date=str(args.decision_date), as_of=str(args.as_of)
         )
@@ -67,7 +75,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if dataset.artifact.decision_time != decision_time:
             raise ValueError("Market Data Dataset DecisionTime differs from --as-of")
         feature_set = load_feature_set(args.feature_set_config)
-        receipt = FeatureMaterializationRunner(max_workers=args.max_workers).run(
+        receipt = FeatureMaterializationRunner(
+            max_workers=args.max_workers,
+            repository_factory=repositories.feature_materialization_for_path,
+        ).run(
             verified_dataset=dataset,
             feature_set=feature_set,
             decision_time=decision_time,
@@ -108,6 +119,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:  # pragma: no cover - defensive CLI boundary
         emit_error(status="COMPUTATION_FAILED", reason_code="FEATURE_COMPUTATION_FAILED", error=exc)
         return EXIT_COMPUTATION_FAILED
+    finally:
+        if repositories is not None:
+            repositories.close()
 
     emit(
         {

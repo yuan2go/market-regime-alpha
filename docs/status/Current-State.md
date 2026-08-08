@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-05
+> **Last Updated:** 2026-08-08
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
@@ -27,19 +27,19 @@ Data and Evidence
 → Outcome, Attribution and Review
 ```
 
-The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable PostgreSQL-default journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability. SQLite adapters remain available only through explicit compatibility/import selection.
+The current engineering baseline contains substantial implementations across this chain, including immutable content-addressed artifacts, semantic Readers, recoverable PostgreSQL-only journals, append-only Fill evidence, complete-account Portfolio/Risk, Thesis-scoped Position books and Fill/calendar-derived A-share T+1 sellability. PostgreSQL 16 is the only persistent Runtime, Journal, Repository, Replay, account, Position and Risk database.
 
 The H6 implementation checkpoint extends the green H4/H5 baseline with an
 explicit Composite Operational Evidence authority. It binds verified Daily and
 Supplemental packages through a content-addressed policy, immutable terminal
-manifest, append-only SQLite replay index and `ResearchInputBundleV2` labelled
+manifest, append-only PostgreSQL replay index and `ResearchInputBundleV2` labelled
 `OPERATIONAL_EXPLORATORY_ARCHIVE`. It does not promote exploratory evidence,
 run a new model, transition a Thesis, call H4, create a ManualTrade/Fill/Broker
 Order or grant trading authority.
 
 The H4.5 implementation checkpoint adds the reducing-risk-only bridge from a
-current permitted H4 decision to a ManualTrade V3 SELL intent. One SQLite
-`BEGIN IMMEDIATE` transaction reloads and replays Decision, H4, H5, H6 and
+current permitted H4 decision to a ManualTrade V3 SELL intent. One PostgreSQL
+transaction reloads and replays Decision, H4, H5, H6 and
 Execution authorities, rebuilds the latest H3 T+1 Position, reruns the H4 Gate
 from fresh execution evidence and atomically records the immutable confirmation
 attempt, route binding, intent and command. It creates no Fill, Broker Order,
@@ -73,6 +73,64 @@ Tencent raw-minute archive, explicit LOTS-to-SHARES conversion, recoverable
 Feature runs and V2 selective physical encodings without changing logical
 Artifact hashes. Signal V1/V2 remain historical compatibility authorities only.
 
+WP-CRR-01 adds a PostgreSQL-only Continuous Research orchestration checkpoint.
+It owns all-day run/tick state, Provider Attempts, validated Evidence CAS,
+material Change Decisions and references to existing Dataset, Feature,
+Controlled and Canonical child receipts. Its bounded Runner recovers across
+Lease expiry and durable boundaries without creating a second research chain.
+The additive 14:30–14:55 policy exposes `DECISION_WINDOW_OPEN` without changing
+historical fixed-14:55 Target/Reader/Replay semantics. Evidence is local and
+fixture-based; deployed authenticated scheduling, formal PIT, economic validation, Shadow,
+Entry and Broker authority remain absent.
+
+WP-STATE-01 adds one ordered `STATE_SYSTEM` child beneath that parent. Four
+domain-specific evaluators persist Observation, proposed/effective State and
+Transition Artifacts with versioned thresholds, confirmation, dwell,
+hysteresis, coverage and counter evidence. An immutable Dynamic Stock Pool
+retains the complete included/excluded cross section and is the only Pool fact
+accepted by the new Candidate binding. New Signal writes use
+`factor_coverage`; empirical Forecast remains `NOT_CALIBRATED`. PostgreSQL
+migration 022 provides fenced/CAS State and Pool authority and migration 023 adds
+the child kind. All evidence
+is local engineering evidence; live free data, formal PIT/OOS, Shadow, Entry and
+Broker authority remain absent.
+
+WP-PGSQL-01 removes the executable file-database backend, backend selection,
+SQL translation bridge, local database migrations, file-backed replay and
+database test substitute. Bounded repositories now execute native psycopg SQL
+and PostgreSQL transactions. Central migrations 001–026 are the only database
+migration authority; an unavailable PostgreSQL connection fails closed.
+
+WP-DECISION-01 adds one ordered `DECISION_SYSTEM` child beneath the same
+Continuous Runtime. It persists an immutable 14:30–14:55 Decision Summary,
+append-only Manual Account Observation, Fill-derived Reconciliation, research
+Portfolio Proposal and independently reloaded Risk Decision. Every result is
+explicitly bound to input identities, Tick/Claim/Lease/fence/version and
+configuration lineage. Original Final is unique and immutable; Correction is a
+new version. No stage creates an Opportunity, Order, Fill, Position change or
+Broker call.
+
+WP-GOV-01 extends the existing PostgreSQL Model Registry rather than creating a
+parallel authority. Migration 027 adds immutable Model-version lineage,
+qualification evidence and decisions, versioned governance policies,
+Champion/Challenger assignments, a global governance revision and append-only
+accepted/rejected Runtime-selection receipts. DailyLoop now selects both B0/B1
+Research Champions before PredictionRuns; it no longer creates a local
+`ModelRegistry`. Decision Runtime selects the Signal and Forecast Production
+Champions before Portfolio/Reconciliation and derives candidate qualification
+from those persisted receipts instead of trusting caller JSON. No Production
+Champion or Production qualification is seeded by this work package, so the
+formal Decision Runtime remains fail-closed until separate PIT, OOS, economic,
+cost/capacity, Shadow and explicit operator-approval evidence exists.
+
+Governed Prediction Artifacts bind the selected receipt to exact Dataset,
+feature/materialization pairs, configuration, code, validation protocol and
+DataEligibility. State Receipt V2 and DecisionLineage V3 carry that PostgreSQL-
+derived eligibility into Decision selection; older schemas remain readable but
+are `UNQUALIFIED`. Daily replay replays every embedded selection receipt, while
+isolated Decision replay transfers a point-in-time governance bundle into its
+isolated PostgreSQL schema and re-executes selection at the original revision.
+
 ## 2. Current stage
 
 ```text
@@ -81,8 +139,8 @@ IMMUTABLE_RESEARCH_EVIDENCE_IMPLEMENTED
 EXPLORATORY_DAILY_LOOP_IMPLEMENTED
 PLATFORM_V2_RESEARCH_LAYER_IMPLEMENTED_EXPLORATORY
 PRODUCTION_DECISION_LIFECYCLE_PHASES_0_TO_7_ENGINEERING_COMPLETE_ON_PRIOR_CHECKPOINT
-H1_COMPLETE_ACCOUNT_PORTFOLIO_RISK_POSTGRES_DEFAULT_SQLITE_COMPAT
-H2_THESIS_TO_OUTCOME_TRACE_POSTGRES_DEFAULT_SQLITE_COMPAT
+H1_COMPLETE_ACCOUNT_PORTFOLIO_RISK_POSTGRES_ONLY
+H2_THESIS_TO_OUTCOME_TRACE_POSTGRES_ONLY
 H3_FILL_CALENDAR_DERIVED_T_PLUS_ONE_IMPLEMENTED
 H4_REDUCING_RISK_ROUTE_IMPLEMENTED_AND_VERIFIED
 H4_IMPLEMENTATION_CHECKPOINT_ENGINEERING_GATE_VERIFIED
@@ -110,8 +168,29 @@ UNIVERSE_FEATURE_HANDOFF_AND_CANDIDATE_VIEW_IMPLEMENTED_ON_FEATURE_BRANCH
 CANONICAL_DECIMAL_SIGNAL_V3_IMPLEMENTED_ON_FEATURE_BRANCH
 TRADING_SESSION_SIGNAL_FRESHNESS_IMPLEMENTED_ON_FEATURE_BRANCH
 IMMUTABLE_TENCENT_MINUTE_ARCHIVE_IMPLEMENTED_EXPLORATORY
-FEATURE_MATERIALIZATION_RUN_AUTHORITY_POSTGRES_DEFAULT_SQLITE_COMPAT
+FEATURE_MATERIALIZATION_RUN_AUTHORITY_POSTGRES_ONLY
 FEATURE_AND_MARKET_DATA_ENCODING_V2_IMPLEMENTED_ON_FEATURE_BRANCH
+CONTINUOUS_RESEARCH_RUNTIME_CRR_00_TO_CRR_06_IMPLEMENTED_LOCAL_ENGINEERING_CHECKPOINT
+CONTINUOUS_RESEARCH_POSTGRESQL_JOURNAL_MIGRATION_020_IMPLEMENTED
+CONTINUOUS_PROVIDER_ATTEMPT_AND_LAST_VALID_EVIDENCE_ISOLATION_IMPLEMENTED
+CONTINUOUS_NO_MATERIAL_CHANGE_IDENTITY_REUSE_IMPLEMENTED
+CONTINUOUS_DECISION_WINDOW_1430_TO_1455_ADDITIVE_POLICY_IMPLEMENTED
+STATEFUL_MARKET_ETF_THEME_CAPITAL_IMPLEMENTED_LOCAL_ENGINEERING_CHECKPOINT
+DYNAMIC_STOCK_POOL_POSTGRES_ONLY_IMPLEMENTED
+STATE_BOUND_CANDIDATE_SIGNAL_FORECAST_IMPLEMENTED_RESEARCH_ONLY
+SIGNAL_V4_FACTOR_COVERAGE_NOT_PREDICTIVE_CONFIDENCE
+PATH_FORECAST_V2_EMPIRICAL_NOT_CALIBRATED
+STATE_SYSTEM_MIGRATIONS_022_AND_023_IMPLEMENTED
+DAILY_DECISION_WINDOW_SUMMARY_IMPLEMENTED_RESEARCH_ONLY
+MANUAL_ACCOUNT_OBSERVATION_APPEND_ONLY_IMPLEMENTED
+ACCOUNT_RECONCILIATION_FILL_DERIVED_IMPLEMENTED
+RESEARCH_PORTFOLIO_PROPOSAL_IMPLEMENTED_NO_EXECUTION_AUTHORITY
+INDEPENDENT_RISK_DECISION_POSTGRES_RELOAD_IMPLEMENTED
+MODEL_GOVERNANCE_RUNTIME_SELECTOR_POSTGRES_ONLY_IMPLEMENTED
+MODEL_QUALIFICATION_AND_SELECTION_RECEIPTS_APPEND_ONLY
+DAILY_LOOP_IN_MEMORY_MODEL_REGISTRY_BYPASS_REMOVED
+DECISION_CALLER_MODEL_QUALIFICATION_AUTHORITY_REMOVED
+PRODUCTION_MODEL_QUALIFICATION_NOT_GRANTED
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
@@ -120,10 +199,9 @@ TRADING_AUTHORITY_NOT_GRANTED
 REAL_BROKER_AUTHORITY_NOT_IMPLEMENTED
 PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
-POSTGRESQL_DEFAULT_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
-SQLITE_EXPLICIT_COMPATIBILITY_AND_IMPORT_ONLY
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_019_APPLIED_LOCAL
-SQLITE_TO_POSTGRES_SCHEMA_ONLY_IMPORT_0_TO_0_VERIFIED
+POSTGRESQL_ONLY_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_027_APPLIED_LOCAL
+FILE_DATABASE_RUNTIME_REMOVED
 ```
 
 ## 3. Implemented capabilities
@@ -155,6 +233,7 @@ BaoStock History
 → DataQuality
 → Universe and Eligibility
 → Features
+→ PostgreSQL Model Governance / Research Champion selection
 → B0/B1 PredictionRuns
 → CandidateRecommendation
 → EntryAssessment
@@ -162,7 +241,7 @@ BaoStock History
 → next-session 10:30 Outcome and DailyReview
 ```
 
-The loop is recoverable through a PostgreSQL-default Runtime Journal and can publish a verified `DATA_BLOCKED` artifact rather than silently continue with invalid inputs. The SQLite journal remains an explicit compatibility adapter.
+The loop is recoverable through a PostgreSQL Runtime Journal and can publish a verified `DATA_BLOCKED` artifact rather than silently continue with invalid inputs.
 
 The operational runtime remains restricted to a small smoke Universe and exploratory data authority. A real controlled 14:55 run reaching `OUTCOME_PENDING` has not been established as current formal evidence.
 
@@ -202,7 +281,7 @@ Implemented:
 - versioned `TradingOpportunity` and `TradingThesis` aggregates;
 - explicit expiry, approval and invalidation transitions;
 - actor, reason and timestamps;
-- SQLite compare-and-swap, global command idempotency and append-only history;
+- PostgreSQL compare-and-swap, global command idempotency and append-only history;
 - atomic Opportunity confirmation and initial Thesis creation.
 
 The implementation supports research-backed human decisions. It does not grant automated order authority.
@@ -217,7 +296,7 @@ Implemented:
 - post-trade gross, symbol, theme, cash, liquidity and maximum-loss evaluation;
 - structured `DATA_INSUFFICIENT` for partial, stale, future or unreconciled inputs;
 - independent Risk recomputation before persistence;
-- atomic SQLite persistence and command idempotency.
+- atomic PostgreSQL persistence and command idempotency.
 
 The hardened H3 application path should be used for new work because the older H1 compatibility entry can accept caller-declared Position quantities.
 
@@ -231,7 +310,7 @@ Implemented:
 - Fill retained as the only position-changing fact;
 - Thesis-scoped Position projection;
 - traceable closed-trade outcome validation across the full authority chain;
-- restart/replay reconstruction through SQLite indexes and histories.
+- restart/replay reconstruction through PostgreSQL indexes and histories.
 
 This is engineering traceability for manual evidence, not broker truth.
 
@@ -262,7 +341,7 @@ H4 is **IMPLEMENTED_AND_VERIFIED** at `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 - A-share sellable quantity, suspension, price-limit state, position/observation freshness and liquidity participation are checked;
 - output is `PERMITTED_FOR_MANUAL_CONFIRMATION`, `BLOCKED` or `DATA_INSUFFICIENT`;
 - migration 007 defines append-only reducing decisions and idempotency commands, with repeat-safe initialization and validation of columns, constraints, foreign keys and trigger semantics;
-- `SQLiteRiskRouteRepository` restores all canonical evidence and reruns the Gate before returning a decision;
+- `PostgresRiskRouteRepository` restores all canonical evidence and reruns the Gate before returning a decision;
 - `RiskRouteApplicationService` validates the command, performs semantic replay and atomically persists the immutable evidence bundle;
 - public package exports and `application/trading_lifecycle` expose the stable H4 route;
 - `scripts/assess_risk_reduction.py` emits `DECISION_ONLY`, `NO_ORDER_CREATED` and `TRADING_AUTHORITY_NOT_GRANTED`.
@@ -280,7 +359,7 @@ H5 is **IMPLEMENTED_AND_VERIFIED** at `831edd6b2ae044d3bd1f3abcec97a30e47082071`
 - `ThesisHealthInputBundle` stores the exact current Market/Theme/Capital/Candidate/Signal/Path/price evidence, configuration, rule set, optional Manual evidence and explicit prior V2 Observation for private replay;
 - the Builder verifies canonical identities, SourceManifest lineage, Candidate→research, Signal→Candidate, Path→Signal, symbol/theme scope, creation-versus-current evidence and explicit price/research skew;
 - `ThesisHealthObservationV2` records observed, prior-effective and effective state. `INVALIDATED` is terminal; `DATA_INSUFFICIENT` does not advance effective state; `WEAKENING` cannot recover automatically;
-- migration 008 and `SQLiteThesisHealthRepository` use `BEGIN IMMEDIATE`, command hash/idempotency, append-only triggers, canonical restoration, prior-chain validation and Builder recomputation;
+- migration 008 and `PostgresThesisHealthRepository` use native PostgreSQL transactions, command hash/idempotency, append-only triggers, canonical restoration, prior-chain validation and Builder recomputation;
 - `ThesisHealthApplicationService` accepts actual typed domain inputs, loads the explicitly bound prior Observation, constructs the private bundle internally and persists the derived Observation atomically;
 - `scripts/build_thesis_health.py` reads verified Research/Signal/Path packages, rejects V1 support booleans and emits `OBSERVATION_ONLY`, `NO_TRADE_ACTION_CREATED` and `TRADING_AUTHORITY_NOT_GRANTED`;
 - `OperationalPositionAssessmentServiceV2` consumes the derived effective health and a Thesis-scoped H3 T+1 PositionSnapshot directly, reusing the existing Holding/Exit decision core without constructing a fake V1 Observation.
@@ -305,11 +384,11 @@ H6 is **IMPLEMENTED_AND_VERIFIED** at
   manifests are publishable; only `VERIFIED` can enter Platform V2;
 - exact three-file package publication detects checksum, semantic, policy and
   identity tamper and uses verified staging plus atomic rename;
-- migration 009 and `SQLiteCompositeOperationalRepository` add append-only
+- migration 009 and `PostgresCompositeOperationalRepository` add append-only
   manifest/component/field/command indexes, semantic idempotency, full
   projection validation, original-package loading and Builder replay;
 - `CompositeOperationalEvidenceApplicationService` implements the explicit
-  file-first/SQLite-second transaction boundary and restart repair without
+  file-first/PostgreSQL-second transaction boundary and restart repair without
   claiming cross-storage atomicity;
 - `ResearchInputBundleV2` uses
   `OPERATIONAL_EXPLORATORY_ARCHIVE`, preserves Daily as primary
@@ -343,8 +422,8 @@ H4.5 is **IMPLEMENTED_AND_VERIFIED** at
 - only the latest operational H5 V2 replay chain bound to an exact VERIFIED H6
   Composite manifest is accepted; synthetic, historical V1 and mismatched
   lineage are rejected;
-- the unified SQLite repository owns migration 010 composition and uses one
-  `BEGIN IMMEDIATE` transaction for authority reload, T+1 Position recheck,
+- the unified PostgreSQL repository owns migration 010 composition and uses one
+  native transaction for authority reload, T+1 Position recheck,
   fresh Gate replay, attempt, ManualTrade, reducing binding and command;
 - each H4 decision can create at most one confirmed intent; failures remain
   append-only attempts and do not create a trade;
@@ -366,7 +445,7 @@ Implemented on prior verified checkpoints:
 - approved-Risk-bound manual intent;
 - partial, filled, cancelled, rejected, unknown and reconciliation-required states;
 - append-only Fill and correction records;
-- SQLite triggers prohibiting Fill UPDATE/DELETE;
+- PostgreSQL triggers prohibiting Fill UPDATE/DELETE;
 - FIFO Position reconstruction and realized PnL;
 - separate Holding and Exit assessment roles;
 - ADD requiring a fresh independent RiskDecision;
@@ -450,7 +529,7 @@ Implemented on the WP-SIG-01A branch:
   authority blocks instead of producing an empty-factor V1 artifact;
 - exact-byte Tencent source/attempt archives, strict cumulative-counter
   handling, explicit volume conversion and versioned 1m→5m resampling;
-- SQLite Run/Task/Attempt/Receipt/Event recovery for Feature materialization;
+- PostgreSQL Run/Task/Attempt/Receipt/Event recovery for Feature materialization;
 - V2 Market Data/Feature physical encoding and selective Readers with logical
   hash equality across V1/V2;
 - durable replay that recomputes Dataset-derived Features, Candidate View,
@@ -492,7 +571,24 @@ observed at real wall-clock 14:55. Tencent remains exploratory, formal PIT and
 OOS Alpha are not established, PathForecast has no Sample Authority, Entry is
 blocked, and Shadow/Production/Trading Authority remain `NO`.
 
-### 3.9 PostgreSQL free-data canonical composition
+### 3.18 Stateful research and Dynamic Stock Pool
+
+The WP-STATE-01 branch preserves V0 snapshots while adding deterministic Market,
+ETF Rotation, Theme Rotation and Capital lifecycle State. Every State binds its
+previous identity, persisted Observation, Model/configuration versions, source
+Artifacts, Continuous parent/Tick and availability time. Theme mapping is
+explicit and many-to-many; Capital language remains observable-proxy inference.
+
+The Dynamic Pool applies Rotation/dwell/coverage/Eligibility/materiality gates,
+stores the full member cross section and reuses identity on no material change.
+Candidate requires that Pool and every effective State ID. New Signal writes
+`factor_coverage`; Forecast remains empirical, uncalibrated and fail closed
+without samples. The ordered State child runs only after canonical Feature
+materialization and before the existing Controlled/Canonical delegates. It owns
+no Provider or scheduler and creates no Opportunity, Order, Fill, Position or
+Broker action.
+
+### 3.19 PostgreSQL free-data canonical composition
 
 The current development branch adds `TENCENT_FREE_OPERATIONAL_V1` as an
 explicit no-fallback profile and composes existing authorities rather than
@@ -512,7 +608,7 @@ evidence; they are never replaced by neutral constants. A post-freeze
 normalization error publishes a content-addressed `FreeDataBlockedArtifact`.
 
 Recorded 20/100/300 replay and real PostgreSQL integration prove deterministic
-identities, single acquisition/materialization and no SQLite file write. A real
+identities, single acquisition/materialization and no local database fallback. A real
 20-symbol network attempt after the 2026-08-05 decision window froze BaoStock
 history/status, Tencent quote and the SourceManifest, then correctly blocked
 with `DATA_AVAILABLE_AFTER_DECISION_TIME`. This is live source evidence, not a
@@ -520,40 +616,48 @@ successful controlled 14:55 run.
 
 ## 4. Persistence, transactions and consistency
 
-PostgreSQL is now the default authority selected through
-`MARKET_REGIME_ALPHA_DATABASE_URL`; SQLite requires an explicit compatibility
-path. All current SQLite-backed bounded contexts have PostgreSQL adapters behind
-the same Repository protocols, including Governance, Decision, Portfolio/Risk,
-Manual Execution, Daily, Feature, Canonical Lifecycle, Controlled Operation and
-Longitudinal state. Runtime composition neither dual-writes nor falls back.
+PostgreSQL 16 is the only database authority selected through
+`MARKET_REGIME_ALPHA_DATABASE_URL` or an explicit equivalent CLI argument.
+`RepositoryFactory` creates only native PostgreSQL repositories. There is no
+backend enumeration, database path, SQL/DB-API translation bridge, automatic
+fallback, persistent test substitute or runtime importer.
 
-PostgreSQL migration versions 001–019 are checksummed, contiguous and serialized
-with an advisory lock. The approved local PostgreSQL 16.14 schema contains 59
-catalog tables. The initial import manifest discovered no SQLite business source
-and produced a verified schema-only `0 -> 0` report at code checkpoint
-`7366ab326c2333d4f6eaefbe0a443b588d0e15b1`. This does not claim migration of
-DuckDB, Parquet, CSV, external files or undiscovered SQLite data.
+PostgreSQL migration versions 001–026 are checksummed, contiguous and
+serialized with an advisory lock. Migration 024 constrains the credential-free
+runtime binding to PostgreSQL without changing the published migration-017
+checksum. Migration 025 adds Decision Summary, Manual Account,
+Reconciliation, research Portfolio, Independent Risk and runtime receipt
+authorities. Migration 026 adds lease-bound receipts, immutable State-stage and
+frozen Fill-account references, versioned Decision configurations and isolated
+replay imports. Manual cash/equity values do not self-corroborate; without an
+independent external account-total Reader, reconciliation records
+`DATA_INSUFFICIENT` and OPEN/ADD remains blocked. Basic Fill projection also
+remains incomplete for available/frozen quantities unless explicit,
+content-addressed T+1 calendar/session evidence exists. When supplied at the
+same account/AsOf scope, that evidence is persisted append-only under the active
+fence and the frozen Fill view binds its ID/hash.
+Fresh 001→026 and 023→026 migration paths are tested on PostgreSQL
+16.
 
-The retained explicit SQLite repositories generally use:
+Native repositories preserve idempotency, command hashes, compare-and-swap,
+scope-level locks, fencing, append-only events, immutable identities,
+reconstruction and replay. Decision writers validate the active Claim, lease,
+fencing token and Tick version inside the same transaction. Reconciliation,
+Summary, Portfolio and Risk revisions use aggregate-scoped advisory locks and
+CAS; terminal Summary uniqueness uses a partial unique index.
 
-- `BEGIN IMMEDIATE` transactions;
-- `busy_timeout`;
-- command idempotency key plus command hash;
-- optimistic version compare-and-swap;
-- append-only event tables;
-- rollback on failure;
-- restore by replaying and validating history;
-- recomputation of Risk before accepting caller-supplied decisions.
+The isolated replay Risk Reader reloads imported Proposal, Summary, account,
+reconciliation, configuration, frozen Fill and optional settlement evidence
+from PostgreSQL before recomputation. Repository, migration, runtime,
+concurrency, replay and CLI integration tests
+use isolated PostgreSQL schemas. Historical path-shaped test inputs are opaque
+test-scope keys only; they do not create or open a file database. Repository
+discovery found no real file-database business authority requiring a long-lived
+importer; the older schema-only `0 -> 0` inventory remains historical discovery
+evidence, not a current migration mechanism.
 
-PostgreSQL adapters preserve idempotency, command hashes, compare-and-swap,
-fencing, append-only events, immutable identities, reconstruction and replay.
-Migration 017 records credential-free runtime backend/database/schema bindings;
-Migration 018 admits `DAILY_LOOP` and `FREE_DATA_OPERATION` binding scopes;
-Migration 019 records append-only free-data Blocked Artifact references;
-resume/replay rejects a missing or mismatched PostgreSQL binding.
-
-This is local PostgreSQL engineering evidence. It is not multi-instance or
-distributed production authority.
+This is local PostgreSQL engineering evidence. It is not a production-qualified
+deployment, sustained multi-instance operation or trading authority.
 
 Not implemented:
 
@@ -691,7 +795,7 @@ rerun. Remote CI and production admission are not claimed.
 - sustained scheduled Shadow operations, operator deadlines/acknowledgements,
   metrics, tracing and alerts;
 - production authentication, authorization and operator signatures;
-- external account/statement/Fill reconciliation;
+- external statement/Fill reconciliation and authenticated resolution;
 - production-qualified PostgreSQL deployment and restore drill;
 - QuantDesk production integration;
 - broker execution and kill-switch architecture.
@@ -754,7 +858,7 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with PostgreSQL-default local persistence and verified H4, H4.5, H5 and H6 engineering checkpoints plus a canonical lifecycle/migration foundation, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+> **A pre-Shadow research decision platform with PostgreSQL-only local persistence, an auditable manual-account/reconciliation/research-portfolio/independent-risk loop, and verified H4, H4.5, H5 and H6 engineering checkpoints, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
 
 The canonical-runtime branch does not change these admission facts:
 

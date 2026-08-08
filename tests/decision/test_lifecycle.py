@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-import sqlite3
 from pathlib import Path
 import subprocess
 import sys
@@ -19,13 +18,11 @@ from market_regime_alpha.decision import (
     InvalidationCondition,
     InvalidationKind,
     OpportunityState,
-    SQLiteDecisionLifecycleRepository,
     ThesisState,
     TradingThesis,
 )
 from market_regime_alpha.decision.opportunity import transition_opportunity
 from market_regime_alpha.decision.thesis import TRADING_THESIS_SCHEMA
-from market_regime_alpha.decision.sqlite_repository import DECISION_DOWN_MIGRATION
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.forecasting.contracts import (
@@ -47,6 +44,11 @@ from market_regime_alpha.signals.contracts import (
     SignalFamily,
     SignalSnapshot,
     SignalState,
+)
+from tests.postgres_path_repositories import (
+    PostgresDecisionLifecycleRepository,
+    postgres_cli_arguments,
+    postgres_connection,
 )
 from market_regime_alpha.strategies.entry import EntryBarrierSpec, build_entry_path_target_contract
 
@@ -219,7 +221,7 @@ def _forecast(signal: SignalSnapshot) -> PathForecast:
 
 
 def _service(tmp_path):
-    repository = SQLiteDecisionLifecycleRepository(tmp_path / "decision.sqlite3")
+    repository = PostgresDecisionLifecycleRepository(tmp_path / "decision.postgres-scope")
     return DecisionLifecycleService(repository), repository
 
 
@@ -288,7 +290,7 @@ def test_opportunity_to_thesis_is_atomic_versioned_and_restorable(tmp_path) -> N
         idempotency_key="confirm-opportunity-1",
     )
 
-    restored_repository = SQLiteDecisionLifecycleRepository(repository.path)
+    restored_repository = PostgresDecisionLifecycleRepository(repository.path)
     restored_opportunity = restored_repository.get_opportunity(opportunity.opportunity_id)
     assert restored_opportunity.state is OpportunityState.CONFIRMED_TO_THESIS
     assert restored_opportunity.version == 1
@@ -297,10 +299,9 @@ def test_opportunity_to_thesis_is_atomic_versioned_and_restorable(tmp_path) -> N
     assert thesis.source_opportunity_version == 0
     completed = subprocess.run(
         [
-            sys.executable,
-            "scripts/run_decision_lifecycle.py",
-            "--database",
-            str(repository.path),
+                sys.executable,
+                "scripts/run_decision_lifecycle.py",
+                *postgres_cli_arguments(repository.path),
             "show-thesis",
             "--thesis-id",
             str(thesis.thesis_id),
@@ -379,7 +380,7 @@ def test_concurrent_stale_confirmation_has_one_winner(tmp_path) -> None:
     service_a, repository = _service(tmp_path)
     opportunity, candidate, signal, forecast = _create(service_a)
     service_b = DecisionLifecycleService(
-        SQLiteDecisionLifecycleRepository(repository.path)
+        PostgresDecisionLifecycleRepository(repository.path)
     )
 
     service_a.reject_opportunity(
@@ -430,26 +431,8 @@ def test_thesis_invalidation_is_append_only_and_recoverable(tmp_path) -> None:
     assert invalidated.state is ThesisState.INVALIDATED
     assert invalidated.version == 1
     assert repository.get_thesis(thesis.thesis_id) == invalidated
-    with sqlite3.connect(repository.path) as connection:
+    with postgres_connection(repository.path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM thesis_events").fetchone()[0] == 2
-
-
-def test_decision_migration_is_isolated_and_has_safe_down_script(tmp_path) -> None:
-    path = tmp_path / "decision.sqlite3"
-    repository = SQLiteDecisionLifecycleRepository(path)
-    with sqlite3.connect(repository.path) as connection:
-        assert connection.execute(
-            "SELECT 1 FROM pdl_schema_migrations WHERE version = 2"
-        ).fetchone() == (1,)
-        connection.executescript(DECISION_DOWN_MIGRATION.read_text(encoding="utf-8"))
-        names = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-    assert "trading_opportunities" not in names
-    assert "daily_runs" not in names
 
 
 def test_repository_rejects_forged_confirmation_that_bypasses_service(tmp_path) -> None:

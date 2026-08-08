@@ -8,8 +8,8 @@ import pytest
 from market_regime_alpha.application.operational_research.composite_service import (
     CompositeOperationalEvidenceApplicationService,
 )
-from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
-    SQLiteCompositeOperationalRepository,
+from tests.postgres_path_repositories import (
+    PostgresCompositeOperationalRepository,
 )
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
     publish_supplemental_research_evidence,
@@ -43,7 +43,7 @@ def test_service_runs_file_first_and_replays_same_command(
     daily_decision_fixture: DailyDecisionFixture,
 ) -> None:
     daily_path, supplemental_path = _paths(tmp_path, daily_decision_fixture)
-    repository = SQLiteCompositeOperationalRepository(tmp_path / "h6.sqlite3")
+    repository = PostgresCompositeOperationalRepository(tmp_path / "h6.postgres-scope")
     service = CompositeOperationalEvidenceApplicationService(repository)
     created_at = daily_decision_fixture.source_manifest.decision_time.value + (
         timedelta(minutes=10)
@@ -76,7 +76,7 @@ def test_service_rejects_same_key_for_another_semantic_command(
     daily_decision_fixture: DailyDecisionFixture,
 ) -> None:
     daily_path, supplemental_path = _paths(tmp_path, daily_decision_fixture)
-    repository = SQLiteCompositeOperationalRepository(tmp_path / "h6.sqlite3")
+    repository = PostgresCompositeOperationalRepository(tmp_path / "h6.postgres-scope")
     service = CompositeOperationalEvidenceApplicationService(repository)
     created_at = daily_decision_fixture.source_manifest.decision_time.value + (
         timedelta(minutes=10)
@@ -106,7 +106,7 @@ def test_crash_after_package_publish_is_repaired_by_idempotent_replay(
     daily_decision_fixture: DailyDecisionFixture,
 ) -> None:
     daily_path, supplemental_path = _paths(tmp_path, daily_decision_fixture)
-    repository = SQLiteCompositeOperationalRepository(tmp_path / "h6.sqlite3")
+    repository = PostgresCompositeOperationalRepository(tmp_path / "h6.postgres-scope")
     service = CompositeOperationalEvidenceApplicationService(repository)
     created_at = daily_decision_fixture.source_manifest.decision_time.value + (
         timedelta(minutes=10)

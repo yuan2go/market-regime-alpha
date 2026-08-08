@@ -19,9 +19,6 @@ from market_regime_alpha.persistence.repository_factory import (
     add_database_arguments,
     settings_from_namespace,
 )
-from market_regime_alpha.persistence.settings import DatabaseBackend
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     add_database_arguments(parser)
@@ -32,8 +29,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = settings_from_namespace(args)
-    if settings.backend is not DatabaseBackend.POSTGRES:
-        raise ValueError("authority migrations require PostgreSQL")
     with PostgresConnectionFactory(settings) as factory:
         applied = () if args.verify_only else PostgresMigrator().apply_all(factory)
         with factory.connection(read_only=True) as connection:

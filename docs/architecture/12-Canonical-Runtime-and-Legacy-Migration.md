@@ -124,7 +124,7 @@ python -m market_regime_alpha.cli.replay_canonical_lifecycle \
 Replay invokes neither the canonical business Runner nor execution services.
 `run_durable_lifecycle_replay()` binds the exact source run, command and history
 hash in a separate `REPLAY` LifecycleRun. The source history is read in one
-SQLite snapshot and published as an immutable, content-addressed snapshot
+PostgreSQL repeatable snapshot and published as an immutable, content-addressed snapshot
 through a same-directory, fsynced atomic install before the replay run is
 created. An interrupted replay resumes from that captured view even if the
 source run later advances; interrupted publication is retryable and snapshot
@@ -191,7 +191,8 @@ spoofed migration marker with a weaker schema is rejected.
 
 ### 4.1 Transaction boundaries
 
-All journal mutations use SQLite `BEGIN IMMEDIATE`:
+All journal mutations use native PostgreSQL transactions with aggregate-scoped
+locking and compare-and-set:
 
 - run creation writes the immutable command, the run projection, all 16
   `PENDING` stage projections and creation history atomically;
@@ -204,7 +205,7 @@ All journal mutations use SQLite `BEGIN IMMEDIATE`:
   atomically.
 
 Domain services and Artifact publication are intentionally outside the journal
-transaction because SQLite cannot make a file Artifact or another domain
+transaction because PostgreSQL cannot make a file Artifact or another bounded
 repository transaction atomic. Each stage therefore calls `recover()` before
 `execute()`: if the deterministic domain output already exists, the handler
 reloads and validates it and only repairs the missing receipt. A crash after a
@@ -292,7 +293,7 @@ The bridge cannot:
 
 Its CLI/result boundary explicitly reports
 `MANUAL_CONFIRMATION_REQUIRED`, `NO_ORDER_CREATED`, `BROKER_NOT_INVOKED` and
-`NO_FILL_CREATED` as applicable. SQLite repository failures use a distinct
+`NO_FILL_CREATED` as applicable. PostgreSQL repository failures use a distinct
 structured error exit and preserve the same safety declarations rather than
 escaping as a traceback or being confused with a domain rejection. The actor
 remains audit text rather than an authenticated principal, so operator

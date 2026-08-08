@@ -104,13 +104,25 @@ from market_regime_alpha.platform.candidate_prediction_adapter import (
     B0_MOMENTUM_MODEL_ID,
     B1_BALANCED_MODEL_ID,
     b0_b1_model_definitions,
+    b0_b1_runtime_lineages,
     publish_b0_b1_prediction_runs,
 )
 from market_regime_alpha.platform.contracts import (
     EvaluationProtocolId,
     ModelDefinition,
 )
-from market_regime_alpha.platform.model_registry import ModelRegistry
+from market_regime_alpha.platform.postgres_runtime_governance import (
+    ModelGovernanceIntegrityError,
+    ModelSelectionRejected,
+    PostgresModelGovernanceRepository,
+)
+from market_regime_alpha.platform.runtime_governance import (
+    ModelSelectionReceipt,
+    ModelSelectionRequest,
+    RuntimeModelLineage,
+    RuntimePurpose,
+    SelectionStatus,
+)
 from market_regime_alpha.platform.prediction_artifacts import (
     publish_prediction_run_artifact,
 )
@@ -136,6 +148,10 @@ DAILY_B0_B1_EXPERIMENT_PROTOCOL_IDS = {
     B1_BALANCED_MODEL_ID: ExperimentId("daily-b1-frozen-experiment-v1"),
 }
 MINIMUM_CANDIDATE_POPULATION = 5
+DAILY_MODEL_SLOTS = {
+    B0_MOMENTUM_MODEL_ID: "DAILY_B0",
+    B1_BALANCED_MODEL_ID: "DAILY_B1",
+}
 
 Clock = Callable[[], datetime]
 StageHook = Callable[[DailyRunStatus], None]
@@ -183,6 +199,7 @@ class DailyLoopRunner:
         policy: DailyUniversePolicy | None = None,
         clock: Clock = _utc_now,
         after_stage_hook: StageHook | None = None,
+        model_selector: PostgresModelGovernanceRepository | None = None,
     ) -> None:
         if not code_revision or code_revision != code_revision.strip():
             raise ValueError("code_revision must be a non-empty trimmed string")
@@ -192,6 +209,7 @@ class DailyLoopRunner:
         self._policy = policy or smoke_pool_policy_v1()
         self._clock = clock
         self._after_stage_hook = after_stage_hook
+        self._model_selector = model_selector
 
     def run(
         self,
@@ -413,28 +431,108 @@ class DailyLoopRunner:
                 config_hash=configuration_hash,
             )
             definitions = b0_b1_model_definitions(dataset)
-            registry = ModelRegistry()
-            for definition in definitions.values():
-                registry.register(definition)
+            if self._model_selector is None:
+                raise RuntimeError(
+                    "PostgreSQL Model Governance Selector is required for predictions"
+                )
+            runtime_lineages = b0_b1_runtime_lineages(
+                dataset,
+                model_definitions=definitions,
+                evaluation_protocol_id=DAILY_B0_B1_EVALUATION_PROTOCOL_ID,
+                code_revision=self._code_revision,
+            )
+            selection_receipt_items = []
+            for fallback_model_id in (
+                B0_MOMENTUM_MODEL_ID,
+                B1_BALANCED_MODEL_ID,
+            ):
+                model_slot = DAILY_MODEL_SLOTS[fallback_model_id]
+                try:
+                    resolved = self._model_selector.resolve_champion(
+                        runtime_scope="DAILY_LOOP",
+                        model_slot=model_slot,
+                        purpose=RuntimePurpose.RESEARCH,
+                        as_of=command.decision_time.value,
+                    )
+                    selected_lineage = runtime_lineages.get(
+                        resolved.model_id,
+                        runtime_lineages[fallback_model_id],
+                    )
+                except (ModelGovernanceIntegrityError, KeyError, ValueError):
+                    selected_lineage = runtime_lineages[fallback_model_id]
+                selection_receipt_items.append(
+                    self._model_selector.select(
+                    ModelSelectionRequest.create(
+                        runtime_scope="DAILY_LOOP",
+                        model_slot=model_slot,
+                        purpose=RuntimePurpose.RESEARCH,
+                        runtime_lineage=selected_lineage,
+                        selected_at=command.decision_time.value,
+                        idempotency_key=(
+                            f"{command.run_request_id}:model-selection:{model_slot}"
+                        ),
+                    )
+                )
+                )
+            selection_receipts = tuple(selection_receipt_items)
+            rejected = tuple(
+                item
+                for item in selection_receipts
+                if item.status is SelectionStatus.REJECTED
+            )
+            if rejected:
+                raise ModelSelectionRejected(rejected[0])
+            if any(
+                item.selected_model_id not in definitions
+                or item.selected_definition_hash
+                != definitions[item.selected_model_id].definition_hash
+                for item in selection_receipts
+            ):
+                raise ValueError("Model Selector authority does not match B0/B1 Runtime")
+            selected_model_ids = tuple(
+                sorted(
+                    {
+                        item.selected_model_id
+                        for item in selection_receipts
+                        if item.selected_model_id is not None
+                    },
+                    key=str,
+                )
+            )
+            if len(selected_model_ids) != len(selection_receipts):
+                raise ValueError(
+                    "one Model cannot be authoritative for multiple Daily slots"
+                )
+            selection_by_model = {
+                item.selected_model_id: item for item in selection_receipts
+            }
             prediction_runs = publish_b0_b1_prediction_runs(
                 dataset,
                 model_definitions=definitions,
                 evaluation_protocol_id=DAILY_B0_B1_EVALUATION_PROTOCOL_ID,
                 experiment_protocol_ids=DAILY_B0_B1_EXPERIMENT_PROTOCOL_IDS,
                 code_revision=self._code_revision,
+                selected_model_ids=selected_model_ids,
             )
             for prediction_run in prediction_runs:
                 _publish_or_verify_prediction(
                     root=command.output_root / "prediction_runs",
                     prediction_run=prediction_run,
                     model_definition=definitions[prediction_run.model_id],
+                    model_selection_receipt=selection_by_model[
+                        prediction_run.model_id
+                    ],
+                    runtime_model_lineage=runtime_lineages[
+                        prediction_run.model_id
+                    ],
                 )
             record = self._advance(
                 record,
                 DailyRunStatus.PREDICTIONS_PUBLISHED,
                 outputs=tuple(
                     item.prediction_run_id for item in prediction_runs
-                ),
+                )
+                + tuple(item.receipt_id for item in selection_receipts),
             )
             recommendations = project_candidate_recommendations(
                 prediction_runs=prediction_runs,
@@ -526,9 +624,37 @@ class DailyLoopRunner:
         )
         if artifact_id is None:
             raise ValueError("Daily Decision Artifact receipt is missing")
-        return load_verified_daily_decision_artifact(
+        verified = load_verified_daily_decision_artifact(
             record.command.output_root / "daily_decisions" / str(artifact_id)
         )
+        if verified.bundle.prediction_runs:
+            if self._model_selector is None:
+                raise ValueError(
+                    "Daily Replay requires PostgreSQL Model Governance"
+                )
+            for prediction_run in verified.bundle.prediction_runs:
+                governed = load_verified_prediction_run_artifact(
+                    record.command.output_root
+                    / "prediction_runs"
+                    / str(prediction_run.prediction_run_id)
+                )
+                selection_receipt = governed.model_selection_receipt
+                lineage = governed.runtime_model_lineage
+                if (
+                    governed.prediction_run != prediction_run
+                    or selection_receipt is None
+                    or lineage is None
+                    or self._model_selector.replay_selection(
+                        selection_receipt.receipt_id
+                    )
+                    != selection_receipt
+                    or selection_receipt.runtime_lineage_hash
+                    != lineage.runtime_lineage_hash
+                ):
+                    raise ValueError(
+                        "Daily Replay Model Governance evidence mismatch"
+                    )
+        return verified
 
     def settle_daily_run(
         self,
@@ -1427,17 +1553,25 @@ def _publish_or_verify_prediction(
     root: Path,
     prediction_run: PredictionRun,
     model_definition: ModelDefinition,
+    model_selection_receipt: ModelSelectionReceipt,
+    runtime_model_lineage: RuntimeModelLineage,
 ) -> Path:
     try:
         return publish_prediction_run_artifact(
             root=root,
             prediction_run=prediction_run,
             model_definition=model_definition,
+            model_selection_receipt=model_selection_receipt,
+            runtime_model_lineage=runtime_model_lineage,
         )
     except FileExistsError:
         path = root / str(prediction_run.prediction_run_id)
         verified = load_verified_prediction_run_artifact(path)
-        if verified.prediction_run != prediction_run:
+        if (
+            verified.prediction_run != prediction_run
+            or verified.model_selection_receipt != model_selection_receipt
+            or verified.runtime_model_lineage != runtime_model_lineage
+        ):
             raise ValueError("existing PredictionRun Artifact semantic mismatch")
         return path
 

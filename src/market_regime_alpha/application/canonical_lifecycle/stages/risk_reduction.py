@@ -134,7 +134,7 @@ class RiskReductionStageHandler:
             ArtifactId(str(references.composite.object_id))
         )
         if composite_file != composite_stored:
-            raise ValueError("Composite Reader and SQLite authority disagree")
+            raise ValueError("Composite Reader and PostgreSQL authority disagree")
         _verify_reference(
             references.composite,
             object_id=composite_file.manifest.manifest_id,

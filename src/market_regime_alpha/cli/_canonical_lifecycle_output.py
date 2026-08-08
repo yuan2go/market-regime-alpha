@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 from typing import Any
 
 import psycopg
@@ -78,7 +77,6 @@ def print_history_failure(
         PostgresConnectionUnavailable,
         OSError,
         psycopg.Error,
-        sqlite3.Error,
         TypeError,
         ValueError,
     ):
@@ -193,7 +191,6 @@ def repository_from_args(
         PostgresConnectionUnavailable,
         OSError,
         psycopg.Error,
-        sqlite3.Error,
         TypeError,
         ValueError,
     ):

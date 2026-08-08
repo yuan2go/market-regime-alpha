@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
@@ -57,21 +57,21 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     CanonicalDecisionLifecycleRunner,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
-from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
-    SQLiteCompositeOperationalRepository,
+from tests.postgres_path_repositories import (
+    PostgresCompositeOperationalRepository,
 )
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.application.trading_lifecycle.complete_account_risk import (
     CompleteAccountPortfolioRiskApplicationService,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.decision.sqlite_repository import (
-    SQLiteDecisionLifecycleRepository,
+from tests.postgres_path_repositories import (
+    PostgresDecisionLifecycleRepository,
 )
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.risk_reduction import (
@@ -86,14 +86,14 @@ from market_regime_alpha.portfolio import (
     PortfolioOutputMode,
     ThesisAllocationRequest,
 )
-from market_regime_alpha.portfolio.sqlite_account_authority import (
-    SQLiteCompleteAccountPortfolioRiskRepository,
+from tests.postgres_path_repositories import (
+    PostgresCompleteAccountPortfolioRiskRepository,
 )
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    SQLiteRiskRouteRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskRouteRepository,
 )
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
+from tests.postgres_path_repositories import (
+    PostgresThesisHealthRepository,
 )
 from tests.daily_decision.conftest import daily_decision_fixture
 from tests.execution.risk_reduction_confirmation_support import (
@@ -246,7 +246,7 @@ def _decision_references(
     fixture: ConfirmationFixture,
 ) -> tuple[LifecycleObjectReference, LifecycleObjectReference]:
     database = fixture.repository.path
-    decisions = SQLiteDecisionLifecycleRepository(database)
+    decisions = PostgresDecisionLifecycleRepository(database)
     thesis = decisions.get_thesis(fixture.book.thesis_id)
     opportunity = decisions.get_opportunity(thesis.opportunity_id)
     opportunity_reference = repository_output_reference(
@@ -271,7 +271,7 @@ def test_decision_stages_wait_without_persisted_creation_or_approval_authority(
 ) -> None:
     as_of = confirmation_fixture.command.confirmed_at.astimezone(UTC)
     database = confirmation_fixture.repository.path
-    repository = SQLiteDecisionLifecycleRepository(database)
+    repository = PostgresDecisionLifecycleRepository(database)
     opportunity_handler = OpportunityStageHandler(repository=repository)
 
     opportunity_result = opportunity_handler.execute(
@@ -302,7 +302,7 @@ def test_existing_opportunity_and_human_approved_thesis_are_loaded_exactly(
 ) -> None:
     as_of = confirmation_fixture.command.confirmed_at.astimezone(UTC)
     database = confirmation_fixture.repository.path
-    repository = SQLiteDecisionLifecycleRepository(database)
+    repository = PostgresDecisionLifecycleRepository(database)
     opportunity_reference, thesis_reference = _decision_references(
         confirmation_fixture
     )
@@ -334,7 +334,7 @@ def test_portfolio_risk_fails_closed_without_complete_account_authority(
 ) -> None:
     _, thesis_reference = _decision_references(confirmation_fixture)
     handler = PortfolioRiskStageHandler(
-        repository=SQLiteCompleteAccountPortfolioRiskRepository(
+        repository=PostgresCompleteAccountPortfolioRiskRepository(
             confirmation_fixture.repository.path
         )
     )
@@ -358,8 +358,8 @@ def test_portfolio_risk_fails_closed_without_complete_account_authority(
 def test_portfolio_risk_loads_actual_complete_account_service_authority(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteCompleteAccountPortfolioRiskRepository(
-        tmp_path / "complete-account.sqlite3"
+    repository = PostgresCompleteAccountPortfolioRiskRepository(
+        tmp_path / "complete-account.postgres-scope"
     )
     thesis = _thesis("000001.SZ")
     account = AuthoritativeAccountPortfolioSnapshot.create(
@@ -450,13 +450,13 @@ def _risk_references(
 ) -> tuple[LifecycleObjectReference, ...]:
     command = fixture.command
     database = fixture.repository.path
-    risk_bundle = SQLiteRiskRouteRepository(
+    risk_bundle = PostgresRiskRouteRepository(
         database
     ).get_verified_reducing_decision_bundle(fixture.decision_id)
-    health = SQLiteThesisHealthRepository(
+    health = PostgresThesisHealthRepository(
         database
     ).get_verified_thesis_health_bundle(command.thesis_health_observation_id)
-    composite = SQLiteCompositeOperationalRepository(database).get_manifest(
+    composite = PostgresCompositeOperationalRepository(database).get_manifest(
         command.composite_manifest_id
     )
     as_of = max(command.confirmed_at, composite.manifest.created_at)
@@ -582,23 +582,23 @@ def _risk_references(
 def _risk_handler(fixture: ConfirmationFixture) -> RiskReductionStageHandler:
     database = fixture.repository.path
     return RiskReductionStageHandler(
-        risk_repository=SQLiteRiskRouteRepository(database),
-        execution_repository=SQLiteRiskReductionManualIntentRepository(database),
-        decision_repository=SQLiteDecisionLifecycleRepository(database),
-        thesis_health_repository=SQLiteThesisHealthRepository(database),
-        composite_repository=SQLiteCompositeOperationalRepository(database),
+        risk_repository=PostgresRiskRouteRepository(database),
+        execution_repository=PostgresRiskReductionManualIntentRepository(database),
+        decision_repository=PostgresDecisionLifecycleRepository(database),
+        thesis_health_repository=PostgresThesisHealthRepository(database),
+        composite_repository=PostgresCompositeOperationalRepository(database),
     )
 
 
 def _risk_continuation_as_of(fixture: ConfirmationFixture) -> datetime:
-    composite = SQLiteCompositeOperationalRepository(
+    composite = PostgresCompositeOperationalRepository(
         fixture.repository.path
     ).get_manifest(fixture.command.composite_manifest_id)
     return max(fixture.command.confirmed_at, composite.manifest.created_at)
 
 
 def _authority_counts(database: Path) -> tuple[int, int]:
-    with sqlite3.connect(database) as connection:
+    with postgres_connection(database) as connection:
         trades = int(
             connection.execute("SELECT COUNT(*) FROM manual_trade_records").fetchone()[0]
         )
@@ -718,7 +718,6 @@ def test_runner_journals_risk_continuation_receipt_and_exact_inputs(
         model_references=(),
         stop_after_stage=None,
         output_directory=tmp_path / "outputs",
-        authority_database_locator=confirmation_fixture.repository.path,
     )
     risk_handler = _risk_handler(confirmation_fixture)
     handlers = tuple(
@@ -728,7 +727,7 @@ def test_runner_journals_risk_continuation_receipt_and_exact_inputs(
         for stage_name in LIFECYCLE_STAGE_ORDER
     )
     runner = CanonicalDecisionLifecycleRunner(
-        repository=SQLiteLifecycleRunRepository(tmp_path / "journal.sqlite3"),
+        repository=PostgresLifecycleRunRepository(tmp_path / "journal.postgres-scope"),
         handlers=handlers,
         clock=_IncreasingClock(as_of + timedelta(minutes=1)),
     )
@@ -762,7 +761,7 @@ def _risk_configuration_references(
     references: tuple[LifecycleObjectReference, ...],
     root: Path,
 ) -> tuple[LifecycleConfigurationReference, ...]:
-    bundle = SQLiteRiskRouteRepository(
+    bundle = PostgresRiskRouteRepository(
         fixture.repository.path
     ).get_verified_reducing_decision_bundle(fixture.decision_id)
     gate_path = _write_json(

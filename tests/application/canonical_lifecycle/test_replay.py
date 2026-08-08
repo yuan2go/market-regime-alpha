@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
@@ -19,8 +19,8 @@ from market_regime_alpha.application.canonical_lifecycle.replay import (
     LifecycleReplayStatus,
     receipt_semantic_fingerprint,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunStatus,
@@ -69,7 +69,7 @@ def test_durable_replay_journals_blocked_entry_source_without_mutating_it(
     tmp_path: Path,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path / "source")
-    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "lifecycle.postgres-scope")
     source_output = tmp_path / "source-runtime"
     command = _canonical_command(
         fixture,
@@ -157,7 +157,7 @@ def test_durable_replay_tamper_fails_closed_without_mutating_source(
     tmp_path: Path,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path / "source")
-    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "lifecycle.postgres-scope")
     source_output = tmp_path / "source-runtime"
     command = _canonical_command(
         fixture,
@@ -199,8 +199,8 @@ def test_durable_replay_resumes_an_interrupted_journal_attempt(
     tmp_path: Path,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path / "source")
-    journal_path = tmp_path / "lifecycle.sqlite3"
-    source_repository = SQLiteLifecycleRunRepository(journal_path)
+    journal_path = tmp_path / "lifecycle.postgres-scope"
+    source_repository = PostgresLifecycleRunRepository(journal_path)
     source_output = tmp_path / "source-runtime"
     command = _canonical_command(
         fixture,
@@ -218,7 +218,7 @@ def test_durable_replay_resumes_an_interrupted_journal_attempt(
         source_repository.history(source.run.run_id)
     )
     failure = _FailFirstReplaySettlement()
-    crashing_repository = SQLiteLifecycleRunRepository(
+    crashing_repository = PostgresLifecycleRunRepository(
         journal_path,
         fault_injector=failure,
     )
@@ -232,7 +232,7 @@ def test_durable_replay_resumes_an_interrupted_journal_attempt(
             output_directory=tmp_path / "replay-runtime",
         )
 
-    with sqlite3.connect(journal_path) as connection:
+    with postgres_connection(journal_path) as connection:
         replay_run_id = str(
             connection.execute(
                 "SELECT run_id FROM lifecycle_runs WHERE run_type = 'REPLAY'"
@@ -244,7 +244,7 @@ def test_durable_replay_resumes_an_interrupted_journal_attempt(
     assert interrupted.stages[0].attempt_count == 1
 
     recovered = run_durable_lifecycle_replay(
-        repository=SQLiteLifecycleRunRepository(journal_path),
+        repository=PostgresLifecycleRunRepository(journal_path),
         source_run_id=source.run.run_id,
         idempotency_key="durable-replay-recovery",
         clock=_TickingClock(fixture.as_of_time + timedelta(hours=4)),
@@ -253,7 +253,7 @@ def test_durable_replay_resumes_an_interrupted_journal_attempt(
 
     assert str(recovered.replay_run.run_id) == replay_run_id
     assert recovered.replay_run.status is LifecycleRunStatus.BLOCKED_BY_MODEL_VALIDATION
-    recovered_history = SQLiteLifecycleRunRepository(journal_path).history(
+    recovered_history = PostgresLifecycleRunRepository(journal_path).history(
         recovered.replay_run.run_id
     )
     assert recovered_history.stages[0].attempt_count == 2
@@ -270,8 +270,8 @@ def test_interrupted_replay_recovers_from_captured_snapshot_after_source_advance
     tmp_path: Path,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path / "source")
-    journal_path = tmp_path / "lifecycle.sqlite3"
-    source_repository = SQLiteLifecycleRunRepository(journal_path)
+    journal_path = tmp_path / "lifecycle.postgres-scope"
+    source_repository = PostgresLifecycleRunRepository(journal_path)
     source_output = tmp_path / "source-runtime"
     command = replace(
         _canonical_command(
@@ -294,7 +294,7 @@ def test_interrupted_replay_recovers_from_captured_snapshot_after_source_advance
         source_repository.history(source.run.run_id)
     )
     failure = _FailFirstReplaySettlement()
-    crashing_repository = SQLiteLifecycleRunRepository(
+    crashing_repository = PostgresLifecycleRunRepository(
         journal_path,
         fault_injector=failure,
     )
@@ -322,7 +322,7 @@ def test_interrupted_replay_recovers_from_captured_snapshot_after_source_advance
     )
 
     recovered = run_durable_lifecycle_replay(
-        repository=SQLiteLifecycleRunRepository(journal_path),
+        repository=PostgresLifecycleRunRepository(journal_path),
         source_run_id=source.run.run_id,
         idempotency_key="captured-source-recovery",
         clock=_TickingClock(fixture.as_of_time + timedelta(hours=5)),
@@ -344,7 +344,7 @@ def test_interrupted_replay_recovers_from_captured_snapshot_after_source_advance
 
 def test_replay_rejects_a_tampered_captured_source_snapshot(tmp_path: Path) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path / "source")
-    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "lifecycle.postgres-scope")
     source_output = tmp_path / "source-runtime"
     source = _canonical_runner(
         fixture,
@@ -393,7 +393,7 @@ def test_interrupted_snapshot_publication_is_atomic_and_retryable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path / "source")
-    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "lifecycle.postgres-scope")
     source_output = tmp_path / "source-runtime"
     source = _canonical_runner(
         fixture,
@@ -449,7 +449,7 @@ def test_replay_idempotency_key_rejects_a_different_source_run(
     tmp_path: Path,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path / "source")
-    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "lifecycle.postgres-scope")
     output = tmp_path / "source-runtime"
     clock = _TickingClock(fixture.as_of_time + timedelta(hours=2))
     first_source = _canonical_runner(
@@ -510,7 +510,7 @@ def test_manual_trade_replay_uses_read_only_repository_and_creates_nothing(
         idempotency_key="risk-source",
         root=tmp_path,
     )
-    journal = SQLiteLifecycleRunRepository(tmp_path / "risk-journal.sqlite3")
+    journal = PostgresLifecycleRunRepository(tmp_path / "risk-journal.postgres-scope")
     runner = _risk_runner(authority=authority, repository=journal, as_of=as_of)
     waiting = runner.run(command)
     assert waiting.run.status is LifecycleRunStatus.WAITING_FOR_MANUAL_CONFIRMATION
@@ -531,6 +531,7 @@ def test_manual_trade_replay_uses_read_only_repository_and_creates_nothing(
         idempotency_key="manual-trade-replay",
         clock=_TickingClock(as_of + timedelta(hours=1)),
         output_directory=tmp_path / "risk-replay",
+        manual_trade_loader=authority.repository.get_manual_trade,
     )
 
     manual_check = next(

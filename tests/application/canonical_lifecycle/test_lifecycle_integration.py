@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -29,8 +29,8 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
     CanonicalDecisionLifecycleRunner,
     LifecycleStageExecutionError,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.contracts import (
     LifecycleStageContext,
@@ -61,8 +61,8 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleStageName,
     LifecycleStageStatus,
 )
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.evidence.canonical import canonical_json
 from market_regime_alpha.execution.risk_reduction import (
@@ -153,7 +153,7 @@ def test_verified_h6_chain_is_durable_replayable_and_clock_independent(
     tmp_path: Path,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path)
-    first_repository = SQLiteLifecycleRunRepository(tmp_path / "first-journal.sqlite3")
+    first_repository = PostgresLifecycleRunRepository(tmp_path / "first-journal.postgres-scope")
     first = _canonical_runner(
         fixture,
         repository=first_repository,
@@ -209,7 +209,7 @@ def test_verified_h6_chain_is_durable_replayable_and_clock_independent(
         == replay
     )
 
-    second_repository = SQLiteLifecycleRunRepository(tmp_path / "second-journal.sqlite3")
+    second_repository = PostgresLifecycleRunRepository(tmp_path / "second-journal.postgres-scope")
     second = _canonical_runner(
         fixture,
         repository=second_repository,
@@ -243,7 +243,7 @@ def test_risk_continuation_requires_external_h45_then_observes_one_manual_trade(
         idempotency_key="risk-continuation-integration",
         root=tmp_path,
     )
-    journal = SQLiteLifecycleRunRepository(tmp_path / "risk-journal.sqlite3")
+    journal = PostgresLifecycleRunRepository(tmp_path / "risk-journal.postgres-scope")
     runner = _risk_runner(
         authority=authority,
         repository=journal,
@@ -315,7 +315,7 @@ def test_manual_confirmation_rejects_policy_not_bound_by_continuation(
         idempotency_key="risk-continuation-policy-mismatch",
         root=tmp_path,
     )
-    journal = SQLiteLifecycleRunRepository(tmp_path / "mismatch-journal.sqlite3")
+    journal = PostgresLifecycleRunRepository(tmp_path / "mismatch-journal.postgres-scope")
     runner = _risk_runner(
         authority=authority,
         repository=journal,
@@ -351,8 +351,8 @@ def test_manual_trade_commit_survives_crash_before_lifecycle_receipt(
         root=tmp_path,
     )
     crash = _ArmableJournalCrash(point="finish_after_attempt")
-    journal_path = tmp_path / "cross-repository-journal.sqlite3"
-    crashing_repository = SQLiteLifecycleRunRepository(
+    journal_path = tmp_path / "cross-repository-journal.postgres-scope"
+    crashing_repository = PostgresLifecycleRunRepository(
         journal_path,
         fault_injector=crash,
     )
@@ -392,7 +392,7 @@ def test_manual_trade_commit_survives_crash_before_lifecycle_receipt(
     assert not any(receipt.stage_name is LifecycleStageName.MANUAL_CONFIRMATION for receipt in after_crash.receipts)
     assert _execution_counts(authority.repository) == committed_counts
 
-    durable_repository = SQLiteLifecycleRunRepository(journal_path)
+    durable_repository = PostgresLifecycleRunRepository(journal_path)
     resumed = CanonicalDecisionLifecycleRunner(
         repository=durable_repository,
         handlers=tuple(handlers),
@@ -421,7 +421,7 @@ def test_delivery_failure_after_real_research_receipt_resumes_at_signal(
     tmp_path: Path,
 ) -> None:
     fixture, manifest_path = _canonical_fixture(tmp_path)
-    repository = SQLiteLifecycleRunRepository(tmp_path / "recovery-journal.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "recovery-journal.postgres-scope")
     handlers = list(_canonical_handlers(fixture, output_root=tmp_path / "recovery-runtime"))
     evidence = _CountingHandler(handlers[0])
     research = _CountingHandler(handlers[1])
@@ -529,7 +529,6 @@ def _canonical_command(
         model_references=fixture.model_references,
         stop_after_stage=None,
         output_directory=output_root,
-        authority_database_locator=None,
     )
 
 
@@ -557,7 +556,7 @@ def _canonical_handlers(fixture: StageFixture, *, output_root: Path) -> tuple[Li
 def _canonical_runner(
     fixture: StageFixture,
     *,
-    repository: SQLiteLifecycleRunRepository,
+    repository: PostgresLifecycleRunRepository,
     output_root: Path,
     clock_start: datetime,
 ) -> CanonicalDecisionLifecycleRunner:
@@ -607,14 +606,13 @@ def _risk_command(
         model_references=(),
         stop_after_stage=None,
         output_directory=root / "risk-output",
-        authority_database_locator=authority.repository.path,
     )
 
 
 def _risk_runner(
     *,
     authority: ConfirmationFixture,
-    repository: SQLiteLifecycleRunRepository,
+    repository: PostgresLifecycleRunRepository,
     as_of: datetime,
 ) -> CanonicalDecisionLifecycleRunner:
     return CanonicalDecisionLifecycleRunner(
@@ -644,9 +642,9 @@ def _settled_output_hashes(history) -> dict[LifecycleStageName, tuple[str, ...]]
 
 
 def _execution_counts(
-    repository: SQLiteRiskReductionManualIntentRepository,
+    repository: PostgresRiskReductionManualIntentRepository,
 ) -> tuple[int, int, int]:
-    with sqlite3.connect(repository.path) as connection:
+    with postgres_connection(repository.path) as connection:
         return tuple(
             int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
             for table in (
@@ -658,5 +656,11 @@ def _execution_counts(
 
 
 def _table_names(path: Path) -> tuple[str, ...]:
-    with sqlite3.connect(path) as connection:
-        return tuple(str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"))
+    with postgres_connection(path) as connection:
+        return tuple(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = current_schema() ORDER BY table_name"
+            )
+        )

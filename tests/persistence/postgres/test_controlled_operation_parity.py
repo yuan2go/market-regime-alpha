@@ -10,10 +10,8 @@ from market_regime_alpha.application.controlled_operation.journal import (
     DecisionTimeOperationStageStatus,
 )
 from market_regime_alpha.application.controlled_operation.postgres_journal import (
-    PostgresDecisionTimeOperationJournal,
-)
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
     ControlledOperationClaimRejected,
+    PostgresDecisionTimeOperationJournal,
 )
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,

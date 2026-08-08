@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-import sqlite3
+import psycopg
 import subprocess
 import sys
 from zoneinfo import ZoneInfo
@@ -18,10 +18,6 @@ from market_regime_alpha.core.identity import (
 )
 from market_regime_alpha.execution import (
     ManualOrderState,
-    SQLiteManualExecutionRepository,
-)
-from market_regime_alpha.execution.sqlite_repository import (
-    MANUAL_EXECUTION_DOWN_MIGRATION,
 )
 from market_regime_alpha.portfolio import (
     RISK_BUDGET_SCHEMA,
@@ -32,6 +28,11 @@ from market_regime_alpha.portfolio import (
     PortfolioOutputMode,
     RiskBudget,
     TargetPosition,
+)
+from tests.postgres_path_repositories import (
+    PostgresManualExecutionRepository,
+    postgres_cli_arguments,
+    postgres_connection,
 )
 from market_regime_alpha.portfolio.lifecycle import PORTFOLIO_DECISION_SCHEMA
 from market_regime_alpha.position import PositionProjector, PositionState
@@ -109,7 +110,7 @@ def _authority(*, current: int = 0, available: int = 0, target: int = 100):
 
 
 def _service(tmp_path):
-    repository = SQLiteManualExecutionRepository(tmp_path / "execution.sqlite3")
+    repository = PostgresManualExecutionRepository(tmp_path / "execution.postgres-scope")
     return ManualExecutionApplicationService(repository), repository
 
 
@@ -184,7 +185,7 @@ def test_partial_fill_duplicate_idempotency_and_full_position_rebuild(tmp_path) 
     assert snapshot.total_quantity == 100
     assert len(repository.fills_for_trade(trade.manual_trade_id)) == 2
     restarted = ManualExecutionApplicationService(
-        SQLiteManualExecutionRepository(repository.path)
+        PostgresManualExecutionRepository(repository.path)
     ).rebuild_position(
         account_id="account-a",
         symbol="000001.SZ",
@@ -195,8 +196,7 @@ def test_partial_fill_duplicate_idempotency_and_full_position_rebuild(tmp_path) 
         [
             sys.executable,
             "scripts/record_manual_fill.py",
-            "--database",
-            str(repository.path),
+            *postgres_cli_arguments(repository.path),
             "position",
             "--account-id",
             "account-a",
@@ -251,9 +251,9 @@ def test_fill_correction_is_append_only_and_rebuilds_effective_position(tmp_path
     assert snapshot.total_quantity == 80
     assert snapshot.average_cost == 11.0
     assert snapshot.effective_fill_ids == (correction.fill_id,)
-    with sqlite3.connect(repository.path) as connection:
+    with postgres_connection(repository.path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM manual_fills").fetchone()[0] == 2
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        with pytest.raises(psycopg.Error, match="append-only"):
             connection.execute("UPDATE manual_fills SET symbol = 'x'")
 
 
@@ -359,21 +359,3 @@ def test_position_projector_cannot_create_actual_position_without_fill() -> None
             fills=(),
             as_of=NOW,
         )
-
-
-def test_manual_execution_migration_has_safe_rollback(tmp_path) -> None:
-    path = tmp_path / "execution.sqlite3"
-    SQLiteManualExecutionRepository(path)
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            MANUAL_EXECUTION_DOWN_MIGRATION.read_text(encoding="utf-8")
-        )
-        names = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-    assert "manual_fills" not in names
-    assert "manual_trade_records" not in names
-    assert "daily_runs" not in names

@@ -51,7 +51,7 @@ runner.settle
   -> load_verified_market_data_dataset
   -> build_trade_horizon_outcome_evidence
   -> ControlledOperationalEvidencePackage.create(SETTLED)
-  -> SQLiteLongitudinalOperationalIndex.append
+  -> PostgresLongitudinalOperationalIndex.append
 ```
 
 The runner never invokes `DailyLoopRunner`, the Legacy daily Feature path,
@@ -75,8 +75,8 @@ admitted at 14:54 waits until the policy DecisionTime before Signal/Path/Entry
 can run. A new canonical child cannot start after 14:55; every canonical stage
 is also guarded before and after execution so work stops once 14:56 is crossed.
 An already-persisted child may recover before 14:56 only after a read-only
-admission check matches its command and parent-frozen evidence. A mere SQLite
-file or migrated empty database is not admission evidence.
+admission check matches its command and parent-frozen evidence. An empty or
+unbound PostgreSQL schema is not admission evidence.
 Non-trading days, missing or conflicting calendars, early/late runs, sources
 received after the DecisionTime and retry after cutoff fail closed. Replay uses
 recorded semantic times and never the current wall clock.
@@ -133,7 +133,7 @@ Receipt, Event, artifact-reference and child-run-reference tables. Completed
 Stages and Events/Receipts are immutable. Stage claims use leases, monotonic
 epochs and CAS. The parent records child Receipt hashes and never copies child
 domain state. Signal, Path and Entry execute through the real migration-011
-`CanonicalDecisionLifecycleRunner` and SQLite journal. A separately readable
+`CanonicalDecisionLifecycleRunner` and PostgreSQL journal. A separately readable
 `ControlledCanonicalLifecycleRunReceipt` binds the actual Run ID, command hash,
 one-snapshot history hash, ordered Stage Receipt hashes, terminal status and
 exact outputs. The parent binds this published Receipt's content hash; its
@@ -166,7 +166,7 @@ Allowed states are `OPERATIONAL_EXPLORATORY_ARCHIVE`, `DATA_BLOCKED`,
 immutable package that explicitly supersedes the pending package; it never
 modifies history.
 
-`SQLiteLongitudinalOperationalIndex` stores package references and discovery
+`PostgresLongitudinalOperationalIndex` stores package references and discovery
 fields only. It is append-only, range/model queryable, detects configuration
 switches and missing trading dates, and can rebuild from packages. It stores no
 unverified profitability conclusion.
@@ -196,7 +196,7 @@ daily Dataset semantics from the daily source archive, recomputes both Feature
 Bundles, controlled research/CandidateSet, minute normalization/Dataset,
 Overlay, Candidate View V2, Signal V3, PathForecast, Entry blocker and optional
 raw-source-derived Outcome. It opens the migration-011 and Feature journals in
-SQLite read-only mode and verifies the exact daily/static/minute/intraday/
+an isolated PostgreSQL schema and verifies the exact daily/static/minute/intraday/
 canonical/Outcome child set, then compares package and Receipt fingerprints.
 The V1 Canonical wrapper remains readable as explicit historical compatibility;
 new V2 evidence requires the real migration-011 journal. Replay performs no

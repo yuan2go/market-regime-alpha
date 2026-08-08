@@ -31,7 +31,7 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
-from tests.application.canonical_lifecycle.test_sqlite_repository import (
+from tests.application.canonical_lifecycle.test_postgres_repository import (
     T0,
     _claimed_started,
     _command,

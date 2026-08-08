@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import runpy
 import subprocess
@@ -12,7 +11,6 @@ from market_regime_alpha.application.daily_loop import (
     DailyLoopRunner,
     DailyRunCommand,
     RunMode,
-    SQLiteDailyRunRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.providers.public_composite import (
@@ -21,6 +19,11 @@ from market_regime_alpha.data.providers.public_composite import (
 )
 from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
 from tests.application.daily_loop.public_fixture import DECISION, public_fixture
+from tests.application.daily_loop.governance_fixture import FIXTURE_MODEL_SELECTOR
+from tests.postgres_path_repositories import (
+    PostgresDailyRunRepository,
+    postgres_cli_arguments,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -28,7 +31,9 @@ SCRIPT = PROJECT_ROOT / "scripts" / "run_exploratory_daily_loop.py"
 CODE_REVISION = "772ecfb09410588b5a406ad900d793a5850e60d5"
 
 
-def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
+def test_cli_replay_fails_closed_without_postgres_model_governance(
+    tmp_path: Path,
+) -> None:
     policy = smoke_pool_policy_v1()
     _, provider_result, source_manifest = public_fixture(policy=policy)
     archive = publish_source_archive(
@@ -48,8 +53,9 @@ def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
         replay_source_manifest_id=source_manifest.source_manifest_id,
     )
     runner = DailyLoopRunner(
-        repository=SQLiteDailyRunRepository(tmp_path / "runtime.sqlite3"),
+        repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
+        model_selector=FIXTURE_MODEL_SELECTOR,
     )
     completed = runner.run(command, replay_archive_path=archive)
     assert completed.record.daily_run_id is not None
@@ -60,8 +66,7 @@ def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
             str(SCRIPT),
             "--output-root",
             str(command.output_root),
-            "--journal",
-            str(tmp_path / "runtime.sqlite3"),
+            *postgres_cli_arguments(tmp_path / "runtime.postgres-scope"),
             "replay",
             "--run-id",
             str(completed.record.daily_run_id),
@@ -72,11 +77,8 @@ def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
         text=True,
     )
 
-    assert process.returncode == 0, process.stderr
-    payload = json.loads(process.stdout)
-    assert payload["daily_run_id"] == str(completed.record.daily_run_id)
-    assert payload["artifact_id"] == completed.decision_artifact.artifact_id
-    assert payload["replay_hash"] == completed.decision_artifact.checksums_hash
+    assert process.returncode != 0
+    assert "model-selection-receipt" in process.stderr
 
 
 def test_new_cli_has_no_legacy_or_broker_dependency() -> None:
@@ -139,8 +141,7 @@ def test_finalize_cli_does_not_construct_live_clients(
             (
                 "--output-root",
                 str(tmp_path / "runtime"),
-                "--journal",
-                str(tmp_path / "runtime.sqlite3"),
+                *postgres_cli_arguments(tmp_path / "runtime.postgres-scope"),
                 "finalize-run",
                 "--decision-date",
                 "2025-02-03",

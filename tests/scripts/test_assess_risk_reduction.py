@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import timedelta
 import json
 from pathlib import Path
-import sqlite3
-
 import pytest
 
 from market_regime_alpha.dividend_t.brokers import PaperBrokerAdapter
@@ -15,6 +13,10 @@ from tests.portfolio.risk_route_test_support import (
     make_configuration,
     make_observation,
     make_position,
+)
+from tests.postgres_path_repositories import (
+    postgres_cli_arguments,
+    postgres_connection,
 )
 
 
@@ -47,8 +49,7 @@ def _invoke(database: Path, request: Path, capsys) -> dict[str, object]:
     assert (
         main(
             [
-                "--database",
-                str(database),
+                *postgres_cli_arguments(database),
                 "--request",
                 str(request),
             ]
@@ -58,10 +59,8 @@ def _invoke(database: Path, request: Path, capsys) -> dict[str, object]:
     return json.loads(capsys.readouterr().out)
 
 
-def test_cli_persists_and_replays_decision_without_execution_authority(
-    tmp_path, capsys, monkeypatch
-) -> None:
-    database = tmp_path / "risk-routes.sqlite3"
+def test_cli_persists_and_replays_decision_without_execution_authority(tmp_path, capsys, monkeypatch) -> None:
+    database = tmp_path / "risk-routes.postgres-scope"
     request = tmp_path / "request.json"
     _write_request(request, idempotency_key="cli-replay")
     monkeypatch.setattr(
@@ -84,16 +83,19 @@ def test_cli_persists_and_replays_decision_without_execution_authority(
     assert first["execution_observation_id"]
     assert first["configuration_id"]
 
-    with sqlite3.connect(database) as connection:
-        tables = {
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
+    with postgres_connection(database) as connection:
+        counts = tuple(
+            connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in (
+                "manual_trade_records",
+                "manual_trade_events",
+                "manual_fills",
+                "execution_commands",
             )
-        }
-    assert "risk_reducing_decisions" in tables
-    assert not any("manual_trade" in table for table in tables)
-    assert not any("fill" in table for table in tables)
+        )
+        decision_count = connection.execute("SELECT count(*) FROM risk_reducing_decisions").fetchone()[0]
+    assert decision_count == 1
+    assert counts == (0, 0, 0, 0)
 
 
 @pytest.mark.parametrize(
@@ -129,7 +131,7 @@ def test_cli_reports_non_permitted_decisions_with_explicit_reasons(
         observation_age=age,
     )
 
-    result = _invoke(tmp_path / f"{expected_state}.sqlite3", request, capsys)
+    result = _invoke(tmp_path / f"{expected_state}.postgres-scope", request, capsys)
 
     assert result["state"] == expected_state
     assert expected_reason in result["reason_codes"]
@@ -162,8 +164,7 @@ def test_cli_rejects_non_string_command_and_audit_fields(
     with pytest.raises(ValueError, match=f"{field} must be a string"):
         main(
             [
-                "--database",
-                str(tmp_path / "invalid.sqlite3"),
+                *postgres_cli_arguments(tmp_path / "invalid.postgres-scope"),
                 "--request",
                 str(request),
             ]

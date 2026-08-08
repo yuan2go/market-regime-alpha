@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 import json
-import sqlite3
+import psycopg
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
@@ -14,8 +15,8 @@ from market_regime_alpha.application.trading_lifecycle.traceable_execution impor
     TraceableManualExecutionApplicationService,
 )
 from market_regime_alpha.core.identity import ArtifactId, FillId
-from market_regime_alpha.decision.sqlite_repository import (
-    SQLiteDecisionLifecycleRepository,
+from tests.postgres_path_repositories import (
+    PostgresDecisionLifecycleRepository,
 )
 from market_regime_alpha.decision.thesis import ThesisState, transition_thesis
 from market_regime_alpha.evidence.canonical import canonical_hash
@@ -36,11 +37,11 @@ from market_regime_alpha.portfolio.risk_routes import (
     RiskChangeKind,
     RiskReducingExecutionGate,
 )
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    SQLiteRiskRouteRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskRouteRepository,
 )
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskReductionManualIntentRepository,
 )
 from market_regime_alpha.position.authority import (
     PositionProjector,
@@ -49,8 +50,8 @@ from market_regime_alpha.position.authority import (
     SymbolTradingState,
 )
 from market_regime_alpha.position.assessment import ExitAssessment
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
+from tests.postgres_path_repositories import (
+    PostgresThesisHealthRepository,
 )
 from market_regime_alpha.position.thesis_health import (
     ThesisHealthInputBundle,
@@ -58,8 +59,8 @@ from market_regime_alpha.position.thesis_health import (
     VerifiedThesisHealthBundle,
     thesis_health_command_hash,
 )
-from market_regime_alpha.application.operational_research.sqlite_composite_repository import (
-    SQLiteCompositeOperationalRepository,
+from tests.postgres_path_repositories import (
+    PostgresCompositeOperationalRepository,
 )
 from tests.position.test_thesis_health_builder import _bundle
 from tests.position.thesis_health_fixtures import make_h5_fixture
@@ -71,9 +72,7 @@ from tests.execution.risk_reduction_confirmation_support import (
 pytest_plugins = ("tests.daily_decision.conftest",)
 
 
-def test_atomic_exit_confirmation_creates_only_route_authorized_manual_intent(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_atomic_exit_confirmation_creates_only_route_authorized_manual_intent(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
     result = fixture.repository.confirm_risk_reduction(fixture.command)
@@ -87,24 +86,16 @@ def test_atomic_exit_confirmation_creates_only_route_authorized_manual_intent(
     assert result.manual_trade.side.value == "SELL"
     assert result.manual_trade.intended_quantity == fixture.quantity
     assert result.manual_trade.position_book_id == fixture.book.position_book_id
-    assert fixture.repository.get_position_book(
-        fixture.book.position_book_id
-    ) == fixture.book
-    assert fixture.repository.fills_for_trade(
-        result.manual_trade.manual_trade_id
-    ) == ()
+    assert fixture.repository.get_position_book(fixture.book.position_book_id) == fixture.book
+    assert fixture.repository.fills_for_trade(result.manual_trade.manual_trade_id) == ()
 
     replay = fixture.repository.confirm_risk_reduction(fixture.command)
     assert replay == result
-    restarted = SQLiteRiskReductionManualIntentRepository(
-        fixture.repository.path
-    )
+    restarted = PostgresRiskReductionManualIntentRepository(fixture.repository.path)
     assert restarted.confirm_risk_reduction(fixture.command) == result
 
 
-def test_fresh_later_confirmation_preserves_identical_position_authority(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_fresh_later_confirmation_preserves_identical_position_authority(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     later = replace(
         fixture.command,
@@ -115,22 +106,14 @@ def test_fresh_later_confirmation_preserves_identical_position_authority(
     result = fixture.repository.confirm_risk_reduction(later)
 
     assert result.attempt.state is RiskReductionConfirmationState.CONFIRMED_INTENT
-    assert result.current_position.snapshot_id == (
-        result.attempt.source_position_snapshot_id
-    )
-    assert canonical_hash(result.current_position.to_canonical_dict()) == (
-        result.attempt.source_position_snapshot_hash
-    )
+    assert result.current_position.snapshot_id == (result.attempt.source_position_snapshot_id)
+    assert canonical_hash(result.current_position.to_canonical_dict()) == (result.attempt.source_position_snapshot_hash)
 
 
-def test_superseded_same_scope_decision_persists_rejection_and_latest_can_confirm(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_superseded_same_scope_decision_persists_rejection_and_latest_can_confirm(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
-    risk_repository = SQLiteRiskRouteRepository(fixture.repository.path)
-    original_bundle = risk_repository.get_verified_reducing_decision_bundle(
-        fixture.decision_id
-    )
+    risk_repository = PostgresRiskRouteRepository(fixture.repository.path)
+    original_bundle = risk_repository.get_verified_reducing_decision_bundle(fixture.decision_id)
     original_decision = original_bundle.decision
     successor_assessed_at = original_decision.assessed_at + timedelta(seconds=1)
     successor = RiskReducingExecutionGate().assess(
@@ -157,30 +140,22 @@ def test_superseded_same_scope_decision_persists_rejection_and_latest_can_confir
             }
         ),
     )
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         assessment_payload = json.loads(
             connection.execute(
                 """
                 SELECT exit_assessment_json FROM operational_exit_directives
-                WHERE directive_id = ?
+                WHERE directive_id = %s
                 """,
                 (str(fixture.directive.directive_id),),
             ).fetchone()[0]
         )
-        fills_before = connection.execute(
-            "SELECT COUNT(*) FROM manual_fills"
-        ).fetchone()[0]
-    successor_bundle = risk_repository.get_verified_reducing_decision_bundle(
-        successor.decision_id
-    )
-    health_bundle = SQLiteThesisHealthRepository(
-        fixture.repository.path
-    ).get_verified_thesis_health_bundle(
+        fills_before = connection.execute("SELECT COUNT(*) FROM manual_fills").fetchone()[0]
+    successor_bundle = risk_repository.get_verified_reducing_decision_bundle(successor.decision_id)
+    health_bundle = PostgresThesisHealthRepository(fixture.repository.path).get_verified_thesis_health_bundle(
         fixture.command.thesis_health_observation_id
     )
-    composite = SQLiteCompositeOperationalRepository(
-        fixture.repository.path
-    ).get_manifest(fixture.command.composite_manifest_id)
+    composite = PostgresCompositeOperationalRepository(fixture.repository.path).get_manifest(fixture.command.composite_manifest_id)
     successor_directive = build_operational_exit_directive_v2(
         exit_assessment=ExitAssessment.from_canonical_dict(assessment_payload),
         risk_bundle=successor_bundle,
@@ -202,21 +177,11 @@ def test_superseded_same_scope_decision_persists_rejection_and_latest_can_confir
 
     rejected = fixture.repository.confirm_risk_reduction(superseded_command)
 
-    assert (
-        rejected.attempt.state
-        is RiskReductionConfirmationState.BLOCKED_ON_RECHECK
-    )
-    assert rejected.attempt.reason_codes == (
-        "RISK_REDUCING_DECISION_SUPERSEDED",
-    )
+    assert rejected.attempt.state is RiskReductionConfirmationState.BLOCKED_ON_RECHECK
+    assert rejected.attempt.reason_codes == ("RISK_REDUCING_DECISION_SUPERSEDED",)
     assert rejected.manual_trade is None
-    assert fixture.repository.get_confirmation_attempt(
-        rejected.attempt.attempt_id
-    ) == rejected.attempt
-    assert (
-        risk_repository.get_reducing_decision(original_decision.decision_id)
-        == original_decision
-    )
+    assert fixture.repository.get_confirmation_attempt(rejected.attempt.attempt_id) == rejected.attempt
+    assert risk_repository.get_reducing_decision(original_decision.decision_id) == original_decision
     assert fixture.repository.confirm_risk_reduction(superseded_command) == rejected
     latest_command = replace(
         fixture.command,
@@ -232,28 +197,30 @@ def test_superseded_same_scope_decision_persists_rejection_and_latest_can_confir
 
     assert confirmed.manual_trade is not None
     assert confirmed.attempt.state is RiskReductionConfirmationState.CONFIRMED_INTENT
-    with sqlite3.connect(fixture.repository.path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM manual_fills"
-        ).fetchone()[0] == fills_before
-        assert connection.execute(
-            """
+    with postgres_connection(fixture.repository.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM manual_fills").fetchone()[0] == fills_before
+        assert (
+            connection.execute(
+                """
             SELECT COUNT(*) FROM manual_trade_records
             WHERE authority_route = 'REDUCING'
             """
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            """
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                """
             SELECT COUNT(*) FROM risk_reduction_confirmation_attempts
-            WHERE risk_reducing_decision_id = ?
+            WHERE risk_reducing_decision_id = %s
             """,
-            (str(original_decision.decision_id),),
-        ).fetchone()[0] == 1
+                (str(original_decision.decision_id),),
+            ).fetchone()[0]
+            == 1
+        )
 
 
-def test_legal_reduce_creates_sell_intent_with_positive_remainder(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_legal_reduce_creates_sell_intent_with_positive_remainder(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(
         tmp_path,
         daily_decision_fixture,
@@ -269,9 +236,7 @@ def test_legal_reduce_creates_sell_intent_with_positive_remainder(
     assert result.manual_trade.side.value == "SELL"
 
 
-def test_h4_v1_reduce_to_zero_requires_new_exit_decision_without_trade(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_h4_v1_reduce_to_zero_requires_new_exit_decision_without_trade(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(
         tmp_path,
         daily_decision_fixture,
@@ -281,10 +246,7 @@ def test_h4_v1_reduce_to_zero_requires_new_exit_decision_without_trade(
 
     result = fixture.repository.confirm_risk_reduction(fixture.command)
 
-    assert (
-        result.attempt.state
-        is RiskReductionConfirmationState.ACTION_SEMANTICS_CONFLICT
-    )
+    assert result.attempt.state is RiskReductionConfirmationState.ACTION_SEMANTICS_CONFLICT
     assert result.attempt.reason_codes == (
         "H4_V2_REDUCE_REQUIRES_POSITIVE_REMAINDER",
         "REQUIRES_NEW_EXIT_DECISION",
@@ -292,9 +254,7 @@ def test_h4_v1_reduce_to_zero_requires_new_exit_decision_without_trade(
     assert result.manual_trade is None
 
 
-def test_decision_hash_mismatch_persists_data_insufficient_attempt(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_decision_hash_mismatch_persists_data_insufficient_attempt(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
     result = fixture.repository.confirm_risk_reduction(
@@ -306,15 +266,11 @@ def test_decision_hash_mismatch_persists_data_insufficient_attempt(
     )
 
     assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
-    assert result.attempt.reason_codes == (
-        "RISK_REDUCING_DECISION_HASH_MISMATCH",
-    )
+    assert result.attempt.reason_codes == ("RISK_REDUCING_DECISION_HASH_MISMATCH",)
     assert result.manual_trade is None
 
 
-def test_unknown_submitted_decision_reference_uses_directive_authority_for_attempt(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_unknown_submitted_decision_reference_uses_directive_authority_for_attempt(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
     result = fixture.repository.confirm_risk_reduction(
@@ -326,21 +282,13 @@ def test_unknown_submitted_decision_reference_uses_directive_authority_for_attem
     )
 
     assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
-    assert result.attempt.reason_codes == (
-        "RISK_REDUCING_DECISION_HASH_MISMATCH",
-    )
-    assert result.attempt.risk_reducing_decision_id == (
-        fixture.command.risk_reducing_decision_id
-    )
+    assert result.attempt.reason_codes == ("RISK_REDUCING_DECISION_HASH_MISMATCH",)
+    assert result.attempt.risk_reducing_decision_id == (fixture.command.risk_reducing_decision_id)
     assert result.manual_trade is None
-    assert fixture.repository.get_confirmation_attempt(
-        result.attempt.attempt_id
-    ) == result.attempt
+    assert fixture.repository.get_confirmation_attempt(result.attempt.attempt_id) == result.attempt
 
 
-def test_directive_hash_mismatch_persists_data_insufficient_attempt(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_directive_hash_mismatch_persists_data_insufficient_attempt(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
     result = fixture.repository.confirm_risk_reduction(
@@ -352,9 +300,7 @@ def test_directive_hash_mismatch_persists_data_insufficient_attempt(
     )
 
     assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
-    assert result.attempt.reason_codes == (
-        "OPERATIONAL_EXIT_DIRECTIVE_REFERENCE_MISMATCH",
-    )
+    assert result.attempt.reason_codes == ("OPERATIONAL_EXIT_DIRECTIVE_REFERENCE_MISMATCH",)
     assert result.manual_trade is None
 
 
@@ -393,9 +339,7 @@ def test_non_permitted_h4_decision_never_creates_manual_intent(
     assert result.manual_trade is None
 
 
-def test_current_invalidated_thesis_can_confirm_exit_intent(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_current_invalidated_thesis_can_confirm_exit_intent(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(
         tmp_path,
         daily_decision_fixture,
@@ -408,11 +352,9 @@ def test_current_invalidated_thesis_can_confirm_exit_intent(
     assert result.attempt.state is RiskReductionConfirmationState.CONFIRMED_INTENT
 
 
-def test_confirmation_rejects_manual_trade_projection_tamper(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_confirmation_rejects_manual_trade_projection_tamper(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         connection.execute(
             """
             UPDATE manual_trade_records
@@ -425,9 +367,7 @@ def test_confirmation_rejects_manual_trade_projection_tamper(
         fixture.repository.confirm_risk_reduction(fixture.command)
 
 
-def test_new_append_only_fill_before_confirmation_yields_position_changed(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_new_append_only_fill_before_confirmation_yields_position_changed(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     ManualExecutionApplicationService(fixture.repository).record_fill(
         fixture.repository.trades_for_book(fixture.book.position_book_id)[0].manual_trade_id,
@@ -446,18 +386,12 @@ def test_new_append_only_fill_before_confirmation_yields_position_changed(
     result = fixture.repository.confirm_risk_reduction(fixture.command)
 
     assert result.attempt.state is RiskReductionConfirmationState.POSITION_CHANGED
-    assert result.attempt.source_position_snapshot_id != (
-        result.attempt.current_position_snapshot_id
-    )
-    assert result.attempt.source_position_snapshot_hash != (
-        result.attempt.current_position_snapshot_hash
-    )
+    assert result.attempt.source_position_snapshot_id != (result.attempt.current_position_snapshot_id)
+    assert result.attempt.source_position_snapshot_hash != (result.attempt.current_position_snapshot_hash)
     assert result.manual_trade is None
 
 
-def test_changed_t_plus_one_sellability_evidence_yields_position_changed(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_changed_t_plus_one_sellability_evidence_yields_position_changed(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     source = fixture.command.symbol_trading_statuses[0]
     suspended = SymbolTradingSessionStatus.create(
@@ -484,9 +418,7 @@ def test_changed_t_plus_one_sellability_evidence_yields_position_changed(
     assert result.manual_trade is None
 
 
-def test_later_status_evidence_is_projected_at_confirmation_time(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_later_status_evidence_is_projected_at_confirmation_time(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     source = fixture.command.symbol_trading_statuses[0]
     later_suspension = SymbolTradingSessionStatus.create(
@@ -509,16 +441,12 @@ def test_later_status_evidence_is_projected_at_confirmation_time(
 
     assert result.attempt.state is RiskReductionConfirmationState.POSITION_CHANGED
     assert result.current_position.as_of == fixture.command.confirmed_at
-    assert result.current_position.source_trading_status_ids == (
-        later_suspension.status_id,
-    )
+    assert result.current_position.source_trading_status_ids == (later_suspension.status_id,)
     assert result.current_position.available_quantity == 0
     assert result.manual_trade is None
 
 
-def test_closed_position_book_blocks_confirmation_without_new_book(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_closed_position_book_blocks_confirmation_without_new_book(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     closed = fixture.book.close(
         closed_at=fixture.command.confirmed_at,
@@ -539,11 +467,9 @@ def test_closed_position_book_blocks_confirmation_without_new_book(
     assert fixture.repository.open_position_books(fixture.book.account_id) == ()
 
 
-def test_closed_thesis_blocks_confirmation(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_closed_thesis_blocks_confirmation(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
-    repository = SQLiteDecisionLifecycleRepository(fixture.repository.path)
+    repository = PostgresDecisionLifecycleRepository(fixture.repository.path)
     current = repository.get_thesis(fixture.book.thesis_id)
     closed = transition_thesis(
         current,
@@ -566,9 +492,7 @@ def test_closed_thesis_blocks_confirmation(
     assert result.manual_trade is None
 
 
-def test_second_command_cannot_create_another_intent_for_confirmed_decision(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_second_command_cannot_create_another_intent_for_confirmed_decision(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     fixture.repository.confirm_risk_reduction(fixture.command)
 
@@ -580,25 +504,17 @@ def test_second_command_cannot_create_another_intent_for_confirmed_decision(
     )
 
     assert second.attempt.state is RiskReductionConfirmationState.BLOCKED_ON_RECHECK
-    assert second.attempt.reason_codes == (
-        "RISK_REDUCING_DECISION_ALREADY_CONFIRMED",
-    )
+    assert second.attempt.reason_codes == ("RISK_REDUCING_DECISION_ALREADY_CONFIRMED",)
     assert second.manual_trade is None
 
 
-def test_expired_decision_persists_failed_attempt_without_trade(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_expired_decision_persists_failed_attempt_without_trade(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     result = fixture.repository.confirm_risk_reduction(
         replace(
             fixture.command,
             confirmed_at=(
-                fixture.command.confirmed_at
-                + timedelta(
-                    seconds=fixture.command.confirmation_policy.maximum_decision_age_seconds
-                    + 1
-                )
+                fixture.command.confirmed_at + timedelta(seconds=fixture.command.confirmation_policy.maximum_decision_age_seconds + 1)
             ),
             idempotency_key="h4-5-expired",
         )
@@ -606,14 +522,10 @@ def test_expired_decision_persists_failed_attempt_without_trade(
 
     assert result.attempt.state is RiskReductionConfirmationState.EXPIRED
     assert result.manual_trade is None
-    assert fixture.repository.get_confirmation_attempt(
-        result.attempt.attempt_id
-    ) == result.attempt
+    assert fixture.repository.get_confirmation_attempt(result.attempt.attempt_id) == result.attempt
 
 
-def test_expired_source_position_uses_explicit_policy_threshold(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_expired_source_position_uses_explicit_policy_threshold(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     source = fixture.command.confirmation_policy
     position_strict = type(source).create(
@@ -622,12 +534,8 @@ def test_expired_source_position_uses_explicit_policy_threshold(
         maximum_decision_age_seconds=120,
         maximum_position_age_seconds=10,
         maximum_execution_observation_age_seconds=30,
-        maximum_reference_price_deviation=(
-            source.maximum_reference_price_deviation
-        ),
-        operator_authentication_requirement=(
-            source.operator_authentication_requirement
-        ),
+        maximum_reference_price_deviation=(source.maximum_reference_price_deviation),
+        operator_authentication_requirement=(source.operator_authentication_requirement),
     )
 
     result = fixture.repository.confirm_risk_reduction(
@@ -661,9 +569,7 @@ def test_expired_source_position_uses_explicit_policy_threshold(
         ),
     ],
 )
-def test_market_gate_is_replayed_from_fresh_canonical_observation(
-    tmp_path, daily_decision_fixture, state, expected
-) -> None:
+def test_market_gate_is_replayed_from_fresh_canonical_observation(tmp_path, daily_decision_fixture, state, expected) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     source = fixture.command.execution_observation
     observation = ReducingExecutionObservation.create(
@@ -692,9 +598,7 @@ def test_market_gate_is_replayed_from_fresh_canonical_observation(
     assert result.manual_trade is None
 
 
-def test_stale_execution_observation_is_data_insufficient(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_stale_execution_observation_is_data_insufficient(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     source = fixture.command.execution_observation
     stale = ReducingExecutionObservation.create(
@@ -707,10 +611,7 @@ def test_stale_execution_observation_is_data_insufficient(
         source_artifact_hash=source.source_artifact_hash,
         availability_time=(
             fixture.command.confirmed_at
-            - timedelta(
-                seconds=fixture.command.confirmation_policy.maximum_execution_observation_age_seconds
-                + 1
-            )
+            - timedelta(seconds=fixture.command.confirmation_policy.maximum_execution_observation_age_seconds + 1)
         ),
         reason_code="H4_5_STALE_RECHECK",
     )
@@ -777,9 +678,7 @@ def test_execution_recheck_rejects_scope_time_and_liquidity_failures(
     elif case == "session":
         values["session_date"] = source.session_date + timedelta(days=1)
     elif case == "future":
-        values["availability_time"] = fixture.command.confirmed_at + timedelta(
-            seconds=1
-        )
+        values["availability_time"] = fixture.command.confirmed_at + timedelta(seconds=1)
     else:
         values["average_daily_volume"] = fixture.quantity
     observation = ReducingExecutionObservation.create(**values)
@@ -797,9 +696,7 @@ def test_execution_recheck_rejects_scope_time_and_liquidity_failures(
     assert result.manual_trade is None
 
 
-def test_expected_price_range_must_contain_fresh_reference_within_policy(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_expected_price_range_must_contain_fresh_reference_within_policy(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
     result = fixture.repository.confirm_risk_reduction(
@@ -812,34 +709,24 @@ def test_expected_price_range_must_contain_fresh_reference_within_policy(
     )
 
     assert result.attempt.state is RiskReductionConfirmationState.BLOCKED_ON_RECHECK
-    assert result.attempt.reason_codes == (
-        "EXPECTED_PRICE_RANGE_OUTSIDE_POLICY",
-    )
+    assert result.attempt.reason_codes == ("EXPECTED_PRICE_RANGE_OUTSIDE_POLICY",)
     assert result.manual_trade is None
 
 
-def test_command_idempotency_semantic_conflict_is_rejected(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_command_idempotency_semantic_conflict_is_rejected(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     fixture.repository.confirm_risk_reduction(fixture.command)
 
     with pytest.raises(ValueError, match="idempotency key reused"):
-        fixture.repository.confirm_risk_reduction(
-            replace(fixture.command, reason="different confirmation semantics")
-        )
+        fixture.repository.confirm_risk_reduction(replace(fixture.command, reason="different confirmation semantics"))
 
 
-def test_reducing_binding_tamper_blocks_trade_and_fill_reads(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_reducing_binding_tamper_blocks_trade_and_fill_reads(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     result = fixture.repository.confirm_risk_reduction(fixture.command)
     assert result.manual_trade is not None
-    with sqlite3.connect(fixture.repository.path) as connection:
-        connection.execute(
-            "DROP TRIGGER risk_reducing_manual_trade_bindings_no_update"
-        )
+    with postgres_connection(fixture.repository.path) as connection:
+        connection.execute("DROP TRIGGER risk_reducing_manual_trade_bindings_no_update ON risk_reducing_manual_trade_bindings")
         connection.execute(
             """
             UPDATE risk_reducing_manual_trade_bindings
@@ -864,14 +751,10 @@ def test_reducing_binding_tamper_blocks_trade_and_fill_reads(
         )
 
 
-def test_non_latest_h5_observation_is_persisted_as_data_insufficient_attempt(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_non_latest_h5_observation_is_persisted_as_data_insufficient_attempt(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
-    repository = SQLiteThesisHealthRepository(fixture.repository.path)
-    current = repository.get_verified_thesis_health_bundle(
-        fixture.command.thesis_health_observation_id
-    )
+    repository = PostgresThesisHealthRepository(fixture.repository.path)
+    current = repository.get_verified_thesis_health_bundle(fixture.command.thesis_health_observation_id)
     source = current.input_bundle
     successor_bundle = ThesisHealthInputBundle.create(
         thesis=source.thesis,
@@ -902,15 +785,11 @@ def test_non_latest_h5_observation_is_persisted_as_data_insufficient_attempt(
     result = fixture.repository.confirm_risk_reduction(fixture.command)
 
     assert result.attempt.state is RiskReductionConfirmationState.DATA_INSUFFICIENT
-    assert result.attempt.reason_codes == (
-        "H5_H6_OPERATIONAL_LINEAGE_NOT_VERIFIED",
-    )
+    assert result.attempt.reason_codes == ("H5_H6_OPERATIONAL_LINEAGE_NOT_VERIFIED",)
     assert result.manual_trade is None
 
 
-def test_h6_manifest_hash_mismatch_is_persisted_as_data_insufficient_attempt(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_h6_manifest_hash_mismatch_is_persisted_as_data_insufficient_attempt(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
 
     result = fixture.repository.confirm_risk_reduction(
@@ -926,22 +805,16 @@ def test_h6_manifest_hash_mismatch_is_persisted_as_data_insufficient_attempt(
     assert result.manual_trade is None
 
 
-def test_synthetic_h5_chain_cannot_claim_operational_h6_lineage(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_synthetic_h5_chain_cannot_claim_operational_h6_lineage(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     synthetic_bundle = _bundle(make_h5_fixture())
-    synthetic_observation = ThesisHealthObservationBuilder().build(
-        synthetic_bundle
-    )
+    synthetic_observation = ThesisHealthObservationBuilder().build(synthetic_bundle)
     synthetic = VerifiedThesisHealthBundle(
         observation=synthetic_observation,
         input_bundle=synthetic_bundle,
         is_latest=True,
     )
-    composite = SQLiteCompositeOperationalRepository(
-        fixture.repository.path
-    ).get_manifest(fixture.command.composite_manifest_id)
+    composite = PostgresCompositeOperationalRepository(fixture.repository.path).get_manifest(fixture.command.composite_manifest_id)
 
     with pytest.raises(ValueError, match="exact H6 lineage"):
         validate_h5_h6_operational_lineage(
@@ -950,16 +823,12 @@ def test_synthetic_h5_chain_cannot_claim_operational_h6_lineage(
         )
 
 
-def test_confirmed_reducing_trade_accepts_manual_fill_and_reprojects_position(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_confirmed_reducing_trade_accepts_manual_fill_and_reprojects_position(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     result = fixture.repository.confirm_risk_reduction(fixture.command)
     assert result.manual_trade is not None
 
-    filled_trade, fill = ManualExecutionApplicationService(
-        fixture.repository
-    ).record_fill(
+    filled_trade, fill = ManualExecutionApplicationService(fixture.repository).record_fill(
         result.manual_trade.manual_trade_id,
         external_fill_id="external-h4-5-exit",
         quantity=40,
@@ -996,9 +865,7 @@ def test_confirmed_reducing_trade_accepts_manual_fill_and_reprojects_position(
     assert second.manual_trade is None
 
 
-def test_full_exit_fill_supports_later_explicit_position_book_close(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_full_exit_fill_supports_later_explicit_position_book_close(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
     result = fixture.repository.confirm_risk_reduction(fixture.command)
     assert result.manual_trade is not None
@@ -1041,31 +908,30 @@ def test_full_exit_fill_supports_later_explicit_position_book_close(
     assert closed.state.value == "CLOSED"
 
 
-def test_atomic_rollback_removes_attempt_and_trade_on_binding_failure(
-    tmp_path, daily_decision_fixture
-) -> None:
+def test_atomic_rollback_removes_attempt_and_trade_on_binding_failure(tmp_path, daily_decision_fixture) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
-    with sqlite3.connect(fixture.repository.path) as connection:
+    with postgres_connection(fixture.repository.path) as connection:
         connection.execute(
             """
+            CREATE OR REPLACE FUNCTION reject_h4_5_binding_insert()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $function$
+            BEGIN
+                RAISE EXCEPTION 'injected H4.5 binding failure'
+                    USING ERRCODE = '23514';
+            END;
+            $function$;
             CREATE TRIGGER reject_h4_5_binding
             BEFORE INSERT ON risk_reducing_manual_trade_bindings
-            BEGIN
-                SELECT RAISE(ABORT, 'injected H4.5 binding failure');
-            END
+            FOR EACH ROW EXECUTE FUNCTION reject_h4_5_binding_insert()
             """
         )
 
-    with pytest.raises(sqlite3.IntegrityError, match="injected H4.5"):
+    with pytest.raises(psycopg.IntegrityError, match="injected H4.5"):
         fixture.repository.confirm_risk_reduction(fixture.command)
 
-    with sqlite3.connect(fixture.repository.path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM risk_reduction_confirmation_attempts"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM manual_trade_records WHERE authority_route = 'REDUCING'"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM risk_reduction_confirmation_commands"
-        ).fetchone()[0] == 0
+    with postgres_connection(fixture.repository.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM risk_reduction_confirmation_attempts").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM manual_trade_records WHERE authority_route = 'REDUCING'").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM risk_reduction_confirmation_commands").fetchone()[0] == 0

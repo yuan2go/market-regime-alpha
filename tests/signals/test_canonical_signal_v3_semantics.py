@@ -19,8 +19,8 @@ from market_regime_alpha.data.trading_calendar import (
 from market_regime_alpha.platform.contracts import EvidenceLevel, ModelLifecycleStatus
 from market_regime_alpha.platform.model_registry import ModelRegistry
 from market_regime_alpha.platform.durable_governance import PersistentModelRegistry
-from market_regime_alpha.platform.sqlite_governance import (
-    SQLiteModelRegistryRepository,
+from tests.postgres_path_repositories import (
+    PostgresModelRegistryRepository,
 )
 from market_regime_alpha.signals.contracts import SignalState
 from market_regime_alpha.signals.decimal_model import (
@@ -332,7 +332,7 @@ def test_signal_governance_persists_draft_to_research_transition(
     tmp_path: Path,
 ) -> None:
     service = PersistentModelRegistry(
-        SQLiteModelRegistryRepository(tmp_path / "model-governance.sqlite3")
+        PostgresModelRegistryRepository(tmp_path / "model-governance.postgres-scope")
     )
     result = persist_canonical_signal_model_for_research(
         service,

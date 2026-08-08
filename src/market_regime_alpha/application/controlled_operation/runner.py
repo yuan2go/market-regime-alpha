@@ -15,7 +15,6 @@ from market_regime_alpha.application.controlled_operation.canonical_bridge impor
     CanonicalRepositoryFactory,
     ControlledCanonicalDeadlineExceeded,
     run_controlled_canonical_lifecycle,
-    sqlite_controlled_canonical_repository,
 )
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     AfterStageHook,
@@ -49,7 +48,6 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
 from market_regime_alpha.application.controlled_operation.longitudinal_index import (
     LongitudinalOperationalIndex,
     LongitudinalOperationalRecord,
-    SQLiteLongitudinalOperationalIndex,
 )
 from market_regime_alpha.application.controlled_operation.journal import (
     ChildRunReferenceKind,
@@ -238,11 +236,9 @@ class ControlledDecisionTimeOperationRunner:
         minute_client_factory: MinuteClientFactory | None = None,
         sleeper: Sleeper = sleep,
         canonical_after_stage_hook: AfterStageHook | None = None,
-        longitudinal_index: LongitudinalOperationalIndex | None = None,
-        canonical_repository_factory: CanonicalRepositoryFactory = (
-            sqlite_controlled_canonical_repository
-        ),
-        feature_repository_factory: FeatureRunRepositoryFactory | None = None,
+        longitudinal_index: LongitudinalOperationalIndex,
+        canonical_repository_factory: CanonicalRepositoryFactory,
+        feature_repository_factory: FeatureRunRepositoryFactory,
     ) -> None:
         self._journal = journal
         self._output_root = output_root.resolve()
@@ -250,12 +246,7 @@ class ControlledDecisionTimeOperationRunner:
         self._minute_client_factory = minute_client_factory
         self._sleeper = sleeper
         self._canonical_after_stage_hook = canonical_after_stage_hook
-        self._longitudinal_index = longitudinal_index or (
-            SQLiteLongitudinalOperationalIndex(
-                self._output_root / "longitudinal-operational-index.sqlite3",
-                clock=self._clock,
-            )
-        )
+        self._longitudinal_index = longitudinal_index
         self._canonical_repository_factory = canonical_repository_factory
         self._feature_repository_factory = feature_repository_factory
 
@@ -1707,9 +1698,8 @@ class ControlledDecisionTimeOperationRunner:
         }
         if not required.issubset(completed):
             return False
-        database_path = self._run_root(command) / "canonical-lifecycle.sqlite3"
         try:
-            repository = self._canonical_repository_factory(database_path, True)
+            repository = self._canonical_repository_factory(True)
             child_run = repository.get_run_by_idempotency_key(
                 f"{command.idempotency_key}:canonical-controlled-v2"
             )

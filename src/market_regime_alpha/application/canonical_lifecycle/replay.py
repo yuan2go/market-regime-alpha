@@ -43,9 +43,6 @@ from market_regime_alpha.data.source_manifest import SourceManifest
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
 from market_regime_alpha.evidence.canonical import canonical_json
 from market_regime_alpha.core.identity import ManualTradeId
-from market_regime_alpha.application.trading_lifecycle.sqlite_risk_reduction import (
-    SQLiteRiskReductionManualIntentRepository,
-)
 from market_regime_alpha.features.artifact import replay_feature_artifact
 from market_regime_alpha.features.materialization_v2 import (
     load_verified_feature_bundle_v2,
@@ -258,6 +255,7 @@ def verify_lifecycle_replay(
     *,
     repository: LifecycleReplaySource,
     run_id: LifecycleRunId,
+    manual_trade_loader: Callable[[ManualTradeId], object] | None = None,
 ) -> LifecycleReplayReport:
     """Verify an existing run without invoking Runner or any mutating service."""
 
@@ -299,7 +297,14 @@ def verify_lifecycle_replay(
             if prior != object_reference:
                 raise ValueError("journal contains conflicting replay references")
     all_references = tuple(references.values())
-    checks.extend(verify_replay_reference(reference, all_references=all_references) for reference in all_references)
+    checks.extend(
+        verify_replay_reference(
+            reference,
+            manual_trade_loader=manual_trade_loader,
+            all_references=all_references,
+        )
+        for reference in all_references
+    )
 
     journal_hash = canonical_hash(
         {
@@ -353,14 +358,14 @@ def _verify_input_manifest(
 def verify_replay_reference(
     reference: LifecycleObjectReference,
     *,
-    authority_database_locator: Path | None = None,
+    manual_trade_loader: Callable[[ManualTradeId], object] | None = None,
     all_references: tuple[LifecycleObjectReference, ...] = (),
 ) -> LifecycleReplayCheck:
     """Recompute or reload one reference without invoking a domain mutation."""
 
     subject = f"OBJECT:{reference.object_type.value}:{reference.object_id}"
     if reference.object_type is LifecycleObjectType.MANUAL_TRADE:
-        if authority_database_locator is None:
+        if manual_trade_loader is None:
             return LifecycleReplayCheck(
                 subject=subject,
                 status=ReplayCheckStatus.NOT_COMPARABLE,
@@ -369,7 +374,9 @@ def verify_replay_reference(
                 detail="MANUAL_TRADE_AUTHORITY_DATABASE_NOT_BOUND",
             )
         try:
-            trade = SQLiteRiskReductionManualIntentRepository(authority_database_locator).get_trade(ManualTradeId(str(reference.object_id)))
+            trade = manual_trade_loader(ManualTradeId(str(reference.object_id)))
+            if not hasattr(trade, "to_canonical_dict"):
+                raise TypeError("ManualTrade loader returned an invalid object")
             observed_hash = canonical_hash(trade.to_canonical_dict())
             if observed_hash != reference.content_hash:
                 raise ValueError("ManualTrade content hash mismatch")

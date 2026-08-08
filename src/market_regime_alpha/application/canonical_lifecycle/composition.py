@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Callable
-
 from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
 )
@@ -49,17 +46,13 @@ from market_regime_alpha.signals.policies import (
 )
 
 
-AuthorityBinder = Callable[[dict[LifecycleStageName, LifecycleStageHandler], Path], None]
-
-
 def build_lifecycle_stage_handlers(
     *,
     command: CanonicalLifecycleCommand,
     manifest: CanonicalLifecycleInputManifest | None,
     configurations: RuntimeConfigurationSet,
-    authority_binder: AuthorityBinder | None,
 ) -> tuple[LifecycleStageHandler, ...]:
-    """Build stages shared by PostgreSQL and explicit compatibility roots."""
+    """Build domain stages before PostgreSQL authority binding."""
 
     output_root = command.output_directory
     research_configuration = configurations.get(LifecycleConfigurationKind.RESEARCH_PIPELINE)
@@ -131,8 +124,6 @@ def build_lifecycle_stage_handlers(
         )
     if manifest is not None:
         handlers[LifecycleStageName.ENTRY_ASSESSMENT] = EntryAssessmentStageHandler(authority_ceiling=manifest.authority_ceiling)
-    if command.authority_database_locator is not None and authority_binder is not None:
-        authority_binder(handlers, command.authority_database_locator)
     return tuple(handlers[stage] for stage in LIFECYCLE_STAGE_ORDER)
 
 
@@ -148,4 +139,4 @@ def _unavailable(
     )
 
 
-__all__ = ["AuthorityBinder", "build_lifecycle_stage_handlers"]
+__all__ = ["build_lifecycle_stage_handlers"]

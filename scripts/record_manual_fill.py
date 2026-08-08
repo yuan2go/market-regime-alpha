@@ -28,7 +28,7 @@ def _object(value: object) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Append manual Fill and rebuild Position")
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
     record = subparsers.add_parser("record")
     record.add_argument("--request", type=Path, required=True)

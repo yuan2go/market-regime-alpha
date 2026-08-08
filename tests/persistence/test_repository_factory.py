@@ -1,37 +1,29 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
 from market_regime_alpha.application.canonical_lifecycle.postgres_repository import (
     PostgresLifecycleRunRepository,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from market_regime_alpha.application.continuous_research.postgres_journal import (
+    PostgresContinuousResearchJournal,
 )
 from market_regime_alpha.decision.postgres_repository import (
     PostgresDecisionLifecycleRepository,
-)
-from market_regime_alpha.decision.sqlite_repository import (
-    SQLiteDecisionLifecycleRepository,
 )
 from market_regime_alpha.persistence.repository_factory import (
     DatabaseBindingError,
     RepositoryFactory,
 )
 from market_regime_alpha.persistence.settings import (
-    DatabaseBackend,
     DatabaseSettings,
 )
 from market_regime_alpha.platform.postgres_governance import (
     PostgresExperimentGovernanceRepository,
     PostgresModelRegistryRepository,
-)
-from market_regime_alpha.platform.sqlite_governance import (
-    SQLiteExperimentGovernanceRepository,
-    SQLiteModelRegistryRepository,
 )
 from tests.persistence.postgres.conftest import (
     TEST_DATABASE_URL_ENV,
@@ -44,7 +36,6 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
 ) -> None:
     configured = DatabaseSettings.from_sources(
         database_url=os.environ[TEST_DATABASE_URL_ENV],
-        sqlite_path=None,
         environ={},
     )
     with RepositoryFactory(
@@ -54,6 +45,9 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
         lifecycle = repositories.lifecycle()
         model_registry = repositories.model_registry()
         experiment_governance = repositories.experiment_governance()
+        continuous = repositories.continuous_research(
+            clock=lambda: datetime(2026, 8, 6, tzinfo=timezone.utc)
+        )
         binding = repositories.binding
 
     assert isinstance(decision, PostgresDecisionLifecycleRepository)
@@ -63,37 +57,9 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
         experiment_governance,
         PostgresExperimentGovernanceRepository,
     )
-    assert binding.backend is DatabaseBackend.POSTGRES
+    assert isinstance(continuous, PostgresContinuousResearchJournal)
     assert "***" in binding.locator
     assert configured.require_database_url() not in binding.locator
-
-
-def test_repository_factory_keeps_sqlite_explicit_and_path_bound(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "compatibility.sqlite3"
-    settings = DatabaseSettings.from_sources(
-        database_url=None,
-        sqlite_path=path,
-        environ={},
-    )
-    with RepositoryFactory(settings) as repositories:
-        decision = repositories.decision()
-        lifecycle = repositories.lifecycle()
-        model_registry = repositories.model_registry()
-        experiment_governance = repositories.experiment_governance()
-        with pytest.raises(ValueError, match="requires PostgreSQL"):
-            repositories.free_data_blocked()
-
-    assert isinstance(decision, SQLiteDecisionLifecycleRepository)
-    assert isinstance(lifecycle, SQLiteLifecycleRunRepository)
-    assert isinstance(model_registry, SQLiteModelRegistryRepository)
-    assert isinstance(
-        experiment_governance,
-        SQLiteExperimentGovernanceRepository,
-    )
-    assert repositories.binding.backend is DatabaseBackend.SQLITE
-    assert repositories.binding.locator == str(path.resolve())
 
 
 def test_postgres_runtime_binding_is_immutable_idempotent_and_credential_free(
@@ -101,7 +67,6 @@ def test_postgres_runtime_binding_is_immutable_idempotent_and_credential_free(
 ) -> None:
     configured = DatabaseSettings.from_sources(
         database_url=os.environ[TEST_DATABASE_URL_ENV],
-        sqlite_path=None,
         environ={},
     )
     repositories = RepositoryFactory(
@@ -124,7 +89,24 @@ def test_postgres_runtime_binding_is_immutable_idempotent_and_credential_free(
         row = connection.execute(
             "SELECT backend, locator FROM runtime_database_bindings"
         ).fetchone()
-    assert row == (first.backend.value, first.locator)
+    assert row == ("postgres", first.locator)
+
+
+def test_postgres_continuous_runtime_binding_is_supported(
+    postgres_factory,
+) -> None:
+    configured = DatabaseSettings.from_sources(
+        database_url=os.environ[TEST_DATABASE_URL_ENV],
+        environ={},
+    )
+    repositories = RepositoryFactory(configured, postgres_factory=postgres_factory)
+
+    first = repositories.bind_runtime("CONTINUOUS_RESEARCH", "continuous-run-1")
+    second = repositories.assert_runtime_binding(
+        "CONTINUOUS_RESEARCH", "continuous-run-1"
+    )
+
+    assert first == second
 
 
 def test_postgres_runtime_binding_rejects_authority_mismatch(
@@ -132,7 +114,6 @@ def test_postgres_runtime_binding_rejects_authority_mismatch(
 ) -> None:
     configured = DatabaseSettings.from_sources(
         database_url=os.environ[TEST_DATABASE_URL_ENV],
-        sqlite_path=None,
         environ={},
     )
     repositories = RepositoryFactory(

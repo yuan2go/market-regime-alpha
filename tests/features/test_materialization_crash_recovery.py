@@ -3,13 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
 from market_regime_alpha.features.materialization_run import (
     FeatureMaterializationExecutionMode,
-    SQLiteFeatureMaterializationRunRepository,
+)
+from tests.postgres_path_repositories import (
+    PostgresFeatureMaterializationRunRepository,
+    feature_repository_factory,
 )
 from market_regime_alpha.features.materialization_v2 import (
     FeatureMaterializationHardCrash,
@@ -62,6 +65,10 @@ def test_hard_crash_boundaries_resume_to_one_receipt_and_explainable_history(
         max_workers=1,
         clock=clock,
         lease_duration=timedelta(seconds=30),
+        repository_factory=feature_repository_factory(
+            tmp_path / "run.postgres-scope",
+            fallback_clock=clock,
+        ),
     )
     fired = False
 
@@ -104,8 +111,8 @@ def test_hard_crash_boundaries_resume_to_one_receipt_and_explainable_history(
     assert len(bundle.artifacts) == 7
     assert len(tuple((tmp_path / "features" / "feature-artifacts").glob("feature-*"))) == 7
 
-    repository = SQLiteFeatureMaterializationRunRepository(
-        tmp_path / "features" / "materialization-run.sqlite3",
+    repository = PostgresFeatureMaterializationRunRepository(
+        tmp_path / "run.postgres-scope",
         clock=clock,
     )
     snapshot = repository.snapshot(1)
@@ -127,7 +134,7 @@ def test_hard_crash_boundaries_resume_to_one_receipt_and_explainable_history(
         assert any('"publication_reused":true' in item for item in completed_payloads)
     if crash_stage == "AFTER_BUNDLE_PUBLISHED":
         assert event_types.count("BUNDLE_PUBLISHED") == 2
-    with sqlite3.connect(tmp_path / "features" / "materialization-run.sqlite3") as connection:
+    with postgres_connection(tmp_path / "run.postgres-scope") as connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM feature_materialization_receipt"
         ).fetchone() == (1,)

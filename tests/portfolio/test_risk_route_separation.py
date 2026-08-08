@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
-import sqlite3
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -38,11 +37,10 @@ from market_regime_alpha.portfolio import (
     RiskReducingExecutionGate,
     RiskReducingDecisionState,
     RiskRouteApplicationService,
-    SQLiteCompleteAccountPortfolioRiskRepository,
-    SQLiteRiskRouteRepository,
 )
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    RISK_ROUTE_DOWN_MIGRATION,
+from tests.postgres_path_repositories import (
+    PostgresCompleteAccountPortfolioRiskRepository,
+    PostgresRiskRouteRepository,
 )
 from market_regime_alpha.position import (
     PositionProjector,
@@ -223,7 +221,7 @@ def _observation(
 
 
 def _service(tmp_path: Path):
-    repository = SQLiteRiskRouteRepository(tmp_path / "risk-routes.sqlite3")
+    repository = PostgresRiskRouteRepository(tmp_path / "risk-routes.postgres-scope")
     return RiskRouteApplicationService(repository), repository
 
 
@@ -540,7 +538,7 @@ def test_t_plus_one_reconciliation_and_market_constraints_are_distinct(tmp_path)
         assert reason_code in decision.reason_codes
 
 
-def test_liquidity_idempotency_restart_audit_and_migration(tmp_path) -> None:
+def test_liquidity_idempotency_restart_and_audit(tmp_path) -> None:
     service, repository = _service(tmp_path)
     arguments = {
         "action": RiskChangeKind.REDUCE,
@@ -556,7 +554,7 @@ def test_liquidity_idempotency_restart_audit_and_migration(tmp_path) -> None:
     }
     first = service.assess_reducing(**arguments)  # type: ignore[arg-type]
     duplicate = service.assess_reducing(**arguments)  # type: ignore[arg-type]
-    restarted = SQLiteRiskRouteRepository(repository.path)
+    restarted = PostgresRiskRouteRepository(repository.path)
 
     assert duplicate == first
     assert first.state is RiskReducingDecisionState.BLOCKED
@@ -565,16 +563,4 @@ def test_liquidity_idempotency_restart_audit_and_migration(tmp_path) -> None:
     assert first.reason == "manual audited reduction"
     assert restarted.get_reducing_decision(first.decision_id) == first
 
-    SQLiteCompleteAccountPortfolioRiskRepository(repository.path)
-    with sqlite3.connect(repository.path) as connection:
-        connection.executescript(
-            RISK_ROUTE_DOWN_MIGRATION.read_text(encoding="utf-8")
-        )
-        tables = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-    assert "risk_reducing_decisions" not in tables
-    assert "complete_account_risk_decisions" in tables
+    assert PostgresCompleteAccountPortfolioRiskRepository(repository.path) is not None

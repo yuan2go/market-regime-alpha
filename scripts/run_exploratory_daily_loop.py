@@ -57,7 +57,7 @@ DEFAULT_CONFIGURATION_ID = ArtifactId(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    add_database_arguments(parser, legacy_sqlite_flag="--journal")
+    add_database_arguments(parser)
     commands = parser.add_subparsers(dest="operation", required=True)
 
     run = commands.add_parser("run", help="run one LIVE or archive-backed day")
@@ -163,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         repository=repository,
         code_revision=_current_git_revision(),
         live_profile=live_profile,
+        model_selector=repositories.model_governance(),
     )
     if args.operation == "run":
         return _run(args, runner, output_root)

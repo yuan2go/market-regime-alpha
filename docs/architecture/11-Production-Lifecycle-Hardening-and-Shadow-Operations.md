@@ -273,16 +273,16 @@ claim Alpha or probability calibration without qualified external evidence.
 
 ## 12. Persistence, migration and recovery
 
-- SQLite is the first durable adapter; repository Protocols remain storage
-  neutral for future PostgreSQL parity.
+- PostgreSQL 16 is the sole durable database adapter; repository Protocols
+  preserve bounded-domain interfaces without permitting backend selection.
 - New hardening tables use migrations after versions 001–004 and do not alter
   `daily_runs` semantics.
 - Mutable aggregates use optimistic versions and command idempotency.
 - Append-only event/Fill/assessment history is never overwritten by a
   projection repair.
-- Every up migration has an isolated down migration for disposable local/test
-  databases. Operational rollback stops writes, retains append-only evidence,
-  and rebuilds projections after forward recovery.
+- Published migrations are forward-only and verified in isolated PostgreSQL
+  schemas. Operational rollback stops writes, retains append-only evidence, and
+  rebuilds projections after forward repair.
 - Immutable Artifact content is not copied into operational tables.
 
 ## 13. Shadow readiness criteria

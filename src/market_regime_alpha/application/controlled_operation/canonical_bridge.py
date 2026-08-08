@@ -35,9 +35,6 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
     CanonicalDecisionLifecycleRunner,
     LifecycleRunResult,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
-)
 from market_regime_alpha.application.canonical_lifecycle.stages.contracts import (
     LifecycleStageContext,
     LifecycleStageHandler,
@@ -110,14 +107,7 @@ from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 
 
 Clock = Callable[[], datetime]
-CanonicalRepositoryFactory = Callable[[Path, bool], LifecycleRunRepository]
-
-
-def sqlite_controlled_canonical_repository(
-    path: Path,
-    read_only: bool,
-) -> LifecycleRunRepository:
-    return SQLiteLifecycleRunRepository(path, read_only=read_only)
+CanonicalRepositoryFactory = Callable[[bool], LifecycleRunRepository]
 
 
 class ControlledCanonicalDeadlineExceeded(RuntimeError):
@@ -128,7 +118,7 @@ class ControlledCanonicalDeadlineExceeded(RuntimeError):
 class ControlledCanonicalLifecycleExecution:
     result: LifecycleRunResult
     history: LifecycleHistory
-    database_path: Path
+    database_authority: str
     signal: VerifiedSignalRunArtifactV3
     candidate_view: CandidateFeatureViewV2
     candidate_view_path: Path
@@ -449,9 +439,7 @@ def run_controlled_canonical_lifecycle(
     overlay_path: Path,
     hard_cutoff: datetime,
     after_stage_hook: AfterStageHook | None = None,
-    repository_factory: CanonicalRepositoryFactory = (
-        sqlite_controlled_canonical_repository
-    ),
+    repository_factory: CanonicalRepositoryFactory,
 ) -> ControlledCanonicalLifecycleExecution:
     """Run and durably journal the real canonical stage graph through Entry."""
 
@@ -567,7 +555,6 @@ def run_controlled_canonical_lifecycle(
         model_references=model_refs,
         stop_after_stage=None,
         output_directory=canonical_root / "outputs",
-        authority_database_locator=None,
     )
     research_inputs = tuple(
         item
@@ -636,8 +623,7 @@ def run_controlled_canonical_lifecycle(
         for stage in LIFECYCLE_STAGE_ORDER
         if stage not in handlers
     }
-    database_path = run_root / "canonical-lifecycle.sqlite3"
-    repository = repository_factory(database_path, False)
+    repository = repository_factory(False)
     stage_latencies: dict[LifecycleStageName, int] = {}
     runner = CanonicalDecisionLifecycleRunner(
         repository=repository,
@@ -712,7 +698,7 @@ def run_controlled_canonical_lifecycle(
     return ControlledCanonicalLifecycleExecution(
         result=result,
         history=history,
-        database_path=database_path,
+        database_authority="POSTGRESQL",
         signal=signal,
         candidate_view=view,
         candidate_view_path=Path(view_ref.locator or ""),

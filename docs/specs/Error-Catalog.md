@@ -3,7 +3,7 @@
 > **Status:** CURRENT_SPECIFICATION  
 > **Authority:** Shared machine-readable validation and operational error codes  
 > **Owner:** Research Artifact and Operations domains  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-08-06
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Contract-Conventions.md, README.md  
@@ -23,5 +23,10 @@
 | `DOCON-010` | `SCHEMA_VERSION_UNSUPPORTED` | Consumer cannot interpret major version | ERROR |
 | `DOCON-011` | `DUPLICATE_IDEMPOTENCY_KEY` | Command conflicts with prior payload | ERROR |
 | `DOCON-012` | `AUTHORITY_VIOLATION` | Non-owning domain attempted a write | BLOCKING |
+| `DBAUTH-001` | `DATABASE_UNAVAILABLE` | Required PostgreSQL authority cannot be reached; no fallback is permitted | BLOCKING |
+| `DBAUTH-002` | `POSTGRESQL_OPERATION_FAILED` | PostgreSQL authority operation failed and was rolled back | ERROR |
+| `DECSYS-001` | `DECISION_INPUT_BLOCKED` | Decision lineage or authority validation failed closed | BLOCKING |
+| `DECSYS-002` | `DECISION_WINDOW_BLOCKED` | Decision preview/finalization violated the decision-window contract | BLOCKING |
+| `DECSYS-003` | `DECISION_CONFLICT` | Decision CAS, idempotency, Final uniqueness, Lease or fencing rejected a write | BLOCKING |
 
 Errors are append-only operational evidence. They are not silently converted to empty values or fallback predictions.

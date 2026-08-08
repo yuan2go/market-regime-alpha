@@ -11,14 +11,13 @@ from market_regime_alpha.persistence.repository_factory import (
 )
 from market_regime_alpha.persistence.settings import (
     DATABASE_URL_ENV,
-    DatabaseBackend,
     DatabaseConfigurationError,
 )
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     return parser
 
 
@@ -40,14 +39,13 @@ def test_cli_selection_defaults_to_dotenv_postgres_and_allows_override(
         dotenv_path=dotenv,
     )
 
-    assert default.backend is DatabaseBackend.POSTGRES
     assert default.require_database_url().endswith("127.0.0.1:5432/app")
     assert explicit.require_database_url() == (
         "postgresql://other:pw@db.example/authority"
     )
 
 
-def test_cli_selection_requires_explicit_sqlite_and_rejects_ambiguity(
+def test_cli_selection_requires_postgres_and_rejects_sqlite_inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -56,36 +54,18 @@ def test_cli_selection_requires_explicit_sqlite_and_rejects_ambiguity(
     with pytest.raises(DatabaseConfigurationError, match="PostgreSQL configuration"):
         settings_from_namespace(missing, dotenv_path=tmp_path / "missing.env")
 
-    sqlite = settings_from_namespace(
-        _parser().parse_args(
-            ["--sqlite-database", str(tmp_path / "compatibility.sqlite3")]
-        ),
-        dotenv_path=tmp_path / "missing.env",
+    for arguments in (
+        ["--sqlite-database", str(tmp_path / "compatibility.postgres-scope")],
+        ["--database", str(tmp_path / "compatibility.postgres-scope")],
+    ):
+        with pytest.raises(SystemExit):
+            _parser().parse_args(arguments)
+
+    sqlite_url = _parser().parse_args(
+        ["--database-url", "postgresql:///tmp/compatibility.postgres-scope"]
     )
-    assert sqlite.backend is DatabaseBackend.SQLITE
-
-    with pytest.raises(DatabaseConfigurationError, match="both supplied"):
+    with pytest.raises(DatabaseConfigurationError, match="PostgreSQL URL"):
         settings_from_namespace(
-            _parser().parse_args(
-                [
-                    "--database-url",
-                    "postgresql://app:secret@localhost/app",
-                    "--sqlite-database",
-                    str(tmp_path / "compatibility.sqlite3"),
-                ]
-            ),
-            dotenv_path=tmp_path / "missing.env",
-        )
-
-    with pytest.raises(ValueError, match="only one"):
-        settings_from_namespace(
-            _parser().parse_args(
-                [
-                    "--sqlite-database",
-                    str(tmp_path / "one.sqlite3"),
-                    "--database",
-                    str(tmp_path / "two.sqlite3"),
-                ]
-            ),
+            sqlite_url,
             dotenv_path=tmp_path / "missing.env",
         )

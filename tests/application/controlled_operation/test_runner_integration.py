@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from hashlib import sha256
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,8 +57,13 @@ from market_regime_alpha.application.controlled_operation.runner import (
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
 )
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
-    SQLiteDecisionTimeOperationJournal,
+from tests.postgres_path_repositories import (
+    PostgresDecisionTimeOperationJournal,
+    PostgresFeatureMaterializationRunRepository,
+    bind_postgres_runtime,
+    controlled_runner_dependencies,
+    postgres_cli_arguments,
+    postgres_connection,
 )
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
     publish_supplemental_research_evidence,
@@ -625,13 +629,19 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
             crash_after_signal[0] = False
             raise RuntimeError("SIMULATED_CONTROLLED_CANONICAL_CRASH")
 
+    database = tmp_path / "controlled-operation.postgres-scope"
+    dependencies = controlled_runner_dependencies(
+        database,
+        clock=lambda: current_time[0],
+    )
     runner = ControlledDecisionTimeOperationRunner(
-        journal=SQLiteDecisionTimeOperationJournal(tmp_path / "controlled-operation.sqlite3", clock=lambda: current_time[0]),
+        journal=PostgresDecisionTimeOperationJournal(database, clock=lambda: current_time[0]),
         output_root=tmp_path / "operations",
         clock=lambda: current_time[0],
         minute_client_factory=factory,
         sleeper=advance_to_decision,
         canonical_after_stage_hook=crash_once_after_signal,
+        **dependencies,  # type: ignore[arg-type]
     )
     runner.prepare(command=command, policy=policy, inputs=inputs)
     current_time[0] = observed
@@ -735,24 +745,52 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
             incomplete_package,
             expected_children=expected_children,
         )
-    canonical_database = settlement.package_path.parent.parent / "canonical-lifecycle.sqlite3"
-    database_hash_before = sha256(canonical_database.read_bytes()).hexdigest()
-    database_mtime_before = canonical_database.stat().st_mtime_ns
-    replay = replay_controlled_operation(settlement.package_path)
+    with postgres_connection(database, read_only=True) as connection:
+        authority_counts_before = tuple(
+            int(connection.execute(statement).fetchone()[0])
+            for statement in (
+                "SELECT COUNT(*) FROM controlled_operation_event",
+                "SELECT COUNT(*) FROM lifecycle_events",
+                "SELECT COUNT(*) FROM feature_materialization_event",
+            )
+        )
+    replay = replay_controlled_operation(
+        settlement.package_path,
+        canonical_repository_factory=dependencies[
+            "canonical_repository_factory"
+        ],  # type: ignore[arg-type]
+        feature_receipt_loader=lambda _path: (
+            PostgresFeatureMaterializationRunRepository(
+                database,
+                clock=lambda: current_time[0],
+            ).receipts()
+        ),
+    )
     assert replay.replay_status == "STABLE"
-    assert sha256(canonical_database.read_bytes()).hexdigest() == database_hash_before
-    assert canonical_database.stat().st_mtime_ns == database_mtime_before
+    with postgres_connection(database, read_only=True) as connection:
+        assert tuple(
+            int(connection.execute(statement).fetchone()[0])
+            for statement in (
+                "SELECT COUNT(*) FROM controlled_operation_event",
+                "SELECT COUNT(*) FROM lifecycle_events",
+                "SELECT COUNT(*) FROM feature_materialization_event",
+            )
+        ) == authority_counts_before
     assert not replay.network_accessed
     assert not replay.broker_invoked
     assert not replay.manual_trade_created
     assert not replay.fill_created
+    bind_postgres_runtime(
+        database,
+        scope_type="CONTROLLED_OPERATION",
+        scope_id=str(command.run_id),
+    )
     assert (
         replay_cli(
             [
                 "--package",
                 str(settlement.package_path),
-                "--sqlite-database",
-                str(tmp_path / "controlled-operation.sqlite3"),
+                *postgres_cli_arguments(database),
             ]
         )
         == 0
@@ -763,8 +801,7 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
             [
                 "--output-root",
                 str(tmp_path / "operations"),
-                "--database",
-                str(tmp_path / "controlled-operation.sqlite3"),
+                *postgres_cli_arguments(database),
                 "--run-id",
                 str(command.run_id),
             ]
@@ -777,8 +814,7 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
             [
                 "--output-root",
                 str(tmp_path / "operations"),
-                "--database",
-                str(tmp_path / "controlled-operation.sqlite3"),
+                *postgres_cli_arguments(database),
                 "--run-id",
                 str(command.run_id),
                 "--outcome-source-manifest",
@@ -839,8 +875,8 @@ def test_controlled_runner_publishes_deadline_missed_when_wait_overshoots(
             seconds=1
         )
 
-    journal = SQLiteDecisionTimeOperationJournal(
-        tmp_path / "controlled-operation.sqlite3",
+    journal = PostgresDecisionTimeOperationJournal(
+        tmp_path / "controlled-operation.postgres-scope",
         clock=lambda: current_time[0],
     )
     runner = ControlledDecisionTimeOperationRunner(
@@ -849,6 +885,10 @@ def test_controlled_runner_publishes_deadline_missed_when_wait_overshoots(
         clock=lambda: current_time[0],
         minute_client_factory=factory,
         sleeper=overshoot,
+        **controlled_runner_dependencies(
+            tmp_path / "controlled-operation.postgres-scope",
+            clock=lambda: current_time[0],
+        ),
     )
     runner.prepare(command=command, policy=policy, inputs=inputs)
     current_time[0] = observed
@@ -902,11 +942,16 @@ def test_controlled_runner_archives_all_provider_failure_as_data_blocked(
     )
     observed = policy.decision_instant(decision.date()) - timedelta(seconds=30)
     current_time = [policy.static_ready_deadline_instant(decision.date())]
+    database = tmp_path / "controlled-operation.postgres-scope"
     runner = ControlledDecisionTimeOperationRunner(
-        journal=SQLiteDecisionTimeOperationJournal(tmp_path / "controlled-operation.sqlite3", clock=lambda: current_time[0]),
+        journal=PostgresDecisionTimeOperationJournal(database, clock=lambda: current_time[0]),
         output_root=tmp_path / "operations",
         clock=lambda: current_time[0],
         minute_client_factory=lambda _symbol, _attempt, _timeout: _FailingMinuteClient(),
+        **controlled_runner_dependencies(
+            database,
+            clock=lambda: current_time[0],
+        ),
     )
     runner.prepare(command=command, policy=policy, inputs=inputs)
     current_time[0] = observed

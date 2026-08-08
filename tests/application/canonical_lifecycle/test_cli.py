@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import timedelta, timezone
 import json
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
@@ -19,11 +19,16 @@ from market_regime_alpha.application.canonical_lifecycle.commands import (
 from market_regime_alpha.application.canonical_lifecycle.runtime_configuration import (
     RuntimeConfigurationReader,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_composition import (
-    build_sqlite_lifecycle_runner,
+from market_regime_alpha.application.canonical_lifecycle.postgres_composition import (
+    build_postgres_lifecycle_runner,
+)
+from tests.postgres_path_repositories import (
+    bind_postgres_runtime,
+    postgres_cli_arguments,
+    postgres_factory,
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LifecycleRunType,
@@ -38,7 +43,6 @@ from market_regime_alpha.cli.replay_canonical_lifecycle import (
     main as replay_main,
 )
 from market_regime_alpha.cli.run_canonical_lifecycle import (
-    EXIT_REPOSITORY_ERROR,
     EXIT_RESUME_REJECTED,
     EXIT_STAGE_FAILED,
     EXIT_SUCCESS,
@@ -118,8 +122,7 @@ def _new_run_args(
         canonical_datetime(fixture.as_of_time),
         "--idempotency-key",
         idempotency_key,
-        "--database",
-        str(database),
+        *postgres_cli_arguments(database),
         "--output-dir",
         str(output),
     ]
@@ -127,7 +130,7 @@ def _new_run_args(
 
 def test_cli_without_feature_authorities_fails_closed_instead_of_producing_v1(tmp_path: Path, capsys) -> None:
     manifest, fixture = _write_restartable_manifest(tmp_path)
-    database = tmp_path / "runtime.sqlite3"
+    database = tmp_path / "runtime.postgres-scope"
     output = tmp_path / "runtime"
     args = _new_run_args(
         manifest=manifest,
@@ -157,7 +160,7 @@ def test_cli_without_feature_authorities_fails_closed_instead_of_producing_v1(tm
     assert first["NO_ORDER_CREATED"] is True
     assert first["BROKER_NOT_INVOKED"] is True
     assert first["NO_FILL_CREATED"] is True
-    with sqlite3.connect(database) as connection:
+    with postgres_connection(database) as connection:
         attempt_count = connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone()[0]
 
     assert lifecycle_main(args) == EXIT_STAGE_FAILED
@@ -165,7 +168,7 @@ def test_cli_without_feature_authorities_fails_closed_instead_of_producing_v1(tm
     assert replayed["run_id"] == first["run_id"]
     assert replayed["command_hash"] == first["command_hash"]
     assert replayed["attempted_stages"] == []
-    with sqlite3.connect(database) as connection:
+    with postgres_connection(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone()[0] == attempt_count
 
     assert (
@@ -173,8 +176,7 @@ def test_cli_without_feature_authorities_fails_closed_instead_of_producing_v1(tm
             [
                 "--resume-run-id",
                 first["run_id"],
-                "--database",
-                str(database),
+                *postgres_cli_arguments(database),
             ]
         )
         == EXIT_STAGE_FAILED
@@ -187,7 +189,7 @@ def test_cli_without_feature_authorities_fails_closed_instead_of_producing_v1(tm
 
 def test_cli_failed_stage_can_resume_without_repeating_settled_stages(tmp_path: Path, capsys) -> None:
     manifest_path, fixture = _invalid_artifact_manifest(tmp_path)
-    database = tmp_path / "runtime.sqlite3"
+    database = tmp_path / "runtime.postgres-scope"
     output = tmp_path / "runtime"
     args = _new_run_args(
         manifest=manifest_path,
@@ -205,7 +207,7 @@ def test_cli_failed_stage_can_resume_without_repeating_settled_stages(tmp_path: 
     assert first["manual_trade_reference"] is None
     assert first["stage_output_references"]["VERIFY_COMPOSITE_EVIDENCE"] == []
     assert first["MANUAL_CONFIRMATION_REQUIRED"] is False
-    with sqlite3.connect(database) as connection:
+    with postgres_connection(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone() == (1,)
 
     assert (
@@ -213,8 +215,7 @@ def test_cli_failed_stage_can_resume_without_repeating_settled_stages(tmp_path: 
             [
                 "--resume-run-id",
                 first["run_id"],
-                "--database",
-                str(database),
+                *postgres_cli_arguments(database),
             ]
         )
         == EXIT_STAGE_FAILED
@@ -222,7 +223,7 @@ def test_cli_failed_stage_can_resume_without_repeating_settled_stages(tmp_path: 
     second = json.loads(capsys.readouterr().out)
     assert second["run_id"] == first["run_id"]
     assert second["completed_stages"] == []
-    with sqlite3.connect(database) as connection:
+    with postgres_connection(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM lifecycle_attempts").fetchone() == (2,)
 
 
@@ -231,7 +232,7 @@ def test_cli_rejects_configuration_locator_and_content_tamper_before_journal_wri
     manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     config_path = Path(manifest_payload["configuration_references"][0]["locator"])
     config_path.write_text("{}", encoding="utf-8")
-    database = tmp_path / "runtime.sqlite3"
+    database = tmp_path / "runtime.postgres-scope"
     assert (
         lifecycle_main(
             _new_run_args(
@@ -254,7 +255,7 @@ def test_cli_rejects_configuration_locator_and_content_tamper_before_journal_wri
 
 def test_replay_cli_is_current_time_independent_and_never_invokes_runner(tmp_path: Path, capsys) -> None:
     manifest, fixture = _write_restartable_manifest(tmp_path)
-    database = tmp_path / "runtime.sqlite3"
+    database = tmp_path / "runtime.postgres-scope"
     args = _new_run_args(
         manifest=manifest,
         fixture=fixture,
@@ -265,15 +266,14 @@ def test_replay_cli_is_current_time_independent_and_never_invokes_runner(tmp_pat
     args.extend(["--stop-after-stage", "PLATFORM_RESEARCH"])
     assert lifecycle_main(args) == EXIT_SUCCESS
     run = json.loads(capsys.readouterr().out)
-    with sqlite3.connect(database) as connection:
+    with postgres_connection(database) as connection:
         source_attempts_before = connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
+            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = %s",
             (run["run_id"],),
         ).fetchone()[0]
 
     replay_args = [
-        "--database",
-        str(database),
+        *postgres_cli_arguments(database),
         "--replay-run-id",
         run["run_id"],
     ]
@@ -291,20 +291,22 @@ def test_replay_cli_is_current_time_independent_and_never_invokes_runner(tmp_pat
     assert payload["RUNNER_INVOKED"] is False
     assert payload["MANUAL_TRADE_CREATED"] is False
     assert payload["BROKER_NOT_INVOKED"] is True
-    with sqlite3.connect(database) as connection:
+    with postgres_connection(database) as connection:
         assert (
             connection.execute(
-                "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
+                "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = %s",
                 (run["run_id"],),
             ).fetchone()[0]
             == source_attempts_before
         )
         assert connection.execute(
-            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = ?",
+            "SELECT COUNT(*) FROM lifecycle_attempts WHERE run_id = %s",
             (payload["replay_run_id"],),
         ).fetchone()[0] == len(LifecycleStageName)
 
-    assert replay_main(["--database", str(database), "--run-id", run["run_id"]]) == EXIT_STABLE
+    assert replay_main(
+        [*postgres_cli_arguments(database), "--run-id", run["run_id"]]
+    ) == EXIT_STABLE
     standalone = json.loads(capsys.readouterr().out)
     assert standalone["report_hash"] == payload["report_hash"]
     assert standalone["replay_run_id"] == payload["replay_run_id"]
@@ -335,12 +337,12 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
         model_references=(),
         stop_after_stage=None,
         output_directory=tmp_path / "risk-output",
-        authority_database_locator=confirmation_fixture.repository.path,
     )
-    journal_path = tmp_path / "risk-journal.sqlite3"
-    repository = SQLiteLifecycleRunRepository(journal_path)
-    runner = build_sqlite_lifecycle_runner(
+    journal_path = confirmation_fixture.repository.path
+    repository = PostgresLifecycleRunRepository(journal_path)
+    runner = build_postgres_lifecycle_runner(
         repository=repository,
+        factory=postgres_factory(journal_path),
         command=command,
         manifest=None,
         configurations=RuntimeConfigurationReader().read_all(command.configuration_references),
@@ -348,6 +350,11 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
     )
     initial = runner.run(command)
     assert initial.run.status.value == "WAITING_FOR_MANUAL_CONFIRMATION"
+    bind_postgres_runtime(
+        journal_path,
+        scope_type="CANONICAL_LIFECYCLE",
+        scope_id=str(command.run_id),
+    )
 
     before = _authority_row_counts(confirmation_fixture.repository.path)
     assert (
@@ -355,10 +362,7 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
             [
                 "--resume-run-id",
                 str(command.run_id),
-                "--database",
-                str(journal_path),
-                "--authority-database",
-                str(confirmation_fixture.repository.path),
+                *postgres_cli_arguments(journal_path),
             ]
         )
         == EXIT_SUCCESS
@@ -390,10 +394,7 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
             [
                 "--resume-run-id",
                 str(command.run_id),
-                "--database",
-                str(journal_path),
-                "--authority-database",
-                str(confirmation_fixture.repository.path),
+                *postgres_cli_arguments(journal_path),
             ]
         )
         == EXIT_SUCCESS
@@ -406,31 +407,32 @@ def test_risk_continuation_resume_uses_only_explicit_authority_database(
     assert observed["stage_output_references"]["MANUAL_TRADE"] == [observed["manual_trade_reference"]]
 
 
-def test_cli_unknown_resume_and_repository_integrity_have_distinct_exit_codes(tmp_path: Path, capsys) -> None:
-    database = tmp_path / "runtime.sqlite3"
-    SQLiteLifecycleRunRepository(database)
+def test_cli_unknown_resume_and_replay_fail_closed_without_database_binding(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    database = tmp_path / "runtime.postgres-scope"
+    PostgresLifecycleRunRepository(database)
 
     assert (
         lifecycle_main(
             [
                 "--resume-run-id",
                 "lifecycle-run-unknown",
-                "--database",
-                str(database),
+                *postgres_cli_arguments(database),
             ]
         )
         == EXIT_RESUME_REJECTED
     )
     unknown = json.loads(capsys.readouterr().out)
-    assert unknown["reason_codes"] == ["LIFECYCLE_RESUME_REJECTED"]
+    assert unknown["reason_codes"] == ["DATABASE_BINDING_MISMATCH"]
 
     assert (
         lifecycle_main(
             [
                 "--replay-run-id",
                 "lifecycle-run-unknown",
-                "--database",
-                str(database),
+                *postgres_cli_arguments(database),
             ]
         )
         == EXIT_RESUME_REJECTED
@@ -438,27 +440,9 @@ def test_cli_unknown_resume_and_repository_integrity_have_distinct_exit_codes(tm
     unknown_replay = json.loads(capsys.readouterr().out)
     assert unknown_replay["reason_codes"] == ["LIFECYCLE_REPLAY_SOURCE_NOT_FOUND"]
 
-    malformed = tmp_path / "malformed.sqlite3"
-    with sqlite3.connect(malformed) as connection:
-        connection.execute("CREATE TABLE lifecycle_runs(run_id TEXT PRIMARY KEY)")
-
-    assert (
-        lifecycle_main(
-            [
-                "--resume-run-id",
-                "lifecycle-run-unknown",
-                "--database",
-                str(malformed),
-            ]
-        )
-        == EXIT_REPOSITORY_ERROR
-    )
-    integrity = json.loads(capsys.readouterr().out)
-    assert integrity["reason_codes"] == ["LIFECYCLE_REPOSITORY_ERROR"]
-
 
 def _authority_row_counts(path: Path) -> tuple[int, int, int]:
-    with sqlite3.connect(path) as connection:
+    with postgres_connection(path) as connection:
         return (
             connection.execute("SELECT COUNT(*) FROM risk_reduction_confirmation_attempts").fetchone()[0],
             connection.execute("SELECT COUNT(*) FROM manual_trade_records").fetchone()[0],

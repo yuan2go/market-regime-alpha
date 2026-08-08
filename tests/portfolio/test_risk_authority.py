@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
-import sqlite3
 from pathlib import Path
 import subprocess
 import sys
@@ -30,11 +29,11 @@ from market_regime_alpha.portfolio import (
     PortfolioOutputMode,
     RiskBudget,
     RiskDecisionState,
-    SQLitePortfolioDecisionRepository,
     ThesisAllocationRequest,
 )
-from market_regime_alpha.portfolio.sqlite_repository import (
-    PORTFOLIO_RISK_DOWN_MIGRATION,
+from tests.postgres_path_repositories import (
+    PostgresPortfolioDecisionRepository,
+    postgres_cli_arguments,
 )
 
 
@@ -146,7 +145,7 @@ def _run(
     completed_at=None,
     key="portfolio-risk-1",
 ):
-    repository = SQLitePortfolioDecisionRepository(tmp_path / "portfolio.sqlite3")
+    repository = PostgresPortfolioDecisionRepository(tmp_path / "portfolio.postgres-scope")
     service = PortfolioRiskApplicationService(repository)
     result = service.run(
         theses=theses,
@@ -184,8 +183,7 @@ def test_approved_risk_is_independent_durable_and_manual_only(tmp_path) -> None:
         [
             sys.executable,
             "scripts/run_portfolio_risk.py",
-            "--database",
-            str(repository.path),
+            *postgres_cli_arguments(repository.path),
             "show-risk",
             "--risk-decision-id",
             str(risk.risk_decision_id),
@@ -301,7 +299,7 @@ def test_conflicting_theses_cannot_reach_risk_approval(tmp_path) -> None:
 
 def test_missing_risk_configuration_has_no_implicit_default(tmp_path) -> None:
     thesis = _thesis(1, "000001.SZ")
-    repository = SQLitePortfolioDecisionRepository(tmp_path / "portfolio.sqlite3")
+    repository = PostgresPortfolioDecisionRepository(tmp_path / "portfolio.postgres-scope")
     service = PortfolioRiskApplicationService(repository)
 
     with pytest.raises(ValueError, match="no default exists"):
@@ -348,21 +346,3 @@ def test_repository_recomputes_and_rejects_forged_risk_approval(tmp_path) -> Non
             command_hash=canonical_hash(forged.to_canonical_dict()),
         )
     assert repository.get_portfolio(portfolio.decision_id) == portfolio
-
-
-def test_portfolio_risk_migration_has_isolated_rollback(tmp_path) -> None:
-    path = tmp_path / "portfolio.sqlite3"
-    SQLitePortfolioDecisionRepository(path)
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            PORTFOLIO_RISK_DOWN_MIGRATION.read_text(encoding="utf-8")
-        )
-        names = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-    assert "risk_decisions" not in names
-    assert "portfolio_decisions" not in names
-    assert "daily_runs" not in names

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-import sqlite3
+import psycopg
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
 from market_regime_alpha.application.controlled_operation.evidence_package import (
     publish_controlled_operation_package,
 )
-from market_regime_alpha.application.controlled_operation.longitudinal_index import (
-    SQLiteLongitudinalOperationalIndex,
+from tests.postgres_path_repositories import (
+    PostgresLongitudinalOperationalIndex,
 )
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.data.trading_calendar import (
@@ -49,7 +50,7 @@ def test_longitudinal_index_is_append_only_queryable_and_rebuildable(tmp_path: P
     package_path = publish_controlled_operation_package(
         root=tmp_path / "packages", artifact=package
     )
-    index = SQLiteLongitudinalOperationalIndex(tmp_path / "longitudinal.sqlite3", clock=lambda: NOW)
+    index = PostgresLongitudinalOperationalIndex(tmp_path / "longitudinal.postgres-scope", clock=lambda: NOW)
     record = index.append(package=package, package_locator="packages/one")
 
     assert index.append(package=package, package_locator="packages/one") == record
@@ -64,8 +65,8 @@ def test_longitudinal_index_is_append_only_queryable_and_rebuildable(tmp_path: P
         calendar=_calendar(), start_date=date(2026, 8, 3), end_date=date(2026, 8, 5)
     ) == (date(2026, 8, 3), date(2026, 8, 5))
 
-    rebuilt = SQLiteLongitudinalOperationalIndex.rebuild(
-        path=tmp_path / "rebuilt.sqlite3",
+    rebuilt = PostgresLongitudinalOperationalIndex.rebuild(
+        path=tmp_path / "rebuilt.postgres-scope",
         packages=((package_path, "packages/one"),),
         clock=lambda: NOW,
     )
@@ -74,17 +75,17 @@ def test_longitudinal_index_is_append_only_queryable_and_rebuildable(tmp_path: P
 
 def test_longitudinal_database_triggers_block_update_and_delete(tmp_path: Path) -> None:
     package = _artifact()
-    path = tmp_path / "longitudinal.sqlite3"
-    index = SQLiteLongitudinalOperationalIndex(path, clock=lambda: NOW)
+    path = tmp_path / "longitudinal.postgres-scope"
+    index = PostgresLongitudinalOperationalIndex(path, clock=lambda: NOW)
     index.append(package=package, package_locator="packages/one")
 
-    with sqlite3.connect(path) as connection, pytest.raises(
-        sqlite3.IntegrityError, match="append-only"
+    with postgres_connection(path) as connection, pytest.raises(
+        psycopg.Error, match="append-only"
     ):
         connection.execute(
             "UPDATE longitudinal_operational_index SET deadline_status = 'FORGED'"
         )
-    with sqlite3.connect(path) as connection, pytest.raises(
-        sqlite3.IntegrityError, match="append-only"
+    with postgres_connection(path) as connection, pytest.raises(
+        psycopg.Error, match="append-only"
     ):
         connection.execute("DELETE FROM longitudinal_operational_index")

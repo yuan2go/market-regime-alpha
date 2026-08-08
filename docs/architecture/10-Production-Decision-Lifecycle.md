@@ -501,13 +501,12 @@ Attribution may propose research work but shall not mutate a model or promote it
 | Store | Responsibility |
 |---|---|
 | Immutable file/object artifact store | source, research, signal, forecast and evaluation evidence |
-| PostgreSQL | default runtime journals, domain ledgers and durable governance authority |
-| SQLite | explicit compatibility, historical replay and one-time import source |
+| PostgreSQL 16 | sole runtime, journal, repository, replay, account, Position, Risk and durable governance database authority |
 
-PostgreSQL and SQLite implement the same bounded Repository protocols. Runtime
-composition selects exactly one authority; it never dual-writes or silently
-falls back. Canonical JSON remains text so storage cannot normalize bytes that
-participate in hashes. Immutable file Artifacts remain outside the database.
+Bounded Repository protocols are implemented directly with native PostgreSQL
+transactions and SQL. Runtime composition cannot select another database,
+dual-write or fall back. Canonical JSON remains text where bytes participate in
+hashes; immutable file Artifacts remain outside the database.
 
 ### 19.2 Suggested operational tables
 
@@ -686,9 +685,7 @@ Inject failure after every durable boundary. Recovery must not reacquire immutab
 
 ## 27. Hardening and admission remainder
 
-The first engineering scope is A-share, long-only, CLI-first and
-PostgreSQL-default, with SQLite retained only as an explicit compatibility and
-import path.
+The first engineering scope is A-share, long-only, CLI-first and PostgreSQL-only.
 Decision time, Path targets and Portfolio/Risk values are explicit versioned
 configurations with no implicit production defaults. Their production validity
 is not established.

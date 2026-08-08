@@ -37,8 +37,9 @@ from market_regime_alpha.application.canonical_lifecycle.replay import (
 from market_regime_alpha.application.canonical_lifecycle.runner import (
     CanonicalDecisionLifecycleRunner,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresFeatureMaterializationRunRepository,
+    PostgresLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.evidence import (
     VerifiedCompositeEvidenceStageHandler,
@@ -442,7 +443,6 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
         model_references=fixture.model_references,
         stop_after_stage=None,
         output_directory=output_root,
-        authority_database_locator=None,
     )
     configured_handlers = {
         LifecycleStageName.VERIFY_COMPOSITE_EVIDENCE: (VerifiedCompositeEvidenceStageHandler()),
@@ -465,7 +465,7 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
         LifecycleStageName.ENTRY_ASSESSMENT: EntryAssessmentStageHandler(authority_ceiling=LifecycleAuthorityCeiling()),
     }
     handlers = tuple(configured_handlers.get(stage, _NeverCalledHandler(stage)) for stage in LIFECYCLE_STAGE_ORDER)
-    repository = SQLiteLifecycleRunRepository(tmp_path / "lifecycle.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "lifecycle.postgres-scope")
     runner = CanonicalDecisionLifecycleRunner(
         repository=repository,
         handlers=handlers,
@@ -613,7 +613,17 @@ def _materialize_bundle(
     dataset_package = publish_market_data_dataset(root=tmp_path / "market-data", artifact=dataset)
     verified_dataset = load_verified_market_data_dataset(dataset_package)
     feature_set = canonical_technical_feature_set(effective_from=decision_time - timedelta(days=365))
-    handoff = OperationalFeatureHandoffRunner(max_workers=2).materialize_universe(
+    feature_scope = tmp_path / "feature-run.postgres-scope"
+    handoff = OperationalFeatureHandoffRunner(
+        max_workers=2,
+        repository_factory=lambda clock, lease: (
+            PostgresFeatureMaterializationRunRepository(
+                feature_scope,
+                clock=clock or (lambda: created_at),
+                lease_duration=lease,
+            )
+        ),
+    ).materialize_universe(
         verified_dataset=verified_dataset,
         feature_set=feature_set,
         universe_symbols=symbols,

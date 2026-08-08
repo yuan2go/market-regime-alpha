@@ -186,9 +186,9 @@ The unused `resume: bool` contract is replaced by:
 - `RETURN_IF_COMPLETE`: return an immutable completed receipt and reject an
   incomplete Run.
 
-The SQLite Feature Materialization Run authority owns Run, Task, Attempt,
+The PostgreSQL Feature Materialization Run authority owns Run, Task, Attempt,
 Receipt and Event state separately from the lifecycle journal. Its task key is
-`symbol + feature_id + timeframe`. `BEGIN IMMEDIATE`, command hashes, CAS
+`symbol + feature_id + timeframe`. Native transactions, command hashes, CAS
 versions, monotonic claim tokens, append-only attempts/events, immutable
 completed tasks and one-snapshot reads reject concurrent/stale writers and
 support exact recovery after failure. H8 may schedule this authority later but

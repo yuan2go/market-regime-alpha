@@ -1,28 +1,11 @@
-"""PostgreSQL manual execution and traceability adapters."""
+"""Native PostgreSQL manual execution and traceability repositories."""
 
-from market_regime_alpha.execution.sqlite_repository import (
-    SQLiteManualExecutionRepository,
+from market_regime_alpha.execution.postgres_manual_repository import (
+    PostgresManualExecutionRepository,
 )
-from market_regime_alpha.execution.sqlite_traceability import (
-    SQLiteTraceableManualExecutionRepository,
+from market_regime_alpha.execution.postgres_traceability import (
+    PostgresTraceableManualExecutionRepository,
 )
-from market_regime_alpha.persistence.postgres.adapter import (
-    PostgresRepositoryAdapter,
-)
-
-
-class PostgresManualExecutionRepository(
-    PostgresRepositoryAdapter,
-    SQLiteManualExecutionRepository,
-):
-    """PostgreSQL implementation of ManualExecutionRepository."""
-
-
-class PostgresTraceableManualExecutionRepository(
-    PostgresRepositoryAdapter,
-    SQLiteTraceableManualExecutionRepository,
-):
-    """PostgreSQL implementation of TraceableManualExecutionRepository."""
 
 
 __all__ = [

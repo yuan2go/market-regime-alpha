@@ -191,7 +191,7 @@ def test_file_reader_requires_locator_but_repository_reference_forbids_one() -> 
     validate_lifecycle_locator_policy(repository_reference)
     with pytest.raises(ValueError, match="forbids locator"):
         validate_lifecycle_locator_policy(
-            replace(repository_reference, locator="state.sqlite3")
+            replace(repository_reference, locator="state.postgres-scope")
         )
 
 

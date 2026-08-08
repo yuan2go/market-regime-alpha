@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
-import sqlite3
+from tests.postgres_path_repositories import postgres_connection
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -54,11 +54,11 @@ from market_regime_alpha.application.trading_lifecycle.manual_execution import (
 )
 from market_regime_alpha.core.identity import ArtifactId, PositionSnapshotId
 from market_regime_alpha.evidence.canonical import canonical_hash
-from market_regime_alpha.portfolio.sqlite_risk_routes import (
-    SQLiteRiskRouteRepository,
+from tests.postgres_path_repositories import (
+    PostgresRiskRouteRepository,
 )
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
+from tests.postgres_path_repositories import (
+    PostgresThesisHealthRepository,
 )
 from tests.execution.risk_reduction_confirmation_support import (
     ConfirmationFixture,
@@ -312,7 +312,7 @@ def test_thesis_health_stage_uses_command_bound_as_of_authority(
     ).execute(_context(fixture, LifecycleStageName.FILL_POSITION, preceding))
     preceding[LifecycleStageName.FILL_POSITION] = position
     handler = ThesisHealthStageHandler(
-        repository=SQLiteThesisHealthRepository(
+        repository=PostgresThesisHealthRepository(
             fixture.authority.repository.path
         )
     )
@@ -331,10 +331,10 @@ def test_thesis_health_stage_uses_command_bound_as_of_authority(
 
 def _fixture(tmp_path: Path, daily_decision_fixture) -> ExecutionStageFixture:
     authority = build_confirmation_fixture(tmp_path, daily_decision_fixture)
-    risk_bundle = SQLiteRiskRouteRepository(
+    risk_bundle = PostgresRiskRouteRepository(
         authority.repository.path
     ).get_verified_reducing_decision_bundle(authority.decision_id)
-    health = SQLiteThesisHealthRepository(
+    health = PostgresThesisHealthRepository(
         authority.repository.path
     ).get_verified_thesis_health_bundle(
         authority.command.thesis_health_observation_id
@@ -566,7 +566,7 @@ def _default_prior_result(
 
 
 def _authority_counts(path: Path) -> tuple[int, int, int]:
-    with sqlite3.connect(path) as connection:
+    with postgres_connection(path) as connection:
         return tuple(
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (

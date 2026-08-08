@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
-import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +35,10 @@ from tests.position.thesis_health_fixtures import (
     _thesis,
     health_rule_set,
 )
+from tests.postgres_path_repositories import (
+    postgres_cli_arguments,
+    postgres_connection,
+)
 from tests.research.platform_v2.conftest import research_input_bundle
 from tests.signals.test_engine import _config as _signal_config
 
@@ -53,9 +56,7 @@ def _write_request(
 ) -> None:
     fixture = fixture or make_h5_fixture()
     _write_document(path.parent / "thesis.json", fixture.thesis.to_canonical_dict())
-    _write_document(
-        path.parent / "opportunity.json", fixture.opportunity.to_canonical_dict()
-    )
+    _write_document(path.parent / "opportunity.json", fixture.opportunity.to_canonical_dict())
     _write_document(path.parent / "price.json", fixture.price.to_canonical_dict())
     _write_document(
         path.parent / "configuration.json",
@@ -65,15 +66,9 @@ def _write_request(
     payload = {
         "thesis_path": "thesis.json",
         "opportunity_path": "opportunity.json",
-        "research_package_path": str(
-            package_paths[0] if package_paths is not None else "research-package"
-        ),
-        "signal_package_path": str(
-            package_paths[1] if package_paths is not None else "signal-package"
-        ),
-        "path_forecast_package_path": str(
-            package_paths[2] if package_paths is not None else "path-package"
-        ),
+        "research_package_path": str(package_paths[0] if package_paths is not None else "research-package"),
+        "signal_package_path": str(package_paths[1] if package_paths is not None else "signal-package"),
+        "path_forecast_package_path": str(package_paths[2] if package_paths is not None else "path-package"),
         "price_snapshot_path": "price.json",
         "configuration_path": "configuration.json",
         "rule_set_path": "rules.json",
@@ -237,9 +232,7 @@ def _publish_verified_packages(
         reason_codes=old_path_envelope.reason_codes,
         limitations=old_path_envelope.limitations,
     )
-    path_forecast = PathForecast.from_canonical_dict(
-        {"envelope": path_envelope.to_canonical_dict(), **path_payload}
-    )
+    path_forecast = PathForecast.from_canonical_dict({"envelope": path_envelope.to_canonical_dict(), **path_payload})
     path_artifact = PathForecastArtifact(
         forecast=path_forecast,
         signal_snapshot=fixture.signal,
@@ -295,14 +288,12 @@ def _install_verified_package_readers(monkeypatch) -> None:
 
 
 def _invoke(database: Path, request: Path, capsys) -> dict[str, object]:
-    assert main(["--database", str(database), "--request", str(request)]) == 0
+    assert main([*postgres_cli_arguments(database), "--request", str(request)]) == 0
     return json.loads(capsys.readouterr().out)
 
 
-def test_cli_persists_and_replays_v2_observation_without_trade_authority(
-    tmp_path, capsys, monkeypatch
-) -> None:
-    database = tmp_path / "health.sqlite3"
+def test_cli_persists_and_replays_v2_observation_without_trade_authority(tmp_path, capsys, monkeypatch) -> None:
+    database = tmp_path / "health.postgres-scope"
     request = tmp_path / "health.json"
     _write_request(request, idempotency_key="cli-health-replay")
     _install_verified_package_readers(monkeypatch)
@@ -330,17 +321,18 @@ def test_cli_persists_and_replays_v2_observation_without_trade_authority(
     assert first["component_states"]["signal"] == "SUPPORTED"
     assert first["source_artifacts"]["candidate_set"]["artifact_id"]
 
-    with sqlite3.connect(database) as connection:
-        tables = {
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
+    with postgres_connection(database) as connection:
+        health_count = connection.execute("SELECT count(*) FROM thesis_health_observations").fetchone()[0]
+        downstream_counts = tuple(
+            connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in (
+                "risk_reducing_decisions",
+                "manual_trade_records",
+                "manual_fills",
             )
-        }
-    assert "thesis_health_observations" in tables
-    assert "risk_reducing_decisions" not in tables
-    assert not any("manual_trade" in name for name in tables)
-    assert not any("fill" in name for name in tables)
+        )
+    assert health_count == 1
+    assert downstream_counts == (0, 0, 0)
 
 
 def test_cli_reads_real_verified_research_signal_and_path_packages(
@@ -356,11 +348,9 @@ def test_cli_reads_real_verified_research_signal_and_path_packages(
         package_paths=package_paths,
     )
 
-    result = _invoke(tmp_path / "verified-packages.sqlite3", request, capsys)
+    result = _invoke(tmp_path / "verified-packages.postgres-scope", request, capsys)
     assert result["observed_health_state"] == "HEALTHY"
-    assert result["source_artifacts"]["candidate_set"]["artifact_id"] == str(
-        fixture.candidate.envelope.artifact_id
-    )
+    assert result["source_artifacts"]["candidate_set"]["artifact_id"] == str(fixture.candidate.envelope.artifact_id)
 
 
 @pytest.mark.parametrize(
@@ -373,9 +363,7 @@ def test_cli_reads_real_verified_research_signal_and_path_packages(
         "health_state",
     ),
 )
-def test_cli_rejects_v1_support_or_caller_authored_health(
-    tmp_path, forbidden_field: str
-) -> None:
+def test_cli_rejects_v1_support_or_caller_authored_health(tmp_path, forbidden_field: str) -> None:
     request = tmp_path / f"forbidden-{forbidden_field}.json"
     _write_request(request, idempotency_key="strict-v2-input")
     payload = json.loads(request.read_text(encoding="utf-8"))
@@ -385,8 +373,7 @@ def test_cli_rejects_v1_support_or_caller_authored_health(
     with pytest.raises(ValueError, match="request fields mismatch"):
         main(
             [
-                "--database",
-                str(tmp_path / "forbidden.sqlite3"),
+                *postgres_cli_arguments(tmp_path / "forbidden.postgres-scope"),
                 "--request",
                 str(request),
             ]
@@ -410,8 +397,7 @@ def test_cli_rejects_v1_health_observation_as_operational_input(tmp_path) -> Non
     with pytest.raises(ValueError):
         main(
             [
-                "--database",
-                str(tmp_path / "v1.sqlite3"),
+                *postgres_cli_arguments(tmp_path / "v1.postgres-scope"),
                 "--request",
                 str(request),
             ]
@@ -444,13 +430,11 @@ def test_cli_reports_derived_insufficient_and_invalidated_states(
     if expected_state == "DATA_INSUFFICIENT":
         from datetime import timedelta
 
-        payload["assessed_at"] = (
-            ASSESSED_AT + timedelta(minutes=2)
-        ).isoformat()
+        payload["assessed_at"] = (ASSESSED_AT + timedelta(minutes=2)).isoformat()
     request.write_text(json.dumps(payload), encoding="utf-8")
     _install_verified_package_readers(monkeypatch)
 
-    result = _invoke(tmp_path / f"{expected_state}.sqlite3", request, capsys)
+    result = _invoke(tmp_path / f"{expected_state}.postgres-scope", request, capsys)
     assert result["observed_health_state"] == expected_state
     if expected_state == "DATA_INSUFFICIENT":
         assert result["effective_health_state"] == "NOT_ESTABLISHED"

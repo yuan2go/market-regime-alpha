@@ -36,8 +36,8 @@ class PostgresRuntimeMetrics:
 
     transaction_attempts: int
     transaction_retries: int
-    compatibility_advisory_locks: int
-    compatibility_lock_wait_seconds: float
+    scoped_advisory_locks: int
+    scoped_lock_wait_seconds: float
 
 
 class _MutablePostgresRuntimeMetrics:
@@ -45,8 +45,8 @@ class _MutablePostgresRuntimeMetrics:
         self._lock = Lock()
         self._transaction_attempts = 0
         self._transaction_retries = 0
-        self._compatibility_advisory_locks = 0
-        self._compatibility_lock_wait_seconds = 0.0
+        self._scoped_advisory_locks = 0
+        self._scoped_lock_wait_seconds = 0.0
 
     def record_transaction_attempt(self) -> None:
         with self._lock:
@@ -56,18 +56,18 @@ class _MutablePostgresRuntimeMetrics:
         with self._lock:
             self._transaction_retries += 1
 
-    def record_compatibility_lock(self, wait_seconds: float) -> None:
+    def record_scoped_lock(self, wait_seconds: float) -> None:
         with self._lock:
-            self._compatibility_advisory_locks += 1
-            self._compatibility_lock_wait_seconds += max(0.0, wait_seconds)
+            self._scoped_advisory_locks += 1
+            self._scoped_lock_wait_seconds += max(0.0, wait_seconds)
 
     def snapshot(self) -> PostgresRuntimeMetrics:
         with self._lock:
             return PostgresRuntimeMetrics(
                 transaction_attempts=self._transaction_attempts,
                 transaction_retries=self._transaction_retries,
-                compatibility_advisory_locks=self._compatibility_advisory_locks,
-                compatibility_lock_wait_seconds=self._compatibility_lock_wait_seconds,
+                scoped_advisory_locks=self._scoped_advisory_locks,
+                scoped_lock_wait_seconds=self._scoped_lock_wait_seconds,
             )
 
 
@@ -127,11 +127,20 @@ class PostgresConnectionFactory:
         if not isinstance(read_only, bool):
             raise TypeError("read_only must be a bool")
         try:
-            self._pool.open(wait=True)
+            # ``open(wait=True)`` is not safe to repeat while the pool's only
+            # ready connection is checked out: psycopg_pool waits for the
+            # initialization-ready signal again instead of growing the pool.
+            # Opening is idempotent; ``getconn`` owns the bounded availability
+            # wait and can request another connection for nested repository
+            # reads.
+            self._pool.open(wait=False)
             connection = self._pool.getconn()
         except (psycopg.Error, PoolTimeout, OSError) as exc:
             locator = redact_database_url(self._database_url)
-            raise PostgresConnectionUnavailable(f"PostgreSQL database is unavailable: {locator}") from exc
+            raise PostgresConnectionUnavailable(
+                "PostgreSQL database is unavailable: "
+                f"{locator} ({type(exc).__name__})"
+            ) from exc
         try:
             connection.read_only = read_only
             yield connection
@@ -156,10 +165,10 @@ class PostgresConnectionFactory:
 
         return self._runtime_metrics.snapshot()
 
-    def record_compatibility_lock(self, wait_seconds: float) -> None:
-        """Record one inherited critical section without exposing SQL or secrets."""
+    def record_scoped_lock(self, wait_seconds: float) -> None:
+        """Record one PostgreSQL scope lock without exposing SQL or secrets."""
 
-        self._runtime_metrics.record_compatibility_lock(wait_seconds)
+        self._runtime_metrics.record_scoped_lock(wait_seconds)
 
     def run_transaction(
         self,
@@ -207,7 +216,7 @@ def _configure_connection(
         "application_name": APPLICATION_NAME,
         "statement_timeout": "30s",
         "lock_timeout": "5s",
-        "idle_in_transaction_session_timeout": "30s",
+        "idle_in_transaction_session_timeout": "120s",
     }
     with connection.cursor() as cursor:
         for name, value in settings.items():

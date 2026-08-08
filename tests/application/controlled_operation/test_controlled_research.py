@@ -62,6 +62,7 @@ from tests.daily_decision.conftest import (
     DailyDecisionFixture,
     daily_decision_fixture,
 )
+from tests.postgres_path_repositories import feature_repository_factory
 
 
 _daily_decision_fixture = daily_decision_fixture
@@ -179,7 +180,13 @@ def _static_inputs(tmp_path: Path, fixture: DailyDecisionFixture):
     feature_set = static_technical_feature_set(
         effective_from=decision - timedelta(days=100)
     )
-    receipt = FeatureMaterializationRunner(max_workers=2).run(
+    receipt = FeatureMaterializationRunner(
+        max_workers=2,
+        repository_factory=feature_repository_factory(
+            tmp_path / "features.postgres-scope",
+            fallback_clock=lambda: supplemental.created_at,
+        ),
+    ).run(
         verified_dataset=dataset,
         feature_set=feature_set,
         decision_time=decision,

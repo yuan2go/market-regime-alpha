@@ -7,6 +7,7 @@ from scripts.confirm_risk_reduction import main
 from tests.execution.risk_reduction_confirmation_support import (
     build_confirmation_fixture,
 )
+from tests.postgres_path_repositories import postgres_cli_arguments
 
 
 pytest_plugins = ("tests.daily_decision.conftest",)
@@ -40,8 +41,7 @@ def _arguments(tmp_path, fixture) -> tuple[str, ...]:
     )
     command = fixture.command
     return (
-        "--database",
-        str(fixture.repository.path),
+        *postgres_cli_arguments(fixture.repository.path),
         "--risk-reducing-decision-id",
         str(command.risk_reducing_decision_id),
         "--risk-reducing-decision-hash",

@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 from zoneinfo import ZoneInfo
@@ -32,11 +31,11 @@ from market_regime_alpha.portfolio import (
     PortfolioOutputMode,
     RiskBudget,
     RiskDecisionState,
-    SQLiteCompleteAccountPortfolioRiskRepository,
     ThesisAllocationRequest,
 )
-from market_regime_alpha.portfolio.sqlite_account_authority import (
-    COMPLETE_ACCOUNT_RISK_DOWN_MIGRATION,
+from tests.postgres_path_repositories import (
+    PostgresCompleteAccountPortfolioRiskRepository,
+    postgres_cli_arguments,
 )
 from market_regime_alpha.portfolio.risk_routes import RiskIncreasingDecision
 
@@ -139,8 +138,8 @@ def test_unallocated_existing_position_enters_post_trade_gross_risk(tmp_path) ->
         loss_per_share=5.0,
     )
     service = CompleteAccountPortfolioRiskApplicationService(
-        SQLiteCompleteAccountPortfolioRiskRepository(
-            tmp_path / "complete-account.sqlite3"
+        PostgresCompleteAccountPortfolioRiskRepository(
+            tmp_path / "complete-account.postgres-scope"
         )
     )
 
@@ -205,7 +204,7 @@ def test_unallocated_existing_positions_enter_theme_and_loss_risk(tmp_path) -> N
         loss_per_share=20.0,
     )
     service = CompleteAccountPortfolioRiskApplicationService(
-        SQLiteCompleteAccountPortfolioRiskRepository(tmp_path / "risk.sqlite3")
+        PostgresCompleteAccountPortfolioRiskRepository(tmp_path / "risk.postgres-scope")
     )
 
     _, risk = service.run(
@@ -275,8 +274,8 @@ def test_incomplete_stale_or_unreconciled_account_fails_closed(tmp_path) -> None
             version=index,
         )
         service = CompleteAccountPortfolioRiskApplicationService(
-            SQLiteCompleteAccountPortfolioRiskRepository(
-                tmp_path / f"risk-{index}.sqlite3"
+            PostgresCompleteAccountPortfolioRiskRepository(
+                tmp_path / f"risk-{index}.postgres-scope"
             )
         )
 
@@ -335,8 +334,8 @@ def test_pure_reduction_and_full_close_use_complete_account(
         loss_per_share=5.0,
     )
     service = CompleteAccountPortfolioRiskApplicationService(
-        SQLiteCompleteAccountPortfolioRiskRepository(
-            tmp_path / f"reduce-{target_quantity}.sqlite3"
+        PostgresCompleteAccountPortfolioRiskRepository(
+            tmp_path / f"reduce-{target_quantity}.postgres-scope"
         )
     )
 
@@ -361,7 +360,7 @@ def test_pure_reduction_and_full_close_use_complete_account(
     )
 
 
-def test_empty_account_idempotency_and_sqlite_restart(tmp_path) -> None:
+def test_empty_account_idempotency_and_postgres_restart(tmp_path) -> None:
     thesis = _thesis("000001.SZ")
     account = AuthoritativeAccountPortfolioSnapshot.create(
         account_id="account-empty",
@@ -383,8 +382,8 @@ def test_empty_account_idempotency_and_sqlite_restart(tmp_path) -> None:
         average_daily_trade_value=1_000_000.0,
         loss_per_share=5.0,
     )
-    path = tmp_path / "restart.sqlite3"
-    repository = SQLiteCompleteAccountPortfolioRiskRepository(path)
+    path = tmp_path / "restart.postgres-scope"
+    repository = PostgresCompleteAccountPortfolioRiskRepository(path)
     service = CompleteAccountPortfolioRiskApplicationService(repository)
     arguments = {
         "theses": (thesis,),
@@ -402,7 +401,7 @@ def test_empty_account_idempotency_and_sqlite_restart(tmp_path) -> None:
 
     first = service.run(**arguments)  # type: ignore[arg-type]
     duplicate = service.run(**arguments)  # type: ignore[arg-type]
-    restarted = SQLiteCompleteAccountPortfolioRiskRepository(path)
+    restarted = PostgresCompleteAccountPortfolioRiskRepository(path)
 
     assert duplicate == first
     assert first[1].state is RiskDecisionState.APPROVED
@@ -437,27 +436,6 @@ def test_empty_account_idempotency_and_sqlite_restart(tmp_path) -> None:
     changed = {**arguments, "reason": "different command semantics"}
     with pytest.raises(ValueError, match="idempotency key reused"):
         service.run(**changed)  # type: ignore[arg-type]
-
-
-def test_complete_account_migration_has_isolated_down_path(tmp_path) -> None:
-    path = tmp_path / "migration.sqlite3"
-    SQLiteCompleteAccountPortfolioRiskRepository(path)
-
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            COMPLETE_ACCOUNT_RISK_DOWN_MIGRATION.read_text(encoding="utf-8")
-        )
-        names = {
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-
-    assert "complete_account_risk_decisions" not in names
-    assert "complete_account_portfolio_decisions" not in names
-    assert "authoritative_account_portfolio_snapshots" not in names
-    assert "daily_runs" not in names
 
 
 def test_complete_account_cli_runs_and_restores_risk(tmp_path) -> None:
@@ -506,15 +484,14 @@ def test_complete_account_cli_runs_and_restores_risk(tmp_path) -> None:
         "idempotency_key": "complete-account-cli",
     }
     request_path = tmp_path / "request.json"
-    database = tmp_path / "cli.sqlite3"
+    database = tmp_path / "cli.postgres-scope"
     request_path.write_text(json.dumps(request), encoding="utf-8")
     root = Path(__file__).parents[2]
     completed = subprocess.run(
         [
             sys.executable,
             "scripts/run_portfolio_risk.py",
-            "--database",
-            str(database),
+            *postgres_cli_arguments(database),
             "run-full-account",
             "--request",
             str(request_path),
@@ -531,8 +508,7 @@ def test_complete_account_cli_runs_and_restores_risk(tmp_path) -> None:
         [
             sys.executable,
             "scripts/run_portfolio_risk.py",
-            "--database",
-            str(database),
+            *postgres_cli_arguments(database),
             "show-full-account-risk",
             "--risk-decision-id",
             risk_id,

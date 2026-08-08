@@ -1,12 +1,17 @@
 # PostgreSQL Free-Data Migration Matrix
 
-> **Status:** CURRENT_STATUS
-> **Authority:** Executable call-chain audit for PostgreSQL and retained SQLite boundaries
+> **Status:** HISTORICAL
+> **Authority:** Historical call-chain observation before WP-PGSQL-01
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-05
 > **Baseline:** `dbdd72cc55a5e13fecf0113e3fad3ac694917ff2` on `feat/controlled-1455-operational-evidence`
 > **Related Documents:** ../../status/Current-State.md, ../../operations/PostgreSQL-Authority-Runbook.md, ../../delivery/PostgreSQL-Free-Data-Canonical-Runtime-V1.md
 > **Code Evidence:** `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/**`, `tests/persistence/postgres/**`, `tests/architecture/test_postgres_runtime_boundaries.py`
+
+This matrix describes the 2026-08-05 baseline only. WP-PGSQL-01 removed the
+compatibility bridge and executable file-database paths. It must not be used as
+current runtime guidance; see
+[PostgreSQL Authority Only](../../roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md).
 
 ## Audit conclusion
 

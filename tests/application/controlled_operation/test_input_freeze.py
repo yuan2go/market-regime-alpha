@@ -13,8 +13,9 @@ from market_regime_alpha.application.controlled_operation.journal import (
     DecisionTimeOperationStageName,
     OperationArtifactReference,
 )
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
-    SQLiteDecisionTimeOperationJournal,
+from tests.postgres_path_repositories import (
+    PostgresDecisionTimeOperationJournal,
+    controlled_runner_dependencies,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from tests.application.controlled_operation.test_journal import HASH, HASH_2, NOW, _command
@@ -53,8 +54,8 @@ def test_frozen_input_accepts_identical_bytes_from_another_locator(
 def test_completed_stage_rejects_recomputed_receipt_divergence(
     tmp_path: Path,
 ) -> None:
-    journal = SQLiteDecisionTimeOperationJournal(
-        tmp_path / "journal.sqlite",
+    journal = PostgresDecisionTimeOperationJournal(
+        tmp_path / "journal.postgres-scope",
         clock=lambda: NOW,
     )
     command = _command()
@@ -63,6 +64,10 @@ def test_completed_stage_rejects_recomputed_receipt_divergence(
         journal=journal,
         output_root=tmp_path / "operations",
         clock=lambda: NOW,
+        **controlled_runner_dependencies(
+            tmp_path / "journal.postgres-scope",
+            clock=lambda: NOW,
+        ),
     )
     inputs = (
         OperationArtifactReference("INPUT", ArtifactId("input"), HASH),

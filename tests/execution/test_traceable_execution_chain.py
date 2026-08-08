@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
-import sqlite3
+import psycopg
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -37,7 +37,6 @@ from market_regime_alpha.decision.thesis import TRADING_THESIS_SCHEMA
 from market_regime_alpha.data import TradingSession, build_trading_calendar_artifact
 from market_regime_alpha.execution import (
     PositionBook,
-    SQLiteTraceableManualExecutionRepository,
 )
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.evaluation import (
@@ -53,12 +52,12 @@ from market_regime_alpha.execution.manual import (
     ManualTradeRecord,
     TradeSide,
 )
-from market_regime_alpha.execution.sqlite_repository import (
+from tests.postgres_path_repositories import (
+    PostgresCompleteAccountPortfolioRiskRepository,
+    PostgresTraceableManualExecutionRepository,
     insert_manual_trade_event,
+    postgres_connection,
     serialize_manual_execution_json,
-)
-from market_regime_alpha.execution.sqlite_traceability import (
-    EXECUTION_TRACEABILITY_DOWN_MIGRATION,
 )
 from market_regime_alpha.portfolio import (
     RISK_BUDGET_SCHEMA,
@@ -70,7 +69,6 @@ from market_regime_alpha.portfolio import (
     PortfolioOutputMode,
     PositionRiskValuationInput,
     RiskBudget,
-    SQLiteCompleteAccountPortfolioRiskRepository,
     ThesisAllocationRequest,
 )
 from market_regime_alpha.position import (
@@ -238,8 +236,8 @@ def _authority(
         loss_per_share=1.0,
     )
     service = CompleteAccountPortfolioRiskApplicationService(
-        SQLiteCompleteAccountPortfolioRiskRepository(
-            tmp_path / f"risk-{index}-{quantity}-{target}.sqlite3"
+        PostgresCompleteAccountPortfolioRiskRepository(
+            tmp_path / f"risk-{index}-{quantity}-{target}.postgres-scope"
         )
     )
     portfolio, risk = service.run_traceable(
@@ -279,7 +277,7 @@ def _create_trade(service: TraceableManualExecutionApplicationService, authority
 
 
 def _insert_historical_v2_sell(
-    repository: SQLiteTraceableManualExecutionRepository,
+    repository: PostgresTraceableManualExecutionRepository,
     book: PositionBook,
     authority,
 ) -> ManualTradeRecord:
@@ -313,10 +311,7 @@ def _insert_historical_v2_sell(
         post_trade_snapshot_id=portfolio.post_trade.snapshot_id,
         post_trade_snapshot_hash=portfolio.post_trade.content_hash,
     )
-    with sqlite3.connect(repository.path, isolation_level=None) as connection:
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("BEGIN IMMEDIATE")
+    with postgres_connection(repository.path) as connection:
         connection.execute(
             """
             INSERT INTO manual_trade_records(
@@ -324,8 +319,8 @@ def _insert_historical_v2_sell(
                 risk_reducing_decision_id, risk_reduction_confirmation_id,
                 account_id, symbol, side, state, filled_quantity,
                 aggregate_json, version
-            ) VALUES (?, 'INCREASING', ?, NULL, NULL, ?, ?, 'SELL',
-                      'RECORDED', 0, ?, 0)
+            ) VALUES (%s, 'INCREASING', %s, NULL, NULL, %s, %s, 'SELL',
+                      'RECORDED', 0, %s, 0)
             """,
             (
                 str(record.manual_trade_id),
@@ -343,7 +338,7 @@ def _insert_historical_v2_sell(
                 portfolio_decision_id, risk_decision_id,
                 post_trade_snapshot_id, post_trade_snapshot_hash,
                 target_delta_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 str(record.manual_trade_id),
@@ -363,14 +358,14 @@ def _insert_historical_v2_sell(
 
 
 def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
-    path = tmp_path / "execution.sqlite3"
-    repository = SQLiteTraceableManualExecutionRepository(path)
+    path = tmp_path / "execution.postgres-scope"
+    repository = PostgresTraceableManualExecutionRepository(path)
     service = TraceableManualExecutionApplicationService(repository)
     first_authority = _authority(tmp_path)
     book, trade = _create_trade(service, first_authority, "create-trace-1")
     assert _create_trade(service, first_authority, "create-trace-1") == (book, trade)
-    with sqlite3.connect(path) as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+    with postgres_connection(path) as connection:
+        with pytest.raises(psycopg.Error, match="append-only"):
             connection.execute(
                 "UPDATE traceable_manual_trade_bindings SET thesis_id = 'forged'"
             )
@@ -396,7 +391,7 @@ def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
     assert snapshot.source_fill_ids == (fill.fill_id,)
 
     restarted = TraceableManualExecutionApplicationService(
-        SQLiteTraceableManualExecutionRepository(path)
+        PostgresTraceableManualExecutionRepository(path)
     )
     assert restarted.rebuild_position(
         book.position_book_id, as_of=NOW + timedelta(minutes=2)
@@ -422,7 +417,7 @@ def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
     assert corrected.effective_fill_ids == (correction.fill_id,)
     assert corrected.source_manual_trade_ids == (trade.manual_trade_id,)
     assert TraceableManualExecutionApplicationService(
-        SQLiteTraceableManualExecutionRepository(path)
+        PostgresTraceableManualExecutionRepository(path)
     ).rebuild_position(
         book.position_book_id, as_of=NOW + timedelta(minutes=4)
     ) == corrected
@@ -457,7 +452,7 @@ def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
     )
     assert t_plus_one.available_quantity == 0
     assert TraceableManualExecutionApplicationService(
-        SQLiteTraceableManualExecutionRepository(path)
+        PostgresTraceableManualExecutionRepository(path)
     ).rebuild_a_share_position(
         book.position_book_id,
         calendar=calendar,
@@ -466,8 +461,8 @@ def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
     ) == t_plus_one
     hardened_risk = PositionAuthoritativePortfolioRiskApplicationService(
         execution_repository=repository,
-        risk_repository=SQLiteCompleteAccountPortfolioRiskRepository(
-            tmp_path / "position-authoritative-risk.sqlite3"
+        risk_repository=PostgresCompleteAccountPortfolioRiskRepository(
+            tmp_path / "position-authoritative-risk.postgres-scope"
         ),
     )
     exit_allocation = ThesisAllocationRequest(
@@ -518,7 +513,7 @@ def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
     second_authority = _authority(tmp_path, index=2)
     second_book, second_trade = _create_trade(
         TraceableManualExecutionApplicationService(
-            SQLiteTraceableManualExecutionRepository(tmp_path / "second.sqlite3")
+            PostgresTraceableManualExecutionRepository(tmp_path / "second.postgres-scope")
         ),
         second_authority,
         "create-trace-2-independent",
@@ -534,7 +529,7 @@ def test_traceable_chain_restarts_and_rejects_cross_book_fill(tmp_path) -> None:
 
 
 def test_one_open_thesis_per_account_symbol_and_mismatched_chain_rejected(tmp_path) -> None:
-    repository = SQLiteTraceableManualExecutionRepository(tmp_path / "execution.sqlite3")
+    repository = PostgresTraceableManualExecutionRepository(tmp_path / "execution.postgres-scope")
     service = TraceableManualExecutionApplicationService(repository)
     first_authority = _authority(tmp_path, index=1)
     _, first_trade = _create_trade(service, first_authority, "create-first-book")
@@ -575,7 +570,7 @@ def test_expired_opportunity_cannot_create_traceable_risk(tmp_path) -> None:
 
 
 def test_increasing_route_cannot_sell_or_close_position_book(tmp_path) -> None:
-    repository = SQLiteTraceableManualExecutionRepository(tmp_path / "execution.sqlite3")
+    repository = PostgresTraceableManualExecutionRepository(tmp_path / "execution.postgres-scope")
     service = TraceableManualExecutionApplicationService(repository)
     first_authority = _authority(tmp_path, index=1)
     book, buy = _create_trade(service, first_authority, "create-buy")
@@ -610,7 +605,7 @@ def test_increasing_route_cannot_sell_or_close_position_book(tmp_path) -> None:
 
 
 def test_historical_v2_sell_path_remains_readable_and_evaluable(tmp_path) -> None:
-    repository = SQLiteTraceableManualExecutionRepository(tmp_path / "execution.sqlite3")
+    repository = PostgresTraceableManualExecutionRepository(tmp_path / "execution.postgres-scope")
     service = TraceableManualExecutionApplicationService(repository)
     first_authority = _authority(tmp_path, index=1)
     book, buy = _create_trade(service, first_authority, "create-buy-v2-history")
@@ -731,24 +726,3 @@ def test_historical_v2_sell_path_remains_readable_and_evaluable(tmp_path) -> Non
         "create-next-book-after-v2-history",
     )
     assert second.thesis_id == ThesisId("thesis-trace-2")
-
-
-def test_traceability_migration_has_isolated_down_path(tmp_path) -> None:
-    path = tmp_path / "migration.sqlite3"
-    SQLiteTraceableManualExecutionRepository(path)
-    with sqlite3.connect(path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM pdl_schema_migrations WHERE version = 6"
-        ).fetchone()[0] == 1
-        connection.executescript(
-            EXECUTION_TRACEABILITY_DOWN_MIGRATION.read_text(encoding="utf-8")
-        )
-        names = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-    assert "position_books" not in names
-    assert "traceable_manual_trade_bindings" not in names
-    assert "manual_fills" in names

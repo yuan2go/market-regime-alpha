@@ -124,7 +124,7 @@ def _invalidate_thesis(repository: Any, payload: dict[str, Any]):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Production decision lifecycle CLI")
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in (
         "create-opportunity",

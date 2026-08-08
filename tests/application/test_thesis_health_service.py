@@ -14,8 +14,8 @@ from market_regime_alpha.position import (
     ThesisHealthObservationV2,
     ThesisInvalidationRuleSet,
 )
-from market_regime_alpha.position.sqlite_thesis_health import (
-    SQLiteThesisHealthRepository,
+from tests.postgres_path_repositories import (
+    PostgresThesisHealthRepository,
 )
 
 from tests.position.test_thesis_health_builder import _bundle
@@ -60,7 +60,7 @@ def _assess(
 
 
 def test_application_service_builds_persists_and_replays_same_command(tmp_path) -> None:
-    repository = SQLiteThesisHealthRepository(tmp_path / "health.sqlite3")
+    repository = PostgresThesisHealthRepository(tmp_path / "health.postgres-scope")
     service = ThesisHealthApplicationService(repository)
     fixture = make_h5_fixture()
     bundle = _bundle(fixture)
@@ -76,7 +76,7 @@ def test_application_service_builds_persists_and_replays_same_command(tmp_path) 
 
 def test_application_service_rejects_same_key_for_different_semantics(tmp_path) -> None:
     service = ThesisHealthApplicationService(
-        SQLiteThesisHealthRepository(tmp_path / "health.sqlite3")
+        PostgresThesisHealthRepository(tmp_path / "health.postgres-scope")
     )
     bundle = _bundle(make_h5_fixture())
     _assess(service, bundle, idempotency_key="semantic-conflict")
@@ -91,7 +91,7 @@ def test_application_service_rejects_same_key_for_different_semantics(tmp_path) 
 
 
 def test_application_service_rejects_incomplete_rule_set_before_persistence(tmp_path) -> None:
-    repository = SQLiteThesisHealthRepository(tmp_path / "health.sqlite3")
+    repository = PostgresThesisHealthRepository(tmp_path / "health.postgres-scope")
     service = ThesisHealthApplicationService(repository)
     bundle = _bundle(make_h5_fixture())
     invalid_rules = ThesisInvalidationRuleSet.create(
@@ -112,7 +112,7 @@ def test_application_service_requires_explicit_latest_prior_after_first_observat
     tmp_path,
 ) -> None:
     service = ThesisHealthApplicationService(
-        SQLiteThesisHealthRepository(tmp_path / "health.sqlite3")
+        PostgresThesisHealthRepository(tmp_path / "health.postgres-scope")
     )
     bundle = _bundle(make_h5_fixture())
     _assess(service, bundle, idempotency_key="first-health")
@@ -123,7 +123,7 @@ def test_application_service_requires_explicit_latest_prior_after_first_observat
 
 def test_application_service_loads_and_verifies_expected_prior(tmp_path) -> None:
     service = ThesisHealthApplicationService(
-        SQLiteThesisHealthRepository(tmp_path / "health.sqlite3")
+        PostgresThesisHealthRepository(tmp_path / "health.postgres-scope")
     )
     fixture = make_h5_fixture()
     first_bundle = _bundle(fixture)
@@ -156,7 +156,7 @@ def test_application_service_accepts_actual_domain_inputs_not_private_bundle(
     tmp_path,
 ) -> None:
     service = ThesisHealthApplicationService(
-        SQLiteThesisHealthRepository(tmp_path / "health.sqlite3")
+        PostgresThesisHealthRepository(tmp_path / "health.postgres-scope")
     )
     with pytest.raises(TypeError, match="thesis must be a TradingThesis"):
         _assess(

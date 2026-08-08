@@ -1,165 +1,174 @@
-# PostgreSQL Authority Runbook
+# PostgreSQL Authority Only Runbook
 
-> **Status:** CURRENT_STATUS
-> **Authority:** Local PostgreSQL bootstrap, migration, cutover and recovery procedure
-> **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-05
-> **Related Documents:** ../status/Current-State.md, ../status/Capability-Matrix.md, ../evidence/PostgreSQL-Authority-Migration-Evidence.md, ../superpowers/specs/2026-08-05-postgresql-authority-migration-design.md
+> **Status:** CURRENT_SPECIFICATION
+> **Scope:** Runtime, Journal, Replay, repositories, CLI integration, account, position and risk authority
+> **Authority ceiling:** RESEARCH / MANUAL_DECISION_SUPPORT
+> **Database:** PostgreSQL 16 only
 
-## Scope and safety boundary
+## 1. Invariant
 
-PostgreSQL is the default database authority for runtime journals and domain repositories. SQLite is an explicit compatibility/import source only; there is no dual write and no automatic fallback. DuckDB, Parquet, CSV and immutable file Artifacts remain outside database authority.
-
-This runbook proves local persistence mechanics. It does not establish formal PIT data, OOS Alpha, sustained Shadow operation, authenticated operators, production readiness, Broker authority or automatic execution.
-
-Approved local resources:
+The executable database chain is:
 
 ```text
-role=market_regime_alpha
-database=market_regime_alpha
-schema=market_regime_alpha
-host=127.0.0.1
-port=5432
+Application / Domain
+→ bounded Repository Protocol
+→ native psycopg PostgreSQL Repository
+→ PostgreSQL 16
 ```
 
-Never place administrator or application passwords in a command argument, committed file, report, terminal transcript or issue. `.env` must remain Git-ignored and mode `0600`.
+There is no database backend selector, file-database path, compatibility bridge,
+SQL translation layer, automatic fallback or persistent test substitute. An
+unavailable PostgreSQL authority fails closed as `DATABASE_UNAVAILABLE` or
+`PostgresConnectionUnavailable`.
 
-## 1. Bootstrap
+Immutable file Artifacts, Parquet and CSV interchange files are evidence or
+transport formats. They are not Runtime, Journal, account, position or risk
+databases. Research caches cannot claim operational authority.
 
-Read the complete administrator DSN without terminal echo, then bootstrap the least-privileged application role. The administrator is bootstrap-only.
+## 2. Bootstrap an explicit database
 
-```bash
-read -r -s MARKET_REGIME_ALPHA_ADMIN_DATABASE_URL
-export MARKET_REGIME_ALPHA_ADMIN_DATABASE_URL
-uv run python scripts/bootstrap_postgres.py --env-file .env
-unset MARKET_REGIME_ALPHA_ADMIN_DATABASE_URL
-```
-
-The command creates or verifies the role/database/schema, generates a fresh application password and stores only `MARKET_REGIME_ALPHA_DATABASE_URL` in `.env`. Existing resources with foreign ownership or unsafe role attributes fail closed.
-
-## 2. Apply and verify migrations
+Use a dedicated PostgreSQL 16 database. Never point tests or replay at an
+unknown business database.
 
 ```bash
-set -a
-source .env
-set +a
+export MARKET_REGIME_ALPHA_DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/market_regime_alpha'
+export MARKET_REGIME_ALPHA_DATABASE_SCHEMA='market_regime_alpha'
+uv run python scripts/bootstrap_postgres.py
 uv run python scripts/apply_postgres_migrations.py
-uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Both commands must report the packaged migration count, latest version, server version, schema and catalog table count without rendering the DSN.
-
-The current package contains migrations 001–019. Migration 018 extends the
-credential-free authority binding constraint to `DAILY_LOOP` and
-`FREE_DATA_OPERATION`. Migration 019 adds an append-only terminal projection
-for Blocked Artifact ID/hash/locator references; it does not copy Artifact
-content or create another runtime state machine.
-
-## 3. Stop SQLite writers and inventory sources
-
-Before a non-empty import:
-
-1. stop every process that can write the declared SQLite files;
-2. require absolute source paths and no active `-wal` or `-journal` sidecar;
-3. enumerate only SQLite authority tables—never DuckDB/Parquet/CSV/Artifact files;
-4. calculate each source file and selected-schema hash;
-5. create a manifest matching `sqlite-to-postgres-migration-manifest-v1`;
-6. independently confirm that the PostgreSQL business tables are empty.
-
-The repository's approved initial manifest is `config/postgres/initial-sqlite-migration-manifest.json`. It has no sources because repository discovery found no SQLite business database. Its successful report is therefore schema-only `0 -> 0` evidence, not proof that external or undiscovered data was migrated.
-
-## 4. Capture the pre-write backup
-
-Set an explicit absolute path outside the repository. Do not use a broad directory or overwrite an unresolved target.
+The URL must include a host and database. CLI arguments can override both
+values explicitly:
 
 ```bash
-export MRA_POSTGRES_BACKUP_PATH=/absolute/operator-controlled/market-regime-alpha-prewrite.dump
-test ! -e "$MRA_POSTGRES_BACKUP_PATH"
-pg_dump --dbname="$MARKET_REGIME_ALPHA_DATABASE_URL" --format=custom --file="$MRA_POSTGRES_BACKUP_PATH"
-pg_restore --list "$MRA_POSTGRES_BACKUP_PATH" >/dev/null
-shasum -a 256 "$MRA_POSTGRES_BACKUP_PATH"
+uv run continuous-research \
+  --database-url "$MARKET_REGIME_ALPHA_DATABASE_URL" \
+  --application-schema "$MARKET_REGIME_ALPHA_DATABASE_SCHEMA" \
+  report --run-id RUN_ID
 ```
 
-Keep the dump and its digest outside tracked paths with operator-controlled permissions.
-
-## 5. Execute the one-time import
+Decision System commands deliberately require an explicit URL:
 
 ```bash
-uv run python scripts/migrate_sqlite_to_postgres.py --manifest config/postgres/initial-sqlite-migration-manifest.json --output-root artifacts/postgres-migration
+uv run decision-system \
+  --database-url "$MARKET_REGIME_ALPHA_DATABASE_URL" \
+  --database-schema "$MARKET_REGIME_ALPHA_DATABASE_SCHEMA" \
+  inspect-manual-account --observation-id OBSERVATION_ID
 ```
 
-The importer holds SQLite read snapshots, rechecks source hashes, requires every PostgreSQL business table to be empty, uses one PostgreSQL transaction, copies tables in foreign-key order, repairs identity sequences, compares counts/primary-key ranges/canonical row digests, verifies canonical JSON and publishes a content-addressed report only after success.
+## 3. Migration
 
-Any source change, schema mismatch, unsupported table, non-empty target, constraint failure, digest mismatch or injected pre-commit fault rolls back the import and publishes no PASS report.
-
-## 6. PostgreSQL integration smoke
-
-Use isolated schemas in the dedicated local database; never point tests at another environment.
+Migrations are contiguous PostgreSQL SQL under
+`src/market_regime_alpha/persistence/postgres/migrations`.
 
 ```bash
-export MARKET_REGIME_ALPHA_TEST_DATABASE_URL="$MARKET_REGIME_ALPHA_DATABASE_URL"
-uv run pytest -q tests/persistence/postgres
-uv run pytest -q tests/platform tests/decision tests/portfolio tests/execution tests/position
-uv run pytest -q tests/application/daily_loop tests/features tests/application/canonical_lifecycle tests/application/controlled_operation
+uv run python scripts/apply_postgres_migrations.py
 ```
 
-These tests cover migrations, Governance, Decision, Portfolio/Risk, manual execution without an invented Fill, Daily/Feature/Canonical/Controlled journals, restart/replay, fencing and longitudinal reads. They are isolated local engineering evidence, not sustained operational evidence.
+The current sequence is 001–026:
 
-## 7. Runtime selection
+- 001–023: historical PostgreSQL authorities through Stateful Research;
+- 024: current runtime binding is constrained to `backend = 'postgres'`;
+- 025: Daily Decision, Manual Account, Reconciliation, Research Portfolio,
+  Independent Risk and Decision Runtime receipt authorities.
+- 026: lease-bound Decision receipts, immutable State-stage and frozen
+  Fill-account references, versioned Risk/Tolerance configurations and isolated
+  replay imports.
 
-Ordinary CLIs load PostgreSQL from `.env` or `MARKET_REGIME_ALPHA_DATABASE_URL`. `--database-url` is an explicit PostgreSQL override. SQLite requires `--sqlite-database /absolute/path.sqlite3`; old `--database`/`--journal` flags remain hidden compatibility aliases and never identify PostgreSQL.
+Published migrations are immutable. Migration 024 supersedes the historical
+binding vocabulary in 017 without editing its checksum. Both an empty-database
+001→026 apply and a 023→026 upgrade must pass.
 
-Missing or conflicting configuration fails closed. A stored PostgreSQL run binding records backend plus a credential-free database/schema locator. Resume and replay reject missing or mismatched bindings.
+Migration 026 preserves rows written by the prerelease v1 Decision payloads
+without rewriting their immutable identities. Legacy v1 Runtime receipts remain
+archival with a null Lease field; all new receipts require the v2 schema and an
+active Lease window. New configuration foreign keys are `NOT VALID`, preserving
+historical rows while enforcing references for new writes. Both 023→026 and an
+empty 001→026 apply are supported.
 
-The six command names are installed, but V1 does not yet provide an admissible
-two-phase schedule. Both prepare/run fail closed before 14:55, while source
-freeze groups History, Status and Tencent quote and the Controlled static
-deadline is 14:50. Operators must classify real 14:55 admission as blocked
-until static prepare and decision-stage quote have separate durable receipts.
+## 4. Transaction and concurrency rules
+
+- bind every value with psycopg parameters;
+- use `ON CONFLICT`, `RETURNING`, native `BOOLEAN`, `TIMESTAMPTZ`, `NUMERIC`
+  and `JSONB` where the contract calls for them;
+- acquire transaction advisory locks only for the aggregate scope whose next
+  revision is being assigned;
+- claim queued work with row locking and `SKIP LOCKED` only where the Journal
+  contract includes recovery;
+- validate Claim ID, fencing token, tick version and lease expiration in the
+  same transaction as each Decision write;
+- use unique/partial indexes for terminal identity and compare-and-set for
+  revision chains;
+- never serialize the entire schema for an ordinary account, tick or trading
+  date operation.
+
+## 5. Backup, recovery and replay
+
+Backup and restore use normal PostgreSQL 16 tooling. A restore target must be a
+new validated database or an explicitly selected recovery database.
 
 ```bash
-prepare-free-data-operation --help
-run-free-data-decision-window --help
-resume-free-data-operation --help
-replay-free-data-operation --help
-report-free-data-operation --help
-inspect-free-data-operation --help
+pg_dump --format=custom --file=market-regime-alpha.dump "$MARKET_REGIME_ALPHA_DATABASE_URL"
+createdb market_regime_alpha_restore
+pg_restore --clean --if-exists --dbname=market_regime_alpha_restore market-regime-alpha.dump
 ```
 
-The profile is `TENCENT_FREE_OPERATIONAL_V1`. A Tencent or BaoStock error,
-missing supplemental input, late availability or missed deadline yields an
-auditable blocked state. No static sample or alternate Provider is selected.
+Replay uses an isolated PostgreSQL database or schema:
 
-## 8. Rollback and forward repair
-
-Before the first PostgreSQL authority write, rollback may explicitly select the unchanged SQLite source only when the migration report still proves source/target equality:
-
-```bash
-uv run python -m market_regime_alpha.cli.run_canonical_lifecycle --sqlite-database /absolute/verified-source.sqlite3 --help
+```text
+Immutable Artifact / authority identities
+→ frozen Fill-derived account view at the original as-of
+→ optional content-addressed T+1 calendar/session settlement evidence
+→ isolated PostgreSQL schema
+→ apply 001–026
+→ restore/import explicitly bound identities
+→ re-execute Reconciliation, Portfolio and independent Risk
+→ reload every Risk authority input from the isolated PostgreSQL import
+→ verify terminal identity, hashes and lineage
+→ drop isolated schema
 ```
 
-After any new PostgreSQL authority write, do not return to a stale SQLite database. Recovery is PostgreSQL restore or a reviewed forward migration:
+Repository, migration, runtime, concurrency, CLI and replay tests require
+`MARKET_REGIME_ALPHA_TEST_DATABASE_URL`. Absence is an error, not a skip.
+Each test uses a randomly named schema. Path-shaped legacy test inputs are
+opaque scope keys mapped to bounded PostgreSQL schemas; no file database is
+created.
+
+## 6. Local qualification gate
 
 ```bash
-export MRA_POSTGRES_RESTORE_PATH=/absolute/operator-controlled/verified.dump
-pg_restore --list "$MRA_POSTGRES_RESTORE_PATH" >/dev/null
-createdb market_regime_alpha_restore_verification
-pg_restore --exit-on-error --clean --if-exists --dbname=market_regime_alpha_restore_verification "$MRA_POSTGRES_RESTORE_PATH"
-```
-
-Restore verification uses a separate explicitly named database. Replacing the authority database, deleting data or dropping resources requires a separate approved recovery action. Migration checksum drift is repaired only by a new forward migration; never edit an applied migration.
-
-## 9. Final gate
-
-```bash
-git diff --check
+uv sync --frozen --extra dev --extra postgres
 uv run python scripts/check_docs_links.py
-uv run pytest -q tests/scripts/test_check_docs_links.py
-uv run pytest -q tests/platform
-uv run pytest -q
+MARKET_REGIME_ALPHA_TEST_DATABASE_URL="$TEST_DATABASE_URL" uv run pytest
 uv run ruff check .
 uv run mypy
 uv run python -m build
+git diff --check
 ```
 
-Record every command as `PASS`, `FAIL`, `NOT_RUN` or `BLOCKED` and bind the result to the exact tested Git SHA. Remote CI is separate evidence and must not be claimed before the exact-SHA run is green.
+Record collected, passed, failed, skipped, warnings, duration, PostgreSQL
+integration, migration, replay and concurrency counts. A green local gate is
+engineering evidence only; it is not Formal PIT, OOS, Shadow, production or
+trading authorization evidence.
+
+## 7. Failure handling
+
+When PostgreSQL is unavailable:
+
+1. stop the operation;
+2. emit a credential-safe database-unavailable error;
+3. do not create a local persistence substitute;
+4. restore service or select an explicitly provisioned PostgreSQL recovery
+   database;
+5. resume only through the Journal/Claim/fencing protocol.
+
+Forward repair must be a new reviewed migration. Do not edit an applied
+migration, rewrite authority history, fabricate a Fill, or directly modify a
+Position.
+
+## 8. Non-claims
+
+PostgreSQL Authority Only does not prove model profitability, Formal PIT,
+Formal OOS Alpha, sustained Shadow operation, broker truth or production
+readiness. Entry remains blocked and this runbook grants no QMT, PTrade,
+XtQuant, Broker, Order, cancellation or automatic execution authority.

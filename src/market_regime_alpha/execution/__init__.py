@@ -17,12 +17,8 @@ from market_regime_alpha.execution.repositories import (
     RiskReductionManualIntentRepository,
     TraceableManualExecutionRepository,
 )
-from market_regime_alpha.execution.sqlite_repository import (
+from market_regime_alpha.execution.postgres_manual_repository import (
     ExecutionVersionConflictError,
-    SQLiteManualExecutionRepository,
-)
-from market_regime_alpha.execution.sqlite_traceability import (
-    SQLiteTraceableManualExecutionRepository,
 )
 from market_regime_alpha.execution.postgres_repository import (
     PostgresManualExecutionRepository,
@@ -44,8 +40,6 @@ __all__ = [
     "PostgresManualExecutionRepository",
     "PostgresTraceableManualExecutionRepository",
     "RiskReductionManualIntentRepository",
-    "SQLiteManualExecutionRepository",
-    "SQLiteTraceableManualExecutionRepository",
     "TraceableManualExecutionRepository",
     "TradeSide",
     "ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA",

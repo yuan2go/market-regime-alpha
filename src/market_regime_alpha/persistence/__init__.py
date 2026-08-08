@@ -2,7 +2,6 @@
 
 from market_regime_alpha.persistence.settings import (
     DATABASE_URL_ENV,
-    DatabaseBackend,
     DatabaseConfigurationError,
     DatabaseSettings,
     redact_database_url,
@@ -10,7 +9,6 @@ from market_regime_alpha.persistence.settings import (
 
 __all__ = [
     "DATABASE_URL_ENV",
-    "DatabaseBackend",
     "DatabaseConfigurationError",
     "DatabaseSettings",
     "redact_database_url",

@@ -9,8 +9,8 @@ from market_regime_alpha.application.canonical_lifecycle.runner import (
     CanonicalDecisionLifecycleRunner,
     LifecycleStageExecutionError,
 )
-from market_regime_alpha.application.canonical_lifecycle.sqlite_repository import (
-    SQLiteLifecycleRunRepository,
+from tests.postgres_path_repositories import (
+    PostgresLifecycleRunRepository,
 )
 from market_regime_alpha.application.canonical_lifecycle.stages.contracts import (
     LifecycleStageContext,
@@ -95,7 +95,7 @@ def test_failed_stage_records_exact_error_and_resumes_safely(
     execute_count_after_failure: int,
     is_recovered: bool,
 ) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / f"{fault}.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / f"{fault}.postgres-scope")
     handler = RecoverableFaultHandler(
         stage_name=LifecycleStageName.VERIFY_COMPOSITE_EVIDENCE,
         fault=fault,
@@ -161,7 +161,7 @@ class OneShotAfterStageCrash:
 
 
 def test_crash_after_receipt_never_reexecutes_completed_stage(tmp_path: Path) -> None:
-    repository = SQLiteLifecycleRunRepository(tmp_path / "delivery.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "delivery.postgres-scope")
     calls: list[tuple[str, LifecycleStageName]] = []
     handlers = _handlers(calls)
     command = _command(idempotency_key="delivery-crash")
@@ -219,7 +219,7 @@ def test_handler_return_type_failure_is_journaled_and_typed(tmp_path: Path) -> N
             self.execute_calls += 1
             return object()
 
-    repository = SQLiteLifecycleRunRepository(tmp_path / "invalid.sqlite3")
+    repository = PostgresLifecycleRunRepository(tmp_path / "invalid.postgres-scope")
     invalid = InvalidHandler(
         stage_name=LifecycleStageName.VERIFY_COMPOSITE_EVIDENCE,
         fault="none",

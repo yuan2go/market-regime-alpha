@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from scripts.benchmark_feature_materialization import main
+from tests.postgres_path_repositories import postgres_cli_arguments
 
 
 def test_offline_feature_benchmark_reports_real_measurements(
@@ -21,6 +22,7 @@ def test_offline_feature_benchmark_reports_real_measurements(
                 "2",
                 "--output-dir",
                 str(tmp_path),
+                *postgres_cli_arguments(tmp_path / "benchmark.postgres-scope"),
             ]
         )
         == 0
@@ -55,6 +57,7 @@ def test_research_scale_v2_only_benchmark_is_measurement_not_absolute_gate(
                 "--columnar-v2-only",
                 "--output-dir",
                 str(tmp_path),
+                *postgres_cli_arguments(tmp_path / "benchmark.postgres-scope"),
             ]
         )
         == 0

@@ -8,7 +8,6 @@ from decimal import Decimal, InvalidOperation
 import json
 from math import isfinite
 from pathlib import Path
-import sqlite3
 import sys
 from typing import Any, NoReturn, Sequence
 
@@ -60,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Create an H4.5 manual SELL intent; never create Fill or broker order."
         )
     )
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
     parser.add_argument("--risk-reducing-decision-id", required=True)
     parser.add_argument("--risk-reducing-decision-hash", required=True)
     parser.add_argument("--exit-directive-id", required=True)
@@ -172,7 +171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             observation=observation,
         )
         return EXIT_VALIDATION_ERROR
-    except (sqlite3.Error, psycopg.Error, PostgresConnectionUnavailable) as error:
+    except (psycopg.Error, PostgresConnectionUnavailable) as error:
         _print_rejection(
             error=error,
             reason_code="H4_5_REPOSITORY_ERROR",

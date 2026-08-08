@@ -23,7 +23,9 @@ _TEST_SCHEMA = re.compile(r"^test_mra_[0-9a-f]{32}$")
 def postgres_factory() -> Iterator[PostgresConnectionFactory]:
     database_url = os.getenv(TEST_DATABASE_URL_ENV)
     if not database_url:
-        pytest.skip(f"{TEST_DATABASE_URL_ENV} is not configured")
+        raise RuntimeError(
+            f"{TEST_DATABASE_URL_ENV} is required; PostgreSQL tests never skip"
+        )
     schema = f"test_mra_{uuid.uuid4().hex}"
     assert _TEST_SCHEMA.fullmatch(schema)
     with psycopg.connect(database_url, autocommit=True) as connection:
@@ -32,7 +34,6 @@ def postgres_factory() -> Iterator[PostgresConnectionFactory]:
         )
     settings = DatabaseSettings.from_sources(
         database_url=database_url,
-        sqlite_path=None,
         environ={},
     )
     factory = PostgresConnectionFactory(

@@ -7,7 +7,6 @@ from datetime import date, datetime, timezone
 from enum import IntEnum
 import json
 from pathlib import Path
-import sqlite3
 from typing import Any, NoReturn
 
 import psycopg
@@ -67,18 +66,12 @@ class StructuredParser(argparse.ArgumentParser):
 
 def add_repository_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output-root", type=Path, required=True)
-    add_database_arguments(parser, legacy_sqlite_flag="--database")
+    add_database_arguments(parser)
 
 
 def repository_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     output_root = args.output_root.resolve()
-    settings = settings_from_namespace(args)
-    database = (
-        settings.require_sqlite_path()
-        if settings.backend.value == "sqlite"
-        else output_root / "postgresql-authority"
-    )
-    return output_root, database
+    return output_root, output_root / "postgresql-authority"
 
 
 def runner_and_journal(
@@ -249,7 +242,7 @@ def emit_error(
 def repository_exception(exc: Exception) -> bool:
     return isinstance(
         exc,
-        (sqlite3.Error, psycopg.Error, PostgresConnectionUnavailable, OSError),
+        (psycopg.Error, PostgresConnectionUnavailable, OSError),
     )
 
 

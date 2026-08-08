@@ -50,7 +50,7 @@ from market_regime_alpha.position.postgres_thesis_health import (
     PostgresThesisHealthRepository,
 )
 from market_regime_alpha.position.thesis_health import thesis_health_command_hash
-from tests.application.operational_research.test_sqlite_composite_repository import (
+from tests.application.operational_research.test_postgres_composite_repository import (
     _publication,
 )
 from tests.daily_decision.conftest import (

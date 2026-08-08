@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sqlite3
+import psycopg
+from tests.postgres_path_repositories import postgres_connection
 
 import pytest
 
@@ -18,10 +19,10 @@ from market_regime_alpha.application.controlled_operation.journal import (
     OperationArtifactReference,
     OperationChildRunReference,
 )
-from market_regime_alpha.application.controlled_operation.sqlite_journal import (
+from tests.postgres_path_repositories import (
     ControlledOperationClaimRejected,
     ControlledOperationConflict,
-    SQLiteDecisionTimeOperationJournal,
+    PostgresDecisionTimeOperationJournal,
 )
 from market_regime_alpha.core.identity import ArtifactId
 
@@ -107,7 +108,7 @@ def _status_after(stage: DecisionTimeOperationStageName) -> DecisionTimeOperatio
 
 
 def _complete_through(
-    journal: SQLiteDecisionTimeOperationJournal,
+    journal: PostgresDecisionTimeOperationJournal,
     command: ControlledOperationCommand,
     stop: DecisionTimeOperationStageName,
 ) -> None:
@@ -126,7 +127,7 @@ def _complete_through(
 
 
 def test_start_is_idempotent_and_command_conflict_fails_closed(tmp_path: Path) -> None:
-    journal = SQLiteDecisionTimeOperationJournal(tmp_path / "journal.sqlite", clock=lambda: NOW)
+    journal = PostgresDecisionTimeOperationJournal(tmp_path / "journal.postgres-scope", clock=lambda: NOW)
     command = _command()
 
     first = journal.create_or_get(command)
@@ -142,8 +143,8 @@ def test_start_is_idempotent_and_command_conflict_fails_closed(tmp_path: Path) -
 
 def test_stage_order_active_lease_epoch_and_stale_worker_fencing(tmp_path: Path) -> None:
     clock = MutableClock(NOW)
-    journal = SQLiteDecisionTimeOperationJournal(
-        tmp_path / "journal.sqlite",
+    journal = PostgresDecisionTimeOperationJournal(
+        tmp_path / "journal.postgres-scope",
         clock=clock,
         lease_duration=timedelta(seconds=30),
     )
@@ -192,8 +193,8 @@ def test_stage_order_active_lease_epoch_and_stale_worker_fencing(tmp_path: Path)
 
 
 def test_child_run_references_and_append_only_database_rules(tmp_path: Path) -> None:
-    path = tmp_path / "journal.sqlite"
-    journal = SQLiteDecisionTimeOperationJournal(path, clock=lambda: NOW)
+    path = tmp_path / "journal.postgres-scope"
+    journal = PostgresDecisionTimeOperationJournal(path, clock=lambda: NOW)
     command = _command()
     journal.create_or_get(command)
     _complete_through(
@@ -210,26 +211,31 @@ def test_child_run_references_and_append_only_database_rules(tmp_path: Path) -> 
             HASH,
         ),
     )
-    with sqlite3.connect(path) as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-            connection.execute("UPDATE controlled_operation_event SET payload_json = '{}' ")
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-            connection.execute("DELETE FROM controlled_operation_receipt")
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            connection.execute(
-                "UPDATE controlled_operation_stage SET status = 'FAILED' "
-                "WHERE stage_name = 'CALENDAR_UNIVERSE_FREEZE'"
-            )
-        with pytest.raises(sqlite3.IntegrityError, match="identity is immutable"):
-            connection.execute(
-                "UPDATE controlled_operation_run SET command_hash = ?",
-                (HASH_2,),
-            )
+    def rejected(statement: str, match: str, parameters: tuple[object, ...] = ()) -> None:
+        with postgres_connection(path) as connection:
+            with pytest.raises(psycopg.Error, match=match):
+                connection.execute(statement, parameters)
+
+    rejected(
+        "UPDATE controlled_operation_event SET payload_json = '{}' ",
+        "append-only",
+    )
+    rejected("DELETE FROM controlled_operation_receipt", "append-only")
+    rejected(
+        "UPDATE controlled_operation_stage SET status = 'FAILED' "
+        "WHERE stage_name = 'CALENDAR_UNIVERSE_FREEZE'",
+        "immutable",
+    )
+    rejected(
+        "UPDATE controlled_operation_run SET command_hash = %s",
+        "identity is immutable",
+        (HASH_2,),
+    )
 
 
 def test_outcome_pending_run_cannot_regress_but_can_settle(tmp_path: Path) -> None:
-    path = tmp_path / "journal.sqlite"
-    journal = SQLiteDecisionTimeOperationJournal(path, clock=lambda: NOW)
+    path = tmp_path / "journal.postgres-scope"
+    journal = PostgresDecisionTimeOperationJournal(path, clock=lambda: NOW)
     command = _command()
     journal.create_or_get(command)
     _complete_through(
@@ -246,10 +252,10 @@ def test_outcome_pending_run_cannot_regress_but_can_settle(tmp_path: Path) -> No
             status=DecisionTimeOperationRunStatus.DEADLINE_MISSED,
             reason="LATE_REENTRY_MUST_NOT_DOWNGRADE",
         )
-    with sqlite3.connect(path) as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="cannot regress"):
+    with postgres_connection(path) as connection:
+        with pytest.raises(psycopg.Error, match="cannot regress"):
             connection.execute(
-                "UPDATE controlled_operation_run SET status = 'DEADLINE_MISSED' WHERE run_id = ?",
+                "UPDATE controlled_operation_run SET status = 'DEADLINE_MISSED' WHERE run_id = %s",
                 (str(command.run_id),),
             )
 
@@ -277,14 +283,14 @@ def test_outcome_pending_run_cannot_regress_but_can_settle(tmp_path: Path) -> No
 def test_settlement_hard_crash_is_atomic_and_resume_publishes_one_receipt(
     tmp_path: Path, failure_point: str
 ) -> None:
-    path = tmp_path / "journal.sqlite"
+    path = tmp_path / "journal.postgres-scope"
     clock = MutableClock(NOW)
 
     def fail(point: str) -> None:
         if point == failure_point:
             raise RuntimeError(f"crash:{point}")
 
-    journal = SQLiteDecisionTimeOperationJournal(
+    journal = PostgresDecisionTimeOperationJournal(
         path,
         clock=clock,
         lease_duration=timedelta(seconds=10),
@@ -304,7 +310,7 @@ def test_settlement_hard_crash_is_atomic_and_resume_publishes_one_receipt(
         )
 
     clock.advance(timedelta(seconds=11))
-    recovered = SQLiteDecisionTimeOperationJournal(
+    recovered = PostgresDecisionTimeOperationJournal(
         path,
         clock=clock,
         lease_duration=timedelta(seconds=10),
@@ -320,7 +326,7 @@ def test_settlement_hard_crash_is_atomic_and_resume_publishes_one_receipt(
         run_status=DecisionTimeOperationRunStatus.WAITING_FOR_STATIC_INPUTS,
     )
     assert final.stages[0].status is DecisionTimeOperationStageStatus.COMPLETED
-    with sqlite3.connect(path) as connection:
+    with postgres_connection(path) as connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM controlled_operation_receipt"
         ).fetchone()[0] == 1
@@ -331,7 +337,7 @@ def test_settlement_hard_crash_is_atomic_and_resume_publishes_one_receipt(
 
 
 def test_full_stage_history_settles_once_and_cannot_resume(tmp_path: Path) -> None:
-    journal = SQLiteDecisionTimeOperationJournal(tmp_path / "journal.sqlite", clock=lambda: NOW)
+    journal = PostgresDecisionTimeOperationJournal(tmp_path / "journal.postgres-scope", clock=lambda: NOW)
     command = _command()
     journal.create_or_get(command)
     _complete_through(
@@ -352,33 +358,37 @@ def test_full_stage_history_settles_once_and_cannot_resume(tmp_path: Path) -> No
 
 
 def test_migration_014_checks_indexes_foreign_keys_and_triggers(tmp_path: Path) -> None:
-    path = tmp_path / "journal.sqlite"
-    SQLiteDecisionTimeOperationJournal(path, clock=lambda: NOW)
-    with sqlite3.connect(path) as connection:
+    path = tmp_path / "journal.postgres-scope"
+    PostgresDecisionTimeOperationJournal(path, clock=lambda: NOW)
+    with postgres_connection(path) as connection:
         migration = connection.execute(
-            "SELECT version FROM controlled_operation_schema_migration"
+            "SELECT version FROM schema_migrations WHERE version = 14"
         ).fetchall()
         indexes = {
             item[0]
             for item in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index' "
-                "AND name LIKE 'controlled_operation_%'"
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname = current_schema() "
+                "AND indexname LIKE 'controlled_operation_%'"
             )
         }
         triggers = {
             item[0]
             for item in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND name LIKE 'controlled_operation_%'"
+                "SELECT trigger_name FROM information_schema.triggers "
+                "WHERE trigger_schema = current_schema() "
+                "AND trigger_name LIKE 'controlled_operation_%'"
             )
         }
         foreign_keys = connection.execute(
-            "PRAGMA foreign_key_list(controlled_operation_child_run)"
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = 'controlled_operation_child_run'::regclass "
+            "AND contype = 'f'"
         ).fetchall()
     assert migration == [(14,)]
     assert "controlled_operation_stage_lease_idx" in indexes
     assert "controlled_operation_event_history_idx" in indexes
     assert "controlled_operation_events_no_update" in triggers
-    assert "controlled_operation_claim_owner_guard" in triggers
-    assert "controlled_operation_terminal_status_guard" in triggers
+    assert "controlled_operation_completed_stage_immutable" in triggers
+    assert "controlled_operation_run_identity_immutable" in triggers
     assert foreign_keys

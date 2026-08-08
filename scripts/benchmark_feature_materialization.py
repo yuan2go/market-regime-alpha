@@ -50,6 +50,11 @@ from market_regime_alpha.market_data import (
     load_verified_market_data_dataset,
     publish_market_data_dataset,
 )
+from market_regime_alpha.persistence.repository_factory import (
+    RepositoryFactory,
+    add_database_arguments,
+    settings_from_namespace,
+)
 from market_regime_alpha.research.candidate_discovery.contracts import (
     CandidateRecord,
     CandidateSelectionStatus,
@@ -92,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--reuse-json-v1-root", type=Path)
     parser.add_argument("--reuse-json-v1-metrics", type=Path)
+    add_database_arguments(parser)
     return parser
 
 
@@ -111,11 +117,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--columnar-v2-only cannot reuse a JSON V1 baseline")
     if (args.reuse_json_v1_root is None) != (args.reuse_json_v1_metrics is None):
         raise SystemExit("--reuse-json-v1-root and --reuse-json-v1-metrics must be supplied together")
-    if args.output_dir is None:
-        with tempfile.TemporaryDirectory(prefix="feature-benchmark-") as temporary:
-            payload = _benchmark(args=args, root=Path(temporary))
-    else:
-        payload = _benchmark(args=args, root=args.output_dir.resolve())
+    repositories = RepositoryFactory(settings_from_namespace(args))
+    args.feature_repository_factory = (
+        repositories.feature_materialization_for_path
+    )
+    try:
+        if args.output_dir is None:
+            with tempfile.TemporaryDirectory(prefix="feature-benchmark-") as temporary:
+                payload = _benchmark(args=args, root=Path(temporary))
+        else:
+            payload = _benchmark(args=args, root=args.output_dir.resolve())
+    finally:
+        repositories.close()
     print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
     return 0
 
@@ -177,6 +190,7 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
             market_encoding="market-data-package-json-v1",
             artifact_encoding="feature-artifact-package-json-v1",
             bundle_encoding="feature-bundle-package-json-v1",
+            repository_factory=args.feature_repository_factory,
         )
     v2 = _benchmark_encoding(
         root=root / "columnar-v2",
@@ -189,6 +203,7 @@ def _benchmark(*, args: argparse.Namespace, root: Path) -> dict[str, object]:
         market_encoding="market-data-package-encoding-v2",
         artifact_encoding=FEATURE_ARTIFACT_ENCODING_V2,
         bundle_encoding=FEATURE_BUNDLE_ENCODING_V2,
+        repository_factory=args.feature_repository_factory,
     )
     if v1["feature_bundle_hash"] != v2["feature_bundle_hash"]:
         raise RuntimeError("Feature logical hash differs between physical encodings")
@@ -305,6 +320,7 @@ def _benchmark_research_scale_two_stage(
         bundle_encoding=FEATURE_BUNDLE_ENCODING_V2,
         selective_output_id="return_1",
         selective_timeframe=Timeframe.DAILY,
+        repository_factory=args.feature_repository_factory,
     )
     intraday = _benchmark_encoding(
         root=root / "candidate-intraday-columnar-v2",
@@ -321,6 +337,7 @@ def _benchmark_research_scale_two_stage(
         bundle_encoding=FEATURE_BUNDLE_ENCODING_V2,
         selective_output_id="price_vs_vwap_return",
         selective_timeframe=Timeframe.MINUTE_5,
+        repository_factory=args.feature_repository_factory,
     )
     static.pop("_verified_bundle")
     static.pop("_verified_dataset")
@@ -474,6 +491,7 @@ def _benchmark_encoding(
     bundle_encoding: str,
     selective_output_id: str = "price_vs_vwap_return",
     selective_timeframe: Timeframe = Timeframe.MINUTE_5,
+    repository_factory=None,
 ) -> dict[str, object]:
     dataset_path = publish_market_data_dataset(
         root=root / "market-data",
@@ -481,7 +499,14 @@ def _benchmark_encoding(
         encoding_version=market_encoding,
     )
     verified = load_verified_market_data_dataset(dataset_path)
-    runner = FeatureMaterializationRunner(max_workers=max_workers)
+    idempotency_key = (
+        "benchmark-feature-materialization:"
+        f"{feature_set.feature_set_id}:{artifact_encoding}"
+    )
+    runner = FeatureMaterializationRunner(
+        max_workers=max_workers,
+        repository_factory=repository_factory,
+    )
     tracemalloc.start()
     started = wall_time.perf_counter()
     receipt = runner.run(
@@ -492,7 +517,7 @@ def _benchmark_encoding(
         selected_symbols=symbols,
         code_revision="benchmark-feature-spine-v2",
         output_root=root / "features",
-        idempotency_key="benchmark-feature-materialization-v2",
+        idempotency_key=idempotency_key,
         execution_mode=FeatureMaterializationExecutionMode.START_NEW,
         artifact_encoding_version=artifact_encoding,
         bundle_encoding_version=bundle_encoding,
@@ -509,7 +534,7 @@ def _benchmark_encoding(
         selected_symbols=symbols,
         code_revision="benchmark-feature-spine-v2",
         output_root=root / "features",
-        idempotency_key="benchmark-feature-materialization-v2",
+        idempotency_key=idempotency_key,
         execution_mode=FeatureMaterializationExecutionMode.RETURN_IF_COMPLETE,
         artifact_encoding_version=artifact_encoding,
         bundle_encoding_version=bundle_encoding,

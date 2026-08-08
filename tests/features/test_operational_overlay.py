@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from tests.postgres_path_repositories import feature_repository_factory
 
 from market_regime_alpha.core.identity import ArtifactId, DatasetId
 from market_regime_alpha.core.time import DecisionTime
@@ -213,7 +214,13 @@ def _composition(tmp_path: Path, *, missing_amount: bool = False):
     static_set = static_technical_feature_set(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
     )
-    static_receipt = FeatureMaterializationRunner(max_workers=2).run(
+    static_receipt = FeatureMaterializationRunner(
+        max_workers=2,
+        repository_factory=feature_repository_factory(
+            tmp_path / "static-features.postgres-scope",
+            fallback_clock=lambda: CREATED_AT,
+        ),
+    ).run(
         verified_dataset=daily,
         feature_set=static_set,
         decision_time=DECISION_TIME,
@@ -239,7 +246,13 @@ def _composition(tmp_path: Path, *, missing_amount: bool = False):
     intraday_set = intraday_overlay_feature_set(
         effective_from=datetime(2026, 1, 1, tzinfo=UTC)
     )
-    intraday_receipt = FeatureMaterializationRunner(max_workers=2).run(
+    intraday_receipt = FeatureMaterializationRunner(
+        max_workers=2,
+        repository_factory=feature_repository_factory(
+            tmp_path / "intraday-features.postgres-scope",
+            fallback_clock=lambda: CREATED_AT,
+        ),
+    ).run(
         verified_dataset=minute,
         feature_set=intraday_set,
         decision_time=DECISION_TIME,
