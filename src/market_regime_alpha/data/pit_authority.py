@@ -26,6 +26,10 @@ from market_regime_alpha.market_data.contracts import (
 )
 
 
+class PITContractError(ValueError):
+    """A caller attempted to bypass a Formal PIT contract invariant."""
+
+
 class PITFactKind(str, Enum):
     MARKET_DATA = "MARKET_DATA"
     TRADING_CALENDAR = "TRADING_CALENDAR"
@@ -53,6 +57,72 @@ class PITSourceAuthorityStatus(str, Enum):
     SUSPENDED = "SUSPENDED"
 
 
+class PITArtifactKind(str, Enum):
+    SOURCE_MANIFEST = "SOURCE_MANIFEST"
+    MARKET_DATA_DATASET = "DATASET"
+    TRADING_CALENDAR = "TRADING_CALENDAR"
+    UNIVERSE = "UNIVERSE"
+    ELIGIBILITY = "ELIGIBILITY"
+    FEATURE_MATERIALIZATION = "FEATURE_MATERIALIZATION"
+    ADJUSTMENT_POLICY = "ADJUSTMENT_POLICY"
+    CONFIGURATION = "CONFIGURATION"
+    VALIDATION_PROTOCOL = "VALIDATION_PROTOCOL"
+    PROVIDER_EVIDENCE = "PROVIDER_EVIDENCE"
+    PROVIDER_ARCHIVE = "PROVIDER_ARCHIVE"
+    MEMBERSHIP_DATASET = "MEMBERSHIP_DATASET"
+    FUNDAMENTAL_DATASET = "FUNDAMENTAL_DATASET"
+
+
+class PITFactEvidenceMode(str, Enum):
+    PROSPECTIVE_CAPTURED_PIT = "PROSPECTIVE_CAPTURED_PIT"
+    HISTORICAL_PROVIDER_PIT = "HISTORICAL_PROVIDER_PIT"
+
+
+class PITSourceEvidenceLevel(str, Enum):
+    FIXTURE = "FIXTURE"
+    REPLAY = "REPLAY"
+    FREE_DATA_EXPLORATORY = "FREE_DATA_EXPLORATORY"
+    PIT_INCOMPLETE = "PIT_INCOMPLETE"
+    FORMAL_PIT_CANDIDATE = "FORMAL_PIT_CANDIDATE"
+    FORMAL_PIT_PROVIDER = "FORMAL_PIT_PROVIDER"
+
+
+class PITProviderEvidenceKind(str, Enum):
+    PROVIDER_CONTRACT = "PROVIDER_CONTRACT"
+    HISTORICAL_AVAILABILITY = "HISTORICAL_AVAILABILITY"
+    REVISION_POLICY = "REVISION_POLICY"
+    DATASET_VERSIONING = "DATASET_VERSIONING"
+    ARCHIVE_INTEGRITY = "ARCHIVE_INTEGRITY"
+    INDEPENDENT_VALIDATION = "INDEPENDENT_VALIDATION"
+    QUALIFICATION_DECISION = "QUALIFICATION_DECISION"
+    SUSPENSION_DECISION = "SUSPENSION_DECISION"
+
+
+_SOURCE_EVIDENCE_RANK = {
+    PITSourceEvidenceLevel.FIXTURE: 0,
+    PITSourceEvidenceLevel.REPLAY: 1,
+    PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY: 2,
+    PITSourceEvidenceLevel.PIT_INCOMPLETE: 3,
+    PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE: 4,
+    PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER: 5,
+}
+
+FORMAL_PROVIDER_EVIDENCE_KINDS = tuple(
+    sorted(
+        {
+            PITProviderEvidenceKind.PROVIDER_CONTRACT,
+            PITProviderEvidenceKind.HISTORICAL_AVAILABILITY,
+            PITProviderEvidenceKind.REVISION_POLICY,
+            PITProviderEvidenceKind.DATASET_VERSIONING,
+            PITProviderEvidenceKind.ARCHIVE_INTEGRITY,
+            PITProviderEvidenceKind.INDEPENDENT_VALIDATION,
+            PITProviderEvidenceKind.QUALIFICATION_DECISION,
+        },
+        key=lambda item: item.value,
+    )
+)
+
+
 @dataclass(frozen=True, slots=True)
 class PITArtifactReference:
     reference_kind: str
@@ -78,6 +148,232 @@ class PITArtifactReference:
             artifact_id=ArtifactId(_string(payload["artifact_id"])),
             content_hash=_string(payload["content_hash"]),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PITProviderEvidence:
+    evidence_kind: PITProviderEvidenceKind
+    reference: PITArtifactReference
+
+    def __post_init__(self) -> None:
+        if self.reference.reference_kind != PITArtifactKind.PROVIDER_EVIDENCE.value:
+            raise PITContractError(
+                "typed Provider evidence requires PROVIDER_EVIDENCE authority"
+            )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_kind": self.evidence_kind.value,
+            "reference": self.reference.to_canonical_dict(),
+        }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> PITProviderEvidence:
+        _require_fields(payload, {"evidence_kind", "reference"}, "PIT Provider Evidence")
+        return cls(
+            evidence_kind=PITProviderEvidenceKind(_string(payload["evidence_kind"])),
+            reference=PITArtifactReference.from_canonical_dict(
+                _mapping(payload["reference"])
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderQualificationPolicy:
+    policy_id: ArtifactId
+    policy_hash: str
+    provider_ceilings: tuple[tuple[str, PITSourceEvidenceLevel], ...]
+    default_ceiling: PITSourceEvidenceLevel
+    formal_required_evidence: tuple[PITProviderEvidenceKind, ...]
+    schema_version: str = "pit-provider-qualification-policy-v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "pit-provider-qualification-policy-v1":
+            raise PITContractError("unsupported Provider Qualification Policy schema")
+        require_sha256("policy_hash", self.policy_hash)
+        ordered = tuple(
+            sorted(self.provider_ceilings, key=lambda item: item[0].casefold())
+        )
+        if not ordered or ordered != self.provider_ceilings:
+            raise PITContractError("provider ceilings must be non-empty and sorted")
+        normalized_ids = tuple(item[0].casefold() for item in ordered)
+        if len(normalized_ids) != len(set(normalized_ids)):
+            raise PITContractError("provider ceilings must be unique")
+        for provider_id, _ in ordered:
+            require_text("provider_id", provider_id)
+        if self.formal_required_evidence != tuple(
+            sorted(set(self.formal_required_evidence), key=lambda item: item.value)
+        ):
+            raise PITContractError("formal evidence kinds must be sorted and unique")
+        if canonical_hash(self.semantic_payload()) != self.policy_hash:
+            raise PITContractError("Provider Qualification Policy hash mismatch")
+        if self.policy_id != _content_id("pit-provider-policy", self.policy_hash):
+            raise PITContractError("Provider Qualification Policy identity mismatch")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        provider_ceilings: tuple[tuple[str, PITSourceEvidenceLevel], ...],
+        default_ceiling: PITSourceEvidenceLevel,
+        formal_required_evidence: tuple[PITProviderEvidenceKind, ...] = FORMAL_PROVIDER_EVIDENCE_KINDS,
+    ) -> ProviderQualificationPolicy:
+        normalized = tuple(
+            sorted(
+                ((provider_id.casefold(), level) for provider_id, level in provider_ceilings),
+                key=lambda item: item[0],
+            )
+        )
+        required = tuple(
+            sorted(set(formal_required_evidence), key=lambda item: item.value)
+        )
+        payload = _provider_policy_payload(
+            provider_ceilings=normalized,
+            default_ceiling=default_ceiling,
+            formal_required_evidence=required,
+        )
+        digest = canonical_hash(payload)
+        return cls(
+            policy_id=_content_id("pit-provider-policy", digest),
+            policy_hash=digest,
+            provider_ceilings=normalized,
+            default_ceiling=default_ceiling,
+            formal_required_evidence=required,
+        )
+
+    @classmethod
+    def default(cls) -> ProviderQualificationPolicy:
+        return cls.create(
+            provider_ceilings=(
+                ("akshare", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
+                ("baostock", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
+                ("qmt", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
+                ("tencent", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
+                ("thinktrader", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
+                ("tushare", PITSourceEvidenceLevel.PIT_INCOMPLETE),
+                ("tushare-free", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
+                ("xuntou", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
+                ("xtquant", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
+            ),
+            default_ceiling=PITSourceEvidenceLevel.PIT_INCOMPLETE,
+        )
+
+    def maximum_level(self, provider_id: str) -> PITSourceEvidenceLevel:
+        normalized = provider_id.casefold()
+        return dict(self.provider_ceilings).get(normalized, self.default_ceiling)
+
+    def require_level(
+        self,
+        provider_id: str,
+        requested: PITSourceEvidenceLevel,
+    ) -> None:
+        require_text("provider_id", provider_id)
+        maximum = self.maximum_level(provider_id)
+        if _SOURCE_EVIDENCE_RANK[requested] > _SOURCE_EVIDENCE_RANK[maximum]:
+            raise PITContractError(
+                f"Provider evidence ceiling rejected {provider_id}: "
+                f"{requested.value} exceeds {maximum.value}"
+            )
+
+    def require_formal_evidence(
+        self, evidence: tuple[PITProviderEvidence, ...]
+    ) -> None:
+        kinds = tuple(sorted({item.evidence_kind for item in evidence}, key=lambda item: item.value))
+        missing = set(self.formal_required_evidence).difference(kinds)
+        if missing:
+            raise PITContractError(
+                "formal Provider evidence incomplete: "
+                + ",".join(sorted(item.value for item in missing))
+            )
+
+    def semantic_payload(self) -> dict[str, Any]:
+        return _provider_policy_payload(
+            provider_ceilings=self.provider_ceilings,
+            default_ceiling=self.default_ceiling,
+            formal_required_evidence=self.formal_required_evidence,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "policy_id": str(self.policy_id),
+            "policy_hash": self.policy_hash,
+            **self.semantic_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PITFactTemporalAuthority:
+    mode: PITFactEvidenceMode
+    provider_available_at: datetime
+    provider_recorded_at: datetime
+    provider_revision: str | None = None
+    provider_dataset_version: str | None = None
+    provider_archive: PITArtifactReference | None = None
+    provider_evidence: tuple[PITProviderEvidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_utc_second("provider_available_at", self.provider_available_at)
+        require_utc_second("provider_recorded_at", self.provider_recorded_at)
+        if self.provider_recorded_at < self.provider_available_at:
+            raise PITContractError("Provider fact was recorded before available")
+        if self.provider_evidence != tuple(
+            sorted(set(self.provider_evidence), key=_provider_evidence_key)
+        ):
+            raise PITContractError("provider_evidence must be sorted and unique")
+        if self.mode is PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT:
+            if any(
+                value is not None
+                for value in (
+                    self.provider_revision,
+                    self.provider_dataset_version,
+                    self.provider_archive,
+                )
+            ) or self.provider_evidence:
+                raise PITContractError(
+                    "prospective captured PIT cannot claim historical Provider authority"
+                )
+            return
+        if not self.provider_revision or not self.provider_dataset_version:
+            raise PITContractError(
+                "historical Provider PIT requires revision and dataset version"
+            )
+        require_text("provider_revision", self.provider_revision)
+        require_text("provider_dataset_version", self.provider_dataset_version)
+        if (
+            self.provider_archive is None
+            or self.provider_archive.reference_kind
+            != PITArtifactKind.PROVIDER_ARCHIVE.value
+        ):
+            raise PITContractError(
+                "historical Provider PIT requires resolved Provider archive authority"
+            )
+        required = {
+            PITProviderEvidenceKind.HISTORICAL_AVAILABILITY,
+            PITProviderEvidenceKind.REVISION_POLICY,
+            PITProviderEvidenceKind.ARCHIVE_INTEGRITY,
+        }
+        actual = {item.evidence_kind for item in self.provider_evidence}
+        if not required.issubset(actual):
+            raise PITContractError(
+                "historical Provider PIT requires typed availability/revision/archive evidence"
+            )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode.value,
+            "provider_available_at": canonical_datetime(self.provider_available_at),
+            "provider_recorded_at": canonical_datetime(self.provider_recorded_at),
+            "provider_revision": self.provider_revision,
+            "provider_dataset_version": self.provider_dataset_version,
+            "provider_archive": (
+                None
+                if self.provider_archive is None
+                else self.provider_archive.to_canonical_dict()
+            ),
+            "provider_evidence": [
+                item.to_canonical_dict() for item in self.provider_evidence
+            ],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,7 +783,8 @@ class FormalPITValidationRequest:
         require_utc_second("decision_time", self.decision_time)
         if not self.symbols or self.symbols != tuple(sorted(set(self.symbols))):
             raise ValueError("symbols must be non-empty, sorted and unique")
-        ordered = tuple(sorted(set(self.required_facts), key=_required_fact_key))
+        require_unique_required_fact_keys(self.required_facts)
+        ordered = tuple(sorted(self.required_facts, key=_required_fact_key))
         if self.required_facts != ordered:
             raise ValueError("required_facts must be sorted and unique")
         if canonical_hash(self.semantic_payload()) != self.request_hash:
@@ -497,7 +794,11 @@ class FormalPITValidationRequest:
     def create(cls, **values: Any) -> FormalPITValidationRequest:
         normalized = dict(values)
         normalized["symbols"] = tuple(sorted(set(values["symbols"])))
-        normalized["required_facts"] = tuple(sorted(set(values["required_facts"]), key=_required_fact_key))
+        required_facts = tuple(values["required_facts"])
+        require_unique_required_fact_keys(required_facts)
+        normalized["required_facts"] = tuple(
+            sorted(required_facts, key=_required_fact_key)
+        )
         digest = canonical_hash(_validation_request_payload(**normalized))
         return cls(request_hash=digest, **normalized)
 
@@ -547,6 +848,32 @@ class PITAsOfQuery:
     required_facts: tuple[PITRequiredFact, ...]
     authority_revision: int | None = None
 
+    def __post_init__(self) -> None:
+        require_sha256("query_hash", self.query_hash)
+        require_text("scope_id", self.scope_id)
+        require_utc_second("decision_time", self.decision_time)
+        require_unique_required_fact_keys(self.required_facts)
+        if self.required_facts != tuple(
+            sorted(self.required_facts, key=_required_fact_key)
+        ):
+            raise PITContractError("required_facts must be sorted and unique")
+        if self.authority_revision is not None and (
+            isinstance(self.authority_revision, bool)
+            or self.authority_revision <= 0
+        ):
+            raise PITContractError("authority_revision must be positive")
+        payload = {
+            "schema_version": "pit-as-of-query-v1",
+            "scope_id": self.scope_id,
+            "decision_time": canonical_datetime(self.decision_time),
+            "required_facts": [
+                item.to_canonical_dict() for item in self.required_facts
+            ],
+            "authority_revision": self.authority_revision,
+        }
+        if canonical_hash(payload) != self.query_hash:
+            raise PITContractError("PIT As-Of Query hash mismatch")
+
     @classmethod
     def create(
         cls,
@@ -558,7 +885,8 @@ class PITAsOfQuery:
     ) -> PITAsOfQuery:
         require_text("scope_id", scope_id)
         require_utc_second("decision_time", decision_time)
-        ordered = tuple(sorted(set(required_facts), key=_required_fact_key))
+        require_unique_required_fact_keys(required_facts)
+        ordered = tuple(sorted(required_facts, key=_required_fact_key))
         if authority_revision is not None and (isinstance(authority_revision, bool) or authority_revision <= 0):
             raise ValueError("authority_revision must be positive")
         payload = {
@@ -753,6 +1081,38 @@ def formal_pit_request_rejection_codes(request: FormalPITValidationRequest) -> t
     return tuple(sorted(reasons))
 
 
+def require_unique_required_fact_keys(
+    required_facts: tuple[PITRequiredFact, ...],
+) -> None:
+    seen: dict[str, PITRequiredFact] = {}
+    for item in required_facts:
+        previous = seen.get(item.logical_key)
+        if previous is not None:
+            raise PITContractError(
+                "required_facts logical_key collision: " + item.logical_key
+            )
+        seen[item.logical_key] = item
+
+
+def _provider_policy_payload(
+    *,
+    provider_ceilings: tuple[tuple[str, PITSourceEvidenceLevel], ...],
+    default_ceiling: PITSourceEvidenceLevel,
+    formal_required_evidence: tuple[PITProviderEvidenceKind, ...],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "pit-provider-qualification-policy-v1",
+        "provider_ceilings": [
+            {"provider_id": provider_id, "maximum_level": level.value}
+            for provider_id, level in provider_ceilings
+        ],
+        "default_ceiling": default_ceiling.value,
+        "formal_required_evidence": [
+            item.value for item in formal_required_evidence
+        ],
+    }
+
+
 def _source_qualification_payload(**values: Any) -> dict[str, Any]:
     return {
         "schema_version": "pit-source-qualification-v1",
@@ -868,6 +1228,12 @@ def _reference_key(item: PITArtifactReference) -> tuple[str, str, str]:
     return item.reference_kind, str(item.artifact_id), item.content_hash
 
 
+def _provider_evidence_key(
+    item: PITProviderEvidence,
+) -> tuple[str, tuple[str, str, str]]:
+    return item.evidence_kind.value, _reference_key(item.reference)
+
+
 def _require_canonical_json(value: str) -> None:
     require_text("value_json", value)
     try:
@@ -909,18 +1275,28 @@ def _sequence(value: object) -> tuple[Any, ...]:
 
 
 __all__ = [
+    "FORMAL_PROVIDER_EVIDENCE_KINDS",
     "FormalPITEvidenceArtifact",
     "FormalPITValidationRequest",
     "PITArtifactReference",
+    "PITArtifactKind",
     "PITAsOfQuery",
     "PITAsOfSnapshot",
+    "PITContractError",
+    "PITFactEvidenceMode",
     "PITFactKind",
     "PITFactRevision",
+    "PITFactTemporalAuthority",
+    "PITProviderEvidence",
+    "PITProviderEvidenceKind",
     "PITRequiredFact",
     "PITSourceAuthorityStatus",
+    "PITSourceEvidenceLevel",
     "PITSourceQualification",
     "PITValidationLineage",
     "PITValidationOutcome",
     "RecordedPITFactRevision",
+    "ProviderQualificationPolicy",
     "formal_pit_request_rejection_codes",
+    "require_unique_required_fact_keys",
 ]

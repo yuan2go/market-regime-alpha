@@ -11,11 +11,20 @@ from market_regime_alpha.data.pit_authority import (
     FormalPITEvidenceArtifact,
     FormalPITValidationRequest,
     PITArtifactReference,
+    PITAsOfQuery,
+    PITArtifactKind,
+    PITContractError,
+    PITFactEvidenceMode,
     PITFactKind,
     PITFactRevision,
+    PITFactTemporalAuthority,
+    PITProviderEvidence,
+    PITProviderEvidenceKind,
     PITRequiredFact,
     PITValidationLineage,
     PITValidationOutcome,
+    PITSourceEvidenceLevel,
+    ProviderQualificationPolicy,
     formal_pit_request_rejection_codes,
 )
 
@@ -85,6 +94,125 @@ def request(required: tuple[PITRequiredFact, ...]) -> FormalPITValidationRequest
         reason="formal point-in-time validation",
         idempotency_key="pit-validation-a",
     )
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        (
+            PITRequiredFact("collision", PITFactKind.MARKET_DATA, "600000.SH"),
+            PITRequiredFact("collision", PITFactKind.ST_STATUS, "600000.SH"),
+        ),
+        (
+            PITRequiredFact("collision", PITFactKind.ST_STATUS, "600000.SH"),
+            PITRequiredFact("collision", PITFactKind.ST_STATUS, "600001.SH"),
+        ),
+        (
+            PITRequiredFact("collision", PITFactKind.ST_STATUS, "600000.SH"),
+            PITRequiredFact("collision", PITFactKind.ST_STATUS, "600000.SH"),
+        ),
+    ],
+)
+def test_required_fact_logical_key_collision_is_rejected(
+    required: tuple[PITRequiredFact, ...],
+) -> None:
+    with pytest.raises(PITContractError, match="logical_key collision"):
+        request(required)
+    with pytest.raises(PITContractError, match="logical_key collision"):
+        PITAsOfQuery.create(
+            scope_id="daily:2026-08-08",
+            decision_time=DECISION_TIME,
+            required_facts=required,
+        )
+
+
+def test_direct_query_construction_cannot_bypass_logical_key_collision() -> None:
+    required = (
+        PITRequiredFact("collision", PITFactKind.MARKET_DATA, "600000.SH"),
+        PITRequiredFact("collision", PITFactKind.MARKET_DATA, "600001.SH"),
+    )
+
+    with pytest.raises(PITContractError, match="logical_key collision"):
+        PITAsOfQuery(
+            query_hash=HASH_A,
+            scope_id="daily:2026-08-08",
+            decision_time=DECISION_TIME,
+            required_facts=required,
+        )
+
+
+def test_default_provider_policy_prevents_authority_inflation() -> None:
+    policy = ProviderQualificationPolicy.default()
+
+    for provider_id in (
+        "tencent",
+        "baostock",
+        "akshare",
+        "tushare-free",
+        "xuntou",
+        "unknown-provider",
+    ):
+        with pytest.raises(PITContractError, match="evidence ceiling"):
+            policy.require_level(
+                provider_id,
+                PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER,
+            )
+
+
+def test_historical_provider_mode_requires_typed_revision_archive_evidence() -> None:
+    with pytest.raises(PITContractError, match="revision and dataset version"):
+        PITFactTemporalAuthority(
+            mode=PITFactEvidenceMode.HISTORICAL_PROVIDER_PIT,
+            provider_available_at=DECISION_TIME,
+            provider_recorded_at=DECISION_TIME,
+        )
+
+    evidence = tuple(
+        sorted(
+            (
+                PITProviderEvidence(
+                    kind,
+                    reference(
+                        PITArtifactKind.PROVIDER_EVIDENCE.value,
+                        "provider-evidence-" + kind.value.lower(),
+                    ),
+                )
+                for kind in (
+                    PITProviderEvidenceKind.HISTORICAL_AVAILABILITY,
+                    PITProviderEvidenceKind.REVISION_POLICY,
+                    PITProviderEvidenceKind.ARCHIVE_INTEGRITY,
+                )
+            ),
+            key=lambda item: (
+                item.evidence_kind.value,
+                item.reference.reference_kind,
+                str(item.reference.artifact_id),
+                item.reference.content_hash,
+            ),
+        )
+    )
+    temporal = PITFactTemporalAuthority(
+        mode=PITFactEvidenceMode.HISTORICAL_PROVIDER_PIT,
+        provider_available_at=DECISION_TIME,
+        provider_recorded_at=DECISION_TIME,
+        provider_revision="provider-revision-1",
+        provider_dataset_version="provider-dataset-2024-v1",
+        provider_archive=reference(
+            PITArtifactKind.PROVIDER_ARCHIVE.value,
+            "provider-archive-2024",
+        ),
+        provider_evidence=evidence,
+    )
+
+    assert temporal.mode is PITFactEvidenceMode.HISTORICAL_PROVIDER_PIT
+
+
+def test_provider_evidence_cannot_use_an_arbitrary_reference_kind() -> None:
+    with pytest.raises(PITContractError, match="PROVIDER_EVIDENCE"):
+        PITProviderEvidence(
+            PITProviderEvidenceKind.PROVIDER_CONTRACT,
+            reference("ARBITRARY_STRING", "fake-evidence"),
+        )
 
 
 def test_fact_revision_has_canonical_identity_and_round_trips() -> None:
