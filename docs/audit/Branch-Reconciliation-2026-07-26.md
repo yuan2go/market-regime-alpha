@@ -5,7 +5,7 @@
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-07-26  
 > **Supersedes:** None  
-> **Superseded By:** None  
+> **Superseded By:** Branch-Reconciliation-2026-08-08.md
 > **Related Documents:** Post-Merge-Reconciliation-2026-07-26.md, ../status/Current-State.md, ../../AGENTS.md, ../../CLAUDE.md  
 > **Code Evidence:** remote-ref audit run `30203431240`; reconciled main baseline `88ee41fed61be39b8b6875a822216d3a9cddead1`
 
