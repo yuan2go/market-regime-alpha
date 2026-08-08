@@ -20,6 +20,7 @@ from market_regime_alpha.data.pit_authority import (
     PITFactTemporalAuthority,
     PITProviderEvidence,
     PITProviderEvidenceKind,
+    PITProviderEvidenceUse,
     PITRequiredFact,
     PITSelectedFactAuthority,
     PITValidationLineage,
@@ -59,6 +60,8 @@ def fact(**overrides: object) -> PITFactRevision:
         "provider_contract": "formal-provider-contract-v1",
         "temporal_authority": PITFactTemporalAuthority(
             mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
+            provider_id="formal-provider",
+            provider_contract="formal-provider-contract-v1",
             provider_available_at=datetime(2026, 8, 8, 6, 44, 1, tzinfo=UTC),
             provider_recorded_at=datetime(2026, 8, 8, 6, 44, 2, tzinfo=UTC),
         ),
@@ -146,6 +149,19 @@ def test_direct_query_construction_cannot_bypass_logical_key_collision() -> None
             required_facts=required,
         )
 
+    with pytest.raises(PITContractError, match="logical_key collision"):
+        FormalPITValidationRequest(
+            request_hash=HASH_A,
+            scope_id="daily:2026-08-08",
+            decision_time=DECISION_TIME,
+            symbols=("600000.SH",),
+            required_facts=required,
+            lineage=lineage(),
+            actor="pit-validator",
+            reason="malformed direct caller construction",
+            idempotency_key="malformed-direct-request",
+        )
+
 
 def test_default_provider_policy_prevents_authority_inflation() -> None:
     policy = ProviderQualificationPolicy.default()
@@ -169,6 +185,8 @@ def test_historical_provider_mode_requires_typed_revision_archive_evidence() -> 
     with pytest.raises(PITContractError, match="revision and dataset version"):
         PITFactTemporalAuthority(
             mode=PITFactEvidenceMode.HISTORICAL_PROVIDER_PIT,
+            provider_id="formal-provider",
+            provider_contract="formal-provider-contract-v1",
             provider_available_at=DECISION_TIME,
             provider_recorded_at=DECISION_TIME,
         )
@@ -182,6 +200,9 @@ def test_historical_provider_mode_requires_typed_revision_archive_evidence() -> 
                         PITArtifactKind.PROVIDER_EVIDENCE.value,
                         "provider-evidence-" + kind.value.lower(),
                     ),
+                    "formal-provider",
+                    "formal-provider-contract-v1",
+                    PITProviderEvidenceUse.HISTORICAL_PROVIDER_PIT,
                 )
                 for kind in (
                     PITProviderEvidenceKind.HISTORICAL_AVAILABILITY,
@@ -199,6 +220,8 @@ def test_historical_provider_mode_requires_typed_revision_archive_evidence() -> 
     )
     temporal = PITFactTemporalAuthority(
         mode=PITFactEvidenceMode.HISTORICAL_PROVIDER_PIT,
+        provider_id="formal-provider",
+        provider_contract="formal-provider-contract-v1",
         provider_available_at=DECISION_TIME,
         provider_recorded_at=DECISION_TIME,
         provider_revision="provider-revision-1",
@@ -218,6 +241,66 @@ def test_provider_evidence_cannot_use_an_arbitrary_reference_kind() -> None:
         PITProviderEvidence(
             PITProviderEvidenceKind.PROVIDER_CONTRACT,
             reference("ARBITRARY_STRING", "fake-evidence"),
+            "formal-provider",
+            "formal-provider-contract-v1",
+            PITProviderEvidenceUse.SOURCE_QUALIFICATION,
+        )
+
+
+def test_validation_lineage_rejects_real_artifact_in_wrong_authority_slot() -> None:
+    with pytest.raises(PITContractError, match="validation dataset requires DATASET"):
+        replace(
+            lineage(),
+            dataset=reference("UNIVERSE", "real-but-wrong-universe"),
+        )
+
+
+def test_fact_rejects_real_artifact_kind_outside_fact_semantics() -> None:
+    with pytest.raises(PITContractError, match="PIT Fact artifact requires DATASET"):
+        fact(artifact=reference("UNIVERSE", "real-but-wrong-universe"))
+
+
+def test_historical_provider_evidence_cannot_cross_provider_or_use() -> None:
+    evidence = tuple(
+        sorted(
+            (
+                PITProviderEvidence(
+                    kind,
+                    reference(
+                        PITArtifactKind.PROVIDER_EVIDENCE.value,
+                        "wrong-provider-" + kind.value.lower(),
+                    ),
+                    "different-provider",
+                    "different-contract",
+                    PITProviderEvidenceUse.SOURCE_QUALIFICATION,
+                )
+                for kind in (
+                    PITProviderEvidenceKind.HISTORICAL_AVAILABILITY,
+                    PITProviderEvidenceKind.REVISION_POLICY,
+                    PITProviderEvidenceKind.ARCHIVE_INTEGRITY,
+                )
+            ),
+            key=lambda item: (
+                item.evidence_kind.value,
+                item.provider_id,
+                item.provider_contract,
+            ),
+        )
+    )
+    with pytest.raises(PITContractError, match="Provider, contract and use"):
+        PITFactTemporalAuthority(
+            mode=PITFactEvidenceMode.HISTORICAL_PROVIDER_PIT,
+            provider_id="formal-provider",
+            provider_contract="formal-provider-contract-v1",
+            provider_available_at=DECISION_TIME,
+            provider_recorded_at=DECISION_TIME,
+            provider_revision="r1",
+            provider_dataset_version="v1",
+            provider_archive=reference(
+                PITArtifactKind.PROVIDER_ARCHIVE.value,
+                "provider-archive-a",
+            ),
+            provider_evidence=evidence,
         )
 
 
@@ -289,6 +372,8 @@ def test_formal_evidence_identity_binds_snapshot_and_lineage() -> None:
         artifact_resolution_hash=HASH_A,
         source_manifest_resolution_id=ArtifactId("manifest-resolution-a"),
         source_manifest_resolution_hash=HASH_B,
+        temporal_resolution_references=(),
+        system_time_authority="POSTGRESQL_CLOCK",
     )
     evidence = FormalPITEvidenceArtifact.create(
         request_hash=HASH_A,

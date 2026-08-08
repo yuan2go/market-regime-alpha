@@ -264,6 +264,8 @@ def _record_decision_fixture_formal_pit(
                 provider_contract="decision-formal-fixture-contract-v1",
                 temporal_authority=PITFactTemporalAuthority(
                     mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
+                    provider_id="decision-formal-fixture-provider",
+                    provider_contract="decision-formal-fixture-contract-v1",
                     provider_available_at=event_time + timedelta(seconds=1),
                     provider_recorded_at=event_time + timedelta(seconds=2),
                 ),

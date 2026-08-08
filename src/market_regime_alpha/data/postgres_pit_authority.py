@@ -20,6 +20,7 @@ from market_regime_alpha.data.pit_authority import (
     FormalPITValidationRequest,
     PITAsOfQuery,
     PITAsOfSnapshot,
+    PITArtifactReference,
     PITFactKind,
     PITFactEvidenceMode,
     PITFactRevision,
@@ -66,15 +67,132 @@ class PostgresPITAuthority(NativePostgresRepository):
         provider_policy: ProviderQualificationPolicy | None = None,
     ) -> None:
         super().__init__(factory)
-        self._clock = clock or _utc_now
+        self._clock = clock
         self._artifact_resolver = artifact_resolver or CanonicalPITArtifactAuthorityResolver(
             artifact_roots={}
         )
         self._provider_policy = provider_policy or ProviderQualificationPolicy.default()
 
+    def _authority_now(self) -> tuple[datetime, str]:
+        if self._clock is not None:
+            return _whole_second(self._clock()), "ENGINEERING_FIXTURE_CLOCK"
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT date_trunc('second', clock_timestamp()) AS authority_now"
+            ).fetchone()
+        if row is None:
+            raise PITAuthorityIntegrityError("PostgreSQL clock returned no row")
+        return (
+            aware_datetime(row["authority_now"], label="PostgreSQL authority clock"),
+            "POSTGRESQL_CLOCK",
+        )
+
     def current_revision(self) -> int:
         with self._connect() as connection:
             return _current_revision(connection)
+
+    def resolve(
+        self,
+        reference: PITArtifactReference,
+        *,
+        resolved_at: datetime,
+    ) -> PITArtifactAuthorityResolution:
+        """Resolve now, or reuse an earlier immutable strict-Reader receipt."""
+        try:
+            return self._artifact_resolver.resolve(
+                reference,
+                resolved_at=resolved_at,
+            )
+        except PITArtifactAuthorityUnavailableError as reader_error:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT payload_json FROM pit_artifact_authority_resolution "
+                    "WHERE reference_kind = %s AND artifact_id = %s "
+                    "AND artifact_hash = %s AND resolved_at <= %s "
+                    "ORDER BY resolved_at DESC LIMIT 1",
+                    (
+                        reference.reference_kind,
+                        str(reference.artifact_id),
+                        reference.content_hash,
+                        resolved_at,
+                    ),
+                ).fetchone()
+            if row is None:
+                raise reader_error
+            restored = PITArtifactAuthorityResolution.from_canonical_dict(
+                _object(row["payload_json"])
+            )
+            if restored.reference != reference:
+                raise PITAuthorityIntegrityError(
+                    "persisted Artifact resolution reference differs"
+                )
+            return restored
+
+    def resolve_artifact(
+        self,
+        reference: PITArtifactReference,
+        *,
+        actor: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> PITArtifactAuthorityResolution:
+        resolved_at, system_time_authority = self._authority_now()
+        resolution = self._artifact_resolver.resolve(
+            reference,
+            resolved_at=resolved_at,
+        )
+        payload = resolution.to_canonical_dict()
+        command_hash = canonical_hash(payload)
+        with self._connect() as connection:
+            acquire_scope_lock(
+                connection,
+                namespace="pit-idempotency",
+                identity=idempotency_key,
+            )
+            acquire_scope_lock(
+                connection,
+                namespace="pit-artifact-resolution",
+                identity=(
+                    f"{reference.reference_kind}:{reference.artifact_id}:"
+                    f"{reference.content_hash}"
+                ),
+            )
+            try:
+                duplicate = _idempotent_action(
+                    connection,
+                    idempotency_key=idempotency_key,
+                    command_hash=command_hash,
+                )
+                if duplicate is not None:
+                    if duplicate["action_type"] != "RESOLVE_ARTIFACT":
+                        raise PITAuthorityConflictError(
+                            "PIT idempotency action mismatch"
+                        )
+                    restored = _load_resolution(
+                        connection,
+                        ArtifactId(str(duplicate["aggregate_id"])),
+                        resolution.resolution_hash,
+                    )
+                    connection.commit()
+                    return restored
+                _persist_resolution(connection, resolution)
+                _insert_action(
+                    connection,
+                    action_type="RESOLVE_ARTIFACT",
+                    aggregate_id=str(resolution.resolution_id),
+                    idempotency_key=idempotency_key,
+                    command_hash=command_hash,
+                    payload=payload,
+                    actor=actor,
+                    reason=reason,
+                    created_at=resolved_at,
+                    system_time_authority=system_time_authority,
+                )
+                connection.commit()
+                return resolution
+            except Exception:
+                connection.rollback()
+                raise
 
     def record_source_qualification(
         self,
@@ -84,7 +202,7 @@ class PostgresPITAuthority(NativePostgresRepository):
     ) -> PITSourceQualification:
         payload = qualification.to_canonical_dict()
         command_hash = canonical_hash(payload)
-        admitted_at = _whole_second(self._clock())
+        admitted_at, system_time_authority = self._authority_now()
         if admitted_at < qualification.recorded_at:
             raise PITAuthorityConflictError(
                 "source qualification cannot be admitted before it was recorded"
@@ -105,12 +223,12 @@ class PostgresPITAuthority(NativePostgresRepository):
                 self._provider_policy.require_formal_evidence(
                     qualification.provider_evidence
                 )
-            source_resolution = self._artifact_resolver.resolve(
+            source_resolution = self.resolve(
                 qualification.source_manifest,
                 resolved_at=admitted_at,
             )
             evidence_resolutions = tuple(
-                self._artifact_resolver.resolve(
+                self.resolve(
                     item.reference,
                     resolved_at=admitted_at,
                 )
@@ -209,6 +327,7 @@ class PostgresPITAuthority(NativePostgresRepository):
                     actor=qualification.actor,
                     reason=qualification.reason,
                     created_at=admitted_at,
+                    system_time_authority=system_time_authority,
                 )
                 _persist_resolution(connection, source_resolution)
                 for resolution in evidence_resolutions:
@@ -220,13 +339,14 @@ class PostgresPITAuthority(NativePostgresRepository):
                         source_manifest_id, source_manifest_hash, provider_id,
                         provider_contract, status, source_revision,
                         supersedes_qualification_id, authority_revision,
-                        evidence_level, qualification_policy_id,
+                        evidence_level, qualified_fact_kinds,
+                        qualification_policy_id,
                         qualification_policy_hash, source_manifest_resolution_id,
                         source_manifest_resolution_hash,
                         effective_at, recorded_at, payload_json
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -245,6 +365,7 @@ class PostgresPITAuthority(NativePostgresRepository):
                         ),
                         revision,
                         qualification.evidence_level.value,
+                        [item.value for item in qualification.qualified_fact_kinds],
                         str(self._provider_policy.policy_id),
                         self._provider_policy.policy_hash,
                         str(source_resolution.resolution_id),
@@ -303,23 +424,26 @@ class PostgresPITAuthority(NativePostgresRepository):
             "reason": reason,
         }
         command_hash = canonical_hash(command_payload)
-        ingested_at = _whole_second(self._clock())
-        if ingested_at < fact.recorded_at:
+        system_imported_at, system_time_authority = self._authority_now()
+        if system_imported_at < fact.recorded_at:
             raise PITAuthorityConflictError(
                 "PIT fact cannot be ingested before its recorded time"
             )
         try:
-            artifact_resolution = self._artifact_resolver.resolve(
+            artifact_resolution = self.resolve(
                 fact.artifact,
-                resolved_at=ingested_at,
+                resolved_at=system_imported_at,
             )
-            source_resolution = self._artifact_resolver.resolve(
+            source_resolution = self.resolve(
                 fact.source_manifest,
-                resolved_at=ingested_at,
+                resolved_at=system_imported_at,
             )
             temporal_resolutions = tuple(
-                self._artifact_resolver.resolve(reference, resolved_at=ingested_at)
-                for reference in _temporal_authority_references(fact)
+                (
+                    role,
+                    self.resolve(reference, resolved_at=system_imported_at),
+                )
+                for role, reference in _temporal_authority_references(fact)
             )
         except (PITArtifactAuthorityUnavailableError, ValueError) as exc:
             raise PITAuthorityConflictError(
@@ -392,8 +516,12 @@ class PostgresPITAuthority(NativePostgresRepository):
                 qualification = _verify_formal_source_authority(
                     connection,
                     fact=fact,
-                    ingested_at=ingested_at,
+                    system_imported_at=system_imported_at,
                 )
+                if fact.fact_kind not in qualification.qualified_fact_kinds:
+                    raise PITAuthorityConflictError(
+                        "PIT source qualification does not authorize this Fact kind"
+                    )
                 if fact.data_eligibility is DataEligibility.FORMAL_RESEARCH and (
                     qualification.evidence_level
                     is not PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER
@@ -413,7 +541,7 @@ class PostgresPITAuthority(NativePostgresRepository):
                 for resolution in (
                     artifact_resolution,
                     source_resolution,
-                    *temporal_resolutions,
+                    *(item[1] for item in temporal_resolutions),
                 ):
                     _persist_resolution(connection, resolution)
                 authority_revision = _insert_action(
@@ -425,7 +553,8 @@ class PostgresPITAuthority(NativePostgresRepository):
                     payload=command_payload,
                     actor=actor,
                     reason=reason,
-                    created_at=ingested_at,
+                    created_at=system_imported_at,
+                    system_time_authority=system_time_authority,
                 )
                 connection.execute(
                     """
@@ -433,18 +562,19 @@ class PostgresPITAuthority(NativePostgresRepository):
                         fact_id, content_hash, scope_id, logical_key, fact_kind,
                         subject, fact_revision, supersedes_fact_id,
                         authority_revision, event_time, effective_from,
-                        effective_to, available_at, recorded_at, ingested_at,
+                        effective_to, available_at, recorded_at, system_imported_at,
                         artifact_id, artifact_hash, source_manifest_id,
                         source_manifest_hash,
                         provider_id, provider_contract, data_eligibility,
-                        temporal_mode, source_qualification_id,
+                        temporal_mode, system_time_authority,
+                        source_qualification_id,
                         source_qualification_hash, artifact_resolution_id,
                         artifact_resolution_hash, source_manifest_resolution_id,
                         source_manifest_resolution_hash, value_json, payload_json
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -454,12 +584,13 @@ class PostgresPITAuthority(NativePostgresRepository):
                         str(fact.supersedes_fact_id) if fact.supersedes_fact_id else None,
                         authority_revision, fact.event_time, fact.effective_from,
                         fact.effective_to, fact.available_at, fact.recorded_at,
-                        ingested_at,
+                        system_imported_at,
                         str(fact.artifact.artifact_id), fact.artifact.content_hash,
                         str(fact.source_manifest.artifact_id),
                         fact.source_manifest.content_hash, fact.provider_id,
                         fact.provider_contract, fact.data_eligibility.value,
                         fact.temporal_authority.mode.value,
+                        system_time_authority,
                         str(qualification.qualification_id),
                         qualification.qualification_hash,
                         str(artifact_resolution.resolution_id),
@@ -469,6 +600,18 @@ class PostgresPITAuthority(NativePostgresRepository):
                         fact.value_json, _json(fact.to_canonical_dict()),
                     ),
                 )
+                for role, resolution in temporal_resolutions:
+                    connection.execute(
+                        "INSERT INTO pit_fact_temporal_authority_resolution("
+                        "fact_id, authority_role, resolution_id, resolution_hash) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (
+                            str(fact.fact_id),
+                            role,
+                            str(resolution.resolution_id),
+                            resolution.resolution_hash,
+                        ),
+                    )
                 restored = _load_fact(connection, fact.fact_id)
                 connection.commit()
                 return restored
@@ -489,13 +632,6 @@ class PostgresPITAuthority(NativePostgresRepository):
             current_revision = _current_revision(connection)
             if current_revision <= 0:
                 raise PITAuthorityIntegrityError("PIT authority has no revision")
-            if (
-                query.authority_revision is not None
-                and query.authority_revision != current_revision
-            ):
-                raise PITAuthorityIntegrityError(
-                    "authority revision prefix is audit metadata, not historical replay authority"
-                )
             return _as_of(connection, query, current_revision)
 
     def validate(
@@ -505,9 +641,9 @@ class PostgresPITAuthority(NativePostgresRepository):
         command_hash = canonical_hash(
             {"schema_version": "formal-pit-validation-command-v1", "request": request.to_canonical_dict()}
         )
-        recorded_at = _whole_second(self._clock())
+        recorded_at, system_time_authority = self._authority_now()
         lineage_resolutions, artifact_rejections = _resolve_validation_lineage(
-            self._artifact_resolver,
+            self,
             request=request,
             resolved_at=recorded_at,
         )
@@ -557,6 +693,7 @@ class PostgresPITAuthority(NativePostgresRepository):
                     actor=request.actor,
                     reason=request.reason,
                     created_at=evidence.recorded_at,
+                    system_time_authority=system_time_authority,
                 )
                 connection.execute(
                     """
@@ -648,7 +785,56 @@ class PostgresPITAuthority(NativePostgresRepository):
                     "Formal PIT replay snapshot binding differs from evidence"
                 )
             _verify_immutable_replay_bindings(connection, original)
-            return original
+            selected = tuple(
+                _load_fact(connection, item.fact_id)
+                for item in original.selected_fact_authorities
+            )
+            lineage_resolutions = tuple(
+                _load_resolution(connection, resolution_id, resolution_hash)
+                for resolution_id, resolution_hash
+                in original.lineage_resolution_references
+            )
+            _verify_replay_projection(
+                request=request,
+                snapshot=snapshot,
+                selected=selected,
+                lineage_resolutions=lineage_resolutions,
+            )
+            replayed_snapshot = PITAsOfSnapshot.create(
+                query_hash=snapshot.query_hash,
+                scope_id=snapshot.scope_id,
+                decision_time=snapshot.decision_time,
+                authority_revision=snapshot.authority_revision,
+                outcome=snapshot.outcome,
+                selected_fact_references=snapshot.selected_fact_references,
+                selected_fact_authorities=snapshot.selected_fact_authorities,
+                rejection_codes=snapshot.rejection_codes,
+            )
+            if replayed_snapshot != snapshot:
+                raise PITAuthorityIntegrityError(
+                    "Formal PIT replay could not reconstruct immutable snapshot"
+                )
+            replayed = FormalPITEvidenceArtifact.create(
+                request_hash=request.request_hash,
+                snapshot_id=replayed_snapshot.snapshot_id,
+                snapshot_hash=replayed_snapshot.snapshot_hash,
+                authority_revision=original.authority_revision,
+                lineage=request.lineage,
+                outcome=replayed_snapshot.outcome,
+                rejection_codes=replayed_snapshot.rejection_codes,
+                selected_fact_references=replayed_snapshot.selected_fact_references,
+                selected_fact_authorities=replayed_snapshot.selected_fact_authorities,
+                lineage_resolution_references=original.lineage_resolution_references,
+                available_at=original.available_at,
+                recorded_at=original.recorded_at,
+                actor=request.actor,
+                reason=request.reason,
+            )
+            if replayed != original:
+                raise PITAuthorityIntegrityError(
+                    "Formal PIT replay could not reconstruct immutable evidence"
+                )
+            return replayed
 
 
 def _evaluate(
@@ -664,7 +850,6 @@ def _evaluate(
         scope_id=request.scope_id,
         decision_time=request.decision_time,
         required_facts=request.required_facts,
-        authority_revision=authority_revision,
     )
     snapshot = _as_of(connection, query, authority_revision)
     selected = tuple(
@@ -721,10 +906,7 @@ def _as_of(
         rows = connection.execute(
             """
             SELECT DISTINCT ON (logical_key)
-                fact_id, payload_json, authority_revision, ingested_at,
-                source_qualification_id, source_qualification_hash,
-                artifact_resolution_id, artifact_resolution_hash,
-                source_manifest_resolution_id, source_manifest_resolution_hash
+                fact_id, logical_key
             FROM pit_fact_revision
             WHERE scope_id = %s
               AND logical_key = ANY(%s)
@@ -735,7 +917,7 @@ def _as_of(
               AND recorded_at <= %s
               AND (
                   temporal_mode = 'HISTORICAL_PROVIDER_PIT'
-                  OR ingested_at <= %s
+                  OR system_imported_at <= %s
               )
             ORDER BY logical_key, fact_revision DESC, authority_revision DESC
             """,
@@ -747,7 +929,7 @@ def _as_of(
         ).fetchall()
     selected: dict[str, RecordedPITFactRevision] = {}
     for row in rows:
-        recorded = _recorded_from_row(row)
+        recorded = _load_fact(connection, ArtifactId(str(row["fact_id"])))
         selected[recorded.fact.logical_key] = recorded
     reasons: set[str] = set()
     for key, required in required_by_key.items():
@@ -779,7 +961,7 @@ def _missing_reason(
 ) -> str:
     row = connection.execute(
         "SELECT event_time, effective_from, effective_to, available_at, "
-        "recorded_at, ingested_at, temporal_mode, fact_kind, subject "
+        "recorded_at, system_imported_at, temporal_mode, fact_kind, subject "
         "FROM pit_fact_revision "
         "WHERE scope_id = %s AND logical_key = %s "
         "ORDER BY fact_revision DESC LIMIT 1",
@@ -808,7 +990,7 @@ def _missing_reason(
         return f"LATE_RECORDED_FACT_REJECTED:{suffix}"
     if (
         row["temporal_mode"] == PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT.value
-        and aware_datetime(row["ingested_at"], label="ingested_at")
+        and aware_datetime(row["system_imported_at"], label="system_imported_at")
         > query.decision_time
     ):
         return f"LATE_INGESTED_FACT_REJECTED:{suffix}"
@@ -856,6 +1038,88 @@ def _verify_selected_facts(
         raise PITAuthorityIntegrityError("Formal PIT selected fact binding mismatch")
 
 
+def _verify_replay_projection(
+    *,
+    request: FormalPITValidationRequest,
+    snapshot: PITAsOfSnapshot,
+    selected: tuple[RecordedPITFactRevision, ...],
+    lineage_resolutions: tuple[PITArtifactAuthorityResolution, ...],
+) -> None:
+    query = PITAsOfQuery.create(
+        scope_id=request.scope_id,
+        decision_time=request.decision_time,
+        required_facts=request.required_facts,
+    )
+    if query.query_hash != snapshot.query_hash:
+        raise PITAuthorityIntegrityError("Formal PIT replay query identity differs")
+    required_by_key = {item.logical_key: item for item in request.required_facts}
+    selected_by_key = {item.fact.logical_key: item for item in selected}
+    if len(selected_by_key) != len(selected):
+        raise PITAuthorityIntegrityError("Formal PIT replay selected keys collide")
+    derived_rejections = set(formal_pit_request_rejection_codes(request))
+    derived_rejections.update(_lineage_rejection_codes(request, selected))
+    derived_rejections.update(
+        _validation_lineage_resolution_rejections(request, lineage_resolutions)
+    )
+    expected_lineage_references = {
+        request.lineage.dataset,
+        *request.lineage.source_manifests,
+        request.lineage.universe,
+        request.lineage.eligibility,
+        *request.lineage.feature_materializations,
+        request.lineage.configuration,
+        request.lineage.validation_protocol,
+    }
+    if (
+        snapshot.outcome is PITValidationOutcome.SATISFIED
+        and {item.reference for item in lineage_resolutions}
+        != expected_lineage_references
+    ):
+        raise PITAuthorityIntegrityError(
+            "Formal PIT replay lineage resolution set is incomplete"
+        )
+    for key, recorded in selected_by_key.items():
+        required = required_by_key.get(key)
+        fact = recorded.fact
+        if required is None:
+            raise PITAuthorityIntegrityError(
+                "Formal PIT replay selected an undeclared Fact"
+            )
+        if fact.fact_kind is not required.fact_kind or fact.subject != required.subject:
+            derived_rejections.add(f"FACT_SCOPE_MISMATCH:{key}")
+        if fact.scope_id != request.scope_id:
+            derived_rejections.add(f"FACT_SCOPE_MISMATCH:{key}")
+        if fact.event_time > request.decision_time:
+            derived_rejections.add(f"FUTURE_EVENT_REJECTED:{fact.fact_kind.value}:{fact.subject}")
+        if fact.effective_from > request.decision_time:
+            derived_rejections.add(
+                f"FUTURE_EFFECTIVE_STATE_REJECTED:{fact.fact_kind.value}:{fact.subject}"
+            )
+        if fact.effective_to is not None and request.decision_time >= fact.effective_to:
+            derived_rejections.add(f"EXPIRED_FACT_REJECTED:{fact.fact_kind.value}:{fact.subject}")
+        if fact.available_at > request.decision_time:
+            derived_rejections.add(f"LATE_AVAILABLE_FACT_REJECTED:{fact.fact_kind.value}:{fact.subject}")
+        if fact.recorded_at > request.decision_time:
+            derived_rejections.add(f"LATE_RECORDED_FACT_REJECTED:{fact.fact_kind.value}:{fact.subject}")
+        if (
+            fact.temporal_authority.mode
+            is PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT
+            and recorded.system_imported_at > request.decision_time
+        ):
+            derived_rejections.add(f"LATE_INGESTED_FACT_REJECTED:{fact.fact_kind.value}:{fact.subject}")
+    if snapshot.outcome is PITValidationOutcome.SATISFIED and (
+        set(required_by_key) != set(selected_by_key) or derived_rejections
+    ):
+        raise PITAuthorityIntegrityError(
+            "satisfied Formal PIT evidence fails replay projection"
+        )
+    unexplained = derived_rejections.difference(snapshot.rejection_codes)
+    if unexplained:
+        raise PITAuthorityIntegrityError(
+            "Formal PIT replay projection differs: " + ",".join(sorted(unexplained))
+        )
+
+
 def _resolve_validation_lineage(
     resolver: PITArtifactAuthorityResolver,
     *,
@@ -892,7 +1156,26 @@ def _resolve_validation_lineage(
                 f"{reference.reference_kind}:{reference.artifact_id}"
             )
             continue
+        if resolution.reference != reference:
+            reasons.add(
+                "ARTIFACT_AUTHORITY_IDENTITY_MISMATCH:"
+                f"{reference.reference_kind}:{reference.artifact_id}"
+            )
+            continue
         resolved.append(resolution)
+    reasons.update(
+        _validation_lineage_resolution_rejections(request, tuple(resolved))
+    )
+    return tuple(resolved), tuple(sorted(reasons))
+
+
+def _validation_lineage_resolution_rejections(
+    request: FormalPITValidationRequest,
+    resolved: tuple[PITArtifactAuthorityResolution, ...],
+) -> tuple[str, ...]:
+    reasons: set[str] = set()
+    for resolution in resolved:
+        reference = resolution.reference
         if (
             resolution.data_eligibility is not None
             and resolution.data_eligibility is not DataEligibility.FORMAL_RESEARCH
@@ -909,17 +1192,45 @@ def _resolve_validation_lineage(
                 "ARTIFACT_FORMAL_PIT_NOT_ESTABLISHED:"
                 f"{reference.reference_kind}:{reference.artifact_id}"
             )
-    return tuple(resolved), tuple(sorted(reasons))
+        for label, instant in (
+            ("EFFECTIVE", resolution.effective_at),
+            ("AVAILABLE", resolution.available_at),
+        ):
+            if instant is not None and instant > request.decision_time:
+                reasons.add(
+                    f"FUTURE_ARTIFACT_{label}:"
+                    f"{reference.reference_kind}:{reference.artifact_id}"
+                )
+    by_reference = {item.reference: item for item in resolved}
+    expected_sources = set(request.lineage.source_manifests)
+    dataset_resolution = by_reference.get(request.lineage.dataset)
+    if dataset_resolution is not None and (
+        set(dataset_resolution.bound_references) != expected_sources
+    ):
+        reasons.add("DATASET_SOURCE_MANIFEST_BINDING_MISMATCH")
+    expected_feature_bindings = {request.lineage.dataset, *expected_sources}
+    for feature in request.lineage.feature_materializations:
+        feature_resolution = by_reference.get(feature)
+        if feature_resolution is not None and (
+            set(feature_resolution.bound_references) != expected_feature_bindings
+        ):
+            reasons.add(
+                f"FEATURE_DEPENDENCY_BINDING_MISMATCH:{feature.artifact_id}"
+            )
+    return tuple(sorted(reasons))
 
 
 def _temporal_authority_references(
     fact: PITFactRevision,
-) -> tuple[Any, ...]:
+) -> tuple[tuple[str, Any], ...]:
     temporal = fact.temporal_authority
-    values = [item.reference for item in temporal.provider_evidence]
+    values = [
+        (item.evidence_kind.value, item.reference)
+        for item in temporal.provider_evidence
+    ]
     if temporal.provider_archive is not None:
-        values.append(temporal.provider_archive)
-    return tuple(values)
+        values.append(("PROVIDER_ARCHIVE", temporal.provider_archive))
+    return tuple(sorted(values, key=lambda item: item[0]))
 
 
 def _persist_resolution(
@@ -981,18 +1292,37 @@ def _verify_immutable_replay_bindings(
             raise PITAuthorityIntegrityError(
                 "Formal PIT replay source qualification differs"
             )
-        _verify_resolution_reference(
+        artifact_resolution = _load_resolution(
             connection,
             expected.artifact_resolution_id,
             expected.artifact_resolution_hash,
         )
-        _verify_resolution_reference(
+        if artifact_resolution.reference != recorded.fact.artifact:
+            raise PITAuthorityIntegrityError(
+                "Formal PIT replay Fact Artifact resolution differs"
+            )
+        source_resolution = _load_resolution(
             connection,
             expected.source_manifest_resolution_id,
             expected.source_manifest_resolution_hash,
         )
+        if source_resolution.reference != recorded.fact.source_manifest:
+            raise PITAuthorityIntegrityError(
+                "Formal PIT replay SourceManifest resolution differs"
+            )
+        temporal_by_role = dict(_temporal_authority_references(recorded.fact))
+        for role, resolution_id, resolution_hash in expected.temporal_resolution_references:
+            temporal_resolution = _load_resolution(
+                connection,
+                resolution_id,
+                resolution_hash,
+            )
+            if temporal_resolution.reference != temporal_by_role.get(role):
+                raise PITAuthorityIntegrityError(
+                    "Formal PIT replay temporal authority role differs"
+                )
         evidence_rows = connection.execute(
-            "SELECT resolution_id, resolution_hash "
+            "SELECT evidence_kind, resolution_id, resolution_hash "
             "FROM pit_source_qualification_evidence "
             "WHERE qualification_id = %s ORDER BY evidence_kind",
             (str(qualification.qualification_id),),
@@ -1001,12 +1331,22 @@ def _verify_immutable_replay_bindings(
             raise PITAuthorityIntegrityError(
                 "Formal PIT replay Provider qualification evidence is incomplete"
             )
+        evidence_by_kind = {
+            item.evidence_kind.value: item.reference
+            for item in qualification.provider_evidence
+        }
         for row in evidence_rows:
-            _verify_resolution_reference(
+            evidence_resolution = _load_resolution(
                 connection,
                 ArtifactId(str(row["resolution_id"])),
                 str(row["resolution_hash"]),
             )
+            if evidence_resolution.reference != evidence_by_kind.get(
+                str(row["evidence_kind"])
+            ):
+                raise PITAuthorityIntegrityError(
+                    "Formal PIT replay Provider evidence role differs"
+                )
     for resolution_id, resolution_hash in evidence.lineage_resolution_references:
         _verify_resolution_reference(connection, resolution_id, resolution_hash)
 
@@ -1034,11 +1374,29 @@ def _verify_resolution_reference(
         )
 
 
+def _load_resolution(
+    connection: PostgresConnection,
+    resolution_id: ArtifactId,
+    resolution_hash: str,
+) -> PITArtifactAuthorityResolution:
+    _verify_resolution_reference(connection, resolution_id, resolution_hash)
+    row = connection.execute(
+        "SELECT payload_json FROM pit_artifact_authority_resolution "
+        "WHERE resolution_id = %s",
+        (str(resolution_id),),
+    ).fetchone()
+    if row is None:
+        raise PITAuthorityIntegrityError("PIT Artifact resolution is missing")
+    return PITArtifactAuthorityResolution.from_canonical_dict(
+        _object(row["payload_json"])
+    )
+
+
 def _verify_formal_source_authority(
     connection: PostgresConnection,
     *,
     fact: PITFactRevision,
-    ingested_at: datetime,
+    system_imported_at: datetime,
 ) -> PITSourceQualification:
     row = connection.execute(
         """
@@ -1061,9 +1419,9 @@ def _verify_formal_source_authority(
             fact.source_manifest.content_hash,
             fact.provider_id,
             fact.provider_contract,
-            ingested_at,
-            ingested_at,
-            ingested_at,
+            system_imported_at,
+            system_imported_at,
+            system_imported_at,
         ),
     ).fetchone()
     if row is None:
@@ -1076,9 +1434,9 @@ def _verify_formal_source_authority(
     action_time = aware_datetime(row["created_at"], label="source authority created_at")
     if (
         qualification.status is not PITSourceAuthorityStatus.QUALIFIED
-        or qualification.effective_at > ingested_at
-        or qualification.recorded_at > ingested_at
-        or action_time > ingested_at
+        or qualification.effective_at > system_imported_at
+        or qualification.recorded_at > system_imported_at
+        or action_time > system_imported_at
     ):
         raise PITAuthorityConflictError(
             "FORMAL_RESEARCH fact source is not qualified at ingest time"
@@ -1119,23 +1477,44 @@ def _load_fact(
     fact_id: ArtifactId,
 ) -> RecordedPITFactRevision:
     row = connection.execute(
-        "SELECT payload_json, authority_revision, ingested_at, "
+        "SELECT payload_json, authority_revision, system_imported_at, "
         "source_qualification_id, source_qualification_hash, "
         "artifact_resolution_id, artifact_resolution_hash, "
-        "source_manifest_resolution_id, source_manifest_resolution_hash "
+        "source_manifest_resolution_id, source_manifest_resolution_hash, "
+        "system_time_authority "
         "FROM pit_fact_revision WHERE fact_id = %s",
         (str(fact_id),),
     ).fetchone()
     if row is None:
         raise KeyError(str(fact_id))
-    return _recorded_from_row(row)
+    temporal_rows = connection.execute(
+        "SELECT authority_role, resolution_id, resolution_hash "
+        "FROM pit_fact_temporal_authority_resolution WHERE fact_id = %s "
+        "ORDER BY authority_role",
+        (str(fact_id),),
+    ).fetchall()
+    return _recorded_from_row(
+        row,
+        temporal_resolution_references=tuple(
+            (
+                str(item["authority_role"]),
+                ArtifactId(str(item["resolution_id"])),
+                str(item["resolution_hash"]),
+            )
+            for item in temporal_rows
+        ),
+    )
 
 
-def _recorded_from_row(row: Mapping[str, Any]) -> RecordedPITFactRevision:
+def _recorded_from_row(
+    row: Mapping[str, Any],
+    *,
+    temporal_resolution_references: tuple[tuple[str, ArtifactId, str], ...],
+) -> RecordedPITFactRevision:
     return RecordedPITFactRevision(
         fact=PITFactRevision.from_canonical_dict(_object(row["payload_json"])),
         authority_revision=int(row["authority_revision"]),
-        ingested_at=aware_datetime(row["ingested_at"], label="ingested_at"),
+        system_imported_at=aware_datetime(row["system_imported_at"], label="system_imported_at"),
         source_qualification_id=ArtifactId(str(row["source_qualification_id"])),
         source_qualification_hash=str(row["source_qualification_hash"]),
         artifact_resolution_id=ArtifactId(str(row["artifact_resolution_id"])),
@@ -1146,6 +1525,8 @@ def _recorded_from_row(row: Mapping[str, Any]) -> RecordedPITFactRevision:
         source_manifest_resolution_hash=str(
             row["source_manifest_resolution_hash"]
         ),
+        temporal_resolution_references=temporal_resolution_references,
+        system_time_authority=str(row["system_time_authority"]),
     )
 
 
@@ -1198,15 +1579,17 @@ def _insert_action(
     actor: str,
     reason: str,
     created_at: datetime,
+    system_time_authority: str,
 ) -> int:
     row = connection.execute(
         "INSERT INTO pit_authority_action(action_type, aggregate_id, "
-        "idempotency_key, command_hash, payload_json, actor, reason, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+        "idempotency_key, command_hash, payload_json, actor, reason, created_at, "
+        "system_time_authority) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
         "RETURNING authority_revision",
         (
             action_type, aggregate_id, idempotency_key, command_hash,
-            _json(payload), actor, reason, created_at,
+            _json(payload), actor, reason, created_at, system_time_authority,
         ),
     ).fetchone()
     if row is None:

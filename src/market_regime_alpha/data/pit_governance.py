@@ -49,7 +49,10 @@ def record_formal_pit_qualification_evidence(
         ),
         (
             "configuration",
-            _governance_reference(pit_lineage.configuration),
+            _governance_reference(
+                pit_lineage.configuration,
+                reference_kind="MODEL_CONFIGURATION",
+            ),
             model_lineage.configuration,
         ),
         ("code_revision", pit_lineage.code_revision, model_lineage.code_revision),
@@ -87,9 +90,13 @@ def record_formal_pit_qualification_evidence(
     )
 
 
-def _governance_reference(reference: PITArtifactReference) -> ArtifactLineageReference:
+def _governance_reference(
+    reference: PITArtifactReference,
+    *,
+    reference_kind: str | None = None,
+) -> ArtifactLineageReference:
     return ArtifactLineageReference(
-        reference_kind=reference.reference_kind,
+        reference_kind=reference_kind or reference.reference_kind,
         artifact_id=reference.artifact_id,
         content_hash=reference.content_hash,
     )

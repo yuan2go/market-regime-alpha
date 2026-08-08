@@ -27,6 +27,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "pit_source_qualification",
         "pit_source_qualification_evidence",
         "pit_fact_revision",
+        "pit_fact_temporal_authority_resolution",
         "pit_as_of_snapshot",
         "formal_pit_validation_evidence",
         "governed_experiments",
@@ -169,6 +170,14 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ),
         ("pit_fact_revision", "pit_fact_revision_no_delete"),
         ("pit_fact_revision", "pit_fact_revision_no_update"),
+        (
+            "pit_fact_temporal_authority_resolution",
+            "pit_fact_temporal_authority_resolution_no_delete",
+        ),
+        (
+            "pit_fact_temporal_authority_resolution",
+            "pit_fact_temporal_authority_resolution_no_update",
+        ),
         ("pit_as_of_snapshot", "pit_as_of_snapshot_no_delete"),
         ("pit_as_of_snapshot", "pit_as_of_snapshot_no_update"),
         ("formal_pit_validation_evidence", "formal_pit_validation_evidence_no_delete"),

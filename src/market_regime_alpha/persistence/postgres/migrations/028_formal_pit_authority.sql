@@ -1,7 +1,7 @@
 CREATE TABLE pit_authority_action (
     authority_revision bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     action_type text NOT NULL CHECK (action_type IN (
-        'SOURCE_QUALIFICATION', 'RECORD_FACT', 'VALIDATE_PIT'
+        'RESOLVE_ARTIFACT', 'SOURCE_QUALIFICATION', 'RECORD_FACT', 'VALIDATE_PIT'
     )),
     aggregate_id text NOT NULL,
     idempotency_key text NOT NULL UNIQUE,
@@ -9,7 +9,10 @@ CREATE TABLE pit_authority_action (
     payload_json jsonb NOT NULL,
     actor text NOT NULL CHECK (btrim(actor) <> ''),
     reason text NOT NULL CHECK (btrim(reason) <> ''),
-    created_at timestamptz NOT NULL
+    created_at timestamptz NOT NULL,
+    system_time_authority text NOT NULL CHECK (system_time_authority IN (
+        'POSTGRESQL_CLOCK', 'ENGINEERING_FIXTURE_CLOCK'
+    ))
 );
 
 CREATE TABLE pit_artifact_authority_resolution (
@@ -28,7 +31,7 @@ CREATE TABLE pit_artifact_authority_resolution (
         payload_json->>'schema_version' = 'pit-artifact-authority-resolution-v1'
     ),
     resolved_at timestamptz NOT NULL,
-    UNIQUE (reference_kind, artifact_id, artifact_hash, physical_checksums_hash),
+    UNIQUE (reference_kind, artifact_id, artifact_hash),
     UNIQUE (resolution_id, resolution_hash)
 );
 
@@ -50,6 +53,9 @@ CREATE TABLE pit_source_qualification (
         'FIXTURE', 'REPLAY', 'FREE_DATA_EXPLORATORY', 'PIT_INCOMPLETE',
         'FORMAL_PIT_CANDIDATE', 'FORMAL_PIT_PROVIDER'
     )),
+    qualified_fact_kinds text[] NOT NULL CHECK (
+        cardinality(qualified_fact_kinds) > 0
+    ),
     qualification_policy_id text NOT NULL,
     qualification_policy_hash text NOT NULL
         CHECK (qualification_policy_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -128,7 +134,7 @@ CREATE TABLE pit_fact_revision (
     effective_to timestamptz,
     available_at timestamptz NOT NULL,
     recorded_at timestamptz NOT NULL,
-    ingested_at timestamptz NOT NULL DEFAULT date_trunc('second', statement_timestamp()),
+    system_imported_at timestamptz NOT NULL DEFAULT date_trunc('second', statement_timestamp()),
     artifact_id text NOT NULL,
     artifact_hash text NOT NULL CHECK (artifact_hash ~ '^sha256:[0-9a-f]{64}$'),
     source_manifest_id text NOT NULL,
@@ -140,6 +146,9 @@ CREATE TABLE pit_fact_revision (
     )),
     temporal_mode text NOT NULL CHECK (temporal_mode IN (
         'PROSPECTIVE_CAPTURED_PIT', 'HISTORICAL_PROVIDER_PIT'
+    )),
+    system_time_authority text NOT NULL CHECK (system_time_authority IN (
+        'POSTGRESQL_CLOCK', 'ENGINEERING_FIXTURE_CLOCK'
     )),
     source_qualification_id text NOT NULL,
     source_qualification_hash text NOT NULL
@@ -158,7 +167,7 @@ CREATE TABLE pit_fact_revision (
     CHECK (effective_to IS NULL OR effective_to > effective_from),
     CHECK (available_at >= event_time),
     CHECK (recorded_at >= available_at),
-    CHECK (ingested_at >= recorded_at),
+    CHECK (system_imported_at >= recorded_at),
     FOREIGN KEY (source_qualification_id, source_qualification_hash)
         REFERENCES pit_source_qualification(
             qualification_id, qualification_hash
@@ -181,7 +190,7 @@ CREATE INDEX pit_fact_revision_as_of_idx
     ON pit_fact_revision(scope_id, logical_key, authority_revision DESC, fact_revision DESC);
 CREATE INDEX pit_fact_revision_temporal_idx
     ON pit_fact_revision(
-        scope_id, event_time, available_at, recorded_at, ingested_at
+        scope_id, event_time, available_at, recorded_at, system_imported_at
     );
 CREATE INDEX pit_fact_revision_authority_idx ON pit_fact_revision(authority_revision);
 CREATE INDEX pit_fact_revision_qualification_idx
@@ -192,6 +201,27 @@ CREATE INDEX pit_fact_revision_manifest_resolution_idx
     ON pit_fact_revision(
         source_manifest_resolution_id, source_manifest_resolution_hash
     );
+
+CREATE TABLE pit_fact_temporal_authority_resolution (
+    fact_id text NOT NULL REFERENCES pit_fact_revision(fact_id),
+    authority_role text NOT NULL CHECK (authority_role IN (
+        'PROVIDER_ARCHIVE', 'HISTORICAL_AVAILABILITY', 'REVISION_POLICY',
+        'ARCHIVE_INTEGRITY', 'DATASET_VERSIONING', 'PROVIDER_CONTRACT',
+        'INDEPENDENT_VALIDATION', 'QUALIFICATION_DECISION',
+        'SUSPENSION_DECISION'
+    )),
+    resolution_id text NOT NULL,
+    resolution_hash text NOT NULL
+        CHECK (resolution_hash ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (fact_id, authority_role),
+    UNIQUE (fact_id, resolution_id),
+    FOREIGN KEY (resolution_id, resolution_hash)
+        REFERENCES pit_artifact_authority_resolution(
+            resolution_id, resolution_hash
+        )
+);
+CREATE INDEX pit_fact_temporal_resolution_idx
+    ON pit_fact_temporal_authority_resolution(resolution_id, resolution_hash);
 
 CREATE TABLE pit_as_of_snapshot (
     snapshot_id text PRIMARY KEY,
@@ -261,6 +291,12 @@ CREATE TRIGGER pit_fact_revision_no_update
     FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 CREATE TRIGGER pit_fact_revision_no_delete
     BEFORE DELETE ON pit_fact_revision
+    FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER pit_fact_temporal_authority_resolution_no_update
+    BEFORE UPDATE ON pit_fact_temporal_authority_resolution
+    FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER pit_fact_temporal_authority_resolution_no_delete
+    BEFORE DELETE ON pit_fact_temporal_authority_resolution
     FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 CREATE TRIGGER pit_as_of_snapshot_no_update
     BEFORE UPDATE ON pit_as_of_snapshot

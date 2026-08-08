@@ -103,14 +103,19 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 - Artifact authority comes only from a configured canonical strict Reader and
   its immutable resolution receipt. Caller-provided IDs/hashes are claims, not
   authority.
+- Validation lineage slots require their exact authority kinds and resolved
+  Dataset/Feature dependency receipts must match the declared SourceManifest
+  and Dataset graph. Effective or available times after DecisionTime reject.
 - `FORMAL_RESEARCH` fact admission requires exact active SourceManifest,
   Provider, contract, typed evidence policy and qualification resolution;
   caller declarations never suffice.
 - Required Fact `logical_key` values are globally unique within a Request or
   Query; Request, Query and Repository boundaries all reject collisions.
 - Historical replay uses the explicit immutable selected Fact IDs/hashes,
-  qualification lineage and Artifact resolution receipts. Authority revision is
-  audit ordering only and never substitutes for this replay manifest.
+  qualification lineage and role-bound Artifact/archive/evidence resolution
+  receipts. Replay re-runs the pure selected-Fact/lineage projection and
+  reconstructs Snapshot/Evidence content identities. Authority revision is audit
+  ordering only and never substitutes for this replay manifest.
 
 ## Failure modes
 
@@ -127,6 +132,9 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 - `src/market_regime_alpha/data/**`
 - `src/market_regime_alpha/research/xuntou_*`
 - `src/market_regime_alpha/data/pit_authority.py`
+- `src/market_regime_alpha/data/pit_contracts.py`
+- `src/market_regime_alpha/data/pit_source_authority.py`
+- `src/market_regime_alpha/data/pit_artifact_authority.py`
 - `src/market_regime_alpha/data/postgres_pit_authority.py`
 - PostgreSQL migration 028
 - `Tencent/BaoStock exploratory adapters`

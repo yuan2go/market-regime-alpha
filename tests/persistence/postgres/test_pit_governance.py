@@ -68,7 +68,11 @@ def _matching_pit_lineage(model_lineage: ModelVersionLineage) -> PITValidationLi
         feature_materializations=(
             ref("FEATURE_MATERIALIZATION", "formal-feature-run"),
         ),
-        configuration=_pit_reference(model_lineage.configuration),
+        configuration=ref(
+            "CONFIGURATION",
+            str(model_lineage.configuration.artifact_id),
+            model_lineage.configuration.content_hash,
+        ),
         code_revision=model_lineage.code_revision,
         code_hash=model_lineage.code_hash,
         validation_protocol=_pit_reference(

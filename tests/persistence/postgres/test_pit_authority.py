@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import replace
 from datetime import timedelta
+from time import perf_counter
 
 import pytest
 
@@ -13,18 +14,22 @@ from market_regime_alpha.data.pit_authority import (
     PITAsOfQuery,
     PITContractError,
     PITFactEvidenceMode,
+    PITFactKind,
     PITFactTemporalAuthority,
     PITProviderEvidence,
     PITProviderEvidenceKind,
+    PITProviderEvidenceUse,
     PITRequiredFact,
     PITSourceAuthorityStatus,
     PITValidationOutcome,
     ProviderQualificationPolicy,
     RecordedPITFactRevision,
 )
+from market_regime_alpha.data.pit_artifact_authority import (
+    PITArtifactAuthorityResolution,
+)
 from market_regime_alpha.data.postgres_pit_authority import (
     PITAuthorityConflictError,
-    PITAuthorityIntegrityError,
     PostgresPITAuthority,
 )
 from market_regime_alpha.persistence.postgres.connection import (
@@ -41,12 +46,51 @@ from tests.persistence.postgres.pit_fixture import (
     NOW,
     authorize_source,
     FixturePITArtifactAuthorityResolver,
+    fixture_provider_policy,
     pit_authority,
     pit_fact,
+    pit_lineage,
     pit_request,
     required_facts,
     source_qualification,
 )
+
+
+class _LineageAttackResolver(FixturePITArtifactAuthorityResolver):
+    def __init__(self, *, wrong_dependency: bool = False, future: bool = False) -> None:
+        self._wrong_dependency = wrong_dependency
+        self._future = future
+
+    def resolve(self, reference, *, resolved_at):
+        resolution = super().resolve(reference, resolved_at=resolved_at)
+        if reference != pit_lineage().dataset:
+            return resolution
+        return PITArtifactAuthorityResolution.create(
+            reference=resolution.reference,
+            canonical_schema=resolution.canonical_schema,
+            reader_contract=resolution.reader_contract,
+            physical_checksums_hash=resolution.physical_checksums_hash,
+            data_eligibility=resolution.data_eligibility,
+            formal_pit_status=resolution.formal_pit_status,
+            effective_at=resolution.effective_at,
+            available_at=(
+                DECISION_TIME + timedelta(seconds=1)
+                if self._future
+                else resolution.available_at
+            ),
+            bound_references=(
+                (
+                    PITArtifactReference(
+                        PITArtifactKind.SOURCE_MANIFEST.value,
+                        ArtifactId("unrelated-source-manifest"),
+                        HASH_A,
+                    ),
+                )
+                if self._wrong_dependency
+                else resolution.bound_references
+            ),
+            resolved_at=resolved_at,
+        )
 
 
 def _record_complete_scope(
@@ -64,7 +108,7 @@ def _record_complete_scope(
     return recorded
 
 
-def test_postgres_as_of_uses_current_snapshot_and_rejects_revision_prefix_replay(
+def test_postgres_as_of_uses_current_snapshot_without_revision_prefix_replay(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     repository = pit_authority(postgres_factory, clock=lambda: INGEST_TIME)
@@ -82,8 +126,6 @@ def test_postgres_as_of_uses_current_snapshot_and_rejects_revision_prefix_replay
         reason="record original",
         idempotency_key="fact-original",
     ) == first
-    first_authority_revision = repository.current_revision()
-
     corrected = repository.record_fact(
         pit_fact(
             first_required,
@@ -102,16 +144,6 @@ def test_postgres_as_of_uses_current_snapshot_and_rejects_revision_prefix_replay
             required_facts=(first_required,),
         )
     )
-    with pytest.raises(PITAuthorityIntegrityError, match="audit metadata"):
-        repository.as_of(
-            PITAsOfQuery.create(
-                scope_id="daily:2026-08-08",
-                decision_time=DECISION_TIME,
-                required_facts=(first_required,),
-                authority_revision=first_authority_revision,
-            )
-        )
-
     assert current.outcome is PITValidationOutcome.SATISFIED
     assert current.selected_fact_references == ((corrected.fact.fact_id, corrected.fact.content_hash),)
 
@@ -130,7 +162,6 @@ def test_repository_rejects_caller_built_query_collision_before_sql_selection(
         "query_hash",
         "scope_id",
         "decision_time",
-        "authority_revision",
     ):
         object.__setattr__(malformed, field_name, getattr(valid, field_name))
     object.__setattr__(
@@ -313,6 +344,78 @@ def test_validation_uses_repeatable_snapshot_while_ingestion_is_waiting(
     assert repository.replay_evidence(evidence.evidence_id) == evidence
 
 
+def test_validation_snapshot_excludes_correction_committed_after_snapshot_start(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    writer = pit_authority(postgres_factory, clock=lambda: INGEST_TIME)
+    recorded = _record_complete_scope(writer)
+    market_required = required_facts()[1]
+    original = recorded[market_required]
+    validation_key = "validation-snapshot-before-concurrent-commit"
+
+    with postgres_factory.connection() as holder:
+        acquire_scope_lock(
+            holder,
+            namespace="pit-idempotency",
+            identity=validation_key,
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending_validation = executor.submit(
+                pit_authority(postgres_factory, clock=lambda: NOW).validate,
+                pit_request(idempotency_key=validation_key),
+            )
+            with pytest.raises(FutureTimeoutError):
+                pending_validation.result(timeout=0.2)
+            writer.record_fact(
+                pit_fact(
+                    market_required,
+                    revision=2,
+                    supersedes_fact_id=original.fact.fact_id,
+                    value_json='{"value":"committed-after-snapshot-start"}',
+                ),
+                actor="source-ingestor",
+                reason="commit after validation snapshot starts",
+                idempotency_key="correction-after-validation-snapshot",
+            )
+            holder.commit()
+            evidence = pending_validation.result(timeout=3)
+
+    assert evidence.outcome is PITValidationOutcome.SATISFIED
+    assert (original.fact.fact_id, original.fact.content_hash) in (
+        evidence.selected_fact_references
+    )
+    assert writer.replay_evidence(evidence.evidence_id) == evidence
+
+
+def test_removed_global_revision_lock_no_longer_blocks_unrelated_write(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    repository = pit_authority(postgres_factory, clock=lambda: INGEST_TIME)
+    authorize_source(repository)
+    required = required_facts()[0]
+
+    with postgres_factory.connection() as holder:
+        acquire_scope_lock(
+            holder,
+            namespace="pit-authority-revision",
+            identity="global",
+        )
+        started = perf_counter()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(
+                repository.record_fact,
+                pit_fact(required),
+                actor="source-ingestor",
+                reason="prove no dependency on former global lock",
+                idempotency_key="write-with-former-global-lock-held",
+            )
+            recorded = pending.result(timeout=3)
+        elapsed = perf_counter() - started
+
+    assert recorded.fact.logical_key == required.logical_key
+    assert elapsed < 3
+
+
 def test_source_qualification_waits_for_inflight_source_admission(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -387,6 +490,94 @@ def test_validation_replay_is_pinned_after_later_revision(
     assert repository.replay_evidence(evidence.evidence_id) == evidence
 
 
+@pytest.mark.parametrize(
+    ("resolver", "rejection"),
+    [
+        (
+            _LineageAttackResolver(wrong_dependency=True),
+            "DATASET_SOURCE_MANIFEST_BINDING_MISMATCH",
+        ),
+        (
+            _LineageAttackResolver(future=True),
+            "FUTURE_ARTIFACT_AVAILABLE:DATASET:dataset-a",
+        ),
+    ],
+)
+def test_validation_rejects_contextually_invalid_canonical_lineage(
+    postgres_factory: PostgresConnectionFactory,
+    resolver: _LineageAttackResolver,
+    rejection: str,
+) -> None:
+    writer = PostgresPITAuthority(
+        postgres_factory,
+        clock=lambda: INGEST_TIME,
+        artifact_resolver=resolver,
+        provider_policy=fixture_provider_policy(),
+    )
+    _record_complete_scope(writer)
+    validator = PostgresPITAuthority(
+        postgres_factory,
+        clock=lambda: NOW,
+        artifact_resolver=resolver,
+        provider_policy=fixture_provider_policy(),
+    )
+
+    evidence = validator.validate(
+        pit_request(idempotency_key="contextual-lineage-" + rejection)
+    )
+
+    assert evidence.outcome is PITValidationOutcome.REJECTED
+    assert rejection in evidence.rejection_codes
+
+
+def test_source_qualification_limits_admitted_fact_kinds(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    repository = pit_authority(postgres_factory, clock=lambda: INGEST_TIME)
+    repository.record_source_qualification(
+        source_qualification(
+            qualified_fact_kinds=(PITFactKind.MARKET_DATA,),
+        ),
+        idempotency_key="market-data-only-source",
+    )
+
+    with pytest.raises(PITAuthorityConflictError, match="does not authorize"):
+        repository.record_fact(
+            pit_fact(required_facts()[0]),
+            actor="source-ingestor",
+            reason="attempt calendar outside qualification",
+            idempotency_key="calendar-outside-source-qualification",
+        )
+
+
+def test_default_repository_uses_postgresql_clock_for_system_import_time(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    repository = PostgresPITAuthority(
+        postgres_factory,
+        artifact_resolver=FixturePITArtifactAuthorityResolver(),
+        provider_policy=fixture_provider_policy(),
+    )
+    with postgres_factory.connection() as connection:
+        before = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp()) AS now"
+        ).fetchone()[0]
+    authorize_source(repository, idempotency_key="database-clock-source")
+    recorded = repository.record_fact(
+        pit_fact(required_facts()[0]),
+        actor="source-ingestor",
+        reason="prove PostgreSQL import clock authority",
+        idempotency_key="database-clock-fact",
+    )
+    with postgres_factory.connection() as connection:
+        after = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp()) AS now"
+        ).fetchone()[0]
+
+    assert before <= recorded.system_imported_at <= after
+    assert recorded.system_time_authority == "POSTGRESQL_CLOCK"
+
+
 def test_forged_artifact_reference_is_rejected_before_fact_admission(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -459,6 +650,9 @@ def _historical_temporal_authority() -> PITFactTemporalAuthority:
                 ArtifactId(f"historical-{kind.value.lower()}"),
                 HASH_A,
             ),
+            "formal-provider",
+            "formal-provider-contract-v1",
+            PITProviderEvidenceUse.HISTORICAL_PROVIDER_PIT,
         )
         for kind in (
             PITProviderEvidenceKind.ARCHIVE_INTEGRITY,
@@ -468,6 +662,8 @@ def _historical_temporal_authority() -> PITFactTemporalAuthority:
     )
     return PITFactTemporalAuthority(
         mode=PITFactEvidenceMode.HISTORICAL_PROVIDER_PIT,
+        provider_id="formal-provider",
+        provider_contract="formal-provider-contract-v1",
         provider_available_at=DECISION_TIME - timedelta(minutes=5),
         provider_recorded_at=DECISION_TIME - timedelta(minutes=4),
         provider_revision="provider-revision-2026-08-08-r1",
@@ -519,7 +715,17 @@ def test_historical_provider_fact_may_be_imported_after_decision_time(
         for fact_id, _ in evidence.selected_fact_references
         if repository.get_fact(fact_id).fact.fact_kind.value == "MARKET_DATA"
     )
-    assert selected_market.ingested_at > DECISION_TIME
+    assert selected_market.system_imported_at > DECISION_TIME
+    assert len(selected_market.temporal_resolution_references) == 4
+    selected_binding = next(
+        item
+        for item in evidence.selected_fact_authorities
+        if item.fact_id == selected_market.fact.fact_id
+    )
+    assert (
+        selected_binding.temporal_resolution_references
+        == selected_market.temporal_resolution_references
+    )
 
     corrected_temporal = replace(
         selected_market.fact.temporal_authority,
@@ -650,26 +856,13 @@ def test_formal_fact_requires_explicit_active_source_authority(
         )
 
 
-def test_as_of_rejects_unknown_future_authority_revision(
-    postgres_factory: PostgresConnectionFactory,
-) -> None:
-    repository = pit_authority(
-        postgres_factory,
-        clock=lambda: INGEST_TIME,
-    )
-    authorize_source(repository)
-    repository.record_fact(
-        pit_fact(required_facts()[0]),
-        actor="source-ingestor",
-        reason="record calendar",
-        idempotency_key="future-revision-calendar",
-    )
-    with pytest.raises(PITAuthorityIntegrityError, match="audit metadata"):
-        repository.as_of(
-            PITAsOfQuery.create(
-                scope_id="daily:2026-08-08",
-                decision_time=DECISION_TIME,
-                required_facts=(required_facts()[0],),
-                authority_revision=repository.current_revision() + 1,
-            )
-        )
+def test_as_of_query_has_no_revision_prefix_input() -> None:
+    values = {
+        "scope_id": "daily:2026-08-08",
+        "decision_time": DECISION_TIME,
+        "required_facts": (required_facts()[0],),
+        "authority_revision": 1,
+    }
+
+    with pytest.raises(TypeError, match="authority_revision"):
+        PITAsOfQuery.create(**values)

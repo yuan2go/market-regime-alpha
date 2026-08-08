@@ -42,6 +42,10 @@ from market_regime_alpha.application.operational_research.postgres_composite_rep
 from market_regime_alpha.application.trading_lifecycle.postgres_risk_reduction import (
     PostgresRiskReductionManualIntentRepository,
 )
+from market_regime_alpha.data.pit_artifact_authority import (
+    PITArtifactAuthorityResolver,
+)
+from market_regime_alpha.data.pit_authority import ProviderQualificationPolicy
 from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.decision.postgres_repository import (
     PostgresDecisionLifecycleRepository,
@@ -164,8 +168,19 @@ class RepositoryFactory:
     def model_governance(self):
         return PostgresModelGovernanceRepository(self._postgres)
 
-    def pit_authority(self, *, clock: Clock | None = None):
-        return PostgresPITAuthority(self._postgres, clock=clock)
+    def pit_authority(
+        self,
+        *,
+        clock: Clock | None = None,
+        artifact_resolver: PITArtifactAuthorityResolver | None = None,
+        provider_policy: ProviderQualificationPolicy | None = None,
+    ):
+        return PostgresPITAuthority(
+            self._postgres,
+            clock=clock,
+            artifact_resolver=artifact_resolver,
+            provider_policy=provider_policy,
+        )
 
     def experiment_governance(self):
         return PostgresExperimentGovernanceRepository(self._postgres)

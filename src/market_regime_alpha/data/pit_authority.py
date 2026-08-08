@@ -8,12 +8,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 import json
 from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import ArtifactId, ModelId
 from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.pit_contracts import (
+    FORMAL_PROVIDER_EVIDENCE_KINDS,
+    PITArtifactKind,
+    PITArtifactReference,
+    PITContractError,
+    PITFactEvidenceMode,
+    PITFactKind,
+    PITProviderEvidence,
+    PITProviderEvidenceKind,
+    PITProviderEvidenceUse,
+    PITSourceAuthorityStatus,
+    PITSourceEvidenceLevel,
+    PITValidationOutcome,
+    ProviderQualificationPolicy,
+)
+from market_regime_alpha.data.pit_source_authority import (
+    PITFactTemporalAuthority,
+    PITSourceQualification,
+)
 from market_regime_alpha.evidence.canonical import (
     canonical_datetime,
     canonical_hash,
@@ -26,541 +44,22 @@ from market_regime_alpha.market_data.contracts import (
 )
 
 
-class PITContractError(ValueError):
-    """A caller attempted to bypass a Formal PIT contract invariant."""
-
-
-class PITFactKind(str, Enum):
-    MARKET_DATA = "MARKET_DATA"
-    TRADING_CALENDAR = "TRADING_CALENDAR"
-    UNIVERSE_MEMBERSHIP = "UNIVERSE_MEMBERSHIP"
-    TRADING_STATUS = "TRADING_STATUS"
-    ST_STATUS = "ST_STATUS"
-    LISTING_STATUS = "LISTING_STATUS"
-    TRADING_ELIGIBILITY = "TRADING_ELIGIBILITY"
-    ADJUSTMENT_FACTOR = "ADJUSTMENT_FACTOR"
-    FEATURE_MATERIALIZATION = "FEATURE_MATERIALIZATION"
-    FUNDAMENTAL = "FUNDAMENTAL"
-    INDEX_MEMBERSHIP = "INDEX_MEMBERSHIP"
-    INDUSTRY_MEMBERSHIP = "INDUSTRY_MEMBERSHIP"
-    THEME_MEMBERSHIP = "THEME_MEMBERSHIP"
-    ETF_MEMBERSHIP = "ETF_MEMBERSHIP"
-
-
-class PITValidationOutcome(str, Enum):
-    SATISFIED = "SATISFIED"
-    REJECTED = "REJECTED"
-
-
-class PITSourceAuthorityStatus(str, Enum):
-    QUALIFIED = "QUALIFIED"
-    SUSPENDED = "SUSPENDED"
-
-
-class PITArtifactKind(str, Enum):
-    SOURCE_MANIFEST = "SOURCE_MANIFEST"
-    MARKET_DATA_DATASET = "DATASET"
-    TRADING_CALENDAR = "TRADING_CALENDAR"
-    UNIVERSE = "UNIVERSE"
-    ELIGIBILITY = "ELIGIBILITY"
-    FEATURE_MATERIALIZATION = "FEATURE_MATERIALIZATION"
-    ADJUSTMENT_POLICY = "ADJUSTMENT_POLICY"
-    CONFIGURATION = "CONFIGURATION"
-    VALIDATION_PROTOCOL = "VALIDATION_PROTOCOL"
-    PROVIDER_EVIDENCE = "PROVIDER_EVIDENCE"
-    PROVIDER_ARCHIVE = "PROVIDER_ARCHIVE"
-    MEMBERSHIP_DATASET = "MEMBERSHIP_DATASET"
-    FUNDAMENTAL_DATASET = "FUNDAMENTAL_DATASET"
-
-
-class PITFactEvidenceMode(str, Enum):
-    PROSPECTIVE_CAPTURED_PIT = "PROSPECTIVE_CAPTURED_PIT"
-    HISTORICAL_PROVIDER_PIT = "HISTORICAL_PROVIDER_PIT"
-
-
-class PITSourceEvidenceLevel(str, Enum):
-    FIXTURE = "FIXTURE"
-    REPLAY = "REPLAY"
-    FREE_DATA_EXPLORATORY = "FREE_DATA_EXPLORATORY"
-    PIT_INCOMPLETE = "PIT_INCOMPLETE"
-    FORMAL_PIT_CANDIDATE = "FORMAL_PIT_CANDIDATE"
-    FORMAL_PIT_PROVIDER = "FORMAL_PIT_PROVIDER"
-
-
-class PITProviderEvidenceKind(str, Enum):
-    PROVIDER_CONTRACT = "PROVIDER_CONTRACT"
-    HISTORICAL_AVAILABILITY = "HISTORICAL_AVAILABILITY"
-    REVISION_POLICY = "REVISION_POLICY"
-    DATASET_VERSIONING = "DATASET_VERSIONING"
-    ARCHIVE_INTEGRITY = "ARCHIVE_INTEGRITY"
-    INDEPENDENT_VALIDATION = "INDEPENDENT_VALIDATION"
-    QUALIFICATION_DECISION = "QUALIFICATION_DECISION"
-    SUSPENSION_DECISION = "SUSPENSION_DECISION"
-
-
-_SOURCE_EVIDENCE_RANK = {
-    PITSourceEvidenceLevel.FIXTURE: 0,
-    PITSourceEvidenceLevel.REPLAY: 1,
-    PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY: 2,
-    PITSourceEvidenceLevel.PIT_INCOMPLETE: 3,
-    PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE: 4,
-    PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER: 5,
+_FACT_ARTIFACT_KINDS = {
+    PITFactKind.MARKET_DATA: PITArtifactKind.MARKET_DATA_DATASET,
+    PITFactKind.TRADING_CALENDAR: PITArtifactKind.TRADING_CALENDAR,
+    PITFactKind.UNIVERSE_MEMBERSHIP: PITArtifactKind.UNIVERSE,
+    PITFactKind.TRADING_STATUS: PITArtifactKind.ELIGIBILITY,
+    PITFactKind.ST_STATUS: PITArtifactKind.ELIGIBILITY,
+    PITFactKind.LISTING_STATUS: PITArtifactKind.ELIGIBILITY,
+    PITFactKind.TRADING_ELIGIBILITY: PITArtifactKind.ELIGIBILITY,
+    PITFactKind.ADJUSTMENT_FACTOR: PITArtifactKind.ADJUSTMENT_POLICY,
+    PITFactKind.FEATURE_MATERIALIZATION: PITArtifactKind.FEATURE_MATERIALIZATION,
+    PITFactKind.FUNDAMENTAL: PITArtifactKind.FUNDAMENTAL_DATASET,
+    PITFactKind.INDEX_MEMBERSHIP: PITArtifactKind.MEMBERSHIP_DATASET,
+    PITFactKind.INDUSTRY_MEMBERSHIP: PITArtifactKind.MEMBERSHIP_DATASET,
+    PITFactKind.THEME_MEMBERSHIP: PITArtifactKind.MEMBERSHIP_DATASET,
+    PITFactKind.ETF_MEMBERSHIP: PITArtifactKind.MEMBERSHIP_DATASET,
 }
-
-FORMAL_PROVIDER_EVIDENCE_KINDS = tuple(
-    sorted(
-        {
-            PITProviderEvidenceKind.PROVIDER_CONTRACT,
-            PITProviderEvidenceKind.HISTORICAL_AVAILABILITY,
-            PITProviderEvidenceKind.REVISION_POLICY,
-            PITProviderEvidenceKind.DATASET_VERSIONING,
-            PITProviderEvidenceKind.ARCHIVE_INTEGRITY,
-            PITProviderEvidenceKind.INDEPENDENT_VALIDATION,
-            PITProviderEvidenceKind.QUALIFICATION_DECISION,
-        },
-        key=lambda item: item.value,
-    )
-)
-
-
-@dataclass(frozen=True, slots=True)
-class PITArtifactReference:
-    reference_kind: str
-    artifact_id: ArtifactId
-    content_hash: str
-
-    def __post_init__(self) -> None:
-        require_text("reference_kind", self.reference_kind)
-        require_sha256("content_hash", self.content_hash)
-
-    def to_canonical_dict(self) -> dict[str, str]:
-        return {
-            "reference_kind": self.reference_kind,
-            "artifact_id": str(self.artifact_id),
-            "content_hash": self.content_hash,
-        }
-
-    @classmethod
-    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> PITArtifactReference:
-        _require_fields(payload, {"reference_kind", "artifact_id", "content_hash"}, "PIT Artifact Reference")
-        return cls(
-            reference_kind=_string(payload["reference_kind"]),
-            artifact_id=ArtifactId(_string(payload["artifact_id"])),
-            content_hash=_string(payload["content_hash"]),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class PITProviderEvidence:
-    evidence_kind: PITProviderEvidenceKind
-    reference: PITArtifactReference
-
-    def __post_init__(self) -> None:
-        if self.reference.reference_kind != PITArtifactKind.PROVIDER_EVIDENCE.value:
-            raise PITContractError(
-                "typed Provider evidence requires PROVIDER_EVIDENCE authority"
-            )
-
-    def to_canonical_dict(self) -> dict[str, Any]:
-        return {
-            "evidence_kind": self.evidence_kind.value,
-            "reference": self.reference.to_canonical_dict(),
-        }
-
-    @classmethod
-    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> PITProviderEvidence:
-        _require_fields(payload, {"evidence_kind", "reference"}, "PIT Provider Evidence")
-        return cls(
-            evidence_kind=PITProviderEvidenceKind(_string(payload["evidence_kind"])),
-            reference=PITArtifactReference.from_canonical_dict(
-                _mapping(payload["reference"])
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderQualificationPolicy:
-    policy_id: ArtifactId
-    policy_hash: str
-    provider_ceilings: tuple[tuple[str, PITSourceEvidenceLevel], ...]
-    default_ceiling: PITSourceEvidenceLevel
-    formal_required_evidence: tuple[PITProviderEvidenceKind, ...]
-    schema_version: str = "pit-provider-qualification-policy-v1"
-
-    def __post_init__(self) -> None:
-        if self.schema_version != "pit-provider-qualification-policy-v1":
-            raise PITContractError("unsupported Provider Qualification Policy schema")
-        require_sha256("policy_hash", self.policy_hash)
-        ordered = tuple(
-            sorted(self.provider_ceilings, key=lambda item: item[0].casefold())
-        )
-        if not ordered or ordered != self.provider_ceilings:
-            raise PITContractError("provider ceilings must be non-empty and sorted")
-        normalized_ids = tuple(item[0].casefold() for item in ordered)
-        if len(normalized_ids) != len(set(normalized_ids)):
-            raise PITContractError("provider ceilings must be unique")
-        for provider_id, _ in ordered:
-            require_text("provider_id", provider_id)
-        if self.formal_required_evidence != tuple(
-            sorted(set(self.formal_required_evidence), key=lambda item: item.value)
-        ):
-            raise PITContractError("formal evidence kinds must be sorted and unique")
-        if canonical_hash(self.semantic_payload()) != self.policy_hash:
-            raise PITContractError("Provider Qualification Policy hash mismatch")
-        if self.policy_id != _content_id("pit-provider-policy", self.policy_hash):
-            raise PITContractError("Provider Qualification Policy identity mismatch")
-
-    @classmethod
-    def create(
-        cls,
-        *,
-        provider_ceilings: tuple[tuple[str, PITSourceEvidenceLevel], ...],
-        default_ceiling: PITSourceEvidenceLevel,
-        formal_required_evidence: tuple[PITProviderEvidenceKind, ...] = FORMAL_PROVIDER_EVIDENCE_KINDS,
-    ) -> ProviderQualificationPolicy:
-        normalized = tuple(
-            sorted(
-                ((provider_id.casefold(), level) for provider_id, level in provider_ceilings),
-                key=lambda item: item[0],
-            )
-        )
-        required = tuple(
-            sorted(set(formal_required_evidence), key=lambda item: item.value)
-        )
-        payload = _provider_policy_payload(
-            provider_ceilings=normalized,
-            default_ceiling=default_ceiling,
-            formal_required_evidence=required,
-        )
-        digest = canonical_hash(payload)
-        return cls(
-            policy_id=_content_id("pit-provider-policy", digest),
-            policy_hash=digest,
-            provider_ceilings=normalized,
-            default_ceiling=default_ceiling,
-            formal_required_evidence=required,
-        )
-
-    @classmethod
-    def default(cls) -> ProviderQualificationPolicy:
-        return cls.create(
-            provider_ceilings=(
-                ("akshare", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
-                ("baostock", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
-                ("qmt", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
-                ("tencent", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
-                ("thinktrader", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
-                ("tushare", PITSourceEvidenceLevel.PIT_INCOMPLETE),
-                ("tushare-free", PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY),
-                ("xuntou", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
-                ("xtquant", PITSourceEvidenceLevel.FORMAL_PIT_CANDIDATE),
-            ),
-            default_ceiling=PITSourceEvidenceLevel.PIT_INCOMPLETE,
-        )
-
-    def maximum_level(self, provider_id: str) -> PITSourceEvidenceLevel:
-        normalized = provider_id.casefold()
-        return dict(self.provider_ceilings).get(normalized, self.default_ceiling)
-
-    def require_level(
-        self,
-        provider_id: str,
-        requested: PITSourceEvidenceLevel,
-    ) -> None:
-        require_text("provider_id", provider_id)
-        maximum = self.maximum_level(provider_id)
-        if _SOURCE_EVIDENCE_RANK[requested] > _SOURCE_EVIDENCE_RANK[maximum]:
-            raise PITContractError(
-                f"Provider evidence ceiling rejected {provider_id}: "
-                f"{requested.value} exceeds {maximum.value}"
-            )
-
-    def require_formal_evidence(
-        self, evidence: tuple[PITProviderEvidence, ...]
-    ) -> None:
-        kinds = tuple(sorted({item.evidence_kind for item in evidence}, key=lambda item: item.value))
-        missing = set(self.formal_required_evidence).difference(kinds)
-        if missing:
-            raise PITContractError(
-                "formal Provider evidence incomplete: "
-                + ",".join(sorted(item.value for item in missing))
-            )
-
-    def semantic_payload(self) -> dict[str, Any]:
-        return _provider_policy_payload(
-            provider_ceilings=self.provider_ceilings,
-            default_ceiling=self.default_ceiling,
-            formal_required_evidence=self.formal_required_evidence,
-        )
-
-    def to_canonical_dict(self) -> dict[str, Any]:
-        return {
-            "policy_id": str(self.policy_id),
-            "policy_hash": self.policy_hash,
-            **self.semantic_payload(),
-        }
-
-    @property
-    def reference(self) -> PITArtifactReference:
-        return PITArtifactReference(
-            PITArtifactKind.CONFIGURATION.value,
-            self.policy_id,
-            self.policy_hash,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class PITFactTemporalAuthority:
-    mode: PITFactEvidenceMode
-    provider_available_at: datetime
-    provider_recorded_at: datetime
-    provider_revision: str | None = None
-    provider_dataset_version: str | None = None
-    provider_archive: PITArtifactReference | None = None
-    provider_evidence: tuple[PITProviderEvidence, ...] = ()
-
-    def __post_init__(self) -> None:
-        require_utc_second("provider_available_at", self.provider_available_at)
-        require_utc_second("provider_recorded_at", self.provider_recorded_at)
-        if self.provider_recorded_at < self.provider_available_at:
-            raise PITContractError("Provider fact was recorded before available")
-        if self.provider_evidence != tuple(
-            sorted(set(self.provider_evidence), key=_provider_evidence_key)
-        ):
-            raise PITContractError("provider_evidence must be sorted and unique")
-        if self.mode is PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT:
-            if any(
-                value is not None
-                for value in (
-                    self.provider_revision,
-                    self.provider_dataset_version,
-                    self.provider_archive,
-                )
-            ) or self.provider_evidence:
-                raise PITContractError(
-                    "prospective captured PIT cannot claim historical Provider authority"
-                )
-            return
-        if not self.provider_revision or not self.provider_dataset_version:
-            raise PITContractError(
-                "historical Provider PIT requires revision and dataset version"
-            )
-        require_text("provider_revision", self.provider_revision)
-        require_text("provider_dataset_version", self.provider_dataset_version)
-        if (
-            self.provider_archive is None
-            or self.provider_archive.reference_kind
-            != PITArtifactKind.PROVIDER_ARCHIVE.value
-        ):
-            raise PITContractError(
-                "historical Provider PIT requires resolved Provider archive authority"
-            )
-        required = {
-            PITProviderEvidenceKind.HISTORICAL_AVAILABILITY,
-            PITProviderEvidenceKind.REVISION_POLICY,
-            PITProviderEvidenceKind.ARCHIVE_INTEGRITY,
-        }
-        actual = {item.evidence_kind for item in self.provider_evidence}
-        if not required.issubset(actual):
-            raise PITContractError(
-                "historical Provider PIT requires typed availability/revision/archive evidence"
-            )
-
-    def to_canonical_dict(self) -> dict[str, Any]:
-        return {
-            "mode": self.mode.value,
-            "provider_available_at": canonical_datetime(self.provider_available_at),
-            "provider_recorded_at": canonical_datetime(self.provider_recorded_at),
-            "provider_revision": self.provider_revision,
-            "provider_dataset_version": self.provider_dataset_version,
-            "provider_archive": (
-                None
-                if self.provider_archive is None
-                else self.provider_archive.to_canonical_dict()
-            ),
-            "provider_evidence": [
-                item.to_canonical_dict() for item in self.provider_evidence
-            ],
-        }
-
-    @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> PITFactTemporalAuthority:
-        _require_fields(
-            payload,
-            {
-                "mode",
-                "provider_available_at",
-                "provider_recorded_at",
-                "provider_revision",
-                "provider_dataset_version",
-                "provider_archive",
-                "provider_evidence",
-            },
-            "PIT Fact Temporal Authority",
-        )
-        archive = payload["provider_archive"]
-        revision = payload["provider_revision"]
-        dataset_version = payload["provider_dataset_version"]
-        return cls(
-            mode=PITFactEvidenceMode(_string(payload["mode"])),
-            provider_available_at=parse_utc_second(
-                "provider_available_at", payload["provider_available_at"]
-            ),
-            provider_recorded_at=parse_utc_second(
-                "provider_recorded_at", payload["provider_recorded_at"]
-            ),
-            provider_revision=(
-                None if revision is None else _string(revision)
-            ),
-            provider_dataset_version=(
-                None if dataset_version is None else _string(dataset_version)
-            ),
-            provider_archive=(
-                None
-                if archive is None
-                else PITArtifactReference.from_canonical_dict(_mapping(archive))
-            ),
-            provider_evidence=tuple(
-                PITProviderEvidence.from_canonical_dict(_mapping(item))
-                for item in _sequence(payload["provider_evidence"])
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class PITSourceQualification:
-    qualification_id: ArtifactId
-    qualification_hash: str
-    source_manifest: PITArtifactReference
-    provider_id: str
-    provider_contract: str
-    status: PITSourceAuthorityStatus
-    evidence_level: PITSourceEvidenceLevel
-    provider_evidence: tuple[PITProviderEvidence, ...]
-    qualification_policy: PITArtifactReference
-    revision: int
-    supersedes_qualification_id: ArtifactId | None
-    effective_at: datetime
-    recorded_at: datetime
-    actor: str
-    reason: str
-    schema_version: str = "pit-source-qualification-v1"
-
-    def __post_init__(self) -> None:
-        if self.schema_version != "pit-source-qualification-v1":
-            raise ValueError("unsupported PIT Source Qualification schema")
-        require_sha256("qualification_hash", self.qualification_hash)
-        for label, value in (
-            ("provider_id", self.provider_id),
-            ("provider_contract", self.provider_contract),
-            ("actor", self.actor),
-            ("reason", self.reason),
-        ):
-            require_text(label, value)
-        if (
-            self.qualification_policy.reference_kind
-            != PITArtifactKind.CONFIGURATION.value
-        ):
-            raise PITContractError(
-                "Provider qualification policy requires CONFIGURATION authority"
-            )
-        evidence_keys = tuple(_provider_evidence_key(item) for item in self.provider_evidence)
-        if not evidence_keys or evidence_keys != tuple(sorted(set(evidence_keys))):
-            raise PITContractError("Provider qualification evidence must be sorted and unique")
-        if isinstance(self.revision, bool) or self.revision <= 0:
-            raise ValueError("source qualification revision must be positive")
-        if (self.revision == 1) != (self.supersedes_qualification_id is None):
-            raise ValueError("source qualification supersession/revision mismatch")
-        require_utc_second("effective_at", self.effective_at)
-        require_utc_second("recorded_at", self.recorded_at)
-        if self.recorded_at < self.effective_at:
-            raise ValueError("source qualification recorded before effective")
-        if canonical_hash(self.semantic_payload()) != self.qualification_hash:
-            raise ValueError("PIT Source Qualification hash mismatch")
-        if self.qualification_id != _content_id(
-            "pit-source-qualification", self.qualification_hash
-        ):
-            raise ValueError("PIT Source Qualification identity mismatch")
-
-    @classmethod
-    def create(cls, **values: Any) -> PITSourceQualification:
-        normalized = dict(values)
-        normalized["provider_evidence"] = tuple(
-            sorted(set(values["provider_evidence"]), key=_provider_evidence_key)
-        )
-        digest = canonical_hash(_source_qualification_payload(**normalized))
-        return cls(
-            qualification_id=_content_id("pit-source-qualification", digest),
-            qualification_hash=digest,
-            **normalized,
-        )
-
-    def semantic_payload(self) -> dict[str, Any]:
-        return _source_qualification_payload(
-            source_manifest=self.source_manifest,
-            provider_id=self.provider_id,
-            provider_contract=self.provider_contract,
-            status=self.status,
-            evidence_level=self.evidence_level,
-            provider_evidence=self.provider_evidence,
-            qualification_policy=self.qualification_policy,
-            revision=self.revision,
-            supersedes_qualification_id=self.supersedes_qualification_id,
-            effective_at=self.effective_at,
-            recorded_at=self.recorded_at,
-            actor=self.actor,
-            reason=self.reason,
-        )
-
-    def to_canonical_dict(self) -> dict[str, Any]:
-        return {
-            "qualification_id": str(self.qualification_id),
-            "qualification_hash": self.qualification_hash,
-            **self.semantic_payload(),
-        }
-
-    @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> PITSourceQualification:
-        expected = {
-            "schema_version", "qualification_id", "qualification_hash",
-            "source_manifest", "provider_id", "provider_contract", "status",
-            "evidence_level", "provider_evidence", "qualification_policy",
-            "revision", "supersedes_qualification_id",
-            "effective_at", "recorded_at", "actor", "reason",
-        }
-        _require_fields(payload, expected, "PIT Source Qualification")
-        supersedes = payload["supersedes_qualification_id"]
-        return cls(
-            qualification_id=ArtifactId(_string(payload["qualification_id"])),
-            qualification_hash=_string(payload["qualification_hash"]),
-            source_manifest=PITArtifactReference.from_canonical_dict(
-                _mapping(payload["source_manifest"])
-            ),
-            provider_id=_string(payload["provider_id"]),
-            provider_contract=_string(payload["provider_contract"]),
-            status=PITSourceAuthorityStatus(_string(payload["status"])),
-            evidence_level=PITSourceEvidenceLevel(_string(payload["evidence_level"])),
-            provider_evidence=tuple(
-                PITProviderEvidence.from_canonical_dict(_mapping(item))
-                for item in _sequence(payload["provider_evidence"])
-            ),
-            qualification_policy=PITArtifactReference.from_canonical_dict(
-                _mapping(payload["qualification_policy"])
-            ),
-            revision=_integer(payload["revision"]),
-            supersedes_qualification_id=(
-                ArtifactId(_string(supersedes)) if supersedes is not None else None
-            ),
-            effective_at=parse_utc_second("effective_at", payload["effective_at"]),
-            recorded_at=parse_utc_second("recorded_at", payload["recorded_at"]),
-            actor=_string(payload["actor"]),
-            reason=_string(payload["reason"]),
-            schema_version=_string(payload["schema_version"]),
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -628,6 +127,23 @@ class PITFactRevision:
             raise PITContractError(
                 "PIT fact recorded_at must equal its temporal authority"
             )
+        if (
+            self.provider_id != self.temporal_authority.provider_id
+            or self.provider_contract != self.temporal_authority.provider_contract
+        ):
+            raise PITContractError(
+                "PIT temporal authority must bind the Fact Provider and contract"
+            )
+        _require_reference_kind(
+            "PIT Fact source_manifest",
+            self.source_manifest,
+            PITArtifactKind.SOURCE_MANIFEST,
+        )
+        _require_reference_kind(
+            "PIT Fact artifact",
+            self.artifact,
+            _FACT_ARTIFACT_KINDS[self.fact_kind],
+        )
         _require_canonical_json(self.value_json)
         if canonical_hash(self.semantic_payload()) != self.content_hash:
             raise ValueError("PIT Fact Revision hash mismatch")
@@ -716,18 +232,20 @@ class PITFactRevision:
 class RecordedPITFactRevision:
     fact: PITFactRevision
     authority_revision: int
-    ingested_at: datetime
+    system_imported_at: datetime
     source_qualification_id: ArtifactId
     source_qualification_hash: str
     artifact_resolution_id: ArtifactId
     artifact_resolution_hash: str
     source_manifest_resolution_id: ArtifactId
     source_manifest_resolution_hash: str
+    temporal_resolution_references: tuple[tuple[str, ArtifactId, str], ...]
+    system_time_authority: str
 
     def __post_init__(self) -> None:
         if isinstance(self.authority_revision, bool) or self.authority_revision <= 0:
             raise ValueError("authority_revision must be positive")
-        require_utc_second("ingested_at", self.ingested_at)
+        require_utc_second("system_imported_at", self.system_imported_at)
         for label, digest in (
             ("source_qualification_hash", self.source_qualification_hash),
             ("artifact_resolution_hash", self.artifact_resolution_hash),
@@ -737,12 +255,21 @@ class RecordedPITFactRevision:
             ),
         ):
             require_sha256(label, digest)
+        _require_resolution_references(
+            "temporal_resolution_references",
+            self.temporal_resolution_references,
+        )
+        if self.system_time_authority not in {
+            "POSTGRESQL_CLOCK",
+            "ENGINEERING_FIXTURE_CLOCK",
+        }:
+            raise PITContractError("unsupported PIT system time authority")
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "fact": self.fact.to_canonical_dict(),
             "authority_revision": self.authority_revision,
-            "ingested_at": canonical_datetime(self.ingested_at),
+            "system_imported_at": canonical_datetime(self.system_imported_at),
             "source_qualification_id": str(self.source_qualification_id),
             "source_qualification_hash": self.source_qualification_hash,
             "artifact_resolution_id": str(self.artifact_resolution_id),
@@ -751,6 +278,15 @@ class RecordedPITFactRevision:
                 self.source_manifest_resolution_id
             ),
             "source_manifest_resolution_hash": self.source_manifest_resolution_hash,
+            "temporal_resolution_references": [
+                {
+                    "authority_role": role,
+                    "resolution_id": str(item_id),
+                    "resolution_hash": digest,
+                }
+                for role, item_id, digest in self.temporal_resolution_references
+            ],
+            "system_time_authority": self.system_time_authority,
         }
 
 
@@ -766,6 +302,8 @@ class PITSelectedFactAuthority:
     artifact_resolution_hash: str
     source_manifest_resolution_id: ArtifactId
     source_manifest_resolution_hash: str
+    temporal_resolution_references: tuple[tuple[str, ArtifactId, str], ...]
+    system_time_authority: str
 
     def __post_init__(self) -> None:
         for label, digest in (
@@ -778,6 +316,15 @@ class PITSelectedFactAuthority:
             ),
         ):
             require_sha256(label, digest)
+        _require_resolution_references(
+            "temporal_resolution_references",
+            self.temporal_resolution_references,
+        )
+        if self.system_time_authority not in {
+            "POSTGRESQL_CLOCK",
+            "ENGINEERING_FIXTURE_CLOCK",
+        }:
+            raise PITContractError("unsupported PIT system time authority")
 
     @classmethod
     def from_recorded(
@@ -792,9 +339,11 @@ class PITSelectedFactAuthority:
             artifact_resolution_hash=recorded.artifact_resolution_hash,
             source_manifest_resolution_id=recorded.source_manifest_resolution_id,
             source_manifest_resolution_hash=recorded.source_manifest_resolution_hash,
+            temporal_resolution_references=recorded.temporal_resolution_references,
+            system_time_authority=recorded.system_time_authority,
         )
 
-    def to_canonical_dict(self) -> dict[str, str]:
+    def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "fact_id": str(self.fact_id),
             "fact_hash": self.fact_hash,
@@ -806,6 +355,15 @@ class PITSelectedFactAuthority:
                 self.source_manifest_resolution_id
             ),
             "source_manifest_resolution_hash": self.source_manifest_resolution_hash,
+            "temporal_resolution_references": [
+                {
+                    "authority_role": role,
+                    "resolution_id": str(item_id),
+                    "resolution_hash": digest,
+                }
+                for role, item_id, digest in self.temporal_resolution_references
+            ],
+            "system_time_authority": self.system_time_authority,
         }
 
     @classmethod
@@ -823,6 +381,8 @@ class PITSelectedFactAuthority:
                 "artifact_resolution_hash",
                 "source_manifest_resolution_id",
                 "source_manifest_resolution_hash",
+                "temporal_resolution_references",
+                "system_time_authority",
             },
             "PIT Selected Fact Authority",
         )
@@ -843,6 +403,15 @@ class PITSelectedFactAuthority:
             source_manifest_resolution_hash=_string(
                 payload["source_manifest_resolution_hash"]
             ),
+            temporal_resolution_references=tuple(
+                (
+                    _string(_mapping(item)["authority_role"]),
+                    ArtifactId(_string(_mapping(item)["resolution_id"])),
+                    _string(_mapping(item)["resolution_hash"]),
+                )
+                for item in _sequence(payload["temporal_resolution_references"])
+            ),
+            system_time_authority=_string(payload["system_time_authority"]),
         )
 
 
@@ -907,6 +476,35 @@ class PITValidationLineage:
             raise ValueError("feature_definition_ids must be sorted and unique")
         if len(self.feature_definition_ids) != len(self.feature_materializations):
             raise ValueError("feature definitions/materializations must align")
+        _require_reference_kind(
+            "validation dataset", self.dataset, PITArtifactKind.MARKET_DATA_DATASET
+        )
+        for item in self.source_manifests:
+            _require_reference_kind(
+                "validation SourceManifest", item, PITArtifactKind.SOURCE_MANIFEST
+            )
+        _require_reference_kind(
+            "validation universe", self.universe, PITArtifactKind.UNIVERSE
+        )
+        _require_reference_kind(
+            "validation eligibility", self.eligibility, PITArtifactKind.ELIGIBILITY
+        )
+        for item in self.feature_materializations:
+            _require_reference_kind(
+                "validation Feature Materialization",
+                item,
+                PITArtifactKind.FEATURE_MATERIALIZATION,
+            )
+        _require_reference_kind(
+            "validation configuration",
+            self.configuration,
+            PITArtifactKind.CONFIGURATION,
+        )
+        _require_reference_kind(
+            "validation protocol",
+            self.validation_protocol,
+            PITArtifactKind.VALIDATION_PROTOCOL,
+        )
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -1043,7 +641,6 @@ class PITAsOfQuery:
     scope_id: str
     decision_time: datetime
     required_facts: tuple[PITRequiredFact, ...]
-    authority_revision: int | None = None
 
     def __post_init__(self) -> None:
         require_sha256("query_hash", self.query_hash)
@@ -1054,11 +651,6 @@ class PITAsOfQuery:
             sorted(self.required_facts, key=_required_fact_key)
         ):
             raise PITContractError("required_facts must be sorted and unique")
-        if self.authority_revision is not None and (
-            isinstance(self.authority_revision, bool)
-            or self.authority_revision <= 0
-        ):
-            raise PITContractError("authority_revision must be positive")
         payload = {
             "schema_version": "pit-as-of-query-v1",
             "scope_id": self.scope_id,
@@ -1066,7 +658,6 @@ class PITAsOfQuery:
             "required_facts": [
                 item.to_canonical_dict() for item in self.required_facts
             ],
-            "authority_revision": self.authority_revision,
         }
         if canonical_hash(payload) != self.query_hash:
             raise PITContractError("PIT As-Of Query hash mismatch")
@@ -1078,22 +669,18 @@ class PITAsOfQuery:
         scope_id: str,
         decision_time: datetime,
         required_facts: tuple[PITRequiredFact, ...],
-        authority_revision: int | None = None,
     ) -> PITAsOfQuery:
         require_text("scope_id", scope_id)
         require_utc_second("decision_time", decision_time)
         require_unique_required_fact_keys(required_facts)
         ordered = tuple(sorted(required_facts, key=_required_fact_key))
-        if authority_revision is not None and (isinstance(authority_revision, bool) or authority_revision <= 0):
-            raise ValueError("authority_revision must be positive")
         payload = {
             "schema_version": "pit-as-of-query-v1",
             "scope_id": scope_id,
             "decision_time": canonical_datetime(decision_time),
             "required_facts": [item.to_canonical_dict() for item in ordered],
-            "authority_revision": authority_revision,
         }
-        return cls(canonical_hash(payload), scope_id, decision_time, ordered, authority_revision)
+        return cls(canonical_hash(payload), scope_id, decision_time, ordered)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1349,50 +936,6 @@ def require_unique_required_fact_keys(
         seen[item.logical_key] = item
 
 
-def _provider_policy_payload(
-    *,
-    provider_ceilings: tuple[tuple[str, PITSourceEvidenceLevel], ...],
-    default_ceiling: PITSourceEvidenceLevel,
-    formal_required_evidence: tuple[PITProviderEvidenceKind, ...],
-) -> dict[str, Any]:
-    return {
-        "schema_version": "pit-provider-qualification-policy-v1",
-        "provider_ceilings": [
-            {"provider_id": provider_id, "maximum_level": level.value}
-            for provider_id, level in provider_ceilings
-        ],
-        "default_ceiling": default_ceiling.value,
-        "formal_required_evidence": [
-            item.value for item in formal_required_evidence
-        ],
-    }
-
-
-def _source_qualification_payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "pit-source-qualification-v1",
-        "source_manifest": values["source_manifest"].to_canonical_dict(),
-        "provider_id": values["provider_id"],
-        "provider_contract": values["provider_contract"],
-        "status": values["status"].value,
-        "evidence_level": values["evidence_level"].value,
-        "provider_evidence": [
-            item.to_canonical_dict() for item in values["provider_evidence"]
-        ],
-        "qualification_policy": values["qualification_policy"].to_canonical_dict(),
-        "revision": values["revision"],
-        "supersedes_qualification_id": (
-            str(values["supersedes_qualification_id"])
-            if values["supersedes_qualification_id"] is not None
-            else None
-        ),
-        "effective_at": canonical_datetime(values["effective_at"]),
-        "recorded_at": canonical_datetime(values["recorded_at"]),
-        "actor": values["actor"],
-        "reason": values["reason"],
-    }
-
-
 def _pit_fact_payload(**values: Any) -> dict[str, Any]:
     return {
         "schema_version": "pit-fact-revision-v1",
@@ -1498,10 +1041,31 @@ def _reference_key(item: PITArtifactReference) -> tuple[str, str, str]:
     return item.reference_kind, str(item.artifact_id), item.content_hash
 
 
-def _provider_evidence_key(
-    item: PITProviderEvidence,
-) -> tuple[str, tuple[str, str, str]]:
-    return item.evidence_kind.value, _reference_key(item.reference)
+def _require_reference_kind(
+    label: str,
+    reference: PITArtifactReference,
+    expected: PITArtifactKind,
+) -> None:
+    if reference.reference_kind != expected.value:
+        raise PITContractError(
+            f"{label} requires {expected.value} authority, got "
+            f"{reference.reference_kind}"
+        )
+
+
+def _require_resolution_references(
+    label: str,
+    values: tuple[tuple[str, ArtifactId, str], ...],
+) -> None:
+    ordered = tuple(sorted(set(values), key=lambda item: item[0]))
+    if values != ordered:
+        raise PITContractError(f"{label} must be sorted and unique")
+    roles = tuple(item[0] for item in values)
+    if len(roles) != len(set(roles)):
+        raise PITContractError(f"{label} authority roles must be unique")
+    for role, _, digest in values:
+        require_text("authority_role", role)
+        require_sha256(label, digest)
 
 
 def _require_canonical_json(value: str) -> None:
@@ -1559,6 +1123,7 @@ __all__ = [
     "PITFactTemporalAuthority",
     "PITProviderEvidence",
     "PITProviderEvidenceKind",
+    "PITProviderEvidenceUse",
     "PITRequiredFact",
     "PITSelectedFactAuthority",
     "PITSourceAuthorityStatus",

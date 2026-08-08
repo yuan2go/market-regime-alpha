@@ -331,7 +331,7 @@ Commit: `git commit -m "feat(pit): persist artifact and source authority"`
 **Interfaces:**
 - Changes: `record_fact` attaches exact source qualification and Artifact resolutions.
 - Changes: `RecordedPITFactRevision.system_imported_at` is database-clock evidence.
-- Preserves compatibility property: none; the unmerged `ingested_at` shape is corrected directly.
+- Preserves compatibility property: none; the unmerged `system_imported_at` shape is corrected directly.
 
 - [ ] **Step 1: Write RED temporal-mode attacks**
 

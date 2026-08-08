@@ -15,6 +15,7 @@ from market_regime_alpha.data.pit_authority import (
     PITFactTemporalAuthority,
     PITProviderEvidence,
     PITProviderEvidenceKind,
+    PITProviderEvidenceUse,
     PITRequiredFact,
     PITSourceAuthorityStatus,
     PITSourceEvidenceLevel,
@@ -51,6 +52,38 @@ class FixturePITArtifactAuthorityResolver:
             raise PITArtifactAuthorityUnavailableError(
                 "engineering fixture resolver rejected unregistered Artifact"
             )
+        bound_references: tuple[PITArtifactReference, ...] = ()
+        if reference.reference_kind == PITArtifactKind.MARKET_DATA_DATASET.value:
+            bound_references = (
+                (
+                    ref("SOURCE_MANIFEST", "formal-source-manifest")
+                    if str(reference.artifact_id) == "formal-dataset"
+                    else ref("SOURCE_MANIFEST", "source-manifest-a", HASH_B)
+                ),
+            )
+        elif reference.reference_kind == PITArtifactKind.FEATURE_MATERIALIZATION.value:
+            formal = str(reference.artifact_id) == "formal-feature-run"
+            bound_references = tuple(
+                sorted(
+                    (
+                        (
+                            ref("DATASET", "formal-dataset")
+                            if formal
+                            else ref("DATASET", "dataset-a")
+                        ),
+                        (
+                            ref("SOURCE_MANIFEST", "formal-source-manifest")
+                            if formal
+                            else ref("SOURCE_MANIFEST", "source-manifest-a", HASH_B)
+                        ),
+                    ),
+                    key=lambda item: (
+                        item.reference_kind,
+                        str(item.artifact_id),
+                        item.content_hash,
+                    ),
+                )
+            )
         return PITArtifactAuthorityResolution.create(
             reference=reference,
             canonical_schema="engineering-fixture-artifact-v1",
@@ -58,6 +91,7 @@ class FixturePITArtifactAuthorityResolver:
             physical_checksums_hash=HASH_C,
             data_eligibility=DataEligibility.FORMAL_RESEARCH,
             available_at=DECISION_TIME - timedelta(minutes=1),
+            bound_references=bound_references,
             resolved_at=resolved_at,
         )
 
@@ -148,7 +182,15 @@ def _artifact(kind: PITFactKind) -> PITArtifactReference:
         return pit_lineage().eligibility
     if kind is PITFactKind.FEATURE_MATERIALIZATION:
         return pit_lineage().feature_materializations[0]
-    return ref(kind.value, f"artifact-{kind.value.lower()}")
+    if kind is PITFactKind.TRADING_CALENDAR:
+        artifact_kind = PITArtifactKind.TRADING_CALENDAR
+    elif kind is PITFactKind.ADJUSTMENT_FACTOR:
+        artifact_kind = PITArtifactKind.ADJUSTMENT_POLICY
+    elif kind is PITFactKind.FUNDAMENTAL:
+        artifact_kind = PITArtifactKind.FUNDAMENTAL_DATASET
+    else:
+        artifact_kind = PITArtifactKind.MEMBERSHIP_DATASET
+    return ref(artifact_kind.value, f"artifact-{kind.value.lower()}")
 
 
 def pit_fact(
@@ -189,6 +231,8 @@ def pit_fact(
         temporal_authority=temporal_authority
         or PITFactTemporalAuthority(
             mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
+            provider_id="formal-provider",
+            provider_contract="formal-provider-contract-v1",
             provider_available_at=available,
             provider_recorded_at=recorded,
         ),
@@ -211,6 +255,7 @@ def source_qualification(
     reason: str = "explicit test source qualification",
     evidence_level: PITSourceEvidenceLevel | None = None,
     evidence_kinds: tuple[PITProviderEvidenceKind, ...] | None = None,
+    qualified_fact_kinds: tuple[PITFactKind, ...] | None = None,
     policy: ProviderQualificationPolicy | None = None,
 ) -> PITSourceQualification:
     selected_evidence_level = (
@@ -235,8 +280,15 @@ def source_qualification(
                     PITArtifactKind.PROVIDER_EVIDENCE.value,
                     f"source-authority-{kind.value.lower()}-{revision}",
                 ),
+                provider_id=provider_id,
+                provider_contract=provider_contract,
+                evidence_use=PITProviderEvidenceUse.SOURCE_QUALIFICATION,
             )
             for kind in selected_evidence_kinds
+        ),
+        qualified_fact_kinds=(
+            qualified_fact_kinds
+            or tuple(sorted(PITFactKind, key=lambda item: item.value))
         ),
         qualification_policy=selected_policy.reference,
         revision=revision,

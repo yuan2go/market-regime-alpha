@@ -9,9 +9,14 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.pit_artifact_authority import (
+    CanonicalPITArtifactAuthorityResolver,
+)
 from market_regime_alpha.data.pit_authority import (
     FormalPITValidationRequest,
     PITAsOfQuery,
+    PITArtifactKind,
+    PITArtifactReference,
     PITFactRevision,
     PITRequiredFact,
     PITSourceQualification,
@@ -30,6 +35,16 @@ from market_regime_alpha.platform.runtime_governance import ModelVersionLineage
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     add_database_arguments(parser)
+    for option in (
+        "source-manifest",
+        "market-data-dataset",
+        "trading-calendar",
+        "universe",
+        "feature-materialization",
+        "configuration",
+    ):
+        parser.add_argument(f"--pit-{option}-root", type=Path)
+    parser.add_argument("--pit-feature-artifact-root", type=Path)
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("revision")
     for name in (
@@ -49,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
     for name in (
         "record-source-qualification",
+        "resolve-artifact",
         "record-fact",
         "as-of",
         "validate",
@@ -66,7 +82,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     with RepositoryFactory(
         settings_from_namespace(args, dotenv_path=Path("/nonexistent"))
     ) as repositories:
-        pit = repositories.pit_authority()
+        pit = repositories.pit_authority(
+            artifact_resolver=_artifact_resolver(args)
+        )
         operation = args.operation
         if operation == "revision":
             result: Any = {"authority_revision": pit.current_revision()}
@@ -92,6 +110,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _write(operation: str, payload: Mapping[str, Any], pit: Any, repositories: Any) -> Any:
+    if operation == "resolve-artifact":
+        resolution = pit.resolve_artifact(
+            PITArtifactReference.from_canonical_dict(
+                _object(payload["reference"])
+            ),
+            actor=_text(payload, "actor"),
+            reason=_text(payload, "reason"),
+            idempotency_key=_text(payload, "idempotency_key"),
+        )
+        return resolution.to_canonical_dict()
     if operation == "record-source-qualification":
         qualification = pit.record_source_qualification(
             PITSourceQualification.from_canonical_dict(
@@ -117,7 +145,6 @@ def _write(operation: str, payload: Mapping[str, Any], pit: Any, repositories: A
                     PITRequiredFact.from_canonical_dict(_object(item))
                     for item in _sequence(payload["required_facts"])
                 ),
-                authority_revision=_optional_integer(payload.get("authority_revision")),
             )
         )
         return snapshot.to_canonical_dict()
@@ -144,6 +171,21 @@ def _write(operation: str, payload: Mapping[str, Any], pit: Any, repositories: A
     raise ValueError(f"unsupported PIT Authority operation: {operation}")
 
 
+def _artifact_resolver(args: argparse.Namespace) -> CanonicalPITArtifactAuthorityResolver:
+    values = {
+        PITArtifactKind.SOURCE_MANIFEST: args.pit_source_manifest_root,
+        PITArtifactKind.MARKET_DATA_DATASET: args.pit_market_data_dataset_root,
+        PITArtifactKind.TRADING_CALENDAR: args.pit_trading_calendar_root,
+        PITArtifactKind.UNIVERSE: args.pit_universe_root,
+        PITArtifactKind.FEATURE_MATERIALIZATION: args.pit_feature_materialization_root,
+        PITArtifactKind.CONFIGURATION: args.pit_configuration_root,
+    }
+    return CanonicalPITArtifactAuthorityResolver(
+        artifact_roots={kind: path for kind, path in values.items() if path is not None},
+        feature_artifact_root=args.pit_feature_artifact_root,
+    )
+
+
 def _object(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("expected JSON object")
@@ -160,14 +202,6 @@ def _text(payload: Mapping[str, Any], name: str) -> str:
     value = payload.get(name)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
-    return value
-
-
-def _optional_integer(value: object) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError("authority_revision must be an integer")
     return value
 
 
