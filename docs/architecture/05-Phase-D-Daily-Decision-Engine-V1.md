@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-07-26  
 > **Supersedes:** None  
 > **Superseded By:** None  
-> **Related Documents:** ../roadmap/Phase-D-Work-Packages.md, ../specs/README.md, ../status/Gap-Register.md  
+> **Related Documents:** decisions/ADR-Daily-Research-Contract-Convergence.md, ../roadmap/Phase-D-Work-Packages.md, ../specs/README.md, ../status/Gap-Register.md
 > **Code Evidence:** Exploratory Phase D daily runtime implemented under `application/daily_loop/**` and `daily_decision/**`; broader production/position/portfolio contracts remain designed; `daily_research/**` is a frozen historical V1 compatibility layer
 
 ## Objective

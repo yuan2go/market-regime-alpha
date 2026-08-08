@@ -204,4 +204,8 @@ Construction returns structured errors and does not persist an aggregate when an
 
 ## Migration
 
-Legacy fields may be exposed through an adapter only after characterization tests prove semantic compatibility. The adapter records its source identity and cannot increase evidence authority.
+Legacy fields may be exposed through an adapter only after characterization
+tests prove semantic compatibility. The adapter records its source identity and
+cannot increase evidence authority. The binding V1 freeze, field matrix and
+blocked-migration rules are defined in
+[ADR-Daily-Research-Contract-Convergence](../architecture/decisions/ADR-Daily-Research-Contract-Convergence.md).

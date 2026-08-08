@@ -67,6 +67,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Research Artifact Architecture](architecture/03-Research-Artifact-Architecture.md)
 - [Data and Time Semantics](architecture/04-Data-and-Time-Semantics.md)
 - [Phase D Daily Decision Engine](architecture/05-Phase-D-Daily-Decision-Engine-V1.md)
+- [ADR: Daily Research Contract Convergence](architecture/decisions/ADR-Daily-Research-Contract-Convergence.md)
 - [Legacy Migration](architecture/06-Legacy-Migration.md)
 - [QuantDesk Boundary](architecture/07-QuantDesk-Integration-Boundary.md)
 - [Deployment and Operations Boundary](architecture/08-Deployment-Operations-Boundary.md)
