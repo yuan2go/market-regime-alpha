@@ -267,8 +267,9 @@ class PostgresStateSystemRepository:
                     """
                     INSERT INTO state_research_stage_authority(
                         run_id, tick_id, state_receipt_id, stage,
-                        artifact_id, artifact_hash, available_at, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        artifact_id, artifact_hash, data_eligibility,
+                        available_at, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (run_id, tick_id, stage) DO NOTHING
                     """,
                     (
@@ -278,13 +279,15 @@ class PostgresStateSystemRepository:
                         authority.stage.value,
                         str(authority.artifact_id),
                         authority.artifact_hash,
+                        authority.data_eligibility.value,
                         authority.available_at,
                         created_at,
                     ),
                 )
                 stored = connection.execute(
                     """
-                    SELECT state_receipt_id, artifact_id, artifact_hash, available_at
+                    SELECT state_receipt_id, artifact_id, artifact_hash,
+                           data_eligibility, available_at
                     FROM state_research_stage_authority
                     WHERE run_id = %s AND tick_id = %s AND stage = %s
                     """,
@@ -294,7 +297,8 @@ class PostgresStateSystemRepository:
                     str(stored[0]) != str(result.child_receipt_id)
                     or str(stored[1]) != str(authority.artifact_id)
                     or str(stored[2]) != authority.artifact_hash
-                    or stored[3] != authority.available_at
+                    or str(stored[3]) != authority.data_eligibility.value
+                    or stored[4] != authority.available_at
                 ):
                     raise StateSystemConflict(
                         "State stage authority identity conflict"
@@ -327,7 +331,7 @@ class PostgresStateSystemRepository:
             )
         rows = connection.execute(
             """
-            SELECT stage, artifact_id, artifact_hash, available_at
+            SELECT stage, artifact_id, artifact_hash, data_eligibility, available_at
             FROM state_research_stage_authority
             WHERE run_id = %s AND tick_id = %s
             """,
@@ -357,19 +361,45 @@ class PostgresStateSystemRepository:
                     str(row[0]),
                     ArtifactId(str(row[1])),
                     str(row[2]),
-                    row[3],
+                    row[4],
                 )
                 for row in ordered
             ),
         )
-        expected_references = [
-            RuntimeArtifactReference(
-                reference_kind=f"STATE_RESEARCH_{row[0]}",
-                artifact_id=ArtifactId(str(row[1])),
-                content_hash=str(row[2]),
-            ).to_canonical_dict()
-            for row in ordered
-        ]
+        receipt_schema = receipt_payload.get("schema")
+        if receipt_schema == "state_system_runtime_receipt/v2":
+            if any(row[3] is None for row in ordered):
+                raise StateSystemIntegrityError(
+                    "State Runtime v2 receipt lacks DataEligibility authority"
+                )
+            expected_references = [
+                {
+                    **RuntimeArtifactReference(
+                        reference_kind=f"STATE_RESEARCH_{row[0]}",
+                        artifact_id=ArtifactId(str(row[1])),
+                        content_hash=str(row[2]),
+                    ).to_canonical_dict(),
+                    "data_eligibility": str(row[3]),
+                }
+                for row in ordered
+            ]
+        elif receipt_schema == "state_system_runtime_receipt/v1":
+            if any(row[3] is not None for row in ordered):
+                raise StateSystemIntegrityError(
+                    "legacy State Runtime receipt eligibility was rewritten"
+                )
+            expected_references = [
+                RuntimeArtifactReference(
+                    reference_kind=f"STATE_RESEARCH_{row[0]}",
+                    artifact_id=ArtifactId(str(row[1])),
+                    content_hash=str(row[2]),
+                ).to_canonical_dict()
+                for row in ordered
+            ]
+        else:
+            raise StateSystemIntegrityError(
+                "unsupported State Runtime receipt schema"
+            )
         expected_receipt_id = ArtifactId(
             f"state-system-receipt:{result.child_receipt_hash[7:]}"
         )
@@ -383,8 +413,6 @@ class PostgresStateSystemRepository:
             or result.child_receipt_id != expected_receipt_id
             or result.child_artifact_id != pipeline_id
             or result.child_artifact_hash != pipeline_hash
-            or receipt_payload.get("schema")
-            != "state_system_runtime_receipt/v1"
             or receipt_payload.get("request_idempotency_key")
             != request.idempotency_key
             or receipt_payload.get("pipeline_artifact_id") != str(pipeline_id)

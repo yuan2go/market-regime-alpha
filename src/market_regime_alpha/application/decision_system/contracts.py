@@ -10,6 +10,7 @@ from typing import Any, Mapping
 import unicodedata
 
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import (
     canonical_datetime,
     canonical_hash,
@@ -23,7 +24,8 @@ from market_regime_alpha.market_data.contracts import (
 
 MANUAL_ACCOUNT_OBSERVATION_SCHEMA = "manual_account_observation/v1"
 ACCOUNT_RECONCILIATION_SCHEMA = "account_reconciliation_report/v1"
-DECISION_LINEAGE_SCHEMA = "decision_lineage/v2"
+DECISION_LINEAGE_SCHEMA = "decision_lineage/v3"
+LEGACY_DECISION_LINEAGE_SCHEMA = "decision_lineage/v2"
 SUMMARY_CANDIDATE_SCHEMA = "daily_summary_candidate/v2"
 DAILY_DECISION_SUMMARY_SCHEMA = "daily_decision_window_summary/v1"
 RESEARCH_PORTFOLIO_PROPOSAL_SCHEMA = "research_portfolio_proposal/v1"
@@ -731,16 +733,30 @@ class DecisionLineage:
     position_snapshot_ids: tuple[ArtifactId, ...]
     model_ids: tuple[ArtifactId, ...]
     configuration_ids: tuple[ArtifactId, ...]
+    data_eligibility: DataEligibility
     as_of_time: datetime
     available_at: datetime
-    schema_version: str = field(default=DECISION_LINEAGE_SCHEMA, init=False)
+    schema_version: str = DECISION_LINEAGE_SCHEMA
 
     def __post_init__(self) -> None:
-        _schema(self.schema_version, DECISION_LINEAGE_SCHEMA)
+        if self.schema_version not in {
+            LEGACY_DECISION_LINEAGE_SCHEMA,
+            DECISION_LINEAGE_SCHEMA,
+        }:
+            raise ValueError("unsupported DecisionLineage schema")
+        if (
+            self.schema_version == LEGACY_DECISION_LINEAGE_SCHEMA
+            and self.data_eligibility is not DataEligibility.UNQUALIFIED
+        ):
+            raise ValueError(
+                "legacy DecisionLineage has UNQUALIFIED data authority"
+            )
         require_sha256("state_receipt_hash", self.state_receipt_hash)
         require_sha256("candidate_binding_hash", self.candidate_binding_hash)
         require_sha256("signal_bundle_hash", self.signal_bundle_hash)
         require_sha256("forecast_bundle_hash", self.forecast_bundle_hash)
+        if not isinstance(self.data_eligibility, DataEligibility):
+            raise TypeError("Decision lineage data_eligibility must be DataEligibility")
         _aware("as_of_time", self.as_of_time)
         _aware("available_at", self.available_at)
         if self.available_at > self.as_of_time:
@@ -754,7 +770,7 @@ class DecisionLineage:
                 raise ValueError(f"{label} must be sorted and unique")
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "continuous_operation_id": str(self.continuous_operation_id),
             "runtime_tick_id": str(self.runtime_tick_id),
@@ -780,15 +796,17 @@ class DecisionLineage:
             "as_of_time": canonical_datetime(self.as_of_time),
             "available_at": canonical_datetime(self.available_at),
         }
+        if self.schema_version == DECISION_LINEAGE_SCHEMA:
+            payload["data_eligibility"] = self.data_eligibility.value
+        return payload
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> DecisionLineage:
         def ids(name: str) -> tuple[ArtifactId, ...]:
             return tuple(ArtifactId(_string(item)) for item in _sequence(payload[name]))
 
-        _fields(
-            payload,
-            {
+        schema = _string(payload.get("schema_version"))
+        expected = {
                 "schema_version", "continuous_operation_id", "runtime_tick_id",
                 "state_receipt_id", "state_receipt_hash", "market_state_id",
                 "etf_state_ids", "theme_state_ids", "capital_state_id",
@@ -797,10 +815,12 @@ class DecisionLineage:
                 "forecast_bundle_id", "forecast_bundle_hash", "signal_ids",
                 "forecast_ids", "position_snapshot_ids", "model_ids",
                 "configuration_ids", "as_of_time", "available_at",
-            },
-            "DecisionLineage",
-        )
-        _schema_value(payload, DECISION_LINEAGE_SCHEMA)
+        }
+        if schema == DECISION_LINEAGE_SCHEMA:
+            expected.add("data_eligibility")
+        elif schema != LEGACY_DECISION_LINEAGE_SCHEMA:
+            raise ValueError("unsupported DecisionLineage schema")
+        _fields(payload, expected, "DecisionLineage")
 
         return cls(
             continuous_operation_id=ArtifactId(_string(payload["continuous_operation_id"])),
@@ -824,8 +844,14 @@ class DecisionLineage:
             position_snapshot_ids=ids("position_snapshot_ids"),
             model_ids=ids("model_ids"),
             configuration_ids=ids("configuration_ids"),
+            data_eligibility=(
+                DataEligibility(_string(payload["data_eligibility"]))
+                if schema == DECISION_LINEAGE_SCHEMA
+                else DataEligibility.UNQUALIFIED
+            ),
             as_of_time=_instant(payload["as_of_time"]),
             available_at=_instant(payload["available_at"]),
+            schema_version=schema,
         )
 
 
@@ -1059,7 +1085,11 @@ def bind_decision_candidate_evidence(
     ordered = tuple(sorted(candidates, key=lambda item: item.candidate_rank))
     candidate_hash = _canonical_hash(
         {
-            "schema_version": "decision_candidate_binding/v1",
+            "schema_version": (
+                "decision_candidate_binding/v2"
+                if lineage.schema_version == DECISION_LINEAGE_SCHEMA
+                else "decision_candidate_binding/v1"
+            ),
             "candidate_binding_id": str(lineage.candidate_binding_id),
             "candidate_set_id": str(lineage.candidate_set_id),
             "dynamic_pool_id": str(lineage.dynamic_pool_id),
@@ -1081,7 +1111,13 @@ def bind_decision_candidate_evidence(
                     "research_exposure_ceiling": _decimal_text(
                         item.research_exposure_ceiling
                     ),
-                    "model_qualification": item.model_qualification.value,
+                    **(
+                        {}
+                        if lineage.schema_version == DECISION_LINEAGE_SCHEMA
+                        else {
+                            "model_qualification": item.model_qualification.value
+                        }
+                    ),
                     "liquidity": _decimal_text(item.liquidity),
                     "orderability": item.orderability.value,
                 }
@@ -1089,9 +1125,12 @@ def bind_decision_candidate_evidence(
             ],
         }
     )
-    signal_hash = _canonical_hash(
-        {
-            "schema_version": "decision_signal_bundle/v1",
+    signal_payload = {
+            "schema_version": (
+                "decision_signal_bundle/v2"
+                if lineage.schema_version == DECISION_LINEAGE_SCHEMA
+                else "decision_signal_bundle/v1"
+            ),
             "signal_bundle_id": str(lineage.signal_bundle_id),
             "signals": [
                 {
@@ -1101,10 +1140,15 @@ def bind_decision_candidate_evidence(
                 for item in ordered
             ],
         }
-    )
-    forecast_hash = _canonical_hash(
-        {
-            "schema_version": "decision_forecast_bundle/v1",
+    if lineage.schema_version == DECISION_LINEAGE_SCHEMA:
+        signal_payload["data_eligibility"] = lineage.data_eligibility.value
+    signal_hash = _canonical_hash(signal_payload)
+    forecast_payload = {
+            "schema_version": (
+                "decision_forecast_bundle/v2"
+                if lineage.schema_version == DECISION_LINEAGE_SCHEMA
+                else "decision_forecast_bundle/v1"
+            ),
             "forecast_bundle_id": str(lineage.forecast_bundle_id),
             "forecasts": [
                 {
@@ -1114,7 +1158,9 @@ def bind_decision_candidate_evidence(
                 for item in ordered
             ],
         }
-    )
+    if lineage.schema_version == DECISION_LINEAGE_SCHEMA:
+        forecast_payload["data_eligibility"] = lineage.data_eligibility.value
+    forecast_hash = _canonical_hash(forecast_payload)
     return replace(
         lineage,
         candidate_binding_hash=candidate_hash,

@@ -86,6 +86,7 @@ class PostgresModelRegistryRepository(NativePostgresRepository):
                 namespace="model-registry",
                 identity=registration.definition.model_id,
             )
+            _acquire_model_governance_revision_lock(connection)
             try:
                 command = _command(connection, idempotency_key)
                 if command is not None:
@@ -99,6 +100,13 @@ class PostgresModelRegistryRepository(NativePostgresRepository):
                         connection,
                         registration.definition.model_id,
                         int(command["result_version"]),
+                    )
+                    _validate_model_governance_action(
+                        connection,
+                        idempotency_key=idempotency_key,
+                        action_type="MODEL_REGISTER",
+                        aggregate_id=str(registration.definition.model_id),
+                        action_hash=command_hash,
                     )
                     connection.commit()
                     return result
@@ -142,6 +150,16 @@ class PostgresModelRegistryRepository(NativePostgresRepository):
                     payload_hash=command_hash,
                     result_version=version,
                 )
+                _insert_model_governance_action(
+                    connection,
+                    idempotency_key=idempotency_key,
+                    action_type="MODEL_REGISTER",
+                    aggregate_id=str(registration.definition.model_id),
+                    action_hash=command_hash,
+                    actor="MODEL_REGISTRY_APPLICATION_SERVICE",
+                    reason="Register immutable Model Definition",
+                    payload=payload,
+                )
                 result = self._load_at(
                     connection, registration.definition.model_id, version
                 )
@@ -170,6 +188,7 @@ class PostgresModelRegistryRepository(NativePostgresRepository):
                 namespace="model-registry",
                 identity=model_id,
             )
+            _acquire_model_governance_revision_lock(connection)
             try:
                 command = _command(connection, idempotency_key)
                 if command is not None:
@@ -181,6 +200,13 @@ class PostgresModelRegistryRepository(NativePostgresRepository):
                     )
                     result = self._load_at(
                         connection, model_id, int(command["result_version"])
+                    )
+                    _validate_model_governance_action(
+                        connection,
+                        idempotency_key=idempotency_key,
+                        action_type="MODEL_LIFECYCLE_TRANSITION",
+                        aggregate_id=str(model_id),
+                        action_hash=effective_hash,
                     )
                     connection.commit()
                     return result
@@ -244,6 +270,21 @@ class PostgresModelRegistryRepository(NativePostgresRepository):
                     aggregate_id=str(model_id),
                     payload_hash=effective_hash,
                     result_version=next_version,
+                )
+                transition = registration.transitions[-1]
+                _insert_model_governance_action(
+                    connection,
+                    idempotency_key=idempotency_key,
+                    action_type="MODEL_LIFECYCLE_TRANSITION",
+                    aggregate_id=str(model_id),
+                    action_hash=effective_hash,
+                    actor=(
+                        transition.approval_ref
+                        or "MODEL_REGISTRY_APPLICATION_SERVICE"
+                    ),
+                    reason=transition.reason,
+                    payload=transition_payload,
+                    created_at=transition.changed_at,
                 )
                 result = self._load_at(connection, model_id, next_version)
                 connection.commit()
@@ -667,6 +708,71 @@ def _insert_command(
             datetime.now(UTC).isoformat(),
         ),
     )
+
+
+def _insert_model_governance_action(
+    connection: PostgresConnection,
+    *,
+    idempotency_key: str,
+    action_type: str,
+    aggregate_id: str,
+    action_hash: str,
+    actor: str,
+    reason: str,
+    payload: dict[str, Any],
+    created_at: datetime | None = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO model_governance_action(
+            idempotency_key, action_type, aggregate_id, action_hash,
+            actor, reason, payload_json, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            idempotency_key,
+            action_type,
+            aggregate_id,
+            action_hash,
+            actor,
+            reason,
+            _json(payload),
+            created_at or datetime.now(UTC),
+        ),
+    )
+
+
+def _acquire_model_governance_revision_lock(
+    connection: PostgresConnection,
+) -> None:
+    acquire_scope_lock(
+        connection,
+        namespace="model-governance-revision",
+        identity="global",
+    )
+
+
+def _validate_model_governance_action(
+    connection: PostgresConnection,
+    *,
+    idempotency_key: str,
+    action_type: str,
+    aggregate_id: str,
+    action_hash: str,
+) -> None:
+    row = connection.execute(
+        "SELECT action_type, aggregate_id, action_hash "
+        "FROM model_governance_action WHERE idempotency_key = %s",
+        (idempotency_key,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Model Registry command lacks governance revision")
+    if (
+        row["action_type"] != action_type
+        or row["aggregate_id"] != aggregate_id
+        or row["action_hash"] != action_hash
+    ):
+        raise ValueError("Model Registry governance action mismatch")
 
 
 def _key(value: str) -> None:

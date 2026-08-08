@@ -47,11 +47,21 @@ from market_regime_alpha.application.decision_system.window import (
     DailyDecisionWindowPolicy,
     DecisionWindowBlocked,
 )
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import ArtifactId, UniverseId
 from market_regime_alpha.evidence.canonical import (
     canonical_datetime,
     canonical_hash,
     require_sha256,
+)
+from market_regime_alpha.platform.postgres_runtime_governance import (
+    PostgresModelGovernanceRepository,
+)
+from market_regime_alpha.platform.runtime_governance import (
+    ArtifactLineageReference,
+    ModelSelectionRequest,
+    RuntimeModelLineage,
+    RuntimePurpose,
+    SelectionStatus,
 )
 
 
@@ -60,6 +70,7 @@ DECISION_RUNTIME_RECEIPT_SCHEMA = "decision_runtime_receipt/v2"
 
 class DecisionRuntimeStage(str, Enum):
     ACCOUNT_OBSERVATION_LOOKUP = "ACCOUNT_OBSERVATION_LOOKUP"
+    MODEL_GOVERNANCE = "MODEL_GOVERNANCE"
     RECONCILIATION = "RECONCILIATION"
     SUMMARY_PREVIEW = "SUMMARY_PREVIEW"
     PORTFOLIO_PROPOSAL = "PORTFOLIO_PROPOSAL"
@@ -263,6 +274,7 @@ class DecisionRuntimeInputs:
     previous_summary_id: ArtifactId | None
     correction_of_summary_id: ArtifactId | None
     risk_configuration: DecisionRiskConfiguration
+    model_runtime_lineages: tuple[RuntimeModelLineage, ...]
     finalize: bool
     uses_complete_close_bar: bool = False
     position_settlement_evidence: PositionSettlementEvidence | None = None
@@ -277,9 +289,11 @@ class DecisionSystemRuntimeService:
         repository: PostgresDecisionSystemRepository,
         *,
         policy: DailyDecisionWindowPolicy | None = None,
+        model_selector: PostgresModelGovernanceRepository | None = None,
     ) -> None:
         self._repository = repository
         self._policy = policy or DailyDecisionWindowPolicy()
+        self._model_selector = model_selector
 
     def execute(
         self,
@@ -309,6 +323,32 @@ class DecisionSystemRuntimeService:
         if observation.as_of_time > request.as_of_time:
             raise ValueError("Manual Account is later than Decision AsOfTime")
         stages.append(_stage(DecisionRuntimeStage.ACCOUNT_OBSERVATION_LOOKUP, observation.observation_id, observation.content_hash))
+
+        governed_inputs, governance_stage = self._apply_model_governance(
+            request=request,
+            inputs=inputs,
+        )
+        stages.append(governance_stage)
+        if governed_inputs is None:
+            blocked = DecisionRuntimeReceipt.create(
+                run_id=request.run_id,
+                tick_id=request.tick_id,
+                claim_id=request.claim_id,
+                fencing_token=request.fencing_token,
+                tick_version=request.tick_version,
+                lease_expires_at=request.lease_expires_at,
+                state_receipt_id=state_reference.artifact_id,
+                state_receipt_hash=state_reference.content_hash,
+                reconciliation_id=None,
+                summary_id=None,
+                proposal_id=None,
+                risk_decision_id=None,
+                status="BLOCKED",
+                stage_receipts=tuple(stages),
+                created_at=request.as_of_time,
+            )
+            return self._repository.save_runtime_receipt(blocked, claim=claim)
+        inputs = governed_inputs
 
         tolerance = self._repository.record_reconciliation_tolerance(
             inputs.reconciliation_tolerance,
@@ -613,6 +653,132 @@ class DecisionSystemRuntimeService:
         ):
             raise ValueError("Decision Candidate current Position mismatch")
 
+    def _apply_model_governance(
+        self,
+        *,
+        request: ChildExecutionRequest,
+        inputs: DecisionRuntimeInputs,
+    ) -> tuple[DecisionRuntimeInputs | None, DecisionStageReceipt]:
+        referenced_model_ids = tuple(
+            sorted(
+                {
+                    str(model_id)
+                    for candidate in inputs.candidates
+                    for model_id in (
+                        candidate.signal_model_id,
+                        candidate.forecast_model_id,
+                    )
+                }
+            )
+        )
+        lineage_by_model = {
+            str(item.model_id): item for item in inputs.model_runtime_lineages
+        }
+        if not referenced_model_ids:
+            return None, DecisionStageReceipt(
+                DecisionRuntimeStage.MODEL_GOVERNANCE,
+                "BLOCKED",
+                None,
+                None,
+                ("MODEL_SELECTION_REQUIRED",),
+            )
+        if (
+            self._model_selector is None
+            or len(lineage_by_model) != len(inputs.model_runtime_lineages)
+            or set(lineage_by_model) != set(referenced_model_ids)
+        ):
+            return None, DecisionStageReceipt(
+                DecisionRuntimeStage.MODEL_GOVERNANCE,
+                "BLOCKED",
+                None,
+                None,
+                ("MODEL_GOVERNANCE_AUTHORITY_UNAVAILABLE",),
+            )
+        requests: list[ModelSelectionRequest] = []
+        for model_id in referenced_model_ids:
+            roles = {
+                role
+                for candidate in inputs.candidates
+                for role, candidate_model_id in (
+                    ("STATE_SIGNAL", candidate.signal_model_id),
+                    ("STATE_FORECAST", candidate.forecast_model_id),
+                )
+                if str(candidate_model_id) == model_id
+            }
+            if len(roles) != 1:
+                return None, DecisionStageReceipt(
+                    DecisionRuntimeStage.MODEL_GOVERNANCE,
+                    "BLOCKED",
+                    None,
+                    None,
+                    ("MODEL_SLOT_AMBIGUOUS",),
+                )
+            slot = next(iter(roles))
+            runtime_lineage = lineage_by_model[model_id]
+            authority_rejections = (
+                ()
+                if _decision_runtime_lineage_is_authoritative(
+                    runtime_lineage,
+                    model_slot=slot,
+                    inputs=inputs,
+                )
+                else ("RUNTIME_LINEAGE_AUTHORITY_MISMATCH",)
+            )
+            requests.append(
+                ModelSelectionRequest.create(
+                    runtime_scope="DECISION_SYSTEM",
+                    model_slot=slot,
+                    purpose=RuntimePurpose.PRODUCTION_DECISION,
+                    runtime_lineage=runtime_lineage,
+                    selected_at=request.as_of_time,
+                    idempotency_key=(
+                        f"{request.run_id}:{request.tick_id}:"
+                        f"model-selection:{slot}:{model_id}"
+                    ),
+                    preselection_rejection_codes=authority_rejections,
+                )
+            )
+        receipts = tuple(
+            self._model_selector.select(selection_request)
+            for selection_request in requests
+        )
+        rejection_reasons = tuple(
+            sorted(
+                {
+                    reason
+                    for receipt in receipts
+                    if receipt.status is SelectionStatus.REJECTED
+                    for reason in receipt.reason_codes
+                }
+            )
+        )
+        if rejection_reasons or any(
+            not receipt.production_authorized for receipt in receipts
+        ):
+            return None, _model_governance_stage(
+                receipts,
+                status="BLOCKED",
+                reason_codes=(
+                    rejection_reasons
+                    or ("PRODUCTION_MODEL_AUTHORIZATION_MISSING",)
+                ),
+            )
+        authorized = replace(
+            inputs,
+            candidates=tuple(
+                replace(
+                    candidate,
+                    model_qualification=DecisionModelQualification.QUALIFIED,
+                )
+                for candidate in inputs.candidates
+            ),
+        )
+        return authorized, _model_governance_stage(
+            receipts,
+            status="COMPLETED",
+            reason_codes=("PRODUCTION_MODELS_AUTHORIZED",),
+        )
+
 
 class DecisionSystemDelegate:
     child_kind = ContinuousChildKind.DECISION_SYSTEM
@@ -717,6 +883,73 @@ def _stage(
         artifact_id,
         artifact_hash,
         (f"{stage.value}_COMPLETED",),
+    )
+
+
+def _model_governance_stage(
+    receipts: tuple[Any, ...],
+    *,
+    status: str,
+    reason_codes: tuple[str, ...],
+) -> DecisionStageReceipt:
+    payload = {
+        "schema_version": "decision-model-governance-binding/v1",
+        "selection_receipts": [
+            {
+                "receipt_id": str(item.receipt_id),
+                "receipt_hash": item.receipt_hash,
+                "status": item.status.value,
+                "production_authorized": item.production_authorized,
+            }
+            for item in sorted(receipts, key=lambda value: str(value.receipt_id))
+        ],
+    }
+    digest = canonical_hash(payload)
+    return DecisionStageReceipt(
+        DecisionRuntimeStage.MODEL_GOVERNANCE,
+        status,
+        ArtifactId(
+            f"decision-model-governance:{digest.split(':', 1)[1][:24]}"
+        ),
+        digest,
+        tuple(
+            sorted(
+                set(reason_codes)
+                | {
+                    f"MODEL_SELECTION_RECEIPT:{item.receipt_id}"
+                    for item in receipts
+                }
+            )
+        ),
+    )
+
+
+def _decision_runtime_lineage_is_authoritative(
+    runtime_lineage: RuntimeModelLineage,
+    *,
+    model_slot: str,
+    inputs: DecisionRuntimeInputs,
+) -> bool:
+    if model_slot == "STATE_SIGNAL":
+        reference = ArtifactLineageReference(
+            "DECISION_SIGNAL_BUNDLE",
+            inputs.lineage.signal_bundle_id,
+            inputs.lineage.signal_bundle_hash,
+        )
+    elif model_slot == "STATE_FORECAST":
+        reference = ArtifactLineageReference(
+            "DECISION_FORECAST_BUNDLE",
+            inputs.lineage.forecast_bundle_id,
+            inputs.lineage.forecast_bundle_hash,
+        )
+    else:
+        return False
+    return (
+        runtime_lineage.dataset == reference
+        and runtime_lineage.feature_materializations == (reference,)
+        and runtime_lineage.universe_id
+        == UniverseId(str(inputs.lineage.dynamic_pool_id))
+        and runtime_lineage.data_eligibility is inputs.lineage.data_eligibility
     )
 
 

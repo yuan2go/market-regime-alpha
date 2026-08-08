@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import runpy
 import subprocess
@@ -20,6 +19,7 @@ from market_regime_alpha.data.providers.public_composite import (
 )
 from market_regime_alpha.universe.daily_exploratory import smoke_pool_policy_v1
 from tests.application.daily_loop.public_fixture import DECISION, public_fixture
+from tests.application.daily_loop.governance_fixture import FIXTURE_MODEL_SELECTOR
 from tests.postgres_path_repositories import (
     PostgresDailyRunRepository,
     postgres_cli_arguments,
@@ -31,7 +31,9 @@ SCRIPT = PROJECT_ROOT / "scripts" / "run_exploratory_daily_loop.py"
 CODE_REVISION = "772ecfb09410588b5a406ad900d793a5850e60d5"
 
 
-def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
+def test_cli_replay_fails_closed_without_postgres_model_governance(
+    tmp_path: Path,
+) -> None:
     policy = smoke_pool_policy_v1()
     _, provider_result, source_manifest = public_fixture(policy=policy)
     archive = publish_source_archive(
@@ -53,6 +55,7 @@ def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
     runner = DailyLoopRunner(
         repository=PostgresDailyRunRepository(tmp_path / "runtime.postgres-scope"),
         code_revision=CODE_REVISION,
+        model_selector=FIXTURE_MODEL_SELECTOR,
     )
     completed = runner.run(command, replay_archive_path=archive)
     assert completed.record.daily_run_id is not None
@@ -74,11 +77,8 @@ def test_cli_semantically_replays_an_existing_run(tmp_path: Path) -> None:
         text=True,
     )
 
-    assert process.returncode == 0, process.stderr
-    payload = json.loads(process.stdout)
-    assert payload["daily_run_id"] == str(completed.record.daily_run_id)
-    assert payload["artifact_id"] == completed.decision_artifact.artifact_id
-    assert payload["replay_hash"] == completed.decision_artifact.checksums_hash
+    assert process.returncode != 0
+    assert "model-selection-receipt" in process.stderr
 
 
 def test_new_cli_has_no_legacy_or_broker_dependency() -> None:

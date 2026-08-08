@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from market_regime_alpha.application.daily_loop import (
-    DailyLoopRunner,
+    DailyLoopRunner as _DailyLoopRunner,
     DailyRunCommand,
     DailyRunStatus,
     RunMode,
@@ -59,6 +59,9 @@ from tests.application.daily_loop.public_fixture import (
     public_fixture,
     public_v2_fixture,
 )
+from tests.application.daily_loop.governance_fixture import (
+    FIXTURE_MODEL_SELECTOR,
+)
 from tests.postgres_path_repositories import (
     PostgresDailyRunRepository,
     postgres_factory,
@@ -67,6 +70,14 @@ from tests.postgres_path_repositories import (
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 CODE_REVISION = "772ecfb09410588b5a406ad900d793a5850e60d5"
+
+
+class DailyLoopRunner(_DailyLoopRunner):
+    """Unit-test composition with explicit engineering fixture authority."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("model_selector", FIXTURE_MODEL_SELECTOR)
+        super().__init__(**kwargs)
 
 
 def _status_stage_batch(*, raw: bytes = b"fixture-security-status") -> PublicCompositeBatch:
@@ -283,6 +294,25 @@ def test_replay_performs_no_network_calls(
     result = runner.run(command, replay_archive_path=archive)
 
     assert result.record.status is DailyRunStatus.OUTCOME_PENDING
+
+
+def test_finalize_without_postgres_model_selector_fails_closed(
+    tmp_path: Path,
+) -> None:
+    _, command, archive = _replay_runner(tmp_path)
+    repository = PostgresDailyRunRepository(
+        tmp_path / "ungoverned-runtime.postgres-scope"
+    )
+
+    with pytest.raises(RuntimeError, match="PostgreSQL Model Governance Selector"):
+        _DailyLoopRunner(
+            repository=repository,
+            code_revision=CODE_REVISION,
+            clock=lambda: datetime(2025, 2, 3, 15, 0, tzinfo=SHANGHAI),
+        ).run(command, replay_archive_path=archive)
+
+    assert repository.get(command.run_request_id).status is DailyRunStatus.FAILED
+    assert not (command.output_root / "prediction_runs").exists()
 
 
 def test_live_stages_are_independent_idempotent_and_finalize_without_clients(

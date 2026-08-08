@@ -51,6 +51,7 @@ from market_regime_alpha.persistence.repository_factory import (
     add_database_arguments,
     settings_from_namespace,
 )
+from market_regime_alpha.platform.runtime_governance import RuntimeModelLineage
 
 
 SUCCESS = 0
@@ -228,7 +229,10 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
             _object(payload["inputs"]),
             finalize=operation == "finalize-daily-decision",
         )
-        receipt = DecisionSystemRuntimeService(repository).execute(
+        receipt = DecisionSystemRuntimeService(
+            repository,
+            model_selector=repositories.model_governance(),
+        ).execute(
             request=request,
             inputs=inputs,
         )
@@ -327,7 +331,7 @@ def _runtime_inputs(payload: Mapping[str, Any], *, finalize: bool) -> DecisionRu
             "lineage", "candidates", "summary_revision",
             "previous_summary_id", "correction_of_summary_id",
             "risk_configuration", "uses_complete_close_bar",
-            "position_settlement_evidence",
+            "position_settlement_evidence", "model_runtime_lineages",
         },
         "Decision Runtime inputs",
         optional={"uses_complete_close_bar", "position_settlement_evidence"},
@@ -345,6 +349,10 @@ def _runtime_inputs(payload: Mapping[str, Any], *, finalize: bool) -> DecisionRu
         previous_summary_id=_optional_artifact(payload.get("previous_summary_id")),
         correction_of_summary_id=_optional_artifact(payload.get("correction_of_summary_id")),
         risk_configuration=_risk_configuration(_object(payload["risk_configuration"])),
+        model_runtime_lineages=tuple(
+            RuntimeModelLineage.from_canonical_dict(_object(item))
+            for item in _array(payload, "model_runtime_lineages")
+        ),
         finalize=finalize,
         uses_complete_close_bar=_optional_boolean(payload.get("uses_complete_close_bar"), default=False),
         position_settlement_evidence=(

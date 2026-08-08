@@ -34,6 +34,7 @@ inspect-free-data-operation = "market_regime_alpha.cli.free_data_operation:inspe
 continuous-research = "market_regime_alpha.cli.continuous_research:main"
 state-system = "market_regime_alpha.cli.state_system:main"
 decision-system = "market_regime_alpha.cli.decision_system:main"
+model-governance = "market_regime_alpha.cli.model_governance:main"
 
 [project.optional-dependencies]
 postgres = []
@@ -136,6 +137,10 @@ files = [
     "src/market_regime_alpha/platform/candidate_prediction_adapter.py",
     "src/market_regime_alpha/platform/experiment_governance.py",
     "src/market_regime_alpha/platform/model_registry.py",
+    "src/market_regime_alpha/platform/durable_governance.py",
+    "src/market_regime_alpha/platform/postgres_governance.py",
+    "src/market_regime_alpha/platform/runtime_governance.py",
+    "src/market_regime_alpha/platform/postgres_runtime_governance.py",
     "src/market_regime_alpha/platform/multi_model_slice.py",
     "src/market_regime_alpha/platform/prediction_artifacts.py",
     "src/market_regime_alpha/platform/prediction_reader.py",
@@ -172,6 +177,10 @@ files = [
     "src/market_regime_alpha/application/daily_loop/runner.py",
     "src/market_regime_alpha/application/daily_loop/postgres_repository.py",
     "src/market_regime_alpha/application/daily_loop/state.py",
+    "src/market_regime_alpha/application/decision_system",
+    "src/market_regime_alpha/cli/decision_system.py",
+    "src/market_regime_alpha/cli/model_governance.py",
+    "src/market_regime_alpha/persistence/repository_factory.py",
     "src/market_regime_alpha/daily_decision/__init__.py",
     "src/market_regime_alpha/daily_decision/_support.py",
     "src/market_regime_alpha/daily_decision/snapshot.py",

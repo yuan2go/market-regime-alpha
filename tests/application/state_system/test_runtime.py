@@ -26,6 +26,7 @@ from market_regime_alpha.application.state_system.runtime import (
     StateSystemRuntimeDelegate,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from tests.application.state_system.test_repositories import _active_claim
@@ -81,6 +82,7 @@ class RecordingStage:
             artifact_id=ArtifactId(f"state-stage-{self.stage.value.lower()}:{digest[7:]}"),
             artifact_hash=digest,
             available_at=context.request.as_of_time,
+            data_eligibility=DataEligibility.EXPLORATORY,
             reason_codes=(f"{self.stage.value}_COMPLETED",),
         )
 
@@ -201,6 +203,7 @@ def test_state_runtime_rejects_future_stage_artifact() -> None:
             artifact_id=artifact.artifact_id,
             artifact_hash=artifact.artifact_hash,
             available_at=context.request.lease_expires_at,
+            data_eligibility=artifact.data_eligibility,
             reason_codes=artifact.reason_codes,
         )
 

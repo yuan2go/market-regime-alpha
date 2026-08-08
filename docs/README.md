@@ -136,6 +136,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-STATE-01 State System Implementation Plan](superpowers/plans/2026-08-06-wp-state-01-state-system.md)
 - [PostgreSQL-Only Decision Closure Design](superpowers/specs/2026-08-06-postgresql-only-decision-closure-design.md)
 - [PostgreSQL-Only Decision Closure Implementation Plan](superpowers/plans/2026-08-06-wp-pgsql-decision-closure.md)
+- [WP-GOV-01 Model Governance and Runtime Selector Design](superpowers/specs/2026-08-08-wp-gov-01-model-governance-runtime-selector-design.md)
+- [WP-GOV-01 Model Governance and Runtime Selector Implementation Plan](superpowers/plans/2026-08-08-wp-gov-01-model-governance-runtime-selector.md)
 - [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
 - [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
 - [WP-PGSQL-01 PostgreSQL Authority Only](roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md)

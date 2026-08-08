@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-06
+> **Last Updated:** 2026-08-08
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md
@@ -110,6 +110,27 @@ configuration lineage. Original Final is unique and immutable; Correction is a
 new version. No stage creates an Opportunity, Order, Fill, Position change or
 Broker call.
 
+WP-GOV-01 extends the existing PostgreSQL Model Registry rather than creating a
+parallel authority. Migration 027 adds immutable Model-version lineage,
+qualification evidence and decisions, versioned governance policies,
+Champion/Challenger assignments, a global governance revision and append-only
+accepted/rejected Runtime-selection receipts. DailyLoop now selects both B0/B1
+Research Champions before PredictionRuns; it no longer creates a local
+`ModelRegistry`. Decision Runtime selects the Signal and Forecast Production
+Champions before Portfolio/Reconciliation and derives candidate qualification
+from those persisted receipts instead of trusting caller JSON. No Production
+Champion or Production qualification is seeded by this work package, so the
+formal Decision Runtime remains fail-closed until separate PIT, OOS, economic,
+cost/capacity, Shadow and explicit operator-approval evidence exists.
+
+Governed Prediction Artifacts bind the selected receipt to exact Dataset,
+feature/materialization pairs, configuration, code, validation protocol and
+DataEligibility. State Receipt V2 and DecisionLineage V3 carry that PostgreSQL-
+derived eligibility into Decision selection; older schemas remain readable but
+are `UNQUALIFIED`. Daily replay replays every embedded selection receipt, while
+isolated Decision replay transfers a point-in-time governance bundle into its
+isolated PostgreSQL schema and re-executes selection at the original revision.
+
 ## 2. Current stage
 
 ```text
@@ -165,6 +186,11 @@ MANUAL_ACCOUNT_OBSERVATION_APPEND_ONLY_IMPLEMENTED
 ACCOUNT_RECONCILIATION_FILL_DERIVED_IMPLEMENTED
 RESEARCH_PORTFOLIO_PROPOSAL_IMPLEMENTED_NO_EXECUTION_AUTHORITY
 INDEPENDENT_RISK_DECISION_POSTGRES_RELOAD_IMPLEMENTED
+MODEL_GOVERNANCE_RUNTIME_SELECTOR_POSTGRES_ONLY_IMPLEMENTED
+MODEL_QUALIFICATION_AND_SELECTION_RECEIPTS_APPEND_ONLY
+DAILY_LOOP_IN_MEMORY_MODEL_REGISTRY_BYPASS_REMOVED
+DECISION_CALLER_MODEL_QUALIFICATION_AUTHORITY_REMOVED
+PRODUCTION_MODEL_QUALIFICATION_NOT_GRANTED
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
 FORMAL_PIT_NOT_ESTABLISHED
@@ -174,7 +200,7 @@ REAL_BROKER_AUTHORITY_NOT_IMPLEMENTED
 PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 POSTGRESQL_ONLY_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_025_APPLIED_LOCAL
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_027_APPLIED_LOCAL
 FILE_DATABASE_RUNTIME_REMOVED
 ```
 
@@ -207,6 +233,7 @@ BaoStock History
 → DataQuality
 → Universe and Eligibility
 → Features
+→ PostgreSQL Model Governance / Research Champion selection
 → B0/B1 PredictionRuns
 → CandidateRecommendation
 → EntryAssessment

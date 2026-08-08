@@ -45,6 +45,9 @@ from market_regime_alpha.evidence.canonical import (
     canonical_hash,
     require_sha256,
 )
+from market_regime_alpha.platform.postgres_runtime_governance import (
+    PostgresModelGovernanceRepository,
+)
 
 
 _REPLAY_SCHEMA = "decision-system-replay/v2"
@@ -110,6 +113,16 @@ def replay_decision_system(
     replay_session_id = ArtifactId(
         f"decision-replay-session-{session_hash[7:31]}"
     )
+    governance_bundle = next(
+        item["payload"]
+        for item in artifacts
+        if item["artifact_kind"] == "MODEL_GOVERNANCE"
+    )
+    if not isinstance(governance_bundle, dict):
+        raise TypeError("Decision Replay governance bundle must be an object")
+    PostgresModelGovernanceRepository(
+        replay_factory
+    ).import_replay_bundle(governance_bundle)
     imported = replay_repository.import_replay_artifacts(
         replay_session_id=replay_session_id,
         artifacts=artifacts,
@@ -156,6 +169,7 @@ class _RestoredReplay:
     risk: IndependentRiskDecision
     terminal: DailyDecisionWindowSummary
     runtime_input: dict[str, Any]
+    governance_bundle: dict[str, Any]
 
 
 def _export_artifacts(
@@ -229,7 +243,22 @@ def _export_artifacts(
         },
         "daily_loss": None,
     }
+    selection_receipt_ids = _selection_receipt_ids(receipt)
+    governance_repository = PostgresModelGovernanceRepository(
+        repository._postgres_factory
+    )
+    for selection_receipt_id in selection_receipt_ids:
+        governance_repository.replay_selection(selection_receipt_id)
+    governance_bundle = governance_repository.export_replay_bundle(
+        selection_receipt_ids
+    )
     artifacts = [
+        _artifact(
+            "MODEL_GOVERNANCE",
+            f"model-governance:{tick_id}",
+            canonical_hash(governance_bundle),
+            governance_bundle,
+        ),
         _artifact("RUNTIME_INPUT", f"runtime-input:{tick_id}", canonical_hash(runtime_input), runtime_input),
         _artifact("MANUAL_OBSERVATION", observation.observation_id, observation.content_hash, observation.to_canonical_dict()),
         _artifact("FILL_AUTHORITY", fill_authority.authority_id, fill_authority.content_hash, fill_authority.to_canonical_dict()),
@@ -286,7 +315,7 @@ def _restore_artifacts(artifacts: tuple[dict[str, Any], ...]) -> _RestoredReplay
         "RUNTIME_INPUT", "MANUAL_OBSERVATION", "FILL_AUTHORITY",
         "RECONCILIATION_TOLERANCE", "RECONCILIATION", "PREVIEW_SUMMARY",
         "RISK_CONFIGURATION", "PORTFOLIO_PROPOSAL", "RISK_DECISION",
-        "TERMINAL_SUMMARY", "RUNTIME_RECEIPT",
+        "TERMINAL_SUMMARY", "RUNTIME_RECEIPT", "MODEL_GOVERNANCE",
     }
     allowed = expected | {"SETTLEMENT_EVIDENCE"}
     if frozenset(by_kind) not in {frozenset(expected), frozenset(allowed)}:
@@ -311,6 +340,7 @@ def _restore_artifacts(artifacts: tuple[dict[str, Any], ...]) -> _RestoredReplay
         risk=IndependentRiskDecision.from_canonical_dict(by_kind["RISK_DECISION"]),
         terminal=DailyDecisionWindowSummary.from_canonical_dict(by_kind["TERMINAL_SUMMARY"]),
         runtime_input=by_kind["RUNTIME_INPUT"],
+        governance_bundle=by_kind["MODEL_GOVERNANCE"],
     )
     if (
         (restored.settlement_evidence is None)
@@ -375,11 +405,24 @@ def _reexecute(
     if recomputed_risk != restored.risk:
         raise ValueError("Decision Replay Risk re-execution mismatch")
     _validate_terminal(restored)
+    governance_repository = PostgresModelGovernanceRepository(
+        replay_repository._postgres_factory
+    )
+    selection_replays = tuple(
+        {
+            "kind": "MODEL_SELECTION",
+            "content_hash": governance_repository.replay_selection(
+                receipt_id
+            ).receipt_hash,
+        }
+        for receipt_id in _selection_receipt_ids(restored.receipt)
+    )
     return (
         {"kind": "RECONCILIATION", "content_hash": report.content_hash},
         {"kind": "PORTFOLIO_PROPOSAL", "content_hash": restored.proposal.content_hash},
         {"kind": "RISK_DECISION", "content_hash": restored.risk.content_hash},
         {"kind": "TERMINAL_SUMMARY", "content_hash": restored.terminal.content_hash},
+        *selection_replays,
     )
 
 
@@ -485,6 +528,18 @@ class _PostgresReplayAuthorityReader:
                 raise ValueError(f"Decision Replay {stage} identity mismatch")
             if artifact_hash is not None and item.get("artifact_hash") != artifact_hash:
                 raise ValueError(f"Decision Replay {stage} hash mismatch")
+        for stage in ("SIGNAL", "FORECAST"):
+            eligibility = stages[stage].get("data_eligibility")
+            if (
+                eligibility is None
+                and summary.lineage.data_eligibility.value != "UNQUALIFIED"
+            ) or (
+                eligibility is not None
+                and eligibility != summary.lineage.data_eligibility.value
+            ):
+                raise ValueError(
+                    f"Decision Replay {stage} DataEligibility mismatch"
+                )
 
         state_context = _state_context_payload(runtime_input)
         if (
@@ -593,7 +648,7 @@ def _validate_terminal(restored: _RestoredReplay) -> None:
 
 
 def _content_hash(kind: str, payload: dict[str, Any]) -> str:
-    if kind == "RUNTIME_INPUT":
+    if kind in {"RUNTIME_INPUT", "MODEL_GOVERNANCE"}:
         return canonical_hash(payload)
     for field in ("content_hash", "configuration_hash", "receipt_hash"):
         value = payload.get(field)
@@ -623,8 +678,19 @@ def _validate_runtime_input(payload: dict[str, Any]) -> None:
         raise TypeError("Decision Replay State stages must be an array")
     for item in stages:
         stage = _strict_object(item)
-        if set(stage) != {
-            "stage", "artifact_id", "artifact_hash", "available_at"
+        if frozenset(stage) not in {
+            frozenset(
+                {"stage", "artifact_id", "artifact_hash", "available_at"}
+            ),
+            frozenset(
+                {
+                    "stage",
+                    "artifact_id",
+                    "artifact_hash",
+                    "data_eligibility",
+                    "available_at",
+                }
+            ),
         }:
             raise ValueError("Decision Replay State stage fields mismatch")
         _strict_string(stage["stage"])
@@ -634,6 +700,10 @@ def _validate_runtime_input(payload: dict[str, Any]) -> None:
             _strict_string(stage["artifact_hash"]),
         )
         _canonical_instant(stage["available_at"])
+        if "data_eligibility" in stage:
+            value = stage["data_eligibility"]
+            if value is not None:
+                _strict_string(value)
     _validate_state_context(payload["state_context"])
     daily_loss = payload["daily_loss"]
     if daily_loss is not None and not isinstance(daily_loss, str):
@@ -646,6 +716,28 @@ def _strict_string(value: object) -> str:
     if value != unicodedata.normalize("NFC", value):
         raise ValueError("Decision Replay text is not Unicode NFC")
     return value
+
+
+def _selection_receipt_ids(
+    receipt: DecisionRuntimeReceipt,
+) -> tuple[ArtifactId, ...]:
+    prefix = "MODEL_SELECTION_RECEIPT:"
+    result = tuple(
+        sorted(
+            {
+                ArtifactId(reason.removeprefix(prefix))
+                for stage in receipt.stage_receipts
+                for reason in stage.reason_codes
+                if reason.startswith(prefix)
+            },
+            key=str,
+        )
+    )
+    if not result:
+        raise ValueError(
+            "Decision Replay receipt lacks Model Selection authority"
+        )
+    return result
 
 
 def _canonical_instant(value: object) -> datetime:

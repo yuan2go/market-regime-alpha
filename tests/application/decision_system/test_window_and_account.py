@@ -7,7 +7,6 @@ from decimal import Decimal
 import pytest
 
 from market_regime_alpha.application.decision_system.contracts import (
-    DecisionModelQualification,
     ManualAccountObservation,
     ManualPositionObservation,
 )
@@ -136,7 +135,7 @@ def test_summary_rejects_candidate_or_signal_content_not_bound_to_state_bundles(
             candidates=(
                 replace(
                     valid.candidates[0],
-                    model_qualification=DecisionModelQualification.UNQUALIFIED,
+                    main_evidence=("FORGED_EVIDENCE",),
                 ),
             ),
         )

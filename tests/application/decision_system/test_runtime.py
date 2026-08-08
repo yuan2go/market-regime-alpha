@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 import os
 import uuid
@@ -24,6 +25,7 @@ from market_regime_alpha.application.continuous_research.policy import (
     ContinuousSessionPhase,
 )
 from market_regime_alpha.application.decision_system.contracts import (
+    DecisionModelQualification,
     DecisionWindowState,
     bind_decision_candidate_evidence,
 )
@@ -41,16 +43,38 @@ from market_regime_alpha.application.decision_system.runtime import (
     DecisionRuntimeStage,
     DecisionStageReceipt,
     DecisionSystemDelegate,
-    DecisionSystemRuntimeService,
+    DecisionSystemRuntimeService as _DecisionSystemRuntimeService,
 )
 from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,
     state_research_pipeline_identity,
 )
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import ArtifactId, TargetId, UniverseId
+from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.settings import DatabaseSettings
+from market_regime_alpha.platform.postgres_runtime_governance import (
+    PostgresModelGovernanceRepository,
+)
+from market_regime_alpha.platform.contracts import (
+    EvidenceLevel,
+    ModelDefinition,
+    ModelLifecycleStatus,
+    ModelRole,
+)
+from market_regime_alpha.platform.durable_governance import PersistentModelRegistry
+from market_regime_alpha.platform.runtime_governance import (
+    ArtifactLineageReference,
+    AssignmentLane,
+    ModelGovernancePolicy,
+    ModelQualificationEvidence,
+    ModelVersionLineage,
+    QualificationEvidenceKind,
+    QualificationEvidenceOutcome,
+    RuntimeModelLineage,
+    RuntimePurpose,
+)
 from tests.application.decision_system.support import (
     AS_OF,
     HASH_A,
@@ -61,6 +85,10 @@ from tests.application.decision_system.support import (
     observation,
     risk_configuration,
     tolerance,
+)
+from tests.application.decision_system.governance_fixture import (
+    FIXTURE_PRODUCTION_SELECTOR,
+    runtime_model_lineage,
 )
 from tests.persistence.postgres.conftest import (
     TEST_DATABASE_URL_ENV,
@@ -74,6 +102,14 @@ from tests.persistence.postgres.test_continuous_research_journal import (
 
 
 UTC = timezone.utc
+
+
+class DecisionSystemRuntimeService(_DecisionSystemRuntimeService):
+    """Unit-test composition with explicit engineering governance fixture."""
+
+    def __init__(self, repository, **kwargs):
+        kwargs.setdefault("model_selector", FIXTURE_PRODUCTION_SELECTOR)
+        super().__init__(repository, **kwargs)
 
 
 def test_scoped_state_bundle_binds_exact_multi_scope_members() -> None:
@@ -147,9 +183,18 @@ def _scoped_id(label: str, claim) -> ArtifactId:
     return ArtifactId(f"{label}-{_scoped_hash(label, claim)[7:31]}")
 
 
-def _runtime_lineage(claim):
+def _runtime_lineage(
+    claim,
+    *,
+    has_candidates: bool = True,
+    data_eligibility: DataEligibility = DataEligibility.EXPLORATORY,
+):
     base = replace(
-        lineage(claim, position_snapshot_ids=()),
+        lineage(
+            claim,
+            position_snapshot_ids=(),
+            has_candidates=has_candidates,
+        ),
         state_receipt_id=_scoped_id("state-receipt", claim),
         state_receipt_hash=_scoped_hash("state-receipt", claim),
         market_state_id=_scoped_id("market-state", claim),
@@ -157,10 +202,15 @@ def _runtime_lineage(claim):
         theme_state_ids=(_scoped_id("theme-state", claim),),
         capital_state_id=_scoped_id("capital-state", claim),
         dynamic_pool_id=_scoped_id("dynamic-pool", claim),
+        data_eligibility=data_eligibility,
     )
     bound = bind_decision_candidate_evidence(
         base,
-        (candidate(dynamic_pool_id=base.dynamic_pool_id, current_quantity=0),),
+        (
+            (candidate(dynamic_pool_id=base.dynamic_pool_id, current_quantity=0),)
+            if has_candidates
+            else ()
+        ),
     )
     pipeline_id, pipeline_hash = state_research_pipeline_identity(
         run_id=claim.run_id,
@@ -178,6 +228,7 @@ def _runtime_lineage(claim):
         pipeline_id=pipeline_id,
         pipeline_hash=pipeline_hash,
         stage_specs=_runtime_stage_specs(claim, bound),
+        data_eligibility=bound.data_eligibility,
     )
     receipt_hash = canonical_hash(receipt_payload)
     return replace(
@@ -253,9 +304,11 @@ def _runtime_stage_specs(claim, decision_lineage):
     )
 
 
-def _state_receipt_payload(*, pipeline_id, pipeline_hash, stage_specs):
+def _state_receipt_payload(
+    *, pipeline_id, pipeline_hash, stage_specs, data_eligibility
+):
     return {
-        "schema": "state_system_runtime_receipt/v1",
+        "schema": "state_system_runtime_receipt/v2",
         "request_idempotency_key": "decision-test-state-request",
         "pipeline_artifact_id": str(pipeline_id),
         "pipeline_artifact_hash": pipeline_hash,
@@ -264,6 +317,7 @@ def _state_receipt_payload(*, pipeline_id, pipeline_hash, stage_specs):
                 "reference_kind": f"STATE_RESEARCH_{stage}",
                 "artifact_id": str(artifact_id),
                 "content_hash": artifact_hash,
+                "data_eligibility": data_eligibility.value,
             }
             for stage, artifact_id, artifact_hash in stage_specs
         ],
@@ -271,8 +325,13 @@ def _state_receipt_payload(*, pipeline_id, pipeline_hash, stage_specs):
     }
 
 
-def _request(claim, *, as_of: datetime = AS_OF) -> ChildExecutionRequest:
-    runtime_lineage = _runtime_lineage(claim)
+def _request(
+    claim,
+    *,
+    as_of: datetime = AS_OF,
+    decision_lineage=None,
+) -> ChildExecutionRequest:
+    runtime_lineage = decision_lineage or _runtime_lineage(claim)
     return ChildExecutionRequest(
         trading_date=as_of.date(),
         as_of_time=as_of,
@@ -317,8 +376,21 @@ def _request(claim, *, as_of: datetime = AS_OF) -> ChildExecutionRequest:
     )
 
 
-def _inputs(claim, account_id: ArtifactId) -> DecisionRuntimeInputs:
-    runtime_lineage = _runtime_lineage(claim)
+def _inputs(
+    claim,
+    account_id: ArtifactId,
+    *,
+    data_eligibility: DataEligibility = DataEligibility.EXPLORATORY,
+) -> DecisionRuntimeInputs:
+    runtime_lineage = _runtime_lineage(
+        claim, data_eligibility=data_eligibility
+    )
+    candidates = (
+        candidate(
+            dynamic_pool_id=runtime_lineage.dynamic_pool_id,
+            current_quantity=0,
+        ),
+    )
     return DecisionRuntimeInputs(
         manual_observation_id=account_id,
         reconciliation_tolerance=tolerance(),
@@ -327,25 +399,230 @@ def _inputs(claim, account_id: ArtifactId) -> DecisionRuntimeInputs:
         strategy_configuration_id=ArtifactId("strategy-config-a"),
         strategy_configuration_hash=HASH_A,
         lineage=runtime_lineage,
-        candidates=(
-            candidate(
-                dynamic_pool_id=runtime_lineage.dynamic_pool_id,
-                current_quantity=0,
-            ),
-        ),
+        candidates=candidates,
         summary_revision=1,
         previous_summary_id=None,
         correction_of_summary_id=None,
         risk_configuration=risk_configuration(),
+        model_runtime_lineages=tuple(
+            runtime_model_lineage(
+                model_id,
+                dataset=(
+                    ArtifactLineageReference(
+                        "DECISION_SIGNAL_BUNDLE",
+                        runtime_lineage.signal_bundle_id,
+                        runtime_lineage.signal_bundle_hash,
+                    )
+                    if model_id
+                    in {str(item.signal_model_id) for item in candidates}
+                    else ArtifactLineageReference(
+                        "DECISION_FORECAST_BUNDLE",
+                        runtime_lineage.forecast_bundle_id,
+                        runtime_lineage.forecast_bundle_hash,
+                    )
+                ),
+                universe_id=UniverseId(str(runtime_lineage.dynamic_pool_id)),
+                data_eligibility=data_eligibility,
+            )
+            for model_id in sorted(
+                {
+                    str(item.signal_model_id)
+                    for item in candidates
+                }
+                | {
+                    str(item.forecast_model_id)
+                    for item in candidates
+                }
+            )
+        ),
         finalize=True,
+    )
+
+
+def _seed_production_model_governance(
+    factory: PostgresConnectionFactory,
+    inputs: DecisionRuntimeInputs,
+) -> DecisionRuntimeInputs:
+    repository = PostgresModelGovernanceRepository(factory)
+    registry = PersistentModelRegistry(repository)
+    policy = ModelGovernancePolicy.create(
+        name="decision-replay-production-fixture-policy",
+        version="1",
+        purpose=RuntimePurpose.PRODUCTION_DECISION,
+        allowed_lifecycle_statuses=(ModelLifecycleStatus.ACTIVE,),
+        required_evidence_kinds=tuple(QualificationEvidenceKind),
+        allowed_data_eligibilities=(DataEligibility.FORMAL_RESEARCH,),
+        production_authorization=True,
+    )
+    repository.record_policy(
+        policy,
+        actor="pytest-governance-operator",
+        reason="explicit isolated Decision replay fixture",
+        created_at=AS_OF - timedelta(minutes=2),
+        idempotency_key="decision-replay-production-policy",
+    )
+    runtime_lineages: list[RuntimeModelLineage] = []
+    slot_by_model = {
+        str(item.signal_model_id): "STATE_SIGNAL"
+        for item in inputs.candidates
+    } | {
+        str(item.forecast_model_id): "STATE_FORECAST"
+        for item in inputs.candidates
+    }
+    for original in inputs.model_runtime_lineages:
+        suffix = sha256(str(original.model_id).encode("utf-8")).hexdigest()[:12]
+        definition = ModelDefinition(
+            model_id=original.model_id,
+            name=f"Decision fixture {suffix}",
+            version="1.0.0",
+            family="decision-state-fixture",
+            role=ModelRole.CONTEXT,
+            target_id=TargetId(f"decision-state-target-{suffix}"),
+            universe_id=original.universe_id,
+            feature_ids=original.feature_definition_ids,
+            implementation_ref=f"tests.decision_fixture:{suffix}",
+            parameter_hash=original.configuration.content_hash.removeprefix(
+                "sha256:"
+            ),
+            decision_time_convention="Decision State receipt AsOfTime",
+            horizon="current decision window",
+            supported_data_eligibilities=(DataEligibility.FORMAL_RESEARCH,),
+        )
+        registered = registry.register(
+            definition,
+            idempotency_key=f"decision-replay-register-{suffix}",
+        )
+        versioned = registered
+        transitions = (
+            ModelLifecycleStatus.RESEARCH,
+            ModelLifecycleStatus.BACKTESTED,
+            ModelLifecycleStatus.OOS_VALIDATED,
+            ModelLifecycleStatus.SHADOW,
+            ModelLifecycleStatus.PROMOTION_CANDIDATE,
+            ModelLifecycleStatus.ACTIVE,
+        )
+        for index, status in enumerate(transitions, start=1):
+            versioned = registry.transition(
+                definition.model_id,
+                expected_version=versioned.version,
+                idempotency_key=(
+                    f"decision-replay-lifecycle-{suffix}-{status.value}"
+                ),
+                to_status=status,
+                changed_at=AS_OF - timedelta(minutes=3) + timedelta(seconds=index),
+                reason="explicit test-only lifecycle evidence",
+                evidence_refs=(f"fixture-lifecycle:{suffix}:{status.value}",),
+                evidence_level=EvidenceLevel.FORMAL_RESEARCH,
+                approval_ref=(
+                    f"fixture-approval:{suffix}"
+                    if status is ModelLifecycleStatus.ACTIVE
+                    else None
+                ),
+            )
+        model_lineage = ModelVersionLineage.create(
+            model_id=definition.model_id,
+            model_version=definition.version,
+            definition_hash=definition.definition_hash,
+            target_id=definition.target_id,
+            universe_contract_id=definition.universe_id,
+            feature_definition_ids=definition.feature_ids,
+            model_parameter_hash=definition.parameter_hash,
+            configuration=original.configuration,
+            implementation_ref=definition.implementation_ref,
+            code_revision=original.code_revision,
+            code_hash=original.code_hash,
+            validation_protocol_refs=original.validation_protocol_refs,
+            supported_data_eligibilities=definition.supported_data_eligibilities,
+            created_at=AS_OF - timedelta(minutes=2),
+        )
+        repository.record_version_lineage(
+            model_lineage,
+            actor="pytest-governance-operator",
+            reason="bind Decision fixture lineage",
+            idempotency_key=f"decision-replay-lineage-{suffix}",
+        )
+        for kind in policy.required_evidence_kinds:
+            repository.record_evidence(
+                ModelQualificationEvidence.create(
+                    model_id=definition.model_id,
+                    definition_hash=definition.definition_hash,
+                    lineage_id=model_lineage.lineage_id,
+                    lineage_hash=model_lineage.lineage_hash,
+                    evidence_kind=kind,
+                    outcome=QualificationEvidenceOutcome.SATISFIED,
+                    evidence=ArtifactLineageReference(
+                        kind.value,
+                        ArtifactId(f"decision-fixture-{suffix}-{kind.value}"),
+                        canonical_hash(
+                            {
+                                "model_id": str(definition.model_id),
+                                "evidence_kind": kind.value,
+                            }
+                        ),
+                    ),
+                    validation_protocol_ref=model_lineage.validation_protocol_refs[0],
+                    available_at=AS_OF - timedelta(minutes=1),
+                    recorded_at=AS_OF - timedelta(minutes=1),
+                    actor="pytest-governance-reviewer",
+                    reason="explicit complete Production fixture evidence",
+                ),
+                idempotency_key=f"decision-replay-evidence-{suffix}-{kind.value}",
+            )
+        qualified = repository.qualify(
+            model_id=definition.model_id,
+            policy_id=policy.policy_id,
+            actor="pytest-governance-reviewer",
+            reason="explicit test-only Production qualification",
+            approval_ref=f"fixture-production-approval:{suffix}",
+            decided_at=AS_OF - timedelta(seconds=30),
+            expected_registry_version=versioned.version,
+            idempotency_key=f"decision-replay-qualify-{suffix}",
+        )
+        assert qualified.production_authorized is True
+        repository.assign(
+            runtime_scope="DECISION_SYSTEM",
+            model_slot=slot_by_model[str(definition.model_id)],
+            purpose=RuntimePurpose.PRODUCTION_DECISION,
+            lane=AssignmentLane.CHAMPION,
+            model_id=definition.model_id,
+            policy_id=policy.policy_id,
+            expected_governance_revision=repository.current_revision(),
+            effective_at=AS_OF - timedelta(seconds=15),
+            actor="pytest-governance-operator",
+            reason="explicit Decision fixture Champion",
+            approval_ref=f"fixture-champion-approval:{suffix}",
+            idempotency_key=f"decision-replay-champion-{suffix}",
+        )
+        runtime_lineages.append(
+            RuntimeModelLineage.create(
+                model_id=definition.model_id,
+                definition_hash=definition.definition_hash,
+                dataset=original.dataset,
+                universe_id=original.universe_id,
+                feature_definition_ids=original.feature_definition_ids,
+                feature_materializations=original.feature_materializations,
+                configuration=original.configuration,
+                code_revision=original.code_revision,
+                code_hash=original.code_hash,
+                validation_protocol_refs=original.validation_protocol_refs,
+                data_eligibility=DataEligibility.FORMAL_RESEARCH,
+            )
+        )
+    return replace(
+        inputs,
+        model_runtime_lineages=tuple(
+            sorted(runtime_lineages, key=lambda item: str(item.model_id))
+        ),
     )
 
 
 def _seed_state_authority(
     factory: PostgresConnectionFactory,
     claim,
+    *,
+    decision_lineage=None,
 ) -> None:
-    decision_lineage = _runtime_lineage(claim)
+    decision_lineage = decision_lineage or _runtime_lineage(claim)
     state_specs = (
         (
             "market_regime_state",
@@ -443,6 +720,7 @@ def _seed_state_authority(
             pipeline_id=pipeline_id,
             pipeline_hash=pipeline_hash,
             stage_specs=stage_specs,
+            data_eligibility=decision_lineage.data_eligibility,
         )
         assert canonical_hash(receipt_payload) == decision_lineage.state_receipt_hash
         receipt_json = {
@@ -508,13 +786,14 @@ def _seed_state_authority(
                 """
                 INSERT INTO state_research_stage_authority(
                     run_id, tick_id, state_receipt_id, stage, artifact_id,
-                    artifact_hash, available_at, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    artifact_hash, data_eligibility, available_at, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     str(claim.run_id), str(claim.tick_id),
                     str(decision_lineage.state_receipt_id), stage,
-                    str(artifact_id), artifact_hash, AS_OF, AS_OF,
+                    str(artifact_id), artifact_hash,
+                    decision_lineage.data_eligibility.value, AS_OF, AS_OF,
                 ),
             )
         connection.commit()
@@ -552,11 +831,23 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     _, claim = active_claim(postgres_factory, clock)
     repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
     account = repository.record_manual_observation(observation(positions=()))
-    request = _request(claim)
-    inputs = _inputs(claim, account.observation_id)
-    _seed_state_authority(postgres_factory, claim)
+    inputs = _seed_production_model_governance(
+        postgres_factory,
+        _inputs(
+            claim,
+            account.observation_id,
+            data_eligibility=DataEligibility.FORMAL_RESEARCH,
+        ),
+    )
+    _seed_state_authority(
+        postgres_factory, claim, decision_lineage=inputs.lineage
+    )
+    request = _request(claim, decision_lineage=inputs.lineage)
     delegate = DecisionSystemDelegate(
-        DecisionSystemRuntimeService(repository),
+        _DecisionSystemRuntimeService(
+            repository,
+            model_selector=PostgresModelGovernanceRepository(postgres_factory),
+        ),
         input_loader=lambda _: inputs,
     )
     before = _execution_authority_counts(postgres_factory)
@@ -569,7 +860,10 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     )
 
     assert replay == result
-    assert receipt.risk_decision_id is not None
+    assert receipt.risk_decision_id is not None, tuple(
+        (item.stage, item.status, item.reason_codes)
+        for item in receipt.stage_receipts
+    )
     persisted_risk = repository.get_risk_decision(receipt.risk_decision_id)
     assert receipt.status == "BLOCKED", (
         persisted_risk.result,
@@ -623,6 +917,9 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             replay_migration_version = connection.execute(
                 "SELECT max(version) FROM schema_migrations"
             ).fetchone()[0]
+            replay_selection_count = connection.execute(
+                "SELECT count(*) FROM model_selection_receipt"
+            ).fetchone()[0]
         imported_artifacts = replay_repository.get_replay_artifacts(
             first_replay.replay_session_id
         )
@@ -662,14 +959,204 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
                 )
             )
     assert first_replay == second_replay
-    assert imported_count == 11
-    assert replay_migration_version == 26
+    assert imported_count == 12
+    assert replay_migration_version == 27
+    assert replay_selection_count == 2
     assert after_conflict_count == imported_count
-    assert first_replay.verified_authority_count == 11
-    assert first_replay.reexecuted_authority_count == 4
+    assert first_replay.verified_authority_count == 12
+    assert first_replay.reexecuted_authority_count == 6
     assert first_replay.postgres_import_verified is True
     assert first_replay.entry_authority_granted is False
     assert first_replay.broker_authority_granted is False
+
+
+def test_runtime_ignores_forged_candidate_qualification_and_fails_closed(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(AS_OF)
+    _, claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    account = repository.record_manual_observation(observation(positions=()))
+    _seed_state_authority(postgres_factory, claim)
+    inputs = _inputs(claim, account.observation_id)
+    assert all(
+        item.model_qualification.value == "QUALIFIED"
+        for item in inputs.candidates
+    )
+
+    receipt = _DecisionSystemRuntimeService(
+        repository,
+        model_selector=PostgresModelGovernanceRepository(postgres_factory),
+    ).execute(
+        request=_request(claim),
+        inputs=inputs,
+    )
+
+    assert receipt.status == "BLOCKED"
+    assert receipt.reconciliation_id is None
+    assert receipt.proposal_id is None
+    assert receipt.risk_decision_id is None
+    assert receipt.stage_receipts[-1].stage is DecisionRuntimeStage.MODEL_GOVERNANCE
+    assert "CHAMPION_AUTHORITY_MISSING" in (
+        receipt.stage_receipts[-1].reason_codes
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        statuses = connection.execute(
+            "SELECT selection_status FROM model_selection_receipt "
+            "ORDER BY model_slot"
+        ).fetchall()
+    assert statuses == [("REJECTED",), ("REJECTED",)]
+
+
+def test_runtime_derives_qualified_output_when_caller_claims_unqualified(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(AS_OF)
+    _, claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    account = repository.record_manual_observation(observation(positions=()))
+    inputs = _inputs(claim, account.observation_id)
+    inputs = replace(
+        inputs,
+        candidates=tuple(
+            replace(
+                item,
+                model_qualification=DecisionModelQualification.UNQUALIFIED,
+            )
+            for item in inputs.candidates
+        ),
+    )
+    _seed_state_authority(
+        postgres_factory, claim, decision_lineage=inputs.lineage
+    )
+
+    receipt = DecisionSystemRuntimeService(repository).execute(
+        request=_request(claim, decision_lineage=inputs.lineage),
+        inputs=inputs,
+    )
+
+    assert receipt.summary_id is not None
+    summary = repository.get_summary(receipt.summary_id)
+    assert all(
+        item.model_qualification.value == "QUALIFIED"
+        for item in summary.candidates
+    )
+
+
+def test_runtime_persists_rejection_for_caller_forged_dynamic_model_lineage(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(AS_OF)
+    _, claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    account = repository.record_manual_observation(observation(positions=()))
+    _seed_state_authority(postgres_factory, claim)
+    inputs = _inputs(claim, account.observation_id)
+    first = inputs.model_runtime_lineages[0]
+    forged = runtime_model_lineage(str(first.model_id))
+    inputs = replace(
+        inputs,
+        model_runtime_lineages=(forged, *inputs.model_runtime_lineages[1:]),
+    )
+
+    receipt = _DecisionSystemRuntimeService(
+        repository,
+        model_selector=PostgresModelGovernanceRepository(postgres_factory),
+    ).execute(request=_request(claim), inputs=inputs)
+
+    assert receipt.status == "BLOCKED"
+    with postgres_factory.connection(read_only=True) as connection:
+        payloads = connection.execute(
+            "SELECT payload_json FROM model_selection_receipt"
+        ).fetchall()
+    assert any(
+        "RUNTIME_LINEAGE_AUTHORITY_MISMATCH" in row[0]["reason_codes"]
+        for row in payloads
+    )
+
+
+def test_runtime_cannot_uplift_persisted_exploratory_data_to_formal(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(AS_OF)
+    _, claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    account = repository.record_manual_observation(observation(positions=()))
+    inputs = _inputs(claim, account.observation_id)
+    _seed_state_authority(
+        postgres_factory, claim, decision_lineage=inputs.lineage
+    )
+    original = inputs.model_runtime_lineages[0]
+    forged = RuntimeModelLineage.create(
+        model_id=original.model_id,
+        definition_hash=original.definition_hash,
+        dataset=original.dataset,
+        universe_id=original.universe_id,
+        feature_definition_ids=original.feature_definition_ids,
+        feature_materializations=original.feature_materializations,
+        configuration=original.configuration,
+        code_revision=original.code_revision,
+        code_hash=original.code_hash,
+        validation_protocol_refs=original.validation_protocol_refs,
+        data_eligibility=DataEligibility.FORMAL_RESEARCH,
+    )
+    inputs = replace(
+        inputs,
+        model_runtime_lineages=(forged, *inputs.model_runtime_lineages[1:]),
+    )
+
+    receipt = _DecisionSystemRuntimeService(
+        repository,
+        model_selector=PostgresModelGovernanceRepository(postgres_factory),
+    ).execute(
+        request=_request(claim, decision_lineage=inputs.lineage),
+        inputs=inputs,
+    )
+
+    assert receipt.status == "BLOCKED"
+    with postgres_factory.connection(read_only=True) as connection:
+        reasons = connection.execute(
+            "SELECT payload_json->'reason_codes' "
+            "FROM model_selection_receipt"
+        ).fetchall()
+    assert any(
+        "RUNTIME_LINEAGE_AUTHORITY_MISMATCH" in row[0]
+        for row in reasons
+    )
+
+
+def test_runtime_cannot_complete_formal_decision_without_model_selection(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(AS_OF)
+    _, claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    account = repository.record_manual_observation(observation(positions=()))
+    empty_lineage = _runtime_lineage(claim, has_candidates=False)
+    _seed_state_authority(
+        postgres_factory,
+        claim,
+        decision_lineage=empty_lineage,
+    )
+    inputs = replace(
+        _inputs(claim, account.observation_id),
+        lineage=empty_lineage,
+        candidates=(),
+        model_runtime_lineages=(),
+    )
+
+    receipt = _DecisionSystemRuntimeService(
+        repository,
+        model_selector=FIXTURE_PRODUCTION_SELECTOR,
+    ).execute(
+        request=_request(claim, decision_lineage=empty_lineage),
+        inputs=inputs,
+    )
+
+    assert receipt.status == "BLOCKED"
+    assert receipt.reconciliation_id is None
+    assert receipt.stage_receipts[-1].stage is DecisionRuntimeStage.MODEL_GOVERNANCE
+    assert receipt.stage_receipts[-1].reason_codes == ("MODEL_SELECTION_REQUIRED",)
 
 
 def test_runtime_records_window_not_open_as_fail_closed_receipt(

@@ -30,6 +30,7 @@ from market_regime_alpha.application.decision_system.contracts import (
     decision_signal_evidence_hash,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -193,6 +194,7 @@ def lineage(
                 key=str,
             )
         ),
+        data_eligibility=DataEligibility.EXPLORATORY,
         as_of_time=AS_OF,
         available_at=AS_OF,
     )

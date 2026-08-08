@@ -73,7 +73,9 @@ from market_regime_alpha.position.postgres_thesis_health import (
 )
 from market_regime_alpha.platform.postgres_governance import (
     PostgresExperimentGovernanceRepository,
-    PostgresModelRegistryRepository,
+)
+from market_regime_alpha.platform.postgres_runtime_governance import (
+    PostgresModelGovernanceRepository,
 )
 
 
@@ -156,7 +158,10 @@ class RepositoryFactory:
         return PostgresCompositeOperationalRepository(self._postgres)
 
     def model_registry(self):
-        return PostgresModelRegistryRepository(self._postgres)
+        return PostgresModelGovernanceRepository(self._postgres)
+
+    def model_governance(self):
+        return PostgresModelGovernanceRepository(self._postgres)
 
     def experiment_governance(self):
         return PostgresExperimentGovernanceRepository(self._postgres)

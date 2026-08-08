@@ -396,7 +396,8 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT stage, artifact_id, artifact_hash, available_at
+                SELECT stage, artifact_id, artifact_hash, data_eligibility,
+                       available_at
                 FROM state_research_stage_authority
                 WHERE run_id = %s AND tick_id = %s
                 ORDER BY stage
@@ -408,6 +409,11 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 "stage": str(row["stage"]),
                 "artifact_id": str(row["artifact_id"]),
                 "artifact_hash": str(row["artifact_hash"]),
+                "data_eligibility": (
+                    None
+                    if row["data_eligibility"] is None
+                    else str(row["data_eligibility"])
+                ),
                 "available_at": canonical_datetime(
                     aware_datetime(row["available_at"], label="stage available_at")
                 ),
@@ -485,7 +491,8 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 )
             rows = connection.execute(
                 """
-                SELECT stage, artifact_id, artifact_hash, available_at
+                SELECT stage, artifact_id, artifact_hash, data_eligibility,
+                       available_at
                 FROM state_research_stage_authority
                 WHERE run_id = %s AND tick_id = %s
                 """,
@@ -528,14 +535,50 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 else json.loads(str(raw_receipt_json))
             )
             receipt_payload = stored_receipt.get("receipt_payload")
-            expected_stage_references = [
-                {
-                    "reference_kind": f"STATE_RESEARCH_{stage}",
-                    "artifact_id": str(by_stage[stage]["artifact_id"]),
-                    "content_hash": str(by_stage[stage]["artifact_hash"]),
-                }
-                for stage in stage_order
-            ]
+            receipt_schema = (
+                receipt_payload.get("schema")
+                if isinstance(receipt_payload, dict)
+                else None
+            )
+            if receipt_schema == "state_system_runtime_receipt/v2":
+                if any(
+                    by_stage[stage]["data_eligibility"] is None
+                    for stage in stage_order
+                ):
+                    raise DecisionSystemIntegrityError(
+                        "State Runtime v2 eligibility authority is incomplete"
+                    )
+                expected_stage_references = [
+                    {
+                        "reference_kind": f"STATE_RESEARCH_{stage}",
+                        "artifact_id": str(by_stage[stage]["artifact_id"]),
+                        "content_hash": str(by_stage[stage]["artifact_hash"]),
+                        "data_eligibility": str(
+                            by_stage[stage]["data_eligibility"]
+                        ),
+                    }
+                    for stage in stage_order
+                ]
+            elif receipt_schema == "state_system_runtime_receipt/v1":
+                if any(
+                    by_stage[stage]["data_eligibility"] is not None
+                    for stage in stage_order
+                ) or lineage.data_eligibility.value != "UNQUALIFIED":
+                    raise DecisionSystemIntegrityError(
+                        "legacy State eligibility authority was inflated"
+                    )
+                expected_stage_references = [
+                    {
+                        "reference_kind": f"STATE_RESEARCH_{stage}",
+                        "artifact_id": str(by_stage[stage]["artifact_id"]),
+                        "content_hash": str(by_stage[stage]["artifact_hash"]),
+                    }
+                    for stage in stage_order
+                ]
+            else:
+                raise DecisionSystemIntegrityError(
+                    "unsupported State Runtime receipt schema"
+                )
             if (
                 stored_receipt.get("schema") != "state_runtime_child_receipt/v2"
                 or not isinstance(receipt_payload, dict)
@@ -551,8 +594,6 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 != lineage.state_receipt_hash
                 or stored_receipt.get("child_artifact_id") != str(pipeline_id)
                 or stored_receipt.get("child_artifact_hash") != pipeline_hash
-                or receipt_payload.get("schema")
-                != "state_system_runtime_receipt/v1"
                 or receipt_payload.get("pipeline_artifact_id") != str(pipeline_id)
                 or receipt_payload.get("pipeline_artifact_hash") != pipeline_hash
                 or receipt_payload.get("stage_references")
@@ -586,6 +627,14 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                     lineage.forecast_bundle_hash,
                 ),
             }
+            if receipt_schema == "state_system_runtime_receipt/v2" and any(
+                str(by_stage[stage]["data_eligibility"])
+                != lineage.data_eligibility.value
+                for stage in ("SIGNAL", "FORECAST")
+            ):
+                raise DecisionSystemIntegrityError(
+                    "PostgreSQL Signal/Forecast DataEligibility authority mismatch"
+                )
             for stage, (artifact_id, artifact_hash) in expected_stage_artifacts.items():
                 row = by_stage.get(stage)
                 if row is None or (

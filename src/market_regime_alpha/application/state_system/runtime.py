@@ -22,6 +22,7 @@ from market_regime_alpha.application.state_system.bundles import (
     state_research_pipeline_identity,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import (
     canonical_hash,
     require_sha256,
@@ -50,12 +51,15 @@ class StateResearchStageArtifact:
     artifact_id: ArtifactId
     artifact_hash: str
     available_at: datetime
+    data_eligibility: DataEligibility
     reason_codes: tuple[str, ...]
 
     def __post_init__(self) -> None:
         require_sha256("artifact_hash", self.artifact_hash)
         if self.available_at.tzinfo is None or self.available_at.utcoffset() is None:
             raise ValueError("stage available_at must be timezone-aware")
+        if not isinstance(self.data_eligibility, DataEligibility):
+            raise TypeError("stage data_eligibility must be DataEligibility")
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("stage reason_codes must be unique and sorted")
 
@@ -180,12 +184,15 @@ class StateSystemRuntimeDelegate:
             return existing
         pipeline_result = self._pipeline.execute(request)
         receipt_payload = {
-            "schema": "state_system_runtime_receipt/v1",
+            "schema": "state_system_runtime_receipt/v2",
             "request_idempotency_key": request.idempotency_key,
             "pipeline_artifact_id": str(pipeline_result.artifact_id),
             "pipeline_artifact_hash": pipeline_result.artifact_hash,
             "stage_references": [
-                artifact.to_reference().to_canonical_dict()
+                {
+                    **artifact.to_reference().to_canonical_dict(),
+                    "data_eligibility": artifact.data_eligibility.value,
+                }
                 for artifact in pipeline_result.stages
             ],
             "reason_codes": list(pipeline_result.reason_codes),

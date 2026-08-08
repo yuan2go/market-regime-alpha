@@ -163,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         repository=repository,
         code_revision=_current_git_revision(),
         live_profile=live_profile,
+        model_selector=repositories.model_governance(),
     )
     if args.operation == "run":
         return _run(args, runner, output_root)

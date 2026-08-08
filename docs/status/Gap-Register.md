@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Ordered gap and dependency register  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-06
+> **Last Updated:** 2026-08-08
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** Current-State.md, Capability-Matrix.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md
@@ -36,9 +36,9 @@
 | Continuous Runtime production operation | P1-EVIDENCE | WP-CRR-01 implements PostgreSQL run/tick Lease, fencing, Attempt/Evidence isolation, material reuse and bounded recovery with engineering fixtures | qualified Provider composition, authenticated scheduler and operating environment | consecutive bounded real-data runs recover from drills, preserve last-valid Evidence and never raise Entry/Broker authority |
 | Daily Decision operating evidence | P1-EVIDENCE | WP-DECISION-01 implements immutable 14:30–14:55 Summary, append-only Manual Account, explicit T+1 settlement evidence, frozen Fill-derived Reconciliation, research Portfolio, independent Risk, fencing and replay on PostgreSQL; cash/equity and missing/unqualified T+1 evidence remain fail-closed | qualified account totals/calendar/status/data/model evidence, authenticated operator and sustained scheduler | consecutive bounded operations finalize/reconcile/replay without Position mutation, authority inflation or stale-fence writes |
 | H9 Signal/Path validation infrastructure | P1 | Signal and PathForecast mechanics exist with explicit assumptions, but no formal incremental-value, calibration or locked OOS infrastructure | Qualified historical data and H8 artifact production | Purged walk-forward, embargo, controls, calibration, sensitivity and frozen OOS protocols pass leakage checks |
-| Runtime governance integration | P1 | Persistent Model/Experiment repositories exist, but DailyLoop creates a local in-memory `ModelRegistry` for B0/B1 | Green baseline and repository ownership decision | Runtime loads approved immutable model/config references from governance authority and cannot bypass transitions/access budgets |
+| Runtime governance integration | DELIVERED_WP_GOV_01_LOCAL_ENGINEERING_GATE | Existing PostgreSQL Registry now owns version lineage, evidence, policy, qualification, Champion/Challenger assignment, global revision and accepted/rejected selection receipts; DailyLoop and Decision Runtime use the Selector and caller qualification is ignored | Formal qualification evidence is intentionally external to this work package | Preserve fail-closed selection and add PIT/OOS/economic/cost/Shadow evidence only through explicit qualification actions |
 | Feature package storage efficiency | DELIVERED_WP_SIG_01A_LOCAL_BENCHMARK_PASS | Encoding V2 separates logical hashes from compressed/columnar physical files, shares definition/configuration data and supports selective read; the required 100-symbol fixture reduced bytes by 85.8937% and selective read time by 99.7085% with stable Bundle/Signal hashes | Sustained operational profiling | Observe real Shadow-scale packages without changing logical identities or V1 compatibility |
-| PostgreSQL Authority Only | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | Native bounded PostgreSQL repositories, migrations 001–026, isolated-schema integration/re-execution replay and fail-closed settings are implemented; the executable file-database backend and bridge are removed | exact-SHA CI PostgreSQL service and production operations qualification | Preserve native PostgreSQL gates in CI; production admission remains separate |
+| PostgreSQL Authority Only | DELIVERED_LOCAL_ENGINEERING_EVIDENCE | Native bounded PostgreSQL repositories, migrations 001–027, isolated-schema integration/re-execution replay and fail-closed settings are implemented; the executable file-database backend and bridge are removed | exact-SHA CI PostgreSQL service and production operations qualification | Preserve native PostgreSQL gates in CI; production admission remains separate |
 
 ## 3. Data and operational evidence gaps
 
@@ -104,6 +104,8 @@ The following are not open implementation gaps, although their operating/model e
 - immutable content-addressed artifacts and semantic Readers;
 - SourceManifest and fail-closed DataQuality;
 - B0/B1 PredictionRuns and candidate baselines;
+- PostgreSQL Model Registry, explicit qualification, Runtime Selector,
+  Champion/Challenger assignment and immutable selection replay;
 - recoverable exploratory DailyLoop;
 - Market/Theme/Capital/Candidate research mechanics;
 - Signal and uncalibrated PathForecast mechanics;
@@ -129,7 +131,7 @@ The following are not open implementation gaps, although their operating/model e
 - append-only manual Fill ledger;
 - exploratory Holding/Exit, TradeOutcome and rolling diagnostics;
 - PostgreSQL-only settings/composition, native bounded repositories, migrations
-  001–026, credential-free runtime bindings, isolated-schema replay and
+  001–027, credential-free runtime bindings, isolated-schema replay and
   fail-closed database unavailability;
 - Daily Decision Summary, append-only Manual Account, Fill-derived
   Reconciliation, research-only Portfolio and independently reloaded Risk.
