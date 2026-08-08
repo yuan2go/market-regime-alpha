@@ -48,3 +48,6 @@ The fixed Phase D MR1 next-session 10:30 recommendation and entry-plumbing contr
 A specification defines target semantics. Implementation status is owned by `docs/status/Current-State.md` and `Capability-Matrix.md`.
 
 The historical V1 implementation cannot be renamed into compliance. Contract convergence must freeze its JSON/Reader identities and define explicit, fail-closed migration boundaries.
+
+The binding convergence decision and field matrix are recorded in
+[ADR-Daily-Research-Contract-Convergence](../architecture/decisions/ADR-Daily-Research-Contract-Convergence.md).
