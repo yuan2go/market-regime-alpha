@@ -7,6 +7,10 @@ import json
 from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import ArtifactId, ModelId
+from market_regime_alpha.data.pit_authority import (
+    FormalPITEvidenceArtifact,
+    PITValidationOutcome,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.native_repository import (
     PostgresConnection,
@@ -29,6 +33,8 @@ from market_regime_alpha.platform.runtime_governance import (
     ModelSelectionReceipt,
     ModelSelectionRequest,
     ModelVersionLineage,
+    QualificationEvidenceKind,
+    QualificationEvidenceOutcome,
     QualificationStatus,
     RuntimeModelLineage,
     RuntimePurpose,
@@ -331,6 +337,8 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     raise ValueError(
                         "Qualification Evidence validation protocol mismatch"
                     )
+                if evidence.evidence_kind is QualificationEvidenceKind.FORMAL_PIT:
+                    _verify_formal_pit_evidence(connection, evidence)
                 revision, duplicate = _record_action(
                     connection,
                     action_type="QUALIFICATION_EVIDENCE",
@@ -1567,6 +1575,46 @@ def _load_lineage_for_model(
     if len(rows) != 1:
         raise KeyError(f"ambiguous or missing Model Version Lineage: {model_id}")
     return ModelVersionLineage.from_canonical_dict(_object(rows[0]["payload_json"]))
+
+
+def _verify_formal_pit_evidence(
+    connection: PostgresConnection,
+    evidence: ModelQualificationEvidence,
+) -> None:
+    if (
+        evidence.outcome is not QualificationEvidenceOutcome.SATISFIED
+        or evidence.evidence.reference_kind != "FORMAL_PIT_VALIDATION"
+    ):
+        raise ValueError("FORMAL_PIT requires a satisfied Formal PIT validation reference")
+    row = connection.execute(
+        "SELECT payload_json FROM formal_pit_validation_evidence WHERE evidence_id = %s",
+        (str(evidence.evidence.artifact_id),),
+    ).fetchone()
+    if row is None:
+        raise ValueError("FORMAL_PIT evidence is not owned by PIT Data Authority")
+    pit = FormalPITEvidenceArtifact.from_canonical_dict(_object(row["payload_json"]))
+    expected_protocol = pit.lineage.validation_protocol
+    mismatches = []
+    for label, governance_value, pit_value in (
+        ("hash", evidence.evidence.content_hash, pit.evidence_hash),
+        ("model", evidence.model_id, pit.lineage.model_id),
+        ("definition", evidence.definition_hash, pit.lineage.definition_hash),
+        ("lineage_id", evidence.lineage_id, pit.lineage.model_lineage_id),
+        ("lineage_hash", evidence.lineage_hash, pit.lineage.model_lineage_hash),
+        ("available_at", evidence.available_at, pit.available_at),
+        ("recorded_at", evidence.recorded_at, pit.recorded_at),
+        (
+            "validation_protocol",
+            evidence.validation_protocol_ref.to_canonical_dict(),
+            expected_protocol.to_canonical_dict(),
+        ),
+    ):
+        if governance_value != pit_value:
+            mismatches.append(label)
+    if pit.outcome is not PITValidationOutcome.SATISFIED:
+        mismatches.append("outcome")
+    if mismatches:
+        raise ValueError("FORMAL_PIT authority mismatch: " + ",".join(mismatches))
 
 
 def _load_evidence(

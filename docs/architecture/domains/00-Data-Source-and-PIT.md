@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE  
 > **Authority:** Canonical bounded-context design for Data Source and PIT  
 > **Owner:** Data Source and PIT domain  
-> **Last Updated:** 2026-07-26  
+> **Last Updated:** 2026-08-08
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** ../01-Domain-Boundaries.md, ../../specs/README.md, ../../roadmap/work-packages/README.md  
@@ -20,6 +20,10 @@ Own provider identity, raw payload preservation, field semantics, availability/f
 - `SourceManifest`
 - `DatasetContract`
 - `DataQualityReport`
+- `PITSourceQualification`
+- `PITFactRevision`
+- `PITAsOfSnapshot`
+- `FormalPITEvidenceArtifact`
 
 Only this domain may create or supersede these authoritative entities.
 
@@ -30,6 +34,9 @@ Only this domain may create or supersede these authoritative entities.
 - `NormalizeSourceArtifact`
 - `FreezeSourceManifest`
 - `AssessDataQuality`
+- `QualifyOrSuspendPITSource`
+- `RecordPITFactRevision`
+- `ValidateFormalPIT`
 
 Commands are idempotent by an explicit request key and either produce immutable artifacts/events or a structured failure.
 
@@ -39,6 +46,8 @@ Commands are idempotent by an explicit request key and either produce immutable 
 - `GetSourceManifest`
 - `GetArtifactLineage`
 - `GetFreshnessStatus`
+- `GetPITAsOfSnapshot`
+- `ReplayFormalPITEvidence`
 
 Queries are read-only projections and return canonical source IDs.
 
@@ -48,6 +57,9 @@ Queries are read-only projections and return canonical source IDs.
 - `SourceManifestFrozen`
 - `DataQualityAssessed`
 - `SourceBlocked`
+- `PITSourceAuthorityChanged`
+- `PITFactRecorded`
+- `FormalPITValidated`
 
 Events carry aggregate identity, schema version, occurred time, correlation ID and causation ID.
 
@@ -81,6 +93,10 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 - No silent provider substitution.
 - Derived evidence never exceeds the weakest required input.
 - event_time, available_time, ingestion_time and decision_time remain distinct.
+- `FORMAL_RESEARCH` fact admission requires exact active SourceManifest,
+  Provider and contract qualification; caller declarations never suffice.
+- Historical reconstruction is pinned to the original PostgreSQL authority
+  revision and never substitutes current rows.
 
 ## Failure modes
 
@@ -96,6 +112,9 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 
 - `src/market_regime_alpha/data/**`
 - `src/market_regime_alpha/research/xuntou_*`
+- `src/market_regime_alpha/data/pit_authority.py`
+- `src/market_regime_alpha/data/postgres_pit_authority.py`
+- PostgreSQL migration 028
 - `Tencent/BaoStock exploratory adapters`
 
 ## Missing implementation
@@ -103,6 +122,7 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 - canonical daily SourceManifest service
 - cross-provider semantic conformance suite
 - daily freshness SLA registry
+- qualified real Provider archive ingestion into the formal PIT ledger
 
 ## Transaction and persistence boundary
 

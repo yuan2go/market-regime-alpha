@@ -42,6 +42,7 @@ from market_regime_alpha.application.operational_research.postgres_composite_rep
 from market_regime_alpha.application.trading_lifecycle.postgres_risk_reduction import (
     PostgresRiskReductionManualIntentRepository,
 )
+from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.decision.postgres_repository import (
     PostgresDecisionLifecycleRepository,
 )
@@ -162,6 +163,9 @@ class RepositoryFactory:
 
     def model_governance(self):
         return PostgresModelGovernanceRepository(self._postgres)
+
+    def pit_authority(self, *, clock: Clock | None = None):
+        return PostgresPITAuthority(self._postgres, clock=clock)
 
     def experiment_governance(self):
         return PostgresExperimentGovernanceRepository(self._postgres)
