@@ -494,8 +494,10 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
             ).fetchall()
         }
     assert tables == {
+        "pit_artifact_authority_resolution",
         "pit_authority_action",
         "pit_source_qualification",
+        "pit_source_qualification_evidence",
         "pit_fact_revision",
         "pit_as_of_snapshot",
     }

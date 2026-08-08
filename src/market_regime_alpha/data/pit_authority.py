@@ -300,6 +300,14 @@ class ProviderQualificationPolicy:
             **self.semantic_payload(),
         }
 
+    @property
+    def reference(self) -> PITArtifactReference:
+        return PITArtifactReference(
+            PITArtifactKind.CONFIGURATION.value,
+            self.policy_id,
+            self.policy_hash,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PITFactTemporalAuthority:
@@ -375,6 +383,51 @@ class PITFactTemporalAuthority:
             ],
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> PITFactTemporalAuthority:
+        _require_fields(
+            payload,
+            {
+                "mode",
+                "provider_available_at",
+                "provider_recorded_at",
+                "provider_revision",
+                "provider_dataset_version",
+                "provider_archive",
+                "provider_evidence",
+            },
+            "PIT Fact Temporal Authority",
+        )
+        archive = payload["provider_archive"]
+        revision = payload["provider_revision"]
+        dataset_version = payload["provider_dataset_version"]
+        return cls(
+            mode=PITFactEvidenceMode(_string(payload["mode"])),
+            provider_available_at=parse_utc_second(
+                "provider_available_at", payload["provider_available_at"]
+            ),
+            provider_recorded_at=parse_utc_second(
+                "provider_recorded_at", payload["provider_recorded_at"]
+            ),
+            provider_revision=(
+                None if revision is None else _string(revision)
+            ),
+            provider_dataset_version=(
+                None if dataset_version is None else _string(dataset_version)
+            ),
+            provider_archive=(
+                None
+                if archive is None
+                else PITArtifactReference.from_canonical_dict(_mapping(archive))
+            ),
+            provider_evidence=tuple(
+                PITProviderEvidence.from_canonical_dict(_mapping(item))
+                for item in _sequence(payload["provider_evidence"])
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PITSourceQualification:
@@ -384,7 +437,9 @@ class PITSourceQualification:
     provider_id: str
     provider_contract: str
     status: PITSourceAuthorityStatus
-    evidence_references: tuple[PITArtifactReference, ...]
+    evidence_level: PITSourceEvidenceLevel
+    provider_evidence: tuple[PITProviderEvidence, ...]
+    qualification_policy: PITArtifactReference
     revision: int
     supersedes_qualification_id: ArtifactId | None
     effective_at: datetime
@@ -404,9 +459,16 @@ class PITSourceQualification:
             ("reason", self.reason),
         ):
             require_text(label, value)
-        _ordered_references(
-            "evidence_references", self.evidence_references, required=True
-        )
+        if (
+            self.qualification_policy.reference_kind
+            != PITArtifactKind.CONFIGURATION.value
+        ):
+            raise PITContractError(
+                "Provider qualification policy requires CONFIGURATION authority"
+            )
+        evidence_keys = tuple(_provider_evidence_key(item) for item in self.provider_evidence)
+        if not evidence_keys or evidence_keys != tuple(sorted(set(evidence_keys))):
+            raise PITContractError("Provider qualification evidence must be sorted and unique")
         if isinstance(self.revision, bool) or self.revision <= 0:
             raise ValueError("source qualification revision must be positive")
         if (self.revision == 1) != (self.supersedes_qualification_id is None):
@@ -425,8 +487,8 @@ class PITSourceQualification:
     @classmethod
     def create(cls, **values: Any) -> PITSourceQualification:
         normalized = dict(values)
-        normalized["evidence_references"] = tuple(
-            sorted(set(values["evidence_references"]), key=_reference_key)
+        normalized["provider_evidence"] = tuple(
+            sorted(set(values["provider_evidence"]), key=_provider_evidence_key)
         )
         digest = canonical_hash(_source_qualification_payload(**normalized))
         return cls(
@@ -441,7 +503,9 @@ class PITSourceQualification:
             provider_id=self.provider_id,
             provider_contract=self.provider_contract,
             status=self.status,
-            evidence_references=self.evidence_references,
+            evidence_level=self.evidence_level,
+            provider_evidence=self.provider_evidence,
+            qualification_policy=self.qualification_policy,
             revision=self.revision,
             supersedes_qualification_id=self.supersedes_qualification_id,
             effective_at=self.effective_at,
@@ -464,7 +528,8 @@ class PITSourceQualification:
         expected = {
             "schema_version", "qualification_id", "qualification_hash",
             "source_manifest", "provider_id", "provider_contract", "status",
-            "evidence_references", "revision", "supersedes_qualification_id",
+            "evidence_level", "provider_evidence", "qualification_policy",
+            "revision", "supersedes_qualification_id",
             "effective_at", "recorded_at", "actor", "reason",
         }
         _require_fields(payload, expected, "PIT Source Qualification")
@@ -478,9 +543,13 @@ class PITSourceQualification:
             provider_id=_string(payload["provider_id"]),
             provider_contract=_string(payload["provider_contract"]),
             status=PITSourceAuthorityStatus(_string(payload["status"])),
-            evidence_references=tuple(
-                PITArtifactReference.from_canonical_dict(_mapping(item))
-                for item in _sequence(payload["evidence_references"])
+            evidence_level=PITSourceEvidenceLevel(_string(payload["evidence_level"])),
+            provider_evidence=tuple(
+                PITProviderEvidence.from_canonical_dict(_mapping(item))
+                for item in _sequence(payload["provider_evidence"])
+            ),
+            qualification_policy=PITArtifactReference.from_canonical_dict(
+                _mapping(payload["qualification_policy"])
             ),
             revision=_integer(payload["revision"]),
             supersedes_qualification_id=(
@@ -513,6 +582,7 @@ class PITFactRevision:
     source_manifest: PITArtifactReference
     provider_id: str
     provider_contract: str
+    temporal_authority: PITFactTemporalAuthority
     value_json: str
     data_eligibility: DataEligibility
     schema_version: str = "pit-fact-revision-v1"
@@ -550,6 +620,14 @@ class PITFactRevision:
             raise ValueError("PIT fact became available before event")
         if self.recorded_at < self.available_at:
             raise ValueError("PIT fact was recorded before available")
+        if self.available_at != self.temporal_authority.provider_available_at:
+            raise PITContractError(
+                "PIT fact available_at must equal its temporal authority"
+            )
+        if self.recorded_at != self.temporal_authority.provider_recorded_at:
+            raise PITContractError(
+                "PIT fact recorded_at must equal its temporal authority"
+            )
         _require_canonical_json(self.value_json)
         if canonical_hash(self.semantic_payload()) != self.content_hash:
             raise ValueError("PIT Fact Revision hash mismatch")
@@ -582,6 +660,7 @@ class PITFactRevision:
             source_manifest=self.source_manifest,
             provider_id=self.provider_id,
             provider_contract=self.provider_contract,
+            temporal_authority=self.temporal_authority,
             value_json=self.value_json,
             data_eligibility=self.data_eligibility,
         )
@@ -601,7 +680,7 @@ class PITFactRevision:
             "supersedes_fact_id", "event_time", "effective_from",
             "effective_to", "available_at", "recorded_at", "artifact",
             "source_manifest", "provider_id", "provider_contract",
-            "value_json", "data_eligibility",
+            "temporal_authority", "value_json", "data_eligibility",
         }
         _require_fields(payload, expected, "PIT Fact Revision")
         effective_to = payload["effective_to"]
@@ -624,6 +703,9 @@ class PITFactRevision:
             source_manifest=PITArtifactReference.from_canonical_dict(_mapping(payload["source_manifest"])),
             provider_id=_string(payload["provider_id"]),
             provider_contract=_string(payload["provider_contract"]),
+            temporal_authority=PITFactTemporalAuthority.from_canonical_dict(
+                _mapping(payload["temporal_authority"])
+            ),
             value_json=_string(payload["value_json"]),
             data_eligibility=DataEligibility(_string(payload["data_eligibility"])),
             schema_version=_string(payload["schema_version"]),
@@ -635,18 +717,133 @@ class RecordedPITFactRevision:
     fact: PITFactRevision
     authority_revision: int
     ingested_at: datetime
+    source_qualification_id: ArtifactId
+    source_qualification_hash: str
+    artifact_resolution_id: ArtifactId
+    artifact_resolution_hash: str
+    source_manifest_resolution_id: ArtifactId
+    source_manifest_resolution_hash: str
 
     def __post_init__(self) -> None:
         if isinstance(self.authority_revision, bool) or self.authority_revision <= 0:
             raise ValueError("authority_revision must be positive")
         require_utc_second("ingested_at", self.ingested_at)
+        for label, digest in (
+            ("source_qualification_hash", self.source_qualification_hash),
+            ("artifact_resolution_hash", self.artifact_resolution_hash),
+            (
+                "source_manifest_resolution_hash",
+                self.source_manifest_resolution_hash,
+            ),
+        ):
+            require_sha256(label, digest)
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "fact": self.fact.to_canonical_dict(),
             "authority_revision": self.authority_revision,
             "ingested_at": canonical_datetime(self.ingested_at),
+            "source_qualification_id": str(self.source_qualification_id),
+            "source_qualification_hash": self.source_qualification_hash,
+            "artifact_resolution_id": str(self.artifact_resolution_id),
+            "artifact_resolution_hash": self.artifact_resolution_hash,
+            "source_manifest_resolution_id": str(
+                self.source_manifest_resolution_id
+            ),
+            "source_manifest_resolution_hash": self.source_manifest_resolution_hash,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class PITSelectedFactAuthority:
+    """Immutable replay binding for one selected Fact and its admission authority."""
+
+    fact_id: ArtifactId
+    fact_hash: str
+    source_qualification_id: ArtifactId
+    source_qualification_hash: str
+    artifact_resolution_id: ArtifactId
+    artifact_resolution_hash: str
+    source_manifest_resolution_id: ArtifactId
+    source_manifest_resolution_hash: str
+
+    def __post_init__(self) -> None:
+        for label, digest in (
+            ("fact_hash", self.fact_hash),
+            ("source_qualification_hash", self.source_qualification_hash),
+            ("artifact_resolution_hash", self.artifact_resolution_hash),
+            (
+                "source_manifest_resolution_hash",
+                self.source_manifest_resolution_hash,
+            ),
+        ):
+            require_sha256(label, digest)
+
+    @classmethod
+    def from_recorded(
+        cls, recorded: RecordedPITFactRevision
+    ) -> PITSelectedFactAuthority:
+        return cls(
+            fact_id=recorded.fact.fact_id,
+            fact_hash=recorded.fact.content_hash,
+            source_qualification_id=recorded.source_qualification_id,
+            source_qualification_hash=recorded.source_qualification_hash,
+            artifact_resolution_id=recorded.artifact_resolution_id,
+            artifact_resolution_hash=recorded.artifact_resolution_hash,
+            source_manifest_resolution_id=recorded.source_manifest_resolution_id,
+            source_manifest_resolution_hash=recorded.source_manifest_resolution_hash,
+        )
+
+    def to_canonical_dict(self) -> dict[str, str]:
+        return {
+            "fact_id": str(self.fact_id),
+            "fact_hash": self.fact_hash,
+            "source_qualification_id": str(self.source_qualification_id),
+            "source_qualification_hash": self.source_qualification_hash,
+            "artifact_resolution_id": str(self.artifact_resolution_id),
+            "artifact_resolution_hash": self.artifact_resolution_hash,
+            "source_manifest_resolution_id": str(
+                self.source_manifest_resolution_id
+            ),
+            "source_manifest_resolution_hash": self.source_manifest_resolution_hash,
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> PITSelectedFactAuthority:
+        _require_fields(
+            payload,
+            {
+                "fact_id",
+                "fact_hash",
+                "source_qualification_id",
+                "source_qualification_hash",
+                "artifact_resolution_id",
+                "artifact_resolution_hash",
+                "source_manifest_resolution_id",
+                "source_manifest_resolution_hash",
+            },
+            "PIT Selected Fact Authority",
+        )
+        return cls(
+            fact_id=ArtifactId(_string(payload["fact_id"])),
+            fact_hash=_string(payload["fact_hash"]),
+            source_qualification_id=ArtifactId(
+                _string(payload["source_qualification_id"])
+            ),
+            source_qualification_hash=_string(payload["source_qualification_hash"]),
+            artifact_resolution_id=ArtifactId(
+                _string(payload["artifact_resolution_id"])
+            ),
+            artifact_resolution_hash=_string(payload["artifact_resolution_hash"]),
+            source_manifest_resolution_id=ArtifactId(
+                _string(payload["source_manifest_resolution_id"])
+            ),
+            source_manifest_resolution_hash=_string(
+                payload["source_manifest_resolution_hash"]
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -909,6 +1106,7 @@ class PITAsOfSnapshot:
     authority_revision: int
     outcome: PITValidationOutcome
     selected_fact_references: tuple[tuple[ArtifactId, str], ...]
+    selected_fact_authorities: tuple[PITSelectedFactAuthority, ...]
     rejection_codes: tuple[str, ...]
     schema_version: str = "pit-as-of-snapshot-v1"
 
@@ -916,6 +1114,12 @@ class PITAsOfSnapshot:
     def create(cls, **values: Any) -> PITAsOfSnapshot:
         normalized = dict(values)
         normalized["selected_fact_references"] = tuple(sorted(set(values["selected_fact_references"]), key=lambda item: str(item[0])))
+        normalized["selected_fact_authorities"] = tuple(
+            sorted(
+                set(values["selected_fact_authorities"]),
+                key=lambda item: str(item.fact_id),
+            )
+        )
         normalized["rejection_codes"] = tuple(sorted(set(values["rejection_codes"])))
         digest = canonical_hash(_snapshot_payload(**normalized))
         return cls(_content_id("pit-as-of-snapshot", digest), digest, **normalized)
@@ -931,6 +1135,13 @@ class PITAsOfSnapshot:
             raise ValueError("snapshot outcome/rejection mismatch")
         for _, item_hash in self.selected_fact_references:
             require_sha256("selected fact hash", item_hash)
+        authority_projection = tuple(
+            (item.fact_id, item.fact_hash) for item in self.selected_fact_authorities
+        )
+        if authority_projection != self.selected_fact_references:
+            raise PITContractError(
+                "selected Fact references must equal immutable authority bindings"
+            )
         if canonical_hash(self.semantic_payload()) != self.snapshot_hash:
             raise ValueError("PIT As-Of Snapshot hash mismatch")
         if self.snapshot_id != _content_id("pit-as-of-snapshot", self.snapshot_hash):
@@ -944,6 +1155,7 @@ class PITAsOfSnapshot:
             authority_revision=self.authority_revision,
             outcome=self.outcome,
             selected_fact_references=self.selected_fact_references,
+            selected_fact_authorities=self.selected_fact_authorities,
             rejection_codes=self.rejection_codes,
         )
 
@@ -953,6 +1165,10 @@ class PITAsOfSnapshot:
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> PITAsOfSnapshot:
         refs = tuple((ArtifactId(_string(item["fact_id"])), _string(item["content_hash"])) for item in _sequence(payload["selected_fact_references"]))
+        authorities = tuple(
+            PITSelectedFactAuthority.from_canonical_dict(_mapping(item))
+            for item in _sequence(payload["selected_fact_authorities"])
+        )
         return cls(
             snapshot_id=ArtifactId(_string(payload["snapshot_id"])),
             snapshot_hash=_string(payload["snapshot_hash"]),
@@ -962,6 +1178,7 @@ class PITAsOfSnapshot:
             authority_revision=_integer(payload["authority_revision"]),
             outcome=PITValidationOutcome(_string(payload["outcome"])),
             selected_fact_references=refs,
+            selected_fact_authorities=authorities,
             rejection_codes=tuple(_string(item) for item in _sequence(payload["rejection_codes"])),
             schema_version=_string(payload["schema_version"]),
         )
@@ -979,6 +1196,8 @@ class FormalPITEvidenceArtifact:
     outcome: PITValidationOutcome
     rejection_codes: tuple[str, ...]
     selected_fact_references: tuple[tuple[ArtifactId, str], ...]
+    selected_fact_authorities: tuple[PITSelectedFactAuthority, ...]
+    lineage_resolution_references: tuple[tuple[ArtifactId, str], ...]
     available_at: datetime
     recorded_at: datetime
     actor: str
@@ -990,6 +1209,18 @@ class FormalPITEvidenceArtifact:
         normalized = dict(values)
         normalized["rejection_codes"] = tuple(sorted(set(values["rejection_codes"])))
         normalized["selected_fact_references"] = tuple(sorted(set(values["selected_fact_references"]), key=lambda item: str(item[0])))
+        normalized["selected_fact_authorities"] = tuple(
+            sorted(
+                set(values["selected_fact_authorities"]),
+                key=lambda item: str(item.fact_id),
+            )
+        )
+        normalized["lineage_resolution_references"] = tuple(
+            sorted(
+                set(values["lineage_resolution_references"]),
+                key=lambda item: str(item[0]),
+            )
+        )
         digest = canonical_hash(_evidence_payload(**normalized))
         return cls(_content_id("formal-pit-evidence", digest), digest, **normalized)
 
@@ -1007,6 +1238,15 @@ class FormalPITEvidenceArtifact:
         require_text("reason", self.reason)
         if (self.outcome is PITValidationOutcome.SATISFIED) != (not self.rejection_codes):
             raise ValueError("Formal PIT evidence outcome/rejection mismatch")
+        authority_projection = tuple(
+            (item.fact_id, item.fact_hash) for item in self.selected_fact_authorities
+        )
+        if authority_projection != self.selected_fact_references:
+            raise PITContractError(
+                "Formal PIT selected Facts must retain admission authority"
+            )
+        for _, digest in self.lineage_resolution_references:
+            require_sha256("lineage resolution hash", digest)
         if canonical_hash(self.semantic_payload()) != self.evidence_hash:
             raise ValueError("Formal PIT Evidence hash mismatch")
         if self.evidence_id != _content_id("formal-pit-evidence", self.evidence_hash):
@@ -1022,6 +1262,8 @@ class FormalPITEvidenceArtifact:
             outcome=self.outcome,
             rejection_codes=self.rejection_codes,
             selected_fact_references=self.selected_fact_references,
+            selected_fact_authorities=self.selected_fact_authorities,
+            lineage_resolution_references=self.lineage_resolution_references,
             available_at=self.available_at,
             recorded_at=self.recorded_at,
             actor=self.actor,
@@ -1034,6 +1276,17 @@ class FormalPITEvidenceArtifact:
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> FormalPITEvidenceArtifact:
         refs = tuple((ArtifactId(_string(item["fact_id"])), _string(item["content_hash"])) for item in _sequence(payload["selected_fact_references"]))
+        authorities = tuple(
+            PITSelectedFactAuthority.from_canonical_dict(_mapping(item))
+            for item in _sequence(payload["selected_fact_authorities"])
+        )
+        lineage_resolutions = tuple(
+            (
+                ArtifactId(_string(item["resolution_id"])),
+                _string(item["resolution_hash"]),
+            )
+            for item in _sequence(payload["lineage_resolution_references"])
+        )
         return cls(
             evidence_id=ArtifactId(_string(payload["evidence_id"])),
             evidence_hash=_string(payload["evidence_hash"]),
@@ -1045,6 +1298,8 @@ class FormalPITEvidenceArtifact:
             outcome=PITValidationOutcome(_string(payload["outcome"])),
             rejection_codes=tuple(_string(item) for item in _sequence(payload["rejection_codes"])),
             selected_fact_references=refs,
+            selected_fact_authorities=authorities,
+            lineage_resolution_references=lineage_resolutions,
             available_at=parse_utc_second("available_at", payload["available_at"]),
             recorded_at=parse_utc_second("recorded_at", payload["recorded_at"]),
             actor=_string(payload["actor"]),
@@ -1120,9 +1375,11 @@ def _source_qualification_payload(**values: Any) -> dict[str, Any]:
         "provider_id": values["provider_id"],
         "provider_contract": values["provider_contract"],
         "status": values["status"].value,
-        "evidence_references": [
-            item.to_canonical_dict() for item in values["evidence_references"]
+        "evidence_level": values["evidence_level"].value,
+        "provider_evidence": [
+            item.to_canonical_dict() for item in values["provider_evidence"]
         ],
+        "qualification_policy": values["qualification_policy"].to_canonical_dict(),
         "revision": values["revision"],
         "supersedes_qualification_id": (
             str(values["supersedes_qualification_id"])
@@ -1154,6 +1411,7 @@ def _pit_fact_payload(**values: Any) -> dict[str, Any]:
         "source_manifest": values["source_manifest"].to_canonical_dict(),
         "provider_id": values["provider_id"],
         "provider_contract": values["provider_contract"],
+        "temporal_authority": values["temporal_authority"].to_canonical_dict(),
         "value_json": values["value_json"],
         "data_eligibility": values["data_eligibility"].value,
     }
@@ -1185,6 +1443,10 @@ def _snapshot_payload(**values: Any) -> dict[str, Any]:
             {"fact_id": str(item_id), "content_hash": item_hash}
             for item_id, item_hash in values["selected_fact_references"]
         ],
+        "selected_fact_authorities": [
+            item.to_canonical_dict()
+            for item in values["selected_fact_authorities"]
+        ],
         "rejection_codes": list(values["rejection_codes"]),
     }
 
@@ -1202,6 +1464,14 @@ def _evidence_payload(**values: Any) -> dict[str, Any]:
         "selected_fact_references": [
             {"fact_id": str(item_id), "content_hash": item_hash}
             for item_id, item_hash in values["selected_fact_references"]
+        ],
+        "selected_fact_authorities": [
+            item.to_canonical_dict()
+            for item in values["selected_fact_authorities"]
+        ],
+        "lineage_resolution_references": [
+            {"resolution_id": str(item_id), "resolution_hash": digest}
+            for item_id, digest in values["lineage_resolution_references"]
         ],
         "available_at": canonical_datetime(values["available_at"]),
         "recorded_at": canonical_datetime(values["recorded_at"]),
@@ -1290,6 +1560,7 @@ __all__ = [
     "PITProviderEvidence",
     "PITProviderEvidenceKind",
     "PITRequiredFact",
+    "PITSelectedFactAuthority",
     "PITSourceAuthorityStatus",
     "PITSourceEvidenceLevel",
     "PITSourceQualification",

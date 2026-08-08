@@ -5,14 +5,26 @@ from datetime import datetime, timedelta, timezone
 from market_regime_alpha.core.identity import ArtifactId, ModelId
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.pit_authority import (
+    FORMAL_PROVIDER_EVIDENCE_KINDS,
     FormalPITValidationRequest,
+    PITArtifactKind,
     PITArtifactReference,
+    PITFactEvidenceMode,
     PITFactKind,
     PITFactRevision,
+    PITFactTemporalAuthority,
+    PITProviderEvidence,
+    PITProviderEvidenceKind,
     PITRequiredFact,
     PITSourceAuthorityStatus,
+    PITSourceEvidenceLevel,
     PITSourceQualification,
     PITValidationLineage,
+    ProviderQualificationPolicy,
+)
+from market_regime_alpha.data.pit_artifact_authority import (
+    PITArtifactAuthorityResolution,
+    PITArtifactAuthorityUnavailableError,
 )
 from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 
@@ -24,6 +36,56 @@ NOW = datetime(2026, 8, 8, 7, 0, tzinfo=UTC)
 HASH_A = "sha256:" + "a" * 64
 HASH_B = "sha256:" + "b" * 64
 HASH_C = "sha256:" + "c" * 64
+
+
+class FixturePITArtifactAuthorityResolver:
+    """Explicit engineering-only resolver; production never composes this class."""
+
+    def resolve(
+        self,
+        reference: PITArtifactReference,
+        *,
+        resolved_at: datetime,
+    ) -> PITArtifactAuthorityResolution:
+        if str(reference.artifact_id).startswith(("forged", "wrong")):
+            raise PITArtifactAuthorityUnavailableError(
+                "engineering fixture resolver rejected unregistered Artifact"
+            )
+        return PITArtifactAuthorityResolution.create(
+            reference=reference,
+            canonical_schema="engineering-fixture-artifact-v1",
+            reader_contract="engineering-fixture-authority-resolver-v1",
+            physical_checksums_hash=HASH_C,
+            data_eligibility=DataEligibility.FORMAL_RESEARCH,
+            available_at=DECISION_TIME - timedelta(minutes=1),
+            resolved_at=resolved_at,
+        )
+
+
+def fixture_provider_policy() -> ProviderQualificationPolicy:
+    return ProviderQualificationPolicy.create(
+        provider_ceilings=(
+            (
+                "decision-formal-fixture-provider",
+                PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER,
+            ),
+            ("formal-provider", PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER),
+        ),
+        default_ceiling=PITSourceEvidenceLevel.PIT_INCOMPLETE,
+    )
+
+
+def pit_authority(
+    factory,
+    *,
+    clock,
+) -> PostgresPITAuthority:
+    return PostgresPITAuthority(
+        factory,
+        clock=clock,
+        artifact_resolver=FixturePITArtifactAuthorityResolver(),
+        provider_policy=fixture_provider_policy(),
+    )
 
 
 class MutableClock:
@@ -92,6 +154,7 @@ def _artifact(kind: PITFactKind) -> PITArtifactReference:
 def pit_fact(
     required: PITRequiredFact,
     *,
+    scope_id: str = "daily:2026-08-08",
     revision: int = 1,
     supersedes_fact_id: ArtifactId | None = None,
     event_time: datetime | None = None,
@@ -102,12 +165,13 @@ def pit_fact(
     eligibility: DataEligibility = DataEligibility.FORMAL_RESEARCH,
     artifact: PITArtifactReference | None = None,
     source_manifest: PITArtifactReference | None = None,
+    temporal_authority: PITFactTemporalAuthority | None = None,
 ) -> PITFactRevision:
     event = event_time or DECISION_TIME - timedelta(minutes=5)
     available = available_at or event + timedelta(seconds=1)
     recorded = recorded_at or available + timedelta(seconds=1)
     return PITFactRevision.create(
-        scope_id="daily:2026-08-08",
+        scope_id=scope_id,
         logical_key=required.logical_key,
         fact_kind=required.fact_kind,
         subject=required.subject,
@@ -122,6 +186,12 @@ def pit_fact(
         source_manifest=source_manifest or pit_lineage().source_manifests[0],
         provider_id="formal-provider",
         provider_contract="formal-provider-contract-v1",
+        temporal_authority=temporal_authority
+        or PITFactTemporalAuthority(
+            mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
+            provider_available_at=available,
+            provider_recorded_at=recorded,
+        ),
         value_json=value_json,
         data_eligibility=eligibility,
     )
@@ -135,21 +205,46 @@ def source_qualification(
     status: PITSourceAuthorityStatus = PITSourceAuthorityStatus.QUALIFIED,
     revision: int = 1,
     supersedes_qualification_id: ArtifactId | None = None,
+    effective_at: datetime | None = None,
+    recorded_at: datetime | None = None,
+    actor: str = "source-governance-operator",
+    reason: str = "explicit test source qualification",
+    evidence_level: PITSourceEvidenceLevel | None = None,
+    evidence_kinds: tuple[PITProviderEvidenceKind, ...] | None = None,
+    policy: ProviderQualificationPolicy | None = None,
 ) -> PITSourceQualification:
+    selected_evidence_level = (
+        evidence_level or PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER
+    )
+    selected_evidence_kinds = evidence_kinds or (
+        FORMAL_PROVIDER_EVIDENCE_KINDS
+        if status is PITSourceAuthorityStatus.QUALIFIED
+        else (PITProviderEvidenceKind.SUSPENSION_DECISION,)
+    )
+    selected_policy = policy or fixture_provider_policy()
     return PITSourceQualification.create(
         source_manifest=source_manifest or pit_lineage().source_manifests[0],
         provider_id=provider_id,
         provider_contract=provider_contract,
         status=status,
-        evidence_references=(
-            ref("SOURCE_AUTHORITY_EVIDENCE", f"source-authority-evidence-{revision}"),
+        evidence_level=selected_evidence_level,
+        provider_evidence=tuple(
+            PITProviderEvidence(
+                evidence_kind=kind,
+                reference=ref(
+                    PITArtifactKind.PROVIDER_EVIDENCE.value,
+                    f"source-authority-{kind.value.lower()}-{revision}",
+                ),
+            )
+            for kind in selected_evidence_kinds
         ),
+        qualification_policy=selected_policy.reference,
         revision=revision,
         supersedes_qualification_id=supersedes_qualification_id,
-        effective_at=INGEST_TIME - timedelta(minutes=2),
-        recorded_at=INGEST_TIME - timedelta(minutes=1),
-        actor="source-governance-operator",
-        reason="explicit test source qualification",
+        effective_at=effective_at or INGEST_TIME - timedelta(minutes=2),
+        recorded_at=recorded_at or INGEST_TIME - timedelta(minutes=1),
+        actor=actor,
+        reason=reason,
     )
 
 

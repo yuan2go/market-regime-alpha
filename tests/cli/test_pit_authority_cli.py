@@ -4,7 +4,6 @@ import json
 import os
 
 from market_regime_alpha.cli.pit_authority import main
-from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -18,6 +17,7 @@ from tests.persistence.postgres.pit_fixture import (
     NOW,
     authorize_source,
     pit_fact,
+    pit_authority,
     pit_request,
     required_facts,
 )
@@ -37,7 +37,7 @@ def test_cli_inspects_and_replays_formal_pit_evidence(
     capsys,
 ) -> None:
     clock = MutableClock(INGEST_TIME)
-    pit = PostgresPITAuthority(postgres_factory, clock=clock)
+    pit = pit_authority(postgres_factory, clock=clock)
     authorize_source(pit, idempotency_key="cli-authorize-source")
     for index, required in enumerate(required_facts()):
         pit.record_fact(

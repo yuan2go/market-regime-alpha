@@ -7,11 +7,11 @@ import pytest
 
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.pit_authority import (
+    PITAsOfQuery,
     PITFactKind,
     PITRequiredFact,
     PITValidationOutcome,
 )
-from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -21,6 +21,7 @@ from tests.persistence.postgres.pit_fixture import (
     MutableClock,
     NOW,
     authorize_source,
+    pit_authority,
     pit_fact,
     pit_request,
     ref,
@@ -36,7 +37,7 @@ def _validate_with_attacked_fact(
     evidence_key: str,
 ) -> tuple[PITValidationOutcome, tuple[str, ...]]:
     clock = MutableClock(INGEST_TIME)
-    authority = PostgresPITAuthority(factory, clock=clock)
+    authority = pit_authority(factory, clock=clock)
     authorize_source(authority, idempotency_key=f"{evidence_key}-source")
     attacked_required = next(
         item for item in required_facts() if item.fact_kind is attacked_kind
@@ -130,7 +131,7 @@ def test_late_server_ingest_is_rejected_even_when_caller_times_look_safe(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     clock = MutableClock(INGEST_TIME)
-    authority = PostgresPITAuthority(postgres_factory, clock=clock)
+    authority = pit_authority(postgres_factory, clock=clock)
     authorize_source(authority, idempotency_key="late-ingest-source")
     for index, required in enumerate(required_facts()):
         if required.fact_kind is PITFactKind.MARKET_DATA:
@@ -160,11 +161,15 @@ def test_late_server_ingest_is_rejected_even_when_caller_times_look_safe(
             "INPUT_AUTHORITY_NOT_FORMAL:market:600000.SH:2026-08-08T06:44:00Z",
         ),
         (
-            {"artifact": ref("DATASET", "wrong-dataset")},
+            {"artifact": ref("DATASET", "alternate-authoritative-dataset")},
             "DATASET_LINEAGE_MISMATCH:market:600000.SH:2026-08-08T06:44:00Z",
         ),
         (
-            {"source_manifest": ref("SOURCE_MANIFEST", "wrong-source")},
+            {
+                "source_manifest": ref(
+                    "SOURCE_MANIFEST", "alternate-authoritative-source"
+                )
+            },
             "SOURCE_MANIFEST_LINEAGE_MISMATCH:market:600000.SH:2026-08-08T06:44:00Z",
         ),
     ],
@@ -189,7 +194,7 @@ def test_back_adjusted_research_data_cannot_be_formal_pit(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     clock = MutableClock(INGEST_TIME)
-    authority = PostgresPITAuthority(postgres_factory, clock=clock)
+    authority = pit_authority(postgres_factory, clock=clock)
     authorize_source(authority, idempotency_key="back-adjusted-source")
     for index, required in enumerate(required_facts()):
         authority.record_fact(
@@ -209,3 +214,48 @@ def test_back_adjusted_research_data_cannot_be_formal_pit(
 
     assert evidence.outcome is PITValidationOutcome.REJECTED
     assert "RESEARCH_BACK_ADJUSTED_NOT_PIT_SAFE" in evidence.rejection_codes
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            PITFactKind.THEME_MEMBERSHIP,
+            "HISTORICAL_THEME_MEMBERSHIP_UNAVAILABLE",
+        ),
+        (PITFactKind.ETF_MEMBERSHIP, "HISTORICAL_ETF_MEMBERSHIP_UNAVAILABLE"),
+        (PITFactKind.ST_STATUS, "HISTORICAL_ST_STATUS_UNAVAILABLE"),
+        (
+            PITFactKind.TRADING_STATUS,
+            "HISTORICAL_SUSPENSION_STATUS_UNAVAILABLE",
+        ),
+        (PITFactKind.LISTING_STATUS, "HISTORICAL_LISTING_STATUS_UNAVAILABLE"),
+        (
+            PITFactKind.ADJUSTMENT_FACTOR,
+            "CORPORATE_ACTION_AUTHORITY_UNAVAILABLE",
+        ),
+    ],
+)
+def test_missing_historical_authority_is_typed_and_rejected(
+    postgres_factory: PostgresConnectionFactory,
+    kind: PITFactKind,
+    expected: str,
+) -> None:
+    authority = pit_authority(postgres_factory, clock=lambda: INGEST_TIME)
+    authorize_source(authority, idempotency_key=f"typed-missing-source-{kind.value}")
+    required = PITRequiredFact(
+        logical_key=f"missing:{kind.value.lower()}:600000.SH",
+        fact_kind=kind,
+        subject="600000.SH",
+    )
+
+    snapshot = authority.as_of(
+        PITAsOfQuery.create(
+            scope_id="daily:2026-08-08",
+            decision_time=DECISION_TIME,
+            required_facts=(required,),
+        )
+    )
+
+    assert snapshot.outcome is PITValidationOutcome.REJECTED
+    assert f"{expected}:{required.logical_key}" in snapshot.rejection_codes

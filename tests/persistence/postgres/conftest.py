@@ -39,7 +39,7 @@ def postgres_factory() -> Iterator[PostgresConnectionFactory]:
     factory = PostgresConnectionFactory(
         settings,
         min_size=0,
-        max_size=2,
+        max_size=8,
         application_schema=schema,
     )
     try:

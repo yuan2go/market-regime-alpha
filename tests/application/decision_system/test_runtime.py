@@ -54,11 +54,11 @@ from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.pit_authority import (
     FormalPITValidationRequest,
     PITArtifactReference,
+    PITFactEvidenceMode,
     PITFactKind,
     PITFactRevision,
+    PITFactTemporalAuthority,
     PITRequiredFact,
-    PITSourceAuthorityStatus,
-    PITSourceQualification,
     PITValidationLineage,
 )
 from market_regime_alpha.data.pit_governance import (
@@ -99,6 +99,10 @@ from tests.application.decision_system.support import (
     observation,
     risk_configuration,
     tolerance,
+)
+from tests.persistence.postgres.pit_fixture import (
+    pit_authority,
+    source_qualification,
 )
 from tests.application.decision_system.governance_fixture import (
     FIXTURE_PRODUCTION_SELECTOR,
@@ -214,22 +218,12 @@ def _record_decision_fixture_formal_pit(
         PITFactKind.TRADING_ELIGIBILITY: eligibility,
     }
     clock = MutableClock(decision_time - timedelta(seconds=10))
-    pit = PostgresPITAuthority(factory, clock=clock)
+    pit = pit_authority(factory, clock=clock)
     pit.record_source_qualification(
-        PITSourceQualification.create(
+        source_qualification(
             source_manifest=source_manifest,
             provider_id="decision-formal-fixture-provider",
             provider_contract="decision-formal-fixture-contract-v1",
-            status=PITSourceAuthorityStatus.QUALIFIED,
-            evidence_references=(
-                PITArtifactReference(
-                    "SOURCE_AUTHORITY_EVIDENCE",
-                    ArtifactId(f"decision-source-authority-{suffix}"),
-                    canonical_hash({"source_authority": suffix}),
-                ),
-            ),
-            revision=1,
-            supersedes_qualification_id=None,
             effective_at=event_time - timedelta(seconds=2),
             recorded_at=event_time - timedelta(seconds=1),
             actor="pytest-source-governance-operator",
@@ -268,6 +262,11 @@ def _record_decision_fixture_formal_pit(
                 source_manifest=source_manifest,
                 provider_id="decision-formal-fixture-provider",
                 provider_contract="decision-formal-fixture-contract-v1",
+                temporal_authority=PITFactTemporalAuthority(
+                    mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
+                    provider_available_at=event_time + timedelta(seconds=1),
+                    provider_recorded_at=event_time + timedelta(seconds=2),
+                ),
                 value_json='{"value":true}',
                 data_eligibility=DataEligibility.FORMAL_RESEARCH,
             ),

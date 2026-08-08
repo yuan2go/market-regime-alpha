@@ -35,6 +35,7 @@ from tests.persistence.postgres.pit_fixture import (
     MutableClock,
     NOW,
     authorize_source,
+    pit_authority,
     pit_fact,
     ref,
     required_facts,
@@ -150,7 +151,7 @@ def test_satisfied_pit_evidence_enters_existing_governance_without_qualification
     model_lineage = _record_model_lineage(governance)
     lineage = _matching_pit_lineage(model_lineage)
     clock = MutableClock(INGEST_TIME)
-    pit = PostgresPITAuthority(postgres_factory, clock=clock)
+    pit = pit_authority(postgres_factory, clock=clock)
     formal_pit = _record_pit_evidence(
         pit,
         clock,
@@ -252,7 +253,7 @@ def test_rejected_pit_evidence_cannot_be_consumed(
     model_lineage = _record_model_lineage(governance)
     lineage = _matching_pit_lineage(model_lineage)
     clock = MutableClock(INGEST_TIME)
-    pit = PostgresPITAuthority(postgres_factory, clock=clock)
+    pit = pit_authority(postgres_factory, clock=clock)
     authorize_source(pit, idempotency_key="rejected-pit-source")
     for index, required in enumerate(required_facts()):
         pit.record_fact(

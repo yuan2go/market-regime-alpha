@@ -21,6 +21,7 @@ from market_regime_alpha.data.pit_authority import (
     PITProviderEvidence,
     PITProviderEvidenceKind,
     PITRequiredFact,
+    PITSelectedFactAuthority,
     PITValidationLineage,
     PITValidationOutcome,
     PITSourceEvidenceLevel,
@@ -56,6 +57,11 @@ def fact(**overrides: object) -> PITFactRevision:
         "source_manifest": reference("SOURCE_MANIFEST", "manifest-a", HASH_B),
         "provider_id": "formal-provider",
         "provider_contract": "formal-provider-contract-v1",
+        "temporal_authority": PITFactTemporalAuthority(
+            mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
+            provider_available_at=datetime(2026, 8, 8, 6, 44, 1, tzinfo=UTC),
+            provider_recorded_at=datetime(2026, 8, 8, 6, 44, 2, tzinfo=UTC),
+        ),
         "value_json": '{"close":"10.12"}',
         "data_eligibility": DataEligibility.FORMAL_RESEARCH,
     }
@@ -274,6 +280,16 @@ def test_research_back_adjustment_is_never_formal_pit() -> None:
 
 
 def test_formal_evidence_identity_binds_snapshot_and_lineage() -> None:
+    selected_authority = PITSelectedFactAuthority(
+        fact_id=ArtifactId("pit-fact-a"),
+        fact_hash=HASH_A,
+        source_qualification_id=ArtifactId("qualification-a"),
+        source_qualification_hash=HASH_A,
+        artifact_resolution_id=ArtifactId("artifact-resolution-a"),
+        artifact_resolution_hash=HASH_A,
+        source_manifest_resolution_id=ArtifactId("manifest-resolution-a"),
+        source_manifest_resolution_hash=HASH_B,
+    )
     evidence = FormalPITEvidenceArtifact.create(
         request_hash=HASH_A,
         snapshot_id=ArtifactId("pit-snapshot-a"),
@@ -283,6 +299,8 @@ def test_formal_evidence_identity_binds_snapshot_and_lineage() -> None:
         outcome=PITValidationOutcome.SATISFIED,
         rejection_codes=(),
         selected_fact_references=((ArtifactId("pit-fact-a"), HASH_A),),
+        selected_fact_authorities=(selected_authority,),
+        lineage_resolution_references=((ArtifactId("lineage-resolution-a"), HASH_A),),
         available_at=DECISION_TIME,
         recorded_at=DECISION_TIME,
         actor="pit-validator",
