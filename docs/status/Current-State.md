@@ -132,17 +132,28 @@ isolated Decision replay transfers a point-in-time governance bundle into its
 isolated PostgreSQL schema and re-executes selection at the original revision.
 
 WP-PIT-01 adds the Data bounded context's PostgreSQL Formal PIT Authority in
-migration 028. Explicit Source qualification/suspension gates every
-`FORMAL_RESEARCH` fact before append-only admission. Revisioned facts preserve
-Event, Effective, Available, Recorded and server Ingested time; as-of selection
-requires all five to be visible at DecisionTime and is pinned to the historical
-authority revision. Dataset, SourceManifest, Universe, Eligibility, Feature,
-configuration, code, validation protocol and Model lineage are bound into an
-immutable pass/rejection artifact. Only a satisfied artifact may enter the
-existing Model Governance `FORMAL_PIT` evidence seam, and doing so does not
-qualify a model or assign a Champion. Current repository evidence is PostgreSQL
-engineering fixture evidence only: no real Provider archive is source-qualified
-or established as Formal PIT by this checkpoint.
+migration 028. Canonical package Readers now resolve exact Artifact identity,
+schema and physical checksums before Source qualification, Fact admission or
+validation; a well-formed caller ID/hash is not authority. Typed Provider
+evidence and a content-addressed qualification policy prevent operator strings
+from raising public/free sources above their configured ceilings. Every Fact
+binds the exact Source qualification plus Artifact and SourceManifest resolution
+receipts used at admission.
+
+Prospective capture requires server ingestion by DecisionTime. Historical
+Provider PIT keeps the later system import time truthful and instead requires
+typed historical availability, revision, dataset-version and archive evidence.
+Validation runs in a PostgreSQL repeatable-read snapshot. The monotonically
+allocated authority revision is audit metadata, not a historical world-prefix;
+replay is bound to explicit immutable Fact IDs/hashes, qualification lineage and
+Artifact resolution receipts. Source changes use an exclusive source lock,
+Fact admission uses the matching shared source lock plus aggregate CAS, and
+unrelated scopes/logical keys do not take a global revision lock. Only a
+satisfied artifact may enter the existing Model Governance `FORMAL_PIT`
+evidence seam, and doing so does not qualify a model or assign a Champion.
+Current evidence remains PostgreSQL engineering fixtures only: no real Provider
+archive, Eligibility Reader or Validation Protocol Reader establishes real
+Formal PIT at this checkpoint.
 
 ## 2. Current stage
 
@@ -651,9 +662,10 @@ content-addressed T+1 calendar/session evidence exists. When supplied at the
 same account/AsOf scope, that evidence is persisted append-only under the active
 fence and the frozen Fill view binds its ID/hash.
 Migration 027 adds Model Governance/Runtime Selector authority. Migration 028
-adds PIT Source qualification, bitemporal facts, as-of snapshots and immutable
-Formal PIT validation evidence. Fresh 001→028 and 023→028 migration paths are tested on PostgreSQL
-16.
+adds canonical Artifact resolution receipts, typed PIT Source qualification
+evidence, prospective/historical bitemporal facts, repeatable-read as-of
+snapshots and explicit-set immutable Formal PIT validation evidence. Fresh
+001→028 and 023→028 migration paths are tested on PostgreSQL 16.
 
 Native repositories preserve idempotency, command hashes, compare-and-swap,
 scope-level locks, fencing, append-only events, immutable identities,

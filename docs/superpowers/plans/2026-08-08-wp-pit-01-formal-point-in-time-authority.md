@@ -1,5 +1,14 @@
 # WP-PIT-01 Formal Point-in-Time Authority Convergence Implementation Plan
 
+> **Status:** CURRENT_SPECIFICATION
+> **Authority:** Execution plan for WP-PIT-01 / Draft PR #42 merge convergence
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-08
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../../../AGENTS.md, ../specs/2026-08-08-wp-pit-01-formal-point-in-time-authority-design.md, ../../architecture/domains/00-Data-Source-and-PIT.md
+> **Code Evidence:** Completion requires final-commit PostgreSQL 16, concurrency, leakage, replay and repository quality gates.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Draft PR #42 merge-ready by closing required-fact collisions, resolving canonical Artifact authority, separating prospective and historical PIT, removing global write serialization safely, and replaying from explicit immutable selections.
@@ -27,7 +36,7 @@
 - Modify: `tests/data/test_pit_authority.py`
 
 **Interfaces:**
-- Produces: `PITContractError`, `PITArtifactKind`, `PITFactEvidenceMode`, `PITSourceEvidenceLevel`, `PITProviderEvidenceKind`, `PITProviderEvidence`, `ProviderQualificationPolicy`, `PITFactTemporalAuthority`, `PITSelectedFactBinding`.
+- Produces: `PITContractError`, `PITArtifactKind`, `PITFactEvidenceMode`, `PITSourceEvidenceLevel`, `PITProviderEvidenceKind`, `PITProviderEvidence`, `ProviderQualificationPolicy`, `PITFactTemporalAuthority`, `PITSelectedFactAuthority`.
 - Produces: `require_unique_required_fact_keys(required_facts: tuple[PITRequiredFact, ...]) -> None`.
 - Preserves: `FormalPITValidationRequest`, `PITAsOfQuery`, `PITFactRevision`, `FormalPITEvidenceArtifact` as the public PIT contracts.
 

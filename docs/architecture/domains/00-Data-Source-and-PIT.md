@@ -20,8 +20,12 @@ Own provider identity, raw payload preservation, field semantics, availability/f
 - `SourceManifest`
 - `DatasetContract`
 - `DataQualityReport`
+- `ProviderQualificationPolicy`
+- `PITProviderEvidence`
+- `PITArtifactAuthorityResolution`
 - `PITSourceQualification`
 - `PITFactRevision`
+- `PITFactTemporalAuthority`
 - `PITAsOfSnapshot`
 - `FormalPITEvidenceArtifact`
 
@@ -93,10 +97,20 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 - No silent provider substitution.
 - Derived evidence never exceeds the weakest required input.
 - event_time, available_time, ingestion_time and decision_time remain distinct.
+- `PROSPECTIVE_CAPTURED_PIT` requires system ingestion no later than
+  DecisionTime; `HISTORICAL_PROVIDER_PIT` preserves the real later import time
+  and requires typed Provider availability/revision/archive evidence.
+- Artifact authority comes only from a configured canonical strict Reader and
+  its immutable resolution receipt. Caller-provided IDs/hashes are claims, not
+  authority.
 - `FORMAL_RESEARCH` fact admission requires exact active SourceManifest,
-  Provider and contract qualification; caller declarations never suffice.
-- Historical reconstruction is pinned to the original PostgreSQL authority
-  revision and never substitutes current rows.
+  Provider, contract, typed evidence policy and qualification resolution;
+  caller declarations never suffice.
+- Required Fact `logical_key` values are globally unique within a Request or
+  Query; Request, Query and Repository boundaries all reject collisions.
+- Historical replay uses the explicit immutable selected Fact IDs/hashes,
+  qualification lineage and Artifact resolution receipts. Authority revision is
+  audit ordering only and never substitutes for this replay manifest.
 
 ## Failure modes
 
@@ -123,11 +137,25 @@ Events carry aggregate identity, schema version, occurred time, correlation ID a
 - cross-provider semantic conformance suite
 - daily freshness SLA registry
 - qualified real Provider archive ingestion into the formal PIT ledger
+- canonical Eligibility and Validation Protocol package Readers
+- real Provider contract/archive/evidence packages that can satisfy the typed
+  qualification policy
 
 ## Transaction and persistence boundary
 
-One command commits one owning-domain aggregate and its outbox event atomically. Cross-domain orchestration uses identities/events; no command mutates another domain's aggregate.
+One command commits one owning-domain aggregate and its audit action atomically.
+Source qualification/suspension takes an exclusive source lock; Fact admission
+takes the corresponding shared source lock and an exclusive
+`scope_id + logical_key` aggregate lock for CAS. Validation takes no global PIT
+write lock and reads one PostgreSQL repeatable-read snapshot. Exact Artifact
+resolution insertion may serialize only callers resolving the same immutable
+reference. Cross-domain orchestration uses identities/events; no command mutates
+another domain's aggregate.
 
 ## Compatibility rule
 
 Legacy adapters may translate input/output shapes but cannot become the authority owner or increase evidence level.
+
+No non-fixture durable PIT v1 rows or Artifacts existed before migration 028 was
+merged, so the unmerged Contract was corrected in place. There is no v1 writer
+or parallel PIT authority path.
