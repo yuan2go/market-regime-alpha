@@ -5,7 +5,7 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-09
 > **Related Documents:** ../specs/2026-08-09-pre-live-engineering-hardening-design.md, ../../status/Current-State.md
-> **Code Evidence:** Baseline `94c1f99f56deeb5019a9a014f9b752328020f8fd`; `src/market_regime_alpha`; `tests`
+> **Code Evidence:** Baseline `94c1f99f56deeb5019a9a014f9b752328020f8fd`; checkpoints `04d8ee6b6734e00b8361956e6b94914d1f5511bd`, `385213601fbfed2e8262cb9ae7e27b6a05b9fba4`, `f68893cb79985564400991298ceb06eeb0b77694`, `d0f630f5a8be55dece3febaecd5b0625692c8e5b`, `ac350db8665efb456adbecd3d022a47e5e7a7bc1`, `0134fbe3c00e242adf3fe3634493f9ab08a5dadf`, `2a40c59a145a7ab08746520b5b300f2f86d944c6`; `src/market_regime_alpha`; `tests`
 
 ## Phase protocol
 
