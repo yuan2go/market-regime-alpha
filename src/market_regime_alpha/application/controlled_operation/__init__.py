@@ -29,6 +29,18 @@ from .postgres_journal import (
 )
 from .postgres_longitudinal_index import PostgresLongitudinalOperationalIndex
 if TYPE_CHECKING:
+    from .postgres_prospective_outcome import (
+        PostgresProspectiveOutcomeRepository,
+        ProspectiveOutcomeConflict,
+        ProspectiveOutcomeIntegrityError,
+    )
+    from .prospective_outcome import (
+        OutcomeAvailabilityStatus,
+        OutcomeMarketCondition,
+        ProspectiveShadowOutcome,
+        SettlementSessionStatus,
+        ShadowOutcomeObservation,
+    )
     from .replay import (
         ControlledOperationReplayReport,
         replay_controlled_operation,
@@ -45,6 +57,14 @@ if TYPE_CHECKING:
 
 
 _LAZY_EXPORTS = {
+    "OutcomeAvailabilityStatus": (".prospective_outcome", "OutcomeAvailabilityStatus"),
+    "OutcomeMarketCondition": (".prospective_outcome", "OutcomeMarketCondition"),
+    "PostgresProspectiveOutcomeRepository": (".postgres_prospective_outcome", "PostgresProspectiveOutcomeRepository"),
+    "ProspectiveOutcomeConflict": (".postgres_prospective_outcome", "ProspectiveOutcomeConflict"),
+    "ProspectiveOutcomeIntegrityError": (".postgres_prospective_outcome", "ProspectiveOutcomeIntegrityError"),
+    "ProspectiveShadowOutcome": (".prospective_outcome", "ProspectiveShadowOutcome"),
+    "SettlementSessionStatus": (".prospective_outcome", "SettlementSessionStatus"),
+    "ShadowOutcomeObservation": (".prospective_outcome", "ShadowOutcomeObservation"),
     "ControlledDecisionTimeOperationRunner": (".runner", "ControlledDecisionTimeOperationRunner"),
     "ControlledOperationDataBlocked": (".runner", "ControlledOperationDataBlocked"),
     "ControlledOperationDecisionResult": (".runner", "ControlledOperationDecisionResult"),
@@ -91,8 +111,16 @@ __all__ = [
     "DecisionWindowState",
     "OperationArtifactReference",
     "OperationChildRunReference",
+    "OutcomeAvailabilityStatus",
+    "OutcomeMarketCondition",
     "PostgresDecisionTimeOperationJournal",
     "PostgresLongitudinalOperationalIndex",
+    "PostgresProspectiveOutcomeRepository",
+    "ProspectiveOutcomeConflict",
+    "ProspectiveOutcomeIntegrityError",
+    "ProspectiveShadowOutcome",
+    "SettlementSessionStatus",
+    "ShadowOutcomeObservation",
     "default_decision_time_operation_policy",
     "replay_controlled_operation",
 ]

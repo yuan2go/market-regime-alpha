@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -59,6 +59,16 @@ from market_regime_alpha.application.free_data_operation.blocked import (
 from market_regime_alpha.application.free_data_operation.service import (
     FreeDataOperationService,
 )
+from market_regime_alpha.application.runtime_operations.observability import (
+    PostgresRuntimeObservability,
+)
+from market_regime_alpha.application.runtime_operations.preflight import (
+    CanonicalRuntimePreflight,
+    RuntimePreflightRequest,
+)
+from market_regime_alpha.application.runtime_operations.query import (
+    PostgresCanonicalRuntimeQuery,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
@@ -79,6 +89,7 @@ from market_regime_alpha.persistence.postgres.connection import (
 )
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from zoneinfo import ZoneInfo
 
 
@@ -86,6 +97,20 @@ SUCCESS = 0
 ARGUMENT_ERROR = 2
 DATABASE_ERROR = 3
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
+_INSPECT_OPERATIONS = (
+    "inspect-run",
+    "inspect-tick",
+    "inspect-provider",
+    "inspect-evidence",
+    "inspect-state",
+    "inspect-pool",
+    "inspect-candidate",
+    "inspect-minute",
+    "inspect-model-selection",
+    "inspect-summary",
+    "trace",
+    "metrics",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,6 +172,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=Decimal("10000000"),
     )
     run_due.add_argument("--provider-timeout-seconds", type=float, default=8.0)
+    preflight = subparsers.add_parser(
+        "preflight", help="Inspect engineering readiness without executing a Tick."
+    )
+    preflight.add_argument("--trading-date", required=True)
+    preflight.add_argument(
+        "--runtime-mode",
+        choices=tuple(item.value for item in RuntimeAuthorityMode),
+        required=True,
+    )
+    preflight.add_argument("--provider-profile-id", required=True)
+    preflight.add_argument("--operational-policy-effective-from", required=True)
+    preflight.add_argument("--artifact-root", type=Path, required=True)
+    preflight.add_argument("--runtime-configuration", type=Path, required=True)
+    preflight.add_argument("--trading-calendar", type=Path, required=True)
+    preflight.add_argument("--run-id")
+    preflight.add_argument("--minimum-free-bytes", type=int, default=1_000_000_000)
+    preflight.add_argument(
+        "--maximum-clock-skew-seconds", type=float, default=5.0
+    )
+    for operation in _INSPECT_OPERATIONS:
+        command = subparsers.add_parser(operation)
+        command.add_argument("--run-id", required=True)
+        if operation == "inspect-tick":
+            command.add_argument("--tick-id", required=True)
+        if operation == "inspect-provider":
+            command.add_argument("--attempt-id", type=int)
     for operation in ("resume", "report", "replay"):
         command = subparsers.add_parser(operation)
         command.add_argument("--run-id", required=True)
@@ -166,14 +217,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         factory = PostgresConnectionFactory(
             settings, application_schema=args.application_schema
         )
-        read_only = args.operation in {"report", "replay"}
+        read_only = args.operation in {
+            "preflight",
+            "report",
+            "replay",
+            *_INSPECT_OPERATIONS,
+        }
         journal = PostgresContinuousResearchJournal(
             factory, apply_migrations=not read_only
         )
         output = (
             _run_due(args, settings, factory, journal)
             if args.operation == "run-due"
-            else _dispatch(args, journal)
+            else _dispatch(args, journal, factory)
         )
         _emit(output)
         return SUCCESS
@@ -195,8 +251,30 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _dispatch(
-    args: argparse.Namespace, journal: PostgresContinuousResearchJournal
+    args: argparse.Namespace,
+    journal: PostgresContinuousResearchJournal,
+    factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "preflight":
+        report = CanonicalRuntimePreflight(factory).inspect(
+            RuntimePreflightRequest(
+                trading_date=date.fromisoformat(args.trading_date),
+                runtime_mode=RuntimeAuthorityMode(args.runtime_mode),
+                provider_profile_id=args.provider_profile_id,
+                operational_policy_effective_from=date.fromisoformat(
+                    args.operational_policy_effective_from
+                ),
+                artifact_root=args.artifact_root,
+                runtime_configuration_path=args.runtime_configuration,
+                trading_calendar_path=args.trading_calendar,
+                run_id=(None if args.run_id is None else ArtifactId(args.run_id)),
+                minimum_free_bytes=args.minimum_free_bytes,
+                maximum_clock_skew=timedelta(
+                    seconds=args.maximum_clock_skew_seconds
+                ),
+            )
+        )
+        return {"operation": "PREFLIGHT", **report.to_canonical_dict()}
     if args.operation == "prepare":
         run_command = ContinuousResearchCommand.from_canonical_dict(
             _load_json_object(args.run_command)
@@ -266,6 +344,34 @@ def _dispatch(
             **_authority_ceiling(),
         }
     run_id = ArtifactId(args.run_id)
+    if args.operation.startswith("inspect-"):
+        query = PostgresCanonicalRuntimeQuery(factory)
+        if args.operation == "inspect-run":
+            return {
+                "operation": "INSPECT_RUN",
+                **query.inspect_run(run_id).to_canonical_dict(),
+            }
+        if args.operation == "inspect-tick":
+            return query.inspect_tick(run_id, ArtifactId(args.tick_id))
+        if args.operation == "inspect-provider":
+            return query.inspect_provider(run_id, attempt_id=args.attempt_id)
+        operation_method = {
+            "inspect-evidence": query.inspect_evidence,
+            "inspect-state": query.inspect_state,
+            "inspect-pool": query.inspect_pool,
+            "inspect-candidate": query.inspect_candidate,
+            "inspect-minute": query.inspect_minute,
+            "inspect-model-selection": query.inspect_model_selection,
+            "inspect-summary": query.inspect_summary,
+        }[args.operation]
+        return operation_method(run_id)
+    if args.operation in {"trace", "metrics"}:
+        observability = PostgresRuntimeObservability(factory)
+        return (
+            observability.trace_run(run_id)
+            if args.operation == "trace"
+            else observability.metrics(run_id)
+        )
     if args.operation == "resume":
         snapshot = journal.resume(run_id)
         return {

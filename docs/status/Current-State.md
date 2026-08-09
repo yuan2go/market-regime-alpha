@@ -7,7 +7,7 @@
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
 > **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../evidence/WP-EVIDENCE-OPS-01-Acceptance.md, ../superpowers/specs/2026-08-09-prospective-formal-qualification-master-design.md, ../superpowers/plans/2026-08-09-prospective-formal-qualification-master.md
-> **Code Evidence:** Canonical Feature Spine implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
+> **Code Evidence:** Pre-live engineering checkpoints `04d8ee6b6734e00b8361956e6b94914d1f5511bd`, `385213601fbfed2e8262cb9ae7e27b6a05b9fba4`, `f68893cb79985564400991298ceb06eeb0b77694`, `d0f630f5a8be55dece3febaecd5b0625692c8e5b`, `ac350db8665efb456adbecd3d022a47e5e7a7bc1`, `0134fbe3c00e242adf3fe3634493f9ab08a5dadf`, `2a40c59a145a7ab08746520b5b300f2f86d944c6`; Canonical Feature Spine implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
 ## 1. Executive status
@@ -118,10 +118,37 @@ built supplemental artifact, and restart reuses the successful Provider receipt.
 The policy is current-only and explicitly not index membership or Formal PIT;
 no exact-window live run or prospective sample is established by this work.
 
+WP-PRE-LIVE-01 adds operational engineering around the same Canonical Runtime,
+without changing its decision composition. A read-only Preflight checks
+PostgreSQL/migrations/schema, trusted clock, calendar/configuration, Provider
+profile, operational policy, Registry assignments, Artifact storage and
+unfinished Tick/Lease recovery state. Trace, metrics and `inspect-*` queries are
+projections over existing Journal, Receipt and Artifact owners and never enter a
+decision. Migration 034 adds CAS-controlled Shadow Sessions and immutable frozen
+Decisions bound to the real Summary, four State owner Artifacts, Pool,
+Candidate, Signal, Forecast, Model Selection, Provider and Controlled Operation
+lineage. Migration 035 adds append-only T+1 checkpoint settlement over the
+existing raw Outcome archive/factual evidence; migration 036 adds immutable,
+versioned Evaluation Datasets with explicit inclusion/exclusion/missing samples;
+migration 037 adds an exploratory ETF/Theme reference Reader. The Free V1
+reference contains only `510300.SH`, `000300.SH` and the declared
+`FREE_A_SHARE_OPERATIONAL_UNIVERSE` proxy mapping; it creates no constituent
+membership and cannot claim Formal PIT.
+
+The disaster-recovery operation performs a PostgreSQL custom-format backup,
+restores it into an isolated database, verifies the complete schema, compares
+selected Authority table fingerprints and Continuous replay hashes, copies and
+hashes every immutable Artifact, and then removes the isolated database. A
+separate SHA-bound Engineering Verification Record executes and records the
+local gates and explicitly distinguishes CI external blockage from a CI pass.
+All tests in this program use recorded/fixture Provider data. They establish
+engineering readiness only: no exact-window Live run, prospective Shadow sample,
+economic evidence, model qualification or Production authorization exists.
+
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
 database test substitute. Bounded repositories now execute native psycopg SQL
-and PostgreSQL transactions. Central migrations 001–033 are the only database
+and PostgreSQL transactions. Central migrations 001–037 are the only database
 migration authority; an unavailable PostgreSQL connection fails closed.
 
 WP-DECISION-01 keeps the strict account-aware Production Decision child and now
@@ -246,6 +273,13 @@ CONTINUOUS_PROVIDER_ATTEMPT_AND_LAST_VALID_EVIDENCE_ISOLATION_IMPLEMENTED
 CONTINUOUS_NO_MATERIAL_CHANGE_IDENTITY_REUSE_IMPLEMENTED
 CONTINUOUS_DECISION_WINDOW_1430_TO_1455_ADDITIVE_POLICY_IMPLEMENTED
 FREE_OPERATIONAL_ETF_THEME_CAPITAL_PRODUCER_ENGINEERING_PROVEN
+CANONICAL_RUNTIME_PREFLIGHT_OBSERVABILITY_QUERY_IMPLEMENTED
+SHADOW_SESSION_AND_FROZEN_DECISION_ENGINEERING_AUTHORITY_IMPLEMENTED
+T_PLUS_ONE_OUTCOME_SETTLEMENT_ENGINEERING_AUTHORITY_IMPLEMENTED
+FROZEN_RESEARCH_EVALUATION_DATASET_ENGINEERING_AUTHORITY_IMPLEMENTED
+ETF_THEME_REFERENCE_FOUNDATION_EXPLORATORY_UNQUALIFIED
+ISOLATED_POSTGRES_ARTIFACT_RECOVERY_ENGINEERING_PROVEN
+SHA_BOUND_ENGINEERING_VERIFICATION_RECORD_IMPLEMENTED
 EXACT_WINDOW_LIVE_RUNTIME_NOT_OBSERVED
 PROSPECTIVE_SHADOW_DATASET_NOT_ESTABLISHED
 STATEFUL_MARKET_ETF_THEME_CAPITAL_IMPLEMENTED_LOCAL_ENGINEERING_CHECKPOINT
@@ -265,7 +299,7 @@ DAILY_LOOP_IN_MEMORY_MODEL_REGISTRY_BYPASS_REMOVED
 DECISION_CALLER_MODEL_QUALIFICATION_AUTHORITY_REMOVED
 PRODUCTION_MODEL_QUALIFICATION_NOT_GRANTED
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
-SHADOW_READY_NOT_ESTABLISHED
+SUSTAINED_SHADOW_OPERATION_NOT_ESTABLISHED
 FORMAL_PIT_ENGINEERING_AUTHORITY_IMPLEMENTED
 REAL_PROVIDER_FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
@@ -274,7 +308,7 @@ REAL_BROKER_AUTHORITY_NOT_IMPLEMENTED
 PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 POSTGRESQL_ONLY_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_028_APPLIED_LOCAL
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_037_IMPLEMENTED
 FILE_DATABASE_RUNTIME_REMOVED
 ```
 

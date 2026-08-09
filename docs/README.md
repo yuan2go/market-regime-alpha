@@ -147,6 +147,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Free Runtime V2 Canonical Convergence Implementation Plan](superpowers/plans/2026-08-09-free-runtime-v2-canonical-convergence.md)
 - [Prospective Research to Formal Qualification Master Design](superpowers/specs/2026-08-09-prospective-formal-qualification-master-design.md)
 - [Prospective Research to Formal Qualification Master Plan](superpowers/plans/2026-08-09-prospective-formal-qualification-master.md)
+- [Pre-Live Engineering Hardening Design](superpowers/specs/2026-08-09-pre-live-engineering-hardening-design.md)
+- [Pre-Live Engineering Hardening Implementation Plan](superpowers/plans/2026-08-09-pre-live-engineering-hardening.md)
 - [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
 - [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
 - [WP-PGSQL-01 PostgreSQL Authority Only](roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md)
