@@ -7,6 +7,7 @@ from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
     DATABASE_ERROR,
     SUCCESS,
+    build_parser,
     main,
 )
 from market_regime_alpha.application.continuous_research.scheduler import (
@@ -30,6 +31,28 @@ def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
         "--application-schema",
         postgres_factory.application_schema,
     ]
+
+
+def test_cli_exposes_one_formal_free_data_execution_entry() -> None:
+    args = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "run-due",
+            "--run-command",
+            "run.json",
+            "--trading-day-assessment",
+            "trading-day.json",
+            "--runtime-configuration",
+            "configuration.json",
+            "--output-root",
+            "runtime-output",
+            "--at",
+            "2025-02-03T14:54:00+08:00",
+        ]
+    )
+
+    assert args.operation == "run-due"
 
 
 def test_cli_prepare_admit_report_and_replay_are_structured(

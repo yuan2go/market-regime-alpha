@@ -1,9 +1,14 @@
 # Free-Data Research and Shadow Runtime Convergence Design
 
-> **Status:** APPROVED_SPECIFICATION
+> **Status:** CURRENT_SPECIFICATION
 > **Authority:** User-approved implementation design for the 2026-08-09 runtime convergence work
 > **Baseline:** `origin/main@fee02f68d3d3e4745ec25920f022a2436e4ae08a`
 > **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-09
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../plans/2026-08-09-free-data-research-shadow-runtime-convergence.md, ../../status/Current-State.md
+> **Code Evidence:** Baseline `fee02f68d3d3e4745ec25920f022a2436e4ae08a`; `src/market_regime_alpha`; `tests`
 > **Authority ceiling:** Free-data exploratory engineering evidence only; no Entry, Order, Fill, Broker, or Position mutation authority
 
 ## 1. Objective

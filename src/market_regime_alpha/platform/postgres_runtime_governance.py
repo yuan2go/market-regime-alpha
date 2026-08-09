@@ -1035,6 +1035,15 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 connection.rollback()
                 raise
 
+    def get_version_lineage_for_model(
+        self,
+        model_id: ModelId,
+    ) -> ModelVersionLineage:
+        """Load the one immutable lineage used to validate Runtime execution."""
+
+        with self._connect() as connection:
+            return _load_lineage_for_model(connection, model_id)
+
     def select(self, request: ModelSelectionRequest) -> ModelSelectionReceipt:
         with self._connect() as connection:
             scope = (

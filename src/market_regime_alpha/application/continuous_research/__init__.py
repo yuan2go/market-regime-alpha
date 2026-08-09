@@ -22,6 +22,11 @@ from market_regime_alpha.application.continuous_research.change_detection import
 from market_regime_alpha.application.continuous_research.children import (
     ContinuousChildReference,
 )
+from market_regime_alpha.application.continuous_research.free_data_runtime import (
+    CanonicalFreeDataProvider,
+    CanonicalFreeDataResearchComposition,
+    ControlledRuntimeModelSelector,
+)
 from market_regime_alpha.application.continuous_research.scope import (
     ContinuousResearchScope,
     ContinuousResearchScopeRecord,
@@ -41,12 +46,15 @@ from market_regime_alpha.application.continuous_research.scheduler import (
 
 __all__ = [
     "ChangeDecision",
+    "CanonicalFreeDataProvider",
+    "CanonicalFreeDataResearchComposition",
     "ContinuousChildReference",
     "ContinuousResearchScope",
     "ContinuousResearchScopeRecord",
     "ContinuousResearchScheduleRunner",
     "ContinuousResearchTickRunner",
     "ContinuousTickExecutionResult",
+    "ControlledRuntimeModelSelector",
     "ContinuousScheduleRunResult",
     "ContinuousScheduleSnapshot",
     "ContinuousScheduleStatus",

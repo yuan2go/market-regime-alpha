@@ -106,11 +106,10 @@ class ResearchStageEvidence:
             and self.output_reference is None
         ):
             raise ValueError("completed Research Stage requires an output")
-        if (
-            self.status is not ResearchStageStatus.COMPLETED
-            and self.output_reference is not None
-        ):
-            raise ValueError("non-completed Research Stage cannot claim an output")
+        # A DATA_INSUFFICIENT Artifact is still a real, immutable Stage output.
+        # Its status and missing-evidence fields prevent it from claiming a
+        # successful computation; retaining the reference is essential for
+        # replay and prospective Shadow outcome joins.
         if (
             self.status is ResearchStageStatus.DATA_INSUFFICIENT
             and not self.missing_evidence

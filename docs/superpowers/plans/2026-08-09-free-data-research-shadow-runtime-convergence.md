@@ -1,5 +1,14 @@
 # Free-Data Research and Shadow Runtime Convergence Implementation Plan
 
+> **Status:** ROADMAP
+> **Authority:** Execution plan for the free-data Runtime convergence
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-09
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../specs/2026-08-09-free-data-research-shadow-runtime-convergence-design.md, ../../status/Current-State.md
+> **Code Evidence:** Baseline `fee02f68d3d3e4745ec25920f022a2436e4ae08a`; `src/market_regime_alpha`; `tests`
+
 > **For agentic workers:** Execute inline in dependency order with focused tests and reviewable checkpoint commits.
 
 **Goal:** Deliver one PostgreSQL-only executable Continuous Runtime that uses the explicit BaoStock/Tencent free-data profile, distinguishes Research/Shadow/Production authority, and reaches an immutable Daily Summary despite stage-level missing research evidence.
