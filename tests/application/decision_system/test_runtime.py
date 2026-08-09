@@ -51,6 +51,20 @@ from market_regime_alpha.application.state_system.bundles import (
 )
 from market_regime_alpha.core.identity import ArtifactId, TargetId, UniverseId
 from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.pit_authority import (
+    FormalPITValidationRequest,
+    PITArtifactReference,
+    PITFactEvidenceMode,
+    PITFactKind,
+    PITFactRevision,
+    PITFactTemporalAuthority,
+    PITRequiredFact,
+    PITValidationLineage,
+)
+from market_regime_alpha.data.pit_governance import (
+    record_formal_pit_qualification_evidence,
+)
+from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.settings import DatabaseSettings
@@ -86,6 +100,10 @@ from tests.application.decision_system.support import (
     risk_configuration,
     tolerance,
 )
+from tests.persistence.postgres.pit_fixture import (
+    pit_authority,
+    source_qualification,
+)
 from tests.application.decision_system.governance_fixture import (
     FIXTURE_PRODUCTION_SELECTOR,
     runtime_model_lineage,
@@ -110,6 +128,185 @@ class DecisionSystemRuntimeService(_DecisionSystemRuntimeService):
     def __init__(self, repository, **kwargs):
         kwargs.setdefault("model_selector", FIXTURE_PRODUCTION_SELECTOR)
         super().__init__(repository, **kwargs)
+
+
+def _pit_ref(reference: ArtifactLineageReference) -> PITArtifactReference:
+    return PITArtifactReference(
+        reference.reference_kind,
+        reference.artifact_id,
+        reference.content_hash,
+    )
+
+
+def _record_decision_fixture_formal_pit(
+    factory: PostgresConnectionFactory,
+    *,
+    model_lineage: ModelVersionLineage,
+    runtime_lineage: RuntimeModelLineage,
+    suffix: str,
+) -> ArtifactId:
+    scope_id = f"decision-formal-pit:{suffix}"
+    decision_time = AS_OF - timedelta(minutes=4)
+    event_time = decision_time - timedelta(minutes=1)
+    source_manifest = PITArtifactReference(
+        "SOURCE_MANIFEST",
+        ArtifactId(f"decision-source-manifest-{suffix}"),
+        canonical_hash({"source_manifest": suffix}),
+    )
+    universe = PITArtifactReference(
+        "UNIVERSE",
+        ArtifactId(f"decision-universe-{suffix}"),
+        canonical_hash({"universe": str(runtime_lineage.universe_id)}),
+    )
+    eligibility = PITArtifactReference(
+        "ELIGIBILITY",
+        ArtifactId(f"decision-eligibility-{suffix}"),
+        canonical_hash({"eligibility": suffix}),
+    )
+    pit_dataset = PITArtifactReference(
+        "DATASET",
+        ArtifactId(f"decision-pit-dataset-{suffix}"),
+        canonical_hash({"decision_pit_dataset": suffix}),
+    )
+    pit_features = tuple(
+        PITArtifactReference(
+            "FEATURE_MATERIALIZATION",
+            ArtifactId(f"decision-pit-feature-{suffix}-{index}"),
+            canonical_hash(
+                {"decision_pit_feature": suffix, "feature_index": index}
+            ),
+        )
+        for index, _ in enumerate(runtime_lineage.feature_materializations)
+    )
+    validation_lineage = PITValidationLineage(
+        model_id=model_lineage.model_id,
+        definition_hash=model_lineage.definition_hash,
+        model_lineage_id=model_lineage.lineage_id,
+        model_lineage_hash=model_lineage.lineage_hash,
+        dataset=pit_dataset,
+        source_manifests=(source_manifest,),
+        universe=universe,
+        eligibility=eligibility,
+        feature_definition_ids=tuple(
+            str(item) for item in model_lineage.feature_definition_ids
+        ),
+        feature_materializations=pit_features,
+        configuration=PITArtifactReference(
+            "CONFIGURATION",
+            model_lineage.configuration.artifact_id,
+            model_lineage.configuration.content_hash,
+        ),
+        code_revision=model_lineage.code_revision,
+        code_hash=model_lineage.code_hash,
+        validation_protocol=_pit_ref(model_lineage.validation_protocol_refs[0]),
+        adjustment_mode="RAW",
+    )
+    facts = [
+        PITRequiredFact(f"calendar:{suffix}", PITFactKind.TRADING_CALENDAR, "XSHG"),
+        PITRequiredFact(f"market:{suffix}", PITFactKind.MARKET_DATA, "600000.SH"),
+        PITRequiredFact(
+            f"universe:{suffix}", PITFactKind.UNIVERSE_MEMBERSHIP, "600000.SH"
+        ),
+        PITRequiredFact(
+            f"trading-status:{suffix}", PITFactKind.TRADING_STATUS, "600000.SH"
+        ),
+        PITRequiredFact(f"st-status:{suffix}", PITFactKind.ST_STATUS, "600000.SH"),
+        PITRequiredFact(
+            f"listing-status:{suffix}", PITFactKind.LISTING_STATUS, "600000.SH"
+        ),
+        PITRequiredFact(
+            f"eligibility:{suffix}", PITFactKind.TRADING_ELIGIBILITY, "600000.SH"
+        ),
+    ]
+    facts.extend(
+        PITRequiredFact(
+            f"feature:{suffix}:{index}",
+            PITFactKind.FEATURE_MATERIALIZATION,
+            str(feature_id),
+        )
+        for index, feature_id in enumerate(model_lineage.feature_definition_ids)
+    )
+    artifact_by_kind = {
+        PITFactKind.MARKET_DATA: validation_lineage.dataset,
+        PITFactKind.UNIVERSE_MEMBERSHIP: universe,
+        PITFactKind.TRADING_STATUS: eligibility,
+        PITFactKind.ST_STATUS: eligibility,
+        PITFactKind.LISTING_STATUS: eligibility,
+        PITFactKind.TRADING_ELIGIBILITY: eligibility,
+    }
+    clock = MutableClock(decision_time - timedelta(seconds=10))
+    pit = pit_authority(factory, clock=clock)
+    pit.record_source_qualification(
+        source_qualification(
+            source_manifest=source_manifest,
+            provider_id="decision-formal-fixture-provider",
+            provider_contract="decision-formal-fixture-contract-v1",
+            effective_at=event_time - timedelta(seconds=2),
+            recorded_at=event_time - timedelta(seconds=1),
+            actor="pytest-source-governance-operator",
+            reason="explicit Decision fixture source authority",
+        ),
+        idempotency_key=f"decision-pit-source-{suffix}",
+    )
+    for index, required in enumerate(facts):
+        if required.fact_kind is PITFactKind.FEATURE_MATERIALIZATION:
+            artifact = validation_lineage.feature_materializations[
+                index - (len(facts) - len(validation_lineage.feature_materializations))
+            ]
+        else:
+            artifact = artifact_by_kind.get(
+                required.fact_kind,
+                PITArtifactReference(
+                    "TRADING_CALENDAR",
+                    ArtifactId(f"decision-calendar-{suffix}"),
+                    canonical_hash({"calendar": suffix}),
+                ),
+            )
+        pit.record_fact(
+            PITFactRevision.create(
+                scope_id=scope_id,
+                logical_key=required.logical_key,
+                fact_kind=required.fact_kind,
+                subject=required.subject,
+                revision=1,
+                supersedes_fact_id=None,
+                event_time=event_time,
+                effective_from=event_time,
+                effective_to=None,
+                available_at=event_time + timedelta(seconds=1),
+                recorded_at=event_time + timedelta(seconds=2),
+                artifact=artifact,
+                source_manifest=source_manifest,
+                provider_id="decision-formal-fixture-provider",
+                provider_contract="decision-formal-fixture-contract-v1",
+                temporal_authority=PITFactTemporalAuthority(
+                    mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
+                    provider_id="decision-formal-fixture-provider",
+                    provider_contract="decision-formal-fixture-contract-v1",
+                    provider_available_at=event_time + timedelta(seconds=1),
+                    provider_recorded_at=event_time + timedelta(seconds=2),
+                ),
+                value_json='{"value":true}',
+                data_eligibility=DataEligibility.FORMAL_RESEARCH,
+            ),
+            actor="pytest-source-ingestor",
+            reason="record Decision Formal PIT fixture fact",
+            idempotency_key=f"decision-pit-fact-{suffix}-{index}",
+        )
+    clock.value = AS_OF - timedelta(minutes=2)
+    evidence = pit.validate(
+        FormalPITValidationRequest.create(
+            scope_id=scope_id,
+            decision_time=decision_time,
+            symbols=("600000.SH",),
+            required_facts=tuple(facts),
+            lineage=validation_lineage,
+            actor="pytest-pit-validator",
+            reason="validate Decision Formal PIT fixture",
+            idempotency_key=f"decision-pit-validate-{suffix}",
+        )
+    )
+    return evidence.evidence_id
 
 
 def test_scoped_state_bundle_binds_exact_multi_scope_members() -> None:
@@ -541,7 +738,26 @@ def _seed_production_model_governance(
             reason="bind Decision fixture lineage",
             idempotency_key=f"decision-replay-lineage-{suffix}",
         )
+        formal_pit_evidence_id = _record_decision_fixture_formal_pit(
+            factory,
+            model_lineage=model_lineage,
+            runtime_lineage=original,
+            suffix=suffix,
+        )
         for kind in policy.required_evidence_kinds:
+            if kind is QualificationEvidenceKind.FORMAL_PIT:
+                record_formal_pit_qualification_evidence(
+                    pit_authority=PostgresPITAuthority(factory),
+                    model_governance=repository,
+                    pit_evidence_id=formal_pit_evidence_id,
+                    model_lineage=model_lineage,
+                    actor="pytest-governance-reviewer",
+                    reason="consume Decision Formal PIT fixture evidence",
+                    idempotency_key=(
+                        f"decision-replay-evidence-{suffix}-{kind.value}"
+                    ),
+                )
+                continue
             repository.record_evidence(
                 ModelQualificationEvidence.create(
                     model_id=definition.model_id,
@@ -960,7 +1176,7 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             )
     assert first_replay == second_replay
     assert imported_count == 12
-    assert replay_migration_version == 27
+    assert replay_migration_version == 28
     assert replay_selection_count == 2
     assert after_conflict_count == imported_count
     assert first_replay.verified_authority_count == 12

@@ -98,7 +98,7 @@ Broker authority remain absent.
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
 database test substitute. Bounded repositories now execute native psycopg SQL
-and PostgreSQL transactions. Central migrations 001–026 are the only database
+and PostgreSQL transactions. Central migrations 001–028 are the only database
 migration authority; an unavailable PostgreSQL connection fails closed.
 
 WP-DECISION-01 adds one ordered `DECISION_SYSTEM` child beneath the same
@@ -130,6 +130,40 @@ derived eligibility into Decision selection; older schemas remain readable but
 are `UNQUALIFIED`. Daily replay replays every embedded selection receipt, while
 isolated Decision replay transfers a point-in-time governance bundle into its
 isolated PostgreSQL schema and re-executes selection at the original revision.
+
+WP-PIT-01 adds the Data bounded context's PostgreSQL Formal PIT Authority in
+migration 028. `pit_contracts.py`, `pit_source_authority.py` and
+`pit_authority.py` separate base contracts, Provider/source authority and
+validation artifacts without changing the public PIT import boundary. Canonical
+package Readers now resolve exact Artifact identity,
+schema and physical checksums before Source qualification, Fact admission or
+validation; a well-formed caller ID/hash is not authority. Typed Provider
+evidence and a content-addressed qualification policy prevent operator strings
+from raising public/free sources above their configured ceilings. Every Fact
+binds the exact Source qualification plus Artifact, SourceManifest and typed
+historical archive/evidence resolution roles used at admission. Validation also
+checks the semantic authority kind, DecisionTime availability and canonical
+Dataset→SourceManifest and Feature→Dataset/SourceManifest dependency graph.
+
+Prospective capture requires PostgreSQL-clock `system_imported_at` by
+DecisionTime; an injected clock is labeled `ENGINEERING_FIXTURE_CLOCK` and is
+not production time authority. Historical
+Provider PIT keeps the later system import time truthful and instead requires
+typed historical availability, revision, dataset-version and archive evidence.
+Validation runs in a PostgreSQL repeatable-read snapshot. The monotonically
+allocated authority revision is audit metadata, not a historical world-prefix;
+replay is bound to explicit immutable Fact IDs/hashes, qualification lineage and
+Artifact resolution receipts, then reconstructs the pure Snapshot/Evidence
+content identities. Source changes use an exclusive source lock,
+Fact admission uses the matching shared source lock plus aggregate CAS, and
+unrelated scopes/logical keys do not take a global revision lock. Only a
+satisfied artifact may enter the existing Model Governance `FORMAL_PIT`
+evidence seam, and doing so does not qualify a model or assign a Champion.
+The CLI can persist strict-Reader receipts with `resolve-artifact`; later
+commands may reuse only an exact immutable receipt. Current evidence remains
+PostgreSQL engineering fixtures only: no real Provider
+archive, Eligibility Reader or Validation Protocol Reader establishes real
+Formal PIT at this checkpoint.
 
 ## 2. Current stage
 
@@ -193,14 +227,15 @@ DECISION_CALLER_MODEL_QUALIFICATION_AUTHORITY_REMOVED
 PRODUCTION_MODEL_QUALIFICATION_NOT_GRANTED
 ENTRY_REMAINS_BLOCKED_BY_MODEL_VALIDATION
 SHADOW_READY_NOT_ESTABLISHED
-FORMAL_PIT_NOT_ESTABLISHED
+FORMAL_PIT_ENGINEERING_AUTHORITY_IMPLEMENTED
+REAL_PROVIDER_FORMAL_PIT_NOT_ESTABLISHED
 FORMAL_OOS_ALPHA_NOT_ESTABLISHED
 TRADING_AUTHORITY_NOT_GRANTED
 REAL_BROKER_AUTHORITY_NOT_IMPLEMENTED
 PRODUCTION_READINESS_NOT_ESTABLISHED
 OPERATOR_AUTHENTICATION_NOT_ESTABLISHED
 POSTGRESQL_ONLY_RUNTIME_IMPLEMENTED_LOCAL_ENGINEERING_EVIDENCE
-POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_027_APPLIED_LOCAL
+POSTGRESQL_SCHEMA_MIGRATIONS_001_TO_028_APPLIED_LOCAL
 FILE_DATABASE_RUNTIME_REMOVED
 ```
 
@@ -622,7 +657,7 @@ PostgreSQL 16 is the only database authority selected through
 backend enumeration, database path, SQL/DB-API translation bridge, automatic
 fallback, persistent test substitute or runtime importer.
 
-PostgreSQL migration versions 001–026 are checksummed, contiguous and
+PostgreSQL migration versions 001–028 are checksummed, contiguous and
 serialized with an advisory lock. Migration 024 constrains the credential-free
 runtime binding to PostgreSQL without changing the published migration-017
 checksum. Migration 025 adds Decision Summary, Manual Account,
@@ -636,8 +671,11 @@ remains incomplete for available/frozen quantities unless explicit,
 content-addressed T+1 calendar/session evidence exists. When supplied at the
 same account/AsOf scope, that evidence is persisted append-only under the active
 fence and the frozen Fill view binds its ID/hash.
-Fresh 001→026 and 023→026 migration paths are tested on PostgreSQL
-16.
+Migration 027 adds Model Governance/Runtime Selector authority. Migration 028
+adds canonical Artifact resolution receipts, typed PIT Source qualification
+evidence, prospective/historical bitemporal facts, repeatable-read as-of
+snapshots and explicit-set immutable Formal PIT validation evidence. Fresh
+001→028 and 023→028 migration paths are tested on PostgreSQL 16.
 
 Native repositories preserve idempotency, command hashes, compare-and-swap,
 scope-level locks, fencing, append-only events, immutable identities,

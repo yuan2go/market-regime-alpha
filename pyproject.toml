@@ -35,6 +35,7 @@ continuous-research = "market_regime_alpha.cli.continuous_research:main"
 state-system = "market_regime_alpha.cli.state_system:main"
 decision-system = "market_regime_alpha.cli.decision_system:main"
 model-governance = "market_regime_alpha.cli.model_governance:main"
+pit-authority = "market_regime_alpha.cli.pit_authority:main"
 
 [project.optional-dependencies]
 postgres = []
