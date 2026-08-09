@@ -11,6 +11,12 @@ from typing import Any
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash, require_text
 from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.authority import (
+    StateAuthorityDomain,
+    StateTransitionPolicy,
+    require_transition_policy,
+    state_transition_parameter,
+)
 from market_regime_alpha.research.state_system.configuration import CapitalStateConfiguration
 
 
@@ -210,9 +216,20 @@ def evaluate_capital_state(
     *,
     previous: StatefulCapitalState | None,
     configuration: CapitalStateConfiguration,
+    state_policy: StateTransitionPolicy | None = None,
 ) -> CapitalStateEvaluation:
     _validate_binding(observation, previous, configuration)
-    proposed, proposal_reasons = _propose(observation, configuration)
+    policy = require_transition_policy(
+        observation.lineage,
+        state_policy,
+        StateAuthorityDomain.CAPITAL_STATE,
+    )
+    _validate_previous_series(observation.lineage, None if previous is None else previous.lineage)
+    proposed, proposal_reasons = _propose(
+        observation,
+        configuration,
+        state_policy=policy,
+    )
     prior = None if previous is None else previous.effective_state
     entered = observation.lineage.as_of_time if previous is None else previous.state_entered_at
     duration = 0 if previous is None else int((observation.lineage.as_of_time - entered).total_seconds())
@@ -308,22 +325,31 @@ def evaluate_capital_state(
 def _propose(
     value: CapitalObservation,
     configuration: CapitalStateConfiguration,
+    *,
+    state_policy: StateTransitionPolicy | None,
 ) -> tuple[CapitalState, tuple[str, ...]]:
+    def parameter(name: str) -> Decimal:
+        return state_transition_parameter(
+            state_policy,
+            StateAuthorityDomain.CAPITAL_STATE,
+            name,
+        )
     if value.data_coverage < configuration.thresholds.minimum_coverage:
         return CapitalState.DATA_INSUFFICIENT, ("CAPITAL_DATA_COVERAGE_INSUFFICIENT",)
     if (
-        value.amount_change >= Decimal("0.50")
-        and value.volume_change >= Decimal("0.50")
-        and value.breadth_change <= Decimal("-0.30")
-        and value.participation_change <= Decimal("-0.30")
-        and value.concentration >= Decimal("0.60")
+        value.amount_change >= parameter("amount_expansion_threshold")
+        and value.volume_change >= parameter("volume_expansion_threshold")
+        and value.breadth_change <= parameter("distribution_breadth_threshold")
+        and value.participation_change
+        <= parameter("distribution_participation_threshold")
+        and value.concentration >= parameter("concentration_threshold")
     ):
         return CapitalState.DISTRIBUTION_BIAS, ("DISTRIBUTION_PROXY_PATTERN",)
     if (
-        abs(value.price_change) <= Decimal("0.20")
-        and value.amount_change >= Decimal("0.50")
-        and value.volume_change >= Decimal("0.50")
-        and value.concentration >= Decimal("0.60")
+        abs(value.price_change) <= parameter("accumulation_price_abs_threshold")
+        and value.amount_change >= parameter("amount_expansion_threshold")
+        and value.volume_change >= parameter("volume_expansion_threshold")
+        and value.concentration >= parameter("concentration_threshold")
     ):
         return CapitalState.ACCUMULATION_BIAS, ("ACCUMULATION_PROXY_PATTERN",)
     expansion_score = sum(
@@ -360,6 +386,18 @@ def _validate_binding(
             raise ValueError("Previous Capital state belongs to another scope")
         if lineage.as_of_time <= previous.lineage.as_of_time:
             raise ValueError("Capital observations must advance As-of Time")
+
+
+def _validate_previous_series(
+    lineage: StateLineage,
+    previous: StateLineage | None,
+) -> None:
+    if (
+        previous is not None
+        and lineage.state_series_id is not None
+        and previous.state_series_id != lineage.state_series_id
+    ):
+        raise ValueError("Previous Capital state belongs to another State Series")
 
 
 def _state_payload(value: StatefulCapitalState) -> dict[str, Any]:

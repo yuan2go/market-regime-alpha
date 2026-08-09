@@ -1,5 +1,14 @@
 # Phase A Correctness Convergence and Research Shadow Operations Implementation Plan
 
+> **Status:** CURRENT_SPECIFICATION
+> **Authority:** Executable Phase A implementation plan
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-10
+> **Supersedes:** None
+> **Superseded By:** None
+> **Related Documents:** ../specs/2026-08-10-phase-a-correctness-shadow-operations-design.md, ../../architecture/16-Phase-A-Correctness-and-Research-Shadow-Operations.md
+> **Code Evidence:** Baseline `4ab425d956f76c1e06d410592ff4c7842f2cc574`; implementation evidence is recorded in ../../audit/Phase-A-Correctness-Shadow-Operations-Delivery.md
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Preserve future Research Shadow sample semantics through one canonical execution boundary, cross-session State, explicit policy/target lineage, an operational Shadow loop, a frozen full-population panel and truthful read models.

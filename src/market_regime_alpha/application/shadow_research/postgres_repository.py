@@ -70,9 +70,7 @@ class PostgresShadowResearchRepository:
         self._factory = factory
         self._clock = clock
         self._decisions = PostgresDecisionSystemRepository(factory, clock=clock)
-        self._continuous = PostgresContinuousResearchJournal(
-            factory, clock=clock, apply_migrations=False
-        )
+        self._continuous = PostgresContinuousResearchJournal(factory, clock=clock, apply_migrations=False)
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
 
@@ -109,9 +107,7 @@ class PostgresShadowResearchRepository:
                     ),
                 ).rowcount
             except psycopg.IntegrityError as exc:
-                raise ShadowResearchConflict(
-                    "one Shadow Session is allowed per Canonical run"
-                ) from exc
+                raise ShadowResearchConflict("one Shadow Session is allowed per Canonical run") from exc
             row = connection.execute(
                 """
                 SELECT session_id, session_hash, command_json
@@ -154,11 +150,7 @@ class PostgresShadowResearchRepository:
         recovered: bool = False,
     ) -> ShadowSessionSnapshot:
         snapshot = self.get_session(session_id)
-        expected_status = (
-            ShadowSessionStatus.FAILED
-            if recovered
-            else ShadowSessionStatus.SCHEDULED
-        )
+        expected_status = ShadowSessionStatus.FAILED if recovered else ShadowSessionStatus.SCHEDULED
         if snapshot.status is not expected_status:
             raise ShadowResearchConflict("Shadow Session is not startable")
         return self._transition(
@@ -168,9 +160,7 @@ class PostgresShadowResearchRepository:
             to_status=ShadowSessionStatus.RUNNING,
             outcome_status=ShadowOutcomeStatus.NOT_EXPECTED,
             event_type="SESSION_RECOVERED" if recovered else "SESSION_RUNNING",
-            reason_codes=(
-                "SHADOW_SESSION_RECOVERED" if recovered else "SHADOW_SESSION_RUNNING",
-            ),
+            reason_codes=("SHADOW_SESSION_RECOVERED" if recovered else "SHADOW_SESSION_RUNNING",),
         )
 
     def freeze(
@@ -186,24 +176,19 @@ class PostgresShadowResearchRepository:
             try:
                 stored = self.get_decision_for_session(session_id)
             except KeyError as exc:
-                raise ShadowResearchConflict(
-                    "Shadow Session is not running"
-                ) from exc
-            if (
-                stored.summary.artifact_id == summary_id
-                and stored.decision_frozen_at == decision_frozen_at
-            ):
+                raise ShadowResearchConflict("Shadow Session is not running") from exc
+            if stored.summary.artifact_id == summary_id and stored.decision_frozen_at == decision_frozen_at:
                 return stored
             raise ShadowResearchConflict("frozen Shadow Decision is immutable")
         summary = self._decisions.get_research_summary(summary_id)
-        controlled_operation = self._controlled_operation_reference(
-            summary.run_id, summary.tick_id
-        )
+        controlled_operation = self._controlled_operation_reference(summary.run_id, summary.tick_id)
+        state_policy_references = self._state_policy_references(summary.run_id, summary.tick_id)
         decision = ShadowDecision.from_summary(
             session=snapshot.command,
             summary=summary,
             controlled_operation=controlled_operation,
             decision_frozen_at=decision_frozen_at,
+            state_policy_references=state_policy_references,
         )
         if summary.runtime_mode is not RuntimeAuthorityMode.SHADOW:
             raise ShadowResearchConflict("only SHADOW Summary can freeze")
@@ -220,9 +205,7 @@ class PostgresShadowResearchRepository:
             if row is None:
                 raise KeyError(str(session_id))
             if str(row[0]) != "RUNNING" or int(row[1]) != expected_version:
-                raise ShadowResearchConflict(
-                    "Shadow freeze rejected by status/version CAS"
-                )
+                raise ShadowResearchConflict("Shadow freeze rejected by status/version CAS")
             if row[2] is not None:
                 raise ShadowResearchConflict("Shadow Decision already exists")
             connection.execute(
@@ -247,6 +230,20 @@ class PostgresShadowResearchRepository:
                     decision.decision_frozen_at,
                 ),
             )
+            for policy in decision.state_policy_references:
+                connection.execute(
+                    """
+                    INSERT INTO shadow_research_decision_state_policy(
+                        decision_id, policy_id, policy_hash
+                    ) VALUES (%s, %s, %s)
+                    ON CONFLICT (decision_id, policy_id) DO NOTHING
+                    """,
+                    (
+                        str(decision.decision_id),
+                        str(policy.artifact_id),
+                        policy.content_hash,
+                    ),
+                )
             updated = connection.execute(
                 """
                 UPDATE shadow_research_session
@@ -285,9 +282,7 @@ class PostgresShadowResearchRepository:
         self._factory.run_transaction(operation)
         return self.get_decision(decision.decision_id)
 
-    def mark_outcome_pending(
-        self, session_id: ArtifactId, *, expected_version: int
-    ) -> ShadowSessionSnapshot:
+    def mark_outcome_pending(self, session_id: ArtifactId, *, expected_version: int) -> ShadowSessionSnapshot:
         return self._transition(
             session_id,
             expected_version=expected_version,
@@ -358,11 +353,7 @@ class PostgresShadowResearchRepository:
             expected_version=expected_version,
             from_status=ShadowSessionStatus.OUTCOME_PENDING,
             to_status=ShadowSessionStatus.SETTLED,
-            outcome_status=(
-                ShadowOutcomeStatus.SETTLED
-                if outcome_available
-                else ShadowOutcomeStatus.UNAVAILABLE
-            ),
+            outcome_status=(ShadowOutcomeStatus.SETTLED if outcome_available else ShadowOutcomeStatus.UNAVAILABLE),
             event_type="SESSION_SETTLED",
             reason_codes=reason_codes,
         )
@@ -382,14 +373,10 @@ class PostgresShadowResearchRepository:
             raise KeyError(str(session_id))
         try:
             return ShadowSessionSnapshot(
-                command=ShadowSessionCommand.from_canonical_dict(
-                    _json_object(row[0])
-                ),
+                command=ShadowSessionCommand.from_canonical_dict(_json_object(row[0])),
                 status=ShadowSessionStatus(str(row[1])),
                 outcome_status=ShadowOutcomeStatus(str(row[2])),
-                decision_id=(
-                    None if row[3] is None else ArtifactId(str(row[3]))
-                ),
+                decision_id=(None if row[3] is None else ArtifactId(str(row[3]))),
                 version=int(row[4]),
                 reason_codes=tuple(str(item) for item in _json_array(row[5])),
                 created_at=row[6],
@@ -397,9 +384,7 @@ class PostgresShadowResearchRepository:
                 finished_at=row[8],
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise ShadowResearchIntegrityError(
-                "Shadow Session failed canonical restoration"
-            ) from exc
+            raise ShadowResearchIntegrityError("Shadow Session failed canonical restoration") from exc
 
     def get_decision(self, decision_id: ArtifactId) -> ShadowDecision:
         with self._factory.connection(read_only=True) as connection:
@@ -410,20 +395,29 @@ class PostgresShadowResearchRepository:
                 """,
                 (str(decision_id),),
             ).fetchone()
+            policy_rows = connection.execute(
+                """
+                SELECT policy_id, policy_hash
+                FROM shadow_research_decision_state_policy
+                WHERE decision_id = %s ORDER BY policy_id
+                """,
+                (str(decision_id),),
+            ).fetchall()
         if row is None:
             raise KeyError(str(decision_id))
         try:
             decision = ShadowDecision.from_canonical_dict(_json_object(row[0]))
         except (KeyError, TypeError, ValueError) as exc:
-            raise ShadowResearchIntegrityError(
-                "Shadow Decision failed canonical restoration"
-            ) from exc
+            raise ShadowResearchIntegrityError("Shadow Decision failed canonical restoration") from exc
         if (
             decision.decision_hash != str(row[1])
             or str(decision.summary.artifact_id) != str(row[2])
             or decision.summary.content_hash != str(row[3])
         ):
             raise ShadowResearchIntegrityError("Shadow Decision owner lineage drift")
+        stored_policies = tuple(RuntimeArtifactReference("STATE_POLICY", ArtifactId(str(item[0])), str(item[1])) for item in policy_rows)
+        if decision.state_policy_references != stored_policies:
+            raise ShadowResearchIntegrityError("Shadow Decision State Policy lineage drift")
         return decision
 
     def get_decision_for_session(self, session_id: ArtifactId) -> ShadowDecision:
@@ -446,15 +440,12 @@ class PostgresShadowResearchRepository:
         rebuilt = ShadowDecision.from_summary(
             session=session.command,
             summary=summary,
-            controlled_operation=self._controlled_operation_reference(
-                stored.run_id, stored.tick_id
-            ),
+            controlled_operation=self._controlled_operation_reference(stored.run_id, stored.tick_id),
             decision_frozen_at=stored.decision_frozen_at,
+            state_policy_references=self._state_policy_references(stored.run_id, stored.tick_id),
         )
         if rebuilt != stored:
-            raise ShadowResearchIntegrityError(
-                "Shadow Decision did not replay deterministically"
-            )
+            raise ShadowResearchIntegrityError("Shadow Decision did not replay deterministically")
         return rebuilt
 
     def events(self, session_id: ArtifactId) -> tuple[dict[str, Any], ...]:
@@ -497,31 +488,36 @@ class PostgresShadowResearchRepository:
         if row is None:
             raise ShadowResearchConflict("Canonical Runtime run does not exist")
         run = ContinuousResearchCommand.from_canonical_dict(_json_object(row[0]))
-        if (
-            run.authority_mode is not RuntimeAuthorityMode.SHADOW
-            or run.trading_date != command.trading_date
-        ):
+        if run.authority_mode is not RuntimeAuthorityMode.SHADOW or run.trading_date != command.trading_date:
             raise ShadowResearchConflict("Shadow Session run lineage mismatch")
 
-    def _controlled_operation_reference(
-        self, run_id: ArtifactId, tick_id: ArtifactId
-    ) -> RuntimeArtifactReference:
+    def _controlled_operation_reference(self, run_id: ArtifactId, tick_id: ArtifactId) -> RuntimeArtifactReference:
         references = self._continuous.get_child_references(run_id, tick_id)
-        controlled = tuple(
-            item
-            for item in references
-            if item.child_kind is ContinuousChildKind.CONTROLLED_OPERATION
-        )
+        controlled = tuple(item for item in references if item.child_kind is ContinuousChildKind.CONTROLLED_OPERATION)
         if len(controlled) != 1:
-            raise ShadowResearchConflict(
-                "Shadow Decision requires one Controlled Operation owner"
-            )
+            raise ShadowResearchConflict("Shadow Decision requires one Controlled Operation owner")
         child = controlled[0]
         return RuntimeArtifactReference(
             reference_kind="CONTROLLED_OPERATION",
             artifact_id=child.child_artifact_id or child.child_receipt_id,
             content_hash=child.child_artifact_hash or child.child_receipt_hash,
         )
+
+    def _state_policy_references(self, run_id: ArtifactId, tick_id: ArtifactId) -> tuple[RuntimeArtifactReference, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT policy.policy_id, policy.policy_hash
+                FROM state_series_link AS link
+                JOIN state_series AS series ON series.series_id = link.series_id
+                JOIN state_policy_authority AS policy
+                  ON policy.policy_id = series.state_policy_id
+                WHERE link.run_id = %s AND link.tick_id = %s
+                ORDER BY policy.policy_id
+                """,
+                (str(run_id), str(tick_id)),
+            ).fetchall()
+        return tuple(RuntimeArtifactReference("STATE_POLICY", ArtifactId(str(row[0])), str(row[1])) for row in rows)
 
     def _transition(
         self,
@@ -564,9 +560,7 @@ class PostgresShadowResearchRepository:
                 ),
             ).rowcount
             if updated != 1:
-                raise ShadowResearchConflict(
-                    "Shadow transition rejected by status/version CAS"
-                )
+                raise ShadowResearchConflict("Shadow transition rejected by status/version CAS")
             decision_row = connection.execute(
                 """
                 SELECT decision_id FROM shadow_research_session
@@ -576,11 +570,7 @@ class PostgresShadowResearchRepository:
             ).fetchone()
             if decision_row is None:
                 raise RuntimeError("Shadow Session disappeared during transition")
-            decision_id = (
-                None
-                if decision_row[0] is None
-                else ArtifactId(str(decision_row[0]))
-            )
+            decision_id = None if decision_row[0] is None else ArtifactId(str(decision_row[0]))
             self._insert_event(
                 connection,
                 session_id=session_id,

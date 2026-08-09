@@ -36,6 +36,7 @@ state-system = "market_regime_alpha.cli.state_system:main"
 decision-system = "market_regime_alpha.cli.decision_system:main"
 model-governance = "market_regime_alpha.cli.model_governance:main"
 pit-authority = "market_regime_alpha.cli.pit_authority:main"
+research-shadow = "market_regime_alpha.cli.research_shadow:main"
 
 [project.optional-dependencies]
 postgres = []

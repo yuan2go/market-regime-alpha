@@ -11,6 +11,12 @@ from typing import Any
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash, require_text
 from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.authority import (
+    StateAuthorityDomain,
+    StateTransitionPolicy,
+    require_transition_policy,
+    state_transition_parameter,
+)
 from market_regime_alpha.research.state_system.configuration import EtfRotationConfiguration
 
 
@@ -224,10 +230,23 @@ def evaluate_etf_rotation(
     *,
     previous: StatefulEtfRotation | None,
     configuration: EtfRotationConfiguration,
+    state_policy: StateTransitionPolicy | None = None,
 ) -> EtfRotationEvaluation:
     _validate_binding(observation, previous, configuration)
+    policy = require_transition_policy(
+        observation.lineage,
+        state_policy,
+        StateAuthorityDomain.ETF_ROTATION,
+    )
+    _validate_previous_series(observation.lineage, None if previous is None else previous.lineage)
     score = _score(observation)
-    proposed, proposal_reasons = _propose(observation, previous, configuration, score)
+    proposed, proposal_reasons = _propose(
+        observation,
+        previous,
+        configuration,
+        score,
+        state_policy=policy,
+    )
     reasons = set(observation.reason_codes) | set(proposal_reasons)
     prior_state = None if previous is None else previous.effective_state
     entered = observation.lineage.as_of_time if previous is None else previous.state_entered_at
@@ -345,31 +364,49 @@ def _propose(
     previous: StatefulEtfRotation | None,
     configuration: EtfRotationConfiguration,
     score: Decimal,
+    *,
+    state_policy: StateTransitionPolicy | None,
 ) -> tuple[EtfRotationState, tuple[str, ...]]:
     threshold = configuration.thresholds
+    def parameter(name: str) -> Decimal:
+        return state_transition_parameter(
+            state_policy,
+            StateAuthorityDomain.ETF_ROTATION,
+            name,
+        )
     if value.data_coverage < threshold.minimum_coverage:
         return EtfRotationState.DATA_INSUFFICIENT, ("ETF_DATA_COVERAGE_INSUFFICIENT",)
     if value.liquidity < threshold.minimum_coverage:
         return EtfRotationState.DATA_INSUFFICIENT, ("ETF_LIQUIDITY_INSUFFICIENT",)
     if previous is None:
         return (
-            EtfRotationState.DORMANT if score < Decimal("0.20") else EtfRotationState.STARTING,
+            EtfRotationState.DORMANT
+            if score < parameter("initial_pulse_threshold")
+            else EtfRotationState.STARTING,
             ("ETF_INITIAL_PULSE_CAPPED",),
         )
     current = previous.effective_state
-    if current is EtfRotationState.LEADING and (value.counter_evidence or value.diffusion < Decimal("0.40")):
+    if current is EtfRotationState.LEADING and (
+        value.counter_evidence
+        or value.diffusion < parameter("divergence_diffusion_threshold")
+    ):
         return EtfRotationState.DIVERGING, ("ETF_ROTATION_DIVERGENCE",)
     if current in {EtfRotationState.LEADING, EtfRotationState.DIVERGING} and score < threshold.exit_threshold:
         return EtfRotationState.WEAKENING, ("ETF_ROTATION_WEAKENING",)
-    if current is EtfRotationState.WEAKENING and score <= Decimal("0"):
+    if current is EtfRotationState.WEAKENING and score <= parameter("failed_score_threshold"):
         return EtfRotationState.FAILED, ("ETF_ROTATION_FAILED",)
-    if score >= Decimal("0.70") and value.diffusion >= Decimal("0.60") and value.amount_persistence >= Decimal("0.60"):
+    if (
+        score >= parameter("leading_score_threshold")
+        and value.diffusion >= parameter("leading_diffusion_threshold")
+        and value.amount_persistence
+        >= parameter("leading_amount_persistence_threshold")
+    ):
         return EtfRotationState.LEADING, ("ETF_MULTI_HORIZON_LEADERSHIP",)
     if score >= threshold.exit_threshold:
         return EtfRotationState.STRENGTHENING, ("ETF_STRENGTH_PERSISTING",)
-    if score >= Decimal("0.20"):
+    if score >= parameter("starting_score_threshold"):
         return EtfRotationState.STARTING, ("ETF_ROTATION_STARTING",)
-    if score <= Decimal("-0.20"):
+    if score <= parameter("negative_failure_threshold"):
         return EtfRotationState.FAILED, ("ETF_ROTATION_FAILED",)
     return EtfRotationState.DORMANT, ("ETF_ROTATION_DORMANT",)
 
@@ -392,6 +429,18 @@ def _validate_binding(
             raise ValueError("Previous ETF state belongs to another ETF")
         if lineage.as_of_time <= previous.lineage.as_of_time:
             raise ValueError("ETF observations must advance As-of Time")
+
+
+def _validate_previous_series(
+    lineage: StateLineage,
+    previous: StateLineage | None,
+) -> None:
+    if (
+        previous is not None
+        and lineage.state_series_id is not None
+        and previous.state_series_id != lineage.state_series_id
+    ):
+        raise ValueError("Previous ETF state belongs to another State Series")
 
 
 def _state_payload(value: StatefulEtfRotation, lineage: StateLineage) -> dict[str, Any]:

@@ -119,9 +119,7 @@ class ShadowSessionCommand:
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> ShadowSessionCommand:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> ShadowSessionCommand:
         if _mapping(payload.get("safety")) != _safety():
             raise ValueError("Shadow Session safety declaration mismatch")
         command = cls.create(
@@ -167,16 +165,21 @@ class ShadowDecision:
     forecast: RuntimeArtifactReference | None
     model_selection_receipts: tuple[RuntimeArtifactReference, ...]
     configuration_references: tuple[RuntimeArtifactReference, ...]
+    state_policy_references: tuple[RuntimeArtifactReference, ...]
     provider_source_references: tuple[RuntimeArtifactReference, ...]
     summary_outcome: str
     data_eligibility: DataEligibility
     evidence_ceiling: PITSourceEvidenceLevel
     reason_codes: tuple[str, ...]
-    schema_version: str = "shadow-decision/v1"
+    schema_version: str = "shadow-decision/v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "shadow-decision/v1":
+        if self.schema_version not in {"shadow-decision/v1", "shadow-decision/v2"}:
             raise ValueError("unsupported Shadow Decision schema")
+        if self.schema_version == "shadow-decision/v1" and self.state_policy_references:
+            raise ValueError("Shadow Decision v1 cannot carry State Policy lineage")
+        if self.schema_version == "shadow-decision/v2" and not self.state_policy_references:
+            raise ValueError("Shadow Decision v2 requires State Policy lineage")
         require_sha256("decision_hash", self.decision_hash)
         _aware("decision_time", self.decision_time)
         _aware("decision_frozen_at", self.decision_frozen_at)
@@ -185,6 +188,7 @@ class ShadowDecision:
         for references in (
             self.model_selection_receipts,
             self.configuration_references,
+            self.state_policy_references,
             self.provider_source_references,
         ):
             if references != _sorted_references(references):
@@ -204,13 +208,11 @@ class ShadowDecision:
         summary: ResearchDailySummary,
         controlled_operation: RuntimeArtifactReference,
         decision_frozen_at: datetime,
+        state_policy_references: tuple[RuntimeArtifactReference, ...] = (),
     ) -> ShadowDecision:
         if summary.runtime_mode is not RuntimeAuthorityMode.SHADOW:
             raise ValueError("Shadow Decision requires a SHADOW Summary")
-        if (
-            session.run_id != summary.run_id
-            or session.trading_date != summary.trading_date
-        ):
+        if session.run_id != summary.run_id or session.trading_date != summary.trading_date:
             raise ValueError("Shadow Session and Summary lineage mismatch")
         if decision_frozen_at < summary.created_at:
             raise ValueError("Shadow Decision cannot freeze before Summary creation")
@@ -262,21 +264,15 @@ class ShadowDecision:
             "candidate_set": summary.candidate_set,
             "signal": stages[StateResearchStage.SIGNAL].output_reference,
             "forecast": stages[StateResearchStage.FORECAST].output_reference,
-            "model_selection_receipts": _sorted_references(
-                summary.model_selection_receipts
-            ),
-            "configuration_references": _sorted_references(
-                summary.configuration_references
-            ),
-            "provider_source_references": _sorted_references(
-                summary.provider_source_references
-            ),
+            "model_selection_receipts": _sorted_references(summary.model_selection_receipts),
+            "configuration_references": _sorted_references(summary.configuration_references),
+            "state_policy_references": _sorted_references(state_policy_references),
+            "provider_source_references": _sorted_references(summary.provider_source_references),
             "summary_outcome": summary.outcome.value,
             "data_eligibility": summary.data_eligibility,
             "evidence_ceiling": summary.evidence_ceiling,
-            "reason_codes": tuple(
-                sorted({*summary.reason_codes, "SHADOW_ENGINEERING_ONLY"})
-            ),
+            "reason_codes": tuple(sorted({*summary.reason_codes, "SHADOW_ENGINEERING_ONLY"})),
+            "schema_version": ("shadow-decision/v2" if state_policy_references else "shadow-decision/v1"),
         }
         digest = canonical_hash(_decision_payload(**values))
         return cls(
@@ -325,11 +321,13 @@ class ShadowDecision:
             forecast=self.forecast,
             model_selection_receipts=self.model_selection_receipts,
             configuration_references=self.configuration_references,
+            state_policy_references=self.state_policy_references,
             provider_source_references=self.provider_source_references,
             summary_outcome=self.summary_outcome,
             data_eligibility=self.data_eligibility,
             evidence_ceiling=self.evidence_ceiling,
             reason_codes=self.reason_codes,
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -365,29 +363,21 @@ class ShadowDecision:
             "candidate_set": _optional_reference(payload.get("candidate_set")),
             "signal": _optional_reference(payload.get("signal")),
             "forecast": _optional_reference(payload.get("forecast")),
-            "model_selection_receipts": _references(
-                payload["model_selection_receipts"]
-            ),
-            "configuration_references": _references(
-                payload["configuration_references"]
-            ),
-            "provider_source_references": _references(
-                payload["provider_source_references"]
-            ),
+            "model_selection_receipts": _references(payload["model_selection_receipts"]),
+            "configuration_references": _references(payload["configuration_references"]),
+            "state_policy_references": _references(payload.get("state_policy_references", [])),
+            "provider_source_references": _references(payload["provider_source_references"]),
             "summary_outcome": _text(payload["summary_outcome"]),
             "data_eligibility": DataEligibility(_text(payload["data_eligibility"])),
-            "evidence_ceiling": PITSourceEvidenceLevel(
-                _text(payload["evidence_ceiling"])
-            ),
+            "evidence_ceiling": PITSourceEvidenceLevel(_text(payload["evidence_ceiling"])),
             "reason_codes": _strings(payload["reason_codes"]),
+            "schema_version": _text(payload["schema_version"]),
         }
         decision = cls(
             decision_id=ArtifactId(_text(payload["decision_id"])),
             decision_hash=_text(payload["decision_hash"]),
             **values,
         )
-        if payload.get("schema_version") != decision.schema_version:
-            raise ValueError("Shadow Decision schema mismatch")
         return decision
 
 
@@ -417,8 +407,8 @@ def _session_payload(**values: Any) -> dict[str, Any]:
 
 
 def _decision_payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "shadow-decision/v1",
+    payload = {
+        "schema_version": values["schema_version"],
         "session_id": str(values["session_id"]),
         "run_id": str(values["run_id"]),
         "tick_id": str(values["tick_id"]),
@@ -439,20 +429,17 @@ def _decision_payload(**values: Any) -> dict[str, Any]:
         "candidate_set": _optional_reference_dict(values["candidate_set"]),
         "signal": _optional_reference_dict(values["signal"]),
         "forecast": _optional_reference_dict(values["forecast"]),
-        "model_selection_receipts": [
-            item.to_canonical_dict() for item in values["model_selection_receipts"]
-        ],
-        "configuration_references": [
-            item.to_canonical_dict() for item in values["configuration_references"]
-        ],
-        "provider_source_references": [
-            item.to_canonical_dict() for item in values["provider_source_references"]
-        ],
+        "model_selection_receipts": [item.to_canonical_dict() for item in values["model_selection_receipts"]],
+        "configuration_references": [item.to_canonical_dict() for item in values["configuration_references"]],
+        "provider_source_references": [item.to_canonical_dict() for item in values["provider_source_references"]],
         "summary_outcome": values["summary_outcome"],
         "data_eligibility": values["data_eligibility"].value,
         "evidence_ceiling": values["evidence_ceiling"].value,
         "reason_codes": list(values["reason_codes"]),
     }
+    if values["schema_version"] == "shadow-decision/v2":
+        payload["state_policy_references"] = [item.to_canonical_dict() for item in values["state_policy_references"]]
+    return payload
 
 
 def _safety() -> dict[str, bool]:
@@ -469,9 +456,7 @@ def _content_id(prefix: str, digest: str) -> ArtifactId:
     return ArtifactId(f"{prefix}-{digest.split(':', 1)[1][:24]}")
 
 
-def _sorted_references(
-    references: tuple[RuntimeArtifactReference, ...]
-) -> tuple[RuntimeArtifactReference, ...]:
+def _sorted_references(references: tuple[RuntimeArtifactReference, ...]) -> tuple[RuntimeArtifactReference, ...]:
     return tuple(
         sorted(
             set(references),

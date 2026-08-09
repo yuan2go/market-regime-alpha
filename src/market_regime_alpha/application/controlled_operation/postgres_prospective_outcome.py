@@ -20,9 +20,9 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
     SettlementSessionStatus,
     build_prospective_shadow_outcome,
 )
-from market_regime_alpha.application.shadow_research import (
+from market_regime_alpha.application.shadow_research.contracts import ShadowSessionStatus
+from market_regime_alpha.application.shadow_research.postgres_repository import (
     PostgresShadowResearchRepository,
-    ShadowSessionStatus,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.market_data.artifacts import VerifiedMarketDataDataset
@@ -65,9 +65,7 @@ class PostgresProspectiveOutcomeRepository:
         self._clock = clock
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
-        self._shadow = PostgresShadowResearchRepository(
-            factory, clock=clock, apply_migrations=False
-        )
+        self._shadow = PostgresShadowResearchRepository(factory, clock=clock, apply_migrations=False)
 
     def build(
         self,
@@ -109,8 +107,7 @@ class PostgresProspectiveOutcomeRepository:
             or settlement.candidate_set != decision.candidate_set
             or settlement.signal != decision.signal
             or settlement.forecast != decision.forecast
-            or settlement.model_selection_receipts
-            != decision.model_selection_receipts
+            or settlement.model_selection_receipts != decision.model_selection_receipts
         ):
             raise ProspectiveOutcomeConflict("Outcome frozen-decision lineage mismatch")
         if settlement.outcome_available_at <= decision.decision_frozen_at:
@@ -141,9 +138,7 @@ class PostgresProspectiveOutcomeRepository:
                     or str(existing[1]) != settlement.settlement_hash
                     or _json_object(existing[2]) != settlement.to_canonical_dict()
                 ):
-                    raise ProspectiveOutcomeConflict(
-                        "Outcome settlement idempotency conflict"
-                    )
+                    raise ProspectiveOutcomeConflict("Outcome settlement idempotency conflict")
                 if str(session[0]) == ShadowSessionStatus.SETTLED.value:
                     return
             if (
@@ -151,9 +146,7 @@ class PostgresProspectiveOutcomeRepository:
                 or str(session[2]) != str(decision.decision_id)
                 or int(session[3]) != expected_shadow_version
             ):
-                raise ProspectiveOutcomeConflict(
-                    "Outcome settlement rejected by Shadow status/version CAS"
-                )
+                raise ProspectiveOutcomeConflict("Outcome settlement rejected by Shadow status/version CAS")
             if existing is None:
                 connection.execute(
                     """
@@ -191,9 +184,7 @@ class PostgresProspectiveOutcomeRepository:
                         settlement.created_at,
                     ),
                 )
-            reasons = tuple(
-                sorted({*settlement.reason_codes, "OUTCOME_SETTLEMENT_RECORDED"})
-            )
+            reasons = tuple(sorted({*settlement.reason_codes, "OUTCOME_SETTLEMENT_RECORDED"}))
             updated = connection.execute(
                 """
                 UPDATE shadow_research_session
@@ -204,11 +195,7 @@ class PostgresProspectiveOutcomeRepository:
                   AND decision_id = %s AND version = %s
                 """,
                 (
-                    (
-                        "UNAVAILABLE"
-                        if settlement.availability_status.value == "UNAVAILABLE"
-                        else "SETTLED"
-                    ),
+                    ("UNAVAILABLE" if settlement.availability_status.value == "UNAVAILABLE" else "SETTLED"),
                     Jsonb(list(reasons)),
                     settlement.created_at,
                     settlement.created_at,
@@ -265,13 +252,9 @@ class PostgresProspectiveOutcomeRepository:
         if row is None:
             raise KeyError(str(settlement_id))
         try:
-            settlement = ProspectiveShadowOutcome.from_canonical_dict(
-                _json_object(row[0])
-            )
+            settlement = ProspectiveShadowOutcome.from_canonical_dict(_json_object(row[0]))
         except (KeyError, TypeError, ValueError) as exc:
-            raise ProspectiveOutcomeIntegrityError(
-                "Outcome settlement failed canonical restoration"
-            ) from exc
+            raise ProspectiveOutcomeIntegrityError("Outcome settlement failed canonical restoration") from exc
         expected = (
             settlement.settlement_hash,
             str(settlement.shadow_decision.artifact_id),
@@ -286,6 +269,21 @@ class PostgresProspectiveOutcomeRepository:
         if expected != actual:
             raise ProspectiveOutcomeIntegrityError("Outcome owner lineage drift")
         return settlement
+
+    def get_for_decision(self, decision_id: ArtifactId) -> ProspectiveShadowOutcome:
+        """Resolve the immutable factual settlement for one frozen Decision."""
+
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT settlement_id FROM prospective_outcome_settlement
+                WHERE shadow_decision_id = %s
+                """,
+                (str(decision_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(decision_id))
+        return self.get(ArtifactId(str(row[0])))
 
     def replay(
         self,
@@ -306,9 +304,7 @@ class PostgresProspectiveOutcomeRepository:
             created_at=stored.created_at,
         )
         if rebuilt != stored:
-            raise ProspectiveOutcomeIntegrityError(
-                "Outcome settlement did not replay deterministically"
-            )
+            raise ProspectiveOutcomeIntegrityError("Outcome settlement did not replay deterministically")
         return rebuilt
 
 

@@ -103,6 +103,18 @@ from market_regime_alpha.application.research_evaluation import (
     build_evaluation_decision_slice,
     publish_research_evaluation_dataset,
 )
+from market_regime_alpha.application.research_evaluation.targets import (
+    engineering_multi_horizon_protocol,
+)
+from market_regime_alpha.application.shadow_research.attestation import (
+    AttestationStatus,
+    ClockMode,
+    ProspectiveEvidenceAttestation,
+    RuntimeOrigin,
+)
+from market_regime_alpha.application.shadow_research.operations import (
+    ResearchShadowOperations,
+)
 from market_regime_alpha.application.shadow_research import (
     PostgresShadowResearchRepository,
     ShadowResearchConflict,
@@ -166,6 +178,7 @@ from market_regime_alpha.strategies.entry.contracts import (
     EntryPathReasonCode,
 )
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
 from market_regime_alpha.signals.decimal_model import SignalModelConfigurationV2
 from tests.application.daily_loop.public_fixture import DECISION
 from tests.application.daily_loop.test_runner import _qualified_stage_clients
@@ -276,10 +289,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     evidence_policy = canonical_free_operational_evidence_policy()
     evidence_policy = replace(
         evidence_policy,
-        themes=tuple(
-            replace(item, effective_from=DECISION.value.date())
-            for item in evidence_policy.themes
-        ),
+        themes=tuple(replace(item, effective_from=DECISION.value.date()) for item in evidence_policy.themes),
     )
     etf_history = _RecordedEtfHistoryClient(runtime_now)
     minute_calls: list[tuple[str, datetime, datetime]] = []
@@ -313,9 +323,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         minute_client_factory=minute_factory,
         sleeper=advance,
         forecast_sample_provider=_HistoricalSampleProvider(decision),
-        operational_supplemental_policy=(
-            evidence_policy if operational_producer else None
-        ),
+        operational_supplemental_policy=(evidence_policy if operational_producer else None),
     )
     captured_executions = []
     original_service_run = service.run
@@ -332,10 +340,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         decision_time=DECISION,
         created_at=decision,
         code_revision="free-data-stateful-e2e",
-        instruments=tuple(
-            FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
-            for symbol in policy.symbols
-        ),
+        instruments=tuple(FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE) for symbol in policy.symbols),
         membership_source="CANONICAL_STATEFUL_E2E",
         minimum_history_sessions=21,
         liquidity_lookback_sessions=21,
@@ -360,9 +365,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         policy_id=continuous_policy.policy_id,
         policy_hash=continuous_policy.content_hash,
         provider_configuration_id=ArtifactId("canonical-free-data-profile-v1"),
-        provider_configuration_hash=canonical_hash(
-            {"profile": TENCENT_FREE_OPERATIONAL_PROFILE_ID}
-        ),
+        provider_configuration_hash=canonical_hash({"profile": TENCENT_FREE_OPERATIONAL_PROFILE_ID}),
         research_configuration_id=configuration.configuration_id,
         research_configuration_hash=configuration.configuration_hash,
         code_revision="free-data-stateful-e2e",
@@ -378,9 +381,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         request=free_request,
         runtime_configuration_path=configuration_path,
         idempotency_key=f"{command.run_id}:free-data",
-        supplemental_evidence_path=(
-            None if operational_producer else supplemental_path
-        ),
+        supplemental_evidence_path=(None if operational_producer else supplemental_path),
     )
     runtime_now[0] = decision - timedelta(minutes=25)
     service.prepare_static_sources(
@@ -407,18 +408,14 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         clock=lambda: runtime_now[0],
     )
     journal = repositories.continuous_research(clock=lambda: runtime_now[0])
-    summary_repository = repositories.decision_system(
-        clock=lambda: runtime_now[0]
-    )
+    summary_repository = repositories.decision_system(clock=lambda: runtime_now[0])
     state_repository = repositories.state_system(clock=lambda: runtime_now[0])
 
     def build_runner() -> ContinuousResearchTickRunner:
         composition = CanonicalFreeDataResearchComposition(
             service=service,
             invocation_builder=lambda _: invocation,
-            model_selector=ControlledRuntimeModelSelector(
-                repositories.model_governance()
-            ),
+            model_selector=ControlledRuntimeModelSelector(repositories.model_governance()),
             summary_repository=summary_repository,
             state_repository=state_repository,
             clock=lambda: runtime_now[0],
@@ -484,11 +481,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         runtime_mode=authority_mode,
     )
     assert summary.outcome is expected_outcome
-    state_child = next(
-        item
-        for item in result.child_references
-        if item.child_kind is ContinuousChildKind.STATE_SYSTEM
-    )
+    state_child = next(item for item in result.child_references if item.child_kind is ContinuousChildKind.STATE_SYSTEM)
     assert summary.state_system_receipt.artifact_id == state_child.child_receipt_id
     assert summary.state_system_receipt.content_hash == state_child.child_receipt_hash
     assert summary.candidate_set is not None
@@ -497,11 +490,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert all(item.status is ResearchStageStatus.COMPLETED for item in summary.stages)
     if liquidity_eligible:
         assert by_stage[StateResearchStage.CANDIDATE].result is ResearchStageResult.RESEARCH_QUALIFIED
-        expected_signal_result = (
-            ResearchStageResult.WATCH
-            if watch_only
-            else ResearchStageResult.RESEARCH_QUALIFIED
-        )
+        expected_signal_result = ResearchStageResult.WATCH if watch_only else ResearchStageResult.RESEARCH_QUALIFIED
         assert by_stage[StateResearchStage.SIGNAL].result is expected_signal_result
         assert by_stage[StateResearchStage.FORECAST].result is ResearchStageResult.RESEARCH_QUALIFIED
         assert minute_calls
@@ -512,27 +501,18 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert by_stage[StateResearchStage.FORECAST].result is ResearchStageResult.EMPTY
         assert minute_calls == []
     assert by_stage[StateResearchStage.OBSERVATION].stage_completed_at < decision
-    assert any(
-        item.product == "ifzq.gtimg.cn:minute"
-        for item in summary.provider_contracts
-    ) is liquidity_eligible
+    assert any(item.product == "ifzq.gtimg.cn:minute" for item in summary.provider_contracts) is liquidity_eligible
     assert len({symbol for symbol, _, _ in minute_calls}) <= 5
     with postgres_factory.connection(read_only=True) as connection:
-        pool_member_count = connection.execute(
-            "SELECT count(*) FROM dynamic_stock_pool_member"
-        ).fetchone()
+        pool_member_count = connection.execute("SELECT count(*) FROM dynamic_stock_pool_member").fetchone()
     assert pool_member_count == (len(policy.symbols),)
     if liquidity_eligible:
-        assert {item.child_kind for item in result.child_references} == set(
-            ContinuousChildKind
-        )
+        assert {item.child_kind for item in result.child_references} == set(ContinuousChildKind)
     assert summary.no_order and summary.no_fill and summary.no_broker
     assert summary.no_position_mutation_from_shadow
     assert summary.evidence_ceiling.value == "FREE_DATA_EXPLORATORY"
     assert replay_continuous_research(journal, command.run_id).integrity_status == "VERIFIED"
-    inspection = PostgresCanonicalRuntimeQuery(
-        postgres_factory, clock=lambda: runtime_now[0]
-    ).inspect_run(command.run_id)
+    inspection = PostgresCanonicalRuntimeQuery(postgres_factory, clock=lambda: runtime_now[0]).inspect_run(command.run_id)
     projected_types = {item.node_type for item in inspection.nodes}
     assert {
         CanonicalDagNodeType.DATASET,
@@ -545,15 +525,11 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         CanonicalDagNodeType.SUMMARY,
     } <= projected_types
     assert (CanonicalDagNodeType.MINUTE in projected_types) is liquidity_eligible
-    trace = PostgresRuntimeObservability(
-        postgres_factory, clock=lambda: runtime_now[0]
-    ).trace_run(command.run_id)
+    trace = PostgresRuntimeObservability(postgres_factory, clock=lambda: runtime_now[0]).trace_run(command.run_id)
     assert any(item["stage"] == "SUMMARY" for item in trace["observations"])
     assert trace["decision_input"] is False
     if authority_mode is RuntimeAuthorityMode.SHADOW:
-        shadow_repository = PostgresShadowResearchRepository(
-            postgres_factory, clock=lambda: runtime_now[0]
-        )
+        shadow_repository = PostgresShadowResearchRepository(postgres_factory, clock=lambda: runtime_now[0])
         shadow_command = ShadowSessionCommand.create(
             idempotency_key=f"{command.run_id}:shadow-session",
             run_id=command.run_id,
@@ -564,8 +540,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         )
         with postgres_factory.connection(read_only=True) as connection:
             before_trade_counts = connection.execute(
-                "SELECT (SELECT count(*) FROM manual_fills), "
-                "(SELECT count(*) FROM position_book_events)"
+                "SELECT (SELECT count(*) FROM manual_fills), (SELECT count(*) FROM position_book_events)"
             ).fetchone()
         shadow_session = shadow_repository.schedule(shadow_command)
         shadow_session = shadow_repository.mark_running(
@@ -595,9 +570,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert captured_executions
         execution = captured_executions[-1]
         assert execution.decision is not None
-        selected_symbols = tuple(
-            item.symbol for item in execution.decision.candidate_set.selected
-        )
+        selected_symbols = tuple(item.symbol for item in execution.decision.candidate_set.selected)
         settlement_dataset, source_archive = _recorded_outcome_dataset(
             tmp_path=tmp_path,
             symbols=selected_symbols,
@@ -609,17 +582,13 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             candidate_set=execution.decision.candidate_set,
             signal=execution.decision.signal,
             forecasts=execution.decision.forecasts,
-            decision_dataset=(
-                execution.preparation.controlled_preparation.daily_dataset
-            ),
+            decision_dataset=(execution.preparation.controlled_preparation.daily_dataset),
             settlement_dataset=settlement_dataset,
             next_session_date=next_session_date,
             horizon=TradeHorizonDefinition.create(include_session_close=False),
             created_at=source_archive.created_at,
         )
-        outcome_repository = PostgresProspectiveOutcomeRepository(
-            postgres_factory, clock=lambda: source_archive.created_at
-        )
+        outcome_repository = PostgresProspectiveOutcomeRepository(postgres_factory, clock=lambda: source_archive.created_at)
         outcome = outcome_repository.build(
             decision_id=frozen.decision_id,
             source_archive=source_archive,
@@ -637,21 +606,75 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 outcome,
                 expected_shadow_version=pending.version - 1,
             )
-        settled = outcome_repository.settle(
-            outcome, expected_shadow_version=pending.version
-        )
+        settled = outcome_repository.settle(outcome, expected_shadow_version=pending.version)
         assert settled == outcome
         assert settled.availability_status is OutcomeAvailabilityStatus.COMPLETE
         assert all(item.price_1000 is not None for item in settled.observations)
-        assert outcome_repository.settle(
-            outcome, expected_shadow_version=pending.version
-        ) == outcome
-        assert outcome_repository.replay(
-            outcome.settlement_id,
+        assert outcome_repository.settle(outcome, expected_shadow_version=pending.version) == outcome
+        assert (
+            outcome_repository.replay(
+                outcome.settlement_id,
+                source_archive=source_archive,
+                settlement_dataset=settlement_dataset,
+                factual_evidence=factual_outcome,
+            )
+            == outcome
+        )
+        shadow_operations = ResearchShadowOperations(postgres_factory)
+        target_protocol = engineering_multi_horizon_protocol()
+        multi_target_available_at = datetime(
+            next_session_date.year,
+            next_session_date.month,
+            next_session_date.day,
+            7,
+            0,
+            1,
+            tzinfo=UTC,
+        )
+        with pytest.raises(ValueError, match="code revision"):
+            shadow_operations.settle(
+                decision_id=frozen.decision_id,
+                source_archive=source_archive,
+                settlement_dataset=settlement_dataset,
+                factual_evidence=factual_outcome,
+                next_session_date=next_session_date,
+                session_status=SettlementSessionStatus.TRADING_DAY,
+                target_protocol=target_protocol,
+                expected_shadow_version=pending.version,
+                created_at=multi_target_available_at,
+                code_revision="not-the-frozen-runtime",
+                clock_mode=ClockMode.SIMULATED,
+                runtime_origin=RuntimeOrigin.FIXTURE,
+            )
+        operational_settlement = shadow_operations.settle(
+            decision_id=frozen.decision_id,
             source_archive=source_archive,
             settlement_dataset=settlement_dataset,
             factual_evidence=factual_outcome,
-        ) == outcome
+            next_session_date=next_session_date,
+            session_status=SettlementSessionStatus.TRADING_DAY,
+            target_protocol=target_protocol,
+            expected_shadow_version=pending.version,
+            created_at=multi_target_available_at,
+            code_revision="free-data-stateful-e2e",
+            clock_mode=ClockMode.SIMULATED,
+            runtime_origin=RuntimeOrigin.FIXTURE,
+        )
+        assert operational_settlement.factual_outcome_v1 == outcome
+        assert operational_settlement.targeted_outcome_v2.target_protocol_id == target_protocol.protocol_id
+        assert {item.target.artifact_id for item in operational_settlement.targeted_outcome_v2.labels} == {
+            item.target_id for item in target_protocol.targets
+        }
+        assert operational_settlement.attestation.status is AttestationStatus.INELIGIBLE
+        assert operational_settlement.attestation.prospective_proven is False
+        attestation_payload = operational_settlement.attestation.to_canonical_dict()
+        attestation_payload["checks"][0]["satisfied"] = "false"
+        with pytest.raises(ValueError, match="boolean"):
+            ProspectiveEvidenceAttestation.from_canonical_dict(attestation_payload)
+        assert frozen.state_policy_references
+        assert {item.artifact_id for item in frozen.state_policy_references}.isdisjoint(
+            item.artifact_id for item in frozen.configuration_references
+        )
         evaluation_slice = build_evaluation_decision_slice(
             decision=frozen,
             outcome=outcome,
@@ -666,7 +689,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 }
             ),
             slices=(evaluation_slice,),
-            created_at=source_archive.created_at,
+            created_at=multi_target_available_at,
         )
         evaluation_path = publish_research_evaluation_dataset(
             root=tmp_path / "evaluation-datasets",
@@ -676,18 +699,76 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             postgres_factory,
             clock=lambda: source_archive.created_at,
         )
-        assert evaluation_repository.register(
-            evaluation_dataset,
-            artifact_path=evaluation_path,
-        ) == evaluation_dataset
-        assert evaluation_repository.replay(
-            evaluation_dataset.dataset_id
-        ) == evaluation_dataset
-        assert evaluation_dataset.included_count == len(selected_symbols)
-        assert all(
-            item.disposition is EvaluationSampleDisposition.INCLUDED
-            for item in evaluation_slice.samples
+        assert (
+            evaluation_repository.register(
+                evaluation_dataset,
+                artifact_path=evaluation_path,
+            )
+            == evaluation_dataset
         )
+        assert evaluation_repository.replay(evaluation_dataset.dataset_id) == evaluation_dataset
+        assert evaluation_dataset.included_count == len(selected_symbols)
+        assert all(item.disposition is EvaluationSampleDisposition.INCLUDED for item in evaluation_slice.samples)
+        assert frozen.dynamic_pool is not None
+        dynamic_pool = DynamicStockPoolVersion.from_canonical_dict(state_repository.read_pool(frozen.dynamic_pool.artifact_id))
+        with pytest.raises(ValueError, match="State Policy lineage"):
+            shadow_operations.build_evaluation(
+                decision_id=frozen.decision_id,
+                targeted_outcome_id=operational_settlement.targeted_outcome_v2.settlement_id,
+                target_protocol_id=target_protocol.protocol_id,
+                dynamic_pool=dynamic_pool,
+                candidate_set=execution.decision.candidate_set,
+                state_policy_references=(),
+                artifact_root=tmp_path / "rejected-evaluation-panels-v2",
+                created_at=multi_target_available_at,
+            )
+        panel, panel_path = shadow_operations.build_evaluation(
+            decision_id=frozen.decision_id,
+            targeted_outcome_id=operational_settlement.targeted_outcome_v2.settlement_id,
+            target_protocol_id=target_protocol.protocol_id,
+            dynamic_pool=dynamic_pool,
+            candidate_set=execution.decision.candidate_set,
+            state_policy_references=frozen.state_policy_references,
+            artifact_root=tmp_path / "evaluation-panels-v2",
+            created_at=multi_target_available_at,
+        )
+        assert panel_path.exists()
+        assert panel.row_count == len(dynamic_pool.members)
+        assert panel.slices[0].state_policy_references == frozen.state_policy_references
+        report = shadow_operations.report(shadow_command.session_id)
+        assert report["authority"]["research_shadow_engineering_ready"] is True
+        assert report["authority"]["prospective_proven"] is False
+        assert report["evaluation_panels_v2"][0]["panel_id"] == str(panel.panel_id)
+        full_inspection = PostgresCanonicalRuntimeQuery(postgres_factory, clock=lambda: source_archive.created_at).inspect_run(
+            command.run_id
+        )
+        owners = {
+            item.node_type: item.owner
+            for item in full_inspection.nodes
+            if item.node_type in {CanonicalDagNodeType.SIGNAL, CanonicalDagNodeType.FORECAST}
+        }
+        assert owners == {
+            CanonicalDagNodeType.SIGNAL: "SIGNAL_SYSTEM",
+            CanonicalDagNodeType.FORECAST: "PATH_FORECAST_SYSTEM",
+        }
+        projected_types = {item.node_type for item in full_inspection.nodes}
+        assert {
+            CanonicalDagNodeType.SHADOW_SESSION,
+            CanonicalDagNodeType.SHADOW_DECISION,
+            CanonicalDagNodeType.OUTCOME,
+            CanonicalDagNodeType.TARGETED_OUTCOME,
+            CanonicalDagNodeType.PROSPECTIVE_ATTESTATION,
+            CanonicalDagNodeType.EVALUATION,
+        } <= projected_types
+        trading_date_inspection = PostgresCanonicalRuntimeQuery(
+            postgres_factory, clock=lambda: source_archive.created_at
+        ).inspect_trading_date(command.trading_date)
+        assert trading_date_inspection["runs"][0]["run_id"] == str(command.run_id)
+        metrics = PostgresRuntimeObservability(postgres_factory, clock=lambda: source_archive.created_at).metrics(command.run_id)
+        assert metrics["candidate_count"] == len(execution.decision.candidate_set.records)
+        assert metrics["minute_coverage"]["observation_status"] == "NOT_OBSERVED"
+        assert metrics["fence_rejection_count"] is None
+        assert metrics["replay_failure_count"] is None
         recovery = backup_restore_verify(
             source_factory=postgres_factory,
             database_url=os.environ[TEST_DATABASE_URL_ENV],
@@ -711,55 +792,54 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 37
+        assert recovery.migration_head == 42
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),
                 replay_continuous_research(journal, command.run_id).replay_hash,
             ),
         )
-        assert recovery.source_artifacts.content_hash == (
-            recovery.restored_artifacts.content_hash
-        )
-        with postgres_factory.connection() as connection, pytest.raises(
-            psycopg.errors.RaiseException,
-            match="research_evaluation_dataset is append-only",
+        assert recovery.source_artifacts.content_hash == (recovery.restored_artifacts.content_hash)
+        with (
+            postgres_factory.connection() as connection,
+            pytest.raises(
+                psycopg.errors.RaiseException,
+                match="research_evaluation_dataset is append-only",
+            ),
         ):
             connection.execute(
-                "UPDATE research_evaluation_dataset "
-                "SET dataset_hash = %s WHERE dataset_id = %s",
+                "UPDATE research_evaluation_dataset SET dataset_hash = %s WHERE dataset_id = %s",
                 (
                     canonical_hash({"forged": "evaluation"}),
                     str(evaluation_dataset.dataset_id),
                 ),
             )
-        with postgres_factory.connection() as connection, pytest.raises(
-            psycopg.errors.RaiseException,
-            match="prospective_outcome_settlement is append-only",
+        with (
+            postgres_factory.connection() as connection,
+            pytest.raises(
+                psycopg.errors.RaiseException,
+                match="prospective_outcome_settlement is append-only",
+            ),
         ):
             connection.execute(
-                "UPDATE prospective_outcome_settlement "
-                "SET settlement_hash = %s WHERE settlement_id = %s",
+                "UPDATE prospective_outcome_settlement SET settlement_hash = %s WHERE settlement_id = %s",
                 (canonical_hash({"forged": True}), str(outcome.settlement_id)),
             )
         with postgres_factory.connection(read_only=True) as connection:
             after_trade_counts = connection.execute(
-                "SELECT (SELECT count(*) FROM manual_fills), "
-                "(SELECT count(*) FROM position_book_events)"
+                "SELECT (SELECT count(*) FROM manual_fills), (SELECT count(*) FROM position_book_events)"
             ).fetchone()
         assert after_trade_counts == before_trade_counts
         with postgres_factory.connection() as connection:
             with pytest.raises(psycopg.errors.RaiseException):
                 connection.execute(
-                    "UPDATE shadow_research_decision SET payload_json = payload_json "
-                    "WHERE decision_id = %s",
+                    "UPDATE shadow_research_decision SET payload_json = payload_json WHERE decision_id = %s",
                     (str(frozen.decision_id),),
                 )
     if operational_producer:
         assert etf_history.calls == 1
         assert any(
-            item.product == "query_history_k_data_plus:daily:adjustflag=3"
-            and item.provider_id == str(BAOSTOCK_PUBLIC_PROVIDER_ID)
+            item.product == "query_history_k_data_plus:daily:adjustflag=3" and item.provider_id == str(BAOSTOCK_PUBLIC_PROVIDER_ID)
             for item in summary.provider_contracts
         )
 
@@ -784,9 +864,7 @@ def _recorded_outcome_dataset(
     symbols: tuple[str, ...],
     decision_time: datetime,
 ):
-    next_session_date = decision_time.astimezone(DECISION.value.tzinfo).date() + timedelta(
-        days=1
-    )
+    next_session_date = decision_time.astimezone(DECISION.value.tzinfo).date() + timedelta(days=1)
     source_id = ArtifactId("recorded-shadow-outcome-source-v1")
     placeholder_hash = canonical_hash({"recorded-shadow-outcome": "placeholder"})
 
@@ -834,9 +912,7 @@ def _recorded_outcome_dataset(
     source_hash = "sha256:" + sha256(raw_payload).hexdigest()
     canonical_bars = bars(source_hash)
     assert encode_recorded_outcome_bars(canonical_bars) == raw_payload
-    retrieved = max(item.available_at for item in canonical_bars) + timedelta(
-        seconds=1
-    )
+    retrieved = max(item.available_at for item in canonical_bars) + timedelta(seconds=1)
     manifest = SourceManifest(
         provider_profile_id="RECORDED_OUTCOME_ENGINEERING_V1",
         decision_time=DecisionTime(retrieved),
@@ -870,9 +946,7 @@ def _recorded_outcome_dataset(
             factors=(),
             limitations=(),
         ),
-        source_manifest_references=(
-            (manifest.source_manifest_id, manifest.content_hash),
-        ),
+        source_manifest_references=((manifest.source_manifest_id, manifest.content_hash),),
         data_eligibility=DataEligibility.EXPLORATORY,
         formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
         limitations=(
@@ -880,9 +954,7 @@ def _recorded_outcome_dataset(
             "NOT_PROSPECTIVE_EVIDENCE",
         ),
     )
-    dataset_path = publish_market_data_dataset(
-        root=tmp_path / "recorded-outcome-dataset", artifact=artifact
-    )
+    dataset_path = publish_market_data_dataset(root=tmp_path / "recorded-outcome-dataset", artifact=artifact)
     archive = OutcomeSettlementSourceArchive.create(
         source_manifest=manifest,
         next_session_date=next_session_date,
@@ -932,8 +1004,7 @@ class _RecordedEtfHistoryClient:
         bars = tuple(
             PublicBar(
                 symbol="510300.SH",
-                event_time=request.decision_time.value
-                - timedelta(days=25 - index),
+                event_time=request.decision_time.value - timedelta(days=25 - index),
                 available_time=None,
                 source_artifact_id=source.source_artifact_id,
                 open=4.0 + index * 0.01,
@@ -985,13 +1056,9 @@ def _outcome_configuration(
         path_forecast=configuration.path_forecast,
         feature_max_workers=configuration.feature_max_workers,
         minute_concurrency_limit=configuration.minute_concurrency_limit,
-        minute_per_request_timeout_seconds=(
-            configuration.minute_per_request_timeout_seconds
-        ),
+        minute_per_request_timeout_seconds=(configuration.minute_per_request_timeout_seconds),
         minute_max_attempts=configuration.minute_max_attempts,
-        minute_retry_backoff_seconds=(
-            configuration.minute_retry_backoff_seconds
-        ),
+        minute_retry_backoff_seconds=(configuration.minute_retry_backoff_seconds),
         provider_profile_id=configuration.provider_profile_id,
         limitations=configuration.limitations,
     )
@@ -1163,11 +1230,7 @@ class _MinuteClient:
         observed = self._runtime_now[0]
         self._calls.append((self._symbol, observed, observed))
         code = f"{self._symbol[-2:].lower()}{self._symbol[:6]}"
-        rows = [
-            f"{1440 + index:04d} {10 + index / 100:.3f} "
-            f"{1000 + index * 100} {100000 + index * 10000}"
-            for index in range(15)
-        ]
+        rows = [f"{1440 + index:04d} {10 + index / 100:.3f} {1000 + index * 100} {100000 + index * 10000}" for index in range(15)]
         payload = json.dumps(
             {
                 "code": 0,
@@ -1201,23 +1264,13 @@ class _HistoricalSampleProvider:
     def load_samples(self, *, signal_snapshot, configuration, decision_time):
         samples = tuple(
             PathForecastSample(
-                sample_id=ArtifactId(
-                    f"free-path-sample-{signal_snapshot.symbol}-{index:02d}"
-                ),
-                source_artifact_id=ArtifactId(
-                    f"free-path-outcome-{signal_snapshot.symbol}-{index:02d}"
-                ),
-                source_content_hash=canonical_hash(
-                    {"symbol": signal_snapshot.symbol, "sample": index}
-                ),
+                sample_id=ArtifactId(f"free-path-sample-{signal_snapshot.symbol}-{index:02d}"),
+                source_artifact_id=ArtifactId(f"free-path-outcome-{signal_snapshot.symbol}-{index:02d}"),
+                source_content_hash=canonical_hash({"symbol": signal_snapshot.symbol, "sample": index}),
                 symbol=signal_snapshot.symbol,
                 target_id=configuration.target_contract.target_id,
-                sample_decision_time=DecisionTime(
-                    self._decision - timedelta(days=40 - index)
-                ),
-                available_at=AvailabilityTime(
-                    self._decision - timedelta(days=39 - index)
-                ),
+                sample_decision_time=DecisionTime(self._decision - timedelta(days=40 - index)),
+                available_at=AvailabilityTime(self._decision - timedelta(days=39 - index)),
                 observation_status=EntryPathObservationStatus.AVAILABLE,
                 observation_reason_code=EntryPathReasonCode.OUTCOME_RESOLVED,
                 realized_mfe=0.04 + index / 1000,

@@ -10,6 +10,10 @@ from typing import Any, Mapping
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
 from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.authority import (
+    StateSeries,
+    StateTransitionPolicy,
+)
 
 
 class StateSystemConflict(RuntimeError):
@@ -43,6 +47,8 @@ class StateArtifactWrite:
     transition_hash: str
     transition_payload: Mapping[str, Any]
     lineage: StateLineage
+    state_series: StateSeries | None = None
+    state_policy: StateTransitionPolicy | None = None
 
     def __post_init__(self) -> None:
         require_text("scope_key", self.scope_key)
@@ -55,6 +61,27 @@ class StateArtifactWrite:
             require_sha256(label, digest)
             if canonical_hash(payload) != digest:
                 raise ValueError(f"{label} does not match Artifact content")
+        if (self.state_series is None) != (self.state_policy is None):
+            raise ValueError("State Series and State Policy must be bound together")
+        series = self.state_series
+        policy = self.state_policy
+        if (
+            series is not None
+            and policy is not None
+            and (
+                series.domain.value != self.domain.value
+                or series.logical_scope != self.scope_key
+                or series.state_policy_id != policy.policy_id
+                or series.state_policy_version != policy.policy_version
+                or series.state_policy_hash != policy.policy_hash
+                or self.lineage.state_series_id != series.series_id
+                or self.lineage.state_series_hash != series.series_hash
+                or self.lineage.state_policy_id != policy.policy_id
+                or self.lineage.state_policy_version != policy.policy_version
+                or self.lineage.state_policy_hash != policy.policy_hash
+            )
+        ):
+            raise ValueError("State V2 authority binding mismatch")
 
 
 def decode_and_verify_pool(pool_json: str) -> dict[str, Any]:
@@ -71,11 +98,7 @@ def decode_and_verify_pool(pool_json: str) -> dict[str, Any]:
         require_sha256("pool_hash", digest)
     except ValueError as exc:
         raise StateSystemIntegrityError("Dynamic Pool hash is invalid") from exc
-    identity: Mapping[str, Any] = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"pool_id", "pool_hash", "created_at"}
-    }
+    identity: Mapping[str, Any] = {key: value for key, value in payload.items() if key not in {"pool_id", "pool_hash", "created_at"}}
     if canonical_hash(identity) != digest:
         raise StateSystemIntegrityError("Dynamic Pool content hash mismatch")
     if payload["pool_id"] != f"dynamic-pool:{digest[7:]}":

@@ -6,12 +6,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash, require_text
-from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.common import (
+    StateLineage,
+    parse_canonical_datetime,
+)
 from market_regime_alpha.research.state_system.configuration import DynamicPoolConfiguration
+from market_regime_alpha.research.state_system.authority import DynamicPoolPolicy
+from market_regime_alpha.research.state_system.configuration import MissingDataPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +133,26 @@ class DynamicPoolMember:
             "missing_evidence": list(self.missing_evidence),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> DynamicPoolMember:
+        return cls(
+            symbol=str(payload["symbol"]),
+            included=_bool(payload["included"]),
+            gate_result=str(payload["gate_result"]),
+            score=Decimal(str(payload["score"])),
+            rank=None if payload["rank"] is None else int(payload["rank"]),
+            exclusion_reasons=_strings(payload["exclusion_reasons"]),
+            eligibility=_bool(payload["eligibility"]),
+            liquidity=Decimal(str(payload["liquidity"])),
+            board=str(payload["board"]),
+            is_st=_bool(payload["is_st"]),
+            suspended=_bool(payload["suspended"]),
+            listing_age_days=int(payload["listing_age_days"]),
+            theme_overlap=_strings(payload["theme_overlap"]),
+            data_coverage=Decimal(str(payload["data_coverage"])),
+            missing_evidence=_strings(payload["missing_evidence"]),
+        )
+
 
 class DynamicPoolEvaluationStatus(str, Enum):
     CREATED = "CREATED"
@@ -200,6 +225,39 @@ class DynamicStockPoolVersion:
             "created_at": canonical_datetime(self.lineage.created_at),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> DynamicStockPoolVersion:
+        lineage_payload = payload["lineage"]
+        if not isinstance(lineage_payload, Mapping):
+            raise ValueError("Dynamic Pool lineage must be an object")
+        created_at = parse_canonical_datetime("created_at", payload["created_at"])
+        return cls(
+            pool_id=ArtifactId(str(payload["pool_id"])),
+            pool_hash=str(payload["pool_hash"]),
+            previous_pool_id=(None if payload["previous_pool_id"] is None else ArtifactId(str(payload["previous_pool_id"]))),
+            pool_version=int(payload["pool_version"]),
+            effective_at=parse_canonical_datetime("effective_at", payload["effective_at"]),
+            available_at=parse_canonical_datetime("available_at", payload["available_at"]),
+            decision_time=parse_canonical_datetime("decision_time", payload["decision_time"]),
+            market_regime_state_id=ArtifactId(str(payload["market_regime_state_id"])),
+            etf_rotation_state_ids=_artifact_ids(payload["etf_rotation_state_ids"]),
+            theme_rotation_state_ids=_artifact_ids(payload["theme_rotation_state_ids"]),
+            capital_state_id=ArtifactId(str(payload["capital_state_id"])),
+            included_symbols=_strings(payload["included_symbols"]),
+            excluded_symbols=_strings(payload["excluded_symbols"]),
+            added_symbols=_strings(payload["added_symbols"]),
+            removed_symbols=_strings(payload["removed_symbols"]),
+            members=tuple(DynamicPoolMember.from_canonical_dict(item) for item in _objects(payload["members"])),
+            missing_evidence=_strings(payload["missing_evidence"]),
+            reason_codes=_strings(payload["reason_codes"]),
+            configuration_version=str(payload["configuration_version"]),
+            configuration_hash=str(payload["configuration_hash"]),
+            source_artifact_ids=_artifact_ids(payload["source_artifact_ids"]),
+            runtime_tick_id=ArtifactId(str(payload["runtime_tick_id"])),
+            material_state_hash=str(payload["material_state_hash"]),
+            lineage=StateLineage.from_canonical_dict({**lineage_payload, "created_at": canonical_datetime(created_at)}),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DynamicPoolEvaluation:
@@ -219,13 +277,33 @@ def evaluate_dynamic_pool(
     previous: DynamicStockPoolVersion | None,
     configuration: DynamicPoolConfiguration,
     lineage: StateLineage,
+    state_policy: DynamicPoolPolicy | None = None,
 ) -> DynamicPoolEvaluation:
     if lineage.configuration_id != configuration.configuration_id or lineage.configuration_hash != configuration.configuration_hash:
         raise ValueError("Dynamic Pool configuration binding mismatch")
+    if lineage.state_policy_id is not None:
+        if state_policy is None:
+            raise ValueError("Dynamic Pool V2 evaluation requires its State Policy")
+        if (
+            lineage.state_policy_id != state_policy.policy_id
+            or lineage.state_policy_version != state_policy.policy_version
+            or lineage.state_policy_hash != state_policy.policy_hash
+        ):
+            raise ValueError("Dynamic Pool Policy lineage mismatch")
+        if state_policy.missing_data_policy is not MissingDataPolicy.FAIL_CLOSED:
+            raise ValueError("Dynamic Pool missing-data behavior is not implemented")
+    elif state_policy is not None:
+        raise ValueError("Legacy Dynamic Pool lineage cannot acquire a V2 State Policy")
     if state_context.available_at > lineage.as_of_time:
         raise ValueError("future State cannot be consumed by Dynamic Pool")
     if previous is not None and lineage.as_of_time <= previous.decision_time:
         raise ValueError("Dynamic Pool decisions must advance As-of Time")
+    if (
+        previous is not None
+        and lineage.state_series_id is not None
+        and previous.lineage.state_series_id != lineage.state_series_id
+    ):
+        raise ValueError("Previous Dynamic Pool belongs to another State Series")
     symbols = tuple(item.symbol for item in eligibility)
     if not symbols or symbols != tuple(sorted(set(symbols))):
         raise ValueError("Eligibility cross section must be non-empty, unique and sorted")
@@ -282,11 +360,7 @@ def evaluate_dynamic_pool(
     pool = DynamicStockPoolVersion(
         pool_id=ArtifactId(f"dynamic-pool:{digest[7:]}"),
         pool_hash=digest,
-        **{
-            field: getattr(prototype, field)
-            for field in prototype.__dataclass_fields__
-            if field not in {"pool_id", "pool_hash"}
-        },
+        **{field: getattr(prototype, field) for field in prototype.__dataclass_fields__ if field not in {"pool_id", "pool_hash"}},
     )
     return DynamicPoolEvaluation(
         status=DynamicPoolEvaluationStatus.CREATED,
@@ -310,10 +384,7 @@ def _rotation_gate(
     allowed = set(configuration.allowed_etf_states) | set(configuration.allowed_theme_states)
     if not any(state in allowed for _state_id, state, _dwell in rotation_states):
         reasons.add("ROTATION_STATE_GATE_CLOSED")
-    if any(
-        state in allowed and dwell < configuration.minimum_state_dwell_seconds
-        for _state_id, state, dwell in rotation_states
-    ):
+    if any(state in allowed and dwell < configuration.minimum_state_dwell_seconds for _state_id, state, dwell in rotation_states):
         reasons.add("ROTATION_MINIMUM_DWELL_NOT_MET")
     return not reasons, tuple(sorted(reasons))
 
@@ -363,3 +434,25 @@ def _members(
         )
         for value, included, exclusions, score in prepared
     )
+
+
+def _objects(value: object) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, list) or any(not isinstance(item, Mapping) for item in value):
+        raise ValueError("Dynamic Pool value must be an object array")
+    return tuple(value)
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("Dynamic Pool value must be a string array")
+    return tuple(value)
+
+
+def _artifact_ids(value: object) -> tuple[ArtifactId, ...]:
+    return tuple(ArtifactId(item) for item in _strings(value))
+
+
+def _bool(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("Dynamic Pool value must be boolean")
+    return value
