@@ -31,6 +31,7 @@ from market_regime_alpha.application.operational_research.contracts import (
     SupplementalResearchEvidenceBundle,
 )
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
+    load_verified_supplemental_research_evidence,
     publish_supplemental_research_evidence,
 )
 from market_regime_alpha.core.identity import ArtifactId, ProviderId
@@ -100,6 +101,7 @@ def prepare_free_data_inputs(
     full_source_manifest: SourceManifest,
     output_root: Path,
     runtime_configuration_path: Path | None = None,
+    supplemental_evidence_path: Path | None = None,
 ) -> FreeDataPreparedInputs:
     """Publish deterministic inputs; mutable lifecycle state stays in PostgreSQL."""
 
@@ -173,11 +175,19 @@ def prepare_free_data_inputs(
         root=root / "operational_universes",
         artifact=universe,
     )
-    supplemental = _build_supplemental(
-        request=request,
-        dataset=daily_dataset,
-        universe=universe,
-        full_source_manifest=full_source_manifest,
+    supplemental = (
+        _load_explicit_supplemental(
+            path=supplemental_evidence_path,
+            request=request,
+            universe=universe,
+        )
+        if supplemental_evidence_path is not None
+        else _build_supplemental(
+            request=request,
+            dataset=daily_dataset,
+            universe=universe,
+            full_source_manifest=full_source_manifest,
+        )
     )
     supplemental_path = publish_supplemental_research_evidence(
         root=root / "supplemental_research_evidence",
@@ -307,6 +317,35 @@ def prepare_free_data_inputs(
         paths=paths,
         calendar=calendar,
     )
+
+
+def _load_explicit_supplemental(
+    *,
+    path: Path,
+    request: FreeDataPreparationRequest,
+    universe: OperationalUniverseArtifact,
+) -> SupplementalResearchEvidenceBundle:
+    """Verify an explicitly configured bundle; never discover or substitute one."""
+
+    bundle = load_verified_supplemental_research_evidence(path.resolve()).bundle
+    if bundle.decision_time.value != request.decision_time.value:
+        raise ValueError("supplemental evidence DecisionTime mismatch")
+    if bundle.source_manifest.decision_time.value != request.decision_time.value:
+        raise ValueError("supplemental SourceManifest DecisionTime mismatch")
+    if any(
+        item.retrieved_at.value > request.decision_time.value
+        for item in bundle.source_manifest.source_artifacts
+    ):
+        raise ValueError("supplemental evidence is available after DecisionTime")
+    universe_symbols = set(universe.symbols)
+    if any(
+        item.symbol not in universe_symbols
+        for item in bundle.theme_memberships
+    ):
+        raise ValueError("supplemental theme membership exceeds Operational Universe")
+    if bundle.data_eligibility is not DataEligibility.EXPLORATORY:
+        raise ValueError("free supplemental evidence must remain EXPLORATORY")
+    return bundle
 
 
 def _validate_source_bindings(

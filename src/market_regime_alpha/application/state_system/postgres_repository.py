@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 import psycopg
@@ -28,10 +29,12 @@ from market_regime_alpha.application.state_system.bundles import (
     state_research_pipeline_identity,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
+from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 
 if TYPE_CHECKING:
     from market_regime_alpha.application.state_system.runtime import (
@@ -268,8 +271,8 @@ class PostgresStateSystemRepository:
                     INSERT INTO state_research_stage_authority(
                         run_id, tick_id, state_receipt_id, stage,
                         artifact_id, artifact_hash, data_eligibility,
-                        available_at, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        stage_status, available_at, reason_codes_json, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
                     ON CONFLICT (run_id, tick_id, stage) DO NOTHING
                     """,
                     (
@@ -280,14 +283,17 @@ class PostgresStateSystemRepository:
                         str(authority.artifact_id),
                         authority.artifact_hash,
                         authority.data_eligibility.value,
+                        authority.status.value,
                         authority.available_at,
+                        json.dumps(list(authority.reason_codes), separators=(",", ":")),
                         created_at,
                     ),
                 )
                 stored = connection.execute(
                     """
                     SELECT state_receipt_id, artifact_id, artifact_hash,
-                           data_eligibility, available_at
+                           data_eligibility, stage_status, available_at,
+                           reason_codes_json
                     FROM state_research_stage_authority
                     WHERE run_id = %s AND tick_id = %s AND stage = %s
                     """,
@@ -298,7 +304,9 @@ class PostgresStateSystemRepository:
                     or str(stored[1]) != str(authority.artifact_id)
                     or str(stored[2]) != authority.artifact_hash
                     or str(stored[3]) != authority.data_eligibility.value
-                    or stored[4] != authority.available_at
+                    or str(stored[4]) != authority.status.value
+                    or stored[5] != authority.available_at
+                    or stored[6] != list(authority.reason_codes)
                 ):
                     raise StateSystemConflict(
                         "State stage authority identity conflict"
@@ -317,6 +325,156 @@ class PostgresStateSystemRepository:
             raise StateSystemIntegrityError("State Runtime receipt decode failed")
         return recorded
 
+    def append_runtime_candidate(
+        self,
+        *,
+        request: ChildExecutionRequest,
+        candidate_set: CandidateSet,
+        candidate_stage: StateResearchStageArtifact,
+    ) -> None:
+        """Stage the State-owned final CandidateSet for crash-safe continuation."""
+
+        from market_regime_alpha.application.state_system.runtime import (
+            StateResearchStage,
+        )
+
+        if candidate_stage.stage is not StateResearchStage.CANDIDATE:
+            raise ValueError("State Candidate authority requires CANDIDATE stage")
+        if candidate_stage.available_at > request.as_of_time:
+            raise ValueError("State Candidate authority cannot contain future data")
+        candidate_set.envelope.verify_payload(candidate_set.artifact_payload())
+        payload = candidate_set.to_canonical_dict()
+
+        def operation(connection: psycopg.Connection[Any]) -> None:
+            self._assert_claim(connection, request)
+            connection.execute(
+                """
+                INSERT INTO state_runtime_candidate_artifact(
+                    run_id, tick_id, candidate_id, candidate_hash,
+                    stage_artifact_id, stage_artifact_hash, payload_json,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                ON CONFLICT (run_id, tick_id) DO NOTHING
+                """,
+                (
+                    str(request.run_id),
+                    str(request.tick_id),
+                    str(candidate_set.envelope.artifact_id),
+                    candidate_set.envelope.content_hash,
+                    str(candidate_stage.artifact_id),
+                    candidate_stage.artifact_hash,
+                    canonical_json(payload),
+                    self._clock(),
+                ),
+            )
+            stored = connection.execute(
+                """
+                SELECT candidate_id, candidate_hash, stage_artifact_id,
+                       stage_artifact_hash, payload_json
+                FROM state_runtime_candidate_artifact
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (str(request.run_id), str(request.tick_id)),
+            ).fetchone()
+            if stored is None or (
+                str(stored[0]) != str(candidate_set.envelope.artifact_id)
+                or str(stored[1]) != candidate_set.envelope.content_hash
+                or str(stored[2]) != str(candidate_stage.artifact_id)
+                or str(stored[3]) != candidate_stage.artifact_hash
+                or stored[4] != payload
+            ):
+                raise StateSystemConflict("State Candidate staging conflict")
+
+        self._factory.run_transaction(operation)
+
+    def read_runtime_candidate(
+        self, request: ChildExecutionRequest
+    ) -> CandidateSet:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT candidate_id, candidate_hash, stage_artifact_id,
+                       stage_artifact_hash, payload_json
+                FROM state_runtime_candidate_artifact
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (str(request.run_id), str(request.tick_id)),
+            ).fetchone()
+            stage = connection.execute(
+                """
+                SELECT artifact_id, artifact_hash
+                FROM state_research_stage_authority
+                WHERE run_id = %s AND tick_id = %s AND stage = 'CANDIDATE'
+                """,
+                (str(request.run_id), str(request.tick_id)),
+            ).fetchone()
+            if row is None or stage is None:
+                raise StateSystemIntegrityError(
+                    "State Candidate recovery authority is missing"
+                )
+            payload = row[4]
+            if not isinstance(payload, dict):
+                raise StateSystemIntegrityError("State Candidate payload is invalid")
+            try:
+                candidate = CandidateSet.from_canonical_dict(payload)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise StateSystemIntegrityError(
+                    "State Candidate payload failed canonical verification"
+                ) from exc
+            if (
+                str(row[0]) != str(candidate.envelope.artifact_id)
+                or str(row[1]) != candidate.envelope.content_hash
+                or str(row[2]) != str(stage[0])
+                or str(row[3]) != str(stage[1])
+            ):
+                raise StateSystemIntegrityError(
+                    "State Candidate owner lineage mismatch"
+                )
+            return candidate
+
+    def read_runtime_stages(
+        self, request: ChildExecutionRequest
+    ) -> tuple[
+        tuple[StateResearchStageArtifact, ...],
+        dict[Any, datetime],
+    ]:
+        from market_regime_alpha.application.state_system.runtime import (
+            STATE_SYSTEM_STAGE_ORDER,
+            StateResearchStage,
+            StateResearchStageArtifact,
+            StateResearchStageStatus,
+        )
+
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT stage, artifact_id, artifact_hash, data_eligibility,
+                       stage_status, available_at, reason_codes_json, created_at
+                FROM state_research_stage_authority
+                WHERE run_id = %s AND tick_id = %s
+                """,
+                (str(request.run_id), str(request.tick_id)),
+            ).fetchall()
+        by_stage = {StateResearchStage(str(row[0])): row for row in rows}
+        if set(by_stage) != set(STATE_SYSTEM_STAGE_ORDER):
+            raise StateSystemIntegrityError("State Stage recovery set is incomplete")
+        artifacts = tuple(
+            StateResearchStageArtifact(
+                stage=stage,
+                artifact_id=ArtifactId(str(by_stage[stage][1])),
+                artifact_hash=str(by_stage[stage][2]),
+                data_eligibility=DataEligibility(str(by_stage[stage][3])),
+                status=StateResearchStageStatus(str(by_stage[stage][4])),
+                available_at=by_stage[stage][5],
+                reason_codes=tuple(str(item) for item in by_stage[stage][6]),
+            )
+            for stage in STATE_SYSTEM_STAGE_ORDER
+        )
+        completed_at = {
+            stage: by_stage[stage][7] for stage in STATE_SYSTEM_STAGE_ORDER
+        }
+        return artifacts, completed_at
+
     def _validate_runtime_receipt_composition(
         self,
         connection: psycopg.Connection[Any],
@@ -331,21 +489,27 @@ class PostgresStateSystemRepository:
             )
         rows = connection.execute(
             """
-            SELECT stage, artifact_id, artifact_hash, data_eligibility, available_at
+            SELECT stage, artifact_id, artifact_hash, data_eligibility,
+                   stage_status, available_at
             FROM state_research_stage_authority
             WHERE run_id = %s AND tick_id = %s
             """,
             (str(request.run_id), str(request.tick_id)),
         ).fetchall()
+        all_order = (
+            "OBSERVATION", "MARKET_REGIME", "ETF_ROTATION",
+            "THEME_ROTATION", "CAPITAL_STATE", "DYNAMIC_POOL",
+            "CANDIDATE", "SIGNAL", "FORECAST",
+        )
+        receipt_schema = receipt_payload.get("schema")
+        expected_order = (
+            all_order[:7]
+            if receipt_schema == "state_system_runtime_receipt/v3"
+            else all_order
+        )
         order = {
             name: index
-            for index, name in enumerate(
-                (
-                    "OBSERVATION", "MARKET_REGIME", "ETF_ROTATION",
-                    "THEME_ROTATION", "CAPITAL_STATE", "DYNAMIC_POOL",
-                    "CANDIDATE", "SIGNAL", "FORECAST",
-                )
-            )
+            for index, name in enumerate(expected_order)
         }
         if len(rows) != len(order) or any(str(row[0]) not in order for row in rows):
             raise StateSystemIntegrityError(
@@ -361,13 +525,29 @@ class PostgresStateSystemRepository:
                     str(row[0]),
                     ArtifactId(str(row[1])),
                     str(row[2]),
-                    row[4],
+                    row[5],
                 )
                 for row in ordered
             ),
         )
-        receipt_schema = receipt_payload.get("schema")
-        if receipt_schema == "state_system_runtime_receipt/v2":
+        if receipt_schema == "state_system_runtime_receipt/v3":
+            if any(row[3] is None or row[4] is None for row in ordered):
+                raise StateSystemIntegrityError(
+                    "State Runtime v3 receipt lacks typed Stage authority"
+                )
+            expected_references = [
+                {
+                    **RuntimeArtifactReference(
+                        reference_kind=f"STATE_RESEARCH_{row[0]}",
+                        artifact_id=ArtifactId(str(row[1])),
+                        content_hash=str(row[2]),
+                    ).to_canonical_dict(),
+                    "data_eligibility": str(row[3]),
+                    "stage_status": str(row[4]),
+                }
+                for row in ordered
+            ]
+        elif receipt_schema == "state_system_runtime_receipt/v2":
             if any(row[3] is None for row in ordered):
                 raise StateSystemIntegrityError(
                     "State Runtime v2 receipt lacks DataEligibility authority"
@@ -547,6 +727,47 @@ class PostgresStateSystemRepository:
         if row is None:
             raise KeyError(str(pool_id))
         return decode_and_verify_pool(str(row[0]))
+
+    def read_current_state(
+        self,
+        domain: StateDomain,
+        scope_key: str,
+    ) -> tuple[ArtifactId, str, dict[str, Any], datetime] | None:
+        """Reload the exact State owner Artifact selected by the CAS pointer."""
+
+        if domain not in _DOMAIN_TABLES:
+            raise ValueError("unsupported State domain")
+        _observation_table, state_table, _transition_table = _DOMAIN_TABLES[domain]
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                sql.SQL(
+                    """
+                    SELECT state.state_id, state.state_hash,
+                           state.artifact_json, state.created_at,
+                           pointer.current_artifact_hash
+                    FROM state_current_pointer AS pointer
+                    JOIN {} AS state
+                      ON state.state_id = pointer.current_artifact_id
+                    WHERE pointer.domain = %s AND pointer.scope_key = %s
+                    """
+                ).format(sql.Identifier(state_table)),
+                (domain.value, scope_key),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(str(row[2]))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise StateSystemIntegrityError("State Artifact JSON is invalid") from exc
+        if not isinstance(payload, dict):
+            raise StateSystemIntegrityError("State Artifact payload is not an object")
+        digest = canonical_hash(payload)
+        if digest != str(row[1]) or digest != str(row[4]):
+            raise StateSystemIntegrityError("State Artifact/pointer hash mismatch")
+        created_at = row[3]
+        if not isinstance(created_at, datetime):
+            raise StateSystemIntegrityError("State Artifact CreatedAt is invalid")
+        return ArtifactId(str(row[0])), digest, payload, created_at
 
     def latest_pool_id(self, continuous_operation_id: ArtifactId) -> ArtifactId | None:
         with self._factory.connection(read_only=True) as connection:
@@ -738,8 +959,6 @@ def _encode_child_result(
 def _decode_child_result(
     serialized: str,
 ) -> tuple[ChildExecutionResult, dict[str, Any] | None]:
-    import json
-
     try:
         payload = json.loads(serialized)
     except json.JSONDecodeError as exc:

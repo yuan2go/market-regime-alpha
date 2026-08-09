@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Mapping
@@ -26,14 +26,36 @@ from market_regime_alpha.evidence.canonical import (
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 
 
-RESEARCH_STAGE_EVIDENCE_SCHEMA = "research-stage-evidence/v1"
-RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v1"
+RESEARCH_STAGE_EVIDENCE_SCHEMA = "research-stage-evidence/v2"
+RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v3"
+LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA = "research-stage-evidence/v1"
+LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v1"
+PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v2"
+
+GOVERNED_RESEARCH_MODEL_SLOTS = {
+    StateResearchStage.MARKET_REGIME: "MARKET_REGIME",
+    StateResearchStage.THEME_ROTATION: "THEME_ROTATION",
+    StateResearchStage.CAPITAL_STATE: "CAPITAL_STATE",
+    StateResearchStage.CANDIDATE: "CANDIDATE",
+    StateResearchStage.SIGNAL: "STATE_SIGNAL",
+    StateResearchStage.FORECAST: "STATE_FORECAST",
+}
 
 
 class ResearchStageStatus(str, Enum):
     COMPLETED = "COMPLETED"
     DATA_INSUFFICIENT = "DATA_INSUFFICIENT"
     MODEL_NOT_QUALIFIED_FOR_MODE = "MODEL_NOT_QUALIFIED_FOR_MODE"
+
+
+class ResearchStageResult(str, Enum):
+    """Structured business result; reason codes remain explanatory only."""
+
+    UNAVAILABLE = "UNAVAILABLE"
+    AVAILABLE = "AVAILABLE"
+    EMPTY = "EMPTY"
+    WATCH = "WATCH"
+    RESEARCH_QUALIFIED = "RESEARCH_QUALIFIED"
 
 
 class ResearchDailySummaryOutcome(str, Enum):
@@ -86,19 +108,26 @@ class ResearchStageEvidence:
     status: ResearchStageStatus
     output_reference: RuntimeArtifactReference | None
     selection_receipt: RuntimeArtifactReference | None
-    available_at: datetime
+    evidence_available_at: datetime
+    stage_completed_at: datetime
+    result: ResearchStageResult
     data_eligibility: DataEligibility
     evidence_ceiling: PITSourceEvidenceLevel
     missing_evidence: tuple[str, ...]
     reason_codes: tuple[str, ...]
-    schema_version: str = field(
-        default=RESEARCH_STAGE_EVIDENCE_SCHEMA,
-        init=False,
-    )
+    schema_version: str = RESEARCH_STAGE_EVIDENCE_SCHEMA
 
     def __post_init__(self) -> None:
         require_sha256("evidence_hash", self.evidence_hash)
-        _aware("available_at", self.available_at)
+        if self.schema_version not in {
+            LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA,
+            RESEARCH_STAGE_EVIDENCE_SCHEMA,
+        }:
+            raise ValueError("unsupported Research Stage evidence schema")
+        _aware("evidence_available_at", self.evidence_available_at)
+        _aware("stage_completed_at", self.stage_completed_at)
+        if self.stage_completed_at < self.evidence_available_at:
+            raise ValueError("Research Stage cannot complete before its evidence")
         _ordered_text("missing_evidence", self.missing_evidence)
         _ordered_text("reason_codes", self.reason_codes, required=True)
         if (
@@ -106,6 +135,16 @@ class ResearchStageEvidence:
             and self.output_reference is None
         ):
             raise ValueError("completed Research Stage requires an output")
+        if (
+            self.status is ResearchStageStatus.COMPLETED
+            and self.result is ResearchStageResult.UNAVAILABLE
+        ):
+            raise ValueError("completed Research Stage requires a business result")
+        if (
+            self.status is not ResearchStageStatus.COMPLETED
+            and self.result is not ResearchStageResult.UNAVAILABLE
+        ):
+            raise ValueError("incomplete Research Stage result must be UNAVAILABLE")
         # A DATA_INSUFFICIENT Artifact is still a real, immutable Stage output.
         # Its status and missing-evidence fields prevent it from claiming a
         # successful computation; retaining the reference is essential for
@@ -128,6 +167,7 @@ class ResearchStageEvidence:
     @classmethod
     def create(cls, **values: Any) -> ResearchStageEvidence:
         normalized = dict(values)
+        normalized.setdefault("schema_version", RESEARCH_STAGE_EVIDENCE_SCHEMA)
         normalized["missing_evidence"] = tuple(
             sorted(set(values["missing_evidence"]))
         )
@@ -145,11 +185,14 @@ class ResearchStageEvidence:
             status=self.status,
             output_reference=self.output_reference,
             selection_receipt=self.selection_receipt,
-            available_at=self.available_at,
+            evidence_available_at=self.evidence_available_at,
+            stage_completed_at=self.stage_completed_at,
+            result=self.result,
             data_eligibility=self.data_eligibility,
             evidence_ceiling=self.evidence_ceiling,
             missing_evidence=self.missing_evidence,
             reason_codes=self.reason_codes,
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -159,10 +202,74 @@ class ResearchStageEvidence:
             **self.semantic_payload(),
         }
 
+    @property
+    def available_at(self) -> datetime:
+        """Compatibility alias for callers migrating from the V1 contract."""
+
+        return self.evidence_available_at
+
+    def creation_values(self) -> dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "status": self.status,
+            "output_reference": self.output_reference,
+            "selection_receipt": self.selection_receipt,
+            "evidence_available_at": self.evidence_available_at,
+            "stage_completed_at": self.stage_completed_at,
+            "result": self.result,
+            "data_eligibility": self.data_eligibility,
+            "evidence_ceiling": self.evidence_ceiling,
+            "missing_evidence": self.missing_evidence,
+            "reason_codes": self.reason_codes,
+            "schema_version": self.schema_version,
+        }
+
     @classmethod
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
     ) -> ResearchStageEvidence:
+        schema = payload.get("schema_version")
+        if schema == LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA:
+            _fields(
+                payload,
+                {
+                    "schema_version",
+                    "evidence_id",
+                    "evidence_hash",
+                    "stage",
+                    "status",
+                    "output_reference",
+                    "selection_receipt",
+                    "available_at",
+                    "data_eligibility",
+                    "evidence_ceiling",
+                    "missing_evidence",
+                    "reason_codes",
+                },
+                "ResearchStageEvidence",
+            )
+            status = ResearchStageStatus(_text(payload["status"]))
+            stage = StateResearchStage(_text(payload["stage"]))
+            available_at = _instant(payload["available_at"])
+            reasons = _strings(payload["reason_codes"])
+            return cls(
+                evidence_id=ArtifactId(_text(payload["evidence_id"])),
+                evidence_hash=_text(payload["evidence_hash"]),
+                stage=stage,
+                status=status,
+                output_reference=_optional_reference(payload["output_reference"]),
+                selection_receipt=_optional_reference(payload["selection_receipt"]),
+                evidence_available_at=available_at,
+                stage_completed_at=available_at,
+                result=_legacy_stage_result(stage, status, reasons),
+                data_eligibility=DataEligibility(_text(payload["data_eligibility"])),
+                evidence_ceiling=PITSourceEvidenceLevel(
+                    _text(payload["evidence_ceiling"])
+                ),
+                missing_evidence=_strings(payload["missing_evidence"]),
+                reason_codes=reasons,
+                schema_version=LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA,
+            )
         _fields(
             payload,
             {
@@ -173,7 +280,9 @@ class ResearchStageEvidence:
                 "status",
                 "output_reference",
                 "selection_receipt",
-                "available_at",
+                "evidence_available_at",
+                "stage_completed_at",
+                "result",
                 "data_eligibility",
                 "evidence_ceiling",
                 "missing_evidence",
@@ -181,7 +290,7 @@ class ResearchStageEvidence:
             },
             "ResearchStageEvidence",
         )
-        if payload["schema_version"] != RESEARCH_STAGE_EVIDENCE_SCHEMA:
+        if schema != RESEARCH_STAGE_EVIDENCE_SCHEMA:
             raise ValueError("unsupported Research Stage evidence schema")
         return cls(
             evidence_id=ArtifactId(_text(payload["evidence_id"])),
@@ -190,13 +299,16 @@ class ResearchStageEvidence:
             status=ResearchStageStatus(_text(payload["status"])),
             output_reference=_optional_reference(payload["output_reference"]),
             selection_receipt=_optional_reference(payload["selection_receipt"]),
-            available_at=_instant(payload["available_at"]),
+            evidence_available_at=_instant(payload["evidence_available_at"]),
+            stage_completed_at=_instant(payload["stage_completed_at"]),
+            result=ResearchStageResult(_text(payload["result"])),
             data_eligibility=DataEligibility(_text(payload["data_eligibility"])),
             evidence_ceiling=PITSourceEvidenceLevel(
                 _text(payload["evidence_ceiling"])
             ),
             missing_evidence=_strings(payload["missing_evidence"]),
             reason_codes=_strings(payload["reason_codes"]),
+            schema_version=RESEARCH_STAGE_EVIDENCE_SCHEMA,
         )
 
 
@@ -211,9 +323,12 @@ class ResearchDailySummary:
     decision_time: datetime
     provider_profile_id: str
     provider_contracts: tuple[ProviderContractLineage, ...]
+    provider_source_references: tuple[RuntimeArtifactReference, ...]
     source_manifest: RuntimeArtifactReference
     dataset: RuntimeArtifactReference
     feature_bundle: RuntimeArtifactReference
+    state_system_receipt: RuntimeArtifactReference | None
+    candidate_set: RuntimeArtifactReference | None
     stages: tuple[ResearchStageEvidence, ...]
     model_selection_receipts: tuple[RuntimeArtifactReference, ...]
     configuration_references: tuple[RuntimeArtifactReference, ...]
@@ -227,13 +342,16 @@ class ResearchDailySummary:
     correction_of_summary_id: ArtifactId | None
     idempotency_key: str
     created_at: datetime
-    schema_version: str = field(
-        default=RESEARCH_DAILY_SUMMARY_SCHEMA,
-        init=False,
-    )
+    schema_version: str = RESEARCH_DAILY_SUMMARY_SCHEMA
 
     def __post_init__(self) -> None:
         require_sha256("content_hash", self.content_hash)
+        if self.schema_version not in {
+            LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            RESEARCH_DAILY_SUMMARY_SCHEMA,
+        }:
+            raise ValueError("unsupported Research Summary schema")
         if self.runtime_mode is RuntimeAuthorityMode.PRODUCTION:
             raise ValueError("Research Summary supports Research/Shadow modes only")
         _aware("decision_time", self.decision_time)
@@ -243,10 +361,38 @@ class ResearchDailySummary:
         require_text("provider_profile_id", self.provider_profile_id)
         require_text("idempotency_key", self.idempotency_key)
         _ordered_provider_contracts(self.provider_contracts)
+        _ordered_references(
+            "provider_source_references", self.provider_source_references
+        )
+        if (
+            self.schema_version == RESEARCH_DAILY_SUMMARY_SCHEMA
+            and not self.provider_source_references
+        ):
+            raise ValueError("Research Summary requires consumed Provider sources")
         if tuple(item.stage for item in self.stages) != STATE_RESEARCH_STAGE_ORDER:
             raise ValueError("Research Summary requires every ordered State stage")
-        if any(item.available_at > self.decision_time for item in self.stages):
+        if self.schema_version in {
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            RESEARCH_DAILY_SUMMARY_SCHEMA,
+        }:
+            if self.state_system_receipt is None:
+                raise ValueError("Research Summary requires State owner Receipt")
+            candidate_stage = self.stages[STATE_RESEARCH_STAGE_ORDER.index(
+                StateResearchStage.CANDIDATE
+            )]
+            if (
+                candidate_stage.status
+                is not ResearchStageStatus.MODEL_NOT_QUALIFIED_FOR_MODE
+                and self.candidate_set is None
+            ):
+                raise ValueError("executed Research Summary requires a CandidateSet")
+        if any(
+            item.evidence_available_at > self.decision_time
+            for item in self.stages
+        ):
             raise ValueError("Research Summary cannot consume future stage evidence")
+        if any(item.stage_completed_at > self.created_at for item in self.stages):
+            raise ValueError("Research Summary cannot predate Stage completion")
         _ordered_references(
             "model_selection_receipts", self.model_selection_receipts
         )
@@ -266,7 +412,12 @@ class ResearchDailySummary:
             raise ValueError("DataEligibility cannot increase downstream")
         _ordered_text("missing_evidence", self.missing_evidence)
         _ordered_text("reason_codes", self.reason_codes, required=True)
-        if self.outcome is not _derive_outcome(self.stages):
+        expected_outcome = (
+            _legacy_derive_outcome(self.stages)
+            if self.schema_version == LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA
+            else _derive_outcome(self.stages)
+        )
+        if self.outcome is not expected_outcome:
             raise ValueError("Research Summary outcome does not match stage evidence")
         if self.revision < 1 or isinstance(self.revision, bool):
             raise ValueError("Research Summary revision must be positive")
@@ -299,11 +450,15 @@ class ResearchDailySummary:
     @classmethod
     def create(cls, **values: Any) -> ResearchDailySummary:
         normalized = dict(values)
+        normalized.setdefault("schema_version", RESEARCH_DAILY_SUMMARY_SCHEMA)
         normalized["provider_contracts"] = tuple(
             sorted(
                 set(values["provider_contracts"]),
                 key=_provider_contract_key,
             )
+        )
+        normalized["provider_source_references"] = _sort_references(
+            values.get("provider_source_references", (values["source_manifest"],))
         )
         normalized["model_selection_receipts"] = _sort_references(
             values["model_selection_receipts"]
@@ -354,9 +509,12 @@ class ResearchDailySummary:
             "decision_time": self.decision_time,
             "provider_profile_id": self.provider_profile_id,
             "provider_contracts": self.provider_contracts,
+            "provider_source_references": self.provider_source_references,
             "source_manifest": self.source_manifest,
             "dataset": self.dataset,
             "feature_bundle": self.feature_bundle,
+            "state_system_receipt": self.state_system_receipt,
+            "candidate_set": self.candidate_set,
             "stages": self.stages,
             "model_selection_receipts": self.model_selection_receipts,
             "configuration_references": self.configuration_references,
@@ -367,6 +525,7 @@ class ResearchDailySummary:
             "correction_of_summary_id": self.correction_of_summary_id,
             "idempotency_key": self.idempotency_key,
             "created_at": self.created_at,
+            "schema_version": self.schema_version,
         }
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -394,6 +553,7 @@ class ResearchDailySummary:
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
     ) -> ResearchDailySummary:
+        schema = payload.get("schema_version")
         expected = {
             "schema_version",
             "summary_id",
@@ -423,8 +583,19 @@ class ResearchDailySummary:
             "created_at",
             "safety",
         }
+        if schema in {
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            RESEARCH_DAILY_SUMMARY_SCHEMA,
+        }:
+            expected |= {"state_system_receipt", "candidate_set"}
+        if schema == RESEARCH_DAILY_SUMMARY_SCHEMA:
+            expected.add("provider_source_references")
         _fields(payload, expected, "ResearchDailySummary")
-        if payload["schema_version"] != RESEARCH_DAILY_SUMMARY_SCHEMA:
+        if schema not in {
+            LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            RESEARCH_DAILY_SUMMARY_SCHEMA,
+        }:
             raise ValueError("unsupported Research Summary schema")
         safety = _mapping(payload["safety"])
         if safety != {
@@ -447,6 +618,14 @@ class ResearchDailySummary:
                 ProviderContractLineage.from_canonical_dict(_mapping(item))
                 for item in _sequence(payload["provider_contracts"])
             ),
+            provider_source_references=(
+                ()
+                if schema != RESEARCH_DAILY_SUMMARY_SCHEMA
+                else tuple(
+                    RuntimeArtifactReference.from_canonical_dict(_mapping(item))
+                    for item in _sequence(payload["provider_source_references"])
+                )
+            ),
             source_manifest=RuntimeArtifactReference.from_canonical_dict(
                 _mapping(payload["source_manifest"])
             ),
@@ -455,6 +634,18 @@ class ResearchDailySummary:
             ),
             feature_bundle=RuntimeArtifactReference.from_canonical_dict(
                 _mapping(payload["feature_bundle"])
+            ),
+            state_system_receipt=(
+                None
+                if schema == LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA
+                else RuntimeArtifactReference.from_canonical_dict(
+                    _mapping(payload["state_system_receipt"])
+                )
+            ),
+            candidate_set=(
+                None
+                if schema == LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA
+                else _optional_reference(payload["candidate_set"])
             ),
             stages=tuple(
                 ResearchStageEvidence.from_canonical_dict(_mapping(item))
@@ -482,12 +673,35 @@ class ResearchDailySummary:
             ),
             idempotency_key=_text(payload["idempotency_key"]),
             created_at=_instant(payload["created_at"]),
+            schema_version=str(schema),
         )
 
 
 def _stage_payload(**values: Any) -> dict[str, Any]:
+    schema = values.get("schema_version", RESEARCH_STAGE_EVIDENCE_SCHEMA)
+    if schema == LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA:
+        return {
+            "schema_version": schema,
+            "stage": values["stage"].value,
+            "status": values["status"].value,
+            "output_reference": (
+                None
+                if values["output_reference"] is None
+                else values["output_reference"].to_canonical_dict()
+            ),
+            "selection_receipt": (
+                None
+                if values["selection_receipt"] is None
+                else values["selection_receipt"].to_canonical_dict()
+            ),
+            "available_at": canonical_datetime(values["evidence_available_at"]),
+            "data_eligibility": values["data_eligibility"].value,
+            "evidence_ceiling": values["evidence_ceiling"].value,
+            "missing_evidence": list(values["missing_evidence"]),
+            "reason_codes": list(values["reason_codes"]),
+        }
     return {
-        "schema_version": RESEARCH_STAGE_EVIDENCE_SCHEMA,
+        "schema_version": schema,
         "stage": values["stage"].value,
         "status": values["status"].value,
         "output_reference": (
@@ -500,7 +714,11 @@ def _stage_payload(**values: Any) -> dict[str, Any]:
             if values["selection_receipt"] is None
             else values["selection_receipt"].to_canonical_dict()
         ),
-        "available_at": canonical_datetime(values["available_at"]),
+        "evidence_available_at": canonical_datetime(
+            values["evidence_available_at"]
+        ),
+        "stage_completed_at": canonical_datetime(values["stage_completed_at"]),
+        "result": values["result"].value,
         "data_eligibility": values["data_eligibility"].value,
         "evidence_ceiling": values["evidence_ceiling"].value,
         "missing_evidence": list(values["missing_evidence"]),
@@ -509,8 +727,9 @@ def _stage_payload(**values: Any) -> dict[str, Any]:
 
 
 def _summary_payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": RESEARCH_DAILY_SUMMARY_SCHEMA,
+    schema = values.get("schema_version", RESEARCH_DAILY_SUMMARY_SCHEMA)
+    result = {
+        "schema_version": schema,
         "runtime_mode": values["runtime_mode"].value,
         "run_id": str(values["run_id"]),
         "tick_id": str(values["tick_id"]),
@@ -551,9 +770,89 @@ def _summary_payload(**values: Any) -> dict[str, Any]:
         "idempotency_key": values["idempotency_key"],
         "created_at": canonical_datetime(values["created_at"]),
     }
+    if schema in {
+        PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+        RESEARCH_DAILY_SUMMARY_SCHEMA,
+    }:
+        state_receipt = values["state_system_receipt"]
+        if state_receipt is None:
+            raise ValueError("Research Summary requires State owner Receipt")
+        result["state_system_receipt"] = state_receipt.to_canonical_dict()
+        result["candidate_set"] = (
+            None
+            if values["candidate_set"] is None
+            else values["candidate_set"].to_canonical_dict()
+        )
+    if schema == RESEARCH_DAILY_SUMMARY_SCHEMA:
+        result["provider_source_references"] = [
+            item.to_canonical_dict()
+            for item in values["provider_source_references"]
+        ]
+    return result
 
 
 def _derive_outcome(
+    stages: tuple[ResearchStageEvidence, ...],
+) -> ResearchDailySummaryOutcome:
+    if any(
+        item.status is ResearchStageStatus.MODEL_NOT_QUALIFIED_FOR_MODE
+        for item in stages
+    ):
+        return ResearchDailySummaryOutcome.MODEL_NOT_QUALIFIED_FOR_MODE
+    if any(item.status is ResearchStageStatus.DATA_INSUFFICIENT for item in stages):
+        return ResearchDailySummaryOutcome.DATA_INSUFFICIENT
+    by_stage = {item.stage: item for item in stages}
+    candidate = by_stage[StateResearchStage.CANDIDATE].result
+    signal = by_stage[StateResearchStage.SIGNAL].result
+    forecast = by_stage[StateResearchStage.FORECAST].result
+    if (
+        candidate is ResearchStageResult.RESEARCH_QUALIFIED
+        and signal is ResearchStageResult.RESEARCH_QUALIFIED
+        and forecast is ResearchStageResult.RESEARCH_QUALIFIED
+    ):
+        return ResearchDailySummaryOutcome.RESEARCH_CANDIDATE
+    if (
+        candidate is ResearchStageResult.RESEARCH_QUALIFIED
+        and signal is ResearchStageResult.WATCH
+    ):
+        return ResearchDailySummaryOutcome.WATCH
+    return ResearchDailySummaryOutcome.NO_ACTION
+
+
+def _legacy_stage_result(
+    stage: StateResearchStage,
+    status: ResearchStageStatus,
+    reason_codes: tuple[str, ...],
+) -> ResearchStageResult:
+    """Expose V1 string semantics without changing its immutable identity."""
+
+    if status is not ResearchStageStatus.COMPLETED:
+        return ResearchStageResult.UNAVAILABLE
+    reasons = set(reason_codes)
+    if stage is StateResearchStage.CANDIDATE:
+        return (
+            ResearchStageResult.RESEARCH_QUALIFIED
+            if "RESEARCH_CANDIDATE" in reasons
+            else ResearchStageResult.EMPTY
+        )
+    if stage is StateResearchStage.SIGNAL:
+        if "WATCH" in reasons:
+            return ResearchStageResult.WATCH
+        return (
+            ResearchStageResult.RESEARCH_QUALIFIED
+            if "RESEARCH_CANDIDATE" in reasons
+            else ResearchStageResult.EMPTY
+        )
+    if stage is StateResearchStage.FORECAST:
+        return (
+            ResearchStageResult.RESEARCH_QUALIFIED
+            if "RESEARCH_CANDIDATE" in reasons
+            else ResearchStageResult.EMPTY
+        )
+    return ResearchStageResult.AVAILABLE
+
+
+def _legacy_derive_outcome(
     stages: tuple[ResearchStageEvidence, ...],
 ) -> ResearchDailySummaryOutcome:
     if any(
@@ -698,11 +997,13 @@ def _integer(value: object) -> int:
 
 
 __all__ = [
+    "GOVERNED_RESEARCH_MODEL_SLOTS",
     "ProviderContractLineage",
     "RESEARCH_DAILY_SUMMARY_SCHEMA",
     "RESEARCH_STAGE_EVIDENCE_SCHEMA",
     "ResearchDailySummary",
     "ResearchDailySummaryOutcome",
     "ResearchStageEvidence",
+    "ResearchStageResult",
     "ResearchStageStatus",
 ]

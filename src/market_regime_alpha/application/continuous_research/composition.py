@@ -32,6 +32,7 @@ class FreeDataPreparationInvocation:
     request: FreeDataPreparationRequest
     runtime_configuration_path: Path
     idempotency_key: str
+    supplemental_evidence_path: Path | None = None
 
 
 FreeDataInvocationBuilder = Callable[[ProviderAcquisitionRequest], FreeDataPreparationInvocation]

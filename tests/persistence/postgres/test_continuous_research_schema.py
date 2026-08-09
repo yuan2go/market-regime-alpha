@@ -48,7 +48,7 @@ def test_migration_020_adds_exact_continuous_runtime_authorities(
         ).fetchone()
 
     assert tables == CONTINUOUS_TABLES
-    assert migration == (29, "research_runtime_summary")
+    assert migration == (33, "free_runtime_v2_authority_hardening")
 
 
 def test_migration_020_extends_runtime_binding_scope_without_weakening_it(

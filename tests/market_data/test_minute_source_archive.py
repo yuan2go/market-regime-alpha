@@ -344,15 +344,14 @@ def test_resampling_boundaries_exclude_lunch_and_post_close_stamps() -> None:
     local_starts = tuple(item.event_start.astimezone(timezone(timedelta(hours=8))).strftime("%H%M") for item in normalized.one_minute_bars)
     assert "1130" not in local_starts
     assert "1500" not in local_starts
+    assert "1459" not in local_starts
     assert tuple(item.event_start.astimezone(timezone(timedelta(hours=8))).strftime("%H%M") for item in normalized.five_minute_bars) == (
         "1125",
         "1300",
-        "1455",
     )
     assert tuple(item.event_end.astimezone(timezone(timedelta(hours=8))).strftime("%H%M") for item in normalized.five_minute_bars) == (
         "1130",
         "1305",
-        "1500",
     )
 
 

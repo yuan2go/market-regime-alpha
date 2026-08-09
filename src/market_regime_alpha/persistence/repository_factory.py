@@ -135,6 +135,16 @@ class RepositoryFactory:
             clock=clock or _utc_now,
         )
 
+    def state_system(self, *, clock: Clock | None = None):
+        from market_regime_alpha.application.state_system.postgres_repository import (
+            PostgresStateSystemRepository,
+        )
+
+        return PostgresStateSystemRepository(
+            self._postgres,
+            clock=clock or _utc_now,
+        )
+
     def decision(self):
         return PostgresDecisionLifecycleRepository(self._postgres)
 

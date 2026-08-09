@@ -74,8 +74,10 @@ class ArtifactEnvelope:
             raise ValueError("decision_date must match Decision Time")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("created_at must be timezone-aware")
-        if self.created_at < self.decision_time.value:
-            raise ValueError("created_at cannot precede Decision Time")
+        # DecisionTime is the decision boundary an artifact is prepared for,
+        # not a substitute for wall-clock creation.  Preliminary State/Pool/
+        # Candidate artifacts may be truthfully completed just before that
+        # boundary so Tencent evidence can be received and frozen on time.
         if len(self.input_artifact_ids) != len(self.input_content_hashes):
             raise ValueError("input Artifact identities and hashes must align")
         if len(self.input_artifact_ids) != len(set(self.input_artifact_ids)):

@@ -42,7 +42,13 @@ class StateResearchStage(str, Enum):
     FORECAST = "FORECAST"
 
 
+class StateResearchStageStatus(str, Enum):
+    COMPLETED = "COMPLETED"
+    DATA_INSUFFICIENT = "DATA_INSUFFICIENT"
+
+
 STATE_RESEARCH_STAGE_ORDER = tuple(StateResearchStage)
+STATE_SYSTEM_STAGE_ORDER = STATE_RESEARCH_STAGE_ORDER[:7]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +59,7 @@ class StateResearchStageArtifact:
     available_at: datetime
     data_eligibility: DataEligibility
     reason_codes: tuple[str, ...]
+    status: StateResearchStageStatus = StateResearchStageStatus.COMPLETED
 
     def __post_init__(self) -> None:
         require_sha256("artifact_hash", self.artifact_hash)
@@ -109,8 +116,8 @@ class OrderedStateResearchPipeline:
         *,
         services: Mapping[StateResearchStage, StateResearchStageService],
     ) -> None:
-        if set(services) != set(STATE_RESEARCH_STAGE_ORDER):
-            raise ValueError("State Research pipeline requires every ordered stage")
+        if set(services) != set(STATE_SYSTEM_STAGE_ORDER):
+            raise ValueError("State System pipeline requires every owned stage")
         for stage, service in services.items():
             if service.stage is not stage:
                 raise ValueError("State Research stage service identity mismatch")
@@ -118,7 +125,7 @@ class OrderedStateResearchPipeline:
 
     def execute(self, request: ChildExecutionRequest) -> StateResearchPipelineResult:
         completed: list[StateResearchStageArtifact] = []
-        for stage in STATE_RESEARCH_STAGE_ORDER:
+        for stage in STATE_SYSTEM_STAGE_ORDER:
             artifact = self._services[stage].execute(
                 StateResearchStageContext(request=request, completed=tuple(completed))
             )
@@ -184,7 +191,7 @@ class StateSystemRuntimeDelegate:
             return existing
         pipeline_result = self._pipeline.execute(request)
         receipt_payload = {
-            "schema": "state_system_runtime_receipt/v2",
+            "schema": "state_system_runtime_receipt/v3",
             "request_idempotency_key": request.idempotency_key,
             "pipeline_artifact_id": str(pipeline_result.artifact_id),
             "pipeline_artifact_hash": pipeline_result.artifact_hash,
@@ -192,6 +199,7 @@ class StateSystemRuntimeDelegate:
                 {
                     **artifact.to_reference().to_canonical_dict(),
                     "data_eligibility": artifact.data_eligibility.value,
+                    "stage_status": artifact.status.value,
                 }
                 for artifact in pipeline_result.stages
             ],

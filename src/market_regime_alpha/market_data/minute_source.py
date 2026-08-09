@@ -849,7 +849,11 @@ def normalize_tencent_minute_source(
         event_end = item.timestamp + timedelta(minutes=1)
         local_time = event_start.astimezone(_SHANGHAI).time()
         in_continuous_session = time(9, 30) <= local_time < time(11, 30) or time(13) <= local_time < time(15)
-        if event_end > artifact.decision_time or not in_continuous_session:
+        if (
+            event_end > artifact.decision_time
+            or event_end > artifact.response_received_at
+            or not in_continuous_session
+        ):
             continue
         one_minute.append(
             CanonicalMarketBar.create(
@@ -1117,6 +1121,7 @@ def minute_normalizations_to_dataset(
         "FORMAL_PIT_NOT_ESTABLISHED",
         "PUBLIC_TENCENT_EXPLORATORY_ONLY",
         "TENCENT_CACHE_NOT_USED_AS_SOURCE_AUTHORITY",
+        "PRE_DECISION_MINUTE_EVIDENCE_FROZEN",
         f"VOLUME_POLICY:{CANONICAL_VOLUME_POLICY_V1}",
         f"RESAMPLING_POLICY:{ONE_MINUTE_TO_FIVE_MINUTE_A_SHARE_V1}",
     }

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 import json
 from pathlib import Path
+import time as wall_time
 from typing import Any, Mapping, Sequence
 
 from market_regime_alpha.application.continuous_research.contracts import (
@@ -120,6 +121,20 @@ def build_parser() -> argparse.ArgumentParser:
     run_due.add_argument("--runtime-configuration", type=Path, required=True)
     run_due.add_argument("--output-root", type=Path, required=True)
     run_due.add_argument("--at", required=True)
+    run_due.add_argument(
+        "--runtime-clock-mode",
+        choices=("LIVE", "SIMULATED"),
+        default="LIVE",
+        help=(
+            "LIVE requires --at to match the PostgreSQL host clock; SIMULATED "
+            "is an explicit engineering/replay mode."
+        ),
+    )
+    run_due.add_argument(
+        "--supplemental-evidence",
+        type=Path,
+        help="Explicit immutable Free Supplemental Evidence bundle; no discovery/fallback.",
+    )
     run_due.add_argument("--minimum-history-sessions", type=int, default=21)
     run_due.add_argument("--liquidity-lookback-sessions", type=int, default=21)
     run_due.add_argument(
@@ -276,6 +291,14 @@ def _run_due(
         _load_json_object(args.trading_day_assessment)
     )
     now = _instant(args.at).astimezone(UTC)
+    operational_now = _operational_now()
+    if (
+        args.runtime_clock_mode == "LIVE"
+        and abs((now - operational_now).total_seconds()) > 5
+    ):
+        raise ValueError(
+            "LIVE --at must match the trusted runtime clock within five seconds"
+        )
     configuration_path = args.runtime_configuration.resolve()
     configuration = load_controlled_runtime_configuration(configuration_path)
     if (
@@ -324,12 +347,37 @@ def _run_due(
             provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
         ),
     )
+    simulated_runtime_now = [now]
+
+    def simulated_sleep(seconds: float) -> None:
+        simulated_runtime_now[0] += timedelta(seconds=seconds)
+
+    runtime_clock = (
+        _operational_now
+        if args.runtime_clock_mode == "LIVE"
+        else lambda: simulated_runtime_now[0]
+    )
+    runtime_sleeper = (
+        wall_time.sleep
+        if args.runtime_clock_mode == "LIVE"
+        else simulated_sleep
+    )
+    # Every durable lease/receipt in one invocation must observe the same
+    # trusted (LIVE) or explicitly simulated engineering clock.
+    journal = PostgresContinuousResearchJournal(
+        factory,
+        clock=runtime_clock,
+        lease_duration=timedelta(minutes=5),
+        apply_migrations=False,
+    )
+
     service = FreeDataOperationService(
         repositories=repositories,
         output_root=args.output_root,
         code_revision=run_command.code_revision,
-        clock=lambda: now,
+        clock=runtime_clock,
         live_profile=profile,
+        sleeper=runtime_sleeper,
     )
     policy = default_continuous_decision_window_policy()
     journal.create_or_get(run_command)
@@ -363,36 +411,18 @@ def _run_due(
                 "WAITING_FOR_TENCENT_DECISION_QUOTE",
             ),
         )
-    if local_now.timetz().replace(tzinfo=None) < time(14, 55):
-        service.prepare(
-            request=free_request,
-            runtime_configuration_path=configuration_path,
-            idempotency_key=f"{run_command.run_id}:free-data",
-        )
-        return _run_due_stage_output(
-            run_command=run_command,
-            status="PREPARED",
-            stage="TENCENT_QUOTE_AND_STATIC_FEATURES_FROZEN",
-            reason_codes=(
-                "ENTRY_BLOCKED",
-                "FREE_DATA_STATIC_INPUTS_READY",
-                "TENCENT_DECISION_QUOTE_FROZEN",
-            ),
-        )
-
     def invocation() -> FreeDataPreparationInvocation:
         return FreeDataPreparationInvocation(
             request=free_request,
             runtime_configuration_path=configuration_path,
             idempotency_key=f"{run_command.run_id}:free-data",
+            supplemental_evidence_path=args.supplemental_evidence,
         )
 
     provider = CanonicalFreeDataProvider(
         service=service,
         invocation_builder=lambda _: invocation(),
-        # Provider Attempt completion is operational wall time, distinct from
-        # the semantic Tick/DecisionTime supplied by --at.
-        clock=_operational_now,
+        clock=runtime_clock,
     )
     children = CanonicalFreeDataResearchComposition(
         service=service,
@@ -400,14 +430,16 @@ def _run_due(
         model_selector=ControlledRuntimeModelSelector(
             repositories.model_governance()
         ),
-        summary_repository=repositories.decision_system(clock=_operational_now),
+        summary_repository=repositories.decision_system(clock=runtime_clock),
+        state_repository=repositories.state_system(clock=runtime_clock),
+        clock=runtime_clock,
     )
     tick_runner = ContinuousResearchTickRunner(
         journal=journal,
         provider=provider,
         children=children,
         policy=policy,
-        clock=_operational_now,
+        clock=runtime_clock,
     )
 
     def provider_request_builder(
@@ -429,6 +461,7 @@ def _run_due(
         run_command=run_command,
         trading_day=trading_day,
         now=now,
+        predecision_lead=timedelta(minutes=1),
     )
     summary_id = None
     summary_outcome = None
@@ -450,6 +483,7 @@ def _run_due(
         "run_id": str(run_command.run_id),
         "runtime_mode": run_command.authority_mode.value,
         "provider_profile": TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+        "runtime_clock_mode": args.runtime_clock_mode,
         "summary_id": summary_id,
         "summary_outcome": summary_outcome,
         "reason_codes": list(result.reason_codes),

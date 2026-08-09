@@ -8,10 +8,13 @@ from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
 from market_regime_alpha.application.decision_system.research_summary import (
+    LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA,
+    LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA,
     ProviderContractLineage,
     ResearchDailySummary,
     ResearchDailySummaryOutcome,
     ResearchStageEvidence,
+    ResearchStageResult,
     ResearchStageStatus,
 )
 from market_regime_alpha.application.state_system.runtime import (
@@ -38,6 +41,9 @@ def _stages(
     missing: str | None = None,
     rejected: str | None = None,
     available_at: datetime = NOW,
+    candidate_result: ResearchStageResult = ResearchStageResult.EMPTY,
+    signal_result: ResearchStageResult = ResearchStageResult.EMPTY,
+    forecast_result: ResearchStageResult = ResearchStageResult.EMPTY,
 ) -> tuple[ResearchStageEvidence, ...]:
     result = []
     for stage in STATE_RESEARCH_STAGE_ORDER:
@@ -45,6 +51,13 @@ def _stages(
         missing_evidence: tuple[str, ...] = ()
         reasons = (f"{stage.value}_COMPLETED",)
         selection = None
+        structured_result = ResearchStageResult.AVAILABLE
+        if stage.value == "CANDIDATE":
+            structured_result = candidate_result
+        elif stage.value == "SIGNAL":
+            structured_result = signal_result
+        elif stage.value == "FORECAST":
+            structured_result = forecast_result
         if stage.value == missing:
             status = ResearchStageStatus.DATA_INSUFFICIENT
             missing_evidence = (f"{stage.value}_EVIDENCE_UNAVAILABLE",)
@@ -53,6 +66,8 @@ def _stages(
             status = ResearchStageStatus.MODEL_NOT_QUALIFIED_FOR_MODE
             reasons = ("MODEL_NOT_QUALIFIED_FOR_MODE",)
             selection = _reference("MODEL_SELECTION_RECEIPT", stage.value, HASH_B)
+        if status is not ResearchStageStatus.COMPLETED:
+            structured_result = ResearchStageResult.UNAVAILABLE
         result.append(
             ResearchStageEvidence.create(
                 stage=stage,
@@ -63,7 +78,9 @@ def _stages(
                     else _reference(f"{stage.value}_OUTPUT", stage.value)
                 ),
                 selection_receipt=selection,
-                available_at=available_at,
+                evidence_available_at=available_at,
+                stage_completed_at=available_at,
+                result=structured_result,
                 data_eligibility=DataEligibility.EXPLORATORY,
                 evidence_ceiling=PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY,
                 missing_evidence=missing_evidence,
@@ -113,6 +130,8 @@ def _summary(
         source_manifest=_reference("SOURCE_MANIFEST", "source"),
         dataset=_reference("MARKET_DATA_DATASET", "dataset"),
         feature_bundle=_reference("FEATURE_BUNDLE", "features"),
+        state_system_receipt=_reference("STATE_SYSTEM_RECEIPT", "state"),
+        candidate_set=_reference("STATE_CONSTRAINED_CANDIDATE_SET", "candidates"),
         stages=stage_values,
         model_selection_receipts=selections,
         configuration_references=(_reference("RUNTIME_CONFIGURATION", "config", HASH_C),),
@@ -138,6 +157,87 @@ def test_research_summary_round_trips_and_binds_complete_lineage() -> None:
     assert summary.no_fill is True
     assert summary.no_broker is True
     assert summary.no_position_mutation_from_shadow is True
+
+
+def test_legacy_v1_summary_remains_content_exact_readable() -> None:
+    current = _summary()
+    legacy_stages = tuple(
+        ResearchStageEvidence.create(
+            **{
+                **stage.creation_values(),
+                "schema_version": LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA,
+            }
+        )
+        for stage in current.stages
+    )
+    legacy = ResearchDailySummary.create(
+        **{
+            **current.creation_values(),
+            "state_system_receipt": None,
+            "candidate_set": None,
+            "stages": legacy_stages,
+            "schema_version": LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA,
+        }
+    )
+    payload = legacy.to_canonical_dict()
+
+    restored = ResearchDailySummary.from_canonical_dict(payload)
+
+    assert restored.to_canonical_dict() == payload
+    assert restored.summary_id == legacy.summary_id
+    assert restored.state_system_receipt is None
+
+
+def test_summary_outcome_uses_structured_results_not_reason_strings() -> None:
+    no_action = _summary(stages=_stages())
+    watch = _summary(
+        stages=_stages(
+            candidate_result=ResearchStageResult.RESEARCH_QUALIFIED,
+            signal_result=ResearchStageResult.WATCH,
+            forecast_result=ResearchStageResult.EMPTY,
+        )
+    )
+    candidate = _summary(
+        stages=_stages(
+            candidate_result=ResearchStageResult.RESEARCH_QUALIFIED,
+            signal_result=ResearchStageResult.RESEARCH_QUALIFIED,
+            forecast_result=ResearchStageResult.RESEARCH_QUALIFIED,
+        )
+    )
+    misleading_reasons = tuple(
+        ResearchStageEvidence.create(
+            **{
+                **stage.creation_values(),
+                "reason_codes": tuple(
+                    sorted({*stage.reason_codes, "RESEARCH_CANDIDATE", "WATCH"})
+                ),
+            }
+        )
+        for stage in no_action.stages
+    )
+
+    assert no_action.outcome is ResearchDailySummaryOutcome.NO_ACTION
+    assert watch.outcome is ResearchDailySummaryOutcome.WATCH
+    assert candidate.outcome is ResearchDailySummaryOutcome.RESEARCH_CANDIDATE
+    assert (
+        _summary(stages=misleading_reasons).outcome
+        is ResearchDailySummaryOutcome.NO_ACTION
+    )
+
+
+def test_stage_preserves_evidence_and_computation_times() -> None:
+    completed = NOW.replace(minute=46)
+    summary = _summary(stages=_stages(available_at=NOW))
+    stage = ResearchStageEvidence.create(
+        **{
+            **summary.stages[0].creation_values(),
+            "stage_completed_at": completed,
+        }
+    )
+
+    assert stage.evidence_available_at == NOW
+    assert stage.stage_completed_at == completed
+    assert stage.stage_completed_at > stage.evidence_available_at
 
 
 def test_missing_stage_is_summary_data_insufficient_not_runtime_disappearance() -> None:

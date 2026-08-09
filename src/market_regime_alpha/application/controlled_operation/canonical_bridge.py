@@ -93,6 +93,7 @@ from market_regime_alpha.forecasting.artifact import (
     VerifiedPathForecastArtifact,
     load_verified_path_forecast,
 )
+from market_regime_alpha.forecasting.sample_provider import PathForecastSampleProvider
 from market_regime_alpha.market_data.artifacts import VerifiedMarketDataDataset
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.signals.candidate_view_v2 import (
@@ -221,11 +222,13 @@ class _ControlledResearchReceiptStageHandler:
         input_references: tuple[LifecycleObjectReference, ...],
         available_at: datetime,
         configuration: ControlledOperationRuntimeConfiguration,
+        candidates: CandidateSet | None = None,
     ) -> None:
         self._research = research
         self._inputs = input_references
         self._available_at = available_at
         self._configuration = configuration
+        self._candidates = candidates
 
     def recover(self, context: LifecycleStageContext) -> StageExecutionResult | None:
         return self.execute(context)
@@ -236,7 +239,7 @@ class _ControlledResearchReceiptStageHandler:
             raise ValueError("Controlled Platform Research Reader divergence")
         _require_traceable(context, self._inputs)
         artifact = restored.artifact
-        candidate = artifact.candidate_set
+        candidate = self._candidates or artifact.candidate_set
         outputs = ordered_references(
             (
                 output_reference(
@@ -427,6 +430,7 @@ def run_controlled_canonical_lifecycle(
     daily_source_manifest_path: Path,
     supplemental_path: Path,
     research: VerifiedControlledResearchArtifact,
+    candidates: CandidateSet,
     daily_dataset: VerifiedMarketDataDataset,
     daily_dataset_path: Path,
     static_bundle: StaticUniverseFeatureBundle,
@@ -440,6 +444,7 @@ def run_controlled_canonical_lifecycle(
     hard_cutoff: datetime,
     after_stage_hook: AfterStageHook | None = None,
     repository_factory: CanonicalRepositoryFactory,
+    forecast_sample_provider: PathForecastSampleProvider | None = None,
 ) -> ControlledCanonicalLifecycleExecution:
     """Run and durably journal the real canonical stage graph through Entry."""
 
@@ -588,10 +593,11 @@ def run_controlled_canonical_lifecycle(
                 input_references=ordered_references(research_inputs),
                 available_at=available_at,
                 configuration=configuration,
+                candidates=candidates,
             )
         ),
         LifecycleStageName.SIGNAL: _ControlledSignalStageHandler(
-            candidates=research.artifact.candidate_set,
+            candidates=candidates,
             static_bundle=static_bundle,
             static_feature_bundle=static_feature_bundle,
             daily_dataset=daily_dataset,
@@ -609,6 +615,7 @@ def run_controlled_canonical_lifecycle(
         LifecycleStageName.PATH_FORECAST: PathForecastStageHandler(
             configuration=configuration.path_forecast,
             output_root=canonical_root / "outputs" / "path-forecasts",
+            sample_provider=forecast_sample_provider,
         ),
         LifecycleStageName.ENTRY_ASSESSMENT: EntryAssessmentStageHandler(
             authority_ceiling=LifecycleAuthorityCeiling()

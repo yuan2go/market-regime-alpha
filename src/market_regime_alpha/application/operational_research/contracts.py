@@ -25,6 +25,9 @@ from market_regime_alpha.research.platform_v2.inputs import (
 
 
 SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA = (
+    "supplemental-research-evidence-bundle-v2"
+)
+LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA = (
     "supplemental-research-evidence-bundle-v1"
 )
 
@@ -92,7 +95,7 @@ class ThemeObservationEvidence:
             raise ValueError("theme confidence must be within [0, 1]")
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "theme_id": self.theme_id,
             "theme_name": self.theme_name,
             "benchmark_id": self.benchmark_id,
@@ -112,6 +115,7 @@ class ThemeObservationEvidence:
             "confidence": self.confidence,
             "reason_codes": list(self.reason_codes),
         }
+        return payload
 
     @classmethod
     def from_canonical_dict(
@@ -324,6 +328,130 @@ class ETFThemeMappingEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class StatefulETFObservationEvidence:
+    """Explicit multi-horizon ETF inputs required by WP-STATE-01."""
+
+    etf_id: str
+    benchmark_id: str
+    available_at: AvailabilityTime
+    source_artifact_id: ArtifactId
+    relative_strength_1d: float
+    relative_strength_3d: float
+    relative_strength_5d: float
+    relative_strength_10d: float
+    benchmark_excess: float
+    amount_change: float
+    amount_persistence: float
+    volume_change: float
+    drawdown: float
+    volatility: float
+    diffusion: float
+    liquidity: float
+    data_coverage: float
+    reason_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_text("etf_id", self.etf_id)
+        require_text("benchmark_id", self.benchmark_id)
+        require_unique_text("reason_code", self.reason_codes)
+        for name in (
+            "relative_strength_1d",
+            "relative_strength_3d",
+            "relative_strength_5d",
+            "relative_strength_10d",
+            "benchmark_excess",
+            "amount_change",
+            "amount_persistence",
+            "volume_change",
+            "drawdown",
+            "volatility",
+            "diffusion",
+            "liquidity",
+            "data_coverage",
+        ):
+            value = getattr(self, name)
+            if not isfinite(value) or not -1.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be finite within [-1, 1]")
+        for name in (
+            "amount_persistence",
+            "drawdown",
+            "volatility",
+            "diffusion",
+            "liquidity",
+            "data_coverage",
+        ):
+            if getattr(self, name) < 0.0:
+                raise ValueError(f"{name} must be within [0, 1]")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "etf_id": self.etf_id,
+            "benchmark_id": self.benchmark_id,
+            "available_at": self.available_at.isoformat(),
+            "source_artifact_id": str(self.source_artifact_id),
+            **{
+                name: getattr(self, name)
+                for name in (
+                    "relative_strength_1d",
+                    "relative_strength_3d",
+                    "relative_strength_5d",
+                    "relative_strength_10d",
+                    "benchmark_excess",
+                    "amount_change",
+                    "amount_persistence",
+                    "volume_change",
+                    "drawdown",
+                    "volatility",
+                    "diffusion",
+                    "liquidity",
+                    "data_coverage",
+                )
+            },
+            "reason_codes": list(self.reason_codes),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> StatefulETFObservationEvidence:
+        numeric = (
+            "relative_strength_1d",
+            "relative_strength_3d",
+            "relative_strength_5d",
+            "relative_strength_10d",
+            "benchmark_excess",
+            "amount_change",
+            "amount_persistence",
+            "volume_change",
+            "drawdown",
+            "volatility",
+            "diffusion",
+            "liquidity",
+            "data_coverage",
+        )
+        _expect_fields(
+            payload,
+            {
+                "etf_id",
+                "benchmark_id",
+                "available_at",
+                "source_artifact_id",
+                "reason_codes",
+                *numeric,
+            },
+            "StatefulETFObservationEvidence",
+        )
+        return cls(
+            etf_id=str(payload["etf_id"]),
+            benchmark_id=str(payload["benchmark_id"]),
+            available_at=_availability(payload["available_at"]),
+            source_artifact_id=ArtifactId(str(payload["source_artifact_id"])),
+            reason_codes=_strings(payload["reason_codes"]),
+            **{name: float(payload[name]) for name in numeric},
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class MissingEvidence:
     evidence_kind: str
     key: str
@@ -375,10 +503,17 @@ class SupplementalResearchEvidenceBundle:
     reason_codes: tuple[str, ...]
     created_at: datetime
     data_eligibility: DataEligibility
+    stateful_etf_observations: tuple[StatefulETFObservationEvidence, ...] = ()
+    schema_version: str = SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA
     content_hash: str = field(init=False)
     bundle_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.schema_version not in {
+            LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+            SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+        }:
+            raise ValueError("unsupported supplemental evidence schema")
         if self.source_manifest.decision_time != self.decision_time:
             raise ValueError("supplemental SourceManifest DecisionTime mismatch")
         if (
@@ -389,8 +524,6 @@ class SupplementalResearchEvidenceBundle:
             raise ValueError("supplemental evidence must remain EXPLORATORY")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("supplemental created_at must be timezone-aware")
-        if self.created_at < self.decision_time.value:
-            raise ValueError("supplemental created_at cannot predate DecisionTime")
         require_unique_text("reason_code", self.reason_codes)
         source_ids = {
             item.artifact_id for item in self.source_manifest.source_artifacts
@@ -427,6 +560,14 @@ class SupplementalResearchEvidenceBundle:
             for item in self.etf_observations
         )
         timed_sources.extend(
+            (
+                "stateful ETF observation",
+                item.available_at,
+                item.source_artifact_id,
+            )
+            for item in self.stateful_etf_observations
+        )
+        timed_sources.extend(
             ("stock daily bar", item.available_at, item.source_artifact_id)
             for item in self.stock_daily_bars
         )
@@ -436,6 +577,17 @@ class SupplementalResearchEvidenceBundle:
                 raise ValueError(
                     f"{label} source is absent from supplemental SourceManifest"
                 )
+        latest_observed_at = max(
+            *(item[1].value for item in timed_sources),
+            *(
+                item.retrieved_at.value
+                for item in self.source_manifest.source_artifacts
+            ),
+        )
+        if self.created_at < latest_observed_at:
+            raise ValueError(
+                "supplemental created_at cannot predate consumed evidence"
+            )
         _require_unique(
             "theme observation",
             tuple(item.theme_id for item in self.theme_observations),
@@ -461,6 +613,10 @@ class SupplementalResearchEvidenceBundle:
             tuple(item.etf_id for item in self.etf_observations),
         )
         _require_unique(
+            "stateful ETF observation",
+            tuple(item.etf_id for item in self.stateful_etf_observations),
+        )
+        _require_unique(
             "missing evidence",
             tuple(
                 f"{item.evidence_kind}:{item.key}"
@@ -479,8 +635,8 @@ class SupplementalResearchEvidenceBundle:
         )
 
     def semantic_payload(self) -> dict[str, Any]:
-        return {
-            "schema_version": SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+        payload = {
+            "schema_version": self.schema_version,
             "source_manifest": self.source_manifest.to_canonical_dict(),
             "decision_time": self.decision_time.isoformat(),
             "market_observation": self.market_observation.to_canonical_dict(),
@@ -512,6 +668,12 @@ class SupplementalResearchEvidenceBundle:
             "created_at": self.created_at.isoformat(),
             "data_eligibility": self.data_eligibility.value,
         }
+        if self.schema_version == SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA:
+            payload["stateful_etf_observations"] = [
+                item.to_canonical_dict()
+                for item in self.stateful_etf_observations
+            ]
+        return payload
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -543,8 +705,18 @@ class SupplementalResearchEvidenceBundle:
             "content_hash",
             "bundle_id",
         }
-        _expect_fields(payload, expected, "SupplementalResearchEvidenceBundle")
-        if payload["schema_version"] != SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA:
+        schema = payload.get("schema_version")
+        expected_for_schema = (
+            expected
+            if schema == LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA
+            else {*expected, "stateful_etf_observations"}
+        )
+        if set(payload) != expected_for_schema:
+            raise ValueError("SupplementalResearchEvidenceBundle fields mismatch")
+        if schema not in {
+            LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+            SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+        }:
             raise ValueError("unsupported supplemental evidence schema")
         result = cls(
             source_manifest=SourceManifest.from_canonical_dict(
@@ -580,6 +752,14 @@ class SupplementalResearchEvidenceBundle:
                 ETFObservation.from_canonical_dict(_dict(item))
                 for item in _array(payload["etf_observations"])
             ),
+            stateful_etf_observations=tuple(
+                StatefulETFObservationEvidence.from_canonical_dict(
+                    _mapping(item)
+                )
+                for item in _array(
+                    payload.get("stateful_etf_observations", [])
+                )
+            ),
             stock_daily_bars=tuple(
                 ResearchDailyBar.from_canonical_dict(_dict(item))
                 for item in _array(payload["stock_daily_bars"])
@@ -591,6 +771,7 @@ class SupplementalResearchEvidenceBundle:
             reason_codes=_strings(payload["reason_codes"]),
             created_at=datetime.fromisoformat(str(payload["created_at"])),
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
+            schema_version=str(schema),
         )
         if (
             result.content_hash != payload["content_hash"]

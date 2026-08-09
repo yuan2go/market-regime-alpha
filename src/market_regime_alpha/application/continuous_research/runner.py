@@ -513,7 +513,9 @@ def _child_request(
         claim_id=claim.claim_id,
         fencing_token=claim.fencing_token,
         tick_version=claim.tick_version,
+        lease_acquired_at=claim.lease_acquired_at,
         lease_expires_at=claim.lease_expires_at,
+        heartbeat_at=claim.heartbeat_at,
         provider_attempt_id=evidence.attempt_id,
         source_manifest_id=evidence.source_manifest_id,
         source_manifest_hash=evidence.source_manifest_hash,
@@ -596,9 +598,19 @@ def _child_reference(
 
 def _require_complete_child_set(results: tuple[ChildExecutionResult, ...]) -> None:
     kinds = tuple(result.child_kind for result in results)
-    expected = tuple(ContinuousChildKind)
-    if len(kinds) != len(set(kinds)) or set(kinds) != set(expected):
-        raise ValueError("child port must return each existing research service exactly once")
+    required = set(ContinuousChildKind) - {
+        # A stage-level DATA_INSUFFICIENT or MODEL_NOT_QUALIFIED outcome can
+        # legitimately stop before Canonical Lifecycle admission.  The Daily
+        # Summary remains the terminal Decision owner; absent work must never
+        # be represented by a synthetic Canonical receipt.
+        ContinuousChildKind.CANONICAL_LIFECYCLE,
+    }
+    if (
+        len(kinds) != len(set(kinds))
+        or not required.issubset(kinds)
+        or not set(kinds).issubset(set(ContinuousChildKind))
+    ):
+        raise ValueError("child port must return each executed research owner exactly once")
 
 
 def _tick_input_references(
@@ -697,6 +709,8 @@ def _validate_evidence_time(
 def _child_failure_reason(exc: Exception) -> str:
     if str(exc) == "FREE_DATA_PRODUCTION_AUTHORITY_DENIED":
         return "FREE_DATA_PRODUCTION_AUTHORITY_DENIED"
+    # Runtime reason codes are typed control-plane facts.  Arbitrary Provider
+    # or database exception text belongs in logs and must not become lineage.
     return f"CHILD_EXECUTION_{type(exc).__name__.upper()}"
 
 

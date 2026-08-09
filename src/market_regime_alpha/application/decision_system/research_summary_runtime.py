@@ -104,9 +104,9 @@ def _claim(request: ChildExecutionRequest) -> ClaimedRuntimeTick:
         claim_id=request.claim_id,
         fencing_token=request.fencing_token,
         tick_version=request.tick_version,
-        lease_acquired_at=request.as_of_time,
+        lease_acquired_at=request.lease_acquired_at,
         lease_expires_at=request.lease_expires_at,
-        heartbeat_at=request.as_of_time,
+        heartbeat_at=request.heartbeat_at,
     )
 
 

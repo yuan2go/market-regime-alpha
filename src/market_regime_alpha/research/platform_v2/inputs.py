@@ -663,8 +663,26 @@ class ResearchInputBundle:
             raise ValueError("Research Input Bundle scope mismatch")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("Research Input Bundle created_at must be aware")
-        if self.created_at < decision.value:
-            raise ValueError("Research Input Bundle cannot predate Decision Time")
+        # A bundle may be prepared for an upcoming DecisionTime, but it cannot
+        # claim to exist before evidence it actually contains was available.
+        available_instants = [
+            self.universe_snapshot.as_of.value,
+            self.eligibility_snapshot.as_of.value,
+            *(item.retrieved_at.value for item in self.source_manifest.source_artifacts),
+            *(item.available_at.value for item in self.theme_observations),
+            *(item.available_at.value for item in self.symbol_observations),
+            *(item.available_at.value for item in self.etf_observations),
+            *(item.available_at.value for item in self.stock_daily_bars),
+            *(
+                item.available_time.value
+                for item in self.decision_price_snapshot.observations
+                if item.available_time is not None
+            ),
+        ]
+        if self.market_observation is not None:
+            available_instants.append(self.market_observation.available_at.value)
+        if available_instants and self.created_at < max(available_instants):
+            raise ValueError("Research Input Bundle predates consumed evidence")
         if self.data_eligibility is not DataEligibility.EXPLORATORY:
             raise ValueError("Research Input Bundle must remain EXPLORATORY")
         if len(self.input_artifact_ids) != len(self.input_content_hashes):

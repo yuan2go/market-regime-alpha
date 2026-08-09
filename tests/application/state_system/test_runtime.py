@@ -18,7 +18,7 @@ from market_regime_alpha.application.state_system.repository import (
     StateSystemIntegrityError,
 )
 from market_regime_alpha.application.state_system.runtime import (
-    STATE_RESEARCH_STAGE_ORDER,
+    STATE_SYSTEM_STAGE_ORDER,
     OrderedStateResearchPipeline,
     StateResearchStage,
     StateResearchStageArtifact,
@@ -47,7 +47,9 @@ def _request(claim) -> ChildExecutionRequest:
         claim_id=claim.claim_id,
         fencing_token=claim.fencing_token,
         tick_version=claim.tick_version,
+        lease_acquired_at=claim.lease_acquired_at,
         lease_expires_at=claim.lease_expires_at,
+        heartbeat_at=claim.heartbeat_at,
         provider_attempt_id=1,
         source_manifest_id=ArtifactId("manifest-1"),
         source_manifest_hash=HASH,
@@ -89,7 +91,7 @@ class RecordingStage:
 
 def _pipeline():
     services: dict[StateResearchStage, RecordingStage] = {}
-    for stage in STATE_RESEARCH_STAGE_ORDER:
+    for stage in STATE_SYSTEM_STAGE_ORDER:
         services[stage] = RecordingStage(stage, [])
     return OrderedStateResearchPipeline(services=services), services
 
@@ -112,9 +114,9 @@ def test_state_runtime_child_executes_full_order_and_recovers_durable_receipt(
 
     assert first == recovered == replay
     assert first.child_kind is ContinuousChildKind.STATE_SYSTEM
-    assert tuple(services[stage].calls[0] for stage in STATE_RESEARCH_STAGE_ORDER) == tuple(
-        STATE_RESEARCH_STAGE_ORDER[:index]
-        for index in range(len(STATE_RESEARCH_STAGE_ORDER))
+    assert tuple(services[stage].calls[0] for stage in STATE_SYSTEM_STAGE_ORDER) == tuple(
+        STATE_SYSTEM_STAGE_ORDER[:index]
+        for index in range(len(STATE_SYSTEM_STAGE_ORDER))
     )
     assert all(len(service.calls) == 1 for service in services.values())
     assert delegate.entry_authority_granted is False
@@ -162,7 +164,7 @@ def test_state_runtime_receipt_composition_is_recomputed_from_postgres(
             """,
             (str(request.run_id), str(request.tick_id)),
         ).fetchone()
-        assert persisted == ("state_runtime_child_receipt/v2", 9)
+        assert persisted == ("state_runtime_child_receipt/v2", 7)
         connection.execute(
             """
             ALTER TABLE state_research_stage_authority
@@ -173,7 +175,7 @@ def test_state_runtime_receipt_composition_is_recomputed_from_postgres(
             """
             UPDATE state_research_stage_authority
             SET artifact_hash = %s
-            WHERE run_id = %s AND tick_id = %s AND stage = 'FORECAST'
+            WHERE run_id = %s AND tick_id = %s AND stage = 'CANDIDATE'
             """,
             ("sha256:" + "2" * 64, str(request.run_id), str(request.tick_id)),
         )
@@ -193,7 +195,7 @@ def test_state_runtime_receipt_composition_is_recomputed_from_postgres(
 
 def test_state_runtime_rejects_future_stage_artifact() -> None:
     pipeline, services = _pipeline()
-    service = services[StateResearchStage.FORECAST]
+    service = services[StateResearchStage.CANDIDATE]
     original = service.execute
 
     def future(context: StateResearchStageContext) -> StateResearchStageArtifact:
@@ -218,7 +220,9 @@ def test_state_runtime_rejects_future_stage_artifact() -> None:
             "claim_id": "claim",
             "fencing_token": 1,
             "tick_version": 1,
+            "lease_acquired_at": NOW,
             "lease_expires_at": NOW + timedelta(minutes=1),
+            "heartbeat_at": NOW,
         },
     )()
 

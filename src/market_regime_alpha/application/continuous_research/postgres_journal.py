@@ -305,6 +305,7 @@ class PostgresContinuousResearchJournal:
         run_command: ContinuousResearchCommand,
         policy: object,
         now: datetime,
+        predecision_lead: timedelta = timedelta(0),
     ) -> ContinuousTickSnapshot | None:
         from market_regime_alpha.application.continuous_research.policy import (
             ContinuousDecisionWindowPolicy,
@@ -316,6 +317,8 @@ class PostgresContinuousResearchJournal:
         if not isinstance(policy, ContinuousDecisionWindowPolicy):
             raise TypeError("policy must be ContinuousDecisionWindowPolicy")
         require_utc_second("now", now)
+        if not timedelta(0) <= predecision_lead <= timedelta(minutes=5):
+            raise ValueError("predecision lead must be within five minutes")
         reserved_tick_id: ArtifactId | None = None
 
         def operation(connection: psycopg.Connection[Any]) -> None:
@@ -339,7 +342,7 @@ class PostgresContinuousResearchJournal:
             if (
                 status is not ContinuousScheduleStatus.ACTIVE
                 or scheduled_at is None
-                or scheduled_at > now
+                or scheduled_at > now + predecision_lead
             ):
                 return
             assessment = policy.assess(
