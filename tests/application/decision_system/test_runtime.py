@@ -1178,7 +1178,7 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             )
     assert first_replay == second_replay
     assert imported_count == 12
-    assert replay_migration_version == 35
+    assert replay_migration_version == 36
     assert replay_selection_count == 2
     assert after_conflict_count == imported_count
     assert first_replay.verified_authority_count == 12

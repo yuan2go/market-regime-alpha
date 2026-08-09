@@ -8,7 +8,7 @@
 > **Supersedes:** Pre-live portions of `2026-08-09-prospective-formal-qualification-master-design.md`
 > **Superseded By:** None
 > **Related Documents:** ../plans/2026-08-09-pre-live-engineering-hardening.md, ../../status/Current-State.md
-> **Code Evidence:** `src/market_regime_alpha`; `tests`; PostgreSQL migrations 001–035
+> **Code Evidence:** `src/market_regime_alpha`; `tests`; PostgreSQL migrations 001–036
 > **Authority ceiling:** Engineering readiness over exploratory free data. No Live, prospective, Alpha, Formal PIT/OOS, qualification, Production, Entry, Order, Fill, Broker, or Position authority.
 
 ## Objective
@@ -72,7 +72,7 @@ Migrations are additive and dependency-ordered:
    immutable frozen lineage and CAS versioning.
 2. `035_prospective_outcome_authority.sql` — append-only Summary-scoped factual
    outcome index bound to the existing raw source archive.
-3. `036_evaluation_dataset_authority.sql` — immutable content-addressed dataset
+3. `036_research_evaluation_dataset.sql` — immutable content-addressed dataset
    manifest index.
 4. `037_etf_theme_reference_authority.sql` — effective-dated ETF/Theme reference
    Artifacts and immutable source lineage.

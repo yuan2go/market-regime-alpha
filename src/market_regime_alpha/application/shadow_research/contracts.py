@@ -157,6 +157,10 @@ class ShadowDecision:
     feature_bundle: RuntimeArtifactReference
     state_system_receipt: RuntimeArtifactReference
     controlled_operation: RuntimeArtifactReference
+    market_state: RuntimeArtifactReference
+    etf_state: RuntimeArtifactReference
+    theme_state: RuntimeArtifactReference
+    capital_state: RuntimeArtifactReference
     dynamic_pool: RuntimeArtifactReference | None
     candidate_set: RuntimeArtifactReference | None
     signal: RuntimeArtifactReference | None
@@ -214,6 +218,25 @@ class ShadowDecision:
         state_receipt = summary.state_system_receipt
         if state_receipt is None:
             raise ValueError("Shadow Decision requires State owner Receipt")
+        required_state_outputs = {
+            stage: stages[stage].output_reference
+            for stage in (
+                StateResearchStage.MARKET_REGIME,
+                StateResearchStage.ETF_ROTATION,
+                StateResearchStage.THEME_ROTATION,
+                StateResearchStage.CAPITAL_STATE,
+            )
+        }
+        if any(item is None for item in required_state_outputs.values()):
+            raise ValueError("Shadow Decision requires every State owner Artifact")
+        market_state = required_state_outputs[StateResearchStage.MARKET_REGIME]
+        etf_state = required_state_outputs[StateResearchStage.ETF_ROTATION]
+        theme_state = required_state_outputs[StateResearchStage.THEME_ROTATION]
+        capital_state = required_state_outputs[StateResearchStage.CAPITAL_STATE]
+        assert market_state is not None
+        assert etf_state is not None
+        assert theme_state is not None
+        assert capital_state is not None
         values: dict[str, Any] = {
             "session_id": session.session_id,
             "run_id": summary.run_id,
@@ -231,6 +254,10 @@ class ShadowDecision:
             "feature_bundle": summary.feature_bundle,
             "state_system_receipt": state_receipt,
             "controlled_operation": controlled_operation,
+            "market_state": market_state,
+            "etf_state": etf_state,
+            "theme_state": theme_state,
+            "capital_state": capital_state,
             "dynamic_pool": stages[StateResearchStage.DYNAMIC_POOL].output_reference,
             "candidate_set": summary.candidate_set,
             "signal": stages[StateResearchStage.SIGNAL].output_reference,
@@ -288,6 +315,10 @@ class ShadowDecision:
             feature_bundle=self.feature_bundle,
             state_system_receipt=self.state_system_receipt,
             controlled_operation=self.controlled_operation,
+            market_state=self.market_state,
+            etf_state=self.etf_state,
+            theme_state=self.theme_state,
+            capital_state=self.capital_state,
             dynamic_pool=self.dynamic_pool,
             candidate_set=self.candidate_set,
             signal=self.signal,
@@ -326,6 +357,10 @@ class ShadowDecision:
             "feature_bundle": _reference(payload["feature_bundle"]),
             "state_system_receipt": _reference(payload["state_system_receipt"]),
             "controlled_operation": _reference(payload["controlled_operation"]),
+            "market_state": _reference(payload["market_state"]),
+            "etf_state": _reference(payload["etf_state"]),
+            "theme_state": _reference(payload["theme_state"]),
+            "capital_state": _reference(payload["capital_state"]),
             "dynamic_pool": _optional_reference(payload.get("dynamic_pool")),
             "candidate_set": _optional_reference(payload.get("candidate_set")),
             "signal": _optional_reference(payload.get("signal")),
@@ -396,6 +431,10 @@ def _decision_payload(**values: Any) -> dict[str, Any]:
         "feature_bundle": values["feature_bundle"].to_canonical_dict(),
         "state_system_receipt": values["state_system_receipt"].to_canonical_dict(),
         "controlled_operation": values["controlled_operation"].to_canonical_dict(),
+        "market_state": values["market_state"].to_canonical_dict(),
+        "etf_state": values["etf_state"].to_canonical_dict(),
+        "theme_state": values["theme_state"].to_canonical_dict(),
+        "capital_state": values["capital_state"].to_canonical_dict(),
         "dynamic_pool": _optional_reference_dict(values["dynamic_pool"]),
         "candidate_set": _optional_reference_dict(values["candidate_set"]),
         "signal": _optional_reference_dict(values["signal"]),

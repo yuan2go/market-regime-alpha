@@ -93,6 +93,13 @@ from market_regime_alpha.application.runtime_operations.query import (
     CanonicalDagNodeType,
     PostgresCanonicalRuntimeQuery,
 )
+from market_regime_alpha.application.research_evaluation import (
+    EvaluationSampleDisposition,
+    FrozenResearchEvaluationDataset,
+    PostgresResearchEvaluationDatasetRepository,
+    build_evaluation_decision_slice,
+    publish_research_evaluation_dataset,
+)
 from market_regime_alpha.application.shadow_research import (
     PostgresShadowResearchRepository,
     ShadowResearchConflict,
@@ -642,6 +649,54 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             settlement_dataset=settlement_dataset,
             factual_evidence=factual_outcome,
         ) == outcome
+        evaluation_slice = build_evaluation_decision_slice(
+            decision=frozen,
+            outcome=outcome,
+            candidate_set=execution.decision.candidate_set,
+        )
+        evaluation_dataset = FrozenResearchEvaluationDataset.create(
+            protocol_id="exploratory-shadow-evaluation-v1",
+            protocol_hash=canonical_hash(
+                {
+                    "inclusion": "SELECTED_CANDIDATE_WITH_SETTLED_OUTCOME",
+                    "version": 1,
+                }
+            ),
+            slices=(evaluation_slice,),
+            created_at=source_archive.created_at,
+        )
+        evaluation_path = publish_research_evaluation_dataset(
+            root=tmp_path / "evaluation-datasets",
+            dataset=evaluation_dataset,
+        )
+        evaluation_repository = PostgresResearchEvaluationDatasetRepository(
+            postgres_factory,
+            clock=lambda: source_archive.created_at,
+        )
+        assert evaluation_repository.register(
+            evaluation_dataset,
+            artifact_path=evaluation_path,
+        ) == evaluation_dataset
+        assert evaluation_repository.replay(
+            evaluation_dataset.dataset_id
+        ) == evaluation_dataset
+        assert evaluation_dataset.included_count == len(selected_symbols)
+        assert all(
+            item.disposition is EvaluationSampleDisposition.INCLUDED
+            for item in evaluation_slice.samples
+        )
+        with postgres_factory.connection() as connection, pytest.raises(
+            psycopg.errors.RaiseException,
+            match="research_evaluation_dataset is append-only",
+        ):
+            connection.execute(
+                "UPDATE research_evaluation_dataset "
+                "SET dataset_hash = %s WHERE dataset_id = %s",
+                (
+                    canonical_hash({"forged": "evaluation"}),
+                    str(evaluation_dataset.dataset_id),
+                ),
+            )
         with postgres_factory.connection() as connection, pytest.raises(
             psycopg.errors.RaiseException,
             match="prospective_outcome_settlement is append-only",
