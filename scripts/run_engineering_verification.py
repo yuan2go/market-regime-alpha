@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 from time import monotonic
 from typing import Sequence
@@ -62,6 +63,11 @@ def main() -> int:
     if repo_root in (output_root, *output_root.parents):
         parser.error("output-root must remain outside the repository")
     output_root.mkdir(parents=True, exist_ok=True)
+    build_output = repo_root / "dist"
+    if build_output.exists():
+        parser.error(
+            "repository dist/ must be absent so this run cannot overwrite user artifacts"
+        )
     commit_sha = _capture(("git", "rev-parse", "HEAD"), cwd=repo_root).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
         raise RuntimeError("Git did not return one full commit SHA")
@@ -69,6 +75,8 @@ def main() -> int:
         _run_gate(name, command, repo_root=repo_root, output_root=output_root)
         for name, command in GATES
     )
+    if build_output.exists():
+        shutil.move(str(build_output), output_root / "build-dist")
     dirty = bool(_capture(("git", "status", "--porcelain"), cwd=repo_root).strip())
     readiness = (
         EngineeringReadiness.ENGINEERING_READY

@@ -88,7 +88,7 @@ def _gates() -> tuple[VerificationGateResult, ...]:
             command=("verify", gate.lower()),
             status=VerificationStatus.PASS,
             exit_code=0,
-            duration_seconds=1.0,
+            duration_seconds=1.123456,
             output_sha256="b" * 64,
             summary="passed",
         )

@@ -70,6 +70,11 @@ class VerificationGateResult:
             raise ValueError("Verification command must be non-empty")
         if self.duration_seconds < 0:
             raise ValueError("Verification duration cannot be negative")
+        object.__setattr__(
+            self,
+            "duration_seconds",
+            round(self.duration_seconds, 3),
+        )
         if self.status in {VerificationStatus.PASS, VerificationStatus.FAIL}:
             if self.exit_code is None or self.output_sha256 is None:
                 raise ValueError("executed Verification gate requires result evidence")
