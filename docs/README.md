@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Canonical documentation entry point and authority policy  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-08
+> **Last Updated:** 2026-08-09
 > **Supersedes:** None  
 > **Superseded By:** None  
 > **Related Documents:** constitution/**, architecture/**, research/**, specs/**, status/**, roadmap/**, audit/**, archive/**  
@@ -141,6 +141,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-GOV-01 Model Governance and Runtime Selector Implementation Plan](superpowers/plans/2026-08-08-wp-gov-01-model-governance-runtime-selector.md)
 - [WP-PIT-01 Formal Point-in-Time Authority Design](superpowers/specs/2026-08-08-wp-pit-01-formal-point-in-time-authority-design.md)
 - [WP-PIT-01 Formal Point-in-Time Authority Implementation Plan](superpowers/plans/2026-08-08-wp-pit-01-formal-point-in-time-authority.md)
+- [Free-Data Research and Shadow Runtime Convergence Design](superpowers/specs/2026-08-09-free-data-research-shadow-runtime-convergence-design.md)
+- [Free-Data Research and Shadow Runtime Convergence Implementation Plan](superpowers/plans/2026-08-09-free-data-research-shadow-runtime-convergence.md)
 - [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
 - [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
 - [WP-PGSQL-01 PostgreSQL Authority Only](roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md)

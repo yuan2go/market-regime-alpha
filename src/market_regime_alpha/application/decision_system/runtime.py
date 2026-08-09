@@ -59,8 +59,8 @@ from market_regime_alpha.platform.postgres_runtime_governance import (
 from market_regime_alpha.platform.runtime_governance import (
     ArtifactLineageReference,
     ModelSelectionRequest,
+    RuntimeAuthorityMode,
     RuntimeModelLineage,
-    RuntimePurpose,
     SelectionStatus,
 )
 
@@ -301,6 +301,10 @@ class DecisionSystemRuntimeService:
         request: ChildExecutionRequest,
         inputs: DecisionRuntimeInputs,
     ) -> DecisionRuntimeReceipt:
+        if request.authority_mode is not RuntimeAuthorityMode.PRODUCTION:
+            raise ValueError(
+                "Research/Shadow must use the account-neutral Summary Runtime"
+            )
         claim = _claim(request)
         state_reference = _state_reference(request)
         if (
@@ -728,12 +732,13 @@ class DecisionSystemRuntimeService:
                 ModelSelectionRequest.create(
                     runtime_scope="DECISION_SYSTEM",
                     model_slot=slot,
-                    purpose=RuntimePurpose.PRODUCTION_DECISION,
+                    purpose=request.authority_mode.runtime_purpose,
                     runtime_lineage=runtime_lineage,
                     selected_at=request.as_of_time,
                     idempotency_key=(
                         f"{request.run_id}:{request.tick_id}:"
-                        f"model-selection:{slot}:{model_id}"
+                        f"model-selection:{request.authority_mode.value}:"
+                        f"{slot}:{model_id}"
                     ),
                     preselection_rejection_codes=authority_rejections,
                 )
@@ -752,9 +757,11 @@ class DecisionSystemRuntimeService:
                 }
             )
         )
-        if rejection_reasons or any(
-            not receipt.production_authorized for receipt in receipts
-        ):
+        production_authorization_missing = (
+            request.authority_mode.requires_production_authorization
+            and any(not receipt.production_authorized for receipt in receipts)
+        )
+        if rejection_reasons or production_authorization_missing:
             return None, _model_governance_stage(
                 receipts,
                 status="BLOCKED",
@@ -776,7 +783,11 @@ class DecisionSystemRuntimeService:
         return authorized, _model_governance_stage(
             receipts,
             status="COMPLETED",
-            reason_codes=("PRODUCTION_MODELS_AUTHORIZED",),
+            reason_codes=(
+                "PRODUCTION_MODELS_AUTHORIZED"
+                if request.authority_mode is RuntimeAuthorityMode.PRODUCTION
+                else f"{request.authority_mode.value}_MODELS_SELECTED",
+            ),
         )
 
 

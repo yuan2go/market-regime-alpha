@@ -70,6 +70,13 @@ class ContinuousTickExecutionResult:
         return False
 
 
+class _ChildExecutionFailed(RuntimeError):
+    def __init__(self, tick: ContinuousTickSnapshot, reason_code: str) -> None:
+        self.tick = tick
+        self.reason_code = reason_code
+        super().__init__(reason_code)
+
+
 class ContinuousResearchTickRunner:
     """The unique all-day owner; computation remains behind existing child ports."""
 
@@ -245,12 +252,22 @@ class ContinuousResearchTickRunner:
             )
             decision = recorded.decision
             active_claim = recorded.claim
-        child_references, active_claim = self._resolve_children(
-            run_command=run_command,
-            claim=active_claim,
-            evidence=evidence,
-            decision=decision,
-        )
+        try:
+            child_references, active_claim = self._resolve_children(
+                run_command=run_command,
+                claim=active_claim,
+                evidence=evidence,
+                decision=decision,
+            )
+        except _ChildExecutionFailed as exc:
+            return ContinuousTickExecutionResult(
+                tick=exc.tick,
+                run_state=self._journal.get_run(run_command.run_id).status,
+                evidence=evidence,
+                decision=decision,
+                child_references=(),
+                reason_codes=("ENTRY_BLOCKED", exc.reason_code),
+            )
         receipt = RuntimeTickReceipt.create(
             claim=active_claim,
             input_references=_tick_input_references(evidence, decision),
@@ -404,13 +421,23 @@ class ContinuousResearchTickRunner:
                 evidence=evidence,
                 decision=decision,
             )
-            results = self._children.lookup_children(request)
-            disposition = ChildReferenceDisposition.REUSED
-            if results is None:
-                # Existing services execute outside the CRR Journal transaction and
-                # remain responsible for their own idempotent receipts.
-                results = self._children.execute_children(request)
-                disposition = ChildReferenceDisposition.CREATED
+            try:
+                results = self._children.lookup_children(request)
+                disposition = ChildReferenceDisposition.REUSED
+                if results is None:
+                    # Existing services execute outside the CRR Journal transaction and
+                    # remain responsible for their own idempotent receipts.
+                    results = self._children.execute_children(request)
+                    disposition = ChildReferenceDisposition.CREATED
+            except Exception as exc:
+                reason = _child_failure_reason(exc)
+                tick = self._journal.fail_tick(
+                    claim=claim,
+                    error=reason,
+                    retryable=False,
+                    retry_at=None,
+                )
+                raise _ChildExecutionFailed(tick, reason) from exc
             claim = self._journal.heartbeat(claim)
             _require_complete_child_set(results)
             references = tuple(
@@ -528,6 +555,7 @@ def _child_request(
                 key=_reference_key,
             )
         ),
+        authority_mode=run_command.authority_mode,
     )
 
 
@@ -664,6 +692,12 @@ def _validate_evidence_time(
         and "COMPLETE_DAILY_BAR" in evidence.limitations
     ):
         raise ValueError("Decision Window cannot consume a complete daily bar")
+
+
+def _child_failure_reason(exc: Exception) -> str:
+    if str(exc) == "FREE_DATA_PRODUCTION_AUTHORITY_DENIED":
+        return "FREE_DATA_PRODUCTION_AUTHORITY_DENIED"
+    return f"CHILD_EXECUTION_{type(exc).__name__.upper()}"
 
 
 __all__ = ["ContinuousResearchTickRunner", "ContinuousTickExecutionResult"]

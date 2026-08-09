@@ -29,6 +29,7 @@ from market_regime_alpha.platform.runtime_governance import (
     QualificationEvidenceOutcome,
     QualificationStatus,
     RuntimeModelLineage,
+    RuntimeAuthorityMode,
     RuntimePurpose,
     SelectionStatus,
     evaluate_qualification,
@@ -40,6 +41,21 @@ NOW = datetime(2026, 8, 8, 6, 0, tzinfo=UTC)
 HASH_A = "sha256:" + "a" * 64
 HASH_B = "sha256:" + "b" * 64
 HASH_C = "sha256:" + "c" * 64
+
+
+def test_runtime_authority_mode_maps_to_exact_registry_purpose() -> None:
+    assert RuntimeAuthorityMode.RESEARCH.runtime_purpose is RuntimePurpose.RESEARCH
+    assert RuntimeAuthorityMode.SHADOW.runtime_purpose is RuntimePurpose.SHADOW
+    assert (
+        RuntimeAuthorityMode.PRODUCTION.runtime_purpose
+        is RuntimePurpose.PRODUCTION_DECISION
+    )
+
+
+def test_only_production_mode_requires_production_authorization() -> None:
+    assert RuntimeAuthorityMode.RESEARCH.requires_production_authorization is False
+    assert RuntimeAuthorityMode.SHADOW.requires_production_authorization is False
+    assert RuntimeAuthorityMode.PRODUCTION.requires_production_authorization is True
 
 
 def _lineage(definition=None) -> ModelVersionLineage:

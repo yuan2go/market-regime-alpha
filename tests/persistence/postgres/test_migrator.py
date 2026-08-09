@@ -53,8 +53,8 @@ from tests.persistence.postgres.test_continuous_research_journal import (
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 29))
-    assert len({item.name for item in migrations}) == 28
+    assert tuple(item.version for item in migrations) == tuple(range(1, 30))
+    assert len({item.name for item in migrations}) == 29
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -76,11 +76,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 29))
+    assert tuple(item.version for item in first) == tuple(range(1, 30))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 28
+    assert len(rows) == 29
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -146,6 +146,7 @@ def test_migration_021_upgrades_an_existing_020_authority(
         (26, "decision_authority_hardening"),
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
+        (29, "research_runtime_summary"),
     )
 
 
@@ -165,6 +166,7 @@ def test_migration_022_upgrades_an_existing_021_authority(
         (26, "decision_authority_hardening"),
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
+        (29, "research_runtime_summary"),
     )
 
 
@@ -183,6 +185,7 @@ def test_migration_023_upgrades_an_existing_022_authority(
         (26, "decision_authority_hardening"),
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
+        (29, "research_runtime_summary"),
     )
 
 
@@ -200,11 +203,12 @@ def test_migrations_024_through_028_upgrade_existing_023_authority(
         (26, "decision_authority_hardening"),
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
+        (29, "research_runtime_summary"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         latest = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
         decision_table = connection.execute("SELECT to_regclass('daily_decision_summary')").fetchone()
-    assert latest == (28, "formal_pit_authority")
+    assert latest == (29, "research_runtime_summary")
     assert decision_table == ("daily_decision_summary",)
 
 
@@ -262,8 +266,9 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (26, "decision_authority_hardening"),
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
+        (29, "research_runtime_summary"),
     )
-    assert applied == (28,)
+    assert applied == (29,)
     assert restored == account
 
 
@@ -345,6 +350,7 @@ def test_migration_027_backfills_existing_registry_history_and_guards_it(
     assert tuple((item.version, item.name) for item in upgraded) == (
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
+        (29, "research_runtime_summary"),
     )
     assert actions == [
         ("MODEL_REGISTER", str(definition.model_id)),
@@ -473,6 +479,7 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (28, "formal_pit_authority"),
+        (29, "research_runtime_summary"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         tables = {
@@ -506,4 +513,41 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
     assert guards == {
         "pit_source_qualification_no_update",
         "pit_source_qualification_no_delete",
+    }
+
+
+def test_migration_029_adds_append_only_research_summary_authority(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:28]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (29, "research_runtime_summary"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = tuple(
+            str(value)
+            for value in connection.execute(
+                "SELECT to_regclass('research_daily_summary'), "
+                "to_regclass('research_summary_stage')"
+            ).fetchone()
+        )
+        guards = {
+            row[0]
+            for row in connection.execute(
+                "SELECT trigger_name FROM information_schema.triggers "
+                "WHERE trigger_schema = current_schema() "
+                "AND event_object_table IN "
+                "('research_daily_summary', 'research_summary_stage')"
+            ).fetchall()
+        }
+    assert tables == ("research_daily_summary", "research_summary_stage")
+    assert guards == {
+        "research_daily_summary_no_delete",
+        "research_daily_summary_no_update",
+        "research_summary_stage_no_delete",
+        "research_summary_stage_no_update",
     }

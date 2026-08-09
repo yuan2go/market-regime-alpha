@@ -29,6 +29,9 @@ from market_regime_alpha.application.decision_system.authority import (
     PostgresFillDerivedAccountAuthorityReader,
     PositionSettlementEvidence,
 )
+from market_regime_alpha.application.decision_system.research_summary import (
+    ResearchDailySummary,
+)
 from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,
     state_research_pipeline_identity,
@@ -44,6 +47,7 @@ from market_regime_alpha.persistence.postgres.native_repository import (
     acquire_scope_lock,
     aware_datetime,
 )
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 
 if TYPE_CHECKING:
     from market_regime_alpha.application.decision_system.runtime import (
@@ -1157,6 +1161,195 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
         with self._connect() as connection:
             return self._load_summary(connection, summary_id)
 
+    def save_research_summary(
+        self,
+        summary: ResearchDailySummary,
+        *,
+        claim: ClaimedRuntimeTick,
+    ) -> ResearchDailySummary:
+        """Append one fenced Research/Shadow Summary revision."""
+
+        payload = summary.to_canonical_dict()
+
+        def operation(connection: PostgresConnection) -> ResearchDailySummary:
+            self._assert_claim(connection, claim)
+            if summary.run_id != claim.run_id or summary.tick_id != claim.tick_id:
+                raise DecisionSystemConflict(
+                    "Research Summary Continuous Tick lineage mismatch"
+                )
+            acquire_scope_lock(
+                connection,
+                namespace="research-daily-summary",
+                identity=(
+                    f"{summary.run_id}:{summary.tick_id}:"
+                    f"{summary.runtime_mode.value}"
+                ),
+            )
+            replay = connection.execute(
+                """
+                SELECT summary_id, content_hash
+                FROM research_daily_summary
+                WHERE idempotency_key = %s
+                FOR UPDATE
+                """,
+                (summary.idempotency_key,),
+            ).fetchone()
+            if replay is not None:
+                if str(replay["content_hash"]) != summary.content_hash:
+                    raise DecisionSystemConflict(
+                        "Research Summary idempotency key conflict"
+                    )
+                return self._load_research_summary(
+                    connection,
+                    ArtifactId(str(replay["summary_id"])),
+                )
+            previous = connection.execute(
+                """
+                SELECT summary_id, revision, correction_of_summary_id
+                FROM research_daily_summary
+                WHERE run_id = %s AND tick_id = %s AND runtime_mode = %s
+                ORDER BY revision DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (
+                    str(summary.run_id),
+                    str(summary.tick_id),
+                    summary.runtime_mode.value,
+                ),
+            ).fetchone()
+            expected_previous = (
+                None
+                if previous is None
+                else ArtifactId(str(previous["summary_id"]))
+            )
+            expected_revision = 1 if previous is None else int(previous["revision"]) + 1
+            if (
+                summary.previous_summary_id != expected_previous
+                or summary.revision != expected_revision
+            ):
+                raise DecisionSystemConflict(
+                    "Research Summary revision CAS rejected"
+                )
+            if previous is not None:
+                original = previous["correction_of_summary_id"] or previous["summary_id"]
+                if summary.correction_of_summary_id != ArtifactId(str(original)):
+                    raise DecisionSystemConflict(
+                        "Research Summary correction lineage mismatch"
+                    )
+            connection.execute(
+                """
+                INSERT INTO research_daily_summary(
+                    summary_id, content_hash, runtime_mode, run_id, tick_id,
+                    trading_date, decision_time, provider_profile_id,
+                    source_manifest_id, source_manifest_hash, dataset_id,
+                    dataset_hash, feature_bundle_id, feature_bundle_hash,
+                    data_eligibility, evidence_ceiling, outcome, revision,
+                    previous_summary_id, correction_of_summary_id,
+                    idempotency_key, run_claim_id, fencing_token, tick_version,
+                    payload_json, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    str(summary.summary_id),
+                    summary.content_hash,
+                    summary.runtime_mode.value,
+                    str(summary.run_id),
+                    str(summary.tick_id),
+                    summary.trading_date,
+                    summary.decision_time,
+                    summary.provider_profile_id,
+                    str(summary.source_manifest.artifact_id),
+                    summary.source_manifest.content_hash,
+                    str(summary.dataset.artifact_id),
+                    summary.dataset.content_hash,
+                    str(summary.feature_bundle.artifact_id),
+                    summary.feature_bundle.content_hash,
+                    summary.data_eligibility.value,
+                    summary.evidence_ceiling.value,
+                    summary.outcome.value,
+                    summary.revision,
+                    _id_text(summary.previous_summary_id),
+                    _id_text(summary.correction_of_summary_id),
+                    summary.idempotency_key,
+                    claim.claim_id,
+                    claim.fencing_token,
+                    claim.tick_version,
+                    Jsonb(payload),
+                    summary.created_at,
+                ),
+            )
+            for index, stage in enumerate(summary.stages, start=1):
+                output = stage.output_reference
+                selection = stage.selection_receipt
+                connection.execute(
+                    """
+                    INSERT INTO research_summary_stage(
+                        summary_id, stage, stage_index, evidence_id,
+                        evidence_hash, status, output_artifact_id,
+                        output_artifact_hash, selection_receipt_id,
+                        selection_receipt_hash, available_at,
+                        data_eligibility, evidence_ceiling, payload_json
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s
+                    )
+                    """,
+                    (
+                        str(summary.summary_id),
+                        stage.stage.value,
+                        index,
+                        str(stage.evidence_id),
+                        stage.evidence_hash,
+                        stage.status.value,
+                        None if output is None else str(output.artifact_id),
+                        None if output is None else output.content_hash,
+                        None if selection is None else str(selection.artifact_id),
+                        None if selection is None else selection.content_hash,
+                        stage.available_at,
+                        stage.data_eligibility.value,
+                        stage.evidence_ceiling.value,
+                        Jsonb(stage.to_canonical_dict()),
+                    ),
+                )
+            return self._load_research_summary(connection, summary.summary_id)
+
+        return cast(ResearchDailySummary, self._run(operation))
+
+    def get_research_summary(
+        self, summary_id: ArtifactId
+    ) -> ResearchDailySummary:
+        with self._connect() as connection:
+            return self._load_research_summary(connection, summary_id)
+
+    def get_research_summary_for_tick(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+        runtime_mode: RuntimeAuthorityMode,
+    ) -> ResearchDailySummary:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT summary_id
+                FROM research_daily_summary
+                WHERE run_id = %s AND tick_id = %s AND runtime_mode = %s
+                ORDER BY revision DESC
+                LIMIT 1
+                """,
+                (str(run_id), str(tick_id), runtime_mode.value),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"{run_id}:{tick_id}:{runtime_mode.value}")
+            return self._load_research_summary(
+                connection,
+                ArtifactId(str(row["summary_id"])),
+            )
+
     def save_proposal(
         self,
         proposal: ResearchPortfolioProposal,
@@ -1432,6 +1625,8 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             "research_portfolio_line",
             "independent_risk_decision",
             "decision_runtime_receipt",
+            "research_daily_summary",
+            "research_summary_stage",
             "reconciliation_tolerance_configuration",
             "decision_risk_configuration",
             "decision_position_settlement_evidence",
@@ -1643,6 +1838,33 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             summary_id,
             DailyDecisionWindowSummary.from_canonical_dict,
         )
+
+    def _load_research_summary(
+        self,
+        connection: PostgresConnection,
+        summary_id: ArtifactId,
+    ) -> ResearchDailySummary:
+        row = connection.execute(
+            """
+            SELECT payload_json
+            FROM research_daily_summary
+            WHERE summary_id = %s
+            """,
+            (str(summary_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(str(summary_id))
+        payload = row["payload_json"]
+        if not isinstance(payload, dict):
+            raise DecisionSystemIntegrityError(
+                "stored Research Summary is not an object"
+            )
+        try:
+            return ResearchDailySummary.from_canonical_dict(payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DecisionSystemIntegrityError(
+                "stored Research Summary failed canonical verification"
+            ) from exc
 
     def _load_proposal(self, connection: PostgresConnection, proposal_id: ArtifactId) -> ResearchPortfolioProposal:
         return _load_payload(

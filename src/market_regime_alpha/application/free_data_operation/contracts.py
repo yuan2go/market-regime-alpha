@@ -13,6 +13,7 @@ from pathlib import Path
 import shutil
 import tempfile
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
@@ -30,6 +31,7 @@ from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 
 
 FREE_DATA_PREPARED_MANIFEST_SCHEMA = "free-data-prepared-input-manifest-v1"
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class FreeDataOperationScale(Enum):
@@ -86,8 +88,11 @@ class FreeDataPreparationRequest:
             raise TypeError("decision_time must be a DecisionTime")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("created_at must be timezone-aware")
-        if self.created_at < self.decision_time.value:
-            raise ValueError("created_at cannot precede Decision Time")
+        if (
+            self.created_at.astimezone(_SHANGHAI).date()
+            != self.decision_time.value.astimezone(_SHANGHAI).date()
+        ):
+            raise ValueError("created_at must share the Decision Time trading date")
         require_text("code_revision", self.code_revision)
         symbols = tuple(item.symbol for item in self.instruments)
         if len(symbols) != self.scale.value or symbols != tuple(sorted(set(symbols))):

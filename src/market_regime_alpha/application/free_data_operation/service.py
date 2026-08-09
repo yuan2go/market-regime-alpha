@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -20,7 +20,10 @@ from market_regime_alpha.application.controlled_operation.journal import (
     DecisionTimeOperationRunSnapshot,
 )
 from market_regime_alpha.application.controlled_operation.policy import (
-    default_decision_time_operation_policy,
+    DecisionTimeOperationPolicy,
+)
+from market_regime_alpha.application.controlled_operation.runtime_configuration import (
+    ControlledOperationRuntimeConfiguration,
 )
 from market_regime_alpha.application.controlled_operation.runner import (
     ControlledDecisionTimeOperationRunner,
@@ -34,6 +37,9 @@ from market_regime_alpha.application.daily_loop import (
     DailyLoopSourceFreezeResult,
     DailyRunCommand,
     RunMode,
+)
+from market_regime_alpha.application.daily_loop.repositories import (
+    AcquisitionStageReceipt,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.application.free_data_operation.builders import (
@@ -60,6 +66,25 @@ from market_regime_alpha.universe.daily_exploratory import DailyUniversePolicy
 
 Clock = Callable[[], datetime]
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def free_data_decision_time_operation_policy() -> DecisionTimeOperationPolicy:
+    """Controlled policy for a 14:54 prepared, 14:55 FreeData decision."""
+
+    return DecisionTimeOperationPolicy.create(
+        policy_version="free-data-research-1455-v1",
+        timezone_name="Asia/Shanghai",
+        decision_time=time(14, 55),
+        static_ready_deadline=time(14, 54, 59),
+        minute_fetch_start=time(14, 54, 59),
+        hard_cutoff=time(14, 56),
+        limitations=(
+            "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+            "FORMAL_PIT_NOT_ESTABLISHED",
+            "NO_EARLY_CLOSE_INFERENCE",
+            "TRADING_AUTHORITY_NOT_GRANTED",
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +141,27 @@ class FreeDataOperationService:
         self._clock = clock
         self._live_profile = live_profile
 
+    def prepare_static_sources(
+        self,
+        *,
+        request: FreeDataPreparationRequest,
+        runtime_configuration_path: Path,
+    ) -> tuple[AcquisitionStageReceipt, AcquisitionStageReceipt]:
+        """Freeze BaoStock history/status before the Tencent quote window."""
+
+        configuration = self._validate_request(
+            request=request,
+            runtime_configuration_path=runtime_configuration_path,
+        )
+        daily_command, runner = self._daily_source_runtime(
+            request=request,
+            configuration=configuration,
+        )
+        return (
+            runner.prepare_history(daily_command),
+            runner.freeze_security_status(daily_command),
+        )
+
     def prepare(
         self,
         *,
@@ -124,47 +170,19 @@ class FreeDataOperationService:
         idempotency_key: str,
     ) -> FreeDataOperationPreparation:
         configuration_path = runtime_configuration_path.resolve()
-        configuration = load_controlled_runtime_configuration(configuration_path)
-        if configuration.configuration_hash != request.configuration_hash:
-            raise ValueError("free-data request does not bind Runtime configuration")
-        if request.provider_profile_id != TENCENT_FREE_OPERATIONAL_PROFILE_ID:
-            raise ValueError("free-data service requires the Tencent operational profile")
-        if request.code_revision != self._code_revision:
-            raise ValueError("free-data request does not bind service code revision")
-        if any(item.asset_type.value != "A_SHARE" for item in request.instruments):
-            raise ValueError("free-data V1 acquisition currently supports A-share stocks")
-        if request.minimum_median_daily_amount <= 0:
-            raise ValueError("Daily acquisition liquidity minimum must be positive")
+        configuration = self._validate_request(
+            request=request,
+            runtime_configuration_path=configuration_path,
+        )
         operation_root = self._operation_root(request)
         operation_root.mkdir(parents=True, exist_ok=True)
-        policy = DailyUniversePolicy(
-            name=f"free-data-{request.scale.name.lower()}",
-            version="v1",
-            symbols=request.symbols,
-            minimum_history_sessions=request.minimum_history_sessions,
-            minimum_median_daily_amount=float(request.minimum_median_daily_amount),
+        daily_command, daily_runner = self._daily_source_runtime(
+            request=request,
+            configuration=configuration,
         )
-        decision_date = request.decision_time.value.astimezone(_SHANGHAI).date()
-        daily_command = DailyRunCommand(
-            decision_date=decision_date,
-            decision_time=request.decision_time,
-            run_mode=RunMode.LIVE,
-            provider_profile_id=request.provider_profile_id,
-            universe_policy_id=str(policy.policy_id),
-            model_set_id="free-data-canonical-inputs-v1",
-            configuration_identity=configuration.configuration_id,
-            output_root=operation_root / "source-runtime",
-        )
-        self._repositories.bind_runtime("FREE_DATA_OPERATION", request.command_hash)
-        self._repositories.bind_runtime("DAILY_LOOP", str(daily_command.run_request_id))
+        decision_date = daily_command.decision_date
         daily_repository = self._repositories.daily()
-        source = DailyLoopRunner(
-            repository=daily_repository,
-            code_revision=self._code_revision,
-            live_profile=self._live_profile,
-            policy=policy,
-            clock=self._clock,
-        ).freeze_sources(daily_command)
+        source = daily_runner.freeze_sources(daily_command)
         history_receipt = daily_repository.get_acquisition_receipt(
             daily_command.run_request_id,
             PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
@@ -218,7 +236,7 @@ class FreeDataOperationService:
         active_configuration = load_controlled_runtime_configuration(
             active_configuration_path
         )
-        controlled_policy = default_decision_time_operation_policy()
+        controlled_policy = free_data_decision_time_operation_policy()
         controlled_command = ControlledOperationCommand.create(
             idempotency_key=idempotency_key,
             decision_date=decision_date,
@@ -274,8 +292,9 @@ class FreeDataOperationService:
         try:
             decision = runner.run_decision_window(
                 command=preparation.controlled_command,
-                policy=default_decision_time_operation_policy(),
+                policy=free_data_decision_time_operation_policy(),
                 inputs=preparation.controlled_preparation.input_paths,
+                _resume_admitted_child=True,
             )
         except ControlledOperationDataBlocked as exc:
             snapshot = self._repositories.controlled_operation(
@@ -301,6 +320,63 @@ class FreeDataOperationService:
 
     def _operation_root(self, request: FreeDataPreparationRequest) -> Path:
         return self._output_root / request.command_hash.split(":", 1)[1][:24]
+
+    def _validate_request(
+        self,
+        *,
+        request: FreeDataPreparationRequest,
+        runtime_configuration_path: Path,
+    ) -> ControlledOperationRuntimeConfiguration:
+        configuration = load_controlled_runtime_configuration(
+            runtime_configuration_path.resolve()
+        )
+        if configuration.configuration_hash != request.configuration_hash:
+            raise ValueError("free-data request does not bind Runtime configuration")
+        if request.provider_profile_id != TENCENT_FREE_OPERATIONAL_PROFILE_ID:
+            raise ValueError("free-data service requires the Tencent operational profile")
+        if request.code_revision != self._code_revision:
+            raise ValueError("free-data request does not bind service code revision")
+        if any(item.asset_type.value != "A_SHARE" for item in request.instruments):
+            raise ValueError("free-data V1 acquisition currently supports A-share stocks")
+        if request.minimum_median_daily_amount <= 0:
+            raise ValueError("Daily acquisition liquidity minimum must be positive")
+        return configuration
+
+    def _daily_source_runtime(
+        self,
+        *,
+        request: FreeDataPreparationRequest,
+        configuration: ControlledOperationRuntimeConfiguration,
+    ) -> tuple[DailyRunCommand, DailyLoopRunner]:
+        operation_root = self._operation_root(request)
+        operation_root.mkdir(parents=True, exist_ok=True)
+        policy = DailyUniversePolicy(
+            name=f"free-data-{request.scale.name.lower()}",
+            version="v1",
+            symbols=request.symbols,
+            minimum_history_sessions=request.minimum_history_sessions,
+            minimum_median_daily_amount=float(request.minimum_median_daily_amount),
+        )
+        decision_date = request.decision_time.value.astimezone(_SHANGHAI).date()
+        command = DailyRunCommand(
+            decision_date=decision_date,
+            decision_time=request.decision_time,
+            run_mode=RunMode.LIVE,
+            provider_profile_id=request.provider_profile_id,
+            universe_policy_id=str(policy.policy_id),
+            model_set_id="free-data-canonical-inputs-v1",
+            configuration_identity=configuration.configuration_id,
+            output_root=operation_root / "source-runtime",
+        )
+        self._repositories.bind_runtime("FREE_DATA_OPERATION", request.command_hash)
+        self._repositories.bind_runtime("DAILY_LOOP", str(command.run_request_id))
+        return command, DailyLoopRunner(
+            repository=self._repositories.daily(),
+            code_revision=self._code_revision,
+            live_profile=self._live_profile,
+            policy=policy,
+            clock=self._clock,
+        )
 
     def _controlled_runner(
         self,
@@ -371,4 +447,5 @@ __all__ = [
     "FreeDataOperationExecution",
     "FreeDataOperationPreparation",
     "FreeDataOperationService",
+    "free_data_decision_time_operation_policy",
 ]
