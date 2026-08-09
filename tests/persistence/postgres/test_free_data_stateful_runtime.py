@@ -64,6 +64,13 @@ from market_regime_alpha.application.operational_research.contracts import (
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
     publish_supplemental_research_evidence,
 )
+from market_regime_alpha.application.runtime_operations.observability import (
+    PostgresRuntimeObservability,
+)
+from market_regime_alpha.application.runtime_operations.query import (
+    CanonicalDagNodeType,
+    PostgresCanonicalRuntimeQuery,
+)
 from market_regime_alpha.application.state_system.runtime import (
     StateResearchStage,
 )
@@ -462,6 +469,26 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert summary.no_position_mutation_from_shadow
     assert summary.evidence_ceiling.value == "FREE_DATA_EXPLORATORY"
     assert replay_continuous_research(journal, command.run_id).integrity_status == "VERIFIED"
+    inspection = PostgresCanonicalRuntimeQuery(
+        postgres_factory, clock=lambda: runtime_now[0]
+    ).inspect_run(command.run_id)
+    projected_types = {item.node_type for item in inspection.nodes}
+    assert {
+        CanonicalDagNodeType.DATASET,
+        CanonicalDagNodeType.FEATURE,
+        CanonicalDagNodeType.STATE,
+        CanonicalDagNodeType.POOL,
+        CanonicalDagNodeType.CANDIDATE,
+        CanonicalDagNodeType.SIGNAL,
+        CanonicalDagNodeType.FORECAST,
+        CanonicalDagNodeType.SUMMARY,
+    } <= projected_types
+    assert (CanonicalDagNodeType.MINUTE in projected_types) is liquidity_eligible
+    trace = PostgresRuntimeObservability(
+        postgres_factory, clock=lambda: runtime_now[0]
+    ).trace_run(command.run_id)
+    assert any(item["stage"] == "SUMMARY" for item in trace["observations"])
+    assert trace["decision_input"] is False
     if operational_producer:
         assert etf_history.calls == 1
         assert any(

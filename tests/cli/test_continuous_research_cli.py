@@ -56,6 +56,45 @@ def test_cli_exposes_one_formal_free_data_execution_entry() -> None:
     assert args.runtime_clock_mode == "LIVE"
 
 
+def test_cli_exposes_read_only_preflight_and_canonical_inspection() -> None:
+    preflight = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "preflight",
+            "--trading-date",
+            "2026-08-10",
+            "--runtime-mode",
+            "SHADOW",
+            "--provider-profile-id",
+            "TENCENT_BAOSTOCK_FREE_OPERATIONAL_V1",
+            "--operational-policy-effective-from",
+            "2026-01-01",
+            "--artifact-root",
+            "artifacts",
+            "--runtime-configuration",
+            "configuration.json",
+            "--trading-calendar",
+            "calendar.json",
+        ]
+    )
+    inspect_tick = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "inspect-tick",
+            "--run-id",
+            "run-1",
+            "--tick-id",
+            "tick-1",
+        ]
+    )
+
+    assert preflight.operation == "preflight"
+    assert preflight.runtime_mode == "SHADOW"
+    assert inspect_tick.operation == "inspect-tick"
+
+
 def test_cli_prepare_admit_report_and_replay_are_structured(
     postgres_factory: PostgresConnectionFactory,
     tmp_path,
