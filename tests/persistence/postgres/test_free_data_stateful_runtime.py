@@ -89,6 +89,9 @@ from market_regime_alpha.application.operational_research.supplemental_artifact 
 from market_regime_alpha.application.runtime_operations.observability import (
     PostgresRuntimeObservability,
 )
+from market_regime_alpha.application.runtime_operations.disaster_recovery import (
+    backup_restore_verify,
+)
 from market_regime_alpha.application.runtime_operations.query import (
     CanonicalDagNodeType,
     PostgresCanonicalRuntimeQuery,
@@ -684,6 +687,39 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert all(
             item.disposition is EvaluationSampleDisposition.INCLUDED
             for item in evaluation_slice.samples
+        )
+        recovery = backup_restore_verify(
+            source_factory=postgres_factory,
+            database_url=os.environ[TEST_DATABASE_URL_ENV],
+            artifact_root=tmp_path / "stateful-runtime",
+            backup_root=tmp_path / "dr-backup",
+            verified_at=source_archive.created_at,
+            table_names=(
+                "capital_state",
+                "continuous_research_run",
+                "continuous_runtime_tick",
+                "dynamic_stock_pool",
+                "dynamic_stock_pool_member",
+                "etf_rotation_state",
+                "formal_pit_validation_evidence",
+                "market_regime_state",
+                "model_runtime_assignment",
+                "prospective_outcome_settlement",
+                "research_daily_summary",
+                "research_evaluation_dataset",
+                "state_runtime_candidate_artifact",
+                "theme_rotation_state",
+            ),
+        )
+        assert recovery.migration_head == 37
+        assert recovery.continuous_replay_hashes == (
+            (
+                str(command.run_id),
+                replay_continuous_research(journal, command.run_id).replay_hash,
+            ),
+        )
+        assert recovery.source_artifacts.content_hash == (
+            recovery.restored_artifacts.content_hash
         )
         with postgres_factory.connection() as connection, pytest.raises(
             psycopg.errors.RaiseException,
