@@ -28,6 +28,7 @@ from market_regime_alpha.data.pit_artifact_authority import (
     PITArtifactAuthorityUnavailableError,
 )
 from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
+from market_regime_alpha.evidence.canonical import canonical_hash
 
 
 UTC = timezone.utc
@@ -54,29 +55,46 @@ class FixturePITArtifactAuthorityResolver:
             )
         bound_references: tuple[PITArtifactReference, ...] = ()
         if reference.reference_kind == PITArtifactKind.MARKET_DATA_DATASET.value:
-            bound_references = (
-                (
-                    ref("SOURCE_MANIFEST", "formal-source-manifest")
-                    if str(reference.artifact_id) == "formal-dataset"
-                    else ref("SOURCE_MANIFEST", "source-manifest-a", HASH_B)
-                ),
-            )
+            artifact_id = str(reference.artifact_id)
+            if artifact_id.startswith("decision-pit-dataset-"):
+                suffix = artifact_id.removeprefix("decision-pit-dataset-")
+                source = ref(
+                    "SOURCE_MANIFEST",
+                    f"decision-source-manifest-{suffix}",
+                    canonical_hash({"source_manifest": suffix}),
+                )
+            elif artifact_id == "formal-dataset":
+                source = ref("SOURCE_MANIFEST", "formal-source-manifest")
+            else:
+                source = ref("SOURCE_MANIFEST", "source-manifest-a", HASH_B)
+            bound_references = (source,)
         elif reference.reference_kind == PITArtifactKind.FEATURE_MATERIALIZATION.value:
-            formal = str(reference.artifact_id) == "formal-feature-run"
+            artifact_id = str(reference.artifact_id)
+            formal = artifact_id == "formal-feature-run"
+            decision_fixture = artifact_id.startswith("decision-pit-feature-")
+            if decision_fixture:
+                suffix = artifact_id.removeprefix("decision-pit-feature-").rsplit(
+                    "-", 1
+                )[0]
+                dataset = ref(
+                    "DATASET",
+                    f"decision-pit-dataset-{suffix}",
+                    canonical_hash({"decision_pit_dataset": suffix}),
+                )
+                source = ref(
+                    "SOURCE_MANIFEST",
+                    f"decision-source-manifest-{suffix}",
+                    canonical_hash({"source_manifest": suffix}),
+                )
+            elif formal:
+                dataset = ref("DATASET", "formal-dataset")
+                source = ref("SOURCE_MANIFEST", "formal-source-manifest")
+            else:
+                dataset = ref("DATASET", "dataset-a")
+                source = ref("SOURCE_MANIFEST", "source-manifest-a", HASH_B)
             bound_references = tuple(
                 sorted(
-                    (
-                        (
-                            ref("DATASET", "formal-dataset")
-                            if formal
-                            else ref("DATASET", "dataset-a")
-                        ),
-                        (
-                            ref("SOURCE_MANIFEST", "formal-source-manifest")
-                            if formal
-                            else ref("SOURCE_MANIFEST", "source-manifest-a", HASH_B)
-                        ),
-                    ),
+                    (dataset, source),
                     key=lambda item: (
                         item.reference_kind,
                         str(item.artifact_id),
@@ -90,7 +108,7 @@ class FixturePITArtifactAuthorityResolver:
             reader_contract="engineering-fixture-authority-resolver-v1",
             physical_checksums_hash=HASH_C,
             data_eligibility=DataEligibility.FORMAL_RESEARCH,
-            available_at=DECISION_TIME - timedelta(minutes=1),
+            available_at=datetime(2020, 1, 1, tzinfo=UTC),
             bound_references=bound_references,
             resolved_at=resolved_at,
         )

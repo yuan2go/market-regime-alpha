@@ -163,22 +163,39 @@ def _record_decision_fixture_formal_pit(
         ArtifactId(f"decision-eligibility-{suffix}"),
         canonical_hash({"eligibility": suffix}),
     )
+    pit_dataset = PITArtifactReference(
+        "DATASET",
+        ArtifactId(f"decision-pit-dataset-{suffix}"),
+        canonical_hash({"decision_pit_dataset": suffix}),
+    )
+    pit_features = tuple(
+        PITArtifactReference(
+            "FEATURE_MATERIALIZATION",
+            ArtifactId(f"decision-pit-feature-{suffix}-{index}"),
+            canonical_hash(
+                {"decision_pit_feature": suffix, "feature_index": index}
+            ),
+        )
+        for index, _ in enumerate(runtime_lineage.feature_materializations)
+    )
     validation_lineage = PITValidationLineage(
         model_id=model_lineage.model_id,
         definition_hash=model_lineage.definition_hash,
         model_lineage_id=model_lineage.lineage_id,
         model_lineage_hash=model_lineage.lineage_hash,
-        dataset=_pit_ref(runtime_lineage.dataset),
+        dataset=pit_dataset,
         source_manifests=(source_manifest,),
         universe=universe,
         eligibility=eligibility,
         feature_definition_ids=tuple(
             str(item) for item in model_lineage.feature_definition_ids
         ),
-        feature_materializations=tuple(
-            _pit_ref(item) for item in runtime_lineage.feature_materializations
+        feature_materializations=pit_features,
+        configuration=PITArtifactReference(
+            "CONFIGURATION",
+            model_lineage.configuration.artifact_id,
+            model_lineage.configuration.content_hash,
         ),
-        configuration=_pit_ref(model_lineage.configuration),
         code_revision=model_lineage.code_revision,
         code_hash=model_lineage.code_hash,
         validation_protocol=_pit_ref(model_lineage.validation_protocol_refs[0]),
