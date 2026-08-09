@@ -41,6 +41,26 @@ class RuntimePurpose(str, Enum):
     PRODUCTION_DECISION = "PRODUCTION_DECISION"
 
 
+class RuntimeAuthorityMode(str, Enum):
+    """Top-level Runtime authority; never inferred from data or model state."""
+
+    RESEARCH = "RESEARCH"
+    SHADOW = "SHADOW"
+    PRODUCTION = "PRODUCTION"
+
+    @property
+    def runtime_purpose(self) -> RuntimePurpose:
+        return {
+            RuntimeAuthorityMode.RESEARCH: RuntimePurpose.RESEARCH,
+            RuntimeAuthorityMode.SHADOW: RuntimePurpose.SHADOW,
+            RuntimeAuthorityMode.PRODUCTION: RuntimePurpose.PRODUCTION_DECISION,
+        }[self]
+
+    @property
+    def requires_production_authorization(self) -> bool:
+        return self is RuntimeAuthorityMode.PRODUCTION
+
+
 class AssignmentLane(str, Enum):
     CHAMPION = "CHAMPION"
     CHALLENGER = "CHALLENGER"
@@ -1714,6 +1734,7 @@ __all__ = [
     "QualificationStatus",
     "RuntimeModelLineage",
     "RuntimePurpose",
+    "RuntimeAuthorityMode",
     "SelectionStatus",
     "evaluate_qualification",
 ]

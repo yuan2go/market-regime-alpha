@@ -25,6 +25,7 @@ from market_regime_alpha.evidence.canonical import (
     require_unique_text,
 )
 from market_regime_alpha.market_data.contracts import require_utc_second
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +244,7 @@ class ChildExecutionRequest:
     decision_hash: str
     input_references: tuple[RuntimeArtifactReference, ...]
     configuration_references: tuple[RuntimeArtifactReference, ...]
+    authority_mode: RuntimeAuthorityMode = RuntimeAuthorityMode.PRODUCTION
 
     def __post_init__(self) -> None:
         for label, value in (
@@ -254,6 +256,8 @@ class ChildExecutionRequest:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{label} must be positive")
         require_text("claim_id", self.claim_id)
+        if not isinstance(self.authority_mode, RuntimeAuthorityMode):
+            raise TypeError("authority_mode must be RuntimeAuthorityMode")
         require_utc_second("as_of_time", self.as_of_time)
         require_utc_second("lease_expires_at", self.lease_expires_at)
         for label, content_hash in (
@@ -289,6 +293,7 @@ class ChildExecutionRequest:
                     item.to_canonical_dict()
                     for item in self.configuration_references
                 ],
+                "authority_mode": self.authority_mode.value,
             }
         )
         return f"continuous-children-{digest.split(':', 1)[1][:32]}"

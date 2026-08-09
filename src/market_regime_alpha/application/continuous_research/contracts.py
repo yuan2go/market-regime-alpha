@@ -15,10 +15,13 @@ from market_regime_alpha.evidence.canonical import (
     require_unique_text,
 )
 from market_regime_alpha.market_data.contracts import parse_utc_second, require_utc_second
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 
 
-CONTINUOUS_RESEARCH_COMMAND_SCHEMA = "continuous-research-command-v1"
-RUNTIME_TICK_COMMAND_SCHEMA = "continuous-runtime-tick-command-v1"
+CONTINUOUS_RESEARCH_COMMAND_SCHEMA = "continuous-research-command-v2"
+LEGACY_CONTINUOUS_RESEARCH_COMMAND_SCHEMA = "continuous-research-command-v1"
+RUNTIME_TICK_COMMAND_SCHEMA = "continuous-runtime-tick-command-v2"
+LEGACY_RUNTIME_TICK_COMMAND_SCHEMA = "continuous-runtime-tick-command-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,11 +41,22 @@ class ContinuousResearchCommand:
     research_configuration_id: ArtifactId
     research_configuration_hash: str
     code_revision: str
+    authority_mode: RuntimeAuthorityMode
     limitations: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.schema_version != CONTINUOUS_RESEARCH_COMMAND_SCHEMA:
+        if self.schema_version not in {
+            CONTINUOUS_RESEARCH_COMMAND_SCHEMA,
+            LEGACY_CONTINUOUS_RESEARCH_COMMAND_SCHEMA,
+        }:
             raise ValueError("unsupported Continuous Research command schema")
+        if not isinstance(self.authority_mode, RuntimeAuthorityMode):
+            raise TypeError("authority_mode must be RuntimeAuthorityMode")
+        if (
+            self.schema_version == LEGACY_CONTINUOUS_RESEARCH_COMMAND_SCHEMA
+            and self.authority_mode is not RuntimeAuthorityMode.RESEARCH
+        ):
+            raise ValueError("legacy Continuous command authority is RESEARCH")
         require_text("idempotency_key", self.idempotency_key)
         require_text("code_revision", self.code_revision)
         require_unique_text("requested_symbols", self.requested_symbols)
@@ -81,6 +95,7 @@ class ContinuousResearchCommand:
         research_configuration_id: ArtifactId,
         research_configuration_hash: str,
         code_revision: str,
+        authority_mode: RuntimeAuthorityMode = RuntimeAuthorityMode.RESEARCH,
         limitations: tuple[str, ...],
     ) -> ContinuousResearchCommand:
         values: dict[str, Any] = {
@@ -96,6 +111,7 @@ class ContinuousResearchCommand:
             "research_configuration_id": research_configuration_id,
             "research_configuration_hash": research_configuration_hash,
             "code_revision": code_revision,
+            "authority_mode": authority_mode,
             "limitations": tuple(sorted(set(limitations))),
         }
         digest = canonical_hash(_run_payload(**values))
@@ -122,7 +138,9 @@ class ContinuousResearchCommand:
             research_configuration_id=self.research_configuration_id,
             research_configuration_hash=self.research_configuration_hash,
             code_revision=self.code_revision,
+            authority_mode=self.authority_mode,
             limitations=self.limitations,
+            schema_version=self.schema_version,
         )
 
     def verify_identity(self) -> None:
@@ -145,6 +163,7 @@ class ContinuousResearchCommand:
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
     ) -> ContinuousResearchCommand:
+        schema = str(payload["schema_version"])
         expected = {
             "schema_version",
             "run_id",
@@ -164,10 +183,13 @@ class ContinuousResearchCommand:
             "code_revision",
             "limitations",
         }
+        if schema == CONTINUOUS_RESEARCH_COMMAND_SCHEMA:
+            expected.add("authority_mode")
+        elif schema != LEGACY_CONTINUOUS_RESEARCH_COMMAND_SCHEMA:
+            raise ValueError("unsupported Continuous Research command schema")
         if set(payload) != expected:
             raise ValueError("Continuous Research command fields mismatch")
         result = cls(
-            schema_version=str(payload["schema_version"]),
             run_id=ArtifactId(str(payload["run_id"])),
             command_hash=str(payload["command_hash"]),
             idempotency_key=str(payload["idempotency_key"]),
@@ -190,7 +212,13 @@ class ContinuousResearchCommand:
                 payload["research_configuration_hash"]
             ),
             code_revision=str(payload["code_revision"]),
+            authority_mode=(
+                RuntimeAuthorityMode(str(payload["authority_mode"]))
+                if schema == CONTINUOUS_RESEARCH_COMMAND_SCHEMA
+                else RuntimeAuthorityMode.RESEARCH
+            ),
             limitations=_strings(payload["limitations"], "limitations"),
+            schema_version=schema,
         )
         if result.request_scope_hash != str(payload["request_scope_hash"]):
             raise ValueError("Continuous Research request scope hash mismatch")
@@ -211,10 +239,21 @@ class RuntimeTickCommand:
     provider_configuration_hash: str
     research_configuration_id: ArtifactId
     research_configuration_hash: str
+    authority_mode: RuntimeAuthorityMode
 
     def __post_init__(self) -> None:
-        if self.schema_version != RUNTIME_TICK_COMMAND_SCHEMA:
+        if self.schema_version not in {
+            RUNTIME_TICK_COMMAND_SCHEMA,
+            LEGACY_RUNTIME_TICK_COMMAND_SCHEMA,
+        }:
             raise ValueError("unsupported Runtime Tick command schema")
+        if not isinstance(self.authority_mode, RuntimeAuthorityMode):
+            raise TypeError("authority_mode must be RuntimeAuthorityMode")
+        if (
+            self.schema_version == LEGACY_RUNTIME_TICK_COMMAND_SCHEMA
+            and self.authority_mode is not RuntimeAuthorityMode.RESEARCH
+        ):
+            raise ValueError("legacy Runtime Tick authority is RESEARCH")
         require_text("idempotency_key", self.idempotency_key)
         require_utc_second("observed_at", self.observed_at)
         for label, value in (
@@ -239,6 +278,7 @@ class RuntimeTickCommand:
         provider_configuration_hash: str,
         research_configuration_id: ArtifactId,
         research_configuration_hash: str,
+        authority_mode: RuntimeAuthorityMode = RuntimeAuthorityMode.RESEARCH,
     ) -> RuntimeTickCommand:
         values: dict[str, Any] = {
             "idempotency_key": idempotency_key,
@@ -250,6 +290,7 @@ class RuntimeTickCommand:
             "provider_configuration_hash": provider_configuration_hash,
             "research_configuration_id": research_configuration_id,
             "research_configuration_hash": research_configuration_hash,
+            "authority_mode": authority_mode,
         }
         digest = canonical_hash(_tick_payload(**values))
         return cls(
@@ -272,6 +313,8 @@ class RuntimeTickCommand:
             provider_configuration_hash=self.provider_configuration_hash,
             research_configuration_id=self.research_configuration_id,
             research_configuration_hash=self.research_configuration_hash,
+            authority_mode=self.authority_mode,
+            schema_version=self.schema_version,
         )
 
     def verify_identity(self) -> None:
@@ -291,11 +334,11 @@ class RuntimeTickCommand:
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> RuntimeTickCommand:
-        expected = {"tick_id", "tick_hash", *_tick_payload_keys()}
+        schema = str(payload["schema_version"])
+        expected = {"tick_id", "tick_hash", *_tick_payload_keys(schema)}
         if set(payload) != expected:
             raise ValueError("Runtime Tick command fields mismatch")
         return cls(
-            schema_version=str(payload["schema_version"]),
             tick_id=ArtifactId(str(payload["tick_id"])),
             tick_hash=str(payload["tick_hash"]),
             idempotency_key=str(payload["idempotency_key"]),
@@ -315,12 +358,19 @@ class RuntimeTickCommand:
             research_configuration_hash=str(
                 payload["research_configuration_hash"]
             ),
+            authority_mode=(
+                RuntimeAuthorityMode(str(payload["authority_mode"]))
+                if schema == RUNTIME_TICK_COMMAND_SCHEMA
+                else RuntimeAuthorityMode.RESEARCH
+            ),
+            schema_version=schema,
         )
 
 
 def _run_payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": CONTINUOUS_RESEARCH_COMMAND_SCHEMA,
+    schema = values.get("schema_version", CONTINUOUS_RESEARCH_COMMAND_SCHEMA)
+    payload = {
+        "schema_version": schema,
         "idempotency_key": values["idempotency_key"],
         "trading_date": values["trading_date"].isoformat(),
         "requested_symbols": list(values["requested_symbols"]),
@@ -335,11 +385,15 @@ def _run_payload(**values: Any) -> dict[str, Any]:
         "code_revision": values["code_revision"],
         "limitations": list(values["limitations"]),
     }
+    if schema == CONTINUOUS_RESEARCH_COMMAND_SCHEMA:
+        payload["authority_mode"] = values["authority_mode"].value
+    return payload
 
 
 def _tick_payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": RUNTIME_TICK_COMMAND_SCHEMA,
+    schema = values.get("schema_version", RUNTIME_TICK_COMMAND_SCHEMA)
+    payload = {
+        "schema_version": schema,
         "idempotency_key": values["idempotency_key"],
         "run_id": str(values["run_id"]),
         "trading_date": values["trading_date"].isoformat(),
@@ -350,10 +404,13 @@ def _tick_payload(**values: Any) -> dict[str, Any]:
         "research_configuration_id": str(values["research_configuration_id"]),
         "research_configuration_hash": values["research_configuration_hash"],
     }
+    if schema == RUNTIME_TICK_COMMAND_SCHEMA:
+        payload["authority_mode"] = values["authority_mode"].value
+    return payload
 
 
-def _tick_payload_keys() -> set[str]:
-    return {
+def _tick_payload_keys(schema: str = RUNTIME_TICK_COMMAND_SCHEMA) -> set[str]:
+    keys = {
         "schema_version",
         "idempotency_key",
         "run_id",
@@ -365,6 +422,11 @@ def _tick_payload_keys() -> set[str]:
         "research_configuration_id",
         "research_configuration_hash",
     }
+    if schema == RUNTIME_TICK_COMMAND_SCHEMA:
+        keys.add("authority_mode")
+    elif schema != LEGACY_RUNTIME_TICK_COMMAND_SCHEMA:
+        raise ValueError("unsupported Runtime Tick command schema")
+    return keys
 
 
 def _require_authority_ceiling(limitations: tuple[str, ...]) -> None:
@@ -389,6 +451,8 @@ def _strings(value: object, label: str) -> tuple[str, ...]:
 
 __all__ = [
     "CONTINUOUS_RESEARCH_COMMAND_SCHEMA",
+    "LEGACY_CONTINUOUS_RESEARCH_COMMAND_SCHEMA",
+    "LEGACY_RUNTIME_TICK_COMMAND_SCHEMA",
     "RUNTIME_TICK_COMMAND_SCHEMA",
     "ContinuousResearchCommand",
     "RuntimeTickCommand",

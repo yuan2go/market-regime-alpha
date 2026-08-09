@@ -363,6 +363,7 @@ class PostgresContinuousResearchJournal:
                 research_configuration_hash=(
                     run_command.research_configuration_hash
                 ),
+                authority_mode=run_command.authority_mode,
             )
             run = connection.execute(
                 """

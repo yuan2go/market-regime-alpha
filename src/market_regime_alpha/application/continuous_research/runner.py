@@ -528,6 +528,7 @@ def _child_request(
                 key=_reference_key,
             )
         ),
+        authority_mode=run_command.authority_mode,
     )
 
 
