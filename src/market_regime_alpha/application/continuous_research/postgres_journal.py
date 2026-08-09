@@ -317,8 +317,8 @@ class PostgresContinuousResearchJournal:
         if not isinstance(policy, ContinuousDecisionWindowPolicy):
             raise TypeError("policy must be ContinuousDecisionWindowPolicy")
         require_utc_second("now", now)
-        if not timedelta(0) <= predecision_lead <= timedelta(seconds=5):
-            raise ValueError("predecision lead must be within five seconds")
+        if not timedelta(0) <= predecision_lead <= timedelta(minutes=5):
+            raise ValueError("predecision lead must be within five minutes")
         reserved_tick_id: ArtifactId | None = None
 
         def operation(connection: psycopg.Connection[Any]) -> None:

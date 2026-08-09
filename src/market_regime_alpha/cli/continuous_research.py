@@ -367,6 +367,7 @@ def _run_due(
     journal = PostgresContinuousResearchJournal(
         factory,
         clock=runtime_clock,
+        lease_duration=timedelta(minutes=5),
         apply_migrations=False,
     )
 
@@ -410,24 +411,6 @@ def _run_due(
                 "WAITING_FOR_TENCENT_DECISION_QUOTE",
             ),
         )
-    if local_now.timetz().replace(tzinfo=None) < time(14, 54, 59):
-        service.prepare(
-            request=free_request,
-            runtime_configuration_path=configuration_path,
-            idempotency_key=f"{run_command.run_id}:free-data",
-            supplemental_evidence_path=args.supplemental_evidence,
-        )
-        return _run_due_stage_output(
-            run_command=run_command,
-            status="PREPARED",
-            stage="TENCENT_QUOTE_AND_STATIC_FEATURES_FROZEN",
-            reason_codes=(
-                "ENTRY_BLOCKED",
-                "FREE_DATA_STATIC_INPUTS_READY",
-                "TENCENT_DECISION_QUOTE_FROZEN",
-            ),
-        )
-
     def invocation() -> FreeDataPreparationInvocation:
         return FreeDataPreparationInvocation(
             request=free_request,
@@ -478,7 +461,7 @@ def _run_due(
         run_command=run_command,
         trading_day=trading_day,
         now=now,
-        predecision_lead=timedelta(seconds=1),
+        predecision_lead=timedelta(minutes=1),
     )
     summary_id = None
     summary_outcome = None

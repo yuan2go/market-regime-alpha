@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -20,6 +21,10 @@ from market_regime_alpha.application.continuous_research.ports import (
 from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
+from market_regime_alpha.application.state_system.bundles import (
+    state_research_pipeline_identity,
+)
+from market_regime_alpha.application.state_system.runtime import StateResearchStage
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
@@ -50,11 +55,19 @@ from tests.persistence.postgres.test_continuous_research_journal import (
 )
 
 
+FREE_RUNTIME_MIGRATIONS = (
+    (30, "research_summary_v2"),
+    (31, "state_system_owned_stages"),
+    (32, "research_summary_owner_lineage"),
+    (33, "free_runtime_v2_authority_hardening"),
+)
+
+
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 30))
-    assert len({item.name for item in migrations}) == 29
+    assert tuple(item.version for item in migrations) == tuple(range(1, 34))
+    assert len({item.name for item in migrations}) == 33
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -76,11 +89,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 30))
+    assert tuple(item.version for item in first) == tuple(range(1, 34))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 29
+    assert len(rows) == 33
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -147,7 +160,7 @@ def test_migration_021_upgrades_an_existing_020_authority(
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
-    )
+    ) + FREE_RUNTIME_MIGRATIONS
 
 
 def test_migration_022_upgrades_an_existing_021_authority(
@@ -167,7 +180,7 @@ def test_migration_022_upgrades_an_existing_021_authority(
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
-    )
+    ) + FREE_RUNTIME_MIGRATIONS
 
 
 def test_migration_023_upgrades_an_existing_022_authority(
@@ -186,7 +199,7 @@ def test_migration_023_upgrades_an_existing_022_authority(
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
-    )
+    ) + FREE_RUNTIME_MIGRATIONS
 
 
 def test_migrations_024_through_028_upgrade_existing_023_authority(
@@ -204,11 +217,11 @@ def test_migrations_024_through_028_upgrade_existing_023_authority(
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
-    )
+    ) + FREE_RUNTIME_MIGRATIONS
     with postgres_factory.connection(read_only=True) as connection:
         latest = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
         decision_table = connection.execute("SELECT to_regclass('daily_decision_summary')").fetchone()
-    assert latest == (29, "research_runtime_summary")
+    assert latest == FREE_RUNTIME_MIGRATIONS[-1]
     assert decision_table == ("daily_decision_summary",)
 
 
@@ -267,8 +280,8 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
-    )
-    assert applied == (29,)
+    ) + FREE_RUNTIME_MIGRATIONS
+    assert applied == (33,)
     assert restored == account
 
 
@@ -351,7 +364,7 @@ def test_migration_027_backfills_existing_registry_history_and_guards_it(
         (27, "model_runtime_governance"),
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
-    )
+    ) + FREE_RUNTIME_MIGRATIONS
     assert actions == [
         ("MODEL_REGISTER", str(definition.model_id)),
         ("MODEL_REGISTER", str(definition.model_id)),
@@ -376,14 +389,38 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
     request = _state_request(claim)
     pipeline, _ = _state_pipeline()
     pipeline_result = pipeline.execute(request)
+    legacy_stages = (
+        *pipeline_result.stages,
+        replace(
+            pipeline_result.stages[-1],
+            stage=StateResearchStage.SIGNAL,
+            artifact_id=ArtifactId("legacy-state-signal"),
+            artifact_hash=canonical_hash({"legacy": "signal"}),
+        ),
+        replace(
+            pipeline_result.stages[-1],
+            stage=StateResearchStage.FORECAST,
+            artifact_id=ArtifactId("legacy-state-forecast"),
+            artifact_hash=canonical_hash({"legacy": "forecast"}),
+        ),
+    )
+    pipeline_id, pipeline_hash = state_research_pipeline_identity(
+        run_id=request.run_id,
+        tick_id=request.tick_id,
+        as_of_time=request.as_of_time,
+        stages=tuple(
+            (item.stage.value, item.artifact_id, item.artifact_hash, item.available_at)
+            for item in legacy_stages
+        ),
+    )
     receipt_payload = {
         "schema": "state_system_runtime_receipt/v1",
         "request_idempotency_key": request.idempotency_key,
-        "pipeline_artifact_id": str(pipeline_result.artifact_id),
-        "pipeline_artifact_hash": pipeline_result.artifact_hash,
+        "pipeline_artifact_id": str(pipeline_id),
+        "pipeline_artifact_hash": pipeline_hash,
         "stage_references": [
             item.to_reference().to_canonical_dict()
-            for item in pipeline_result.stages
+            for item in legacy_stages
         ],
         "reason_codes": list(pipeline_result.reason_codes),
     }
@@ -396,8 +433,8 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
         ),
         child_receipt_id=ArtifactId(f"state-system-receipt:{receipt_hash[7:]}"),
         child_receipt_hash=receipt_hash,
-        child_artifact_id=pipeline_result.artifact_id,
-        child_artifact_hash=pipeline_result.artifact_hash,
+        child_artifact_id=pipeline_id,
+        child_artifact_hash=pipeline_hash,
         input_references=request.input_references,
         configuration_references=request.configuration_references,
     )
@@ -435,7 +472,7 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
                 NOW,
             ),
         )
-        for stage in pipeline_result.stages:
+        for stage in legacy_stages:
             connection.execute(
                 """
                 INSERT INTO state_research_stage_authority(
@@ -480,7 +517,7 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
     assert tuple((item.version, item.name) for item in upgraded) == (
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
-    )
+    ) + FREE_RUNTIME_MIGRATIONS
     with postgres_factory.connection(read_only=True) as connection:
         tables = {
             row[0]
@@ -526,7 +563,7 @@ def test_migration_029_adds_append_only_research_summary_authority(
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (29, "research_runtime_summary"),
-    )
+    ) + FREE_RUNTIME_MIGRATIONS
     with postgres_factory.connection(read_only=True) as connection:
         tables = tuple(
             str(value)

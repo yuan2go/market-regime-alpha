@@ -234,7 +234,9 @@ class ChildExecutionRequest:
     claim_id: str
     fencing_token: int
     tick_version: int
+    lease_acquired_at: datetime
     lease_expires_at: datetime
+    heartbeat_at: datetime
     provider_attempt_id: int
     source_manifest_id: ArtifactId
     source_manifest_hash: str
@@ -259,7 +261,16 @@ class ChildExecutionRequest:
         if not isinstance(self.authority_mode, RuntimeAuthorityMode):
             raise TypeError("authority_mode must be RuntimeAuthorityMode")
         require_utc_second("as_of_time", self.as_of_time)
-        require_utc_second("lease_expires_at", self.lease_expires_at)
+        for label, timestamp in (
+            ("lease_acquired_at", self.lease_acquired_at),
+            ("lease_expires_at", self.lease_expires_at),
+            ("heartbeat_at", self.heartbeat_at),
+        ):
+            require_utc_second(label, timestamp)
+        if self.lease_expires_at <= self.lease_acquired_at:
+            raise ValueError("lease must expire after acquisition")
+        if not self.lease_acquired_at <= self.heartbeat_at < self.lease_expires_at:
+            raise ValueError("heartbeat must be within the active lease")
         for label, content_hash in (
             ("source_manifest_hash", self.source_manifest_hash),
             ("evidence_commit_hash", self.evidence_commit_hash),

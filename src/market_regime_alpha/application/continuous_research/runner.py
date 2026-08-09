@@ -513,7 +513,9 @@ def _child_request(
         claim_id=claim.claim_id,
         fencing_token=claim.fencing_token,
         tick_version=claim.tick_version,
+        lease_acquired_at=claim.lease_acquired_at,
         lease_expires_at=claim.lease_expires_at,
+        heartbeat_at=claim.heartbeat_at,
         provider_attempt_id=evidence.attempt_id,
         source_manifest_id=evidence.source_manifest_id,
         source_manifest_hash=evidence.source_manifest_hash,
@@ -707,8 +709,9 @@ def _validate_evidence_time(
 def _child_failure_reason(exc: Exception) -> str:
     if str(exc) == "FREE_DATA_PRODUCTION_AUTHORITY_DENIED":
         return "FREE_DATA_PRODUCTION_AUTHORITY_DENIED"
-    detail = str(exc).strip().replace(" ", "_").upper()
-    return f"CHILD_EXECUTION_{type(exc).__name__.upper()}:{detail}"[:512]
+    # Runtime reason codes are typed control-plane facts.  Arbitrary Provider
+    # or database exception text belongs in logs and must not become lineage.
+    return f"CHILD_EXECUTION_{type(exc).__name__.upper()}"
 
 
 __all__ = ["ContinuousResearchTickRunner", "ContinuousTickExecutionResult"]

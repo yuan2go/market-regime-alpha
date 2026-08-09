@@ -50,6 +50,7 @@ from market_regime_alpha.persistence.postgres.native_repository import (
     aware_datetime,
 )
 from market_regime_alpha.platform.runtime_governance import (
+    ArtifactLineageReference,
     ModelSelectionReceipt,
     ModelSelectionRequest,
     RuntimeAuthorityMode,
@@ -1184,6 +1185,7 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 raise DecisionSystemConflict(
                     "Research Summary Continuous Tick lineage mismatch"
                 )
+            _verify_research_summary_state_authority(connection, summary)
             _verify_research_summary_model_receipts(connection, summary)
             acquire_scope_lock(
                 connection,
@@ -1973,6 +1975,29 @@ def _verify_research_summary_model_receipts(
             else SelectionStatus.SELECTED
         )
         runtime_configuration = request.runtime_lineage.configuration
+        expected_feature_materializations = tuple(
+            ArtifactLineageReference(
+                reference_kind="PREPARED_FEATURE_INPUT_SCOPE",
+                artifact_id=ArtifactId(
+                    "runtime-feature-input:"
+                    + canonical_hash(
+                        {
+                            "static_bundle_id": str(
+                                summary.feature_bundle.artifact_id
+                            ),
+                            "feature_definition_id": str(feature_id),
+                        }
+                    )[7:]
+                ),
+                content_hash=canonical_hash(
+                    {
+                        "static_bundle_hash": summary.feature_bundle.content_hash,
+                        "feature_definition_id": str(feature_id),
+                    }
+                ),
+            )
+            for feature_id in request.runtime_lineage.feature_definition_ids
+        )
         if (
             str(row["receipt_hash"]) != reference.content_hash
             or receipt.receipt_id != reference.artifact_id
@@ -1989,16 +2014,84 @@ def _verify_research_summary_model_receipts(
             != summary.dataset.artifact_id
             or request.runtime_lineage.dataset.content_hash
             != summary.dataset.content_hash
+            or request.runtime_lineage.feature_materializations
+            != expected_feature_materializations
             or (
                 runtime_configuration.artifact_id,
                 runtime_configuration.content_hash,
             )
             not in configurations
             or receipt.selected_at > summary.decision_time
+            or request.selected_at != summary.decision_time
+            or request.runtime_scope != "CONTROLLED_OPERATION"
+            or request.idempotency_key
+            != (
+                f"{summary.run_id}:{summary.tick_id}:"
+                f"{summary.runtime_mode.value}:{expected_slot}"
+            )
         ):
             raise DecisionSystemConflict(
                 "Research Summary Model Selection authority mismatch"
             )
+
+
+def _verify_research_summary_state_authority(
+    connection: PostgresConnection,
+    summary: ResearchDailySummary,
+) -> None:
+    """Reload State owner receipt and its staged final CandidateSet."""
+
+    reference = summary.state_system_receipt
+    if reference is None or reference.reference_kind != "STATE_SYSTEM_RECEIPT":
+        raise DecisionSystemConflict("Research Summary State owner Receipt is missing")
+    state = connection.execute(
+        """
+        SELECT receipt_id, receipt_hash
+        FROM state_runtime_receipt
+        WHERE run_id = %s AND tick_id = %s
+        """,
+        (str(summary.run_id), str(summary.tick_id)),
+    ).fetchone()
+    if state is None or (
+        str(state["receipt_id"]) != str(reference.artifact_id)
+        or str(state["receipt_hash"]) != reference.content_hash
+    ):
+        raise DecisionSystemConflict("Research Summary State owner mismatch")
+
+    candidate_reference = summary.candidate_set
+    candidate = connection.execute(
+        """
+        SELECT candidate_id, candidate_hash, stage_artifact_id,
+               stage_artifact_hash
+        FROM state_runtime_candidate_artifact
+        WHERE run_id = %s AND tick_id = %s
+        """,
+        (str(summary.run_id), str(summary.tick_id)),
+    ).fetchone()
+    stage = connection.execute(
+        """
+        SELECT artifact_id, artifact_hash
+        FROM state_research_stage_authority
+        WHERE run_id = %s AND tick_id = %s AND stage = 'CANDIDATE'
+        """,
+        (str(summary.run_id), str(summary.tick_id)),
+    ).fetchone()
+    if candidate_reference is None:
+        if candidate is not None:
+            raise DecisionSystemConflict(
+                "Research Summary omitted persisted State Candidate authority"
+            )
+        return
+    if (
+        candidate_reference.reference_kind != "STATE_CONSTRAINED_CANDIDATE_SET"
+        or candidate is None
+        or stage is None
+        or str(candidate["candidate_id"]) != str(candidate_reference.artifact_id)
+        or str(candidate["candidate_hash"]) != candidate_reference.content_hash
+        or str(candidate["stage_artifact_id"]) != str(stage["artifact_id"])
+        or str(candidate["stage_artifact_hash"]) != str(stage["artifact_hash"])
+    ):
+        raise DecisionSystemConflict("Research Summary Candidate owner mismatch")
 
 
 def _idempotent(

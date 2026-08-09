@@ -47,7 +47,9 @@ def _request(claim) -> ChildExecutionRequest:
         claim_id=claim.claim_id,
         fencing_token=claim.fencing_token,
         tick_version=claim.tick_version,
+        lease_acquired_at=claim.lease_acquired_at,
         lease_expires_at=claim.lease_expires_at,
+        heartbeat_at=claim.heartbeat_at,
         provider_attempt_id=1,
         source_manifest_id=ArtifactId("manifest-1"),
         source_manifest_hash=HASH,
@@ -218,7 +220,9 @@ def test_state_runtime_rejects_future_stage_artifact() -> None:
             "claim_id": "claim",
             "fencing_token": 1,
             "tick_version": 1,
+            "lease_acquired_at": NOW,
             "lease_expires_at": NOW + timedelta(minutes=1),
+            "heartbeat_at": NOW,
         },
     )()
 

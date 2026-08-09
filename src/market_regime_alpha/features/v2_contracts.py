@@ -129,8 +129,15 @@ class FeatureArtifactV2:
             ("available_at", self.available_at),
         ):
             require_utc_second(label, timestamp)
-        if self.created_at < self.decision_time:
-            raise ValueError("Feature Artifact created_at cannot precede DecisionTime")
+        if self.created_at < self.available_at:
+            raise ValueError("Feature Artifact predates consumed evidence")
+        if (
+            self.created_at < self.decision_time
+            and "PRE_DECISION_MINUTE_EVIDENCE_FROZEN" not in self.limitations
+        ):
+            raise ValueError(
+                "only explicitly frozen minute Features may predate DecisionTime"
+            )
         if self.available_at > self.decision_time:
             raise ValueError("Feature Artifact evidence became available after DecisionTime")
         self.definition.verify_identity()
@@ -632,8 +639,15 @@ class FeatureBundleArtifact:
         self.feature_set.verify_identity()
         require_utc_second("decision_time", self.decision_time)
         require_utc_second("created_at", self.created_at)
-        if self.created_at < self.decision_time:
-            raise ValueError("Feature Bundle created_at cannot precede DecisionTime")
+        if self.created_at < self.available_at:
+            raise ValueError("Feature Bundle predates consumed Features")
+        if (
+            self.created_at < self.decision_time
+            and "PRE_DECISION_MINUTE_EVIDENCE_FROZEN" not in self.limitations
+        ):
+            raise ValueError(
+                "only explicitly frozen minute Feature Bundles may predate DecisionTime"
+            )
         require_text("code_revision", self.code_revision)
         require_unique_text("symbol", self.symbols)
         if not self.symbols or self.symbols != tuple(sorted(self.symbols)):

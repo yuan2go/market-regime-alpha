@@ -495,6 +495,9 @@ def _build_summary(
         decision_time=request.as_of_time,
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
         provider_contracts=_consumed_provider_contracts(preparation, execution),
+        provider_source_references=_consumed_provider_sources(
+            preparation, execution
+        ),
         source_manifest=RuntimeArtifactReference(
             "SOURCE_MANIFEST",
             request.source_manifest_id,
@@ -626,10 +629,10 @@ def _stage_evidence(
         evidence_available_at=(
             state_artifact.available_at
             if state_artifact is not None
-            else request.as_of_time
+            else _canonical_stage_times(stage, request, execution)[0]
         ),
         stage_completed_at=state_coordinator.stage_completed_at.get(
-            stage, request.as_of_time
+            stage, _canonical_stage_times(stage, request, execution)[1]
         ),
         result=_stage_result(
             stage,
@@ -642,6 +645,33 @@ def _stage_evidence(
         missing_evidence=missing,
         reason_codes=reasons,
     )
+
+
+def _canonical_stage_times(
+    stage: StateResearchStage,
+    request: ChildExecutionRequest,
+    execution: FreeDataOperationExecution | None,
+) -> tuple[datetime, datetime]:
+    if execution is None or execution.decision is None:
+        package = None if execution is None else execution.terminal_package
+        completed = (
+            request.as_of_time
+            if package is None
+            else max(request.as_of_time, package.created_at)
+        )
+        return request.as_of_time, completed
+    decision = execution.decision
+    if stage is StateResearchStage.SIGNAL:
+        completed = decision.signal.artifact.envelope.created_at
+        return decision.minute_coverage.request_completed_at, completed
+    if stage is StateResearchStage.FORECAST:
+        signal_completed = decision.signal.artifact.envelope.created_at
+        completed = max(
+            (item.artifact.forecast.envelope.created_at for item in decision.forecasts),
+            default=signal_completed,
+        )
+        return signal_completed, completed
+    return request.as_of_time, request.as_of_time
 
 
 def _stage_result(
@@ -928,15 +958,14 @@ def _consumed_provider_contracts(
     preparation: FreeDataOperationPreparation,
     execution: FreeDataOperationExecution | None,
 ) -> tuple[ProviderContractLineage, ...]:
-    source_provider_ids = {
-        str(item.provider_id)
-        for item in preparation.source.acquired.source_manifest.source_artifacts
+    consumed_products = {
+        (str(item.provider_id), item.product)
+        for item in preparation.source.acquired.provider_result.raw_payloads
     }
     contracts = {
         item
         for item in FREE_DATA_PROVIDER_CONTRACTS
-        if item.provider_id in source_provider_ids
-        and item.product != "ifzq.gtimg.cn:minute"
+        if (item.provider_id, item.product) in consumed_products
     }
     supplemental = (
         preparation.controlled_preparation.input_paths.supplemental_research_evidence
@@ -948,13 +977,17 @@ def _consumed_provider_contracts(
     bundle = load_verified_supplemental_research_evidence(supplemental).bundle
     known = {(item.provider_id, item.product) for item in contracts}
     for item in bundle.source_manifest.source_artifacts:
-        key = (str(item.provider_id), bundle.source_manifest.provider_profile_id)
+        product = (
+            "supplemental-evidence-bundle:"
+            f"{bundle.source_manifest.provider_profile_id}"
+        )
+        key = (str(item.provider_id), product)
         if key not in known:
             contracts.add(
                 ProviderContractLineage(
                     provider_id=key[0],
                     product=key[1],
-                    contract_version=bundle.source_manifest.schema_version,
+                    contract_version=bundle.schema_version,
                 )
             )
             known.add(key)
@@ -971,6 +1004,69 @@ def _consumed_provider_contracts(
                 item.provider_id,
                 item.product,
                 item.contract_version,
+            ),
+        )
+    )
+
+
+def _consumed_provider_sources(
+    preparation: FreeDataOperationPreparation,
+    execution: FreeDataOperationExecution | None,
+) -> tuple[RuntimeArtifactReference, ...]:
+    from market_regime_alpha.application.operational_research.supplemental_artifact import (
+        load_verified_supplemental_research_evidence,
+    )
+
+    references: dict[tuple[str, ArtifactId], RuntimeArtifactReference] = {}
+
+    def add(kind: str, artifact_id: ArtifactId, content_hash: str) -> None:
+        key = (kind, artifact_id)
+        value = RuntimeArtifactReference(kind, artifact_id, content_hash)
+        existing = references.get(key)
+        if existing is not None and existing != value:
+            raise ValueError("consumed Provider source identity conflict")
+        references[key] = value
+
+    for item in preparation.source.acquired.source_manifest.source_artifacts:
+        add("PROVIDER_SOURCE_ARTIFACT", item.artifact_id, item.content_hash)
+    supplemental = load_verified_supplemental_research_evidence(
+        preparation.controlled_preparation.input_paths.supplemental_research_evidence
+    ).bundle
+    add("SUPPLEMENTAL_EVIDENCE_BUNDLE", supplemental.bundle_id, supplemental.content_hash)
+    add(
+        "SUPPLEMENTAL_SOURCE_MANIFEST",
+        supplemental.source_manifest.source_manifest_id,
+        supplemental.source_manifest.content_hash,
+    )
+    for item in supplemental.source_manifest.source_artifacts:
+        add("SUPPLEMENTAL_SOURCE_ARTIFACT", item.artifact_id, item.content_hash)
+    if execution is not None and execution.decision is not None:
+        coverage = execution.decision.minute_coverage
+        add("MINUTE_ACQUISITION_COVERAGE", coverage.artifact_id, coverage.content_hash)
+        add(
+            "MINUTE_ACQUISITION_COMMAND",
+            coverage.command.command_id,
+            coverage.command.command_hash,
+        )
+        for symbol in coverage.symbol_coverage:
+            for attempt in symbol.attempt_references:
+                add("PROVIDER_ATTEMPT", attempt.attempt_id, attempt.attempt_hash)
+                if (
+                    attempt.source_artifact_id is not None
+                    and attempt.source_content_hash is not None
+                ):
+                    add(
+                        "PROVIDER_SOURCE_ARTIFACT",
+                        attempt.source_artifact_id,
+                        attempt.source_content_hash,
+                    )
+    return tuple(
+        sorted(
+            references.values(),
+            key=lambda item: (
+                item.reference_kind,
+                str(item.artifact_id),
+                item.content_hash,
             ),
         )
     )
@@ -993,9 +1089,6 @@ def _runtime_lineage(
                 "runtime-feature-input:"
                 + canonical_hash(
                     {
-                        "prepared_manifest_id": str(
-                            preparation.prepared_inputs.manifest.manifest_id
-                        ),
                         "static_bundle_id": str(controlled.static_bundle.artifact_id),
                         "feature_definition_id": str(feature_id),
                     }
@@ -1003,7 +1096,6 @@ def _runtime_lineage(
             ),
             content_hash=canonical_hash(
                 {
-                    "prepared_manifest_hash": preparation.prepared_inputs.manifest.content_hash,
                     "static_bundle_hash": controlled.static_bundle.content_hash,
                     "feature_definition_id": str(feature_id),
                 }

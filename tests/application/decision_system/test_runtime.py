@@ -538,7 +538,9 @@ def _request(
         claim_id=claim.claim_id,
         fencing_token=claim.fencing_token,
         tick_version=claim.tick_version,
+        lease_acquired_at=claim.lease_acquired_at,
         lease_expires_at=claim.lease_expires_at,
+        heartbeat_at=claim.heartbeat_at,
         provider_attempt_id=1,
         source_manifest_id=ArtifactId("source-manifest-a"),
         source_manifest_hash=HASH_A,
@@ -1176,7 +1178,7 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             )
     assert first_replay == second_replay
     assert imported_count == 12
-    assert replay_migration_version == 29
+    assert replay_migration_version == 33
     assert replay_selection_count == 2
     assert after_conflict_count == imported_count
     assert first_replay.verified_authority_count == 12

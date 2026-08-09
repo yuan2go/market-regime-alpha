@@ -25,6 +25,9 @@ from market_regime_alpha.research.platform_v2.inputs import (
 
 
 SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA = (
+    "supplemental-research-evidence-bundle-v2"
+)
+LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA = (
     "supplemental-research-evidence-bundle-v1"
 )
 
@@ -501,10 +504,16 @@ class SupplementalResearchEvidenceBundle:
     created_at: datetime
     data_eligibility: DataEligibility
     stateful_etf_observations: tuple[StatefulETFObservationEvidence, ...] = ()
+    schema_version: str = SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA
     content_hash: str = field(init=False)
     bundle_id: ArtifactId = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.schema_version not in {
+            LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+            SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+        }:
+            raise ValueError("unsupported supplemental evidence schema")
         if self.source_manifest.decision_time != self.decision_time:
             raise ValueError("supplemental SourceManifest DecisionTime mismatch")
         if (
@@ -627,7 +636,7 @@ class SupplementalResearchEvidenceBundle:
 
     def semantic_payload(self) -> dict[str, Any]:
         payload = {
-            "schema_version": SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+            "schema_version": self.schema_version,
             "source_manifest": self.source_manifest.to_canonical_dict(),
             "decision_time": self.decision_time.isoformat(),
             "market_observation": self.market_observation.to_canonical_dict(),
@@ -659,7 +668,7 @@ class SupplementalResearchEvidenceBundle:
             "created_at": self.created_at.isoformat(),
             "data_eligibility": self.data_eligibility.value,
         }
-        if self.stateful_etf_observations:
+        if self.schema_version == SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA:
             payload["stateful_etf_observations"] = [
                 item.to_canonical_dict()
                 for item in self.stateful_etf_observations
@@ -696,13 +705,18 @@ class SupplementalResearchEvidenceBundle:
             "content_hash",
             "bundle_id",
         }
-        actual = set(payload)
-        if actual not in {
-            frozenset(expected),
-            frozenset({*expected, "stateful_etf_observations"}),
-        }:
+        schema = payload.get("schema_version")
+        expected_for_schema = (
+            expected
+            if schema == LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA
+            else {*expected, "stateful_etf_observations"}
+        )
+        if set(payload) != expected_for_schema:
             raise ValueError("SupplementalResearchEvidenceBundle fields mismatch")
-        if payload["schema_version"] != SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA:
+        if schema not in {
+            LEGACY_SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+            SUPPLEMENTAL_RESEARCH_EVIDENCE_SCHEMA,
+        }:
             raise ValueError("unsupported supplemental evidence schema")
         result = cls(
             source_manifest=SourceManifest.from_canonical_dict(
@@ -757,6 +771,7 @@ class SupplementalResearchEvidenceBundle:
             reason_codes=_strings(payload["reason_codes"]),
             created_at=datetime.fromisoformat(str(payload["created_at"])),
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
+            schema_version=str(schema),
         )
         if (
             result.content_hash != payload["content_hash"]

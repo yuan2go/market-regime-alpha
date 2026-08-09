@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from market_regime_alpha.application.decision_system.postgres_repository import (
+    DecisionSystemConflict,
     PostgresDecisionSystemRepository,
 )
 from market_regime_alpha.application.decision_system.research_summary_runtime import (
@@ -25,7 +26,7 @@ from tests.persistence.postgres.conftest import postgres_factory as postgres_fac
 from tests.persistence.postgres.test_continuous_research_journal import MutableClock
 
 
-def test_research_summary_delegate_is_the_recoverable_decision_child(
+def test_research_summary_delegate_rejects_synthetic_state_owner(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     clock = MutableClock(AS_OF)
@@ -48,18 +49,8 @@ def test_research_summary_delegate_is_the_recoverable_decision_child(
         input_loader=lambda _: summary,
     )
 
-    result = delegate.execute(request)
-    restarted = ResearchSummaryDelegate(
-        ResearchSummaryRuntimeService(
-            PostgresDecisionSystemRepository(postgres_factory, clock=clock)
-        ),
-        input_loader=lambda _: summary,
-    )
-
-    assert restarted.lookup(request) == result
-    assert result.child_receipt_id == summary.summary_id
-    assert result.child_artifact_id == summary.summary_id
-    assert summary.no_order and summary.no_fill and summary.no_broker
+    with pytest.raises(DecisionSystemConflict, match="State owner mismatch"):
+        delegate.execute(request)
 
 
 def test_production_cannot_enter_research_summary_runtime(

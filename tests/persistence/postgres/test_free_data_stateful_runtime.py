@@ -43,6 +43,9 @@ from market_regime_alpha.application.decision_system.research_summary import (
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     publish_controlled_runtime_configuration,
 )
+from market_regime_alpha.application.controlled_operation.runtime_configuration import (
+    ControlledOperationRuntimeConfiguration,
+)
 from market_regime_alpha.application.free_data_operation import (
     FreeDataInstrument,
     FreeDataOperationScale,
@@ -95,6 +98,7 @@ from market_regime_alpha.strategies.entry.contracts import (
     EntryPathReasonCode,
 )
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from market_regime_alpha.signals.decimal_model import SignalModelConfigurationV2
 from tests.application.daily_loop.public_fixture import DECISION
 from tests.application.daily_loop.test_runner import _qualified_stage_clients
 from tests.persistence.postgres.conftest import TEST_DATABASE_URL_ENV
@@ -107,35 +111,64 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
 
 
 @pytest.mark.parametrize(
-    ("authority_mode", "liquidity_eligible", "expected_outcome"),
+    (
+        "authority_mode",
+        "liquidity_eligible",
+        "watch_only",
+        "crash_before_summary",
+        "expected_outcome",
+    ),
     (
         (
             RuntimeAuthorityMode.RESEARCH,
             True,
+            False,
+            False,
             ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
         ),
         (
             RuntimeAuthorityMode.SHADOW,
             True,
+            False,
+            False,
             ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
         ),
         (
             RuntimeAuthorityMode.RESEARCH,
             False,
+            False,
+            False,
             ResearchDailySummaryOutcome.NO_ACTION,
+        ),
+        (
+            RuntimeAuthorityMode.RESEARCH,
+            True,
+            True,
+            False,
+            ResearchDailySummaryOutcome.WATCH,
+        ),
+        (
+            RuntimeAuthorityMode.RESEARCH,
+            True,
+            False,
+            True,
+            ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
         ),
     ),
 )
 def test_real_stateful_positive_path_reaches_research_candidate(
     tmp_path: Path,
     postgres_factory: PostgresConnectionFactory,
+    monkeypatch: pytest.MonkeyPatch,
     authority_mode: RuntimeAuthorityMode,
     liquidity_eligible: bool,
+    watch_only: bool,
+    crash_before_summary: bool,
     expected_outcome: ResearchDailySummaryOutcome,
 ) -> None:
     policy, history, status, quote = _qualified_stage_clients()
     calendar = _calendar()
-    configuration = _configuration(calendar)
+    configuration = _outcome_configuration(calendar, watch_only=watch_only)
     configuration_path = publish_controlled_runtime_configuration(
         root=tmp_path / "runtime-configurations",
         artifact=configuration,
@@ -251,26 +284,31 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         clock=lambda: runtime_now[0],
     )
     journal = repositories.continuous_research(clock=lambda: runtime_now[0])
-    runner = ContinuousResearchTickRunner(
-        journal=journal,
-        provider=provider,
-        children=CanonicalFreeDataResearchComposition(
+    summary_repository = repositories.decision_system(
+        clock=lambda: runtime_now[0]
+    )
+    state_repository = repositories.state_system(clock=lambda: runtime_now[0])
+
+    def build_runner() -> ContinuousResearchTickRunner:
+        composition = CanonicalFreeDataResearchComposition(
             service=service,
             invocation_builder=lambda _: invocation,
             model_selector=ControlledRuntimeModelSelector(
                 repositories.model_governance()
             ),
-            summary_repository=repositories.decision_system(
-                clock=lambda: runtime_now[0]
-            ),
-            state_repository=repositories.state_system(
-                clock=lambda: runtime_now[0]
-            ),
+            summary_repository=summary_repository,
+            state_repository=state_repository,
             clock=lambda: runtime_now[0],
-        ),
-        policy=continuous_policy,
-        clock=lambda: runtime_now[0],
-    )
+        )
+        return ContinuousResearchTickRunner(
+            journal=journal,
+            provider=provider,
+            children=composition,
+            policy=continuous_policy,
+            clock=lambda: runtime_now[0],
+        )
+
+    runner = build_runner()
     tick = _tick(command, "positive")
     provider_request = ProviderAcquisitionRequest(
         provider_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
@@ -279,11 +317,42 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         provider_revision="canonical-free-data-profile-v1",
     )
 
-    result = runner.execute(
-        run_command=command,
-        tick_command=tick,
-        provider_request=provider_request,
-    )
+    if crash_before_summary:
+        original_save = summary_repository.save_research_summary
+
+        def simulated_process_crash(*args, **kwargs):
+            raise _SimulatedProcessCrash
+
+        monkeypatch.setattr(
+            summary_repository,
+            "save_research_summary",
+            simulated_process_crash,
+        )
+        with pytest.raises(_SimulatedProcessCrash):
+            runner.execute(
+                run_command=command,
+                tick_command=tick,
+                provider_request=provider_request,
+            )
+        calls_before_restart = tuple(minute_calls)
+        monkeypatch.setattr(
+            summary_repository,
+            "save_research_summary",
+            original_save,
+        )
+        runtime_now[0] += timedelta(seconds=31)
+        result = build_runner().execute(
+            run_command=command,
+            tick_command=tick,
+            provider_request=provider_request,
+        )
+        assert tuple(minute_calls) == calls_before_restart
+    else:
+        result = runner.execute(
+            run_command=command,
+            tick_command=tick,
+            provider_request=provider_request,
+        )
 
     assert result.tick.status is ContinuousTickStatus.COMPLETED
     summary = repositories.decision_system().get_research_summary_for_tick(
@@ -305,7 +374,12 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert all(item.status is ResearchStageStatus.COMPLETED for item in summary.stages)
     if liquidity_eligible:
         assert by_stage[StateResearchStage.CANDIDATE].result is ResearchStageResult.RESEARCH_QUALIFIED
-        assert by_stage[StateResearchStage.SIGNAL].result is ResearchStageResult.RESEARCH_QUALIFIED
+        expected_signal_result = (
+            ResearchStageResult.WATCH
+            if watch_only
+            else ResearchStageResult.RESEARCH_QUALIFIED
+        )
+        assert by_stage[StateResearchStage.SIGNAL].result is expected_signal_result
         assert by_stage[StateResearchStage.FORECAST].result is ResearchStageResult.RESEARCH_QUALIFIED
         assert minute_calls
         assert all(started <= received <= decision for _, started, received in minute_calls)
@@ -320,6 +394,11 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         for item in summary.provider_contracts
     ) is liquidity_eligible
     assert len({symbol for symbol, _, _ in minute_calls}) <= 5
+    with postgres_factory.connection(read_only=True) as connection:
+        pool_member_count = connection.execute(
+            "SELECT count(*) FROM dynamic_stock_pool_member"
+        ).fetchone()
+    assert pool_member_count == (len(policy.symbols),)
     if liquidity_eligible:
         assert {item.child_kind for item in result.child_references} == set(
             ContinuousChildKind
@@ -336,6 +415,50 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     )
     assert restarted.child_references == result.child_references
     assert len(minute_calls) == len({symbol for symbol, _, _ in minute_calls})
+
+
+class _SimulatedProcessCrash(BaseException):
+    """Bypass ordinary Exception handling to model abrupt process loss."""
+
+
+def _outcome_configuration(
+    calendar,
+    *,
+    watch_only: bool,
+) -> ControlledOperationRuntimeConfiguration:
+    configuration = _configuration(calendar)
+    if not watch_only:
+        return configuration
+    watch_signal = SignalModelConfigurationV2.create(
+        configuration_version="free-data-watch-only-e2e-v1",
+        price_action_min_return=Decimal("1"),
+        volume_confirmation_min_ratio=Decimal("100"),
+        trend_confirmation_min_return=Decimal("1"),
+        vwap_min_relative_return=Decimal("1"),
+        overheat_max_return=Decimal("100"),
+        minimum_confirmations=4,
+    )
+    return ControlledOperationRuntimeConfiguration.create(
+        static_feature_set=configuration.static_feature_set,
+        intraday_feature_set=configuration.intraday_feature_set,
+        research=configuration.research,
+        signal_model=watch_signal,
+        signal_mapping=configuration.signal_mapping,
+        signal_requirement=configuration.signal_requirement,
+        signal_freshness=configuration.signal_freshness,
+        path_forecast=configuration.path_forecast,
+        feature_max_workers=configuration.feature_max_workers,
+        minute_concurrency_limit=configuration.minute_concurrency_limit,
+        minute_per_request_timeout_seconds=(
+            configuration.minute_per_request_timeout_seconds
+        ),
+        minute_max_attempts=configuration.minute_max_attempts,
+        minute_retry_backoff_seconds=(
+            configuration.minute_retry_backoff_seconds
+        ),
+        provider_profile_id=configuration.provider_profile_id,
+        limitations=configuration.limitations,
+    )
 
 
 def _complete_supplemental(

@@ -27,9 +27,10 @@ from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 
 
 RESEARCH_STAGE_EVIDENCE_SCHEMA = "research-stage-evidence/v2"
-RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v2"
+RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v3"
 LEGACY_RESEARCH_STAGE_EVIDENCE_SCHEMA = "research-stage-evidence/v1"
 LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v1"
+PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA = "research-daily-summary/v2"
 
 GOVERNED_RESEARCH_MODEL_SLOTS = {
     StateResearchStage.MARKET_REGIME: "MARKET_REGIME",
@@ -322,6 +323,7 @@ class ResearchDailySummary:
     decision_time: datetime
     provider_profile_id: str
     provider_contracts: tuple[ProviderContractLineage, ...]
+    provider_source_references: tuple[RuntimeArtifactReference, ...]
     source_manifest: RuntimeArtifactReference
     dataset: RuntimeArtifactReference
     feature_bundle: RuntimeArtifactReference
@@ -346,6 +348,7 @@ class ResearchDailySummary:
         require_sha256("content_hash", self.content_hash)
         if self.schema_version not in {
             LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
             RESEARCH_DAILY_SUMMARY_SCHEMA,
         }:
             raise ValueError("unsupported Research Summary schema")
@@ -358,9 +361,20 @@ class ResearchDailySummary:
         require_text("provider_profile_id", self.provider_profile_id)
         require_text("idempotency_key", self.idempotency_key)
         _ordered_provider_contracts(self.provider_contracts)
+        _ordered_references(
+            "provider_source_references", self.provider_source_references
+        )
+        if (
+            self.schema_version == RESEARCH_DAILY_SUMMARY_SCHEMA
+            and not self.provider_source_references
+        ):
+            raise ValueError("Research Summary requires consumed Provider sources")
         if tuple(item.stage for item in self.stages) != STATE_RESEARCH_STAGE_ORDER:
             raise ValueError("Research Summary requires every ordered State stage")
-        if self.schema_version == RESEARCH_DAILY_SUMMARY_SCHEMA:
+        if self.schema_version in {
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            RESEARCH_DAILY_SUMMARY_SCHEMA,
+        }:
             if self.state_system_receipt is None:
                 raise ValueError("Research Summary requires State owner Receipt")
             candidate_stage = self.stages[STATE_RESEARCH_STAGE_ORDER.index(
@@ -443,6 +457,9 @@ class ResearchDailySummary:
                 key=_provider_contract_key,
             )
         )
+        normalized["provider_source_references"] = _sort_references(
+            values.get("provider_source_references", (values["source_manifest"],))
+        )
         normalized["model_selection_receipts"] = _sort_references(
             values["model_selection_receipts"]
         )
@@ -492,6 +509,7 @@ class ResearchDailySummary:
             "decision_time": self.decision_time,
             "provider_profile_id": self.provider_profile_id,
             "provider_contracts": self.provider_contracts,
+            "provider_source_references": self.provider_source_references,
             "source_manifest": self.source_manifest,
             "dataset": self.dataset,
             "feature_bundle": self.feature_bundle,
@@ -565,11 +583,17 @@ class ResearchDailySummary:
             "created_at",
             "safety",
         }
-        if schema == RESEARCH_DAILY_SUMMARY_SCHEMA:
+        if schema in {
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            RESEARCH_DAILY_SUMMARY_SCHEMA,
+        }:
             expected |= {"state_system_receipt", "candidate_set"}
+        if schema == RESEARCH_DAILY_SUMMARY_SCHEMA:
+            expected.add("provider_source_references")
         _fields(payload, expected, "ResearchDailySummary")
         if schema not in {
             LEGACY_RESEARCH_DAILY_SUMMARY_SCHEMA,
+            PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
             RESEARCH_DAILY_SUMMARY_SCHEMA,
         }:
             raise ValueError("unsupported Research Summary schema")
@@ -593,6 +617,14 @@ class ResearchDailySummary:
             provider_contracts=tuple(
                 ProviderContractLineage.from_canonical_dict(_mapping(item))
                 for item in _sequence(payload["provider_contracts"])
+            ),
+            provider_source_references=(
+                ()
+                if schema != RESEARCH_DAILY_SUMMARY_SCHEMA
+                else tuple(
+                    RuntimeArtifactReference.from_canonical_dict(_mapping(item))
+                    for item in _sequence(payload["provider_source_references"])
+                )
             ),
             source_manifest=RuntimeArtifactReference.from_canonical_dict(
                 _mapping(payload["source_manifest"])
@@ -738,7 +770,10 @@ def _summary_payload(**values: Any) -> dict[str, Any]:
         "idempotency_key": values["idempotency_key"],
         "created_at": canonical_datetime(values["created_at"]),
     }
-    if schema == RESEARCH_DAILY_SUMMARY_SCHEMA:
+    if schema in {
+        PREVIOUS_RESEARCH_DAILY_SUMMARY_SCHEMA,
+        RESEARCH_DAILY_SUMMARY_SCHEMA,
+    }:
         state_receipt = values["state_system_receipt"]
         if state_receipt is None:
             raise ValueError("Research Summary requires State owner Receipt")
@@ -748,6 +783,11 @@ def _summary_payload(**values: Any) -> dict[str, Any]:
             if values["candidate_set"] is None
             else values["candidate_set"].to_canonical_dict()
         )
+    if schema == RESEARCH_DAILY_SUMMARY_SCHEMA:
+        result["provider_source_references"] = [
+            item.to_canonical_dict()
+            for item in values["provider_source_references"]
+        ]
     return result
 
 

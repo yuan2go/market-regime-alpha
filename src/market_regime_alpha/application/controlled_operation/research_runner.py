@@ -361,7 +361,17 @@ def discover_controlled_candidates(
     capital_evolution: CapitalEvolutionSnapshot,
     configuration: ControlledCandidateDiscoveryConfig,
     code_revision: str,
+    dynamic_pool_membership: Mapping[str, bool] | None = None,
+    dynamic_pool_reference: tuple[ArtifactId, str] | None = None,
 ) -> CandidateSet:
+    if (dynamic_pool_membership is None) != (dynamic_pool_reference is None):
+        raise ValueError(
+            "Dynamic Pool membership and lineage reference must be supplied together"
+        )
+    if dynamic_pool_membership is not None and set(dynamic_pool_membership) != set(
+        inputs.operational_universe.symbols
+    ):
+        raise ValueError("Dynamic Pool must preserve the complete Universe cross section")
     theme_by_id = {item.theme_id: item for item in theme_rotation.themes}
     capital_by_symbol = {item.symbol: item for item in capital_evolution.symbols}
     membership_by_symbol = {item.symbol: item for item in inputs.theme_memberships}
@@ -379,7 +389,13 @@ def discover_controlled_candidates(
         reasons: tuple[str, ...]
         state = CandidateSelectionStatus.DATA_INSUFFICIENT
         score: float | None = None
-        if market_regime.trade_permission is TradePermission.PROHIBIT:
+        if (
+            dynamic_pool_membership is not None
+            and not dynamic_pool_membership[symbol]
+        ):
+            state = CandidateSelectionStatus.REJECTED
+            reasons = ("DYNAMIC_POOL_EXCLUDED",)
+        elif market_regime.trade_permission is TradePermission.PROHIBIT:
             state = CandidateSelectionStatus.REJECTED
             reasons = ("MARKET_REGIME_PROHIBITS_RISK",)
         elif membership is None:
@@ -488,6 +504,9 @@ def discover_controlled_candidates(
         theme_rotation.envelope.artifact_id: theme_rotation.envelope.content_hash,
         capital_evolution.envelope.artifact_id: capital_evolution.envelope.content_hash,
     }
+    if dynamic_pool_reference is not None:
+        pool_id, pool_hash = dynamic_pool_reference
+        lineage[pool_id] = pool_hash
     by_id = {item.artifact.artifact_id: item.artifact.content_hash for item in static_feature_bundle.artifacts}
     for record in finalized:
         for artifact_id in record.input_artifact_ids:

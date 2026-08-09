@@ -17,6 +17,7 @@ from market_regime_alpha.application.controlled_operation.runner import (
 )
 from market_regime_alpha.application.controlled_operation.research_runner import (
     VerifiedControlledResearchArtifact,
+    discover_controlled_candidates,
 )
 from market_regime_alpha.application.decision_system.research_summary import (
     GOVERNED_RESEARCH_MODEL_SLOTS,
@@ -266,6 +267,16 @@ class CanonicalFreeDataStateCoordinator:
             clock=self._clock,
         )
         self.work = work
+        existing = self._repository.lookup_runtime_child(self._request)
+        if existing is not None:
+            stages, completed_at = self._repository.read_runtime_stages(self._request)
+            work.stage_artifacts = {item.stage: item for item in stages}
+            work.stage_completed_at = completed_at
+            work.final_candidates = self._repository.read_runtime_candidate(
+                self._request
+            )
+            self.child_result = existing
+            return work.final_candidates
         services: dict[StateResearchStage, StateResearchStageService] = {
             StateResearchStage.OBSERVATION: _StageService(
                 StateResearchStage.OBSERVATION,
@@ -308,8 +319,12 @@ class CanonicalFreeDataStateCoordinator:
             repository=self._repository,
         )
         self.child_result = delegate.execute(self._request)
-        if work.final_candidates is None:
-            raise ValueError("State System did not produce a CandidateSet")
+        stages, completed_at = self._repository.read_runtime_stages(self._request)
+        work.stage_artifacts = {item.stage: item for item in stages}
+        work.stage_completed_at = completed_at
+        work.final_candidates = self._repository.read_runtime_candidate(
+            self._request
+        )
         return work.final_candidates
 
 
@@ -331,11 +346,18 @@ def _market_stage(
     work: _StateWork, context: StateResearchStageContext
 ) -> StateResearchStageArtifact:
     snapshot = work.research.artifact.market_regime
+    _assert_selected_execution(
+        work,
+        StateResearchStage.MARKET_REGIME,
+        snapshot.envelope.model_id,
+        snapshot.envelope.model_version,
+        snapshot.envelope.configuration_id,
+        snapshot.envelope.configuration_hash,
+    )
     config = _state_configuration(
         MarketStateConfiguration,
         work,
         StateResearchStage.MARKET_REGIME,
-        snapshot.envelope.model_version or "v0",
     )
     components = tuple(
         value
@@ -465,11 +487,19 @@ def _theme_stage(
             StateResearchStage.THEME_ROTATION,
             ("THEME_OBSERVATION", "ETF_ROTATION"),
         )
+    snapshot = work.research.artifact.theme_rotation
+    _assert_selected_execution(
+        work,
+        StateResearchStage.THEME_ROTATION,
+        snapshot.envelope.model_id,
+        snapshot.envelope.model_version,
+        snapshot.envelope.configuration_id,
+        snapshot.envelope.configuration_hash,
+    )
     config = _state_configuration(
         ThemeRotationConfiguration,
         work,
         StateResearchStage.THEME_ROTATION,
-        work.research.artifact.configuration.theme_rotation.model_version,
     )
     capital = {item.theme_id: item for item in inputs.capital_observations}
     mappings = {item.etf_id: item for item in inputs.etf_theme_mappings}
@@ -574,11 +604,19 @@ def _capital_stage(
             StateResearchStage.CAPITAL_STATE,
             ("CAPITAL_OBSERVATION", "THEME_ROTATION"),
         )
+    snapshot = work.research.artifact.capital_evolution
+    _assert_selected_execution(
+        work,
+        StateResearchStage.CAPITAL_STATE,
+        snapshot.envelope.model_id,
+        snapshot.envelope.model_version,
+        snapshot.envelope.configuration_id,
+        snapshot.envelope.configuration_hash,
+    )
     config = _state_configuration(
         CapitalStateConfiguration,
         work,
         StateResearchStage.CAPITAL_STATE,
-        work.research.artifact.configuration.capital_evolution.model_version,
     )
     theme_values = inputs.theme_observations
     capital_values = inputs.capital_observations
@@ -648,7 +686,6 @@ def _pool_stage(
         item.symbol: item
         for item in work.research.artifact.inputs.supplemental_evidence.theme_memberships
     }
-    candidate_symbols = {item.symbol for item in work.candidates.records}
     eligibility = tuple(
         PoolEligibilityObservation(
             symbol=item.symbol,
@@ -683,7 +720,6 @@ def _pool_stage(
             missing_evidence=(),
         )
         for item in universe.records
-        if item.symbol in candidate_symbols
     )
     state_context = DynamicPoolStateContext(
         market_regime_state_id=work.market.state.state_id,
@@ -755,12 +791,38 @@ def _candidate_stage(
 ) -> StateResearchStageArtifact:
     if work.pool is None or work.market is None or work.capital is None:
         work.final_candidates = _block_candidates_without_pool(work.candidates)
-        return _insufficient_stage(
+        artifact = _insufficient_stage(
             work,
             StateResearchStage.CANDIDATE,
             ("DYNAMIC_POOL",),
         )
-    final = _constrain_candidates(work.candidates, work.pool)
+        work.repository.append_runtime_candidate(
+            request=work.request,
+            candidate_set=work.final_candidates,
+            candidate_stage=artifact,
+        )
+        return artifact
+    final = discover_controlled_candidates(
+        inputs=work.research.artifact.inputs,
+        static_feature_bundle=work.preparation.static_feature_bundle,
+        market_regime=work.research.artifact.market_regime,
+        theme_rotation=work.research.artifact.theme_rotation,
+        capital_evolution=work.research.artifact.capital_evolution,
+        configuration=work.research.artifact.configuration.candidate_discovery,
+        code_revision=work.research.artifact.envelope.code_revision,
+        dynamic_pool_membership={
+            item.symbol: item.included for item in work.pool.members
+        },
+        dynamic_pool_reference=(work.pool.pool_id, work.pool.pool_hash),
+    )
+    _assert_selected_execution(
+        work,
+        StateResearchStage.CANDIDATE,
+        final.envelope.model_id,
+        final.envelope.model_version,
+        final.envelope.configuration_id,
+        final.envelope.configuration_hash,
+    )
     work.final_candidates = final
     binding = bind_candidate_set(
         candidate_set=final,
@@ -781,7 +843,7 @@ def _candidate_stage(
         configuration_version="v1",
     )
     work.bound_candidates = binding
-    return _state_artifact(
+    artifact = _state_artifact(
         StateResearchStage.CANDIDATE,
         binding.binding_id,
         binding.binding_hash,
@@ -791,6 +853,12 @@ def _candidate_stage(
             "STATE_BOUND_CANDIDATE_COMPLETED",
         ),
     )
+    work.repository.append_runtime_candidate(
+        request=work.request,
+        candidate_set=final,
+        candidate_stage=artifact,
+    )
+    return artifact
 
 
 def _constrain_candidates(
@@ -1286,9 +1354,9 @@ def _claim(request: ChildExecutionRequest):
         claim_id=request.claim_id,
         fencing_token=request.fencing_token,
         tick_version=request.tick_version,
-        lease_acquired_at=request.as_of_time,
+        lease_acquired_at=request.lease_acquired_at,
         lease_expires_at=request.lease_expires_at,
-        heartbeat_at=request.as_of_time,
+        heartbeat_at=request.heartbeat_at,
     )
 
 
@@ -1333,7 +1401,7 @@ def _lineage(
     )
 
 
-def _state_configuration(cls, work: _StateWork, stage: StateResearchStage, version: str):
+def _state_configuration(cls, work: _StateWork, stage: StateResearchStage):
     receipt = work.receipts[stage]
     if (
         receipt.status is not SelectionStatus.SELECTED
@@ -1341,15 +1409,46 @@ def _state_configuration(cls, work: _StateWork, stage: StateResearchStage, versi
         or receipt.model_slot != GOVERNED_RESEARCH_MODEL_SLOTS[stage]
     ):
         raise ValueError("State model was not selected by Governance")
+    # Governance selects and executes the upstream snapshot model.  The
+    # hysteresis transition is a separate deterministic, versioned State
+    # policy and must not impersonate the selected model configuration.
+    policy_name = f"free-data-{stage.value.lower()}-state-transition-v1"
     return cls.create(
-        model_id=receipt.selected_model_id,
-        model_version=version,
+        model_id=ModelId(policy_name),
+        model_version="v1",
         configuration_id=ArtifactId(
-            f"free-data-{stage.value.lower()}-transition-policy-v1"
+            f"{policy_name}-configuration"
         ),
         configuration_version="v1",
         thresholds=_thresholds(),
     )
+
+
+def _assert_selected_execution(
+    work: _StateWork,
+    stage: StateResearchStage,
+    model_id: ModelId | None,
+    model_version: str | None,
+    configuration_id: ArtifactId,
+    configuration_hash: str,
+) -> None:
+    receipt = work.receipts[stage]
+    configured: Any = {
+        StateResearchStage.MARKET_REGIME: work.research.artifact.configuration.market_regime,
+        StateResearchStage.THEME_ROTATION: work.research.artifact.configuration.theme_rotation,
+        StateResearchStage.CAPITAL_STATE: work.research.artifact.configuration.capital_evolution,
+        StateResearchStage.CANDIDATE: work.research.artifact.configuration.candidate_discovery,
+    }[stage]
+    if (
+        receipt.status is not SelectionStatus.SELECTED
+        or receipt.model_slot != GOVERNED_RESEARCH_MODEL_SLOTS[stage]
+        or receipt.selected_model_id != model_id
+        or configured.model_id != model_id
+        or configured.model_version != model_version
+        or configured.configuration_id != configuration_id
+        or configured.configuration_hash != configuration_hash
+    ):
+        raise ValueError("State input was not executed by the selected Model/configuration")
 
 
 def _deterministic_state_configuration(cls, name: str):

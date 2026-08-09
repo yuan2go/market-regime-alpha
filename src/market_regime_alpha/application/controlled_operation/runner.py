@@ -650,7 +650,10 @@ class ControlledDecisionTimeOperationRunner:
             normalized_sources=tuple(normalized_sources),
             expected_symbols=tuple(sorted(item.symbol for item in candidates.selected)),
             decision_time=command.decision_time,
-            created_at=command.decision_time,
+            # The persisted coverage receipt owns the actual acquisition
+            # completion time.  Reusing it keeps crash recovery deterministic
+            # without backfilling the Dataset to DecisionTime.
+            created_at=coverage.request_completed_at,
         )
         minute_path = publish_market_data_dataset(root=run_root / "minute-datasets", artifact=minute_artifact)
         minute = load_verified_market_data_dataset(minute_path)

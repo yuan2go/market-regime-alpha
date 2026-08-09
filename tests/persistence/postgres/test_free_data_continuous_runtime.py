@@ -564,11 +564,6 @@ def test_formal_run_due_entry_executes_staged_research_summary(
     assert (history.calls, status.calls, quote.calls) == (1, 1, 0)
 
     assert continuous_cli.main([*common, "--at", "2025-02-03T14:54:00+08:00"]) == 0
-    prepared = json.loads(capsys.readouterr().out)
-    assert prepared["status"] == "PREPARED"
-    assert (history.calls, status.calls, quote.calls) == (1, 1, 1)
-
-    assert continuous_cli.main([*common, "--at", "2025-02-03T14:54:59+08:00"]) == 0
     completed = json.loads(capsys.readouterr().out)
     assert completed["status"] == "COMPLETED", json.dumps(completed, sort_keys=True)
     assert completed["daily_decision_window_summary_delivered"] is True
@@ -833,7 +828,9 @@ def _child_request_from_claim(command, claim, observed):
         claim_id=claim.claim_id,
         fencing_token=claim.fencing_token,
         tick_version=claim.tick_version,
+        lease_acquired_at=claim.lease_acquired_at,
         lease_expires_at=claim.lease_expires_at,
+        heartbeat_at=claim.heartbeat_at,
         provider_attempt_id=1,
         source_manifest_id=ArtifactId("selector-source-manifest"),
         source_manifest_hash=digest,

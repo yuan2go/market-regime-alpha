@@ -5,6 +5,9 @@ from decimal import Decimal
 
 import pytest
 
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
 from market_regime_alpha.application.decision_system.authority import (
     FillDerivedAccountAuthority,
     PositionSettlementEvidence,
@@ -12,7 +15,11 @@ from market_regime_alpha.application.decision_system.authority import (
 from market_regime_alpha.application.trading_lifecycle import (
     TraceableManualExecutionApplicationService,
 )
-from market_regime_alpha.core.identity import ArtifactId, DatasetId
+from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId
+from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.data import (
     TradingSession,
     build_trading_calendar_artifact,
@@ -34,12 +41,20 @@ from market_regime_alpha.application.decision_system.postgres_repository import 
 from market_regime_alpha.application.decision_system.reconciliation import (
     reconcile_account,
 )
+from market_regime_alpha.application.state_system.postgres_repository import (
+    PostgresStateSystemRepository,
+)
+from market_regime_alpha.application.state_system.runtime import (
+    StateResearchStage,
+    StateSystemRuntimeDelegate,
+)
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.position import (
     SymbolTradingSessionStatus,
     SymbolTradingState,
 )
+from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from tests.application.decision_system.support import (
     AS_OF,
     active_claim,
@@ -53,6 +68,10 @@ from tests.application.decision_system.support import (
 from tests.application.decision_system.test_research_summary import (
     _stages as research_stages,
     _summary as research_summary,
+)
+from tests.application.state_system.test_runtime import (
+    _pipeline as state_pipeline,
+    _request as state_request,
 )
 from tests.persistence.postgres.test_continuous_research_journal import (
     MutableClock,
@@ -81,6 +100,91 @@ def _report(account):
         previous_reconciliation_id=None,
         idempotency_key="reconciliation-1",
         created_at=AS_OF,
+    )
+
+
+def _bind_real_state_owner(
+    *,
+    factory: PostgresConnectionFactory,
+    clock: MutableClock,
+    claim,
+    value,
+):
+    """Publish the real State receipt/Candidate authority required by Summary V3."""
+
+    request = state_request(claim)
+    repository = PostgresStateSystemRepository(factory, clock=clock)
+    pipeline, _services = state_pipeline()
+    owner = StateSystemRuntimeDelegate(
+        pipeline=pipeline,
+        repository=repository,
+    ).execute(request)
+    stages, _completed_at = repository.read_runtime_stages(request)
+    candidate_stage = next(
+        item for item in stages if item.stage is StateResearchStage.CANDIDATE
+    )
+    reasons = ("SUMMARY_REPOSITORY_STATE_FIXTURE",)
+    payload = {
+        "records": [],
+        "minimum_candidate_population": 1,
+        "reason_codes": list(reasons),
+    }
+    configuration_hash = canonical_hash(
+        {"configuration": "summary-repository-state-fixture-v1"}
+    )
+    candidate = CandidateSet(
+        envelope=ArtifactEnvelope.create(
+            artifact_type="CANDIDATE_SET",
+            artifact_payload=payload,
+            decision_date=request.trading_date,
+            decision_time=DecisionTime(request.as_of_time),
+            created_at=request.as_of_time,
+            code_revision="summary-repository-state-fixture",
+            configuration_id=ArtifactId(
+                "summary-repository-state-candidate-config-v1"
+            ),
+            configuration_hash=configuration_hash,
+            source_manifest_id=request.source_manifest_id,
+            source_manifest_hash=request.source_manifest_hash,
+            input_artifact_ids=tuple(
+                item.artifact_id for item in request.input_references
+            ),
+            input_content_hashes=tuple(
+                item.content_hash for item in request.input_references
+            ),
+            model_id=ModelId("summary-repository-state-candidate-model-v1"),
+            model_version="1.0.0",
+            data_eligibility=DataEligibility.EXPLORATORY,
+            evidence_authority=(
+                EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT
+            ),
+            status="RESEARCH_BLOCKED",
+            reason_codes=reasons,
+            limitations=("TEST_ONLY",),
+        ),
+        records=(),
+        minimum_candidate_population=1,
+        reason_codes=reasons,
+    )
+    repository.append_runtime_candidate(
+        request=request,
+        candidate_set=candidate,
+        candidate_stage=candidate_stage,
+    )
+    return type(value).create(
+        **{
+            **value.creation_values(),
+            "state_system_receipt": RuntimeArtifactReference(
+                "STATE_SYSTEM_RECEIPT",
+                owner.child_receipt_id,
+                owner.child_receipt_hash,
+            ),
+            "candidate_set": RuntimeArtifactReference(
+                "STATE_CONSTRAINED_CANDIDATE_SET",
+                candidate.envelope.artifact_id,
+                candidate.envelope.content_hash,
+            ),
+        }
     )
 
 
@@ -168,6 +272,12 @@ def test_research_summary_is_fenced_idempotent_and_restart_readable(
         decision_time=AS_OF,
         stages=research_stages(available_at=AS_OF, missing="ETF_ROTATION"),
     )
+    value = _bind_real_state_owner(
+        factory=postgres_factory,
+        clock=clock,
+        claim=claim,
+        value=value,
+    )
 
     assert repository.save_research_summary(value, claim=claim) == value
     assert repository.save_research_summary(value, claim=claim) == value
@@ -193,6 +303,12 @@ def test_research_summary_rejects_caller_declared_selection_receipt(
         decision_time=AS_OF,
         stages=research_stages(available_at=AS_OF, rejected="SIGNAL"),
     )
+    value = _bind_real_state_owner(
+        factory=postgres_factory,
+        clock=clock,
+        claim=claim,
+        value=value,
+    )
 
     with pytest.raises(DecisionSystemConflict, match="does not exist"):
         repository.save_research_summary(value, claim=claim)
@@ -210,6 +326,12 @@ def test_stale_fence_cannot_write_research_summary(
         trading_date=stale_claim.lease_acquired_at.date(),
         decision_time=AS_OF,
         stages=research_stages(available_at=AS_OF),
+    )
+    value = _bind_real_state_owner(
+        factory=postgres_factory,
+        clock=clock,
+        claim=stale_claim,
+        value=value,
     )
     clock.advance(timedelta(minutes=3))
     fresh_claim = journal.claim_tick(

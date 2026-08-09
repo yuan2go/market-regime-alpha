@@ -76,13 +76,15 @@ Artifact hashes. Signal V1/V2 remain historical compatibility authorities only.
 WP-CRR-01 owns the PostgreSQL-only Continuous Research Runtime. Its executable
 `run-due` composition freezes BaoStock history/status and the Tencent decision
 quote, materializes Dataset/Feature, executes the real WP-STATE-01 authorities,
-scopes Tencent minute acquisition to the resulting CandidateSet at 14:54:59,
+scopes Tencent minute acquisition to the resulting CandidateSet after the
+semantic 14:55 Tick is admitted at or after 14:54,
 then completes Signal/Forecast/Summary at the 14:55 DecisionTime. Lease, fence,
 CAS, recovery, material reuse and replay remain owned by the one Continuous
 journal. The default profile is explicit and has no Provider fallback. A real
 PostgreSQL positive-path test reaches non-empty Market/ETF/Theme/Capital State,
 Dynamic Pool, Candidate, pre-Decision minute, Signal, Forecast and
-`RESEARCH_CANDIDATE` under both RESEARCH and SHADOW. This is recorded-provider
+`RESEARCH_CANDIDATE` under both RESEARCH and SHADOW. Structured `WATCH` and
+`NO_ACTION` paths are separately executable. This is recorded-provider
 engineering evidence; an exact-window live run has not yet been observed.
 Formal PIT, economic validation, Entry and Broker authority remain absent.
 
@@ -104,7 +106,7 @@ Broker authority remain absent.
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
 database test substitute. Bounded repositories now execute native psycopg SQL
-and PostgreSQL transactions. Central migrations 001–032 are the only database
+and PostgreSQL transactions. Central migrations 001–033 are the only database
 migration authority; an unavailable PostgreSQL connection fails closed.
 
 WP-DECISION-01 keeps the strict account-aware Production Decision child and now
@@ -112,7 +114,8 @@ adds an account-neutral Research/Shadow endpoint beneath the same Continuous
 Runtime. Research/Shadow persist an immutable `ResearchDailySummary` even when
 ETF, Theme, Capital or downstream evidence is insufficient. It binds Runtime
 mode, DecisionTime, Provider contracts, SourceManifest, Dataset, Feature,
-the real State owner Receipt, State-constrained CandidateSet, ordered
+the real State owner Receipt, State-constrained CandidateSet, actual consumed
+Provider source/attempt Artifacts, ordered
 State/Candidate/Signal/Forecast evidence, six selection receipts,
 configuration, DataEligibility and the inherited Evidence ceiling. Production
 continues through the stricter governed Decision path and fails closed when
@@ -652,9 +655,10 @@ fallback or silent substitution.
 
 The formal `continuous-research run-due` entry uses the single Continuous
 Runtime owner in three recoverable steps: freeze BaoStock history/status before
-the decision window; at 14:54 freeze Tencent quote and complete Dataset/static
-Feature preparation; at 14:54:59 reserve the semantic 14:55 Tick, execute the
-State chain and bounded Candidate minute acquisition, then persist the final
+the decision window; at or after 14:54 reserve the semantic 14:55 Tick with a
+one-minute pre-Decision lead, freeze the Tencent quote, complete Dataset/static
+Feature preparation, execute the State chain and bounded Candidate minute
+acquisition under a five-minute lease, then persist the final
 Research/Shadow Summary no earlier than DecisionTime. Every step reuses the
 existing Daily, Feature, State, Controlled, Canonical and Decision PostgreSQL
 authorities and immutable source receipts. `--at` is clock-authoritative in
@@ -674,9 +678,11 @@ Summary remains reachable. Model rejection is
 content-addressed `FreeDataBlockedArtifact`.
 
 Recorded-provider PostgreSQL end-to-end tests prove a non-empty Stateful
-RESEARCH/SHADOW chain through `RESEARCH_CANDIDATE`, a no-Candidate `NO_ACTION`
-path without minute calls, mode-specific selection receipts, Evidence-ceiling
-preservation, staged single acquisition, restart, material reuse and
+RESEARCH/SHADOW chain through `RESEARCH_CANDIDATE`, structured `WATCH`, a
+no-Candidate `NO_ACTION` path without minute calls, mode-specific selection
+receipts, Evidence-ceiling preservation, staged single acquisition, and a crash
+after the State owner Receipt but before Summary that recovers without a second
+Provider request or identity change. Restart, material reuse and
 deterministic replay; PRODUCTION over free evidence fails closed. A real
 20-symbol network attempt
 after the 2026-08-05 window remains the latest network evidence and correctly
@@ -692,7 +698,7 @@ PostgreSQL 16 is the only database authority selected through
 backend enumeration, database path, SQL/DB-API translation bridge, automatic
 fallback, persistent test substitute or runtime importer.
 
-PostgreSQL migration versions 001–032 are checksummed, contiguous and
+PostgreSQL migration versions 001–033 are checksummed, contiguous and
 serialized with an advisory lock. Migration 024 constrains the credential-free
 runtime binding to PostgreSQL without changing the published migration-017
 checksum. Migration 025 adds Decision Summary, Manual Account,
@@ -712,7 +718,9 @@ evidence, prospective/historical bitemporal facts, repeatable-read as-of
 snapshots and explicit-set immutable Formal PIT validation evidence. Migration
 029 adds immutable Research/Shadow Summary and ordered Stage evidence;
 030–032 add typed results/timestamps, seven-stage State ownership and explicit
-Summary owner lineage while retaining historical schema checks. Fresh 001→032
+Summary owner lineage while retaining historical schema checks. Migration 033
+adds the append-only State-owned Candidate payload needed for crash recovery,
+persists Stage reason codes and admits Summary V3 actual-source lineage. Fresh 001→033
 and incremental migration paths are tested on PostgreSQL 16.
 
 Native repositories preserve idempotency, command hashes, compare-and-swap,

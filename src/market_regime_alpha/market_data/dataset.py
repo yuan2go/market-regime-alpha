@@ -308,8 +308,6 @@ class MarketDataDatasetArtifact:
         require_sha256("content_hash", self.content_hash)
         require_utc_second("decision_time", self.decision_time)
         require_utc_second("created_at", self.created_at)
-        if self.created_at < self.decision_time:
-            raise ValueError("created_at cannot precede DecisionTime")
         if not self.partitions:
             raise ValueError("Market Data Dataset requires at least one partition")
         partition_keys = tuple((item.symbol, item.timeframe.value) for item in self.partitions)
@@ -318,6 +316,16 @@ class MarketDataDatasetArtifact:
         if self.bar_count != sum(item.bar_count for item in self.partitions):
             raise ValueError("dataset bar_count mismatch")
         bars = tuple(self.iter_bars())
+        latest_available_at = max(item.available_at for item in bars)
+        if self.created_at < latest_available_at:
+            raise ValueError("Market Data Dataset predates consumed bars")
+        if (
+            self.created_at < self.decision_time
+            and "PRE_DECISION_MINUTE_EVIDENCE_FROZEN" not in self.limitations
+        ):
+            raise ValueError(
+                "only explicitly frozen minute evidence may predate DecisionTime"
+            )
         if self.first_market_date != min(item.market_date for item in bars):
             raise ValueError("dataset first market date mismatch")
         if self.last_market_date != max(item.market_date for item in bars):
