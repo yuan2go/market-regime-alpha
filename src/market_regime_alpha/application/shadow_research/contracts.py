@@ -156,6 +156,7 @@ class ShadowDecision:
     dataset: RuntimeArtifactReference
     feature_bundle: RuntimeArtifactReference
     state_system_receipt: RuntimeArtifactReference
+    controlled_operation: RuntimeArtifactReference
     dynamic_pool: RuntimeArtifactReference | None
     candidate_set: RuntimeArtifactReference | None
     signal: RuntimeArtifactReference | None
@@ -197,6 +198,7 @@ class ShadowDecision:
         *,
         session: ShadowSessionCommand,
         summary: ResearchDailySummary,
+        controlled_operation: RuntimeArtifactReference,
         decision_frozen_at: datetime,
     ) -> ShadowDecision:
         if summary.runtime_mode is not RuntimeAuthorityMode.SHADOW:
@@ -228,6 +230,7 @@ class ShadowDecision:
             "dataset": summary.dataset,
             "feature_bundle": summary.feature_bundle,
             "state_system_receipt": state_receipt,
+            "controlled_operation": controlled_operation,
             "dynamic_pool": stages[StateResearchStage.DYNAMIC_POOL].output_reference,
             "candidate_set": summary.candidate_set,
             "signal": stages[StateResearchStage.SIGNAL].output_reference,
@@ -284,6 +287,7 @@ class ShadowDecision:
             dataset=self.dataset,
             feature_bundle=self.feature_bundle,
             state_system_receipt=self.state_system_receipt,
+            controlled_operation=self.controlled_operation,
             dynamic_pool=self.dynamic_pool,
             candidate_set=self.candidate_set,
             signal=self.signal,
@@ -321,6 +325,7 @@ class ShadowDecision:
             "dataset": _reference(payload["dataset"]),
             "feature_bundle": _reference(payload["feature_bundle"]),
             "state_system_receipt": _reference(payload["state_system_receipt"]),
+            "controlled_operation": _reference(payload["controlled_operation"]),
             "dynamic_pool": _optional_reference(payload.get("dynamic_pool")),
             "candidate_set": _optional_reference(payload.get("candidate_set")),
             "signal": _optional_reference(payload.get("signal")),
@@ -390,6 +395,7 @@ def _decision_payload(**values: Any) -> dict[str, Any]:
         "dataset": values["dataset"].to_canonical_dict(),
         "feature_bundle": values["feature_bundle"].to_canonical_dict(),
         "state_system_receipt": values["state_system_receipt"].to_canonical_dict(),
+        "controlled_operation": values["controlled_operation"].to_canonical_dict(),
         "dynamic_pool": _optional_reference_dict(values["dynamic_pool"]),
         "candidate_set": _optional_reference_dict(values["candidate_set"]),
         "signal": _optional_reference_dict(values["signal"]),

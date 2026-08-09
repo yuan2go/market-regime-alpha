@@ -12,6 +12,13 @@ from psycopg.types.json import Jsonb
 from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
 )
+from market_regime_alpha.application.continuous_research.journal import (
+    ContinuousChildKind,
+    RuntimeArtifactReference,
+)
+from market_regime_alpha.application.continuous_research.postgres_journal import (
+    PostgresContinuousResearchJournal,
+)
 from market_regime_alpha.application.decision_system.postgres_repository import (
     PostgresDecisionSystemRepository,
 )
@@ -63,6 +70,9 @@ class PostgresShadowResearchRepository:
         self._factory = factory
         self._clock = clock
         self._decisions = PostgresDecisionSystemRepository(factory, clock=clock)
+        self._continuous = PostgresContinuousResearchJournal(
+            factory, clock=clock, apply_migrations=False
+        )
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
 
@@ -186,9 +196,13 @@ class PostgresShadowResearchRepository:
                 return stored
             raise ShadowResearchConflict("frozen Shadow Decision is immutable")
         summary = self._decisions.get_research_summary(summary_id)
+        controlled_operation = self._controlled_operation_reference(
+            summary.run_id, summary.tick_id
+        )
         decision = ShadowDecision.from_summary(
             session=snapshot.command,
             summary=summary,
+            controlled_operation=controlled_operation,
             decision_frozen_at=decision_frozen_at,
         )
         if summary.runtime_mode is not RuntimeAuthorityMode.SHADOW:
@@ -432,6 +446,9 @@ class PostgresShadowResearchRepository:
         rebuilt = ShadowDecision.from_summary(
             session=session.command,
             summary=summary,
+            controlled_operation=self._controlled_operation_reference(
+                stored.run_id, stored.tick_id
+            ),
             decision_frozen_at=stored.decision_frozen_at,
         )
         if rebuilt != stored:
@@ -485,6 +502,26 @@ class PostgresShadowResearchRepository:
             or run.trading_date != command.trading_date
         ):
             raise ShadowResearchConflict("Shadow Session run lineage mismatch")
+
+    def _controlled_operation_reference(
+        self, run_id: ArtifactId, tick_id: ArtifactId
+    ) -> RuntimeArtifactReference:
+        references = self._continuous.get_child_references(run_id, tick_id)
+        controlled = tuple(
+            item
+            for item in references
+            if item.child_kind is ContinuousChildKind.CONTROLLED_OPERATION
+        )
+        if len(controlled) != 1:
+            raise ShadowResearchConflict(
+                "Shadow Decision requires one Controlled Operation owner"
+            )
+        child = controlled[0]
+        return RuntimeArtifactReference(
+            reference_kind="CONTROLLED_OPERATION",
+            artifact_id=child.child_artifact_id or child.child_receipt_id,
+            content_hash=child.child_artifact_hash or child.child_receipt_hash,
+        )
 
     def _transition(
         self,

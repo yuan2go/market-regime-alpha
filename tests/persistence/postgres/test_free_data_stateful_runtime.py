@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,26 @@ from market_regime_alpha.application.decision_system.research_summary import (
 )
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     publish_controlled_runtime_configuration,
+)
+from market_regime_alpha.application.controlled_operation.outcome_evidence import (
+    TradeHorizonDefinition,
+    build_trade_horizon_outcome_evidence,
+)
+from market_regime_alpha.application.controlled_operation.outcome_source_archive import (
+    OutcomeRawSourcePayload,
+    OutcomeSettlementSourceArchive,
+    RECORDED_OUTCOME_BARS_SOURCE_KIND,
+    encode_recorded_outcome_bars,
+    load_outcome_settlement_source_archive,
+    publish_outcome_settlement_source_archive,
+)
+from market_regime_alpha.application.controlled_operation.postgres_prospective_outcome import (
+    PostgresProspectiveOutcomeRepository,
+    ProspectiveOutcomeConflict,
+)
+from market_regime_alpha.application.controlled_operation.prospective_outcome import (
+    OutcomeAvailabilityStatus,
+    SettlementSessionStatus,
 )
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
@@ -103,7 +124,21 @@ from market_regime_alpha.forecasting.path import (
     PathForecastSample,
 )
 from market_regime_alpha.forecasting.sample_provider import PathForecastSampleBatch
-from market_regime_alpha.market_data import AssetType
+from market_regime_alpha.market_data import (
+    AdjustmentMode,
+    AssetType,
+    CanonicalMarketBar,
+    Exchange,
+    FormalPitStatus,
+    MarketDataDatasetArtifact,
+    PriceAdjustmentPolicy,
+    PriceLimitState,
+    Timeframe,
+    TradingStatus,
+    VolumeUnit,
+    load_verified_market_data_dataset,
+    publish_market_data_dataset,
+)
 from market_regime_alpha.market_data.minute_source import (
     MinuteSourceRequest,
     MinuteSourceResponse,
@@ -272,6 +307,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             evidence_policy if operational_producer else None
         ),
     )
+    captured_executions = []
+    original_service_run = service.run
+
+    def record_service_execution(*args, **kwargs):
+        execution = original_service_run(*args, **kwargs)
+        captured_executions.append(execution)
+        return execution
+
+    monkeypatch.setattr(service, "run", record_service_execution)
     free_request = FreeDataPreparationRequest(
         scale=FreeDataOperationScale.SMOKE,
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
@@ -538,6 +582,75 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert shadow_repository.replay(frozen.decision_id) == frozen
         assert frozen.no_order and frozen.no_fill and frozen.no_broker
         assert frozen.no_position_mutation
+        assert captured_executions
+        execution = captured_executions[-1]
+        assert execution.decision is not None
+        selected_symbols = tuple(
+            item.symbol for item in execution.decision.candidate_set.selected
+        )
+        settlement_dataset, source_archive = _recorded_outcome_dataset(
+            tmp_path=tmp_path,
+            symbols=selected_symbols,
+            decision_time=summary.decision_time,
+        )
+        next_session_date = summary.trading_date + timedelta(days=1)
+        factual_outcome = build_trade_horizon_outcome_evidence(
+            operation_package=execution.decision.package,
+            candidate_set=execution.decision.candidate_set,
+            signal=execution.decision.signal,
+            forecasts=execution.decision.forecasts,
+            decision_dataset=(
+                execution.preparation.controlled_preparation.daily_dataset
+            ),
+            settlement_dataset=settlement_dataset,
+            next_session_date=next_session_date,
+            horizon=TradeHorizonDefinition.create(include_session_close=False),
+            created_at=source_archive.created_at,
+        )
+        outcome_repository = PostgresProspectiveOutcomeRepository(
+            postgres_factory, clock=lambda: source_archive.created_at
+        )
+        outcome = outcome_repository.build(
+            decision_id=frozen.decision_id,
+            source_archive=source_archive,
+            settlement_dataset=settlement_dataset,
+            factual_evidence=factual_outcome,
+            next_session_date=next_session_date,
+            session_status=SettlementSessionStatus.TRADING_DAY,
+            created_at=source_archive.created_at,
+        )
+        with pytest.raises(
+            ProspectiveOutcomeConflict,
+            match="status/version CAS",
+        ):
+            outcome_repository.settle(
+                outcome,
+                expected_shadow_version=pending.version - 1,
+            )
+        settled = outcome_repository.settle(
+            outcome, expected_shadow_version=pending.version
+        )
+        assert settled == outcome
+        assert settled.availability_status is OutcomeAvailabilityStatus.COMPLETE
+        assert all(item.price_1000 is not None for item in settled.observations)
+        assert outcome_repository.settle(
+            outcome, expected_shadow_version=pending.version
+        ) == outcome
+        assert outcome_repository.replay(
+            outcome.settlement_id,
+            source_archive=source_archive,
+            settlement_dataset=settlement_dataset,
+            factual_evidence=factual_outcome,
+        ) == outcome
+        with postgres_factory.connection() as connection, pytest.raises(
+            psycopg.errors.RaiseException,
+            match="prospective_outcome_settlement is append-only",
+        ):
+            connection.execute(
+                "UPDATE prospective_outcome_settlement "
+                "SET settlement_hash = %s WHERE settlement_id = %s",
+                (canonical_hash({"forged": True}), str(outcome.settlement_id)),
+            )
         with postgres_factory.connection(read_only=True) as connection:
             after_trade_counts = connection.execute(
                 "SELECT (SELECT count(*) FROM manual_fills), "
@@ -572,6 +685,142 @@ def test_real_stateful_positive_path_reaches_research_candidate(
 
 class _SimulatedProcessCrash(BaseException):
     """Bypass ordinary Exception handling to model abrupt process loss."""
+
+
+def _recorded_outcome_dataset(
+    *,
+    tmp_path: Path,
+    symbols: tuple[str, ...],
+    decision_time: datetime,
+):
+    next_session_date = decision_time.astimezone(DECISION.value.tzinfo).date() + timedelta(
+        days=1
+    )
+    source_id = ArtifactId("recorded-shadow-outcome-source-v1")
+    placeholder_hash = canonical_hash({"recorded-shadow-outcome": "placeholder"})
+
+    def bars(source_hash: str) -> tuple[CanonicalMarketBar, ...]:
+        result: list[CanonicalMarketBar] = []
+        for symbol in symbols:
+            exchange = Exchange.SH if symbol.endswith(".SH") else Exchange.SZ
+            start = datetime.combine(
+                next_session_date,
+                datetime.min.time().replace(hour=9, minute=30),
+                tzinfo=DECISION.value.tzinfo,
+            ).astimezone(UTC)
+            for index in range(60):
+                price = Decimal("10") + Decimal(index) / Decimal("100")
+                result.append(
+                    CanonicalMarketBar.create(
+                        symbol=symbol,
+                        exchange=exchange,
+                        asset_type=AssetType.A_SHARE,
+                        timeframe=Timeframe.MINUTE_1,
+                        market_date=next_session_date,
+                        event_start=start + timedelta(minutes=index),
+                        event_end=start + timedelta(minutes=index + 1),
+                        available_at=start + timedelta(minutes=index + 1),
+                        open=price,
+                        high=price + Decimal("0.02"),
+                        low=price - Decimal("0.02"),
+                        close=price + Decimal("0.01"),
+                        previous_close=None,
+                        volume=Decimal("1000"),
+                        volume_unit=VolumeUnit.SHARES,
+                        amount=Decimal("10000"),
+                        turnover_rate=None,
+                        adjustment_mode=AdjustmentMode.RAW,
+                        adjustment_factor=Decimal("1"),
+                        trading_status=TradingStatus.TRADING,
+                        price_limit_state=PriceLimitState.NORMAL,
+                        source_artifact_id=source_id,
+                        source_content_hash=source_hash,
+                    )
+                )
+        return tuple(result)
+
+    raw_payload = encode_recorded_outcome_bars(bars(placeholder_hash))
+    source_hash = "sha256:" + sha256(raw_payload).hexdigest()
+    canonical_bars = bars(source_hash)
+    assert encode_recorded_outcome_bars(canonical_bars) == raw_payload
+    retrieved = max(item.available_at for item in canonical_bars) + timedelta(
+        seconds=1
+    )
+    manifest = SourceManifest(
+        provider_profile_id="RECORDED_OUTCOME_ENGINEERING_V1",
+        decision_time=DecisionTime(retrieved),
+        source_artifacts=(
+            SourceArtifactReference(
+                artifact_id=source_id,
+                provider_id=ProviderId("provider-recorded-outcome-engineering"),
+                retrieved_at=RetrievedAt(retrieved),
+                content_hash=source_hash,
+                locator="recorded://shadow-outcome/t-plus-one-minute",
+            ),
+        ),
+        fields=(),
+        source_conflicts=(),
+        limitations=(
+            "ENGINEERING_RECORDED_ONLY",
+            "NOT_PROSPECTIVE_EVIDENCE",
+        ),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        schema_version=SourceManifest.SCHEMA_V2,
+    )
+    artifact = MarketDataDatasetArtifact.create(
+        decision_time=retrieved,
+        created_at=retrieved,
+        bars=canonical_bars,
+        expected_symbols=symbols,
+        expected_timeframes=(Timeframe.MINUTE_1,),
+        adjustment_policy=PriceAdjustmentPolicy.create(
+            policy_version="recorded-shadow-outcome-raw-v1",
+            mode=AdjustmentMode.RAW,
+            factors=(),
+            limitations=(),
+        ),
+        source_manifest_references=(
+            (manifest.source_manifest_id, manifest.content_hash),
+        ),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
+        limitations=(
+            "ENGINEERING_RECORDED_ONLY",
+            "NOT_PROSPECTIVE_EVIDENCE",
+        ),
+    )
+    dataset_path = publish_market_data_dataset(
+        root=tmp_path / "recorded-outcome-dataset", artifact=artifact
+    )
+    archive = OutcomeSettlementSourceArchive.create(
+        source_manifest=manifest,
+        next_session_date=next_session_date,
+        raw_payloads=(
+            OutcomeRawSourcePayload(
+                source_artifact_id=source_id,
+                source_kind=RECORDED_OUTCOME_BARS_SOURCE_KIND,
+                media_type="application/json",
+                payload=raw_payload,
+            ),
+        ),
+        created_at=retrieved,
+    )
+    archive_path = publish_outcome_settlement_source_archive(
+        root=tmp_path / "recorded-outcome-archive",
+        artifact=archive,
+        raw_payloads=(
+            OutcomeRawSourcePayload(
+                source_artifact_id=source_id,
+                source_kind=RECORDED_OUTCOME_BARS_SOURCE_KIND,
+                media_type="application/json",
+                payload=raw_payload,
+            ),
+        ),
+    )
+    return (
+        load_verified_market_data_dataset(dataset_path),
+        load_outcome_settlement_source_archive(archive_path),
+    )
 
 
 class _RecordedEtfHistoryClient:

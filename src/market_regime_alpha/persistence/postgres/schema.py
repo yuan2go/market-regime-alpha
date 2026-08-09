@@ -133,6 +133,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "shadow_research_session",
         "shadow_research_decision",
         "shadow_research_event",
+        "prospective_outcome_settlement",
     }
 )
 
@@ -222,6 +223,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("shadow_research_session", "shadow_research_session_guard"),
         ("shadow_research_decision", "shadow_research_decision_no_update"),
         ("shadow_research_event", "shadow_research_event_no_update"),
+        (
+            "prospective_outcome_settlement",
+            "prospective_outcome_settlement_no_update",
+        ),
         ("controlled_operation_stage", "controlled_operation_completed_stage_immutable"),
         ("controlled_operation_stage", "controlled_operation_stages_no_delete"),
         ("continuous_research_run", "continuous_research_run_identity_immutable"),
