@@ -62,11 +62,15 @@ from market_regime_alpha.application.free_data_operation.service import (
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
+    BaoStockFreeSupplementalClient,
     BaoStockHistoryClient,
     BaoStockSecurityStatusClient,
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     TencentCurrentQuoteClient,
     TencentFreeOperationalProfile,
+)
+from market_regime_alpha.data.free_operational_policy import (
+    canonical_free_operational_evidence_policy,
 )
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError
 from market_regime_alpha.market_data import AssetType
@@ -334,19 +338,6 @@ def _run_due(
     )
     repositories = RepositoryFactory(settings, postgres_factory=factory)
     repositories.bind_runtime("CONTINUOUS_RESEARCH", str(run_command.run_id))
-    profile = TencentFreeOperationalProfile(
-        history_client=BaoStockHistoryClient(
-            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        ),
-        security_status_client=BaoStockSecurityStatusClient(
-            timeout_seconds=args.provider_timeout_seconds,
-            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        ),
-        current_client=TencentCurrentQuoteClient(
-            timeout_seconds=args.provider_timeout_seconds,
-            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        ),
-    )
     simulated_runtime_now = [now]
 
     def simulated_sleep(seconds: float) -> None:
@@ -361,6 +352,47 @@ def _run_due(
         wall_time.sleep
         if args.runtime_clock_mode == "LIVE"
         else simulated_sleep
+    )
+    history_client = BaoStockHistoryClient(
+        clock=runtime_clock,
+        provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+    )
+    canonical_supplemental_policy = canonical_free_operational_evidence_policy()
+    supplemental_policy = (
+        canonical_supplemental_policy
+        if (
+            args.runtime_clock_mode == "LIVE"
+            and args.supplemental_evidence is None
+            and run_command.trading_date
+            >= min(
+                item.effective_from
+                for item in canonical_supplemental_policy.themes
+            )
+        )
+        else None
+    )
+    profile = TencentFreeOperationalProfile(
+        history_client=history_client,
+        supplemental_client=(
+            BaoStockFreeSupplementalClient(
+                history_client=history_client,
+                policy=supplemental_policy,
+                provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+                clock=runtime_clock,
+            )
+            if supplemental_policy is not None
+            else None
+        ),
+        security_status_client=BaoStockSecurityStatusClient(
+            timeout_seconds=args.provider_timeout_seconds,
+            clock=runtime_clock,
+            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+        ),
+        current_client=TencentCurrentQuoteClient(
+            timeout_seconds=args.provider_timeout_seconds,
+            clock=runtime_clock,
+            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+        ),
     )
     # Every durable lease/receipt in one invocation must observe the same
     # trusted (LIVE) or explicitly simulated engineering clock.
@@ -378,6 +410,7 @@ def _run_due(
         clock=runtime_clock,
         live_profile=profile,
         sleeper=runtime_sleeper,
+        operational_supplemental_policy=supplemental_policy,
     )
     policy = default_continuous_decision_window_policy()
     journal.create_or_get(run_command)

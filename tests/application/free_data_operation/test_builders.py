@@ -6,6 +6,8 @@ from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from market_regime_alpha.application.free_data_operation import (
     FreeDataInstrument,
     FreeDataOperationScale,
@@ -34,6 +36,11 @@ from market_regime_alpha.data.providers.public_composite import (
     TradingStatus,
     load_verified_public_source_stage_artifact,
     publish_public_source_stage_artifact,
+)
+from market_regime_alpha.data.free_operational_policy import (
+    FREE_OPERATIONAL_POLICY_AUTHORITY_ID,
+    build_free_operational_policy_source,
+    canonical_free_operational_evidence_policy,
 )
 from market_regime_alpha.data.source_manifest import (
     CriticalSourceFact,
@@ -130,6 +137,11 @@ def _source_inputs(
             trading_status=TradingStatus.UNKNOWN,
             unit="CNY",
             finality=SourceFieldFinality.PRELIMINARY,
+            previous_close=10.0,
+            open_price=10.1,
+            high_price=10.6,
+            low_price=10.0,
+            change_fraction=0.05,
         )
         for symbol in symbols
     )
@@ -220,6 +232,78 @@ def _request(count: int = 20) -> FreeDataPreparationRequest:
     )
 
 
+def _supplemental_source_stage(
+    tmp_path: Path,
+    *,
+    policy: object,
+    retrieved_at: datetime | None = None,
+    session_limit: int | None = None,
+) -> Path:
+    retrieved = RetrievedAt(
+        retrieved_at or DECISION.value - timedelta(minutes=10)
+    )
+    etf_source = AcquiredSourcePayload(
+        provider_id=BAOSTOCK_PUBLIC_PROVIDER_ID,
+        product="query_history_k_data_plus:daily:adjustflag=3",
+        locator="recorded://baostock/etf/510300.SH",
+        raw_payload=b"recorded-real-provider-contract-etf-history",
+        retrieved_time=retrieved,
+        limitations=("RECORDED_PROVIDER_ENGINEERING_EVIDENCE",),
+    )
+    policy_source = build_free_operational_policy_source(
+        policy=policy,
+        retrieved_at=retrieved,
+        decision_time=DECISION,
+        provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+    )
+    sessions = tuple(
+        date(2026, 7, 20) + timedelta(days=index)
+        for index in range(18)
+        if (date(2026, 7, 20) + timedelta(days=index)).weekday() < 5
+    )
+    if session_limit is not None:
+        sessions = sessions[:session_limit]
+    bars = tuple(
+        PublicBar(
+            symbol="510300.SH",
+            event_time=datetime.combine(session, time(15), tzinfo=SHANGHAI),
+            available_time=None,
+            source_artifact_id=etf_source.source_artifact_id,
+            open=4.0 + index * 0.01,
+            high=4.05 + index * 0.01,
+            low=3.95 + index * 0.01,
+            close=4.02 + index * 0.01,
+            volume=10_000_000 + index * 100_000,
+            amount=100_000_000 + index * 1_000_000,
+            unit="CNY",
+            adjustment_basis="BAOSTOCK_ADJUSTFLAG_3",
+            finality=SourceFieldFinality.UNKNOWN,
+        )
+        for index, session in enumerate(sessions)
+    )
+    return publish_public_source_stage_artifact(
+        root=tmp_path / "source_stages",
+        stage=PublicSourceAcquisitionStage.SUPPLEMENTAL_SOURCE_FROZEN,
+        batch=PublicCompositeBatch(
+            raw_payloads=(etf_source, policy_source),
+            bars=bars,
+            quotes=(),
+            source_conflicts=(),
+            limitations=("FREE_OPERATIONAL_SUPPLEMENTAL",),
+        ),
+        scope=PublicSourceStageScope(
+            run_request_id="free-data-recorded-request",
+            decision_date=DECISION.value.date(),
+            decision_time=DECISION,
+            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+            universe_policy_id="free-data-20",
+            acquisition_stage=(
+                PublicSourceAcquisitionStage.SUPPLEMENTAL_SOURCE_FROZEN
+            ),
+        ),
+    )
+
+
 def test_recorded_free_data_builds_replayable_canonical_inputs(tmp_path: Path) -> None:
     stage_path, result, manifest = _source_inputs(tmp_path)
 
@@ -261,6 +345,123 @@ def test_recorded_free_data_builds_replayable_canonical_inputs(tmp_path: Path) -
     )
     assert repeated.manifest == prepared.manifest
     assert repeated.manifest_path == prepared.manifest_path
+
+
+def test_recorded_operational_etf_source_materializes_state_inputs_without_fixture(
+    tmp_path: Path,
+) -> None:
+    stage_path, result, manifest = _source_inputs(tmp_path)
+    policy = canonical_free_operational_evidence_policy()
+    supplemental_path = _supplemental_source_stage(tmp_path, policy=policy)
+
+    prepared = prepare_free_data_inputs(
+        request=_request(),
+        history_source=load_verified_public_source_stage_artifact(stage_path),
+        provider_result=result,
+        full_source_manifest=manifest,
+        output_root=tmp_path,
+        operational_supplemental_source=(
+            load_verified_public_source_stage_artifact(supplemental_path)
+        ),
+        operational_supplemental_policy=policy,
+    )
+
+    bundle = load_verified_supplemental_research_evidence(
+        prepared.paths.supplemental_research_evidence
+    ).bundle
+    assert {item.etf_id for item in bundle.stateful_etf_observations} == {
+        "510300.SH"
+    }
+    assert {item.theme_id for item in bundle.theme_observations} == {
+        "FREE_A_SHARE_OPERATIONAL_UNIVERSE"
+    }
+    assert len(bundle.theme_memberships) == 20
+    assert len(bundle.capital_observations) == 1
+    assert bundle.missing_evidence == ()
+    assert "OPERATIONAL_FREE_EVIDENCE_PRODUCED" in bundle.reason_codes
+    assert bundle.data_eligibility is DataEligibility.EXPLORATORY
+    provider_ids = {
+        item.provider_id for item in bundle.source_manifest.source_artifacts
+    }
+    assert BAOSTOCK_PUBLIC_PROVIDER_ID in provider_ids
+    assert FREE_OPERATIONAL_POLICY_AUTHORITY_ID in provider_ids
+
+    replayed = prepare_free_data_inputs(
+        request=_request(),
+        history_source=load_verified_public_source_stage_artifact(stage_path),
+        provider_result=result,
+        full_source_manifest=manifest,
+        output_root=tmp_path,
+        operational_supplemental_source=(
+            load_verified_public_source_stage_artifact(supplemental_path)
+        ),
+        operational_supplemental_policy=policy,
+    )
+    assert replayed.manifest == prepared.manifest
+
+
+def test_operational_etf_source_received_after_decision_fails_closed(
+    tmp_path: Path,
+) -> None:
+    stage_path, result, manifest = _source_inputs(tmp_path)
+    policy = canonical_free_operational_evidence_policy()
+    supplemental_path = _supplemental_source_stage(
+        tmp_path,
+        policy=policy,
+        retrieved_at=DECISION.value + timedelta(seconds=1),
+    )
+
+    with pytest.raises(ValueError, match="available after DecisionTime"):
+        prepare_free_data_inputs(
+            request=_request(),
+            history_source=load_verified_public_source_stage_artifact(stage_path),
+            provider_result=result,
+            full_source_manifest=manifest,
+            output_root=tmp_path,
+            operational_supplemental_source=(
+                load_verified_public_source_stage_artifact(supplemental_path)
+            ),
+            operational_supplemental_policy=policy,
+        )
+
+
+def test_partial_etf_coverage_is_explicit_and_never_falls_back(
+    tmp_path: Path,
+) -> None:
+    stage_path, result, manifest = _source_inputs(tmp_path)
+    policy = canonical_free_operational_evidence_policy()
+    supplemental_path = _supplemental_source_stage(
+        tmp_path,
+        policy=policy,
+        session_limit=5,
+    )
+
+    prepared = prepare_free_data_inputs(
+        request=_request(),
+        history_source=load_verified_public_source_stage_artifact(stage_path),
+        provider_result=result,
+        full_source_manifest=manifest,
+        output_root=tmp_path,
+        operational_supplemental_source=(
+            load_verified_public_source_stage_artifact(supplemental_path)
+        ),
+        operational_supplemental_policy=policy,
+    )
+
+    bundle = load_verified_supplemental_research_evidence(
+        prepared.paths.supplemental_research_evidence
+    ).bundle
+    assert bundle.stateful_etf_observations == ()
+    assert bundle.theme_observations == ()
+    assert bundle.capital_observations == ()
+    assert {
+        item.evidence_kind for item in bundle.missing_evidence
+    } == {
+        "CAPITAL_OBSERVATION",
+        "STATEFUL_ETF_OBSERVATION",
+        "THEME_OBSERVATION",
+    }
+    assert "NO_PROVIDER_FALLBACK" in bundle.reason_codes
 
 
 def test_calendar_contains_only_sessions_observed_in_archived_bars(

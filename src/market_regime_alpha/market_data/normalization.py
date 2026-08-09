@@ -130,6 +130,7 @@ def normalize_public_history_stage(
                 *verified.batch.limitations,
                 "FORMAL_PIT_NOT_ESTABLISHED",
                 "PUBLIC_DATA_EXPLORATORY_ONLY",
+                "PRE_DECISION_STATIC_EVIDENCE_FROZEN",
                 "SOURCE_FLOAT_NORMALIZED_TO_DECIMAL",
                 "TRADING_AND_LIMIT_STATUS_NOT_ESTABLISHED_BY_HISTORY_SOURCE",
                 "TURNOVER_RATE_NOT_PROVIDED",

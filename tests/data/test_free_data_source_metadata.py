@@ -83,6 +83,7 @@ def test_metadata_binds_request_response_and_raw_identity(
     batch = client.acquire(_request())
 
     source = batch.raw_payloads[0]
+    quote = batch.quotes[0]
     metadata = source.request_metadata
     assert metadata is not None
     assert metadata.provider_profile_id == TENCENT_FREE_OPERATIONAL_PROFILE_ID
@@ -99,6 +100,11 @@ def test_metadata_binds_request_response_and_raw_identity(
     assert metadata.symbol_scope == ("601919.SH",)
     assert metadata.field_scope == ("current_quote",)
     assert source.raw_hash.startswith("sha256:")
+    assert quote.previous_close == 14.86
+    assert quote.open_price == 14.94
+    assert quote.high_price == 14.98
+    assert quote.low_price == 14.78
+    assert quote.change_fraction == pytest.approx(0.0034)
     restored = AcquiredSourcePayload.from_canonical_dict(
         source.to_canonical_dict(include_payload=True)
     )

@@ -26,6 +26,7 @@ from market_regime_alpha.data.providers.public_composite.contracts import (
 class PublicSourceAcquisitionStage(str, Enum):
     HISTORY_SOURCE_FROZEN = "HISTORY_SOURCE_FROZEN"
     SECURITY_STATUS_SOURCE_FROZEN = "SECURITY_STATUS_SOURCE_FROZEN"
+    SUPPLEMENTAL_SOURCE_FROZEN = "SUPPLEMENTAL_SOURCE_FROZEN"
     DECISION_QUOTE_SOURCE_FROZEN = "DECISION_QUOTE_SOURCE_FROZEN"
 
 

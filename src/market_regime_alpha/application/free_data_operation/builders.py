@@ -30,6 +30,9 @@ from market_regime_alpha.application.operational_research.contracts import (
     MissingEvidence,
     SupplementalResearchEvidenceBundle,
 )
+from market_regime_alpha.application.operational_research.free_evidence_producer import (
+    produce_free_operational_evidence,
+)
 from market_regime_alpha.application.operational_research.supplemental_artifact import (
     load_verified_supplemental_research_evidence,
     publish_supplemental_research_evidence,
@@ -39,6 +42,9 @@ from market_regime_alpha.core.time import AvailabilityTime, RetrievedAt
 from market_regime_alpha.data.contracts import (
     DataEligibility,
     SourceArtifactReference,
+)
+from market_regime_alpha.data.free_operational_policy import (
+    FreeOperationalEvidencePolicy,
 )
 from market_regime_alpha.data.providers.public_composite import PublicCompositeProviderResult
 from market_regime_alpha.data.providers.public_composite.contracts import (
@@ -102,6 +108,8 @@ def prepare_free_data_inputs(
     output_root: Path,
     runtime_configuration_path: Path | None = None,
     supplemental_evidence_path: Path | None = None,
+    operational_supplemental_source: VerifiedPublicSourceStageArtifact | None = None,
+    operational_supplemental_policy: FreeOperationalEvidencePolicy | None = None,
 ) -> FreeDataPreparedInputs:
     """Publish deterministic inputs; mutable lifecycle state stays in PostgreSQL."""
 
@@ -175,6 +183,14 @@ def prepare_free_data_inputs(
         root=root / "operational_universes",
         artifact=universe,
     )
+    operational_pair = (
+        operational_supplemental_source is not None,
+        operational_supplemental_policy is not None,
+    )
+    if operational_pair[0] != operational_pair[1]:
+        raise ValueError("operational supplemental source and policy are inseparable")
+    if supplemental_evidence_path is not None and operational_pair[0]:
+        raise ValueError("explicit and operational supplemental evidence are exclusive")
     supplemental = (
         _load_explicit_supplemental(
             path=supplemental_evidence_path,
@@ -182,11 +198,30 @@ def prepare_free_data_inputs(
             universe=universe,
         )
         if supplemental_evidence_path is not None
-        else _build_supplemental(
-            request=request,
-            dataset=daily_dataset,
-            universe=universe,
-            full_source_manifest=full_source_manifest,
+        else (
+            produce_free_operational_evidence(
+                base=_build_supplemental(
+                    request=request,
+                    dataset=daily_dataset,
+                    universe=universe,
+                    full_source_manifest=full_source_manifest,
+                    provider_result=provider_result,
+                ),
+                source=operational_supplemental_source,
+                policy=operational_supplemental_policy,
+                created_at=created_at,
+            )
+            if (
+                operational_supplemental_source is not None
+                and operational_supplemental_policy is not None
+            )
+            else _build_supplemental(
+                request=request,
+                dataset=daily_dataset,
+                universe=universe,
+                full_source_manifest=full_source_manifest,
+                provider_result=provider_result,
+            )
         )
     )
     supplemental_path = publish_supplemental_research_evidence(
@@ -631,6 +666,7 @@ def _build_supplemental(
     dataset: MarketDataDatasetArtifact,
     universe: OperationalUniverseArtifact,
     full_source_manifest: SourceManifest,
+    provider_result: PublicCompositeProviderResult,
 ) -> SupplementalResearchEvidenceBundle:
     dataset_id = ArtifactId(str(dataset.dataset_id))
     dataset_reference = SourceArtifactReference(
@@ -709,26 +745,83 @@ def _build_supplemental(
                 ),
             )
         )
-    market_direction = _mean(latest_returns)
+    eligible_quotes = tuple(
+        item
+        for item in provider_result.quotes
+        if (
+            item.symbol in included
+            and item.event_time is not None
+            and item.event_time <= request.decision_time.value
+            and item.available_time is not None
+            and item.available_time.value <= request.decision_time.value
+            and item.change_fraction is not None
+            and item.high_price is not None
+            and item.low_price is not None
+            and (item.previous_close is not None or item.price is not None)
+        )
+    )
+    quote_coverage = len(eligible_quotes) / len(included) if included else 0.0
+    use_decision_quotes = (
+        quote_coverage == 1.0
+        and len({item.source_artifact_id for item in eligible_quotes}) == 1
+    )
+    market_direction = (
+        _mean([float(item.change_fraction) for item in eligible_quotes])
+        if use_decision_quotes
+        else _mean(latest_returns)
+    )
     amount_change = _mean(amount_changes)
     breadth = (
-        sum(1 for item in latest_returns if item > 0) / len(latest_returns)
+        sum(float(item.change_fraction) > 0.0 for item in eligible_quotes)
+        / len(eligible_quotes)
+        if use_decision_quotes
+        else sum(1 for item in latest_returns if item > 0) / len(latest_returns)
         if latest_returns
         else None
     )
+    intraday_range = (
+        _mean(
+            [
+                (float(item.high_price) - float(item.low_price))
+                / float(item.previous_close or item.price)
+                for item in eligible_quotes
+            ]
+        )
+        if use_decision_quotes
+        else None
+    )
+    market_available_at = (
+        max(item.available_time.value for item in eligible_quotes)
+        if use_decision_quotes
+        else dataset.available_at
+    )
+    market_source_id = (
+        eligible_quotes[0].source_artifact_id if use_decision_quotes else dataset_id
+    )
     market_observation = MarketObservation(
-        available_at=AvailabilityTime(dataset.available_at),
-        source_artifact_id=dataset_id,
+        available_at=AvailabilityTime(market_available_at),
+        source_artifact_id=market_source_id,
         market_direction_return=market_direction,
-        market_intraday_range_to_cutoff=None,
+        market_intraday_range_to_cutoff=intraday_range,
         market_amount_change_same_cutoff=amount_change,
         candidate_breadth_at_cutoff=breadth,
         limit_structure_score=None,
-        coverage=(len(latest_returns) / len(included) if included else 0.0),
+        coverage=(
+            quote_coverage
+            if use_decision_quotes
+            else len(latest_returns) / len(included)
+            if included
+            else 0.0
+        ),
         reason_codes=(
-            "EQUAL_WEIGHTED_OPERATIONAL_UNIVERSE_PROXY",
+            (
+                "TENCENT_DECISION_QUOTE_MARKET_PROXY"
+                if use_decision_quotes
+                else "EQUAL_WEIGHTED_PRIOR_SESSION_MARKET_PROXY"
+            ),
             "INDEX_PROXY_NOT_PROVIDED",
-            "INTRADAY_MARKET_EVIDENCE_MISSING",
+            *(() if use_decision_quotes else ("INTRADAY_MARKET_EVIDENCE_MISSING",)),
+            "PRIOR_SESSION_AMOUNT_CHANGE_PROXY",
             "LIMIT_STRUCTURE_EVIDENCE_MISSING",
         ),
     )

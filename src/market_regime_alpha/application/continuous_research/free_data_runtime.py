@@ -68,6 +68,9 @@ from market_regime_alpha.core.identity import (
 )
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.pit_contracts import PITSourceEvidenceLevel
+from market_regime_alpha.data.free_operational_policy import (
+    FREE_OPERATIONAL_POLICY_AUTHORITY_ID,
+)
 from market_regime_alpha.data.providers.public_composite import (
     BAOSTOCK_PUBLIC_PROVIDER_ID,
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
@@ -118,6 +121,11 @@ FREE_DATA_PROVIDER_CONTRACTS = (
         provider_id=str(TENCENT_PUBLIC_PROVIDER_ID),
         product="ifzq.gtimg.cn:minute",
         contract_version="tencent-public-minute-v1",
+    ),
+    ProviderContractLineage(
+        provider_id=str(FREE_OPERATIONAL_POLICY_AUTHORITY_ID),
+        product="free-operational-etf-theme-policy",
+        contract_version="free-operational-evidence-policy-v1",
     ),
 )
 
@@ -962,41 +970,33 @@ def _consumed_provider_contracts(
         (str(item.provider_id), item.product)
         for item in preparation.source.acquired.provider_result.raw_payloads
     }
-    contracts = {
-        item
+    declared = {
+        (item.provider_id, item.product): item
         for item in FREE_DATA_PROVIDER_CONTRACTS
-        if (item.provider_id, item.product) in consumed_products
     }
-    supplemental = (
-        preparation.controlled_preparation.input_paths.supplemental_research_evidence
-    )
-    from market_regime_alpha.application.operational_research.supplemental_artifact import (
-        load_verified_supplemental_research_evidence,
-    )
-
-    bundle = load_verified_supplemental_research_evidence(supplemental).bundle
-    known = {(item.provider_id, item.product) for item in contracts}
-    for item in bundle.source_manifest.source_artifacts:
-        product = (
-            "supplemental-evidence-bundle:"
-            f"{bundle.source_manifest.provider_profile_id}"
+    contracts = {
+        declared.get(
+            key,
+            ProviderContractLineage(
+                provider_id=key[0],
+                product=key[1],
+                contract_version="UNDECLARED_EXPLORATORY_CONTRACT",
+            ),
         )
-        key = (str(item.provider_id), product)
-        if key not in known:
-            contracts.add(
-                ProviderContractLineage(
-                    provider_id=key[0],
-                    product=key[1],
-                    contract_version=bundle.schema_version,
-                )
-            )
-            known.add(key)
+        for key in consumed_products
+    }
     if (
         execution is not None
         and execution.decision is not None
         and execution.decision.minute_coverage.accepted_source_references
     ):
-        contracts.add(FREE_DATA_PROVIDER_CONTRACTS[-1])
+        contracts.add(
+            next(
+                item
+                for item in FREE_DATA_PROVIDER_CONTRACTS
+                if item.product == "ifzq.gtimg.cn:minute"
+            )
+        )
     return tuple(
         sorted(
             contracts,

@@ -26,6 +26,7 @@ from .live_clients import (
     BaoStockSecurityStatusClient,
     TencentCurrentQuoteClient,
 )
+from .free_supplemental import BaoStockFreeSupplementalClient
 from .manifest_builder import (
     DailyControlSourceEvidence,
     build_daily_control_source_evidence,
@@ -65,6 +66,7 @@ __all__ = [
     "AcquiredReplaySource",
     "AcquiredSourcePayload",
     "RawSourceRequestMetadata",
+    "BaoStockFreeSupplementalClient",
     "BaoStockHistoryClient",
     "BaoStockSecurityStatusClient",
     "PublicBar",

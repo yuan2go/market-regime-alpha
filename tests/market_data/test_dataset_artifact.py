@@ -108,10 +108,12 @@ def _bar(
 def _dataset(
     *,
     bars: tuple[CanonicalMarketBar, ...] | None = None,
+    created_at: datetime = CREATED_AT,
+    limitations: tuple[str, ...] = ("PUBLIC_DATA_EXPLORATORY_ONLY",),
 ) -> MarketDataDatasetArtifact:
     return MarketDataDatasetArtifact.create(
         decision_time=DECISION_TIME,
-        created_at=CREATED_AT,
+        created_at=created_at,
         bars=bars or (
             _bar(market_date=date(2026, 8, 1)),
             _bar(market_date=date(2026, 8, 3)),
@@ -130,8 +132,33 @@ def _dataset(
         ),
         data_eligibility=DataEligibility.EXPLORATORY,
         formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
-        limitations=("PUBLIC_DATA_EXPLORATORY_ONLY",),
+        limitations=limitations,
     )
+
+
+def test_pre_decision_static_dataset_requires_explicit_freeze_contract() -> None:
+    frozen_at = DECISION_TIME - timedelta(seconds=1)
+    bars = (
+        _bar(
+            market_date=date(2026, 8, 3),
+            available_at=DECISION_TIME - timedelta(minutes=1),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="explicit frozen-evidence contract"):
+        _dataset(bars=bars, created_at=frozen_at)
+
+    frozen = _dataset(
+        bars=bars,
+        created_at=frozen_at,
+        limitations=(
+            "PRE_DECISION_STATIC_EVIDENCE_FROZEN",
+            "PUBLIC_DATA_EXPLORATORY_ONLY",
+        ),
+    )
+
+    assert frozen.created_at == frozen_at
+    assert frozen.available_at < frozen.decision_time
 
 
 def test_dataset_is_deterministic_partitioned_and_content_addressed() -> None:

@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-08-09
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../superpowers/specs/2026-08-09-free-data-research-shadow-runtime-convergence-design.md, ../superpowers/plans/2026-08-09-free-data-research-shadow-runtime-convergence.md, ../superpowers/specs/2026-08-09-free-runtime-v2-canonical-convergence-design.md, ../superpowers/plans/2026-08-09-free-runtime-v2-canonical-convergence.md
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../evidence/WP-EVIDENCE-OPS-01-Acceptance.md, ../superpowers/specs/2026-08-09-prospective-formal-qualification-master-design.md, ../superpowers/plans/2026-08-09-prospective-formal-qualification-master.md
 > **Code Evidence:** Canonical Feature Spine implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
@@ -102,6 +102,21 @@ migration 022 provides fenced/CAS State and Pool authority and migration 023 add
 the child kind. All evidence
 is local engineering evidence; live free data, formal PIT/OOS, Shadow, Entry and
 Broker authority remain absent.
+
+WP-EVIDENCE-OPS-01 adds one bounded supplemental source stage to that same
+Daily acquisition journal. The default free profile explicitly acquires prior-
+session `510300.SH` ETF history from BaoStock and binds an exact, effective-
+dated current-operational-Universe Theme/ETF policy source; Tencent remains the
+DecisionTime quote/minute source. The Operational Research producer derives
+only observable ETF strength/liquidity, Theme breadth/participation and Capital
+amount/persistence/concentration/diffusion proxies, with coverage, missingness,
+availability and immutable SourceManifest lineage. It then hands the existing
+supplemental contract to the real WP-STATE-01 owners. Recorded-source PostgreSQL
+tests reach non-empty Market/ETF/Theme/Capital State, Dynamic Pool, Candidate,
+pre-Decision minute, Signal, Forecast and `RESEARCH_CANDIDATE` without a caller-
+built supplemental artifact, and restart reuses the successful Provider receipt.
+The policy is current-only and explicitly not index membership or Formal PIT;
+no exact-window live run or prospective sample is established by this work.
 
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
@@ -230,6 +245,9 @@ CONTINUOUS_RESEARCH_POSTGRESQL_JOURNAL_MIGRATION_020_IMPLEMENTED
 CONTINUOUS_PROVIDER_ATTEMPT_AND_LAST_VALID_EVIDENCE_ISOLATION_IMPLEMENTED
 CONTINUOUS_NO_MATERIAL_CHANGE_IDENTITY_REUSE_IMPLEMENTED
 CONTINUOUS_DECISION_WINDOW_1430_TO_1455_ADDITIVE_POLICY_IMPLEMENTED
+FREE_OPERATIONAL_ETF_THEME_CAPITAL_PRODUCER_ENGINEERING_PROVEN
+EXACT_WINDOW_LIVE_RUNTIME_NOT_OBSERVED
+PROSPECTIVE_SHADOW_DATASET_NOT_ESTABLISHED
 STATEFUL_MARKET_ETF_THEME_CAPITAL_IMPLEMENTED_LOCAL_ENGINEERING_CHECKPOINT
 DYNAMIC_STOCK_POOL_POSTGRES_ONLY_IMPLEMENTED
 STATE_BOUND_CANDIDATE_SIGNAL_FORECAST_IMPLEMENTED_RESEARCH_ONLY
