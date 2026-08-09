@@ -14,6 +14,7 @@ from market_regime_alpha.application.controlled_operation.evidence_package impor
     load_controlled_operation_package,
 )
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
+    load_controlled_trading_calendar,
     load_controlled_runtime_configuration,
 )
 from market_regime_alpha.application.controlled_operation.journal import (
@@ -56,12 +57,17 @@ from market_regime_alpha.application.free_data_operation.blocked import (
 from market_regime_alpha.application.free_data_operation.contracts import (
     FreeDataPreparationRequest,
     FreeDataPreparedInputs,
+    FreeDataPreparedPaths,
+    load_free_data_prepared_manifest,
 )
 from market_regime_alpha.data.providers.public_composite import (
     PublicCompositeLiveProfile,
     PublicSourceAcquisitionStage,
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     load_verified_public_source_stage_artifact,
+)
+from market_regime_alpha.data.free_operational_policy import (
+    FreeOperationalEvidencePolicy,
 )
 from market_regime_alpha.market_data.minute_batch import MinuteClientFactory
 from market_regime_alpha.forecasting.sample_provider import PathForecastSampleProvider
@@ -140,6 +146,7 @@ class FreeDataOperationService:
         minute_client_factory: MinuteClientFactory | None = None,
         sleeper: Sleeper = sleep,
         forecast_sample_provider: PathForecastSampleProvider | None = None,
+        operational_supplemental_policy: FreeOperationalEvidencePolicy | None = None,
     ) -> None:
         if not code_revision or code_revision != code_revision.strip():
             raise ValueError("code_revision must be a non-empty trimmed value")
@@ -151,6 +158,7 @@ class FreeDataOperationService:
         self._minute_client_factory = minute_client_factory
         self._sleeper = sleeper
         self._forecast_sample_provider = forecast_sample_provider
+        self._operational_supplemental_policy = operational_supplemental_policy
 
     def wait_until(self, instant: datetime) -> datetime:
         """Wait on the configured trusted/simulated clock without backfilling time."""
@@ -172,7 +180,7 @@ class FreeDataOperationService:
         *,
         request: FreeDataPreparationRequest,
         runtime_configuration_path: Path,
-    ) -> tuple[AcquisitionStageReceipt, AcquisitionStageReceipt]:
+    ) -> tuple[AcquisitionStageReceipt, ...]:
         """Freeze BaoStock history/status before the Tencent quote window."""
 
         configuration = self._validate_request(
@@ -183,10 +191,13 @@ class FreeDataOperationService:
             request=request,
             configuration=configuration,
         )
-        return (
+        receipts = [
             runner.prepare_history(daily_command),
             runner.freeze_security_status(daily_command),
-        )
+        ]
+        if self._operational_supplemental_policy is not None:
+            receipts.append(runner.freeze_supplemental(daily_command))
+        return tuple(receipts)
 
     def prepare(
         self,
@@ -209,6 +220,12 @@ class FreeDataOperationService:
         )
         decision_date = daily_command.decision_date
         daily_repository = self._repositories.daily()
+        if (
+            supplemental_evidence_path is None
+            and self._operational_supplemental_policy is not None
+        ):
+            daily_runner.prepare_history(daily_command)
+            daily_runner.freeze_supplemental(daily_command)
         source = daily_runner.freeze_sources(daily_command)
         history_receipt = daily_repository.get_acquisition_receipt(
             daily_command.run_request_id,
@@ -216,25 +233,53 @@ class FreeDataOperationService:
         )
         if history_receipt is None:
             raise ValueError("PostgreSQL DailyRun lacks frozen History receipt")
+        supplemental_source = None
+        if (
+            supplemental_evidence_path is None
+            and self._operational_supplemental_policy is not None
+        ):
+            supplemental_receipt = daily_repository.get_acquisition_receipt(
+                daily_command.run_request_id,
+                PublicSourceAcquisitionStage.SUPPLEMENTAL_SOURCE_FROZEN,
+            )
+            if supplemental_receipt is None:
+                raise ValueError(
+                    "PostgreSQL DailyRun lacks frozen supplemental receipt"
+                )
+            supplemental_source = load_verified_public_source_stage_artifact(
+                Path(supplemental_receipt.locator)
+            )
         materialization_request = replace(
             request,
-            created_at=max(
-                source.record.created_at,
-                request.decision_time.value,
-            ),
+            # Preserve when this invocation actually materialized evidence.
+            # A late caller must fail the DecisionTime checks; it may not
+            # backfill CreatedAt to the semantic cutoff.
+            created_at=self._clock(),
         )
         try:
-            prepared = prepare_free_data_inputs(
-                request=materialization_request,
-                history_source=load_verified_public_source_stage_artifact(
-                    Path(history_receipt.locator)
-                ),
-                provider_result=source.acquired.provider_result,
-                full_source_manifest=source.acquired.source_manifest,
-                output_root=operation_root,
-                runtime_configuration_path=configuration_path,
-                supplemental_evidence_path=supplemental_evidence_path,
+            prepared = _load_existing_prepared_inputs(
+                operation_root=operation_root,
+                request=request,
+                source=source,
             )
+            if prepared is None:
+                prepared = prepare_free_data_inputs(
+                    request=materialization_request,
+                    history_source=load_verified_public_source_stage_artifact(
+                        Path(history_receipt.locator)
+                    ),
+                    provider_result=source.acquired.provider_result,
+                    full_source_manifest=source.acquired.source_manifest,
+                    output_root=operation_root,
+                    runtime_configuration_path=configuration_path,
+                    supplemental_evidence_path=supplemental_evidence_path,
+                    operational_supplemental_source=supplemental_source,
+                    operational_supplemental_policy=(
+                        self._operational_supplemental_policy
+                        if supplemental_source is not None
+                        else None
+                    ),
+                )
         except Exception as exc:
             blocked = FreeDataBlockedArtifact.create(
                 command_hash=materialization_request.command_hash,
@@ -459,6 +504,81 @@ class FreeDataOperationService:
             sleeper=self._sleeper,
             forecast_sample_provider=self._forecast_sample_provider,
         )
+
+
+def _load_existing_prepared_inputs(
+    *,
+    operation_root: Path,
+    request: FreeDataPreparationRequest,
+    source: DailyLoopSourceFreezeResult,
+) -> FreeDataPreparedInputs | None:
+    """Recover the first immutable materialization instead of changing its clock."""
+
+    manifests_root = operation_root / "prepared_free_data_inputs"
+    if not manifests_root.is_dir():
+        return None
+    matches = []
+    for path in sorted(manifests_root.iterdir()):
+        if not path.is_dir() or path.name.startswith("."):
+            continue
+        manifest = load_free_data_prepared_manifest(path)
+        if (
+            manifest.command_hash != request.command_hash
+            or manifest.configuration_hash != request.configuration_hash
+        ):
+            continue
+        references = {item.kind: item for item in manifest.artifacts}
+        full = references.get("FULL_SOURCE_MANIFEST")
+        if full is None or (
+            full.artifact_id
+            != source.acquired.source_manifest.source_manifest_id
+            or full.content_hash != source.acquired.source_manifest.content_hash
+        ):
+            continue
+        matches.append((path, manifest, references))
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise ValueError("multiple prepared input identities bind one source")
+    manifest_path, manifest, references = matches[0]
+    required = {
+        "DAILY_SOURCE_STAGE",
+        "DAILY_SOURCE_MANIFEST",
+        "FULL_SOURCE_MANIFEST",
+        "MARKET_DATA_DATASET",
+        "OPERATIONAL_UNIVERSE",
+        "SUPPLEMENTAL_RESEARCH_EVIDENCE",
+        "TRADING_CALENDAR",
+        "RUNTIME_CONFIGURATION",
+    }
+    if not required.issubset(references):
+        raise ValueError("prepared input manifest omits required artifacts")
+
+    def locate(kind: str) -> Path:
+        value = (operation_root / references[kind].relative_locator).resolve()
+        if not value.is_relative_to(operation_root) or not value.exists():
+            raise ValueError("prepared input locator is invalid")
+        return value
+
+    paths = FreeDataPreparedPaths(
+        history_source_stage=locate("DAILY_SOURCE_STAGE"),
+        daily_source_manifest=locate("DAILY_SOURCE_MANIFEST"),
+        full_source_manifest=locate("FULL_SOURCE_MANIFEST"),
+        daily_market_data=locate("MARKET_DATA_DATASET"),
+        trading_calendar=locate("TRADING_CALENDAR"),
+        operational_universe=locate("OPERATIONAL_UNIVERSE"),
+        supplemental_research_evidence=locate(
+            "SUPPLEMENTAL_RESEARCH_EVIDENCE"
+        ),
+        runtime_configuration=locate("RUNTIME_CONFIGURATION"),
+    )
+    calendar = load_controlled_trading_calendar(paths.trading_calendar)
+    return FreeDataPreparedInputs(
+        manifest=manifest,
+        manifest_path=manifest_path,
+        paths=paths,
+        calendar=calendar,
+    )
 
 
 def _controlled_paths(

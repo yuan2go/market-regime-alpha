@@ -262,6 +262,21 @@ class DailyLoopRunner:
             ),
         )
 
+    def freeze_supplemental(
+        self,
+        command: DailyRunCommand,
+    ) -> AcquisitionStageReceipt:
+        """Freeze configured ETF/policy evidence once after stock History."""
+
+        return self._freeze_live_stage_command(
+            command,
+            stage=PublicSourceAcquisitionStage.SUPPLEMENTAL_SOURCE_FROZEN,
+            prerequisite_stages=(
+                PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
+            ),
+            acquire=lambda profile, request: profile.acquire_supplemental(request),
+        )
+
     def freeze_decision_quote(
         self,
         command: DailyRunCommand,
@@ -848,10 +863,24 @@ class DailyLoopRunner:
             output_root=output_root,
             stage=PublicSourceAcquisitionStage.DECISION_QUOTE_SOURCE_FROZEN,
         )
+        supplemental_receipt = self._repository.get_acquisition_receipt(
+            record.run_request_id,
+            PublicSourceAcquisitionStage.SUPPLEMENTAL_SOURCE_FROZEN,
+        )
+        supplemental = (
+            self._load_required_live_stage(
+                record=record,
+                output_root=output_root,
+                stage=PublicSourceAcquisitionStage.SUPPLEMENTAL_SOURCE_FROZEN,
+            )
+            if supplemental_receipt is not None
+            else None
+        )
         result = compose_public_composite_live(
             history=history,
             security_status=security_status,
             current=current,
+            supplemental=supplemental,
             request=request,
             profile_id=record.command.provider_profile_id,
         )

@@ -93,6 +93,22 @@ def _require_number(label: str, value: float, *, positive: bool = False) -> None
         raise ValueError(f"{label} must be a finite {qualifier} number")
 
 
+def _require_finite_number(label: str, value: float) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise ValueError(f"{label} must be a finite number")
+
+
+def _optional_payload_float(
+    payload: Mapping[str, Any], key: str
+) -> float | None:
+    value = payload.get(key)
+    return float(value) if value is not None else None
+
+
 def _canonical_hash(payload: Mapping[str, Any]) -> str:
     encoded = json.dumps(
         payload,
@@ -490,6 +506,11 @@ class PublicQuote:
     trading_status: TradingStatus
     unit: str
     finality: SourceFieldFinality
+    previous_close: float | None = None
+    open_price: float | None = None
+    high_price: float | None = None
+    low_price: float | None = None
+    change_fraction: float | None = None
 
     def __post_init__(self) -> None:
         _require_text("symbol", self.symbol)
@@ -497,6 +518,22 @@ class PublicQuote:
             _require_aware("event_time", self.event_time)
         if self.price is not None:
             _require_number("price", self.price, positive=True)
+        for label, value in (
+            ("previous_close", self.previous_close),
+            ("open_price", self.open_price),
+            ("high_price", self.high_price),
+            ("low_price", self.low_price),
+        ):
+            if value is not None:
+                _require_number(label, value, positive=True)
+        if self.change_fraction is not None:
+            _require_finite_number("change_fraction", self.change_fraction)
+        if (
+            self.high_price is not None
+            and self.low_price is not None
+            and self.high_price < self.low_price
+        ):
+            raise ValueError("quote high_price cannot be below low_price")
         if not isinstance(self.trading_status, TradingStatus):
             raise TypeError("trading_status must be a TradingStatus")
         _require_text("unit", self.unit)
@@ -517,6 +554,11 @@ class PublicQuote:
             "trading_status": self.trading_status.value,
             "unit": self.unit,
             "finality": self.finality.value,
+            "previous_close": self.previous_close,
+            "open_price": self.open_price,
+            "high_price": self.high_price,
+            "low_price": self.low_price,
+            "change_fraction": self.change_fraction,
         }
 
     @classmethod
@@ -539,6 +581,11 @@ class PublicQuote:
             trading_status=TradingStatus(str(payload["trading_status"])),
             unit=str(payload["unit"]),
             finality=SourceFieldFinality(str(payload["finality"])),
+            previous_close=_optional_payload_float(payload, "previous_close"),
+            open_price=_optional_payload_float(payload, "open_price"),
+            high_price=_optional_payload_float(payload, "high_price"),
+            low_price=_optional_payload_float(payload, "low_price"),
+            change_fraction=_optional_payload_float(payload, "change_fraction"),
         )
 
 

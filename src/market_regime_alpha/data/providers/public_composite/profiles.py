@@ -44,6 +44,7 @@ class PublicCompositeLiveProfile:
     history_client: PublicAcquisitionClient
     current_client: PublicAcquisitionClient
     security_status_client: PublicAcquisitionClient | None = None
+    supplemental_client: PublicAcquisitionClient | None = None
     profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID
 
     def acquire(
@@ -112,6 +113,16 @@ class PublicCompositeLiveProfile:
             )
         return status
 
+    def acquire_supplemental(
+        self,
+        request: PublicCompositeRequest,
+    ) -> PublicCompositeBatch:
+        """Acquire the explicitly configured free supplemental product."""
+
+        if self.supplemental_client is None:
+            raise AShareDataError("LIVE supplemental client is not configured")
+        return self.supplemental_client.acquire(request)
+
     def compose(
         self,
         *,
@@ -119,6 +130,7 @@ class PublicCompositeLiveProfile:
         current: PublicCompositeBatch,
         request: PublicCompositeRequest,
         security_status: PublicCompositeBatch | None = None,
+        supplemental: PublicCompositeBatch | None = None,
     ) -> PublicCompositeProviderResult:
         """Compose already-frozen stages without invoking either client."""
 
@@ -126,6 +138,7 @@ class PublicCompositeLiveProfile:
             history=history,
             security_status=security_status,
             current=current,
+            supplemental=supplemental,
             request=request,
             profile_id=self.profile_id,
         )
@@ -145,10 +158,12 @@ def compose_public_composite_live(
     current: PublicCompositeBatch,
     request: PublicCompositeRequest,
     profile_id: str = PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
+    supplemental: PublicCompositeBatch | None = None,
 ) -> PublicCompositeProviderResult:
     """Compose verified frozen LIVE stages without any client dependency."""
 
     status = security_status
+    extra = supplemental
     return PublicCompositeProviderResult(
         profile_id=profile_id,
         decision_time=request.decision_time,
@@ -156,7 +171,10 @@ def compose_public_composite_live(
             *history.raw_payloads,
             *(status.raw_payloads if status is not None else ()),
             *current.raw_payloads,
+            *(extra.raw_payloads if extra is not None else ()),
         ),
+        # Supplemental normalized observations stay in their bounded producer;
+        # only their exact raw sources join the composite SourceManifest.
         bars=(*history.bars, *current.bars),
         quotes=(*history.quotes, *current.quotes),
         source_conflicts=tuple(
@@ -165,6 +183,7 @@ def compose_public_composite_live(
                     *history.source_conflicts,
                     *(status.source_conflicts if status is not None else ()),
                     *current.source_conflicts,
+                    *(extra.source_conflicts if extra is not None else ()),
                 )
             )
         ),
@@ -174,6 +193,7 @@ def compose_public_composite_live(
                     *history.limitations,
                     *(status.limitations if status is not None else ()),
                     *current.limitations,
+                    *(extra.limitations if extra is not None else ()),
                     "PUBLIC_DATA_EXPLORATORY_ONLY",
                     "NO_LOCAL_ARCHIVE_FALLBACK",
                 )

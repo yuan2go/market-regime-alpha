@@ -321,10 +321,13 @@ class MarketDataDatasetArtifact:
             raise ValueError("Market Data Dataset predates consumed bars")
         if (
             self.created_at < self.decision_time
-            and "PRE_DECISION_MINUTE_EVIDENCE_FROZEN" not in self.limitations
+            and not {
+                "PRE_DECISION_MINUTE_EVIDENCE_FROZEN",
+                "PRE_DECISION_STATIC_EVIDENCE_FROZEN",
+            }.intersection(self.limitations)
         ):
             raise ValueError(
-                "only explicitly frozen minute evidence may predate DecisionTime"
+                "pre-Decision datasets require an explicit frozen-evidence contract"
             )
         if self.first_market_date != min(item.market_date for item in bars):
             raise ValueError("dataset first market date mismatch")

@@ -496,6 +496,15 @@ class TencentCurrentQuoteClient:
                     trading_status=TradingStatus.UNKNOWN,
                     unit="CNY",
                     finality=SourceFieldFinality.PRELIMINARY,
+                    previous_close=quote.previous_close,
+                    open_price=quote.open_price,
+                    high_price=quote.high_price,
+                    low_price=quote.low_price,
+                    change_fraction=(
+                        quote.change_pct / 100.0
+                        if quote.change_pct is not None
+                        else None
+                    ),
                 )
             )
         limitations = ["TENCENT_CURRENT_QUOTE_ONLY"]

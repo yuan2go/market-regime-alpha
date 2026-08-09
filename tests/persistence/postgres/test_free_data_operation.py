@@ -137,7 +137,7 @@ def test_postgres_free_data_prepare_is_idempotent_and_never_writes_sqlite(
         minimum_median_daily_amount=Decimal("1"),
         configuration_hash=configuration.configuration_hash,
     )
-    observed_at = [datetime(2025, 2, 3, 14, 50, tzinfo=SHANGHAI)]
+    observed_at = [datetime(2025, 2, 3, 14, 54, 30, tzinfo=SHANGHAI)]
     service = FreeDataOperationService(
         repositories=repositories,
         output_root=tmp_path / "operation",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
@@ -70,10 +71,18 @@ from market_regime_alpha.core.identity import ArtifactId, FeatureDefinitionId, P
 from market_regime_alpha.core.time import AvailabilityTime, DecisionTime, RetrievedAt
 from market_regime_alpha.data.contracts import DataEligibility, SourceArtifactReference
 from market_regime_alpha.data.providers.public_composite import (
+    BAOSTOCK_PUBLIC_PROVIDER_ID,
+    BaoStockFreeSupplementalClient,
+    AcquiredSourcePayload,
+    PublicBar,
+    PublicCompositeBatch,
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     TencentFreeOperationalProfile,
 )
-from market_regime_alpha.data.source_manifest import SourceManifest
+from market_regime_alpha.data.free_operational_policy import (
+    canonical_free_operational_evidence_policy,
+)
+from market_regime_alpha.data.source_manifest import SourceFieldFinality, SourceManifest
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.forecasting.path import (
     PATH_FORECAST_SAMPLE_SCHEMA,
@@ -117,6 +126,7 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
         "watch_only",
         "crash_before_summary",
         "expected_outcome",
+        "operational_producer",
     ),
     (
         (
@@ -125,6 +135,7 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
             False,
             False,
             ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
+            True,
         ),
         (
             RuntimeAuthorityMode.SHADOW,
@@ -132,6 +143,7 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
             False,
             False,
             ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
+            True,
         ),
         (
             RuntimeAuthorityMode.RESEARCH,
@@ -139,6 +151,7 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
             False,
             False,
             ResearchDailySummaryOutcome.NO_ACTION,
+            False,
         ),
         (
             RuntimeAuthorityMode.RESEARCH,
@@ -146,6 +159,7 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
             True,
             False,
             ResearchDailySummaryOutcome.WATCH,
+            False,
         ),
         (
             RuntimeAuthorityMode.RESEARCH,
@@ -153,6 +167,7 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
             False,
             True,
             ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
+            True,
         ),
     ),
 )
@@ -165,8 +180,24 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     watch_only: bool,
     crash_before_summary: bool,
     expected_outcome: ResearchDailySummaryOutcome,
+    operational_producer: bool,
 ) -> None:
     policy, history, status, quote = _qualified_stage_clients()
+    if operational_producer:
+        quote.batch = replace(
+            quote.batch,
+            quotes=tuple(
+                replace(
+                    item,
+                    previous_close=10.0,
+                    open_price=10.1,
+                    high_price=10.4,
+                    low_price=10.3,
+                    change_fraction=0.04,
+                )
+                for item in quote.batch.quotes
+            ),
+        )
     calendar = _calendar()
     configuration = _outcome_configuration(calendar, watch_only=watch_only)
     configuration_path = publish_controlled_runtime_configuration(
@@ -183,6 +214,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     )
     decision = DECISION.value.astimezone(UTC)
     runtime_now = [decision - timedelta(seconds=1)]
+    evidence_policy = canonical_free_operational_evidence_policy()
+    evidence_policy = replace(
+        evidence_policy,
+        themes=tuple(
+            replace(item, effective_from=DECISION.value.date())
+            for item in evidence_policy.themes
+        ),
+    )
+    etf_history = _RecordedEtfHistoryClient(runtime_now)
     minute_calls: list[tuple[str, datetime, datetime]] = []
 
     def minute_factory(symbol: str, _attempt: int, _timeout: float):
@@ -200,10 +240,23 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             history_client=history,
             security_status_client=status,
             current_client=quote,
+            supplemental_client=(
+                BaoStockFreeSupplementalClient(
+                    history_client=etf_history,
+                    policy=evidence_policy,
+                    provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+                    clock=lambda: runtime_now[0],
+                )
+                if operational_producer
+                else None
+            ),
         ),
         minute_client_factory=minute_factory,
         sleeper=advance,
         forecast_sample_provider=_HistoricalSampleProvider(decision),
+        operational_supplemental_policy=(
+            evidence_policy if operational_producer else None
+        ),
     )
     free_request = FreeDataPreparationRequest(
         scale=FreeDataOperationScale.SMOKE,
@@ -257,7 +310,9 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         request=free_request,
         runtime_configuration_path=configuration_path,
         idempotency_key=f"{command.run_id}:free-data",
-        supplemental_evidence_path=supplemental_path,
+        supplemental_evidence_path=(
+            None if operational_producer else supplemental_path
+        ),
     )
     runtime_now[0] = decision - timedelta(minutes=25)
     service.prepare_static_sources(
@@ -269,7 +324,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         request=free_request,
         runtime_configuration_path=configuration_path,
         idempotency_key=invocation.idempotency_key,
-        supplemental_evidence_path=supplemental_path,
+        supplemental_evidence_path=invocation.supplemental_evidence_path,
     )
     _qualify_runtime_models(
         repositories=repositories,
@@ -354,7 +409,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             provider_request=provider_request,
         )
 
-    assert result.tick.status is ContinuousTickStatus.COMPLETED
+    assert result.tick.status is ContinuousTickStatus.COMPLETED, result.tick.last_error
     summary = repositories.decision_system().get_research_summary_for_tick(
         run_id=command.run_id,
         tick_id=tick.tick_id,
@@ -407,6 +462,13 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert summary.no_position_mutation_from_shadow
     assert summary.evidence_ceiling.value == "FREE_DATA_EXPLORATORY"
     assert replay_continuous_research(journal, command.run_id).integrity_status == "VERIFIED"
+    if operational_producer:
+        assert etf_history.calls == 1
+        assert any(
+            item.product == "query_history_k_data_plus:daily:adjustflag=3"
+            and item.provider_id == str(BAOSTOCK_PUBLIC_PROVIDER_ID)
+            for item in summary.provider_contracts
+        )
 
     restarted = runner.execute(
         run_command=command,
@@ -415,10 +477,55 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     )
     assert restarted.child_references == result.child_references
     assert len(minute_calls) == len({symbol for symbol, _, _ in minute_calls})
+    if operational_producer:
+        assert etf_history.calls == 1
 
 
 class _SimulatedProcessCrash(BaseException):
     """Bypass ordinary Exception handling to model abrupt process loss."""
+
+
+class _RecordedEtfHistoryClient:
+    def __init__(self, runtime_now: list[datetime]) -> None:
+        self._runtime_now = runtime_now
+        self.calls = 0
+
+    def acquire(self, request) -> PublicCompositeBatch:
+        self.calls += 1
+        source = AcquiredSourcePayload(
+            provider_id=BAOSTOCK_PUBLIC_PROVIDER_ID,
+            product="query_history_k_data_plus:daily:adjustflag=3",
+            locator="recorded://baostock/etf/510300.SH",
+            raw_payload=b"recorded-provider-etf-history-v1",
+            retrieved_time=RetrievedAt(self._runtime_now[0]),
+            limitations=("RECORDED_PROVIDER_ENGINEERING_EVIDENCE",),
+        )
+        bars = tuple(
+            PublicBar(
+                symbol="510300.SH",
+                event_time=request.decision_time.value
+                - timedelta(days=25 - index),
+                available_time=None,
+                source_artifact_id=source.source_artifact_id,
+                open=4.0 + index * 0.01,
+                high=4.05 + index * 0.01,
+                low=3.95 + index * 0.01,
+                close=4.02 + index * 0.01,
+                volume=10_000_000 + index * 100_000,
+                amount=100_000_000 + index * 1_000_000,
+                unit="CNY",
+                adjustment_basis="BAOSTOCK_ADJUSTFLAG_3",
+                finality=SourceFieldFinality.UNKNOWN,
+            )
+            for index in range(21)
+        )
+        return PublicCompositeBatch(
+            raw_payloads=(source,),
+            bars=bars,
+            quotes=(),
+            source_conflicts=(),
+            limitations=("RECORDED_PROVIDER_ENGINEERING_EVIDENCE",),
+        )
 
 
 def _outcome_configuration(

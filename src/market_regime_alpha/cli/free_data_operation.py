@@ -41,11 +41,15 @@ from market_regime_alpha.cli.resume_controlled_operation import (
 )
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
+    BaoStockFreeSupplementalClient,
     BaoStockHistoryClient,
     BaoStockSecurityStatusClient,
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     TencentCurrentQuoteClient,
     TencentFreeOperationalProfile,
+)
+from market_regime_alpha.data.free_operational_policy import (
+    canonical_free_operational_evidence_policy,
 )
 from market_regime_alpha.market_data import AssetType
 from market_regime_alpha.persistence.repository_factory import (
@@ -139,9 +143,30 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
             configuration_hash=configuration.configuration_hash,
         )
         repositories = RepositoryFactory(settings_from_namespace(args))
+        history_client = BaoStockHistoryClient(
+            provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+        )
+        canonical_supplemental_policy = canonical_free_operational_evidence_policy()
+        supplemental_policy = (
+            canonical_supplemental_policy
+            if decision_date
+            >= min(
+                item.effective_from
+                for item in canonical_supplemental_policy.themes
+            )
+            else None
+        )
         profile = TencentFreeOperationalProfile(
-            history_client=BaoStockHistoryClient(
-                provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+            history_client=history_client,
+            supplemental_client=(
+                BaoStockFreeSupplementalClient(
+                    history_client=history_client,
+                    policy=supplemental_policy,
+                    provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+                    clock=_utc_now,
+                )
+                if supplemental_policy is not None
+                else None
             ),
             security_status_client=BaoStockSecurityStatusClient(
                 timeout_seconds=args.provider_timeout_seconds,
@@ -158,6 +183,7 @@ def _execute(argv: Sequence[str] | None, *, run_decision: bool) -> int:
             code_revision=code_revision,
             clock=_utc_now,
             live_profile=profile,
+            operational_supplemental_policy=supplemental_policy,
         )
         result = (
             service.run(
