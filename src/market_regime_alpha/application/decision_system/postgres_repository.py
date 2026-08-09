@@ -47,6 +47,7 @@ from market_regime_alpha.persistence.postgres.native_repository import (
     acquire_scope_lock,
     aware_datetime,
 )
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 
 if TYPE_CHECKING:
     from market_regime_alpha.application.decision_system.runtime import (
@@ -1329,7 +1330,7 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
         *,
         run_id: ArtifactId,
         tick_id: ArtifactId,
-        runtime_mode: str,
+        runtime_mode: RuntimeAuthorityMode,
     ) -> ResearchDailySummary:
         with self._connect() as connection:
             row = connection.execute(
@@ -1340,10 +1341,10 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 ORDER BY revision DESC
                 LIMIT 1
                 """,
-                (str(run_id), str(tick_id), runtime_mode),
+                (str(run_id), str(tick_id), runtime_mode.value),
             ).fetchone()
             if row is None:
-                raise KeyError(f"{run_id}:{tick_id}:{runtime_mode}")
+                raise KeyError(f"{run_id}:{tick_id}:{runtime_mode.value}")
             return self._load_research_summary(
                 connection,
                 ArtifactId(str(row["summary_id"])),

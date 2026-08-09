@@ -35,6 +35,7 @@ from market_regime_alpha.application.decision_system.reconciliation import (
     reconcile_account,
 )
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.position import (
     SymbolTradingSessionStatus,
     SymbolTradingState,
@@ -175,7 +176,7 @@ def test_research_summary_is_fenced_idempotent_and_restart_readable(
     assert restarted.get_research_summary_for_tick(
         run_id=claim.run_id,
         tick_id=claim.tick_id,
-        runtime_mode="RESEARCH",
+        runtime_mode=RuntimeAuthorityMode.RESEARCH,
     ) == value
 
 
