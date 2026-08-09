@@ -127,6 +127,8 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "research_portfolio_line",
         "independent_risk_decision",
         "decision_runtime_receipt",
+        "research_daily_summary",
+        "research_summary_stage",
     }
 )
 
@@ -209,6 +211,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("decision_runtime_receipt", "decision_runtime_receipt_no_delete"),
         ("decision_runtime_receipt", "decision_runtime_receipt_no_update"),
         ("decision_runtime_receipt", "decision_runtime_receipt_v2_insert_guard"),
+        ("research_daily_summary", "research_daily_summary_no_delete"),
+        ("research_daily_summary", "research_daily_summary_no_update"),
+        ("research_summary_stage", "research_summary_stage_no_delete"),
+        ("research_summary_stage", "research_summary_stage_no_update"),
         ("controlled_operation_stage", "controlled_operation_completed_stage_immutable"),
         ("controlled_operation_stage", "controlled_operation_stages_no_delete"),
         ("continuous_research_run", "continuous_research_run_identity_immutable"),

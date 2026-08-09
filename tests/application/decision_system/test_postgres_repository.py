@@ -49,6 +49,10 @@ from tests.application.decision_system.support import (
     summary,
     tolerance,
 )
+from tests.application.decision_system.test_research_summary import (
+    _stages as research_stages,
+    _summary as research_summary,
+)
 from tests.persistence.postgres.test_continuous_research_journal import (
     MutableClock,
     NOW,
@@ -141,11 +145,62 @@ def test_postgres_round_trip_is_idempotent_and_decimal_exact(
         "research_portfolio_line": 1,
         "independent_risk_decision": 1,
         "decision_runtime_receipt": 0,
+        "research_daily_summary": 0,
+        "research_summary_stage": 0,
         "decision_risk_configuration": 1,
         "reconciliation_tolerance_configuration": 1,
         "decision_position_settlement_evidence": 0,
         "decision_fill_account_authority": 0,
     }
+
+
+def test_research_summary_is_fenced_idempotent_and_restart_readable(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(NOW)
+    _, claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    value = research_summary(
+        run_id=claim.run_id,
+        tick_id=claim.tick_id,
+        trading_date=claim.lease_acquired_at.date(),
+        decision_time=AS_OF,
+        stages=research_stages(available_at=AS_OF, missing="ETF_ROTATION"),
+    )
+
+    assert repository.save_research_summary(value, claim=claim) == value
+    assert repository.save_research_summary(value, claim=claim) == value
+    restarted = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    assert restarted.get_research_summary(value.summary_id) == value
+    assert restarted.get_research_summary_for_tick(
+        run_id=claim.run_id,
+        tick_id=claim.tick_id,
+        runtime_mode="RESEARCH",
+    ) == value
+
+
+def test_stale_fence_cannot_write_research_summary(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(NOW)
+    journal, stale_claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    value = research_summary(
+        run_id=stale_claim.run_id,
+        tick_id=stale_claim.tick_id,
+        trading_date=stale_claim.lease_acquired_at.date(),
+        decision_time=AS_OF,
+        stages=research_stages(available_at=AS_OF),
+    )
+    clock.advance(timedelta(minutes=3))
+    fresh_claim = journal.claim_tick(
+        run_id=stale_claim.run_id,
+        tick_id=stale_claim.tick_id,
+    )
+
+    with pytest.raises(DecisionSystemConflict, match="stale|claim|fence"):
+        repository.save_research_summary(value, claim=stale_claim)
+    assert repository.save_research_summary(value, claim=fresh_claim) == value
 
 
 def test_manual_account_revision_is_append_only_cas(
