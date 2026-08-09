@@ -48,7 +48,7 @@ def test_migration_020_adds_exact_continuous_runtime_authorities(
         ).fetchone()
 
     assert tables == CONTINUOUS_TABLES
-    assert migration == (36, "research_evaluation_dataset")
+    assert migration == (37, "etf_theme_reference_authority")
 
 
 def test_migration_020_extends_runtime_binding_scope_without_weakening_it(

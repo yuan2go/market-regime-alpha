@@ -136,6 +136,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "prospective_outcome_settlement",
         "research_evaluation_dataset",
         "research_evaluation_dataset_settlement",
+        "etf_theme_reference_snapshot",
     }
 )
 
@@ -236,6 +237,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "research_evaluation_dataset_settlement",
             "research_evaluation_dataset_settlement_no_update",
+        ),
+        (
+            "etf_theme_reference_snapshot",
+            "etf_theme_reference_snapshot_no_update",
         ),
         ("controlled_operation_stage", "controlled_operation_completed_stage_immutable"),
         ("controlled_operation_stage", "controlled_operation_stages_no_delete"),

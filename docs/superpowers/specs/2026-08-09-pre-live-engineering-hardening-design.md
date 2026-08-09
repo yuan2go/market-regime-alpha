@@ -8,7 +8,7 @@
 > **Supersedes:** Pre-live portions of `2026-08-09-prospective-formal-qualification-master-design.md`
 > **Superseded By:** None
 > **Related Documents:** ../plans/2026-08-09-pre-live-engineering-hardening.md, ../../status/Current-State.md
-> **Code Evidence:** `src/market_regime_alpha`; `tests`; PostgreSQL migrations 001–036
+> **Code Evidence:** `src/market_regime_alpha`; `tests`; PostgreSQL migrations 001–037
 > **Authority ceiling:** Engineering readiness over exploratory free data. No Live, prospective, Alpha, Formal PIT/OOS, qualification, Production, Entry, Order, Fill, Broker, or Position authority.
 
 ## Objective
