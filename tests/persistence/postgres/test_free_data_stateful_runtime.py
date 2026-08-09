@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 
+import psycopg
 import pytest
 
 from market_regime_alpha.application.continuous_research.composition import (
@@ -70,6 +71,12 @@ from market_regime_alpha.application.runtime_operations.observability import (
 from market_regime_alpha.application.runtime_operations.query import (
     CanonicalDagNodeType,
     PostgresCanonicalRuntimeQuery,
+)
+from market_regime_alpha.application.shadow_research import (
+    PostgresShadowResearchRepository,
+    ShadowResearchConflict,
+    ShadowSessionCommand,
+    ShadowSessionStatus,
 )
 from market_regime_alpha.application.state_system.runtime import (
     StateResearchStage,
@@ -489,6 +496,61 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     ).trace_run(command.run_id)
     assert any(item["stage"] == "SUMMARY" for item in trace["observations"])
     assert trace["decision_input"] is False
+    if authority_mode is RuntimeAuthorityMode.SHADOW:
+        shadow_repository = PostgresShadowResearchRepository(
+            postgres_factory, clock=lambda: runtime_now[0]
+        )
+        shadow_command = ShadowSessionCommand.create(
+            idempotency_key=f"{command.run_id}:shadow-session",
+            run_id=command.run_id,
+            trading_date=command.trading_date,
+            runtime_mode=RuntimeAuthorityMode.SHADOW,
+            scheduled_at=decision - timedelta(minutes=25),
+            operator_observation="RECORDED_PROVIDER_ENGINEERING_EVIDENCE",
+        )
+        with postgres_factory.connection(read_only=True) as connection:
+            before_trade_counts = connection.execute(
+                "SELECT (SELECT count(*) FROM manual_fills), "
+                "(SELECT count(*) FROM position_book_events)"
+            ).fetchone()
+        shadow_session = shadow_repository.schedule(shadow_command)
+        shadow_session = shadow_repository.mark_running(
+            shadow_command.session_id,
+            expected_version=shadow_session.version,
+        )
+        frozen = shadow_repository.freeze(
+            shadow_command.session_id,
+            summary_id=summary.summary_id,
+            decision_frozen_at=summary.created_at,
+            expected_version=shadow_session.version,
+        )
+        with pytest.raises(ShadowResearchConflict, match="status/version CAS"):
+            shadow_repository.mark_outcome_pending(
+                shadow_command.session_id,
+                expected_version=shadow_session.version,
+            )
+        frozen_session = shadow_repository.get_session(shadow_command.session_id)
+        pending = shadow_repository.mark_outcome_pending(
+            shadow_command.session_id,
+            expected_version=frozen_session.version,
+        )
+        assert pending.status is ShadowSessionStatus.OUTCOME_PENDING
+        assert shadow_repository.replay(frozen.decision_id) == frozen
+        assert frozen.no_order and frozen.no_fill and frozen.no_broker
+        assert frozen.no_position_mutation
+        with postgres_factory.connection(read_only=True) as connection:
+            after_trade_counts = connection.execute(
+                "SELECT (SELECT count(*) FROM manual_fills), "
+                "(SELECT count(*) FROM position_book_events)"
+            ).fetchone()
+        assert after_trade_counts == before_trade_counts
+        with postgres_factory.connection() as connection:
+            with pytest.raises(psycopg.errors.RaiseException):
+                connection.execute(
+                    "UPDATE shadow_research_decision SET payload_json = payload_json "
+                    "WHERE decision_id = %s",
+                    (str(frozen.decision_id),),
+                )
     if operational_producer:
         assert etf_history.calls == 1
         assert any(
