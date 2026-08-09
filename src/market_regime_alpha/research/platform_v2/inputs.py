@@ -663,8 +663,9 @@ class ResearchInputBundle:
             raise ValueError("Research Input Bundle scope mismatch")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("Research Input Bundle created_at must be aware")
-        if self.created_at < decision.value:
-            raise ValueError("Research Input Bundle cannot predate Decision Time")
+        # A bundle may be prepared for an upcoming DecisionTime.  Evidence
+        # availability is enforced independently below; CreatedAt must remain
+        # the truthful wall-clock time rather than being backfilled.
         if self.data_eligibility is not DataEligibility.EXPLORATORY:
             raise ValueError("Research Input Bundle must remain EXPLORATORY")
         if len(self.input_artifact_ids) != len(self.input_content_hashes):

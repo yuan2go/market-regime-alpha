@@ -21,7 +21,6 @@ from market_regime_alpha.application.continuous_research.free_data_runtime impor
     CanonicalFreeDataResearchComposition,
     ControlledRuntimeModelSelector,
     FREE_DATA_MODEL_SLOTS,
-    GovernedControlledModels,
 )
 from market_regime_alpha.application.continuous_research.journal import (
     ChangeDecisionType,
@@ -64,7 +63,13 @@ from market_regime_alpha.application.free_data_operation import (
     FreeDataPreparationRequest,
 )
 from market_regime_alpha.application.state_system.runtime import StateResearchStage
-from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId
+from market_regime_alpha.core.identity import (
+    ArtifactId,
+    DatasetId,
+    FeatureDefinitionId,
+    TargetId,
+    UniverseId,
+)
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.pit_contracts import PITSourceEvidenceLevel
 from market_regime_alpha.data.providers.public_composite import (
@@ -86,14 +91,23 @@ from market_regime_alpha.persistence.postgres.connection import (
 )
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.persistence.settings import DatabaseSettings
-from market_regime_alpha.platform.contracts import ModelLifecycleStatus
+from market_regime_alpha.platform.contracts import (
+    EvidenceLevel,
+    ModelDefinition,
+    ModelLifecycleStatus,
+    ModelRole,
+)
+from market_regime_alpha.platform.durable_governance import PersistentModelRegistry
 from market_regime_alpha.platform.runtime_governance import (
+    ArtifactLineageReference,
     AssignmentLane,
     ModelGovernancePolicy,
-    ModelRuntimeAssignment,
-    ModelSelectionReceipt,
+    ModelQualificationEvidence,
+    ModelVersionLineage,
     QualificationEvidenceKind,
+    QualificationEvidenceOutcome,
     RuntimeAuthorityMode,
+    RuntimePurpose,
 )
 from market_regime_alpha.signals import (
     canonical_all_factors_required_policy,
@@ -216,12 +230,24 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
         invocation_builder=lambda _: invocation,
         clock=lambda: observed,
     )
-    selected_models = _SelectedModels()
+    if authority_mode is not RuntimeAuthorityMode.PRODUCTION:
+        _qualify_runtime_models(
+            repositories=repositories,
+            configuration=configuration,
+            purpose=authority_mode.runtime_purpose,
+            observed=observed,
+            code_revision="free-data-continuous-e2e",
+        )
+    selected_models = ControlledRuntimeModelSelector(
+        repositories.model_governance()
+    )
     composition = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation,
-        model_selector=selected_models,  # type: ignore[arg-type]
+        model_selector=selected_models,
         summary_repository=repositories.decision_system(clock=lambda: observed),
+        state_repository=repositories.state_system(clock=lambda: observed),
+        clock=lambda: observed,
     )
     journal = repositories.continuous_research(clock=lambda: observed)
     runner = ContinuousResearchTickRunner(
@@ -252,10 +278,6 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
             "FREE_DATA_PRODUCTION_AUTHORITY_DENIED",
         )
         assert first.child_references == ()
-        assert all(
-            receipt.production_authorized is False
-            for receipt in selected_models.receipts
-        )
         with pytest.raises(KeyError):
             repositories.decision_system().get_research_summary_for_tick(
                 run_id=command.run_id,
@@ -275,6 +297,12 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
     assert summary.evidence_ceiling is PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY
     assert summary.data_eligibility is DataEligibility.EXPLORATORY
     assert summary.provider_profile_id == TENCENT_FREE_OPERATIONAL_PROFILE_ID
+    assert all(
+        contract.product != "ifzq.gtimg.cn:minute"
+        for contract in summary.provider_contracts
+    )
+    assert summary.state_system_receipt.reference_kind == "STATE_SYSTEM_RECEIPT"
+    assert summary.candidate_set is not None
     assert summary.no_order and summary.no_fill and summary.no_broker
     assert summary.no_position_mutation_from_shadow
     by_stage = {stage.stage: stage for stage in summary.stages}
@@ -283,8 +311,11 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
     assert by_stage[StateResearchStage.CAPITAL_STATE].status is ResearchStageStatus.DATA_INSUFFICIENT
     assert len(summary.model_selection_receipts) == 6
     assert all(
-        receipt.purpose is authority_mode.runtime_purpose
-        for receipt in selected_models.receipts
+        repositories.model_governance()
+        .get_selection_receipt(reference.artifact_id)
+        .purpose
+        is authority_mode.runtime_purpose
+        for reference in summary.model_selection_receipts
     )
     assert replay_continuous_research(journal, command.run_id).integrity_status == "VERIFIED"
 
@@ -299,8 +330,10 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
         children=CanonicalFreeDataResearchComposition(
             service=service,
             invocation_builder=lambda _: invocation,
-            model_selector=selected_models,  # type: ignore[arg-type]
+            model_selector=selected_models,
             summary_repository=repositories.decision_system(clock=lambda: observed),
+            state_repository=repositories.state_system(clock=lambda: observed),
+            clock=lambda: observed,
         ),
         policy=continuous_policy,
         clock=lambda: observed,
@@ -441,6 +474,8 @@ def test_actual_selector_uses_mode_specific_slots_and_persists_rejections(
                 repositories.model_governance()
             ),
             summary_repository=repositories.decision_system(clock=lambda: observed),
+            state_repository=repositories.state_system(clock=lambda: observed),
+            clock=lambda: observed,
         )
         with pytest.raises(
             PermissionError,
@@ -519,6 +554,8 @@ def test_formal_run_due_entry_executes_staged_research_summary(
         str(tmp_path / "formal-runtime"),
         "--minimum-median-daily-amount",
         "1",
+        "--runtime-clock-mode",
+        "SIMULATED",
     ]
 
     assert continuous_cli.main([*common, "--at", "2025-02-03T14:30:00+08:00"]) == 0
@@ -531,9 +568,9 @@ def test_formal_run_due_entry_executes_staged_research_summary(
     assert prepared["status"] == "PREPARED"
     assert (history.calls, status.calls, quote.calls) == (1, 1, 1)
 
-    assert continuous_cli.main([*common, "--at", "2025-02-03T14:55:00+08:00"]) == 0
+    assert continuous_cli.main([*common, "--at", "2025-02-03T14:54:59+08:00"]) == 0
     completed = json.loads(capsys.readouterr().out)
-    assert completed["status"] == "COMPLETED"
+    assert completed["status"] == "COMPLETED", json.dumps(completed, sort_keys=True)
     assert completed["daily_decision_window_summary_delivered"] is True
     assert completed["summary_outcome"] == "MODEL_NOT_QUALIFIED_FOR_MODE"
     assert completed["entry_authority_granted"] is False
@@ -601,89 +638,156 @@ def _tick(command: ContinuousResearchCommand, suffix: str) -> RuntimeTickCommand
     )
 
 
-class _SelectedModels:
-    def __init__(self) -> None:
-        self.receipts: list[ModelSelectionReceipt] = []
-
-    def select(self, *, request, **_):
-        if request.authority_mode is RuntimeAuthorityMode.PRODUCTION:
-            receipts = tuple(
-                (
-                    stage,
-                    ModelSelectionReceipt.rejected(
-                        request_hash=canonical_hash(
-                            {"stage": stage.value, "tick": str(request.tick_id)}
-                        ),
-                        runtime_scope="CONTROLLED_OPERATION",
-                        model_slot=slot,
-                        purpose=request.authority_mode.runtime_purpose,
-                        governance_revision=0,
-                        runtime_lineage_hash=canonical_hash(
-                            {"runtime-lineage": stage.value}
-                        ),
-                        reason_codes=("PRODUCTION_AUTHORIZATION_MISSING",),
-                        selected_at=request.as_of_time,
-                    ),
-                )
-                for stage, slot in FREE_DATA_MODEL_SLOTS.items()
-            )
-            self.receipts.extend(receipt for _, receipt in receipts)
-            return GovernedControlledModels(receipts)
-        policy = ModelGovernancePolicy.create(
-            name=f"fixture-{request.authority_mode.value.lower()}",
-            version="1",
-            purpose=request.authority_mode.runtime_purpose,
-            allowed_lifecycle_statuses=(ModelLifecycleStatus.RESEARCH,),
-            required_evidence_kinds=(QualificationEvidenceKind.DATASET_INTEGRITY,),
-            allowed_data_eligibilities=(DataEligibility.EXPLORATORY,),
-            production_authorization=False,
+def _qualify_runtime_models(
+    *,
+    repositories: RepositoryFactory,
+    configuration: ControlledOperationRuntimeConfiguration,
+    purpose: RuntimePurpose,
+    observed: datetime,
+    code_revision: str,
+) -> None:
+    repository = repositories.model_governance()
+    registry = PersistentModelRegistry(repository)
+    policy = ModelGovernancePolicy.create(
+        name=f"free-data-{purpose.value.lower()}-e2e",
+        version="1",
+        purpose=purpose,
+        allowed_lifecycle_statuses=(ModelLifecycleStatus.RESEARCH,),
+        required_evidence_kinds=(QualificationEvidenceKind.DATASET_INTEGRITY,),
+        allowed_data_eligibilities=(DataEligibility.EXPLORATORY,),
+        production_authorization=False,
+    )
+    repository.record_policy(
+        policy,
+        actor="e2e-governance",
+        reason="real mode-specific positive-path authority",
+        created_at=observed - timedelta(minutes=10),
+        idempotency_key=f"policy-{purpose.value}",
+    )
+    configured = {
+        StateResearchStage.MARKET_REGIME: configuration.research.market_regime,
+        StateResearchStage.THEME_ROTATION: configuration.research.theme_rotation,
+        StateResearchStage.CAPITAL_STATE: configuration.research.capital_evolution,
+        StateResearchStage.CANDIDATE: configuration.research.candidate_discovery,
+        StateResearchStage.SIGNAL: configuration.signal_model,
+        StateResearchStage.FORECAST: configuration.path_forecast,
+    }
+    for stage, slot in FREE_DATA_MODEL_SLOTS.items():
+        model = configured[stage]
+        feature_ids = (
+            ()
+            if stage
+            in {
+                StateResearchStage.MARKET_REGIME,
+                StateResearchStage.THEME_ROTATION,
+                StateResearchStage.CAPITAL_STATE,
+            }
+            else (FeatureDefinitionId(f"e2e-{stage.value.lower()}-feature-v1"),)
         )
-        receipts = []
-        for index, (stage, slot) in enumerate(FREE_DATA_MODEL_SLOTS.items(), start=1):
-            definition_hash = canonical_hash({"stage": stage.value})[7:]
-            model_id = ModelId(f"selected-{stage.value.lower()}-v1")
-            champion = ModelRuntimeAssignment.create(
-                runtime_scope="CONTROLLED_OPERATION",
-                model_slot=slot,
-                purpose=request.authority_mode.runtime_purpose,
-                lane=AssignmentLane.CHAMPION,
-                model_id=model_id,
-                definition_hash=definition_hash,
-                policy_id=policy.policy_id,
-                policy_hash=policy.policy_hash,
-                effective_at=request.as_of_time - timedelta(seconds=1),
-                actor="fixture-governance",
-                reason="qualified fixture model",
-                approval_ref="fixture-approval",
-                governance_revision=index,
-            )
-            receipt = ModelSelectionReceipt.accepted(
-                request_hash=canonical_hash(
-                    {"stage": stage.value, "tick": str(request.tick_id)}
+        definition = ModelDefinition(
+            model_id=model.model_id,
+            name=f"FreeData {stage.value} E2E",
+            version=model.model_version,
+            family="free-data-canonical-e2e",
+            role=(ModelRole.CONTEXT if not feature_ids else ModelRole.CANDIDATE),
+            target_id=TargetId("free-data-e2e-target-v1"),
+            universe_id=UniverseId("free-data-e2e-universe-v1"),
+            feature_ids=feature_ids,
+            implementation_ref=f"market_regime_alpha.e2e:{stage.value.lower()}",
+            parameter_hash=model.configuration_hash,
+            decision_time_convention="14:55 Asia/Shanghai",
+            horizon="research-only",
+            supported_data_eligibilities=(DataEligibility.EXPLORATORY,),
+        )
+        registered = registry.register(
+            definition,
+            idempotency_key=f"register-{purpose.value}-{stage.value}",
+        )
+        research = registry.transition(
+            definition.model_id,
+            expected_version=registered.version,
+            idempotency_key=f"research-{purpose.value}-{stage.value}",
+            to_status=ModelLifecycleStatus.RESEARCH,
+            changed_at=observed - timedelta(minutes=9),
+            reason="explicit Research/Shadow engineering qualification",
+            evidence_refs=(f"e2e:{purpose.value}:{stage.value}",),
+            evidence_level=EvidenceLevel.EXPLORATORY,
+        )
+        protocol = ArtifactLineageReference(
+            "VALIDATION_PROTOCOL",
+            ArtifactId(f"free-data-{purpose.value.lower()}-protocol-v1"),
+            canonical_hash({"protocol": purpose.value}),
+        )
+        lineage = repository.record_version_lineage(
+            ModelVersionLineage.create(
+                model_id=definition.model_id,
+                model_version=definition.version,
+                definition_hash=definition.definition_hash,
+                target_id=definition.target_id,
+                universe_contract_id=definition.universe_id,
+                feature_definition_ids=definition.feature_ids,
+                model_parameter_hash=definition.parameter_hash,
+                configuration=ArtifactLineageReference(
+                    "MODEL_CONFIGURATION",
+                    model.configuration_id,
+                    model.configuration_hash,
                 ),
-                runtime_scope="CONTROLLED_OPERATION",
-                model_slot=slot,
-                purpose=request.authority_mode.runtime_purpose,
-                governance_revision=index,
-                policy=policy,
-                champion=champion,
-                challengers=(),
-                qualification_decision_id=ArtifactId(
-                    f"qualification-{stage.value.lower()}"
+                implementation_ref=definition.implementation_ref,
+                code_revision=code_revision,
+                code_hash=canonical_hash({"code_revision": code_revision}),
+                validation_protocol_refs=(protocol,),
+                supported_data_eligibilities=definition.supported_data_eligibilities,
+                created_at=observed - timedelta(minutes=8),
+            ),
+            actor="e2e-governance",
+            reason="bind actual Runtime model/config version",
+            idempotency_key=f"lineage-{purpose.value}-{stage.value}",
+        )
+        repository.record_evidence(
+            ModelQualificationEvidence.create(
+                model_id=definition.model_id,
+                definition_hash=definition.definition_hash,
+                lineage_id=lineage.lineage_id,
+                lineage_hash=lineage.lineage_hash,
+                evidence_kind=QualificationEvidenceKind.DATASET_INTEGRITY,
+                outcome=QualificationEvidenceOutcome.SATISFIED,
+                evidence=ArtifactLineageReference(
+                    "DATASET_INTEGRITY",
+                    ArtifactId(f"e2e-evidence-{purpose.value.lower()}-{stage.value.lower()}"),
+                    canonical_hash({"evidence": purpose.value, "stage": stage.value}),
                 ),
-                qualification_decision_hash=canonical_hash(
-                    {"qualification": stage.value}
-                ),
-                selected_registry_version=1,
-                runtime_lineage_hash=canonical_hash(
-                    {"runtime-lineage": stage.value}
-                ),
-                evidence_ids=(ArtifactId(f"evidence-{stage.value.lower()}"),),
-                selected_at=request.as_of_time,
-            )
-            receipts.append((stage, receipt))
-            self.receipts.append(receipt)
-        return GovernedControlledModels(tuple(receipts))
+                validation_protocol_ref=protocol,
+                available_at=observed - timedelta(minutes=7),
+                recorded_at=observed - timedelta(minutes=7),
+                actor="e2e-reviewer",
+                reason="positive-path engineering evidence",
+            ),
+            idempotency_key=f"evidence-{purpose.value}-{stage.value}",
+        )
+        repository.qualify(
+            model_id=definition.model_id,
+            policy_id=policy.policy_id,
+            actor="e2e-reviewer",
+            reason="approve mode-specific exploratory execution",
+            approval_ref=f"e2e:{purpose.value}:{stage.value}",
+            decided_at=observed - timedelta(minutes=6),
+            expected_registry_version=research.version,
+            idempotency_key=f"qualify-{purpose.value}-{stage.value}",
+        )
+        repository.assign(
+            runtime_scope="CONTROLLED_OPERATION",
+            model_slot=slot,
+            purpose=purpose,
+            lane=AssignmentLane.CHAMPION,
+            model_id=definition.model_id,
+            policy_id=policy.policy_id,
+            expected_governance_revision=repository.current_revision(),
+            effective_at=observed - timedelta(minutes=5),
+            actor="e2e-governance",
+            reason="mode-specific positive-path Champion",
+            approval_ref=f"e2e-assignment:{purpose.value}:{stage.value}",
+            idempotency_key=f"assign-{purpose.value}-{stage.value}",
+        )
 
 
 def _continuous_command(symbols, calendar, configuration, authority_mode):

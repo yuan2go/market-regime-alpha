@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Any, Callable, Mapping
 
@@ -181,6 +181,7 @@ class ContinuousResearchScheduleRunner:
         run_command: ContinuousResearchCommand,
         trading_day: TradingDayAssessment,
         now: datetime,
+        predecision_lead: timedelta = timedelta(0),
     ) -> ContinuousScheduleRunResult:
         require_utc_second("now", now)
         _validate_trading_day(run_command, trading_day)
@@ -204,6 +205,7 @@ class ContinuousResearchScheduleRunner:
                 run_command=run_command,
                 policy=self._policy,
                 now=now,
+                predecision_lead=predecision_lead,
             )
             if reserved is None:
                 return ContinuousScheduleRunResult(

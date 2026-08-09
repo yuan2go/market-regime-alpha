@@ -21,9 +21,17 @@ def state_research_pipeline_identity(
 ) -> tuple[ArtifactId, str]:
     """Recompute the exact ordered State pipeline aggregate identity."""
 
+    # Signal and Forecast belong to Canonical Lifecycle.  STATE_SYSTEM owns the
+    # observation-to-candidate boundary and therefore hashes only those seven
+    # owner artifacts.
     expected_order = (
-        "OBSERVATION", "MARKET_REGIME", "ETF_ROTATION", "THEME_ROTATION",
-        "CAPITAL_STATE", "DYNAMIC_POOL", "CANDIDATE", "SIGNAL", "FORECAST",
+        "OBSERVATION",
+        "MARKET_REGIME",
+        "ETF_ROTATION",
+        "THEME_ROTATION",
+        "CAPITAL_STATE",
+        "DYNAMIC_POOL",
+        "CANDIDATE",
     )
     if tuple(item[0] for item in stages) != expected_order:
         raise ValueError("State pipeline stages must use the canonical order")
@@ -32,7 +40,7 @@ def state_research_pipeline_identity(
         if available_at > as_of_time:
             raise ValueError("State pipeline stage cannot be available after AsOfTime")
     payload = {
-        "schema": "state_research_pipeline_result/v1",
+        "schema": "state_research_pipeline_result/v2",
         "run_id": str(run_id),
         "tick_id": str(tick_id),
         "as_of_time": canonical_datetime(as_of_time),

@@ -101,6 +101,35 @@ def test_schedule_reserves_one_due_tick_and_persists_next_tick(
     assert journal.get_run(command.run_id).current_tick_sequence == 1
 
 
+def test_scheduler_can_reserve_decision_tick_one_second_early(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    command = _command()
+    policy = default_continuous_decision_window_policy()
+    journal, scheduler = _scheduler(
+        postgres_factory,
+        ScriptedProvider([_provider_result(HASHES[8])]),
+    )
+    journal.create_or_get(command)
+    decision_time = NOW + timedelta(seconds=1)
+    journal.initialize_schedule(
+        run_command=command,
+        policy=policy,
+        trading_day=_trading_day(),
+        initial_tick_at=decision_time,
+    )
+
+    result = scheduler.run_due_once(
+        run_command=command,
+        trading_day=_trading_day(),
+        now=NOW,
+        predecision_lead=timedelta(seconds=1),
+    )
+
+    assert result.tick_result is not None
+    assert result.tick_result.tick.command.observed_at == decision_time
+
+
 def test_non_trading_day_stops_without_creating_a_tick(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:

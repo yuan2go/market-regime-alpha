@@ -53,6 +53,7 @@ def test_cli_exposes_one_formal_free_data_execution_entry() -> None:
     )
 
     assert args.operation == "run-due"
+    assert args.runtime_clock_mode == "LIVE"
 
 
 def test_cli_prepare_admit_report_and_replay_are_structured(

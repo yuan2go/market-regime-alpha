@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, time
 from pathlib import Path
+from time import sleep
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -26,11 +27,13 @@ from market_regime_alpha.application.controlled_operation.runtime_configuration 
     ControlledOperationRuntimeConfiguration,
 )
 from market_regime_alpha.application.controlled_operation.runner import (
+    CandidateStateTransform,
     ControlledDecisionTimeOperationRunner,
     ControlledOperationDataBlocked,
     ControlledOperationDecisionResult,
     ControlledOperationInputPaths,
     ControlledOperationPreparation,
+    Sleeper,
 )
 from market_regime_alpha.application.daily_loop import (
     DailyLoopRunner,
@@ -60,6 +63,8 @@ from market_regime_alpha.data.providers.public_composite import (
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     load_verified_public_source_stage_artifact,
 )
+from market_regime_alpha.market_data.minute_batch import MinuteClientFactory
+from market_regime_alpha.forecasting.sample_provider import PathForecastSampleProvider
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.universe.daily_exploratory import DailyUniversePolicy
 
@@ -132,6 +137,9 @@ class FreeDataOperationService:
         code_revision: str,
         clock: Clock,
         live_profile: PublicCompositeLiveProfile | None = None,
+        minute_client_factory: MinuteClientFactory | None = None,
+        sleeper: Sleeper = sleep,
+        forecast_sample_provider: PathForecastSampleProvider | None = None,
     ) -> None:
         if not code_revision or code_revision != code_revision.strip():
             raise ValueError("code_revision must be a non-empty trimmed value")
@@ -140,6 +148,24 @@ class FreeDataOperationService:
         self._code_revision = code_revision
         self._clock = clock
         self._live_profile = live_profile
+        self._minute_client_factory = minute_client_factory
+        self._sleeper = sleeper
+        self._forecast_sample_provider = forecast_sample_provider
+
+    def wait_until(self, instant: datetime) -> datetime:
+        """Wait on the configured trusted/simulated clock without backfilling time."""
+
+        observed = self._clock()
+        remaining = (instant - observed).total_seconds()
+        if remaining <= 0:
+            return observed
+        if remaining > 60:
+            raise ValueError("DecisionTime is too far ahead for bounded Runtime wait")
+        self._sleeper(remaining)
+        observed = self._clock()
+        if observed < instant:
+            raise ValueError("Runtime clock did not reach DecisionTime")
+        return observed
 
     def prepare_static_sources(
         self,
@@ -168,6 +194,7 @@ class FreeDataOperationService:
         request: FreeDataPreparationRequest,
         runtime_configuration_path: Path,
         idempotency_key: str,
+        supplemental_evidence_path: Path | None = None,
     ) -> FreeDataOperationPreparation:
         configuration_path = runtime_configuration_path.resolve()
         configuration = self._validate_request(
@@ -206,6 +233,7 @@ class FreeDataOperationService:
                 full_source_manifest=source.acquired.source_manifest,
                 output_root=operation_root,
                 runtime_configuration_path=configuration_path,
+                supplemental_evidence_path=supplemental_evidence_path,
             )
         except Exception as exc:
             blocked = FreeDataBlockedArtifact.create(
@@ -281,11 +309,14 @@ class FreeDataOperationService:
         request: FreeDataPreparationRequest,
         runtime_configuration_path: Path,
         idempotency_key: str,
+        candidate_state_transform: CandidateStateTransform | None = None,
+        supplemental_evidence_path: Path | None = None,
     ) -> FreeDataOperationExecution:
         preparation = self.prepare(
             request=request,
             runtime_configuration_path=runtime_configuration_path,
             idempotency_key=idempotency_key,
+            supplemental_evidence_path=supplemental_evidence_path,
         )
         operation_root = self._operation_root(request)
         runner = self._controlled_runner(operation_root)
@@ -295,6 +326,7 @@ class FreeDataOperationService:
                 policy=free_data_decision_time_operation_policy(),
                 inputs=preparation.controlled_preparation.input_paths,
                 _resume_admitted_child=True,
+                candidate_state_transform=candidate_state_transform,
             )
         except ControlledOperationDataBlocked as exc:
             snapshot = self._repositories.controlled_operation(
@@ -318,8 +350,38 @@ class FreeDataOperationService:
             blocked_reason=None,
         )
 
+    def record_model_not_qualified(
+        self,
+        *,
+        preparation: FreeDataOperationPreparation,
+        reason_codes: tuple[str, ...],
+    ) -> FreeDataOperationExecution:
+        """Persist a real Controlled blocked package without model execution."""
+
+        snapshot, package = self._controlled_runner(
+            self._operation_root_from_preparation(preparation)
+        ).record_pre_research_blocked(
+            preparation=preparation.controlled_preparation,
+            policy=free_data_decision_time_operation_policy(),
+            reason_codes=reason_codes,
+        )
+        return FreeDataOperationExecution(
+            preparation=preparation,
+            snapshot=snapshot,
+            decision=None,
+            terminal_package=package,
+            blocked_reason="MODEL_NOT_QUALIFIED_FOR_MODE",
+        )
+
     def _operation_root(self, request: FreeDataPreparationRequest) -> Path:
         return self._output_root / request.command_hash.split(":", 1)[1][:24]
+
+    def _operation_root_from_preparation(
+        self, preparation: FreeDataOperationPreparation
+    ) -> Path:
+        return self._output_root / preparation.prepared_inputs.manifest.command_hash.split(
+            ":", 1
+        )[1][:24]
 
     def _validate_request(
         self,
@@ -393,6 +455,9 @@ class FreeDataOperationService:
             feature_repository_factory=(
                 self._repositories.feature_materialization_for_path
             ),
+            minute_client_factory=self._minute_client_factory,
+            sleeper=self._sleeper,
+            forecast_sample_provider=self._forecast_sample_provider,
         )
 
 

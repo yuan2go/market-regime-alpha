@@ -1,0 +1,575 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from market_regime_alpha.application.continuous_research.composition import (
+    FreeDataPreparationInvocation,
+)
+from market_regime_alpha.application.continuous_research.contracts import (
+    ContinuousResearchCommand,
+)
+from market_regime_alpha.application.continuous_research.free_data_runtime import (
+    CanonicalFreeDataProvider,
+    CanonicalFreeDataResearchComposition,
+    ControlledRuntimeModelSelector,
+)
+from market_regime_alpha.application.continuous_research.journal import (
+    ContinuousChildKind,
+    ContinuousTickStatus,
+)
+from market_regime_alpha.application.continuous_research.policy import (
+    default_continuous_decision_window_policy,
+)
+from market_regime_alpha.application.continuous_research.ports import (
+    ProviderAcquisitionRequest,
+)
+from market_regime_alpha.application.continuous_research.replay import (
+    replay_continuous_research,
+)
+from market_regime_alpha.application.continuous_research.runner import (
+    ContinuousResearchTickRunner,
+)
+from market_regime_alpha.application.decision_system.research_summary import (
+    ResearchDailySummaryOutcome,
+    ResearchStageResult,
+    ResearchStageStatus,
+)
+from market_regime_alpha.application.controlled_operation.input_artifacts import (
+    publish_controlled_runtime_configuration,
+)
+from market_regime_alpha.application.free_data_operation import (
+    FreeDataInstrument,
+    FreeDataOperationScale,
+    FreeDataOperationService,
+    FreeDataPreparationRequest,
+)
+from market_regime_alpha.application.operational_research.contracts import (
+    CapitalObservationEvidence,
+    ETFThemeMappingEvidence,
+    PITThemeMembershipEvidence,
+    StatefulETFObservationEvidence,
+    SupplementalResearchEvidenceBundle,
+    ThemeObservationEvidence,
+)
+from market_regime_alpha.application.operational_research.supplemental_artifact import (
+    publish_supplemental_research_evidence,
+)
+from market_regime_alpha.application.state_system.runtime import (
+    StateResearchStage,
+)
+from market_regime_alpha.core.identity import ArtifactId, FeatureDefinitionId, ProviderId
+from market_regime_alpha.core.time import AvailabilityTime, DecisionTime, RetrievedAt
+from market_regime_alpha.data.contracts import DataEligibility, SourceArtifactReference
+from market_regime_alpha.data.providers.public_composite import (
+    TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+    TencentFreeOperationalProfile,
+)
+from market_regime_alpha.data.source_manifest import SourceManifest
+from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.forecasting.path import (
+    PATH_FORECAST_SAMPLE_SCHEMA,
+    PathForecastSample,
+)
+from market_regime_alpha.forecasting.sample_provider import PathForecastSampleBatch
+from market_regime_alpha.market_data import AssetType
+from market_regime_alpha.market_data.minute_source import (
+    MinuteSourceRequest,
+    MinuteSourceResponse,
+)
+from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
+from market_regime_alpha.persistence.repository_factory import RepositoryFactory
+from market_regime_alpha.persistence.settings import DatabaseSettings
+from market_regime_alpha.research.platform_v2.inputs import (
+    ETFObservation,
+    MarketObservation,
+    SymbolResearchObservation,
+)
+from market_regime_alpha.strategies.entry.contracts import (
+    EntryPathObservationStatus,
+    EntryPathReasonCode,
+)
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from tests.application.daily_loop.public_fixture import DECISION
+from tests.application.daily_loop.test_runner import _qualified_stage_clients
+from tests.persistence.postgres.conftest import TEST_DATABASE_URL_ENV
+from tests.persistence.postgres.test_free_data_continuous_runtime import (
+    _calendar,
+    _configuration,
+    _qualify_runtime_models,
+    _tick,
+)
+
+
+@pytest.mark.parametrize(
+    ("authority_mode", "liquidity_eligible", "expected_outcome"),
+    (
+        (
+            RuntimeAuthorityMode.RESEARCH,
+            True,
+            ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
+        ),
+        (
+            RuntimeAuthorityMode.SHADOW,
+            True,
+            ResearchDailySummaryOutcome.RESEARCH_CANDIDATE,
+        ),
+        (
+            RuntimeAuthorityMode.RESEARCH,
+            False,
+            ResearchDailySummaryOutcome.NO_ACTION,
+        ),
+    ),
+)
+def test_real_stateful_positive_path_reaches_research_candidate(
+    tmp_path: Path,
+    postgres_factory: PostgresConnectionFactory,
+    authority_mode: RuntimeAuthorityMode,
+    liquidity_eligible: bool,
+    expected_outcome: ResearchDailySummaryOutcome,
+) -> None:
+    policy, history, status, quote = _qualified_stage_clients()
+    calendar = _calendar()
+    configuration = _configuration(calendar)
+    configuration_path = publish_controlled_runtime_configuration(
+        root=tmp_path / "runtime-configurations",
+        artifact=configuration,
+    )
+    repositories = RepositoryFactory(
+        DatabaseSettings.from_sources(
+            database_url=os.environ[TEST_DATABASE_URL_ENV],
+            application_schema=postgres_factory.application_schema,
+            environ={},
+        ),
+        postgres_factory=postgres_factory,
+    )
+    decision = DECISION.value.astimezone(UTC)
+    runtime_now = [decision - timedelta(seconds=1)]
+    minute_calls: list[tuple[str, datetime, datetime]] = []
+
+    def minute_factory(symbol: str, _attempt: int, _timeout: float):
+        return _MinuteClient(symbol, runtime_now, minute_calls)
+
+    def advance(seconds: float) -> None:
+        runtime_now[0] += timedelta(seconds=seconds)
+
+    service = FreeDataOperationService(
+        repositories=repositories,
+        output_root=tmp_path / "stateful-runtime",
+        code_revision="free-data-stateful-e2e",
+        clock=lambda: runtime_now[0],
+        live_profile=TencentFreeOperationalProfile(
+            history_client=history,
+            security_status_client=status,
+            current_client=quote,
+        ),
+        minute_client_factory=minute_factory,
+        sleeper=advance,
+        forecast_sample_provider=_HistoricalSampleProvider(decision),
+    )
+    free_request = FreeDataPreparationRequest(
+        scale=FreeDataOperationScale.SMOKE,
+        provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+        decision_time=DECISION,
+        created_at=decision,
+        code_revision="free-data-stateful-e2e",
+        instruments=tuple(
+            FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
+            for symbol in policy.symbols
+        ),
+        membership_source="CANONICAL_STATEFUL_E2E",
+        minimum_history_sessions=21,
+        liquidity_lookback_sessions=21,
+        minimum_median_daily_amount=Decimal("1"),
+        configuration_hash=configuration.configuration_hash,
+    )
+    supplemental_path = publish_supplemental_research_evidence(
+        root=tmp_path / "supplemental",
+        bundle=_complete_supplemental(
+            policy.symbols,
+            decision,
+            liquidity_eligible=liquidity_eligible,
+        ),
+    )
+    continuous_policy = default_continuous_decision_window_policy()
+    command = ContinuousResearchCommand.create(
+        idempotency_key=f"free-data-stateful-positive-e2e-{authority_mode.value}",
+        trading_date=DECISION.value.date(),
+        requested_symbols=policy.symbols,
+        trading_calendar_id=calendar.artifact_id,
+        trading_calendar_hash=calendar.content_hash,
+        policy_id=continuous_policy.policy_id,
+        policy_hash=continuous_policy.content_hash,
+        provider_configuration_id=ArtifactId("canonical-free-data-profile-v1"),
+        provider_configuration_hash=canonical_hash(
+            {"profile": TENCENT_FREE_OPERATIONAL_PROFILE_ID}
+        ),
+        research_configuration_id=configuration.configuration_id,
+        research_configuration_hash=configuration.configuration_hash,
+        code_revision="free-data-stateful-e2e",
+        authority_mode=authority_mode,
+        limitations=(
+            "ENTRY_BLOCKED",
+            "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+            "FORMAL_PIT_NOT_ESTABLISHED",
+            "NO_BROKER_AUTHORITY",
+        ),
+    )
+    invocation = FreeDataPreparationInvocation(
+        request=free_request,
+        runtime_configuration_path=configuration_path,
+        idempotency_key=f"{command.run_id}:free-data",
+        supplemental_evidence_path=supplemental_path,
+    )
+    runtime_now[0] = decision - timedelta(minutes=25)
+    service.prepare_static_sources(
+        request=free_request,
+        runtime_configuration_path=configuration_path,
+    )
+    runtime_now[0] = decision - timedelta(seconds=1)
+    service.prepare(
+        request=free_request,
+        runtime_configuration_path=configuration_path,
+        idempotency_key=invocation.idempotency_key,
+        supplemental_evidence_path=supplemental_path,
+    )
+    _qualify_runtime_models(
+        repositories=repositories,
+        configuration=configuration,
+        purpose=authority_mode.runtime_purpose,
+        observed=decision,
+        code_revision="free-data-stateful-e2e",
+    )
+    provider = CanonicalFreeDataProvider(
+        service=service,
+        invocation_builder=lambda _: invocation,
+        clock=lambda: runtime_now[0],
+    )
+    journal = repositories.continuous_research(clock=lambda: runtime_now[0])
+    runner = ContinuousResearchTickRunner(
+        journal=journal,
+        provider=provider,
+        children=CanonicalFreeDataResearchComposition(
+            service=service,
+            invocation_builder=lambda _: invocation,
+            model_selector=ControlledRuntimeModelSelector(
+                repositories.model_governance()
+            ),
+            summary_repository=repositories.decision_system(
+                clock=lambda: runtime_now[0]
+            ),
+            state_repository=repositories.state_system(
+                clock=lambda: runtime_now[0]
+            ),
+            clock=lambda: runtime_now[0],
+        ),
+        policy=continuous_policy,
+        clock=lambda: runtime_now[0],
+    )
+    tick = _tick(command, "positive")
+    provider_request = ProviderAcquisitionRequest(
+        provider_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+        product="BAOSTOCK_TENCENT_CANONICAL_FREE_DATA",
+        request_hash=free_request.command_hash,
+        provider_revision="canonical-free-data-profile-v1",
+    )
+
+    result = runner.execute(
+        run_command=command,
+        tick_command=tick,
+        provider_request=provider_request,
+    )
+
+    assert result.tick.status is ContinuousTickStatus.COMPLETED
+    summary = repositories.decision_system().get_research_summary_for_tick(
+        run_id=command.run_id,
+        tick_id=tick.tick_id,
+        runtime_mode=authority_mode,
+    )
+    assert summary.outcome is expected_outcome
+    state_child = next(
+        item
+        for item in result.child_references
+        if item.child_kind is ContinuousChildKind.STATE_SYSTEM
+    )
+    assert summary.state_system_receipt.artifact_id == state_child.child_receipt_id
+    assert summary.state_system_receipt.content_hash == state_child.child_receipt_hash
+    assert summary.candidate_set is not None
+    assert summary.created_at >= decision
+    by_stage = {item.stage: item for item in summary.stages}
+    assert all(item.status is ResearchStageStatus.COMPLETED for item in summary.stages)
+    if liquidity_eligible:
+        assert by_stage[StateResearchStage.CANDIDATE].result is ResearchStageResult.RESEARCH_QUALIFIED
+        assert by_stage[StateResearchStage.SIGNAL].result is ResearchStageResult.RESEARCH_QUALIFIED
+        assert by_stage[StateResearchStage.FORECAST].result is ResearchStageResult.RESEARCH_QUALIFIED
+        assert minute_calls
+        assert all(started <= received <= decision for _, started, received in minute_calls)
+    else:
+        assert by_stage[StateResearchStage.CANDIDATE].result is ResearchStageResult.EMPTY
+        assert by_stage[StateResearchStage.SIGNAL].result is ResearchStageResult.EMPTY
+        assert by_stage[StateResearchStage.FORECAST].result is ResearchStageResult.EMPTY
+        assert minute_calls == []
+    assert by_stage[StateResearchStage.OBSERVATION].stage_completed_at < decision
+    assert any(
+        item.product == "ifzq.gtimg.cn:minute"
+        for item in summary.provider_contracts
+    ) is liquidity_eligible
+    assert len({symbol for symbol, _, _ in minute_calls}) <= 5
+    if liquidity_eligible:
+        assert {item.child_kind for item in result.child_references} == set(
+            ContinuousChildKind
+        )
+    assert summary.no_order and summary.no_fill and summary.no_broker
+    assert summary.no_position_mutation_from_shadow
+    assert summary.evidence_ceiling.value == "FREE_DATA_EXPLORATORY"
+    assert replay_continuous_research(journal, command.run_id).integrity_status == "VERIFIED"
+
+    restarted = runner.execute(
+        run_command=command,
+        tick_command=tick,
+        provider_request=provider_request,
+    )
+    assert restarted.child_references == result.child_references
+    assert len(minute_calls) == len({symbol for symbol, _, _ in minute_calls})
+
+
+def _complete_supplemental(
+    symbols: tuple[str, ...],
+    decision: datetime,
+    *,
+    liquidity_eligible: bool = True,
+) -> SupplementalResearchEvidenceBundle:
+    decision_time = DecisionTime(decision)
+    available = AvailabilityTime(decision - timedelta(seconds=10))
+    source_id = ArtifactId("free-supplemental-positive-source-v1")
+    source_manifest = SourceManifest(
+        provider_profile_id="FREE_SUPPLEMENTAL_EXPLICIT_V1",
+        decision_time=decision_time,
+        source_artifacts=(
+            SourceArtifactReference(
+                artifact_id=source_id,
+                provider_id=ProviderId("provider-free-supplemental-explicit"),
+                retrieved_at=RetrievedAt(available.value),
+                content_hash=canonical_hash({"free-supplemental": "positive"}),
+                locator="postgres://free-supplemental/positive-v1",
+            ),
+        ),
+        fields=(),
+        source_conflicts=(),
+        limitations=("FREE_DATA_EXPLORATORY", "FORMAL_PIT_NOT_ESTABLISHED"),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        schema_version=SourceManifest.SCHEMA_V2,
+    )
+    theme = ThemeObservationEvidence(
+        theme_id="theme-positive",
+        theme_name="Positive Theme",
+        benchmark_id="000300.SH",
+        proxy_etf_ids=("510001.SH",),
+        available_at=available,
+        source_artifact_id=source_id,
+        relative_strength_1d=0.08,
+        relative_strength_3d=0.10,
+        relative_strength_5d=0.12,
+        relative_strength_10d=0.15,
+        amount_expansion=0.60,
+        breadth=0.85,
+        new_high_breadth=0.70,
+        leader_strength=0.90,
+        participation_change=0.50,
+        rank_persistence=0.90,
+        confidence=1.0,
+        reason_codes=("FREE_SUPPLEMENTAL_POSITIVE",),
+    )
+    capital = CapitalObservationEvidence(
+        theme_id=theme.theme_id,
+        available_at=available,
+        source_artifact_id=source_id,
+        etf_amount_expansion=0.70,
+        amount_persistence=0.85,
+        capital_concentration=0.60,
+        diffusion_score=0.80,
+        reason_codes=("PUBLIC_PROXY_NOT_ACTOR_INTENT",),
+    )
+    return SupplementalResearchEvidenceBundle(
+        source_manifest=source_manifest,
+        decision_time=decision_time,
+        market_observation=MarketObservation(
+            available_at=available,
+            source_artifact_id=source_id,
+            market_direction_return=0.03,
+            market_intraday_range_to_cutoff=0.01,
+            market_amount_change_same_cutoff=0.50,
+            candidate_breadth_at_cutoff=0.90,
+            limit_structure_score=0.50,
+            coverage=1.0,
+            reason_codes=("FREE_SUPPLEMENTAL_POSITIVE",),
+        ),
+        theme_observations=(theme,),
+        capital_observations=(capital,),
+        symbol_observations=tuple(
+            SymbolResearchObservation(
+                symbol=symbol,
+                available_at=available,
+                source_artifact_id=source_id,
+                symbol_relative_strength=0.30,
+                symbol_amount_expansion=0.50,
+                theme_participation_contribution=0.40,
+                leader_correlation=0.80,
+                leader_lag=0.0,
+                rank_persistence=0.90,
+                amount_persistence=0.80,
+                liquidity_eligible=liquidity_eligible,
+                history_complete=True,
+                status_known=True,
+                source_feature_ids=(FeatureDefinitionId("free-symbol-positive-v1"),),
+                reason_codes=("FREE_SUPPLEMENTAL_POSITIVE",),
+            )
+            for symbol in symbols
+        ),
+        theme_memberships=tuple(
+            PITThemeMembershipEvidence(
+                symbol=symbol,
+                primary_theme_id=theme.theme_id,
+                supporting_theme_ids=(),
+                available_at=available,
+                source_artifact_id=source_id,
+            )
+            for symbol in symbols
+        ),
+        etf_theme_mappings=(
+            ETFThemeMappingEvidence(
+                etf_id="510001.SH",
+                theme_id=theme.theme_id,
+                available_at=available,
+                source_artifact_id=source_id,
+            ),
+        ),
+        etf_observations=(
+            ETFObservation(
+                etf_id="510001.SH",
+                theme_id=theme.theme_id,
+                available_at=available,
+                source_artifact_id=source_id,
+                relative_strength=0.30,
+                amount_expansion=0.50,
+            ),
+        ),
+        stock_daily_bars=(),
+        missing_evidence=(),
+        reason_codes=("EXPLICIT_FREE_SUPPLEMENTAL_COMPLETE",),
+        created_at=available.value,
+        data_eligibility=DataEligibility.EXPLORATORY,
+        stateful_etf_observations=(
+            StatefulETFObservationEvidence(
+                etf_id="510001.SH",
+                benchmark_id="000300.SH",
+                available_at=available,
+                source_artifact_id=source_id,
+                relative_strength_1d=0.30,
+                relative_strength_3d=0.35,
+                relative_strength_5d=0.40,
+                relative_strength_10d=0.45,
+                benchmark_excess=0.30,
+                amount_change=0.70,
+                amount_persistence=0.90,
+                volume_change=0.60,
+                drawdown=0.05,
+                volatility=0.10,
+                diffusion=0.90,
+                liquidity=1.0,
+                data_coverage=1.0,
+                reason_codes=("FREE_SUPPLEMENTAL_POSITIVE",),
+            ),
+        ),
+    )
+
+
+class _MinuteClient:
+    def __init__(
+        self,
+        symbol: str,
+        runtime_now: list[datetime],
+        calls: list[tuple[str, datetime, datetime]],
+    ) -> None:
+        self._symbol = symbol
+        self._runtime_now = runtime_now
+        self._calls = calls
+
+    def fetch(self, request: MinuteSourceRequest) -> MinuteSourceResponse:
+        observed = self._runtime_now[0]
+        self._calls.append((self._symbol, observed, observed))
+        code = f"{self._symbol[-2:].lower()}{self._symbol[:6]}"
+        rows = [
+            f"{1440 + index:04d} {10 + index / 100:.3f} "
+            f"{1000 + index * 100} {100000 + index * 10000}"
+            for index in range(15)
+        ]
+        payload = json.dumps(
+            {
+                "code": 0,
+                "data": {
+                    code: {
+                        "data": {
+                            "date": request.decision_time.strftime("%Y%m%d"),
+                            "data": rows,
+                        }
+                    }
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+        return MinuteSourceResponse(
+            request=request,
+            request_started_at=observed,
+            response_received_at=observed,
+            http_status=200,
+            content_type="application/json",
+            raw_payload=payload,
+            provider_timestamp=request.decision_time.strftime("%Y%m%d"),
+            limitations=("ENGINEERING_POSITIVE_PATH",),
+        )
+
+
+class _HistoricalSampleProvider:
+    def __init__(self, decision: datetime) -> None:
+        self._decision = decision
+
+    def load_samples(self, *, signal_snapshot, configuration, decision_time):
+        samples = tuple(
+            PathForecastSample(
+                sample_id=ArtifactId(
+                    f"free-path-sample-{signal_snapshot.symbol}-{index:02d}"
+                ),
+                source_artifact_id=ArtifactId(
+                    f"free-path-outcome-{signal_snapshot.symbol}-{index:02d}"
+                ),
+                source_content_hash=canonical_hash(
+                    {"symbol": signal_snapshot.symbol, "sample": index}
+                ),
+                symbol=signal_snapshot.symbol,
+                target_id=configuration.target_contract.target_id,
+                sample_decision_time=DecisionTime(
+                    self._decision - timedelta(days=40 - index)
+                ),
+                available_at=AvailabilityTime(
+                    self._decision - timedelta(days=39 - index)
+                ),
+                observation_status=EntryPathObservationStatus.AVAILABLE,
+                observation_reason_code=EntryPathReasonCode.OUTCOME_RESOLVED,
+                realized_mfe=0.04 + index / 1000,
+                realized_mae=-0.01,
+                realized_return=0.02 + index / 2000,
+                schema_version=PATH_FORECAST_SAMPLE_SCHEMA,
+            )
+            for index in range(configuration.minimum_usable_samples)
+        )
+        return PathForecastSampleBatch(
+            samples=samples,
+            reason_codes=("EXPLORATORY_HISTORICAL_SAMPLES_BOUND",),
+            limitations=("FORMAL_OOS_NOT_ESTABLISHED",),
+        )

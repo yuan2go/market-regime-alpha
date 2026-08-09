@@ -6,7 +6,7 @@
 > **Last Updated:** 2026-08-09
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../superpowers/specs/2026-08-09-free-data-research-shadow-runtime-convergence-design.md, ../superpowers/plans/2026-08-09-free-data-research-shadow-runtime-convergence.md
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../superpowers/specs/2026-08-09-free-data-research-shadow-runtime-convergence-design.md, ../superpowers/plans/2026-08-09-free-data-research-shadow-runtime-convergence.md, ../superpowers/specs/2026-08-09-free-runtime-v2-canonical-convergence-design.md, ../superpowers/plans/2026-08-09-free-runtime-v2-canonical-convergence.md
 > **Code Evidence:** Canonical Feature Spine implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
@@ -73,23 +73,28 @@ Tencent raw-minute archive, explicit LOTS-to-SHARES conversion, recoverable
 Feature runs and V2 selective physical encodings without changing logical
 Artifact hashes. Signal V1/V2 remain historical compatibility authorities only.
 
-WP-CRR-01 owns the PostgreSQL-only Continuous Research Runtime. The current
-branch adds its executable `run-due` composition: the same entry stages
-BaoStock history/status, freezes the Tencent decision quote and static inputs,
-then executes the due 14:55 Tick through the existing Dataset, Feature, State,
-Controlled, Canonical and Decision boundaries. Lease, fence, CAS, recovery,
-material reuse and replay remain owned by the one Continuous journal. The
-default profile is explicit and has no Provider fallback. Recorded-provider
-PostgreSQL tests establish the engineering path; an exact-window live run has
-not yet been observed. Formal PIT, economic validation, Entry and Broker
-authority remain absent.
+WP-CRR-01 owns the PostgreSQL-only Continuous Research Runtime. Its executable
+`run-due` composition freezes BaoStock history/status and the Tencent decision
+quote, materializes Dataset/Feature, executes the real WP-STATE-01 authorities,
+scopes Tencent minute acquisition to the resulting CandidateSet at 14:54:59,
+then completes Signal/Forecast/Summary at the 14:55 DecisionTime. Lease, fence,
+CAS, recovery, material reuse and replay remain owned by the one Continuous
+journal. The default profile is explicit and has no Provider fallback. A real
+PostgreSQL positive-path test reaches non-empty Market/ETF/Theme/Capital State,
+Dynamic Pool, Candidate, pre-Decision minute, Signal, Forecast and
+`RESEARCH_CANDIDATE` under both RESEARCH and SHADOW. This is recorded-provider
+engineering evidence; an exact-window live run has not yet been observed.
+Formal PIT, economic validation, Entry and Broker authority remain absent.
 
 WP-STATE-01 adds one ordered `STATE_SYSTEM` child beneath that parent. Four
 domain-specific evaluators persist Observation, proposed/effective State and
 Transition Artifacts with versioned thresholds, confirmation, dwell,
 hysteresis, coverage and counter evidence. An immutable Dynamic Stock Pool
 retains the complete included/excluded cross section and is the only Pool fact
-accepted by the new Candidate binding. New Signal writes use
+accepted by the new Candidate binding. The FreeData composition now invokes
+these owners directly, reloads prior State/Pool heads through PostgreSQL and
+persists its own seven-stage receipt; it no longer synthesizes `STATE_SYSTEM`
+from a final Summary. New Signal writes use
 `factor_coverage`; empirical Forecast remains `NOT_CALIBRATED`. PostgreSQL
 migration 022 provides fenced/CAS State and Pool authority and migration 023 adds
 the child kind. All evidence
@@ -99,7 +104,7 @@ Broker authority remain absent.
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
 database test substitute. Bounded repositories now execute native psycopg SQL
-and PostgreSQL transactions. Central migrations 001–029 are the only database
+and PostgreSQL transactions. Central migrations 001–032 are the only database
 migration authority; an unavailable PostgreSQL connection fails closed.
 
 WP-DECISION-01 keeps the strict account-aware Production Decision child and now
@@ -107,12 +112,17 @@ adds an account-neutral Research/Shadow endpoint beneath the same Continuous
 Runtime. Research/Shadow persist an immutable `ResearchDailySummary` even when
 ETF, Theme, Capital or downstream evidence is insufficient. It binds Runtime
 mode, DecisionTime, Provider contracts, SourceManifest, Dataset, Feature,
-ordered State/Candidate/Signal/Forecast evidence, six selection receipts,
+the real State owner Receipt, State-constrained CandidateSet, ordered
+State/Candidate/Signal/Forecast evidence, six selection receipts,
 configuration, DataEligibility and the inherited Evidence ceiling. Production
 continues through the stricter governed Decision path and fails closed when
 unauthorized; that failure no longer suppresses Research/Shadow summaries.
 Original Final is immutable and a Correction is a new revision. Neither path
 creates an Opportunity, Order, Fill, Position change or Broker call.
+Outcome selection is typed: empty Candidate is `NO_ACTION`, observed-only
+Signal is `WATCH`, a qualified Candidate/Signal/Forecast chain is
+`RESEARCH_CANDIDATE`, and missing evidence or mode qualification remains
+explicit. Historical V1 Summary/Stage identities retain content-exact Readers.
 
 WP-GOV-01 extends the existing PostgreSQL Model Registry rather than creating a
 parallel authority. Migration 027 adds immutable Model-version lineage,
@@ -643,12 +653,14 @@ fallback or silent substitution.
 The formal `continuous-research run-due` entry uses the single Continuous
 Runtime owner in three recoverable steps: freeze BaoStock history/status before
 the decision window; at 14:54 freeze Tencent quote and complete Dataset/static
-Feature preparation; at 14:55 execute the due Tick and persist the normal
-Research/Shadow Summary. Every step reuses the existing Daily, Feature,
-Controlled, Canonical and Decision PostgreSQL authorities and immutable source
-receipts. Provider failure, late/future evidence, stale fence and lineage
-conflict fail closed. A restart loads the existing Summary and no-material-change
-Ticks reuse all six child artifacts.
+Feature preparation; at 14:54:59 reserve the semantic 14:55 Tick, execute the
+State chain and bounded Candidate minute acquisition, then persist the final
+Research/Shadow Summary no earlier than DecisionTime. Every step reuses the
+existing Daily, Feature, State, Controlled, Canonical and Decision PostgreSQL
+authorities and immutable source receipts. `--at` is clock-authoritative in
+LIVE mode; historical clocks require explicit `SIMULATED` engineering mode.
+Provider failure, late/future evidence, stale fence and lineage conflict fail
+closed. Restart and no-material-change reuse real owner Artifacts.
 
 New source writes retain raw BaoStock/Tencent bytes with request, timing,
 content, scope, encoding, byte-count and hash metadata. The preparation layer
@@ -661,10 +673,12 @@ Summary remains reachable. Model rejection is
 `MODEL_NOT_QUALIFIED_FOR_MODE`. A post-freeze normalization error publishes a
 content-addressed `FreeDataBlockedArtifact`.
 
-Recorded-provider PostgreSQL end-to-end tests prove RESEARCH/SHADOW Summary
-reachability, mode-specific selection receipts, Evidence-ceiling preservation,
-staged single acquisition, restart, material reuse and deterministic replay;
-PRODUCTION over free evidence fails closed. A real 20-symbol network attempt
+Recorded-provider PostgreSQL end-to-end tests prove a non-empty Stateful
+RESEARCH/SHADOW chain through `RESEARCH_CANDIDATE`, a no-Candidate `NO_ACTION`
+path without minute calls, mode-specific selection receipts, Evidence-ceiling
+preservation, staged single acquisition, restart, material reuse and
+deterministic replay; PRODUCTION over free evidence fails closed. A real
+20-symbol network attempt
 after the 2026-08-05 window remains the latest network evidence and correctly
 blocked with `DATA_AVAILABLE_AFTER_DECISION_TIME`. Therefore the engineering
 runtime is proven, but a live exact-window BaoStock/Tencent Summary is not yet
@@ -678,7 +692,7 @@ PostgreSQL 16 is the only database authority selected through
 backend enumeration, database path, SQL/DB-API translation bridge, automatic
 fallback, persistent test substitute or runtime importer.
 
-PostgreSQL migration versions 001–029 are checksummed, contiguous and
+PostgreSQL migration versions 001–032 are checksummed, contiguous and
 serialized with an advisory lock. Migration 024 constrains the credential-free
 runtime binding to PostgreSQL without changing the published migration-017
 checksum. Migration 025 adds Decision Summary, Manual Account,
@@ -696,8 +710,10 @@ Migration 027 adds Model Governance/Runtime Selector authority. Migration 028
 adds canonical Artifact resolution receipts, typed PIT Source qualification
 evidence, prospective/historical bitemporal facts, repeatable-read as-of
 snapshots and explicit-set immutable Formal PIT validation evidence. Migration
-029 adds immutable Research/Shadow Summary and ordered Stage evidence.
-Fresh 001→029 and 023→029 migration paths are tested on PostgreSQL 16.
+029 adds immutable Research/Shadow Summary and ordered Stage evidence;
+030–032 add typed results/timestamps, seven-stage State ownership and explicit
+Summary owner lineage while retaining historical schema checks. Fresh 001→032
+and incremental migration paths are tested on PostgreSQL 16.
 
 Native repositories preserve idempotency, command hashes, compare-and-swap,
 scope-level locks, fencing, append-only events, immutable identities,

@@ -30,7 +30,9 @@ from market_regime_alpha.application.decision_system.authority import (
     PositionSettlementEvidence,
 )
 from market_regime_alpha.application.decision_system.research_summary import (
+    GOVERNED_RESEARCH_MODEL_SLOTS,
     ResearchDailySummary,
+    ResearchStageStatus,
 )
 from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,
@@ -47,7 +49,12 @@ from market_regime_alpha.persistence.postgres.native_repository import (
     acquire_scope_lock,
     aware_datetime,
 )
-from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from market_regime_alpha.platform.runtime_governance import (
+    ModelSelectionReceipt,
+    ModelSelectionRequest,
+    RuntimeAuthorityMode,
+    SelectionStatus,
+)
 
 if TYPE_CHECKING:
     from market_regime_alpha.application.decision_system.runtime import (
@@ -1177,6 +1184,7 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                 raise DecisionSystemConflict(
                     "Research Summary Continuous Tick lineage mismatch"
                 )
+            _verify_research_summary_model_receipts(connection, summary)
             acquire_scope_lock(
                 connection,
                 namespace="research-daily-summary",
@@ -1292,10 +1300,11 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                         evidence_hash, status, output_artifact_id,
                         output_artifact_hash, selection_receipt_id,
                         selection_receipt_hash, available_at,
+                        stage_completed_at, result,
                         data_eligibility, evidence_ceiling, payload_json
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s
+                        %s, %s, %s, %s
                     )
                     """,
                     (
@@ -1309,7 +1318,9 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
                         None if output is None else output.content_hash,
                         None if selection is None else str(selection.artifact_id),
                         None if selection is None else selection.content_hash,
-                        stage.available_at,
+                        stage.evidence_available_at,
+                        stage.stage_completed_at,
+                        stage.result.value,
                         stage.data_eligibility.value,
                         stage.evidence_ceiling.value,
                         Jsonb(stage.to_canonical_dict()),
@@ -1903,6 +1914,91 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             return DecisionRuntimeReceipt.from_canonical_dict(payload)
         except (KeyError, TypeError, ValueError) as exc:
             raise DecisionSystemIntegrityError("stored Decision Runtime receipt failed canonical verification") from exc
+
+
+def _verify_research_summary_model_receipts(
+    connection: PostgresConnection,
+    summary: ResearchDailySummary,
+) -> None:
+    """Reload Governance authority instead of trusting caller references."""
+
+    configurations = {
+        (item.artifact_id, item.content_hash)
+        for item in summary.configuration_references
+    }
+    for stage in summary.stages:
+        reference = stage.selection_receipt
+        if reference is None:
+            continue
+        if reference.reference_kind != "MODEL_SELECTION_RECEIPT":
+            raise DecisionSystemConflict(
+                "Research Summary Selection Receipt kind mismatch"
+            )
+        expected_slot = GOVERNED_RESEARCH_MODEL_SLOTS.get(stage.stage)
+        if expected_slot is None:
+            raise DecisionSystemConflict(
+                "deterministic Research Stage cannot claim a Model Selection"
+            )
+        row = connection.execute(
+            """
+            SELECT receipt_hash, request_json, payload_json
+            FROM model_selection_receipt
+            WHERE receipt_id = %s
+            """,
+            (str(reference.artifact_id),),
+        ).fetchone()
+        if row is None:
+            raise DecisionSystemConflict(
+                "Research Summary Selection Receipt does not exist"
+            )
+        request_payload = row["request_json"]
+        receipt_payload = row["payload_json"]
+        if not isinstance(request_payload, dict) or not isinstance(
+            receipt_payload, dict
+        ):
+            raise DecisionSystemIntegrityError(
+                "stored Model Selection authority is not an object"
+            )
+        try:
+            request = ModelSelectionRequest.from_canonical_dict(request_payload)
+            receipt = ModelSelectionReceipt.from_canonical_dict(receipt_payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DecisionSystemIntegrityError(
+                "stored Model Selection authority failed canonical verification"
+            ) from exc
+        expected_status = (
+            SelectionStatus.REJECTED
+            if stage.status
+            is ResearchStageStatus.MODEL_NOT_QUALIFIED_FOR_MODE
+            else SelectionStatus.SELECTED
+        )
+        runtime_configuration = request.runtime_lineage.configuration
+        if (
+            str(row["receipt_hash"]) != reference.content_hash
+            or receipt.receipt_id != reference.artifact_id
+            or receipt.receipt_hash != reference.content_hash
+            or receipt.request_hash != request.request_hash
+            or receipt.purpose is not summary.runtime_mode.runtime_purpose
+            or request.purpose is not summary.runtime_mode.runtime_purpose
+            or receipt.model_slot != expected_slot
+            or request.model_slot != expected_slot
+            or receipt.status is not expected_status
+            or receipt.runtime_lineage_hash
+            != request.runtime_lineage.runtime_lineage_hash
+            or request.runtime_lineage.dataset.artifact_id
+            != summary.dataset.artifact_id
+            or request.runtime_lineage.dataset.content_hash
+            != summary.dataset.content_hash
+            or (
+                runtime_configuration.artifact_id,
+                runtime_configuration.content_hash,
+            )
+            not in configurations
+            or receipt.selected_at > summary.decision_time
+        ):
+            raise DecisionSystemConflict(
+                "Research Summary Model Selection authority mismatch"
+            )
 
 
 def _idempotent(

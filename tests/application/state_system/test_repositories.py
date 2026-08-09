@@ -320,6 +320,16 @@ def test_postgres_state_history_supports_explicit_restart_replay(
         claim=claim,
         expected_previous_state_id=None,
     ) == write.state_id
+    restored = PostgresStateSystemRepository(
+        postgres_factory,
+        clock=clock,
+    ).read_current_state(StateDomain.MARKET_REGIME, write.scope_key)
+    assert restored is not None
+    assert restored[:3] == (
+        write.state_id,
+        write.state_hash,
+        dict(write.state_payload),
+    )
     assert PostgresStateSystemRepository(postgres_factory, clock=clock).append_state(
         write,
         claim=claim,

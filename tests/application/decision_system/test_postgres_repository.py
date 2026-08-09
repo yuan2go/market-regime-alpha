@@ -180,6 +180,24 @@ def test_research_summary_is_fenced_idempotent_and_restart_readable(
     ) == value
 
 
+def test_research_summary_rejects_caller_declared_selection_receipt(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    clock = MutableClock(NOW)
+    _, claim = active_claim(postgres_factory, clock)
+    repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
+    value = research_summary(
+        run_id=claim.run_id,
+        tick_id=claim.tick_id,
+        trading_date=claim.lease_acquired_at.date(),
+        decision_time=AS_OF,
+        stages=research_stages(available_at=AS_OF, rejected="SIGNAL"),
+    )
+
+    with pytest.raises(DecisionSystemConflict, match="does not exist"):
+        repository.save_research_summary(value, claim=claim)
+
+
 def test_stale_fence_cannot_write_research_summary(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:

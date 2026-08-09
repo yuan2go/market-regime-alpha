@@ -120,6 +120,7 @@ from market_regime_alpha.forecasting.artifact import (
     VerifiedPathForecastArtifact,
     load_verified_path_forecast,
 )
+from market_regime_alpha.forecasting.sample_provider import PathForecastSampleProvider
 from market_regime_alpha.market_data import (
     AssetType,
     VerifiedMarketDataDataset,
@@ -214,6 +215,16 @@ class ControlledOperationDecisionResult:
     package_path: Path
 
 
+CandidateStateTransform = Callable[
+    [
+        ControlledOperationPreparation,
+        VerifiedControlledResearchArtifact,
+        CandidateSet,
+    ],
+    CandidateSet,
+]
+
+
 @dataclass(frozen=True, slots=True)
 class ControlledOperationSettlementResult:
     snapshot: DecisionTimeOperationRunSnapshot
@@ -239,6 +250,7 @@ class ControlledDecisionTimeOperationRunner:
         longitudinal_index: LongitudinalOperationalIndex,
         canonical_repository_factory: CanonicalRepositoryFactory,
         feature_repository_factory: FeatureRunRepositoryFactory,
+        forecast_sample_provider: PathForecastSampleProvider | None = None,
     ) -> None:
         self._journal = journal
         self._output_root = output_root.resolve()
@@ -249,6 +261,7 @@ class ControlledDecisionTimeOperationRunner:
         self._longitudinal_index = longitudinal_index
         self._canonical_repository_factory = canonical_repository_factory
         self._feature_repository_factory = feature_repository_factory
+        self._forecast_sample_provider = forecast_sample_provider
 
     def prepare(
         self,
@@ -401,6 +414,7 @@ class ControlledDecisionTimeOperationRunner:
         policy: DecisionTimeOperationPolicy,
         inputs: ControlledOperationInputPaths,
         _resume_admitted_child: bool = False,
+        candidate_state_transform: CandidateStateTransform | None = None,
     ) -> ControlledOperationDecisionResult:
         preparation = self.prepare(command=command, policy=policy, inputs=inputs)
         run_root = self._run_root(command)
@@ -498,6 +512,12 @@ class ControlledDecisionTimeOperationRunner:
             premeasured=True,
         )
         candidates = research.artifact.candidate_set
+        if candidate_state_transform is not None:
+            candidates = candidate_state_transform(
+                preparation,
+                research,
+                candidates,
+            )
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.CANDIDATE_SET,
@@ -753,6 +773,7 @@ class ControlledDecisionTimeOperationRunner:
                 daily_source_manifest_path=inputs.daily_source_manifest,
                 supplemental_path=inputs.supplemental_research_evidence,
                 research=research,
+                candidates=candidates,
                 daily_dataset=preparation.daily_dataset,
                 daily_dataset_path=preparation.daily_dataset_path,
                 static_bundle=preparation.static_bundle,
@@ -766,6 +787,7 @@ class ControlledDecisionTimeOperationRunner:
                 hard_cutoff=hard_cutoff,
                 after_stage_hook=self._canonical_after_stage_hook,
                 repository_factory=self._canonical_repository_factory,
+                forecast_sample_provider=self._forecast_sample_provider,
             )
         except LifecycleStageExecutionError as exc:
             if exc.exception_type != ControlledCanonicalDeadlineExceeded.__name__:
@@ -1014,6 +1036,44 @@ class ControlledDecisionTimeOperationRunner:
             package=package,
             package_path=package_path,
         )
+
+    def record_pre_research_blocked(
+        self,
+        *,
+        preparation: ControlledOperationPreparation,
+        policy: DecisionTimeOperationPolicy,
+        reason_codes: tuple[str, ...],
+    ) -> tuple[
+        DecisionTimeOperationRunSnapshot,
+        ControlledOperationalEvidencePackage,
+    ]:
+        """Close the Controlled owner without running an unselected model."""
+
+        configuration = load_controlled_runtime_configuration(
+            preparation.input_paths.runtime_configuration
+        )
+        package, _ = self._publish_terminal_package(
+            command=preparation.snapshot.command,
+            policy=policy,
+            inputs=preparation.input_paths,
+            preparation=preparation,
+            configuration=configuration,
+            status=ControlledOperationalEvidenceStatus.DATA_BLOCKED,
+            deadline_status="MODEL_NOT_QUALIFIED_FOR_MODE",
+            reason_codes=tuple(
+                sorted({*reason_codes, "MODEL_NOT_QUALIFIED_FOR_MODE"})
+            ),
+            latencies={},
+        )
+        snapshot = self._journal.get(preparation.snapshot.command.run_id)
+        if snapshot.status is not DecisionTimeOperationRunStatus.DATA_BLOCKED:
+            snapshot = self._journal.set_run_status(
+                run_id=snapshot.command.run_id,
+                expected_version=snapshot.version,
+                status=DecisionTimeOperationRunStatus.DATA_BLOCKED,
+                reason="MODEL_NOT_QUALIFIED_FOR_MODE",
+            )
+        return snapshot, package
 
     def resume(
         self,

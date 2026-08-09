@@ -596,9 +596,19 @@ def _child_reference(
 
 def _require_complete_child_set(results: tuple[ChildExecutionResult, ...]) -> None:
     kinds = tuple(result.child_kind for result in results)
-    expected = tuple(ContinuousChildKind)
-    if len(kinds) != len(set(kinds)) or set(kinds) != set(expected):
-        raise ValueError("child port must return each existing research service exactly once")
+    required = set(ContinuousChildKind) - {
+        # A stage-level DATA_INSUFFICIENT or MODEL_NOT_QUALIFIED outcome can
+        # legitimately stop before Canonical Lifecycle admission.  The Daily
+        # Summary remains the terminal Decision owner; absent work must never
+        # be represented by a synthetic Canonical receipt.
+        ContinuousChildKind.CANONICAL_LIFECYCLE,
+    }
+    if (
+        len(kinds) != len(set(kinds))
+        or not required.issubset(kinds)
+        or not set(kinds).issubset(set(ContinuousChildKind))
+    ):
+        raise ValueError("child port must return each executed research owner exactly once")
 
 
 def _tick_input_references(
@@ -697,7 +707,8 @@ def _validate_evidence_time(
 def _child_failure_reason(exc: Exception) -> str:
     if str(exc) == "FREE_DATA_PRODUCTION_AUTHORITY_DENIED":
         return "FREE_DATA_PRODUCTION_AUTHORITY_DENIED"
-    return f"CHILD_EXECUTION_{type(exc).__name__.upper()}"
+    detail = str(exc).strip().replace(" ", "_").upper()
+    return f"CHILD_EXECUTION_{type(exc).__name__.upper()}:{detail}"[:512]
 
 
 __all__ = ["ContinuousResearchTickRunner", "ContinuousTickExecutionResult"]

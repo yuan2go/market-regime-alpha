@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from market_regime_alpha.application.continuous_research.composition import (
-    CONTINUOUS_CHILD_ORDER,
     FreeDataPreparationInvocation,
     _with_upstream_result,
 )
@@ -26,6 +25,11 @@ from market_regime_alpha.application.continuous_research.ports import (
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     load_controlled_runtime_configuration,
 )
+from market_regime_alpha.application.controlled_operation.journal import (
+    DecisionTimeOperationReceipt,
+    DecisionTimeOperationRunSnapshot,
+    DecisionTimeOperationStageName,
+)
 from market_regime_alpha.application.controlled_operation.runtime_configuration import (
     ControlledOperationRuntimeConfiguration,
 )
@@ -36,6 +40,7 @@ from market_regime_alpha.application.decision_system.research_summary import (
     ProviderContractLineage,
     ResearchDailySummary,
     ResearchStageEvidence,
+    ResearchStageResult,
     ResearchStageStatus,
 )
 from market_regime_alpha.application.decision_system.research_summary_runtime import (
@@ -49,6 +54,12 @@ from market_regime_alpha.application.free_data_operation.service import (
 from market_regime_alpha.application.state_system.runtime import (
     STATE_RESEARCH_STAGE_ORDER,
     StateResearchStage,
+)
+from market_regime_alpha.application.state_system.free_data_composition import (
+    CanonicalFreeDataStateCoordinator,
+)
+from market_regime_alpha.application.state_system.postgres_repository import (
+    PostgresStateSystemRepository,
 )
 from market_regime_alpha.core.identity import (
     ArtifactId,
@@ -254,6 +265,7 @@ class CanonicalFreeDataProvider:
             request=invocation.request,
             runtime_configuration_path=invocation.runtime_configuration_path,
             idempotency_key=invocation.idempotency_key,
+            supplemental_evidence_path=invocation.supplemental_evidence_path,
         )
         return free_data_provider_result(
             preparation,
@@ -271,11 +283,15 @@ class CanonicalFreeDataResearchComposition:
         invocation_builder: ChildInvocationBuilder,
         model_selector: ControlledRuntimeModelSelector,
         summary_repository: PostgresDecisionSystemRepository,
+        state_repository: PostgresStateSystemRepository,
+        clock: Clock,
     ) -> None:
         self._service = service
         self._invocation_builder = invocation_builder
         self._model_selector = model_selector
         self._summary_repository = summary_repository
+        self._state_repository = state_repository
+        self._clock = clock
         self._summary_runtime = ResearchSummaryRuntimeService(summary_repository)
 
     def lookup_children(
@@ -283,15 +299,10 @@ class CanonicalFreeDataResearchComposition:
     ) -> tuple[ChildExecutionResult, ...] | None:
         if request.authority_mode.requires_production_authorization:
             return None
-        try:
-            summary = self._summary_repository.get_research_summary_for_tick(
-                run_id=request.run_id,
-                tick_id=request.tick_id,
-                runtime_mode=request.authority_mode,
-            )
-        except KeyError:
-            return None
-        return _child_results(request, summary)
+        # A completed Continuous Tick is recovered by its own journal.  An
+        # incomplete Tick re-enters the real bounded-context owners below;
+        # their PostgreSQL receipts make that recovery idempotent.
+        return None
 
     def execute_children(
         self, request: ChildExecutionRequest
@@ -301,6 +312,7 @@ class CanonicalFreeDataResearchComposition:
             request=invocation.request,
             runtime_configuration_path=invocation.runtime_configuration_path,
             idempotency_key=invocation.idempotency_key,
+            supplemental_evidence_path=invocation.supplemental_evidence_path,
         )
         governed = self._model_selector.select(
             request=request,
@@ -311,21 +323,70 @@ class CanonicalFreeDataResearchComposition:
             # Free public evidence remains below the Production data ceiling even
             # if a governance operator accidentally assigns a Production model.
             raise PermissionError("FREE_DATA_PRODUCTION_AUTHORITY_DENIED")
+        dataset_result = _controlled_stage_child_result(
+            kind=ContinuousChildKind.DAILY_DATASET,
+            request=request,
+            snapshot=preparation.controlled_preparation.snapshot,
+            stage=DecisionTimeOperationStageName.DAILY_DATASET,
+        )
+        feature_request = _with_upstream_result(request, dataset_result)
+        feature_result = _controlled_stage_child_result(
+            kind=ContinuousChildKind.FEATURE_MATERIALIZATION,
+            request=feature_request,
+            snapshot=preparation.controlled_preparation.snapshot,
+            stage=DecisionTimeOperationStageName.STATIC_FEATURES,
+        )
+        state_request = _with_upstream_result(feature_request, feature_result)
+        state_coordinator = CanonicalFreeDataStateCoordinator(
+            request=state_request,
+            repository=self._state_repository,
+            selection_receipts=governed.receipts,
+            clock=self._clock,
+        )
         execution = None
         if governed.all_selected:
             execution = self._service.run(
                 request=invocation.request,
                 runtime_configuration_path=invocation.runtime_configuration_path,
                 idempotency_key=invocation.idempotency_key,
+                supplemental_evidence_path=invocation.supplemental_evidence_path,
+                candidate_state_transform=state_coordinator,
             )
+        else:
+            rejection_reasons = tuple(
+                sorted(
+                    {
+                        reason
+                        for _, receipt in governed.receipts
+                        for reason in receipt.reason_codes
+                    }
+                )
+            )
+            state_coordinator.record_model_blocked(
+                reason_codes=rejection_reasons
+            )
+            execution = self._service.record_model_not_qualified(
+                preparation=preparation,
+                reason_codes=rejection_reasons,
+            )
+        summary_created_at = self._service.wait_until(request.as_of_time)
         summary = _build_summary(
             request=request,
             preparation=preparation,
             execution=execution,
             governed=governed,
+            state_coordinator=state_coordinator,
+            created_at=summary_created_at,
         )
         persisted = self._summary_runtime.execute(request=request, summary=summary)
-        return _child_results(request, persisted)
+        return _owner_child_results(
+            request=request,
+            dataset_result=dataset_result,
+            feature_result=feature_result,
+            state_result=state_coordinator.child_result,
+            execution=execution,
+            summary=persisted,
+        )
 
 
 def free_data_provider_result(
@@ -380,6 +441,8 @@ def _build_summary(
     preparation: FreeDataOperationPreparation,
     execution: FreeDataOperationExecution | None,
     governed: GovernedControlledModels,
+    state_coordinator: CanonicalFreeDataStateCoordinator,
+    created_at: datetime,
 ) -> ResearchDailySummary:
     controlled = preparation.controlled_preparation
     dataset = RuntimeArtifactReference(
@@ -399,6 +462,7 @@ def _build_summary(
             preparation=preparation,
             execution=execution,
             governed=governed,
+            state_coordinator=state_coordinator,
         )
         for stage in STATE_RESEARCH_STAGE_ORDER
     )
@@ -409,6 +473,20 @@ def _build_summary(
     active_configuration = load_controlled_runtime_configuration(
         controlled.input_paths.runtime_configuration
     )
+    governed_configurations = tuple(
+        RuntimeArtifactReference(
+            "MODEL_CONFIGURATION",
+            configuration_id,
+            configuration_hash,
+        )
+        for _, _, configuration_id, configuration_hash in _configured_models(
+            active_configuration
+        ).values()
+    )
+    state_result = state_coordinator.child_result
+    if state_result is None:
+        raise ValueError("State System owner receipt is unavailable")
+    candidate_set = state_coordinator.final_candidates
     return ResearchDailySummary.create(
         runtime_mode=request.authority_mode,
         run_id=request.run_id,
@@ -416,7 +494,7 @@ def _build_summary(
         trading_date=request.trading_date,
         decision_time=request.as_of_time,
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
-        provider_contracts=FREE_DATA_PROVIDER_CONTRACTS,
+        provider_contracts=_consumed_provider_contracts(preparation, execution),
         source_manifest=RuntimeArtifactReference(
             "SOURCE_MANIFEST",
             request.source_manifest_id,
@@ -424,6 +502,20 @@ def _build_summary(
         ),
         dataset=dataset,
         feature_bundle=feature,
+        state_system_receipt=RuntimeArtifactReference(
+            "STATE_SYSTEM_RECEIPT",
+            state_result.child_receipt_id,
+            state_result.child_receipt_hash,
+        ),
+        candidate_set=(
+            None
+            if candidate_set is None
+            else RuntimeArtifactReference(
+                "STATE_CONSTRAINED_CANDIDATE_SET",
+                candidate_set.envelope.artifact_id,
+                candidate_set.envelope.content_hash,
+            )
+        ),
         stages=stages,
         model_selection_receipts=tuple(sorted(receipts, key=_reference_key)),
         configuration_references=tuple(
@@ -435,6 +527,7 @@ def _build_summary(
                         active_configuration.configuration_id,
                         active_configuration.configuration_hash,
                     ),
+                    *governed_configurations,
                 },
                 key=_reference_key,
             )
@@ -445,7 +538,7 @@ def _build_summary(
         previous_summary_id=None,
         correction_of_summary_id=None,
         idempotency_key=f"{request.idempotency_key}:research-summary",
-        created_at=request.as_of_time,
+        created_at=created_at,
     )
 
 
@@ -456,10 +549,16 @@ def _stage_evidence(
     preparation: FreeDataOperationPreparation,
     execution: FreeDataOperationExecution | None,
     governed: GovernedControlledModels,
+    state_coordinator: CanonicalFreeDataStateCoordinator,
 ) -> ResearchStageEvidence:
     receipt = governed.for_stage(stage)
     selection = None if receipt is None else _selection_reference(receipt)
-    output = _execution_stage_output(stage, preparation, execution)
+    state_artifact = state_coordinator.stage_artifacts.get(stage)
+    output = (
+        state_artifact.to_reference()
+        if state_artifact is not None
+        else _execution_stage_output(stage, preparation, execution)
+    )
     if receipt is not None and receipt.status is SelectionStatus.REJECTED:
         status = ResearchStageStatus.MODEL_NOT_QUALIFIED_FOR_MODE
         missing: tuple[str, ...] = ()
@@ -471,6 +570,27 @@ def _stage_evidence(
                 }
             )
         )
+    elif state_artifact is not None:
+        status = (
+            ResearchStageStatus.COMPLETED
+            if state_artifact.status.value == "COMPLETED"
+            else ResearchStageStatus.DATA_INSUFFICIENT
+        )
+        missing = (
+            ()
+            if status is ResearchStageStatus.COMPLETED
+            else _missing_evidence(stage, execution)
+        )
+        reasons = state_artifact.reason_codes
+    elif (
+        stage in {StateResearchStage.SIGNAL, StateResearchStage.FORECAST}
+        and state_coordinator.final_candidates is not None
+        and not state_coordinator.final_candidates.selected
+        and output is not None
+    ):
+        status = ResearchStageStatus.COMPLETED
+        missing = ()
+        reasons = (f"{stage.value}_NOT_REQUIRED_WITHOUT_CANDIDATE",)
     elif (
         output is not None
         and (
@@ -503,12 +623,68 @@ def _stage_evidence(
         status=status,
         output_reference=output,
         selection_receipt=selection,
-        available_at=request.as_of_time,
+        evidence_available_at=(
+            state_artifact.available_at
+            if state_artifact is not None
+            else request.as_of_time
+        ),
+        stage_completed_at=state_coordinator.stage_completed_at.get(
+            stage, request.as_of_time
+        ),
+        result=_stage_result(
+            stage,
+            status,
+            execution,
+            state_coordinator.final_candidates,
+        ),
         data_eligibility=DataEligibility.EXPLORATORY,
         evidence_ceiling=PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY,
         missing_evidence=missing,
         reason_codes=reasons,
     )
+
+
+def _stage_result(
+    stage: StateResearchStage,
+    status: ResearchStageStatus,
+    execution: FreeDataOperationExecution | None,
+    state_candidates: Any | None = None,
+) -> ResearchStageResult:
+    if status is not ResearchStageStatus.COMPLETED:
+        return ResearchStageResult.UNAVAILABLE
+    if stage is StateResearchStage.CANDIDATE:
+        if state_candidates is None:
+            return ResearchStageResult.EMPTY
+        return (
+            ResearchStageResult.RESEARCH_QUALIFIED
+            if state_candidates.selected
+            else ResearchStageResult.EMPTY
+        )
+    if stage is StateResearchStage.SIGNAL:
+        if execution is None or execution.decision is None:
+            return ResearchStageResult.EMPTY
+        states = {
+            item.signal_state.value
+            for item in execution.decision.signal.artifact.snapshots
+        }
+        if "CONFIRMED_FOR_RESEARCH" in states:
+            return ResearchStageResult.RESEARCH_QUALIFIED
+        if "WATCH" in states:
+            return ResearchStageResult.WATCH
+        return ResearchStageResult.EMPTY
+    if stage is StateResearchStage.FORECAST:
+        if execution is None or execution.decision is None:
+            return ResearchStageResult.EMPTY
+        return (
+            ResearchStageResult.RESEARCH_QUALIFIED
+            if any(
+                item.artifact.forecast.forecast_status.value
+                == "AVAILABLE_FOR_RESEARCH"
+                for item in execution.decision.forecasts
+            )
+            else ResearchStageResult.EMPTY
+        )
+    return ResearchStageResult.AVAILABLE
 
 
 def _execution_stage_output(
@@ -529,7 +705,15 @@ def _execution_stage_output(
                 StateResearchStage.THEME_ROTATION: "CONTROLLED_RESEARCH",
                 StateResearchStage.CAPITAL_STATE: "CONTROLLED_RESEARCH",
                 StateResearchStage.CANDIDATE: "CANDIDATE_SET",
+                StateResearchStage.SIGNAL: "OPERATION_PACKAGE",
+                StateResearchStage.FORECAST: "OPERATION_PACKAGE",
             }.get(stage)
+            if reference_type == "OPERATION_PACKAGE":
+                return RuntimeArtifactReference(
+                    f"NO_{stage.value}_REQUIRED_RECEIPT",
+                    package.package_id,
+                    package.content_hash,
+                )
             matches = tuple(
                 item
                 for item in package.evidence_references
@@ -614,58 +798,182 @@ def _completed_reason(
     return f"{stage.value}_ARTIFACT_RECORDED"
 
 
-def _child_results(
+def _controlled_stage_child_result(
+    *,
+    kind: ContinuousChildKind,
     request: ChildExecutionRequest,
+    snapshot: DecisionTimeOperationRunSnapshot,
+    stage: DecisionTimeOperationStageName,
+) -> ChildExecutionResult:
+    receipt = _required_controlled_receipt(snapshot, stage)
+    if len(receipt.output_references) != 1:
+        raise ValueError(f"{stage.value} owner Receipt must expose one output")
+    output = receipt.output_references[0]
+    return ChildExecutionResult(
+        child_kind=kind,
+        child_run_id=snapshot.command.run_id,
+        child_receipt_id=receipt.receipt_id,
+        child_receipt_hash=receipt.content_hash,
+        child_artifact_id=output.object_id,
+        child_artifact_hash=output.content_hash,
+        input_references=request.input_references,
+        configuration_references=request.configuration_references,
+    )
+
+
+def _required_controlled_receipt(
+    snapshot: DecisionTimeOperationRunSnapshot,
+    stage: DecisionTimeOperationStageName,
+) -> DecisionTimeOperationReceipt:
+    matches = tuple(
+        item.receipt
+        for item in snapshot.stages
+        if item.stage_name is stage and item.receipt is not None
+    )
+    if len(matches) != 1:
+        raise ValueError(f"{stage.value} owner Receipt is unavailable")
+    return matches[0]
+
+
+def _owner_child_results(
+    *,
+    request: ChildExecutionRequest,
+    dataset_result: ChildExecutionResult,
+    feature_result: ChildExecutionResult,
+    state_result: ChildExecutionResult | None,
+    execution: FreeDataOperationExecution | None,
     summary: ResearchDailySummary,
 ) -> tuple[ChildExecutionResult, ...]:
-    stage_digest = canonical_hash(
-        {"stages": [stage.to_canonical_dict() for stage in summary.stages]}
-    )
-    stage_ref = RuntimeArtifactReference(
-        "STATE_RESEARCH_PIPELINE",
-        ArtifactId(f"state-research-pipeline:{stage_digest[7:]}"),
-        stage_digest,
-    )
-    artifacts = {
-        ContinuousChildKind.DAILY_DATASET: summary.dataset,
-        ContinuousChildKind.FEATURE_MATERIALIZATION: summary.feature_bundle,
-        ContinuousChildKind.STATE_SYSTEM: stage_ref,
-        ContinuousChildKind.CONTROLLED_OPERATION: stage_ref,
-        ContinuousChildKind.CANONICAL_LIFECYCLE: stage_ref,
-        ContinuousChildKind.DECISION_SYSTEM: RuntimeArtifactReference(
-            "RESEARCH_DAILY_SUMMARY", summary.summary_id, summary.content_hash
+    if state_result is None:
+        raise ValueError("State System owner Receipt is unavailable")
+    if execution is None or execution.terminal_package is None:
+        raise ValueError("Controlled Operation owner Receipt is unavailable")
+    package = execution.terminal_package
+    controlled_request = _with_upstream_result(
+        _with_upstream_result(
+            _with_upstream_result(request, dataset_result), feature_result
         ),
-    }
-    results = []
-    stage_request = request
-    for kind in CONTINUOUS_CHILD_ORDER:
-        artifact = artifacts[kind]
-        receipt_hash = canonical_hash(
-            {
-                "schema_version": "canonical-free-data-child-receipt/v1",
-                "child_kind": kind.value,
-                "run_id": str(request.run_id),
-                "tick_id": str(request.tick_id),
-                "summary_id": str(summary.summary_id),
-                "summary_hash": summary.content_hash,
-                "artifact": artifact.to_canonical_dict(),
-            }
-        )
-        result = ChildExecutionResult(
-            child_kind=kind,
-            child_run_id=request.run_id,
-            child_receipt_id=ArtifactId(
-                f"canonical-free-data-child-receipt:{receipt_hash[7:]}"
-            ),
-            child_receipt_hash=receipt_hash,
-            child_artifact_id=artifact.artifact_id,
-            child_artifact_hash=artifact.content_hash,
-            input_references=stage_request.input_references,
+        state_result,
+    )
+    package_receipts = tuple(
+        item.receipt
+        for item in execution.snapshot.stages
+        if item.stage_name is DecisionTimeOperationStageName.OPERATION_PACKAGE
+        and item.receipt is not None
+    )
+    if len(package_receipts) > 1:
+        raise ValueError("Controlled Operation owner Receipt is ambiguous")
+    package_receipt_id = (
+        package_receipts[0].receipt_id if package_receipts else package.package_id
+    )
+    package_receipt_hash = (
+        package_receipts[0].content_hash if package_receipts else package.content_hash
+    )
+    controlled = ChildExecutionResult(
+        child_kind=ContinuousChildKind.CONTROLLED_OPERATION,
+        child_run_id=execution.snapshot.command.run_id,
+        child_receipt_id=package_receipt_id,
+        child_receipt_hash=package_receipt_hash,
+        child_artifact_id=package.package_id,
+        child_artifact_hash=package.content_hash,
+        input_references=controlled_request.input_references,
+        configuration_references=summary.configuration_references,
+    )
+    canonical_request = _with_upstream_result(controlled_request, controlled)
+    canonical_ref = tuple(
+        item
+        for item in package.evidence_references
+        if item.reference_type == "CANONICAL_LIFECYCLE_RUN"
+    )
+    if len(canonical_ref) > 1:
+        raise ValueError("Canonical Lifecycle owner Receipt is ambiguous")
+    canonical = None
+    decision_request = canonical_request
+    if canonical_ref:
+        canonical_artifact = canonical_ref[0]
+        canonical = ChildExecutionResult(
+            child_kind=ContinuousChildKind.CANONICAL_LIFECYCLE,
+            child_run_id=canonical_artifact.object_id,
+            child_receipt_id=canonical_artifact.object_id,
+            child_receipt_hash=canonical_artifact.content_hash,
+            child_artifact_id=canonical_artifact.object_id,
+            child_artifact_hash=canonical_artifact.content_hash,
+            input_references=canonical_request.input_references,
             configuration_references=summary.configuration_references,
         )
-        results.append(result)
-        stage_request = _with_upstream_result(stage_request, result)
+        decision_request = _with_upstream_result(canonical_request, canonical)
+    decision = ChildExecutionResult(
+        child_kind=ContinuousChildKind.DECISION_SYSTEM,
+        child_run_id=summary.run_id,
+        child_receipt_id=summary.summary_id,
+        child_receipt_hash=summary.content_hash,
+        child_artifact_id=summary.summary_id,
+        child_artifact_hash=summary.content_hash,
+        input_references=decision_request.input_references,
+        configuration_references=summary.configuration_references,
+    )
+    results = [
+        dataset_result,
+        feature_result,
+        state_result,
+        controlled,
+        decision,
+    ]
+    if canonical is not None:
+        results.insert(-1, canonical)
     return tuple(results)
+
+
+def _consumed_provider_contracts(
+    preparation: FreeDataOperationPreparation,
+    execution: FreeDataOperationExecution | None,
+) -> tuple[ProviderContractLineage, ...]:
+    source_provider_ids = {
+        str(item.provider_id)
+        for item in preparation.source.acquired.source_manifest.source_artifacts
+    }
+    contracts = {
+        item
+        for item in FREE_DATA_PROVIDER_CONTRACTS
+        if item.provider_id in source_provider_ids
+        and item.product != "ifzq.gtimg.cn:minute"
+    }
+    supplemental = (
+        preparation.controlled_preparation.input_paths.supplemental_research_evidence
+    )
+    from market_regime_alpha.application.operational_research.supplemental_artifact import (
+        load_verified_supplemental_research_evidence,
+    )
+
+    bundle = load_verified_supplemental_research_evidence(supplemental).bundle
+    known = {(item.provider_id, item.product) for item in contracts}
+    for item in bundle.source_manifest.source_artifacts:
+        key = (str(item.provider_id), bundle.source_manifest.provider_profile_id)
+        if key not in known:
+            contracts.add(
+                ProviderContractLineage(
+                    provider_id=key[0],
+                    product=key[1],
+                    contract_version=bundle.source_manifest.schema_version,
+                )
+            )
+            known.add(key)
+    if (
+        execution is not None
+        and execution.decision is not None
+        and execution.decision.minute_coverage.accepted_source_references
+    ):
+        contracts.add(FREE_DATA_PROVIDER_CONTRACTS[-1])
+    return tuple(
+        sorted(
+            contracts,
+            key=lambda item: (
+                item.provider_id,
+                item.product,
+                item.contract_version,
+            ),
+        )
+    )
 
 
 def _runtime_lineage(
