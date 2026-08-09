@@ -143,6 +143,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-PIT-01 Formal Point-in-Time Authority Implementation Plan](superpowers/plans/2026-08-08-wp-pit-01-formal-point-in-time-authority.md)
 - [Free-Data Research and Shadow Runtime Convergence Design](superpowers/specs/2026-08-09-free-data-research-shadow-runtime-convergence-design.md)
 - [Free-Data Research and Shadow Runtime Convergence Implementation Plan](superpowers/plans/2026-08-09-free-data-research-shadow-runtime-convergence.md)
+- [Free Runtime V2 Canonical Convergence Design](superpowers/specs/2026-08-09-free-runtime-v2-canonical-convergence-design.md)
+- [Free Runtime V2 Canonical Convergence Implementation Plan](superpowers/plans/2026-08-09-free-runtime-v2-canonical-convergence.md)
 - [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
 - [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
 - [WP-PGSQL-01 PostgreSQL Authority Only](roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md)
