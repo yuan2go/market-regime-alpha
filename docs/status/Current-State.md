@@ -3,18 +3,18 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole current implementation-status document
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
-> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/046_close_reference_only_qualification.sql`, `src/market_regime_alpha/persistence/postgres/migrations/047_free_historical_evidence_registry.sql`, `tests`
+> **Last Updated:** 2026-08-11
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations`, `tests`
 
 ## Implemented engineering boundary
 
-The system is a PostgreSQL-only modular monolith with one Continuous Research Runtime. It has durable source freeze, Dataset/Feature materialization, Model Governance selection, State/StateSeries/Pool/Candidate, controlled minute/Signal/Forecast work, Research Summary, Canonical Lifecycle mechanics, manual-account Decision support, Research Shadow, prospective outcomes, Panel V2, Research Validation harnesses and isolated Strategy Shadow mechanics. Free-data operation now includes an automatic retrospective BaoStock decision/outcome/sample pipeline, a PostgreSQL Historical Registry Reader in the Research/Shadow Forecast composition, T+1 settlement/enrichment and an idempotent Strategy Shadow operator flow.
+The system is a PostgreSQL-only modular monolith with one Continuous Research Runtime. It has durable source freeze, Dataset/Feature materialization, Model Governance selection, State/StateSeries/Pool/Candidate, controlled minute/Signal/Forecast work, Research Summary, Canonical Lifecycle mechanics, manual-account Decision support, Research Shadow, prospective outcomes, Panel V2 and Research Validation harnesses. Free-data operation includes an automatic retrospective BaoStock decision/outcome/sample pipeline, a PostgreSQL Historical Registry Reader in the Research/Shadow Forecast composition, a full-A-share exploratory Security Master/Research Universe snapshot, explicit Proxy/Derived/Declared reference semantics, T+1 settlement/enrichment and factor lineage/de-duplication evidence.
+
+Phase B engineering also includes daily cross-sectional evaluation science, tie-aware RankIC, label-aware purging/embargo, trading-date moving-block bootstrap, explicit `NOT_ESTIMABLE`, calibration method harnesses and a PostgreSQL Portfolio Shadow ledger. Portfolio Shadow records Cash, Order Intent, Shadow Fill, Shadow Position, NAV, exposure, turnover, cost, capacity, drawdown and attribution while enforcing A-share T+1, 100-share lots, suspension, price-limit and continuous-auction constraints. Append-only Principal/Role/Approval/Audit governance and a read-only recovery audit are available through the existing CLIs. External authentication is not bound.
 
 Actual positions derive only from observed manual fills. The system creates no broker order and does not automatically mutate actual positions.
 
-Migration 047 permits immutable free retrospective Decision/Outcome artifact
-kinds and an owner kind for Strategy Shadow liquidity observations. It does not
-alter migration 046, which removes reference-only
+Migrations 047–050 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow and engineering access-governance owners. They do not alter migration 046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -22,6 +22,7 @@ qualification paths from the current architecture:
 - pure helpers cannot promote Calibration, Entry, Holding/Exit or Strategy Shadow;
 - Production Admission has only `BLOCKED`;
 - PostgreSQL Model Governance rejects all Production qualification with `PRODUCTION_EVIDENCE_OWNER_RESOLUTION_NOT_IMPLEMENTED`.
+- engineering RBAC has no Production Admission or Broker permission and reports authentication as not established.
 
 This is a deliberate fail-closed state. It does not mean the missing qualification work is complete.
 
@@ -29,19 +30,19 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 572 | broad modular monolith; size alone is not a defect |
-| Python test files | 401 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 583 | broad modular monolith; size alone is not a defect |
+| Python test files | 410 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 47 | contiguous, checksummed, forward-only; 046 remains the qualification ceiling |
-| PostgreSQL Authority-schema tables | 148 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 148 independent business Authorities |
-| PostgreSQL owner/repository/journal classes | 32 | bounded owners; not 32 competing global Authorities |
+| PostgreSQL migrations | 50 | contiguous, checksummed, forward-only; 046 remains the qualification ceiling |
+| PostgreSQL Authority-schema tables | 159 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 159 independent business Authorities |
+| PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
-| Artifact/Receipt class names | 42 | immutable contracts across bounded contexts |
-| Policy class names | 34 | time, risk, provider, state and research rules |
+| Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |
+| Policy class names | 38 | time, risk, provider, state and research rules |
 | Protocol/Port class names | 16 | external/composition seams |
 | Qualification-named class types | 14 | contracts and statuses; only Model Governance is a current qualification writer |
-| Current canonical docs | 10 | index, four architecture, four status, one runbook |
+| Current canonical docs | 11 | index, four architecture, four status, one runbook and one research registry |
 | Normative Constitution docs | 10 | unchanged `00` through `09` |
 | Current research registries | 1 | negative/inconclusive results |
 | Historical/superseded/archive docs | 2 | archive boundary index plus superseded Constitution implementation-status; detailed history lives in Git |
@@ -53,7 +54,7 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 ## Complexity classification
 
 - **Essential:** semantic time, immutable identities, PIT resolution, PostgreSQL fences/CAS, separate Candidate/Signal/Forecast/Decision/Position Authorities, replay, actual-Fill Position derivation.
-- **Accidental:** duplicate executable surfaces have been removed; some fixture-heavy test compositions remain.
+- **Accidental:** installed executable surfaces are converged; uninstalled research, legacy, backtesting and diagnostic scripts retain local main guards and some fixture-heavy test compositions remain.
 - **Legacy:** `daily_research`, `dividend_t`, explicit legacy adapters and their compatibility tests. They are isolated from Canonical composition but still carry maintenance cost.
 - **AI-generated:** 273 stale/historical Markdown files, five reference-only promotion functions, a generic Governance binding DTO, an 800-line uncomposed Decision replay library and its 400-line pseudo-Production test seeder were removed in this convergence.
 
@@ -62,9 +63,19 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 ```text
 automatic_order_execution = false
 broker_integration_proven = false
+free_data_engineering_complete = true
+research_engineering_complete = true
+evaluation_engineering_complete = true
+strategy_validation_engineering_complete = true
+shadow_engineering_complete = true
+operations_engineering_complete = true
+governance_engineering_complete = true
 entry_model_empirically_validated = false
 formal_pit_established = false
 formal_oos_alpha_established = false
+calibrated = false
+holding_exit_validated = false
+strategy_shadow_proven = false
 production_ready = false
 ```
 

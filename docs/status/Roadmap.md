@@ -3,23 +3,23 @@
 > **Status:** ROADMAP
 > **Authority:** Current forward engineering order
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 ## P0 Architecture and Authority correctness
 
 1. Preserve the single Continuous Runtime and PostgreSQL-only composition.
 2. Keep migration 046 fail-closed while designing owner-specific Historical Sample and Formal OOS writers.
-3. Preserve the converged six-script/six-main-guard operator boundary.
+3. Preserve the converged six installed-script/six installed-CLI-module-guard operator boundary.
 4. Continue Legacy consumer measurement; delete only after Reader/replay/migration demand reaches zero.
 
 P0 must not add model parameters, Alpha claims or trading permissions.
 
-## P1 Remaining engineering completion
+## P1 Operational evidence completion
 
 1. Run exact-window free-data Research/Shadow operations and recovery drills.
 2. Accumulate real prospective outcome/attestation evidence under trusted clock/origin rules.
-3. Complete authentication, RBAC, backup/restore and observability foundations.
+3. Bind external authentication and execute repeated backup/restore, recovery-audit and observability drills; the RBAC/Approval owners already exist.
 4. Implement narrow qualification writers only when their owner evidence exists.
 
 ## P2 Free-data operational research

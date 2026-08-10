@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
@@ -28,7 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 148 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 159 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -340,19 +340,33 @@ Every entry separates ownership from storage and consumption. A missing writer o
 
 ### Strategy Shadow
 
-- **Domain / Capability:** Strategy Shadow / simulated Entry, Fill, Position, Holding and Exit.
+- **Domain / Capability:** Strategy Shadow / simulated Entry, Fill, Position, Portfolio, Holding and Exit.
 - **Classification:** isolated Research Harness and simulated ledger.
 - **Owner:** Strategy Shadow.
-- **Canonical Writer:** `PostgresStrategyShadowRepository`.
-- **Reader:** session, event and artifact Readers plus deterministic replay.
-- **Repository:** `PostgresStrategyShadowRepository`.
-- **PostgreSQL tables:** `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`.
-- **Artifact / Receipt:** Strategy Shadow Session/Event and simulated Entry/Fill/Position/Holding/Exit artifacts.
-- **Runtime caller:** separately invoked research workflow; no installed CLI.
+- **Canonical Writer:** `PostgresStrategyShadowRepository` for single-trade sessions and `PostgresShadowPortfolioRepository` for Portfolio Shadow.
+- **Reader:** session, event, artifact and Portfolio day-state Readers plus deterministic replay.
+- **Repository:** `PostgresStrategyShadowRepository`, `PostgresShadowPortfolioRepository`.
+- **PostgreSQL tables:** `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`, `strategy_shadow_portfolio`, `strategy_shadow_portfolio_day`.
+- **Artifact / Receipt:** Strategy Shadow Session/Event and simulated Entry/Fill/Position/Holding/Exit artifacts; Portfolio Policy and CAS-linked day states.
+- **Runtime caller:** thin subcommands of the installed `continuous-research` CLI; no second Runtime.
 - **Downstream consumer:** Holding/Exit engineering evaluation and Production Admission gap projection.
 - **Replay mechanism:** CAS session/event/artifact replay.
 - **Evidence ceiling:** simulated only; no actual Fill, Position or broker mutation.
 - **Legacy replacement:** no legacy trading simulator may write actual Position Authority.
+
+### Engineering Access Governance
+
+- **Domain / Capability:** Principal, Role, Permission, engineering Approval and Audit.
+- **Classification:** PostgreSQL Authority for engineering access facts; external authentication remains unbound.
+- **Owner:** Access Governance.
+- **Canonical Writer:** `PostgresAccessGovernance`.
+- **Reader:** current Principal status/Role authorization and append-only Audit readers.
+- **Repository:** `PostgresAccessGovernance`.
+- **PostgreSQL tables:** `security_principal`, `security_principal_status_event`, `security_role_event`, `security_approval`, `security_approval_decision`, `security_audit_event`, `security_governance_command`.
+- **Artifact / Receipt:** content-addressed Principal, Role event, Approval and Approval Decision.
+- **Runtime caller:** `model-governance access-*` operator commands.
+- **Replay mechanism:** append-only status/role chains and idempotent command receipts.
+- **Evidence ceiling:** no authentication proof, Production Admission permission, Broker permission or trading authority.
 
 ### Production Admission
 
@@ -367,7 +381,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Runtime caller:** none in Canonical Runtime.
 - **Downstream consumer:** engineering gap/status reporting only.
 - **Replay mechanism:** deterministic recomputation of missing/rejected floors; no persisted admission replay.
-- **Evidence ceiling:** always blocked; operator approval, RBAC and broker readiness owners do not exist.
+- **Evidence ceiling:** always blocked; engineering RBAC exists, but authenticated operator, Formal evidence and broker readiness owners do not. Caller-supplied approval references cannot promote a floor.
 - **Legacy replacement:** removes reference-only `ELIGIBLE_FOR_OPERATOR_REVIEW` and `AUTHORIZED` projections.
 
 ## Qualification closure

@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current executable operator procedures
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `pyproject.toml`, `scripts/*.py`, `src/market_regime_alpha/cli`
 
 ## Install and verify environment
@@ -14,6 +14,8 @@ uv run continuous-research --help
 uv run continuous-research run-day --help
 uv run continuous-research settle-day --help
 uv run continuous-research strategy-day --help
+uv run continuous-research portfolio-shadow-day --help
+uv run continuous-research recovery-audit --help
 uv run model-governance --help
 uv run pit-authority --help
 ```
@@ -37,7 +39,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 047, `free_historical_evidence_registry`. Expected schema catalog: 148 tables. Migration 047 adds retrospective free Decision/Outcome artifact kinds and an immutable Strategy Shadow liquidity-observation owner kind; migration 046's qualification and Production constraints remain unchanged and fail-closed. Missing/unreachable PostgreSQL is a blocked operation; there is no alternate persistent backend.
+Expected head: migration 050, `security_governance`. Expected schema catalog: 159 tables. Migrations 047–050 add retrospective free evidence, Research Universe, Portfolio Shadow and engineering access-governance owners; migration 046's qualification and Production constraints remain unchanged and fail-closed. Missing/unreachable PostgreSQL is a blocked operation; there is no alternate persistent backend.
 
 Migration 046 intentionally stops if an existing database contains reference-only qualified Validation or Historical Sample rows. Do not update or delete those append-only rows in place. Preserve/export the database, audit the owning evidence, and use a separately reviewed forward-repair migration before retrying 046.
 
@@ -50,6 +52,10 @@ uv run continuous-research run-due --help
 uv run continuous-research run-day --help
 uv run continuous-research settle-day --help
 uv run continuous-research strategy-day --help
+uv run continuous-research portfolio-shadow-day --help
+uv run continuous-research portfolio-shadow-replay --help
+uv run continuous-research research-universe-sync --help
+uv run continuous-research recovery-audit --help
 uv run continuous-research report-day --help
 uv run continuous-research replay-day --help
 uv run continuous-research inspect-run --help
@@ -72,7 +78,9 @@ continuous-research settle-day \
   --trading-date YYYY-MM-DD --next-session-date YYYY-MM-DD \
   --artifact-root ARTIFACT_ROOT --at RFC3339
 continuous-research strategy-day --observations OBSERVATION_JSON
+continuous-research portfolio-shadow-day --observations PORTFOLIO_JSON
 continuous-research report-day --trading-date YYYY-MM-DD --at RFC3339
+continuous-research recovery-audit --checked-at RFC3339
 continuous-research replay-day --trading-date YYYY-MM-DD
 ```
 
@@ -85,10 +93,18 @@ factual settlement exists, retries reload its PostgreSQL-owned identities and
 immutable packages without calling the Provider again.
 
 `strategy-day` resolves the settled Research Shadow, Panel and Candidate from
-PostgreSQL. Its observation file contains only operator facts: trading date,
-optional selected symbol, intended quantity/reference price, fillability,
-optional observed shadow fill, holding/exit observations and an observed-at
-timestamp. It advances only the isolated Strategy Shadow ledger.
+PostgreSQL. Its observation file must explicitly provide every quantity,
+price, fillability, cost, holding/exit value and each value's provenance as
+`OBSERVED_FACT`, `ENGINEERING_ASSUMPTION`, `CALIBRATED_PARAMETER` or
+`OPERATOR_INPUT`; no result-affecting numeric default is supplied. It advances
+only the isolated Strategy Shadow ledger.
+
+`portfolio-shadow-day` resolves current Candidate scores, the settled Panel
+and any previous Portfolio state from PostgreSQL. Its input supplies a stable
+versioned Policy and explicit market observations. Missing price, ADV,
+trading-status, price-limit or session evidence becomes an unfilled Shadow
+Intent. `portfolio-shadow-replay` verifies the immutable predecessor/CAS chain.
+Shadow Fill/Position never become real Fill/Position.
 
 All four day commands are duplicate-safe and resume partial owner journals on
 reinvocation. Strategy Shadow reloads immutable Entry/Fill/Position owner rows
@@ -98,6 +114,11 @@ and can advance later Holding/Exit observations until Outcome settlement.
 creating real trading state. Provider failures leave earlier immutable
 PostgreSQL evidence intact. Lease/fence or CAS conflicts fail closed and must be
 retried through the same command and identifiers.
+
+`recovery-audit` is read-only. It identifies expired Tick leases, retryable
+Provider/Tick failures, partial or missed Research Shadow settlement, missing
+Panel V2, partial Strategy Shadow and failed Portfolio replay. It reports the
+owner command to use; it does not mutate or bypass a fence.
 
 Free data may run only in `RESEARCH` or `SHADOW`. A Production request must fail with `FREE_DATA_PRODUCTION_AUTHORITY_DENIED`. Do not edit status rows, receipts or hashes to recover a run; resume through the owning journal.
 
@@ -109,9 +130,18 @@ uv run decision-system --help
 uv run model-governance --help
 uv run pit-authority --help
 uv run research-shadow --help
+uv run model-governance access-bootstrap-admin --help
+uv run model-governance access-authorize --help
+uv run model-governance access-request-approval --help
+uv run model-governance access-decide-approval --help
 ```
 
 `decision-system` is manual-account decision support. It requires current PostgreSQL model selection; Production qualification is currently forced closed. `research-shadow` freezes research decisions and outcomes, not simulated fills. Strategy Shadow is exposed only as subcommands of `continuous-research`; there is no duplicate installed CLI.
+
+Access Governance permits a one-time Admin bootstrap only while the Principal
+table is empty, then uses append-only Role grant/revoke and two-person
+engineering Approval. It intentionally has no Production Admission or Broker
+permission. Principal IDs on a local CLI are not proof of authentication.
 
 ## Validation
 

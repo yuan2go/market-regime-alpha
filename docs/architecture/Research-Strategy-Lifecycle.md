@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical research/strategy responsibility split
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `src/market_regime_alpha/application/research_evaluation`, `src/market_regime_alpha/application/research_validation`, `src/market_regime_alpha/application/shadow_research`, `src/market_regime_alpha/application/strategy_shadow`
 
 ## Lifecycle
@@ -19,7 +19,8 @@ Canonical Dataset / Feature / State / Candidate / Signal / Forecast
 -> calibration fit/evaluation (not calibrated)
 -> locked-partition metric computation (not Formal OOS Authority)
 -> Entry research
--> Strategy Shadow
+-> Strategy Shadow Entry/Fill/Position
+-> Portfolio Shadow Cash/NAV/Exposure/Cost/Attribution
 -> Holding/Exit engineering assessment
 -> blocked Production Admission projection
 ```
@@ -39,6 +40,7 @@ qualification or empirical validation.
 - Entry research evaluates Candidate-only, Candidate+Signal, Candidate+Forecast and Candidate+Intraday variants. Its strongest output is `SHADOW_ENTER`; Canonical Entry still has no `ENTER` state.
 - Research Shadow freezes what the research system knew and later binds factual outcomes. It has no simulated account or execution ledger.
 - Strategy Shadow owns an isolated simulated Entry/Fill/Position/Holding/Exit session. The free-data operator uses a selected-Candidate pass-through with no score threshold and a T+1 fixed-time observation contract, not tuned model parameters. Later invocations reload Entry/Fill/Position and append Holding/Exit observations until settlement. Every stored artifact has `real_trading_mutation=false`.
+- Portfolio Shadow owns an independent simulated Cash/Order Intent/Fill/Position/NAV ledger under the same Strategy Shadow boundary. Top1/3/5 Equal/Score/Risk policies and all cost/capacity inputs carry explicit provenance; T+1, 100-share lots, suspension, price limits and continuous-auction constraints fail closed. It cannot write actual account or Position authorities.
 - Holding/Exit validation consumes Strategy Shadow outcomes only. It cannot mutate actual `position_books` or `manual_fills`.
 - Production Admission lists missing floors. It is not an Authority and cannot reach review eligibility or authorization.
 
@@ -60,4 +62,4 @@ The next legitimate implementation is a set of narrow owner-specific writers, ad
 - no calibrated probability;
 - no Entry authorization;
 - no actual Fill or Position from Strategy Shadow;
-- no operator, RBAC or broker readiness proof.
+- no authenticated operator or broker readiness proof; engineering RBAC is not authentication or Production Admission.
