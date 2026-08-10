@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 
-from market_regime_alpha.cli.model_governance import main
+from market_regime_alpha.cli.model_governance import build_parser, main
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -28,6 +28,61 @@ def _authority(factory: PostgresConnectionFactory) -> list[str]:
         "--database-schema",
         factory.application_schema,
     ]
+
+
+def test_cli_exposes_access_governance_without_a_second_cli() -> None:
+    for operation in (
+        "access-bootstrap-admin",
+        "access-create-principal",
+        "access-change-role",
+        "access-set-principal-status",
+        "access-authorize",
+        "access-request-approval",
+        "access-decide-approval",
+        "access-audit",
+    ):
+        args = build_parser().parse_args(
+            [
+                "--database-url",
+                "postgresql://authority",
+                operation,
+                "--input",
+                "access.json",
+            ]
+        )
+        assert args.operation == operation
+
+
+def test_cli_bootstraps_engineering_access_governance(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path,
+    capsys,
+) -> None:
+    payload_path = tmp_path / "bootstrap-access.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "external_subject": "local:cli-admin",
+                "display_name": "CLI Admin",
+                "reason": "test bootstrap",
+                "occurred_at": "2026-08-11T01:00:00+00:00",
+                "idempotency_key": "cli-access-bootstrap",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            *_authority(postgres_factory),
+            "access-bootstrap-admin",
+            "--input",
+            str(payload_path),
+        ]
+    ) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["external_subject"] == "local:cli-admin"
+    assert "PRODUCTION_ADMISSION_PERMISSION_ABSENT" in output["limitations"]
 
 
 def test_cli_lists_and_inspects_postgres_model_authority(

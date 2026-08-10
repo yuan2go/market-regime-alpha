@@ -154,6 +154,15 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "portfolio-1",
         ]
     )
+    recovery_audit = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "recovery-audit",
+            "--checked-at",
+            "2026-08-11T08:00:00+08:00",
+        ]
+    )
 
     assert run_day.operation == "run-day"
     assert strategy_day.operation == "strategy-day"
@@ -164,6 +173,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert universe_replay.operation == "research-universe-replay"
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
+    assert recovery_audit.operation == "recovery-audit"
 
 
 def test_cli_exposes_read_only_preflight_and_canonical_inspection() -> None:

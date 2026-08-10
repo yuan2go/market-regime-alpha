@@ -8,6 +8,18 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from market_regime_alpha.application.governance.access_control import (
+    ApprovalAction,
+    ApprovalDecisionKind,
+    PostgresAccessGovernance,
+    PrincipalStatus,
+    RoleEventKind,
+    SecurityPermission,
+    SecurityRole,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.core.identity import ArtifactId, ModelId
 from market_regime_alpha.platform.contracts import (
     EvidenceLevel,
@@ -66,6 +78,14 @@ def build_parser() -> argparse.ArgumentParser:
         "assign",
         "transition-assignment",
         "replace-champion",
+        "access-bootstrap-admin",
+        "access-create-principal",
+        "access-change-role",
+        "access-set-principal-status",
+        "access-authorize",
+        "access-request-approval",
+        "access-decide-approval",
+        "access-audit",
     ):
         command = commands.add_parser(name)
         command.add_argument("--input", type=Path, required=True)
@@ -81,8 +101,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     ) as repositories:
         governance = repositories.model_governance()
         operation = args.operation
-        if operation == "list-models":
-            result: Any = {
+        result: Any
+        if operation.startswith("access-"):
+            payload = _object(json.loads(args.input.read_text(encoding="utf-8")))
+            result = _access_operation(
+                operation,
+                payload,
+                PostgresAccessGovernance(
+                    repositories.postgres_factory,
+                    apply_migrations=False,
+                ),
+            )
+        elif operation == "list-models":
+            result = {
                 "governance_revision": governance.current_revision(),
                 "models": governance.list_models(),
             }
@@ -234,6 +265,83 @@ def _write(operation: str, payload: Mapping[str, Any], governance: Any) -> Any:
     else:
         raise ValueError(f"unsupported Model Governance operation: {operation}")
     return item.to_canonical_dict()
+
+
+def _access_operation(
+    operation: str,
+    payload: Mapping[str, Any],
+    governance: PostgresAccessGovernance,
+) -> Any:
+    if operation == "access-bootstrap-admin":
+        return governance.bootstrap_admin(
+            external_subject=_text(payload, "external_subject"),
+            display_name=_text(payload, "display_name"),
+            reason=_text(payload, "reason"),
+            occurred_at=_instant(payload["occurred_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+        ).to_canonical_dict()
+    if operation == "access-create-principal":
+        return governance.create_principal(
+            actor=ArtifactId(_text(payload, "actor_principal_id")),
+            external_subject=_text(payload, "external_subject"),
+            display_name=_text(payload, "display_name"),
+            reason=_text(payload, "reason"),
+            occurred_at=_instant(payload["occurred_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+        ).to_canonical_dict()
+    if operation == "access-change-role":
+        return governance.change_role(
+            actor=ArtifactId(_text(payload, "actor_principal_id")),
+            principal_id=ArtifactId(_text(payload, "principal_id")),
+            role=SecurityRole(_text(payload, "role")),
+            event_kind=RoleEventKind(_text(payload, "event_kind")),
+            reason=_text(payload, "reason"),
+            occurred_at=_instant(payload["occurred_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+        ).to_canonical_dict()
+    if operation == "access-set-principal-status":
+        status = governance.set_principal_status(
+            actor=ArtifactId(_text(payload, "actor_principal_id")),
+            principal_id=ArtifactId(_text(payload, "principal_id")),
+            status=PrincipalStatus(_text(payload, "status")),
+            reason=_text(payload, "reason"),
+            occurred_at=_instant(payload["occurred_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+        )
+        return {"status": status.value, "production_authorized": False}
+    if operation == "access-authorize":
+        return governance.authorization(
+            ArtifactId(_text(payload, "principal_id")),
+            SecurityPermission(_text(payload, "permission")),
+        ).to_canonical_dict()
+    if operation == "access-request-approval":
+        return governance.request_approval(
+            requester=ArtifactId(_text(payload, "requester_principal_id")),
+            action_kind=ApprovalAction(_text(payload, "action_kind")),
+            resource_reference=ValidationArtifactReference.from_canonical_dict(
+                _object(payload["resource_reference"])
+            ),
+            reason=_text(payload, "reason"),
+            requested_at=_instant(payload["requested_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+        ).to_canonical_dict()
+    if operation == "access-decide-approval":
+        return governance.decide_approval(
+            approval_id=ArtifactId(_text(payload, "approval_id")),
+            approver=ArtifactId(_text(payload, "approver_principal_id")),
+            decision=ApprovalDecisionKind(_text(payload, "decision")),
+            reason=_text(payload, "reason"),
+            decided_at=_instant(payload["decided_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+        ).to_canonical_dict()
+    if operation == "access-audit":
+        return {
+            "events": governance.audit_events(
+                reader=ArtifactId(_text(payload, "reader_principal_id"))
+            ),
+            "production_authorized": False,
+        }
+    raise ValueError(f"unsupported Access Governance operation: {operation}")
 
 
 def _object(value: object) -> Mapping[str, Any]:

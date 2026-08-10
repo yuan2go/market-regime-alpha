@@ -468,6 +468,7 @@ def _result(
         "trading_date": request.trading_date.isoformat(),
         "portfolio_id": str(portfolio.portfolio_id),
         "state_id": None if state is None else str(state.state_id),
+        "state_hash": None if state is None else state.state_hash,
         "sequence": None if state is None else state.sequence,
         "cash": None if state is None else str(state.cash),
         "nav": None if state is None else str(state.nav),

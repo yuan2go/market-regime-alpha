@@ -75,6 +75,13 @@ from market_regime_alpha.application.free_data_operation import (
     FreeDataOperationService,
     FreeDataPreparationRequest,
 )
+from market_regime_alpha.application.governance.access_control import (
+    ApprovalAction,
+    ApprovalDecisionKind,
+    PostgresAccessGovernance,
+    RoleEventKind,
+    SecurityRole,
+)
 from market_regime_alpha.application.operational_research.contracts import (
     CapitalObservationEvidence,
     ETFThemeMappingEvidence,
@@ -95,6 +102,9 @@ from market_regime_alpha.application.runtime_operations.disaster_recovery import
 from market_regime_alpha.application.runtime_operations.query import (
     CanonicalDagNodeType,
     PostgresCanonicalRuntimeQuery,
+)
+from market_regime_alpha.application.runtime_operations.recovery_audit import (
+    PostgresRecoveryAudit,
 )
 from market_regime_alpha.application.research_evaluation import (
     EvaluationSampleDisposition,
@@ -892,6 +902,58 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         )
         assert portfolio_replay["state_count"] == 2
         assert portfolio_replay["shadow_position_is_real_position"] is False
+        access = PostgresAccessGovernance(postgres_factory)
+        admin = access.bootstrap_admin(
+            external_subject="fixture:stateful-admin",
+            display_name="Stateful Admin",
+            reason="engineering fixture bootstrap",
+            occurred_at=strategy_observed_at + timedelta(days=2),
+            idempotency_key="stateful-access-bootstrap",
+        )
+        approver = access.create_principal(
+            actor=admin.principal_id,
+            external_subject="fixture:stateful-approver",
+            display_name="Stateful Approver",
+            reason="two-person engineering approval",
+            occurred_at=strategy_observed_at + timedelta(days=2, seconds=1),
+            idempotency_key="stateful-create-approver",
+        )
+        access.change_role(
+            actor=admin.principal_id,
+            principal_id=approver.principal_id,
+            role=SecurityRole.APPROVER,
+            event_kind=RoleEventKind.GRANTED,
+            reason="engineering approval role",
+            occurred_at=strategy_observed_at + timedelta(days=2, seconds=2),
+            idempotency_key="stateful-grant-approver",
+        )
+        engineering_approval = access.request_approval(
+            requester=admin.principal_id,
+            action_kind=ApprovalAction.SHADOW_OPERATION,
+            resource_reference=ValidationArtifactReference(
+                "SHADOW_PORTFOLIO_DAY_STATE",
+                ArtifactId(str(portfolio_next["state_id"])),
+                str(portfolio_next["state_hash"]),
+            ),
+            reason="review Portfolio Shadow engineering output",
+            requested_at=strategy_observed_at + timedelta(days=2, seconds=3),
+            idempotency_key="stateful-request-shadow-approval",
+        )
+        approval_decision = access.decide_approval(
+            approval_id=engineering_approval.approval_id,
+            approver=approver.principal_id,
+            decision=ApprovalDecisionKind.APPROVED,
+            reason="engineering-only review",
+            decided_at=strategy_observed_at + timedelta(days=2, seconds=4),
+            idempotency_key="stateful-decide-shadow-approval",
+        )
+        assert approval_decision.production_authorized is False
+        assert len(access.audit_events(reader=approver.principal_id)) == 5
+        recovery_audit = PostgresRecoveryAudit(postgres_factory).inspect(
+            checked_at=strategy_observed_at + timedelta(days=2, seconds=5)
+        )
+        assert recovery_audit.issues == ()
+        assert recovery_audit.portfolio_replay_verified_count == 1
         report = shadow_operations.report(shadow_command.session_id)
         assert report["authority"]["research_shadow_engineering_ready"] is True
         assert report["authority"]["prospective_proven"] is False
@@ -932,8 +994,8 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             artifact_root=tmp_path / "stateful-runtime",
             backup_root=tmp_path / "dr-backup",
             verified_at=source_archive.created_at,
-            table_names=(
-                "capital_state",
+                table_names=(
+                    "capital_state",
                 "continuous_research_run",
                 "continuous_runtime_tick",
                 "dynamic_stock_pool",
@@ -944,12 +1006,22 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "model_runtime_assignment",
                 "prospective_outcome_settlement",
                 "research_daily_summary",
-                "research_evaluation_dataset",
-                "state_runtime_candidate_artifact",
-                "theme_rotation_state",
-            ),
-        )
-        assert recovery.migration_head == 49
+                    "research_evaluation_dataset",
+                    "research_validation_artifact",
+                    "security_approval",
+                    "security_approval_decision",
+                    "security_audit_event",
+                    "security_governance_command",
+                    "security_principal",
+                    "security_principal_status_event",
+                    "security_role_event",
+                    "state_runtime_candidate_artifact",
+                    "strategy_shadow_portfolio",
+                    "strategy_shadow_portfolio_day",
+                    "theme_rotation_state",
+                ),
+            )
+        assert recovery.migration_head == 50
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

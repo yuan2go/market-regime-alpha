@@ -84,6 +84,9 @@ from market_regime_alpha.application.runtime_operations.preflight import (
 from market_regime_alpha.application.runtime_operations.query import (
     PostgresCanonicalRuntimeQuery,
 )
+from market_regime_alpha.application.runtime_operations.recovery_audit import (
+    PostgresRecoveryAudit,
+)
 from market_regime_alpha.application.shadow_research.attestation import (
     ClockMode,
     RuntimeOrigin,
@@ -248,6 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     report_day.add_argument("--at", required=True)
     replay_day = subparsers.add_parser("replay-day")
     replay_day.add_argument("--trading-date", required=True)
+    recovery_audit = subparsers.add_parser("recovery-audit")
+    recovery_audit.add_argument("--checked-at", required=True)
     preflight = subparsers.add_parser("preflight", help="Inspect engineering readiness without executing a Tick.")
     preflight.add_argument("--trading-date", required=True)
     preflight.add_argument(
@@ -297,6 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "replay-day",
             "research-universe-replay",
             "portfolio-shadow-replay",
+            "recovery-audit",
             *_INSPECT_OPERATIONS,
         }
         journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
@@ -369,6 +375,10 @@ def _dispatch(
         return FreeResearchUniverseOperator(factory).replay(
             ArtifactId(args.snapshot_id)
         )
+    if args.operation == "recovery-audit":
+        return PostgresRecoveryAudit(factory).inspect(
+            checked_at=_instant(args.checked_at)
+        ).to_canonical_dict()
     if args.operation == "report-day":
         trading_date = date.fromisoformat(args.trading_date)
         runtime = PostgresCanonicalRuntimeQuery(factory).inspect_trading_date(

@@ -162,11 +162,34 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "continuous_runtime_authority_evidence",
         "free_data_research_universe_snapshot",
         "free_data_research_universe_member",
+        "security_principal",
+        "security_principal_status_event",
+        "security_role_event",
+        "security_approval",
+        "security_approval_decision",
+        "security_audit_event",
+        "security_governance_command",
     }
 )
 
 EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
+        ("security_principal", "security_principal_no_update"),
+        (
+            "security_principal_status_event",
+            "security_principal_status_event_no_update",
+        ),
+        ("security_role_event", "security_role_event_no_update"),
+        ("security_approval", "security_approval_no_update"),
+        (
+            "security_approval_decision",
+            "security_approval_decision_no_update",
+        ),
+        ("security_audit_event", "security_audit_event_no_update"),
+        (
+            "security_governance_command",
+            "security_governance_command_no_update",
+        ),
         (
             "strategy_shadow_portfolio",
             "strategy_shadow_portfolio_no_update",
