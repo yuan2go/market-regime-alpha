@@ -63,6 +63,9 @@ from market_regime_alpha.application.free_data_operation.blocked import (
 from market_regime_alpha.application.free_data_operation.service import (
     FreeDataOperationService,
 )
+from market_regime_alpha.application.free_data_operation.research_universe import (
+    FreeResearchUniverseOperator,
+)
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
     FreeHistoricalSampleBuildResult,
@@ -224,6 +227,11 @@ def build_parser() -> argparse.ArgumentParser:
     settle_day.add_argument("--at", required=True)
     strategy_replay = subparsers.add_parser("strategy-replay")
     strategy_replay.add_argument("--session-id", required=True)
+    universe_sync = subparsers.add_parser("research-universe-sync")
+    universe_sync.add_argument("--as-of-date", required=True)
+    universe_sync.add_argument("--artifact-root", type=Path, required=True)
+    universe_replay = subparsers.add_parser("research-universe-replay")
+    universe_replay.add_argument("--snapshot-id", required=True)
     report_day = subparsers.add_parser("report-day")
     report_day.add_argument("--trading-date", required=True)
     report_day.add_argument("--at", required=True)
@@ -276,6 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "report",
             "replay",
             "replay-day",
+            "research-universe-replay",
             *_INSPECT_OPERATIONS,
         }
         journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
@@ -328,6 +337,15 @@ def _dispatch(
     if args.operation == "strategy-replay":
         return StrategyShadowDayOperator(factory).replay(
             ArtifactId(args.session_id)
+        )
+    if args.operation == "research-universe-sync":
+        return FreeResearchUniverseOperator(factory).sync(
+            as_of_date=date.fromisoformat(args.as_of_date),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "research-universe-replay":
+        return FreeResearchUniverseOperator(factory).replay(
+            ArtifactId(args.snapshot_id)
         )
     if args.operation == "report-day":
         trading_date = date.fromisoformat(args.trading_date)

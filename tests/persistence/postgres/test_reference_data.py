@@ -13,6 +13,7 @@ from market_regime_alpha.data.postgres_reference_data import (
     PostgresETFThemeReferenceRepository,
 )
 from market_regime_alpha.data.reference_data import (
+    MembershipKind,
     free_v1_reference_snapshot,
     publish_reference_snapshot,
 )
@@ -51,6 +52,10 @@ def test_free_v1_reference_is_exploratory_append_only_and_replayable(
     assert tuple((item.etf_id, item.theme_id) for item in snapshot.mappings) == (
         ("510300.SH", "FREE_A_SHARE_OPERATIONAL_UNIVERSE"),
     )
+    assert {
+        item.membership_kind for item in snapshot.mappings
+    } == {MembershipKind.PROXY_MEMBERSHIP}
+    assert snapshot.schema_version == "etf-theme-reference-snapshot/v2"
 
     with pytest.raises(KeyError, match="known at that time"):
         repository.latest_as_of(

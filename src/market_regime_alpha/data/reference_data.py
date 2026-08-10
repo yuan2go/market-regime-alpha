@@ -30,13 +30,20 @@ from market_regime_alpha.evidence.canonical import (
 )
 
 
-REFERENCE_SNAPSHOT_SCHEMA = "etf-theme-reference-snapshot/v1"
+REFERENCE_SNAPSHOT_SCHEMA_V1 = "etf-theme-reference-snapshot/v1"
+REFERENCE_SNAPSHOT_SCHEMA = "etf-theme-reference-snapshot/v2"
 
 
 class ReferenceRole(str, Enum):
     PRIMARY = "PRIMARY"
     ALTERNATIVE = "ALTERNATIVE"
     SUPPORTING = "SUPPORTING"
+
+
+class MembershipKind(str, Enum):
+    DECLARED_MEMBERSHIP = "DECLARED_MEMBERSHIP"
+    DERIVED_MEMBERSHIP = "DERIVED_MEMBERSHIP"
+    PROXY_MEMBERSHIP = "PROXY_MEMBERSHIP"
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,18 +194,24 @@ class ThemeMembershipRecord:
     theme_id: str
     role: ReferenceRole
     validity: ReferenceValidity
+    membership_kind: MembershipKind = MembershipKind.PROXY_MEMBERSHIP
 
     def __post_init__(self) -> None:
         require_text("symbol", self.symbol)
         require_text("theme_id", self.theme_id)
 
-    def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+    def to_canonical_dict(
+        self, *, include_membership_kind: bool = True
+    ) -> dict[str, Any]:
+        payload = {
             "symbol": self.symbol,
             "theme_id": self.theme_id,
             "role": self.role.value,
             "validity": self.validity.to_canonical_dict(),
         }
+        if include_membership_kind:
+            payload["membership_kind"] = self.membership_kind.value
+        return payload
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> ThemeMembershipRecord:
@@ -209,6 +222,13 @@ class ThemeMembershipRecord:
             validity=ReferenceValidity.from_canonical_dict(
                 _mapping(payload["validity"])
             ),
+            membership_kind=MembershipKind(
+                _text(
+                    payload.get(
+                        "membership_kind", MembershipKind.PROXY_MEMBERSHIP.value
+                    )
+                )
+            ),
         )
 
 
@@ -218,18 +238,24 @@ class ETFThemeMappingRecord:
     theme_id: str
     role: ReferenceRole
     validity: ReferenceValidity
+    membership_kind: MembershipKind = MembershipKind.PROXY_MEMBERSHIP
 
     def __post_init__(self) -> None:
         require_text("etf_id", self.etf_id)
         require_text("theme_id", self.theme_id)
 
-    def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+    def to_canonical_dict(
+        self, *, include_membership_kind: bool = True
+    ) -> dict[str, Any]:
+        payload = {
             "etf_id": self.etf_id,
             "theme_id": self.theme_id,
             "role": self.role.value,
             "validity": self.validity.to_canonical_dict(),
         }
+        if include_membership_kind:
+            payload["membership_kind"] = self.membership_kind.value
+        return payload
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> ETFThemeMappingRecord:
@@ -239,6 +265,13 @@ class ETFThemeMappingRecord:
             role=ReferenceRole(_text(payload["role"])),
             validity=ReferenceValidity.from_canonical_dict(
                 _mapping(payload["validity"])
+            ),
+            membership_kind=MembershipKind(
+                _text(
+                    payload.get(
+                        "membership_kind", MembershipKind.PROXY_MEMBERSHIP.value
+                    )
+                )
             ),
         )
 
@@ -259,7 +292,10 @@ class ETFThemeReferenceSnapshot:
     schema_version: str = REFERENCE_SNAPSHOT_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema_version != REFERENCE_SNAPSHOT_SCHEMA:
+        if self.schema_version not in {
+            REFERENCE_SNAPSHOT_SCHEMA_V1,
+            REFERENCE_SNAPSHOT_SCHEMA,
+        }:
             raise ValueError("unsupported ETF/Theme Reference schema")
         require_sha256("content_hash", self.content_hash)
         require_text("reference_version", self.reference_version)
@@ -306,9 +342,16 @@ class ETFThemeReferenceSnapshot:
             raise ValueError("Reference Snapshot authority ceiling is incomplete")
         if self.limitations != tuple(sorted(set(self.limitations))):
             raise ValueError("Reference limitations must be unique and sorted")
+        validity_records: tuple[
+            ETFReferenceRecord
+            | ThemeTaxonomyRecord
+            | ThemeMembershipRecord
+            | ETFThemeMappingRecord,
+            ...,
+        ] = (*self.etfs, *self.themes, *self.memberships, *self.mappings)
         if any(
             item.validity.available_at > self.created_at
-            for item in (*self.etfs, *self.themes, *self.memberships, *self.mappings)
+            for item in validity_records
         ):
             raise ValueError("Reference Snapshot predates source availability")
         if canonical_hash(self.semantic_payload()) != self.content_hash:
@@ -330,6 +373,7 @@ class ETFThemeReferenceSnapshot:
             sorted(values["mappings"], key=lambda item: (item.etf_id, item.theme_id))
         )
         normalized["limitations"] = tuple(sorted(set(values["limitations"])))
+        normalized["schema_version"] = REFERENCE_SNAPSHOT_SCHEMA
         digest = canonical_hash(_snapshot_payload(**normalized))
         return cls(
             snapshot_id=_content_id("etf-theme-reference", digest),
@@ -339,9 +383,16 @@ class ETFThemeReferenceSnapshot:
 
     @property
     def available_at(self) -> datetime:
+        validity_records: tuple[
+            ETFReferenceRecord
+            | ThemeTaxonomyRecord
+            | ThemeMembershipRecord
+            | ETFThemeMappingRecord,
+            ...,
+        ] = (*self.etfs, *self.themes, *self.memberships, *self.mappings)
         return max(
             item.validity.available_at
-            for item in (*self.etfs, *self.themes, *self.memberships, *self.mappings)
+            for item in validity_records
         )
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -355,6 +406,7 @@ class ETFThemeReferenceSnapshot:
             evidence_ceiling=self.evidence_ceiling,
             created_at=self.created_at,
             limitations=self.limitations,
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -451,6 +503,7 @@ def free_v1_reference_snapshot(
             theme_id=item.theme_id,
             role=ReferenceRole.PRIMARY,
             validity=etfs[index].validity,
+            membership_kind=MembershipKind.PROXY_MEMBERSHIP,
         )
         for index, item in enumerate(policy.etfs)
     )
@@ -495,13 +548,25 @@ def load_reference_snapshot(path: Path) -> ETFThemeReferenceSnapshot:
 
 
 def _snapshot_payload(**values: Any) -> dict[str, Any]:
+    schema_version = values.get("schema_version", REFERENCE_SNAPSHOT_SCHEMA)
+    include_membership_kind = schema_version != REFERENCE_SNAPSHOT_SCHEMA_V1
     return {
-        "schema_version": REFERENCE_SNAPSHOT_SCHEMA,
+        "schema_version": schema_version,
         "reference_version": values["reference_version"],
         "etfs": [item.to_canonical_dict() for item in values["etfs"]],
         "themes": [item.to_canonical_dict() for item in values["themes"]],
-        "memberships": [item.to_canonical_dict() for item in values["memberships"]],
-        "mappings": [item.to_canonical_dict() for item in values["mappings"]],
+        "memberships": [
+            item.to_canonical_dict(
+                include_membership_kind=include_membership_kind
+            )
+            for item in values["memberships"]
+        ],
+        "mappings": [
+            item.to_canonical_dict(
+                include_membership_kind=include_membership_kind
+            )
+            for item in values["mappings"]
+        ],
         "data_eligibility": values["data_eligibility"].value,
         "evidence_ceiling": values["evidence_ceiling"].value,
         "created_at": canonical_datetime(values["created_at"]),
@@ -570,6 +635,7 @@ __all__ = [
     "ETFReferenceRecord",
     "ETFThemeMappingRecord",
     "ETFThemeReferenceSnapshot",
+    "MembershipKind",
     "ReferenceRole",
     "ReferenceValidity",
     "ThemeMembershipRecord",

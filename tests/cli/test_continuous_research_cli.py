@@ -116,12 +116,34 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "2025-02-03",
         ]
     )
+    universe_sync = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "research-universe-sync",
+            "--as-of-date",
+            "2025-02-03",
+            "--artifact-root",
+            "runtime-output",
+        ]
+    )
+    universe_replay = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "research-universe-replay",
+            "--snapshot-id",
+            "research-universe-1",
+        ]
+    )
 
     assert run_day.operation == "run-day"
     assert strategy_day.operation == "strategy-day"
     assert settle_day.operation == "settle-day"
     assert report_day.operation == "report-day"
     assert replay_day.operation == "replay-day"
+    assert universe_sync.operation == "research-universe-sync"
+    assert universe_replay.operation == "research-universe-replay"
 
 
 def test_cli_exposes_read_only_preflight_and_canonical_inspection() -> None:
