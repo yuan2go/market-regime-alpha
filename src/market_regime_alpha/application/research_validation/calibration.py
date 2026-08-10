@@ -56,6 +56,19 @@ class CalibrationProtocol:
     maximum_iterations: int
     learning_rate: Decimal
 
+    def __post_init__(self) -> None:
+        require_sha256("protocol_hash", self.protocol_hash)
+        require_text("protocol_version", self.protocol_version)
+        if (
+            self.bin_count < 2
+            or self.minimum_fit_samples <= 0
+            or self.maximum_iterations <= 0
+            or self.learning_rate <= 0
+        ):
+            raise ValueError("Calibration protocol parameters are invalid")
+        if canonical_hash(self.identity_payload()) != self.protocol_hash:
+            raise ValueError("Calibration Protocol hash mismatch")
+
     @classmethod
     def create(
         cls,
@@ -81,6 +94,17 @@ class CalibrationProtocol:
         artifact_id, digest = content_identity("calibration-protocol", values)
         return cls(artifact_id, digest, protocol_version, method, bin_count, minimum_fit_samples, maximum_iterations, learning_rate)
 
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "schema": "calibration-protocol/v1",
+            "protocol_version": self.protocol_version,
+            "method": self.method.value,
+            "bin_count": self.bin_count,
+            "minimum_fit_samples": self.minimum_fit_samples,
+            "maximum_iterations": self.maximum_iterations,
+            "learning_rate": str(self.learning_rate),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class CalibrationFit:
@@ -98,6 +122,17 @@ class CalibrationFit:
             raise ValueError("fit observations must be unique and sorted")
         if self.parameters != tuple(sorted(self.parameters)):
             raise ValueError("Calibration parameters must be unique and sorted")
+        if canonical_hash(self.identity_payload()) != self.fit_hash:
+            raise ValueError("Calibration Fit hash mismatch")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "protocol_reference": self.protocol_reference.to_canonical_dict(),
+            "fit_observation_ids": list(self.fit_observation_ids),
+            "parameters": [[name, str(value)] for name, value in self.parameters],
+            "training_loss": str(self.training_loss),
+            "created_at": timestamp(self.created_at),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +147,25 @@ class CalibrationEvaluation:
     ece: Decimal
     coverage: Decimal
     bins: tuple[tuple[Decimal, Decimal, int], ...]
+
+    def __post_init__(self) -> None:
+        require_sha256("evaluation_hash", self.evaluation_hash)
+        if self.observation_ids != tuple(sorted(set(self.observation_ids))):
+            raise ValueError("Calibration evaluation observations must be unique")
+        if canonical_hash(self.identity_payload()) != self.evaluation_hash:
+            raise ValueError("Calibration Evaluation hash mismatch")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "partition": self.partition.value,
+            "observation_ids": list(self.observation_ids),
+            "brier": str(self.brier),
+            "log_loss": str(self.log_loss),
+            "reliability": str(self.reliability),
+            "ece": str(self.ece),
+            "coverage": str(self.coverage),
+            "bins": [[str(a), str(b), count] for a, b, count in self.bins],
+        }
 
 
 @dataclass(frozen=True, slots=True)

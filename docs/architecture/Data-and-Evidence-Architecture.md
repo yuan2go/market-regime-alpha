@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical data, time and evidence rules
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `src/market_regime_alpha/data`, `src/market_regime_alpha/market_data`, `src/market_regime_alpha/evidence`, `src/market_regime_alpha/data/postgres_pit_authority.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Evidence is not a reference
@@ -42,14 +42,14 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 046 and checksummed.
+- Packaged migrations are contiguous from 001 through 050 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 148 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count.
+The schema catalog currently contains 159 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–051 add only exploratory sample, Research Universe, Portfolio Shadow, engineering access-governance owners and Path Calibration Hypothesis evidence and do not weaken migration 046.
 
 ## Replay
 

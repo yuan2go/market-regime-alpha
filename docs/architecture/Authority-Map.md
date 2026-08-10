@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
@@ -28,7 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 148 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 159 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -97,6 +97,22 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Replay mechanism:** run/task receipt and immutable materialization Reader.
 - **Evidence ceiling:** inherits Dataset authority; computation does not improve PIT or Provider status.
 - **Legacy replacement:** replaces recomputation from legacy feature files in current execution.
+
+### Free-data Security Master and Research Universe
+
+- **Domain / Capability:** Data / append-only BaoStock Security Master snapshot and full A-share historical research population.
+- **Classification:** exploratory Evidence Authority; distinct from Daily Eligibility, bounded Operational Universe, Dynamic Pool and Candidate.
+- **Owner:** Free Research Universe.
+- **Canonical Writer:** `FreeResearchUniverseOperator` through `PostgresFreeResearchUniverseRepository`.
+- **Reader:** snapshot/member reload, latest-as-of and replay Readers.
+- **Repository:** `PostgresFreeResearchUniverseRepository`.
+- **PostgreSQL tables:** `free_data_research_universe_snapshot`, `free_data_research_universe_member`.
+- **Artifact / Receipt:** content-addressed Security Master raw archive/SourceManifest and `FreeResearchUniverseSnapshot`.
+- **Runtime caller:** `continuous-research research-universe-sync`; archived replay uses `research-universe-replay`.
+- **Downstream consumer:** research population/audit Readers; the bounded Operational Universe remains a separate capacity control.
+- **Replay mechanism:** exact owner-row ID/hash reconstruction, member-projection comparison and checksum/identity verification of the immutable raw archive supplied to `research-universe-replay`.
+- **Evidence ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_PIT_NOT_ESTABLISHED`; unknown listing facts remain `UNKNOWN` and are never silently included or discarded.
+- **Legacy replacement:** no listing-date or current-status heuristic may write Daily Eligibility or Formal PIT facts.
 
 ### Formal PIT
 
@@ -332,27 +348,41 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Repository:** `PostgresResearchValidationRepository`.
 - **PostgreSQL tables:** `research_validation_artifact`, `research_panel_factor_exposure`, `historical_path_sample_record`, `calibration_partition_binding`.
 - **Artifact / Receipt:** engineering Validation artifacts, Historical Sample Dataset, Calibration artifact, Evaluation result and Entry/Holding evidence.
-- **Runtime caller:** offline research harness only.
+- **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
 - **Downstream consumer:** human research review and future owner-specific qualification writers.
-- **Replay mechanism:** immutable payload/sample reload; no qualification replay/writer exists.
+- **Replay mechanism:** immutable payload/sample reload plus exact calibration hypothesis (including Target/label/Panel/Forecast references, raw score/outcome and negative reasons), protocol, fit, evaluation and partition-binding reload; no qualification replay/writer exists.
 - **Evidence ceiling:** migration 046 enforces engineering/unqualified only.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
 ### Strategy Shadow
 
-- **Domain / Capability:** Strategy Shadow / simulated Entry, Fill, Position, Holding and Exit.
+- **Domain / Capability:** Strategy Shadow / simulated Entry, Fill, Position, Portfolio, Holding and Exit.
 - **Classification:** isolated Research Harness and simulated ledger.
 - **Owner:** Strategy Shadow.
-- **Canonical Writer:** `PostgresStrategyShadowRepository`.
-- **Reader:** session, event and artifact Readers plus deterministic replay.
-- **Repository:** `PostgresStrategyShadowRepository`.
-- **PostgreSQL tables:** `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`.
-- **Artifact / Receipt:** Strategy Shadow Session/Event and simulated Entry/Fill/Position/Holding/Exit artifacts.
-- **Runtime caller:** separately invoked research workflow; no installed CLI.
+- **Canonical Writer:** `PostgresStrategyShadowRepository` for single-trade sessions and `PostgresShadowPortfolioRepository` for Portfolio Shadow.
+- **Reader:** session, event, artifact and Portfolio day-state Readers plus deterministic replay.
+- **Repository:** `PostgresStrategyShadowRepository`, `PostgresShadowPortfolioRepository`.
+- **PostgreSQL tables:** `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`, `strategy_shadow_portfolio`, `strategy_shadow_portfolio_day`.
+- **Artifact / Receipt:** Strategy Shadow Session/Event and simulated Entry/Fill/Position/Holding/Exit artifacts; Portfolio Policy and CAS-linked day states.
+- **Runtime caller:** thin subcommands of the installed `continuous-research` CLI; no second Runtime.
 - **Downstream consumer:** Holding/Exit engineering evaluation and Production Admission gap projection.
 - **Replay mechanism:** CAS session/event/artifact replay.
 - **Evidence ceiling:** simulated only; no actual Fill, Position or broker mutation.
 - **Legacy replacement:** no legacy trading simulator may write actual Position Authority.
+
+### Engineering Access Governance
+
+- **Domain / Capability:** Principal, Role, Permission, engineering Approval and Audit.
+- **Classification:** PostgreSQL Authority for engineering access facts; external authentication remains unbound.
+- **Owner:** Access Governance.
+- **Canonical Writer:** `PostgresAccessGovernance`.
+- **Reader:** current Principal status/Role authorization and append-only Audit readers.
+- **Repository:** `PostgresAccessGovernance`.
+- **PostgreSQL tables:** `security_principal`, `security_principal_status_event`, `security_role_event`, `security_approval`, `security_approval_decision`, `security_audit_event`, `security_governance_command`.
+- **Artifact / Receipt:** content-addressed Principal, Role event, Approval and Approval Decision.
+- **Runtime caller:** `model-governance access-*` manages facts; every `continuous-research` command requires an active `--principal-id`, binds an exact operation resource and writes an allowed/denied audit event. Non-Admin Shadow/recovery mutation also consumes an exact approved `--approval-decision-id`.
+- **Replay mechanism:** append-only status/role chains and idempotent command receipts.
+- **Evidence ceiling:** the caller-supplied Principal ID is role-authorized but not externally authenticated; there is no Production Admission permission, Broker permission or trading authority.
 
 ### Production Admission
 
@@ -367,7 +397,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Runtime caller:** none in Canonical Runtime.
 - **Downstream consumer:** engineering gap/status reporting only.
 - **Replay mechanism:** deterministic recomputation of missing/rejected floors; no persisted admission replay.
-- **Evidence ceiling:** always blocked; operator approval, RBAC and broker readiness owners do not exist.
+- **Evidence ceiling:** always blocked; engineering RBAC exists, but authenticated operator, Formal evidence and broker readiness owners do not. Caller-supplied approval references cannot promote a floor.
 - **Legacy replacement:** removes reference-only `ELIGIBLE_FOR_OPERATOR_REVIEW` and `AUTHORIZED` projections.
 
 ## Qualification closure

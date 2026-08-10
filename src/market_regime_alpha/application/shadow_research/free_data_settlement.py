@@ -37,6 +37,17 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
 from market_regime_alpha.application.research_evaluation.targets import (
     engineering_multi_horizon_protocol,
 )
+from market_regime_alpha.application.research_validation.factor_research import (
+    analyze_factor_deduplication,
+    build_factor_research_catalog,
+    publish_factor_research_artifact,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
+)
+from market_regime_alpha.application.research_validation.path_calibration import (
+    PostgresPathForecastCalibrationOperator,
+)
 from market_regime_alpha.application.shadow_research.attestation import (
     ClockMode,
     RuntimeOrigin,
@@ -51,18 +62,31 @@ from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId, ProviderId
-from market_regime_alpha.core.time import DecisionTime, RetrievedAt
+from market_regime_alpha.core.time import (
+    AvailabilityTime,
+    DecisionTime,
+    RetrievedAt,
+)
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.source_manifest import (
+    CriticalSourceFact,
     SourceArtifactReference,
+    SourceAuthorityKind,
+    SourceFieldFinality,
+    SourceFieldQualityStatus,
     SourceManifest,
+    SourceManifestField,
 )
 from market_regime_alpha.data_sources.a_share_bars import (
     AShareBarProvider,
+    AShareDataError,
     BaoStockADataProvider,
 )
 from market_regime_alpha.features.materialization_v2 import (
     load_verified_feature_bundle_v2,
+)
+from market_regime_alpha.features.operational_overlay import (
+    load_static_universe_feature_bundle,
 )
 from market_regime_alpha.forecasting.artifact import (
     load_verified_path_forecast,
@@ -140,13 +164,20 @@ class FreeOutcomeDatasetBuilder:
         provider = self._historical
         timeframe = Timeframe.MINUTE_5
         frames = []
+        missing_symbols: set[str] = set()
         for symbol in symbols:
-            frame = provider.minute_bars(
-                symbol,
-                freq="5min",
-                start_date=next_session_date.isoformat(),
-                end_date=next_session_date.isoformat(),
-            )
+            try:
+                frame = provider.minute_bars(
+                    symbol,
+                    freq="5min",
+                    start_date=next_session_date.isoformat(),
+                    end_date=next_session_date.isoformat(),
+                )
+            except AShareDataError as exc:
+                if not _is_explicit_no_data_error(exc):
+                    raise
+                missing_symbols.add(symbol)
+                continue
             scoped = frame[
                 frame["timestamp"].map(
                     lambda value: _timestamp(value).astimezone(_SHANGHAI).date()
@@ -154,8 +185,13 @@ class FreeOutcomeDatasetBuilder:
                 )
             ]
             if scoped.empty:
-                raise ValueError(f"Free Outcome provider returned no {next_session_date} bars for {symbol}")
+                missing_symbols.add(symbol)
+                continue
             frames.append((symbol, scoped))
+        if not frames:
+            raise ValueError(
+                "Free Outcome provider returned no bars for any requested symbol"
+            )
 
         source_id = ArtifactId(
             f"free-outcome-source-{next_session_date.isoformat()}-"
@@ -185,25 +221,74 @@ class FreeOutcomeDatasetBuilder:
         if encode_recorded_outcome_bars(bars) != raw_payload:
             raise ValueError("Free Outcome recorded payload is not hash-stable")
         provider_id = "BAOSTOCK_HISTORICAL_5MIN_FREE_EXPLORATORY"
+        provider_reference_id = ProviderId(provider_id.lower())
+        manifest_fields = tuple(
+            SourceManifestField(
+                field_id="outcome_bars.MINUTE_5",
+                symbol=symbol,
+                critical_fact=CriticalSourceFact.PRICE,
+                provider_id=provider_reference_id,
+                source_artifact_id=source_id,
+                event_time=datetime.combine(
+                    next_session_date,
+                    time(15),
+                    tzinfo=_SHANGHAI,
+                ).astimezone(UTC),
+                available_time=(
+                    None
+                    if symbol in missing_symbols
+                    else AvailabilityTime(retrieved_at)
+                ),
+                retrieved_time=RetrievedAt(retrieved_at),
+                decision_time=DecisionTime(retrieved_at),
+                unit="OHLCV_5MIN",
+                adjustment_basis="RAW_UNADJUSTED",
+                finality=SourceFieldFinality.UNKNOWN,
+                data_eligibility=DataEligibility.EXPLORATORY,
+                quality_status=(
+                    SourceFieldQualityStatus.INSUFFICIENT
+                    if symbol in missing_symbols
+                    else SourceFieldQualityStatus.COMPLETE
+                ),
+                reason_codes=(
+                    ("AVAILABILITY_UNKNOWN", "OUTCOME_BARS_MISSING")
+                    if symbol in missing_symbols
+                    else ()
+                ),
+                schema_version=SourceManifestField.SCHEMA_V2,
+                authority_kind=SourceAuthorityKind.PROVIDER,
+                value=("MISSING" if symbol in missing_symbols else "OBSERVED"),
+            )
+            for symbol in symbols
+        )
         manifest = SourceManifest(
             provider_profile_id=provider_id,
             decision_time=DecisionTime(retrieved_at),
             source_artifacts=(
                 SourceArtifactReference(
                     artifact_id=source_id,
-                    provider_id=ProviderId(provider_id.lower()),
+                    provider_id=provider_reference_id,
                     retrieved_at=RetrievedAt(retrieved_at),
                     content_hash=source_hash,
                     locator=f"free-data://outcome/{next_session_date.isoformat()}",
                 ),
             ),
-            fields=(),
+            fields=manifest_fields,
             source_conflicts=(),
-            limitations=(
-                "BACKFILL_NOT_POINT_IN_TIME",
-                "FREE_DATA_EXPLORATORY",
-                "PROVIDER_NOT_QUALIFIED",
-                "SOURCE_TRANSPORT_REENCODED_AS_CANONICAL_BARS",
+            limitations=tuple(
+                sorted(
+                    {
+                        "BACKFILL_NOT_POINT_IN_TIME",
+                        "FREE_DATA_EXPLORATORY",
+                        "PROVIDER_NOT_QUALIFIED",
+                        "SOURCE_TRANSPORT_REENCODED_AS_CANONICAL_BARS",
+                        *(
+                            ("PARTIAL_SYMBOL_COVERAGE_EXPLICIT",)
+                            if missing_symbols
+                            else ()
+                        ),
+                    }
+                )
             ),
             data_eligibility=DataEligibility.EXPLORATORY,
             schema_version=SourceManifest.SCHEMA_V2,
@@ -226,12 +311,21 @@ class FreeOutcomeDatasetBuilder:
             ),
             data_eligibility=DataEligibility.EXPLORATORY,
             formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
-            limitations=(
-                "ALPHA_VALIDATED_FALSE",
-                "FORMAL_OOS_FALSE",
-                "FORMAL_PIT_FALSE",
-                "FREE_DATA_EXPLORATORY",
-                "PRODUCTION_AUTHORIZED_FALSE",
+            limitations=tuple(
+                sorted(
+                    {
+                        "ALPHA_VALIDATED_FALSE",
+                        "FORMAL_OOS_FALSE",
+                        "FORMAL_PIT_FALSE",
+                        "FREE_DATA_EXPLORATORY",
+                        "PRODUCTION_AUTHORIZED_FALSE",
+                        *(
+                            ("PARTIAL_SYMBOL_COVERAGE_EXPLICIT",)
+                            if missing_symbols
+                            else ()
+                        ),
+                    }
+                )
             ),
         )
         dataset_path = publish_market_data_dataset(
@@ -287,6 +381,10 @@ class FreeDataSettlementOperator:
         self._state = PostgresStateSystemRepository(factory, apply_migrations=False)
         self._operations = ResearchShadowOperations(factory)
         self._outcomes = PostgresProspectiveOutcomeRepository(
+            factory,
+            apply_migrations=False,
+        )
+        self._validation = PostgresResearchValidationRepository(
             factory,
             apply_migrations=False,
         )
@@ -360,6 +458,7 @@ class FreeDataSettlementOperator:
                 artifact=factual_evidence,
             )
         assert evidence_path is not None
+        target_protocol = engineering_multi_horizon_protocol()
         settled = self._operations.settle(
             decision_id=decision.decision_id,
             source_archive=acquisition.source_archive,
@@ -367,7 +466,7 @@ class FreeDataSettlementOperator:
             factual_evidence=factual_evidence,
             next_session_date=next_session_date,
             session_status=SettlementSessionStatus.TRADING_DAY,
-            target_protocol=engineering_multi_horizon_protocol(),
+            target_protocol=target_protocol,
             expected_shadow_version=session.version,
             created_at=acquisition.retrieved_at,
             code_revision=package.code_revision,
@@ -378,7 +477,13 @@ class FreeDataSettlementOperator:
         if pool_payload is None:
             raise ValueError("settle-day requires frozen Dynamic Pool")
         pool = DynamicStockPoolVersion.from_canonical_dict(pool_payload)
-        feature_path = _reference_path(package, run_root, "STATIC_FEATURE_BUNDLE")
+        static = load_static_universe_feature_bundle(
+            _reference_path(package, run_root, "STATIC_FEATURE_BUNDLE")
+        )
+        feature_path = _identity_directory(
+            run_root / "static-features",
+            static.feature_bundle_id,
+        )
         feature_bundle = load_verified_feature_bundle_v2(
             feature_path,
             artifact_root=run_root / "static-features" / "feature-artifacts",
@@ -392,10 +497,58 @@ class FreeDataSettlementOperator:
             state_policy_references=decision.state_policy_references,
             dataset=decision_dataset,
             feature_bundle=feature_bundle,
+            feature_wrapper=static,
             signal_run=signal.artifact,
             forecasts=tuple(item.artifact.forecast for item in forecasts),
             state_sources=(),
             artifact_root=artifact_root / "free-data-settlement" / "research-evaluation",
+            created_at=acquisition.retrieved_at,
+        )
+        catalog = build_factor_research_catalog(
+            enrichment=enrichment,
+            created_at=acquisition.retrieved_at,
+        )
+        deduplication = analyze_factor_deduplication(
+            enrichment=enrichment,
+            catalog=catalog,
+            analyzed_at=acquisition.retrieved_at,
+        )
+        factor_root = (
+            artifact_root
+            / "free-data-settlement"
+            / "research-evaluation"
+            / "factor-research"
+        )
+        catalog_path = publish_factor_research_artifact(
+            root=factor_root,
+            artifact=catalog,
+        )
+        deduplication_path = publish_factor_research_artifact(
+            root=factor_root,
+            artifact=deduplication,
+        )
+        self._validation.record(
+            artifact_id=catalog.catalog_id,
+            artifact_hash=catalog.catalog_hash,
+            artifact_kind="FACTOR_RESEARCH_CATALOG",
+            evidence_authority="EXPLORATORY",
+            payload=catalog.identity_payload(),
+            created_at=catalog.created_at,
+        )
+        self._validation.record(
+            artifact_id=deduplication.report_id,
+            artifact_hash=deduplication.report_hash,
+            artifact_kind="FACTOR_DEDUPLICATION_REPORT",
+            evidence_authority="EXPLORATORY",
+            payload=deduplication.identity_payload(),
+            created_at=deduplication.analyzed_at,
+        )
+        calibration_engineering = PostgresPathForecastCalibrationOperator(
+            self._factory,
+            repository=self._validation,
+        ).run(
+            target_protocol=target_protocol,
+            through_date=trading_date,
             created_at=acquisition.retrieved_at,
         )
         return {
@@ -408,13 +561,21 @@ class FreeDataSettlementOperator:
             "target_protocol_id": str(settled.targeted_outcome_v2.target_protocol_id),
             "panel_id": str(panel.panel_id),
             "panel_enrichment_id": str(enrichment.enrichment_id),
+            "factor_catalog_id": str(catalog.catalog_id),
+            "factor_deduplication_report_id": str(deduplication.report_id),
+            "calibration_engineering": calibration_engineering,
             "outcome_source_archive": str(acquisition.source_archive_path),
             "outcome_dataset": str(acquisition.dataset_path),
             "outcome_evidence": str(evidence_path),
             "panel_artifact": str(panel_path),
             "panel_enrichment_artifact": str(enrichment_path),
+            "factor_catalog_artifact": str(catalog_path),
+            "factor_deduplication_artifact": str(deduplication_path),
             "outcome_provider": acquisition.provider_id,
             "outcome_minute_timeframe": acquisition.minute_timeframe.value,
+            "missing_outcome_symbol_timeframes": list(
+                acquisition.dataset.artifact.coverage.missing_symbol_timeframes
+            ),
             "recovered_from_postgres_authority": recovered,
             "formal_pit": False,
             "formal_oos": False,
@@ -513,6 +674,13 @@ def _canonical_bars(
     return tuple(sorted((*minute_bars, *daily_bars), key=lambda item: (item.symbol, item.timeframe.value, item.event_start)))
 
 
+def _is_explicit_no_data_error(error: AShareDataError) -> bool:
+    return str(error) in {
+        "data source returned no rows",
+        "normalized minute bars are empty",
+    }
+
+
 def _is_continuous_session_stamp(
     observed_time: time,
     *,
@@ -572,6 +740,13 @@ def _resolve_operation_package(
     if not matches:
         raise ValueError("settle-day cannot locate the frozen Controlled package")
     return max(matches, key=lambda item: (item[0].created_at, str(item[0].package_id)))
+
+
+def _identity_directory(root: Path, object_id: ArtifactId) -> Path:
+    matches = tuple(path for path in root.rglob(str(object_id)) if path.is_dir())
+    if len(matches) != 1:
+        raise ValueError(f"settle-day identity directory mismatch: {object_id}")
+    return matches[0]
 
 
 def _recover_acquisition(

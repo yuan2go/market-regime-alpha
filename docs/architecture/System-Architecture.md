@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical implementation architecture
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `src/market_regime_alpha/cli/continuous_research.py`, `src/market_regime_alpha/application/continuous_research`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Shape
@@ -76,8 +76,10 @@ ResearchDailySummary
 -> canonical Factor Extraction
 -> engineering Ablation / Calibration / Formal Evaluation
 -> Entry research
--> isolated Strategy Shadow
+-> isolated Strategy Shadow Entry/Fill/Position
+-> CAS-linked Portfolio Shadow day state
 -> Holding / Exit engineering validation
+-> engineering RBAC Approval/Audit (separate operator boundary)
 -> blocked Production Admission projection
 ```
 
@@ -92,10 +94,10 @@ not remove an importable compatibility function or its tests.
 
 | Module | Classification | Executable treatment |
 |---|---|---|
-| `continuous_research` | `PUBLIC_OPERATOR` | installed; owns `run-day`, `settle-day`, `strategy-day`, `report-day`, resume and replay |
+| `continuous_research` | `PUBLIC_OPERATOR` | installed; owns `run-day`, `settle-day`, `strategy-day`, `portfolio-shadow-day`, `report-day`, `recovery-audit`, resume and replay |
 | `state_system` | `PUBLIC_OPERATOR` | installed bounded owner/admin command |
 | `decision_system` | `PUBLIC_OPERATOR` | installed bounded decision-support command |
-| `model_governance` | `PUBLIC_OPERATOR` | installed Authority administration command |
+| `model_governance` | `PUBLIC_OPERATOR` | installed Model and engineering Access Governance administration command |
 | `pit_authority` | `PUBLIC_OPERATOR` | installed Authority administration command; Formal qualification remains closed |
 | `research_shadow` | `PUBLIC_OPERATOR` | installed bounded research command |
 | `compare_legacy_features` | `RESEARCH_TOOL` | importable harness; main guard removed |
@@ -129,6 +131,7 @@ were duplicate entry points and were removed from packaging.
 | `application/research_evaluation` | Build immutable outcome datasets, target protocols and complete Research Panel V2. |
 | `application/research_validation` | Compute engineering-only factor, ablation, calibration, evaluation and Entry evidence. |
 | `application/strategy_shadow` | Simulate Entry/Fill/Position/Holding/Exit without real execution mutation. |
+| `application/governance` | Own append-only engineering Principal/Role/Approval/Audit facts; never Production Admission. |
 | `research/**` | Hold pure research models and observable State algorithms. |
 | `market_data`, `data`, `universe`, `features` | Own source semantics, datasets, eligibility, materialization and feature lineage. |
 | `signals`, `forecasting`, `candidates` | Compute distinct Candidate, Signal and Forecast artifacts. |

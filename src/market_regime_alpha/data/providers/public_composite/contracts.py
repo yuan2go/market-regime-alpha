@@ -30,6 +30,7 @@ from market_regime_alpha.data.source_manifest import (
 PUBLIC_COMPOSITE_LIVE_PROFILE_ID = "public-composite-live-v1"
 PUBLIC_COMPOSITE_REPLAY_PROFILE_ID = "public-composite-replay-v1"
 TENCENT_FREE_OPERATIONAL_PROFILE_ID = "TENCENT_FREE_OPERATIONAL_V1"
+BAOSTOCK_RESEARCH_UNIVERSE_PROFILE_ID = "BAOSTOCK_RESEARCH_UNIVERSE_V1"
 BAOSTOCK_PUBLIC_PROVIDER_ID = ProviderId("provider-baostock-public")
 TENCENT_PUBLIC_PROVIDER_ID = ProviderId("provider-tencent-public")
 HISTORICAL_PUBLIC_RETRIEVAL_SEMANTICS_V1 = (
@@ -803,6 +804,7 @@ class PublicCompositeProviderResult:
             PUBLIC_COMPOSITE_LIVE_PROFILE_ID,
             PUBLIC_COMPOSITE_REPLAY_PROFILE_ID,
             TENCENT_FREE_OPERATIONAL_PROFILE_ID,
+            BAOSTOCK_RESEARCH_UNIVERSE_PROFILE_ID,
         }:
             raise ValueError("unsupported public composite profile")
         if not isinstance(self.decision_time, DecisionTime):

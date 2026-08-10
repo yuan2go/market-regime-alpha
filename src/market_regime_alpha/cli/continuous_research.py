@@ -63,6 +63,16 @@ from market_regime_alpha.application.free_data_operation.blocked import (
 from market_regime_alpha.application.free_data_operation.service import (
     FreeDataOperationService,
 )
+from market_regime_alpha.application.free_data_operation.research_universe import (
+    FreeResearchUniverseOperator,
+)
+from market_regime_alpha.application.governance.access_control import (
+    PostgresAccessGovernance,
+    SecurityPermission,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
     FreeHistoricalSampleBuildResult,
@@ -81,6 +91,9 @@ from market_regime_alpha.application.runtime_operations.preflight import (
 from market_regime_alpha.application.runtime_operations.query import (
     PostgresCanonicalRuntimeQuery,
 )
+from market_regime_alpha.application.runtime_operations.recovery_audit import (
+    PostgresRecoveryAudit,
+)
 from market_regime_alpha.application.shadow_research.attestation import (
     ClockMode,
     RuntimeOrigin,
@@ -95,7 +108,12 @@ from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyDayObservation,
     StrategyShadowDayOperator,
 )
+from market_regime_alpha.application.strategy_shadow.portfolio_operator import (
+    PortfolioShadowDayInput,
+    PortfolioShadowDayOperator,
+)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
     BaoStockFreeSupplementalClient,
@@ -144,6 +162,18 @@ _INSPECT_OPERATIONS = (
     "trace",
     "metrics",
 )
+_READ_OPERATIONS = {
+    "preflight",
+    "report",
+    "replay",
+    "report-day",
+    "replay-day",
+    "research-universe-replay",
+    "strategy-replay",
+    "portfolio-shadow-replay",
+    "recovery-audit",
+    *_INSPECT_OPERATIONS,
+}
 
 
 def _add_run_arguments(command: argparse.ArgumentParser) -> None:
@@ -186,6 +216,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="market_regime_alpha",
         help="Explicit lowercase PostgreSQL schema authority.",
     )
+    parser.add_argument(
+        "--principal-id",
+        help="Required active engineering Principal; caller identity is not authenticated.",
+    )
+    parser.add_argument(
+        "--approval-decision-id",
+        help="Independent approval required for non-Admin Shadow/recovery mutations.",
+    )
     subparsers = parser.add_subparsers(dest="operation", required=True)
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--run-command", type=Path, required=True)
@@ -224,11 +262,26 @@ def build_parser() -> argparse.ArgumentParser:
     settle_day.add_argument("--at", required=True)
     strategy_replay = subparsers.add_parser("strategy-replay")
     strategy_replay.add_argument("--session-id", required=True)
+    portfolio_day = subparsers.add_parser(
+        "portfolio-shadow-day",
+        help="Append one PostgreSQL-owned A-share Portfolio Shadow day.",
+    )
+    portfolio_day.add_argument("--observations", type=Path, required=True)
+    portfolio_replay = subparsers.add_parser("portfolio-shadow-replay")
+    portfolio_replay.add_argument("--portfolio-id", required=True)
+    universe_sync = subparsers.add_parser("research-universe-sync")
+    universe_sync.add_argument("--as-of-date", required=True)
+    universe_sync.add_argument("--artifact-root", type=Path, required=True)
+    universe_replay = subparsers.add_parser("research-universe-replay")
+    universe_replay.add_argument("--snapshot-id", required=True)
+    universe_replay.add_argument("--artifact-root", type=Path, required=True)
     report_day = subparsers.add_parser("report-day")
     report_day.add_argument("--trading-date", required=True)
     report_day.add_argument("--at", required=True)
     replay_day = subparsers.add_parser("replay-day")
     replay_day.add_argument("--trading-date", required=True)
+    recovery_audit = subparsers.add_parser("recovery-audit")
+    recovery_audit.add_argument("--checked-at", required=True)
     preflight = subparsers.add_parser("preflight", help="Inspect engineering readiness without executing a Tick.")
     preflight.add_argument("--trading-date", required=True)
     preflight.add_argument(
@@ -266,18 +319,47 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = build_parser().parse_args(argv)
         if args.database_url is None:
             raise ValueError("explicit --database-url is required")
+        if args.principal_id is None:
+            raise ValueError("explicit --principal-id is required")
         settings = DatabaseSettings.from_sources(
             database_url=args.database_url,
             environ={},
         )
         factory = PostgresConnectionFactory(settings, application_schema=args.application_schema)
-        read_only = args.operation in {
-            "preflight",
-            "report",
-            "replay",
-            "replay-day",
-            *_INSPECT_OPERATIONS,
-        }
+        read_only = args.operation in _READ_OPERATIONS
+        governance = PostgresAccessGovernance(
+            factory,
+            apply_migrations=False,
+        )
+        resource_reference = _operator_resource(args)
+        try:
+            permission = _required_permission(args)
+        except PermissionError:
+            governance.audit_denied_operation(
+                principal_id=ArtifactId(args.principal_id),
+                resource_reference=resource_reference,
+                reason_code="PRODUCTION_RUNTIME_AUTHORITY_CLOSED",
+                occurred_at=_operational_now(),
+            )
+            raise
+        decision = governance.authorize_operation(
+            principal_id=ArtifactId(args.principal_id),
+            permission=permission,
+            resource_reference=resource_reference,
+            approval_decision_id=(
+                None
+                if args.approval_decision_id is None
+                else ArtifactId(args.approval_decision_id)
+            ),
+            occurred_at=_operational_now(),
+        )
+        if not decision.allowed:
+            raise PermissionError(
+                f"Principal is not authorized for {permission.value}; "
+                f"resource={resource_reference.artifact_id}@"
+                f"{resource_reference.content_hash}; "
+                f"reasons={','.join(decision.reason_codes)}"
+            )
         journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
         output = (
             _run_due(args, settings, factory, journal)
@@ -294,6 +376,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except AShareDataError as exc:
         _emit_error("FREE_DATA_PROVIDER_FAILED", exc)
         return DATABASE_ERROR
+    except PermissionError as exc:
+        _emit_error("OPERATOR_NOT_AUTHORIZED", exc)
+        return ARGUMENT_ERROR
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         _emit_error("ARGUMENT_OR_IDENTITY_INVALID", exc)
         return ARGUMENT_ERROR
@@ -329,6 +414,30 @@ def _dispatch(
         return StrategyShadowDayOperator(factory).replay(
             ArtifactId(args.session_id)
         )
+    if args.operation == "portfolio-shadow-day":
+        return PortfolioShadowDayOperator(factory).run(
+            PortfolioShadowDayInput.from_canonical_dict(
+                _load_json_object(args.observations)
+            )
+        )
+    if args.operation == "portfolio-shadow-replay":
+        return PortfolioShadowDayOperator(factory).replay(
+            ArtifactId(args.portfolio_id)
+        )
+    if args.operation == "research-universe-sync":
+        return FreeResearchUniverseOperator(factory).sync(
+            as_of_date=date.fromisoformat(args.as_of_date),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "research-universe-replay":
+        return FreeResearchUniverseOperator(factory).replay(
+            ArtifactId(args.snapshot_id),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "recovery-audit":
+        return PostgresRecoveryAudit(factory).inspect(
+            checked_at=_instant(args.checked_at)
+        ).to_canonical_dict()
     if args.operation == "report-day":
         trading_date = date.fromisoformat(args.trading_date)
         runtime = PostgresCanonicalRuntimeQuery(factory).inspect_trading_date(
@@ -341,6 +450,16 @@ def _dispatch(
                 FROM shadow_research_session
                 WHERE trading_date = %s
                 ORDER BY session_id
+                """,
+                (trading_date,),
+            ).fetchall()
+            portfolio_rows = connection.execute(
+                """
+                SELECT portfolio_id, state_id, sequence, cash, nav,
+                       gross_exposure, turnover, drawdown, total_cost
+                FROM strategy_shadow_portfolio_day
+                WHERE trading_date = %s
+                ORDER BY portfolio_id
                 """,
                 (trading_date,),
             ).fetchall()
@@ -358,6 +477,22 @@ def _dispatch(
             "runtime": runtime,
             "research_shadow": research_reports,
             "strategy_shadow": strategy_report,
+            "portfolio_shadow": [
+                {
+                    "portfolio_id": str(row[0]),
+                    "state_id": str(row[1]),
+                    "sequence": int(row[2]),
+                    "cash": str(row[3]),
+                    "nav": str(row[4]),
+                    "gross_exposure": str(row[5]),
+                    "turnover": str(row[6]),
+                    "drawdown": str(row[7]),
+                    "total_cost": str(row[8]),
+                    "shadow_fill_is_real_fill": False,
+                    "shadow_position_is_real_position": False,
+                }
+                for row in portfolio_rows
+            ],
             **_authority_ceiling(),
         }
     if args.operation == "replay-day":
@@ -378,9 +513,17 @@ def _dispatch(
                 """,
                 (trading_date,),
             ).fetchall()
+            portfolio_rows = connection.execute(
+                """
+                SELECT portfolio_id FROM strategy_shadow_portfolio_day
+                WHERE trading_date = %s ORDER BY portfolio_id
+                """,
+                (trading_date,),
+            ).fetchall()
         research = ResearchShadowOperations(factory)
         strategy_operator = StrategyShadowDayOperator(factory)
         strategy_sessions = strategy_operator.list_sessions(trading_date)
+        portfolio_operator = PortfolioShadowDayOperator(factory)
         return {
             "operation": "REPLAY_DAY",
             "trading_date": trading_date.isoformat(),
@@ -394,6 +537,10 @@ def _dispatch(
             ],
             "strategy_shadow": [
                 strategy_operator.replay(item.session_id) for item in strategy_sessions
+            ],
+            "portfolio_shadow": [
+                portfolio_operator.replay(ArtifactId(str(row[0])))
+                for row in portfolio_rows
             ],
             **_authority_ceiling(),
         }
@@ -863,6 +1010,87 @@ def _authority_ceiling() -> dict[str, bool]:
         "broker_authority_granted": False,
         "daily_decision_window_summary_delivered": False,
     }
+
+
+def _required_permission(args: argparse.Namespace) -> SecurityPermission:
+    operation = str(args.operation)
+    if operation in _READ_OPERATIONS:
+        return SecurityPermission.READ_RESEARCH
+    if operation == "research-universe-sync":
+        return SecurityPermission.RUN_RESEARCH
+    if operation == "resume":
+        return SecurityPermission.RECOVER_RUNTIME
+    if operation in {"prepare", "schedule", "reserve-due-tick", "run-due", "run-day"}:
+        run_command = ContinuousResearchCommand.from_canonical_dict(
+            _load_json_object(args.run_command)
+        )
+        return _runtime_permission(run_command.authority_mode)
+    if operation == "admit-tick":
+        tick_command = RuntimeTickCommand.from_canonical_dict(
+            _load_json_object(args.tick_command)
+        )
+        return _runtime_permission(tick_command.authority_mode)
+    return SecurityPermission.RUN_SHADOW
+
+
+def _runtime_permission(mode: RuntimeAuthorityMode) -> SecurityPermission:
+    if mode is RuntimeAuthorityMode.RESEARCH:
+        return SecurityPermission.RUN_RESEARCH
+    if mode is RuntimeAuthorityMode.SHADOW:
+        return SecurityPermission.RUN_SHADOW
+    raise PermissionError(
+        "Free-data Continuous CLI cannot authorize Production Runtime mutations"
+    )
+
+
+def _operator_resource(args: argparse.Namespace) -> ValidationArtifactReference:
+    omitted = {
+        "approval_decision_id",
+        "application_schema",
+        "artifact_root",
+        "database_url",
+        "output_root",
+        "principal_id",
+    }
+    arguments: dict[str, Any] = {}
+    for name, value in sorted(vars(args).items()):
+        if name in omitted or value is None:
+            continue
+        if isinstance(value, Path):
+            if value.suffix.lower() == ".json" and value.is_file():
+                arguments[name] = _load_json_object(value)
+            continue
+        arguments[name] = _canonical_operator_argument(value)
+    payload = {
+        "schema_version": "continuous-operator-resource/v1",
+        "operation": str(args.operation),
+        "arguments": arguments,
+    }
+    digest = canonical_hash(payload)
+    return ValidationArtifactReference(
+        "CONTINUOUS_OPERATOR_OPERATION",
+        ArtifactId(f"continuous-operator:{digest[7:]}"),
+        digest,
+    )
+
+
+def _canonical_operator_argument(value: object) -> object:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (date, datetime, time)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {
+            str(name): _canonical_operator_argument(item)
+            for name, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_operator_argument(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(
+        f"Unsupported Continuous operator argument type: {type(value).__name__}"
+    )
 
 
 def _emit(payload: Mapping[str, Any]) -> None:

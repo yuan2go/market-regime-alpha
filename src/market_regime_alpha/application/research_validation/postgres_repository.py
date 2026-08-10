@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from psycopg.types.json import Jsonb
 
-from market_regime_alpha.application.research_validation.calibration import CalibrationArtifact, CalibrationObservation
+from market_regime_alpha.application.research_validation.calibration import (
+    CalibrationArtifact,
+    CalibrationObservation,
+    CalibrationPartition,
+    CalibrationProtocol,
+)
 from market_regime_alpha.application.research_validation.factor_extraction import ResearchPanelEnrichment
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleDataset
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleQualification
@@ -43,6 +48,7 @@ class PostgresResearchValidationRepository:
         qualified: bool = False,
         production_authorized: bool = False,
     ) -> None:
+        _reject_unresolved_authority_claims(payload)
         if (
             qualified
             or production_authorized
@@ -263,16 +269,111 @@ class PostgresResearchValidationRepository:
                 return dataset
         return None
 
-    def bind_calibration_partitions(self, artifact: CalibrationArtifact, observations: tuple[CalibrationObservation, ...]) -> None:
+    def record_calibration_protocol(
+        self,
+        protocol: CalibrationProtocol,
+        *,
+        recorded_at: datetime,
+    ) -> None:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                protocol.protocol_id,
+                protocol.protocol_hash,
+                "CALIBRATION_PROTOCOL",
+                "ENGINEERING_ONLY",
+                protocol.identity_payload(),
+                recorded_at,
+            )
+        )
+
+    def record_calibration(
+        self,
+        *,
+        protocol: CalibrationProtocol,
+        artifact: CalibrationArtifact,
+        observations: tuple[CalibrationObservation, ...],
+    ) -> None:
+        if artifact.calibrated or artifact.qualification_evidence is not None:
+            raise ValueError(
+                "Calibration qualification requires a future owner-resolving writer"
+            )
+        if artifact.protocol_reference.artifact_id != protocol.protocol_id or (
+            artifact.protocol_reference.content_hash != protocol.protocol_hash
+        ):
+            raise ValueError("Calibration Artifact Protocol lineage mismatch")
+        if artifact.fit.protocol_reference != artifact.protocol_reference:
+            raise ValueError("Calibration Fit Protocol lineage mismatch")
+        expected_bindings = _validated_calibration_partition_bindings(
+            artifact,
+            observations,
+        )
+
         def operation(connection: Any) -> None:
-            for item in observations:
+            self._insert_artifact(
+                connection,
+                protocol.protocol_id,
+                protocol.protocol_hash,
+                "CALIBRATION_PROTOCOL",
+                "ENGINEERING_ONLY",
+                protocol.identity_payload(),
+                artifact.created_at,
+            )
+            self._insert_artifact(
+                connection,
+                artifact.fit.fit_id,
+                artifact.fit.fit_hash,
+                "CALIBRATION_FIT",
+                "ENGINEERING_ONLY",
+                artifact.fit.identity_payload(),
+                artifact.fit.created_at,
+            )
+            for evaluation in artifact.evaluations:
+                self._insert_artifact(
+                    connection,
+                    evaluation.evaluation_id,
+                    evaluation.evaluation_hash,
+                    "CALIBRATION_EVALUATION",
+                    "ENGINEERING_ONLY",
+                    evaluation.identity_payload(),
+                    artifact.created_at,
+                )
+            self._insert_artifact(
+                connection,
+                artifact.artifact_id,
+                artifact.artifact_hash,
+                "CALIBRATION_ARTIFACT",
+                "ENGINEERING_ONLY",
+                artifact.identity_payload(),
+                artifact.created_at,
+            )
+            for observation_id, partition_name in expected_bindings:
                 connection.execute(
                     """
                     INSERT INTO calibration_partition_binding(
                         calibration_artifact_id, observation_id, partition_name
                     ) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
                     """,
-                    (str(artifact.artifact_id), item.observation_id, item.partition.value),
+                    (
+                        str(artifact.artifact_id),
+                        observation_id,
+                        partition_name,
+                    ),
+                )
+            stored_bindings = connection.execute(
+                """
+                SELECT observation_id, partition_name
+                FROM calibration_partition_binding
+                WHERE calibration_artifact_id = %s
+                ORDER BY observation_id
+                """,
+                (str(artifact.artifact_id),),
+            ).fetchall()
+            if tuple((str(row[0]), str(row[1])) for row in stored_bindings) != (
+                expected_bindings
+            ):
+                raise ValueError(
+                    "Calibration PostgreSQL partition binding conflicts with Artifact"
                 )
 
         self._factory.run_transaction(operation)
@@ -345,6 +446,7 @@ class PostgresResearchValidationRepository:
         payload: Mapping[str, Any],
         created_at: datetime,
     ) -> None:
+        _reject_unresolved_authority_claims(payload)
         if canonical_hash(dict(payload)) != artifact_hash:
             raise ValueError("Research Validation payload hash mismatch")
         connection.execute(
@@ -363,3 +465,70 @@ class PostgresResearchValidationRepository:
         ).fetchone()
         if stored is None or str(stored[0]) != artifact_hash:
             raise ValueError("Research Validation artifact identity conflict")
+
+
+def _reject_unresolved_authority_claims(payload: Mapping[str, Any]) -> None:
+    for field in (
+        "calibrated",
+        "formal_oos",
+        "formal_pit",
+        "production_authorized",
+        "qualified",
+    ):
+        if payload.get(field) is True:
+            raise ValueError(
+                f"Research Validation payload cannot claim unresolved {field} authority"
+            )
+    if payload.get("qualification_evidence") is not None:
+        raise ValueError(
+            "Research Validation payload cannot bind unresolved qualification evidence"
+        )
+
+
+def _validated_calibration_partition_bindings(
+    artifact: CalibrationArtifact,
+    observations: tuple[CalibrationObservation, ...],
+) -> tuple[tuple[str, str], ...]:
+    observation_bindings: dict[str, CalibrationPartition] = {}
+    for observation in observations:
+        if observation.observation_id in observation_bindings:
+            raise ValueError("Calibration observations must be globally disjoint")
+        observation_bindings[observation.observation_id] = observation.partition
+
+    artifact_bindings: dict[str, CalibrationPartition] = {}
+
+    def bind_artifact_ids(
+        observation_ids: tuple[str, ...],
+        partition: CalibrationPartition,
+    ) -> None:
+        for observation_id in observation_ids:
+            if observation_id in artifact_bindings:
+                raise ValueError(
+                    "Calibration Artifact partitions must be globally disjoint"
+                )
+            artifact_bindings[observation_id] = partition
+
+    bind_artifact_ids(
+        artifact.fit.fit_observation_ids,
+        CalibrationPartition.FIT,
+    )
+    evaluation_partitions: set[CalibrationPartition] = set()
+    for evaluation in artifact.evaluations:
+        if evaluation.partition is CalibrationPartition.FIT:
+            raise ValueError("Calibration FIT partition cannot be an evaluation")
+        if evaluation.partition in evaluation_partitions:
+            raise ValueError(
+                "Calibration Artifact has duplicate evaluation partition"
+            )
+        evaluation_partitions.add(evaluation.partition)
+        bind_artifact_ids(evaluation.observation_ids, evaluation.partition)
+    if CalibrationPartition.VALIDATION not in evaluation_partitions:
+        raise ValueError("Calibration Artifact requires VALIDATION evaluation")
+    if artifact_bindings != observation_bindings:
+        raise ValueError("Calibration Artifact observation partition mismatch")
+    return tuple(
+        sorted(
+            (observation_id, partition.value)
+            for observation_id, partition in observation_bindings.items()
+        )
+    )
