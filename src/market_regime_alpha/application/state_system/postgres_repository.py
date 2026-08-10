@@ -34,6 +34,11 @@ from market_regime_alpha.evidence.canonical import canonical_hash, canonical_jso
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
+from market_regime_alpha.research.state_system.authority import (
+    DynamicPoolPolicy,
+    StateSeries,
+    StateTransitionPolicy,
+)
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 
 if TYPE_CHECKING:
@@ -173,19 +178,37 @@ class PostgresStateSystemRepository:
                 ),
             )
             stored = connection.execute(
-                sql.SQL(
-                    "SELECT state_hash FROM {} WHERE state_id = %s FOR UPDATE"
-                ).format(sql.Identifier(state_table)),
+                sql.SQL("SELECT state_hash FROM {} WHERE state_id = %s FOR UPDATE").format(sql.Identifier(state_table)),
                 (str(write.state_id),),
             ).fetchone()
             if stored is None or str(stored[0]) != write.state_hash:
                 raise StateSystemConflict("State identity resolved to different content")
-            self._advance_state_pointer(
-                connection,
-                write=write,
-                claim=claim,
-                expected_previous_state_id=expected_previous_state_id,
-            )
+            if write.state_series is None or write.state_policy is None:
+                self._advance_state_pointer(
+                    connection,
+                    write=write,
+                    claim=claim,
+                    expected_previous_state_id=expected_previous_state_id,
+                )
+            else:
+                self._register_state_authority(
+                    connection,
+                    series=write.state_series,
+                    policy=write.state_policy,
+                    created_at=write.lineage.created_at,
+                )
+                self._advance_series_head(
+                    connection,
+                    series=write.state_series,
+                    policy=write.state_policy,
+                    artifact_id=write.state_id,
+                    artifact_hash=write.state_hash,
+                    expected_previous_artifact_id=expected_previous_state_id,
+                    claim=claim,
+                    as_of_time=write.lineage.as_of_time,
+                    available_at=write.lineage.available_at,
+                    created_at=write.lineage.created_at,
+                )
             return write.state_id
 
         try:
@@ -196,9 +219,7 @@ class PostgresStateSystemRepository:
             raise StateSystemIntegrityError("State write returned invalid identity")
         return result
 
-    def lookup_runtime_child(
-        self, request: ChildExecutionRequest
-    ) -> ChildExecutionResult | None:
+    def lookup_runtime_child(self, request: ChildExecutionRequest) -> ChildExecutionResult | None:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
                 """
@@ -308,9 +329,7 @@ class PostgresStateSystemRepository:
                     or stored[5] != authority.available_at
                     or stored[6] != list(authority.reason_codes)
                 ):
-                    raise StateSystemConflict(
-                        "State stage authority identity conflict"
-                    )
+                    raise StateSystemConflict("State stage authority identity conflict")
             recorded, stored_receipt_payload = _decode_child_result(str(row[1]))
             self._validate_runtime_receipt_composition(
                 connection,
@@ -387,9 +406,7 @@ class PostgresStateSystemRepository:
 
         self._factory.run_transaction(operation)
 
-    def read_runtime_candidate(
-        self, request: ChildExecutionRequest
-    ) -> CandidateSet:
+    def read_runtime_candidate(self, request: ChildExecutionRequest) -> CandidateSet:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
                 """
@@ -409,27 +426,21 @@ class PostgresStateSystemRepository:
                 (str(request.run_id), str(request.tick_id)),
             ).fetchone()
             if row is None or stage is None:
-                raise StateSystemIntegrityError(
-                    "State Candidate recovery authority is missing"
-                )
+                raise StateSystemIntegrityError("State Candidate recovery authority is missing")
             payload = row[4]
             if not isinstance(payload, dict):
                 raise StateSystemIntegrityError("State Candidate payload is invalid")
             try:
                 candidate = CandidateSet.from_canonical_dict(payload)
             except (KeyError, TypeError, ValueError) as exc:
-                raise StateSystemIntegrityError(
-                    "State Candidate payload failed canonical verification"
-                ) from exc
+                raise StateSystemIntegrityError("State Candidate payload failed canonical verification") from exc
             if (
                 str(row[0]) != str(candidate.envelope.artifact_id)
                 or str(row[1]) != candidate.envelope.content_hash
                 or str(row[2]) != str(stage[0])
                 or str(row[3]) != str(stage[1])
             ):
-                raise StateSystemIntegrityError(
-                    "State Candidate owner lineage mismatch"
-                )
+                raise StateSystemIntegrityError("State Candidate owner lineage mismatch")
             return candidate
 
     def read_runtime_stages(
@@ -470,9 +481,7 @@ class PostgresStateSystemRepository:
             )
             for stage in STATE_SYSTEM_STAGE_ORDER
         )
-        completed_at = {
-            stage: by_stage[stage][7] for stage in STATE_SYSTEM_STAGE_ORDER
-        }
+        completed_at = {stage: by_stage[stage][7] for stage in STATE_SYSTEM_STAGE_ORDER}
         return artifacts, completed_at
 
     def _validate_runtime_receipt_composition(
@@ -484,9 +493,7 @@ class PostgresStateSystemRepository:
         receipt_payload: dict[str, Any] | None,
     ) -> None:
         if receipt_payload is None:
-            raise StateSystemIntegrityError(
-                "legacy State Runtime receipt has no recomputable composition"
-            )
+            raise StateSystemIntegrityError("legacy State Runtime receipt has no recomputable composition")
         rows = connection.execute(
             """
             SELECT stage, artifact_id, artifact_hash, data_eligibility,
@@ -497,24 +504,21 @@ class PostgresStateSystemRepository:
             (str(request.run_id), str(request.tick_id)),
         ).fetchall()
         all_order = (
-            "OBSERVATION", "MARKET_REGIME", "ETF_ROTATION",
-            "THEME_ROTATION", "CAPITAL_STATE", "DYNAMIC_POOL",
-            "CANDIDATE", "SIGNAL", "FORECAST",
+            "OBSERVATION",
+            "MARKET_REGIME",
+            "ETF_ROTATION",
+            "THEME_ROTATION",
+            "CAPITAL_STATE",
+            "DYNAMIC_POOL",
+            "CANDIDATE",
+            "SIGNAL",
+            "FORECAST",
         )
         receipt_schema = receipt_payload.get("schema")
-        expected_order = (
-            all_order[:7]
-            if receipt_schema == "state_system_runtime_receipt/v3"
-            else all_order
-        )
-        order = {
-            name: index
-            for index, name in enumerate(expected_order)
-        }
+        expected_order = all_order[:7] if receipt_schema == "state_system_runtime_receipt/v3" else all_order
+        order = {name: index for index, name in enumerate(expected_order)}
         if len(rows) != len(order) or any(str(row[0]) not in order for row in rows):
-            raise StateSystemIntegrityError(
-                "State Runtime receipt stage authority set is incomplete"
-            )
+            raise StateSystemIntegrityError("State Runtime receipt stage authority set is incomplete")
         ordered = tuple(sorted(rows, key=lambda row: order[str(row[0])]))
         pipeline_id, pipeline_hash = state_research_pipeline_identity(
             run_id=request.run_id,
@@ -532,9 +536,7 @@ class PostgresStateSystemRepository:
         )
         if receipt_schema == "state_system_runtime_receipt/v3":
             if any(row[3] is None or row[4] is None for row in ordered):
-                raise StateSystemIntegrityError(
-                    "State Runtime v3 receipt lacks typed Stage authority"
-                )
+                raise StateSystemIntegrityError("State Runtime v3 receipt lacks typed Stage authority")
             expected_references = [
                 {
                     **RuntimeArtifactReference(
@@ -549,9 +551,7 @@ class PostgresStateSystemRepository:
             ]
         elif receipt_schema == "state_system_runtime_receipt/v2":
             if any(row[3] is None for row in ordered):
-                raise StateSystemIntegrityError(
-                    "State Runtime v2 receipt lacks DataEligibility authority"
-                )
+                raise StateSystemIntegrityError("State Runtime v2 receipt lacks DataEligibility authority")
             expected_references = [
                 {
                     **RuntimeArtifactReference(
@@ -565,9 +565,7 @@ class PostgresStateSystemRepository:
             ]
         elif receipt_schema == "state_system_runtime_receipt/v1":
             if any(row[3] is not None for row in ordered):
-                raise StateSystemIntegrityError(
-                    "legacy State Runtime receipt eligibility was rewritten"
-                )
+                raise StateSystemIntegrityError("legacy State Runtime receipt eligibility was rewritten")
             expected_references = [
                 RuntimeArtifactReference(
                     reference_kind=f"STATE_RESEARCH_{row[0]}",
@@ -577,34 +575,23 @@ class PostgresStateSystemRepository:
                 for row in ordered
             ]
         else:
-            raise StateSystemIntegrityError(
-                "unsupported State Runtime receipt schema"
-            )
-        expected_receipt_id = ArtifactId(
-            f"state-system-receipt:{result.child_receipt_hash[7:]}"
-        )
-        expected_child_run_id = ArtifactId(
-            "state-system-run:"
-            f"{request.idempotency_key.removeprefix('continuous-children-')}"
-        )
+            raise StateSystemIntegrityError("unsupported State Runtime receipt schema")
+        expected_receipt_id = ArtifactId(f"state-system-receipt:{result.child_receipt_hash[7:]}")
+        expected_child_run_id = ArtifactId(f"state-system-run:{request.idempotency_key.removeprefix('continuous-children-')}")
         if (
             result.child_kind is not ContinuousChildKind.STATE_SYSTEM
             or result.child_run_id != expected_child_run_id
             or result.child_receipt_id != expected_receipt_id
             or result.child_artifact_id != pipeline_id
             or result.child_artifact_hash != pipeline_hash
-            or receipt_payload.get("request_idempotency_key")
-            != request.idempotency_key
+            or receipt_payload.get("request_idempotency_key") != request.idempotency_key
             or receipt_payload.get("pipeline_artifact_id") != str(pipeline_id)
             or receipt_payload.get("pipeline_artifact_hash") != pipeline_hash
             or receipt_payload.get("stage_references") != expected_references
-            or receipt_payload.get("reason_codes")
-            != ["ENTRY_BLOCKED", "STATE_RESEARCH_CHAIN_COMPLETED"]
+            or receipt_payload.get("reason_codes") != ["ENTRY_BLOCKED", "STATE_RESEARCH_CHAIN_COMPLETED"]
             or canonical_hash(receipt_payload) != result.child_receipt_hash
         ):
-            raise StateSystemIntegrityError(
-                "State Runtime receipt composition cannot be reproduced"
-            )
+            raise StateSystemIntegrityError("State Runtime receipt composition cannot be reproduced")
 
     def append_pool(
         self,
@@ -612,6 +599,8 @@ class PostgresStateSystemRepository:
         *,
         claim: ClaimedRuntimeTick,
         expected_previous_pool_id: ArtifactId | None,
+        state_series: StateSeries | None = None,
+        state_policy: DynamicPoolPolicy | None = None,
     ) -> dict[str, Any]:
         if not isinstance(pool, DynamicStockPoolVersion):
             raise TypeError("pool must be DynamicStockPoolVersion")
@@ -621,6 +610,24 @@ class PostgresStateSystemRepository:
             raise StateSystemConflict("Dynamic Pool lineage does not match active claim")
         if pool.previous_pool_id != expected_previous_pool_id:
             raise StateSystemConflict("Dynamic Pool previous identity does not match CAS expectation")
+        if (state_series is None) != (state_policy is None):
+            raise ValueError("Dynamic Pool State Series and Policy must be bound together")
+        if (
+            state_series is not None
+            and state_policy is not None
+            and (
+                state_series.domain.value != "DYNAMIC_POOL"
+                or state_series.state_policy_id != state_policy.policy_id
+                or state_series.state_policy_version != state_policy.policy_version
+                or state_series.state_policy_hash != state_policy.policy_hash
+                or pool.lineage.state_series_id != state_series.series_id
+                or pool.lineage.state_series_hash != state_series.series_hash
+                or pool.lineage.state_policy_id != state_policy.policy_id
+                or pool.lineage.state_policy_version != state_policy.policy_version
+                or pool.lineage.state_policy_hash != state_policy.policy_hash
+            )
+        ):
+            raise ValueError("Dynamic Pool V2 authority binding mismatch")
         serialized = canonical_json(pool.to_canonical_dict())
 
         def operation(connection: psycopg.Connection[Any]) -> dict[str, Any]:
@@ -702,12 +709,32 @@ class PostgresStateSystemRepository:
                         canonical_json({"symbol": symbol, "change_type": change_type}),
                     ),
                 )
-            self._advance_pointer(
-                connection,
-                pool=pool,
-                claim=claim,
-                expected_previous_pool_id=expected_previous_pool_id,
-            )
+            if state_series is None or state_policy is None:
+                self._advance_pointer(
+                    connection,
+                    pool=pool,
+                    claim=claim,
+                    expected_previous_pool_id=expected_previous_pool_id,
+                )
+            else:
+                self._register_state_authority(
+                    connection,
+                    series=state_series,
+                    policy=state_policy,
+                    created_at=pool.lineage.created_at,
+                )
+                self._advance_series_head(
+                    connection,
+                    series=state_series,
+                    policy=state_policy,
+                    artifact_id=pool.pool_id,
+                    artifact_hash=pool.pool_hash,
+                    expected_previous_artifact_id=expected_previous_pool_id,
+                    claim=claim,
+                    as_of_time=pool.decision_time,
+                    available_at=pool.available_at,
+                    created_at=pool.lineage.created_at,
+                )
             return decode_and_verify_pool(str(stored[1]))
 
         try:
@@ -780,6 +807,316 @@ class PostgresStateSystemRepository:
                 (str(continuous_operation_id),),
             ).fetchone()
         return None if row is None else ArtifactId(str(row[0]))
+
+    def read_current_series_state(
+        self,
+        domain: StateDomain,
+        series_id: ArtifactId,
+    ) -> tuple[ArtifactId, str, dict[str, Any], datetime] | None:
+        """Read the latest effective Artifact from a stable cross-session series."""
+
+        if domain not in _DOMAIN_TABLES:
+            raise ValueError("unsupported State domain")
+        _observation_table, state_table, _transition_table = _DOMAIN_TABLES[domain]
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                sql.SQL(
+                    """
+                    SELECT state.state_id, state.state_hash, state.artifact_json,
+                           state.created_at, head.current_artifact_hash
+                    FROM state_series_head AS head
+                    JOIN state_series AS series ON series.series_id = head.series_id
+                    JOIN {} AS state ON state.state_id = head.current_artifact_id
+                    WHERE head.series_id = %s AND series.domain = %s
+                    """
+                ).format(sql.Identifier(state_table)),
+                (str(series_id), domain.value),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(str(row[2]))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise StateSystemIntegrityError("State Series Artifact JSON is invalid") from exc
+        if not isinstance(payload, dict):
+            raise StateSystemIntegrityError("State Series Artifact payload is not an object")
+        digest = canonical_hash(payload)
+        if digest != str(row[1]) or digest != str(row[4]):
+            raise StateSystemIntegrityError("State Series Artifact/head hash mismatch")
+        if not isinstance(row[3], datetime):
+            raise StateSystemIntegrityError("State Series CreatedAt is invalid")
+        return ArtifactId(str(row[0])), digest, payload, row[3]
+
+    def latest_pool_id_for_series(self, series_id: ArtifactId) -> ArtifactId | None:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT head.current_artifact_id
+                FROM state_series_head AS head
+                JOIN state_series AS series ON series.series_id = head.series_id
+                WHERE head.series_id = %s AND series.domain = 'DYNAMIC_POOL'
+                """,
+                (str(series_id),),
+            ).fetchone()
+        return None if row is None else ArtifactId(str(row[0]))
+
+    def read_series_chain(self, series_id: ArtifactId) -> tuple[tuple[ArtifactId, ArtifactId | None, ArtifactId, datetime], ...]:
+        """Return immutable lineage in effective-time order for replay verification."""
+
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT artifact_id, previous_artifact_id, run_id, as_of_time
+                FROM state_series_link
+                WHERE series_id = %s
+                ORDER BY as_of_time, link_id
+                """,
+                (str(series_id),),
+            ).fetchall()
+        return tuple(
+            (
+                ArtifactId(str(row[0])),
+                None if row[1] is None else ArtifactId(str(row[1])),
+                ArtifactId(str(row[2])),
+                row[3],
+            )
+            for row in rows
+        )
+
+    def _register_state_authority(
+        self,
+        connection: psycopg.Connection[Any],
+        *,
+        series: StateSeries,
+        policy: StateTransitionPolicy | DynamicPoolPolicy,
+        created_at: datetime,
+    ) -> None:
+        policy_payload = policy.to_canonical_dict()
+        policy_domain = policy.domain.value if isinstance(policy, StateTransitionPolicy) else "DYNAMIC_POOL"
+        connection.execute(
+            """
+            INSERT INTO state_policy_authority(
+                policy_id, policy_hash, policy_version, domain, policy_json, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (policy_id) DO NOTHING
+            """,
+            (
+                str(policy.policy_id),
+                policy.policy_hash,
+                policy.policy_version,
+                policy_domain,
+                canonical_json(policy_payload),
+                created_at,
+            ),
+        )
+        stored_policy = connection.execute(
+            "SELECT policy_hash FROM state_policy_authority WHERE policy_id = %s",
+            (str(policy.policy_id),),
+        ).fetchone()
+        if stored_policy is None or str(stored_policy[0]) != policy.policy_hash:
+            raise StateSystemConflict("State Policy identity conflict")
+        connection.execute(
+            """
+            INSERT INTO state_series(
+                series_id, series_hash, domain, logical_scope, research_family,
+                authority_mode, universe_policy_id, universe_policy_hash,
+                model_id, model_version, configuration_id, configuration_hash,
+                state_policy_id, state_policy_version, state_policy_hash,
+                series_json, created_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
+            ) ON CONFLICT (series_id) DO NOTHING
+            """,
+            (
+                str(series.series_id),
+                series.series_hash,
+                series.domain.value,
+                series.logical_scope,
+                series.research_family,
+                series.authority_mode,
+                str(series.universe_policy_id),
+                series.universe_policy_hash,
+                str(series.model_id),
+                series.model_version,
+                str(series.configuration_id),
+                series.configuration_hash,
+                str(series.state_policy_id),
+                series.state_policy_version,
+                series.state_policy_hash,
+                canonical_json(series.to_canonical_dict()),
+                created_at,
+            ),
+        )
+        stored_series = connection.execute(
+            "SELECT series_hash FROM state_series WHERE series_id = %s",
+            (str(series.series_id),),
+        ).fetchone()
+        if stored_series is None or str(stored_series[0]) != series.series_hash:
+            raise StateSystemConflict("State Series identity conflict")
+
+    def _advance_series_head(
+        self,
+        connection: psycopg.Connection[Any],
+        *,
+        series: StateSeries,
+        policy: StateTransitionPolicy | DynamicPoolPolicy,
+        artifact_id: ArtifactId,
+        artifact_hash: str,
+        expected_previous_artifact_id: ArtifactId | None,
+        claim: ClaimedRuntimeTick,
+        as_of_time: datetime,
+        available_at: datetime,
+        created_at: datetime,
+    ) -> None:
+        del policy
+        head = connection.execute(
+            """
+            SELECT current_link_id, current_artifact_id, current_artifact_hash,
+                   current_run_id, current_tick_sequence, current_as_of_time,
+                   version, last_fencing_token
+            FROM state_series_head WHERE series_id = %s FOR UPDATE
+            """,
+            (str(series.series_id),),
+        ).fetchone()
+        if head is None:
+            if expected_previous_artifact_id is not None:
+                raise StateSystemConflict("State Series CAS expected a missing predecessor")
+            previous_link_id = None
+        else:
+            if str(head[1]) == str(artifact_id):
+                if str(head[2]) != artifact_hash:
+                    raise StateSystemConflict("State Series head hash conflict")
+                return
+            if expected_previous_artifact_id is None or str(head[1]) != str(expected_previous_artifact_id):
+                raise StateSystemConflict("State Series CAS predecessor mismatch")
+            if as_of_time <= head[5]:
+                raise StateSystemConflict("State Series stale AsOfTime cannot advance head")
+            if str(head[3]) == str(claim.run_id) and (claim.tick_sequence <= int(head[4]) or claim.fencing_token < int(head[7])):
+                raise StateSystemConflict("State Series stale Tick/fence cannot advance head")
+            previous_link_id = str(head[0])
+        trading_date = connection.execute(
+            "SELECT trading_date FROM continuous_research_run WHERE run_id = %s",
+            (str(claim.run_id),),
+        ).fetchone()
+        if trading_date is None:
+            raise StateSystemConflict("State Series Runtime parent is missing")
+        foreign_ids: dict[str, str | None] = {
+            "MARKET_REGIME": None,
+            "ETF_ROTATION": None,
+            "THEME_ROTATION": None,
+            "CAPITAL_STATE": None,
+            "DYNAMIC_POOL": None,
+        }
+        foreign_ids[series.domain.value] = str(artifact_id)
+        link_payload = {
+            "schema": "state_series_link/v1",
+            "series_id": str(series.series_id),
+            "previous_artifact_id": (None if expected_previous_artifact_id is None else str(expected_previous_artifact_id)),
+            "artifact_id": str(artifact_id),
+            "artifact_hash": artifact_hash,
+            "run_id": str(claim.run_id),
+            "tick_id": str(claim.tick_id),
+            "trading_date": trading_date[0].isoformat(),
+            "tick_sequence": claim.tick_sequence,
+            "fencing_token": claim.fencing_token,
+            "as_of_time": as_of_time.isoformat().replace("+00:00", "Z"),
+            "available_at": available_at.isoformat().replace("+00:00", "Z"),
+        }
+        link_hash = canonical_hash(link_payload)
+        link_id = ArtifactId(f"state-series-link:{link_hash[7:]}")
+        connection.execute(
+            """
+            INSERT INTO state_series_link(
+                link_id, link_hash, series_id, previous_link_id,
+                previous_artifact_id, artifact_id, artifact_hash,
+                market_regime_state_id, etf_rotation_state_id,
+                theme_rotation_state_id, capital_state_id, dynamic_pool_id,
+                run_id, tick_id, trading_date, tick_sequence, fencing_token,
+                as_of_time, available_at, link_json, created_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s
+            ) ON CONFLICT (link_id) DO NOTHING
+            """,
+            (
+                str(link_id),
+                link_hash,
+                str(series.series_id),
+                previous_link_id,
+                None if expected_previous_artifact_id is None else str(expected_previous_artifact_id),
+                str(artifact_id),
+                artifact_hash,
+                foreign_ids["MARKET_REGIME"],
+                foreign_ids["ETF_ROTATION"],
+                foreign_ids["THEME_ROTATION"],
+                foreign_ids["CAPITAL_STATE"],
+                foreign_ids["DYNAMIC_POOL"],
+                str(claim.run_id),
+                str(claim.tick_id),
+                trading_date[0],
+                claim.tick_sequence,
+                claim.fencing_token,
+                as_of_time,
+                available_at,
+                canonical_json(link_payload),
+                created_at,
+            ),
+        )
+        if head is None:
+            connection.execute(
+                """
+                INSERT INTO state_series_head(
+                    series_id, current_link_id, current_artifact_id,
+                    current_artifact_hash, current_run_id, current_tick_id,
+                    current_tick_sequence, current_as_of_time, version,
+                    last_fencing_token, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+                """,
+                (
+                    str(series.series_id),
+                    str(link_id),
+                    str(artifact_id),
+                    artifact_hash,
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    claim.tick_sequence,
+                    as_of_time,
+                    claim.fencing_token,
+                    self._clock(),
+                ),
+            )
+            return
+        updated = connection.execute(
+            """
+            UPDATE state_series_head
+            SET current_link_id = %s, current_artifact_id = %s,
+                current_artifact_hash = %s, current_run_id = %s,
+                current_tick_id = %s, current_tick_sequence = %s,
+                current_as_of_time = %s, version = version + 1,
+                last_fencing_token = %s, updated_at = %s
+            WHERE series_id = %s AND version = %s
+              AND current_artifact_id = %s AND current_link_id = %s
+            """,
+            (
+                str(link_id),
+                str(artifact_id),
+                artifact_hash,
+                str(claim.run_id),
+                str(claim.tick_id),
+                claim.tick_sequence,
+                as_of_time,
+                claim.fencing_token,
+                self._clock(),
+                str(series.series_id),
+                int(head[6]),
+                str(expected_previous_artifact_id),
+                str(head[0]),
+            ),
+        ).rowcount
+        if updated != 1:
+            raise StateSystemConflict("State Series CAS update lost a concurrent race")
 
     def _assert_claim(
         self,
@@ -949,9 +1286,7 @@ def _encode_child_result(
         "child_artifact_id": None if result.child_artifact_id is None else str(result.child_artifact_id),
         "child_artifact_hash": result.child_artifact_hash,
         "input_references": [value.to_canonical_dict() for value in result.input_references],
-        "configuration_references": [
-            value.to_canonical_dict() for value in result.configuration_references
-        ],
+        "configuration_references": [value.to_canonical_dict() for value in result.configuration_references],
         "receipt_payload": dict(receipt_payload),
     }
 
@@ -981,26 +1316,15 @@ def _decode_child_result(
         child_receipt_hash=str(payload["child_receipt_hash"]),
         child_artifact_id=None if artifact_id is None else ArtifactId(str(artifact_id)),
         child_artifact_hash=None if artifact_hash is None else str(artifact_hash),
-        input_references=tuple(
-            RuntimeArtifactReference.from_canonical_dict(value)
-            for value in inputs
-            if isinstance(value, dict)
-        ),
+        input_references=tuple(RuntimeArtifactReference.from_canonical_dict(value) for value in inputs if isinstance(value, dict)),
         configuration_references=tuple(
-            RuntimeArtifactReference.from_canonical_dict(value)
-            for value in configurations
-            if isinstance(value, dict)
+            RuntimeArtifactReference.from_canonical_dict(value) for value in configurations if isinstance(value, dict)
         ),
     )
     raw_receipt_payload = payload.get("receipt_payload")
-    receipt_payload = (
-        raw_receipt_payload if isinstance(raw_receipt_payload, dict) else None
-    )
+    receipt_payload = raw_receipt_payload if isinstance(raw_receipt_payload, dict) else None
     if payload["schema"] == "state_runtime_child_receipt/v2" and (
-        receipt_payload is None
-        or canonical_hash(receipt_payload) != result.child_receipt_hash
+        receipt_payload is None or canonical_hash(receipt_payload) != result.child_receipt_hash
     ):
-        raise StateSystemIntegrityError(
-            "State Runtime receipt payload failed hash verification"
-        )
+        raise StateSystemIntegrityError("State Runtime receipt payload failed hash verification")
     return result, receipt_payload

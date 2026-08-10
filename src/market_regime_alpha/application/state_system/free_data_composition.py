@@ -64,12 +64,17 @@ from market_regime_alpha.research.state_system.common import (
 )
 from market_regime_alpha.research.state_system.configuration import (
     CapitalStateConfiguration,
-    DynamicPoolConfiguration,
     EtfRotationConfiguration,
     MarketStateConfiguration,
-    MissingDataPolicy,
     ThemeRotationConfiguration,
-    TransitionThresholds,
+)
+from market_regime_alpha.research.state_system.authority import (
+    DynamicPoolPolicy,
+    StateAuthorityDomain,
+    StateSeries,
+    StateTransitionPolicy,
+    engineering_dynamic_pool_policy,
+    engineering_state_transition_policy,
 )
 from market_regime_alpha.research.state_system.etf_rotation import (
     EtfRotationEvaluation,
@@ -136,9 +141,7 @@ class _StageService(StateResearchStageService):
     operation: Callable[[StateResearchStageContext], StateResearchStageArtifact]
     work: _StateWork
 
-    def execute(
-        self, context: StateResearchStageContext
-    ) -> StateResearchStageArtifact:
+    def execute(self, context: StateResearchStageContext) -> StateResearchStageArtifact:
         result = self.operation(context)
         if self.work.stage_artifacts is None:
             self.work.stage_artifacts = {}
@@ -154,9 +157,7 @@ class _FixedStageService(StateResearchStageService):
     stage: StateResearchStage
     artifact: StateResearchStageArtifact
 
-    def execute(
-        self, context: StateResearchStageContext
-    ) -> StateResearchStageArtifact:
+    def execute(self, context: StateResearchStageContext) -> StateResearchStageArtifact:
         return self.artifact
 
 
@@ -168,9 +169,7 @@ class CanonicalFreeDataStateCoordinator:
         *,
         request: ChildExecutionRequest,
         repository: PostgresStateSystemRepository,
-        selection_receipts: tuple[
-            tuple[StateResearchStage, ModelSelectionReceipt], ...
-        ],
+        selection_receipts: tuple[tuple[StateResearchStage, ModelSelectionReceipt], ...],
         clock: Clock,
     ) -> None:
         self._request = request
@@ -179,9 +178,7 @@ class CanonicalFreeDataStateCoordinator:
         self._clock = clock
         self.child_result: ChildExecutionResult | None = None
         self.work: _StateWork | None = None
-        self._blocked_artifacts: dict[
-            StateResearchStage, StateResearchStageArtifact
-        ] = {}
+        self._blocked_artifacts: dict[StateResearchStage, StateResearchStageArtifact] = {}
         self._blocked_completed_at: dict[StateResearchStage, datetime] = {}
 
     @property
@@ -230,9 +227,7 @@ class CanonicalFreeDataStateCoordinator:
             )
             artifact = StateResearchStageArtifact(
                 stage=stage,
-                artifact_id=ArtifactId(
-                    f"state-stage-model-blocked:{digest[7:]}"
-                ),
+                artifact_id=ArtifactId(f"state-stage-model-blocked:{digest[7:]}"),
                 artifact_hash=digest,
                 available_at=min(self._request.as_of_time, completed_at),
                 data_eligibility=DataEligibility.EXPLORATORY,
@@ -247,9 +242,7 @@ class CanonicalFreeDataStateCoordinator:
         )
         self.child_result = delegate.execute(self._request)
         self._blocked_artifacts = artifacts
-        self._blocked_completed_at = {
-            stage: completed_at for stage in artifacts
-        }
+        self._blocked_completed_at = {stage: completed_at for stage in artifacts}
 
     def __call__(
         self,
@@ -272,9 +265,7 @@ class CanonicalFreeDataStateCoordinator:
             stages, completed_at = self._repository.read_runtime_stages(self._request)
             work.stage_artifacts = {item.stage: item for item in stages}
             work.stage_completed_at = completed_at
-            work.final_candidates = self._repository.read_runtime_candidate(
-                self._request
-            )
+            work.final_candidates = self._repository.read_runtime_candidate(self._request)
             self.child_result = existing
             return work.final_candidates
         services: dict[StateResearchStage, StateResearchStageService] = {
@@ -322,15 +313,11 @@ class CanonicalFreeDataStateCoordinator:
         stages, completed_at = self._repository.read_runtime_stages(self._request)
         work.stage_artifacts = {item.stage: item for item in stages}
         work.stage_completed_at = completed_at
-        work.final_candidates = self._repository.read_runtime_candidate(
-            self._request
-        )
+        work.final_candidates = self._repository.read_runtime_candidate(self._request)
         return work.final_candidates
 
 
-def _observation_stage(
-    work: _StateWork, context: StateResearchStageContext
-) -> StateResearchStageArtifact:
+def _observation_stage(work: _StateWork, context: StateResearchStageContext) -> StateResearchStageArtifact:
     bundle = work.research.artifact.inputs.supplemental_evidence
     return StateResearchStageArtifact(
         stage=StateResearchStage.OBSERVATION,
@@ -342,9 +329,7 @@ def _observation_stage(
     )
 
 
-def _market_stage(
-    work: _StateWork, context: StateResearchStageContext
-) -> StateResearchStageArtifact:
+def _market_stage(work: _StateWork, context: StateResearchStageContext) -> StateResearchStageArtifact:
     snapshot = work.research.artifact.market_regime
     _assert_selected_execution(
         work,
@@ -354,10 +339,22 @@ def _market_stage(
         snapshot.envelope.configuration_id,
         snapshot.envelope.configuration_hash,
     )
+    policy = engineering_state_transition_policy(StateAuthorityDomain.MARKET_REGIME)
     config = _state_configuration(
         MarketStateConfiguration,
         work,
         StateResearchStage.MARKET_REGIME,
+        policy,
+    )
+    series = _state_series(
+        work,
+        domain=StateAuthorityDomain.MARKET_REGIME,
+        logical_scope="A_SHARE_MARKET",
+        policy=policy,
+        model_id=snapshot.envelope.model_id,
+        model_version=snapshot.envelope.model_version,
+        configuration_id=snapshot.envelope.configuration_id,
+        configuration_hash=snapshot.envelope.configuration_hash,
     )
     components = tuple(
         value
@@ -372,7 +369,14 @@ def _market_stage(
     )
     score = Decimal(str(fmean(components))) if components else Decimal("0")
     missing = () if components else ("MARKET_REGIME_COMPONENTS",)
-    lineage = _lineage(work, config.model_id, config.model_version, config)
+    lineage = _lineage(
+        work,
+        config.model_id,
+        config.model_version,
+        config,
+        series=series,
+        policy=policy,
+    )
     observation = MarketRegimeObservation.create(
         v0_snapshot_id=snapshot.envelope.artifact_id,
         regime_score=score,
@@ -384,14 +388,17 @@ def _market_stage(
     )
     evaluation = evaluate_market_state(
         observation,
-        previous=_previous_market(work, "A_SHARE_MARKET"),
+        previous=_previous_market(work, series),
         configuration=config,
+        state_policy=policy,
     )
     _append_evaluation(
         work,
         StateDomain.MARKET_REGIME,
         "A_SHARE_MARKET",
         evaluation,
+        series=series,
+        policy=policy,
     )
     work.market = evaluation
     return _state_artifact(
@@ -403,9 +410,7 @@ def _market_stage(
     )
 
 
-def _etf_stage(
-    work: _StateWork, context: StateResearchStageContext
-) -> StateResearchStageArtifact:
+def _etf_stage(work: _StateWork, context: StateResearchStageContext) -> StateResearchStageArtifact:
     values = work.research.artifact.inputs.supplemental_evidence.stateful_etf_observations
     if not values:
         return _insufficient_stage(
@@ -413,18 +418,32 @@ def _etf_stage(
             StateResearchStage.ETF_ROTATION,
             ("STATEFUL_ETF_OBSERVATION",),
         )
+    policy = engineering_state_transition_policy(StateAuthorityDomain.ETF_ROTATION)
     config = _deterministic_state_configuration(
         EtfRotationConfiguration,
         "free-data-etf-rotation-policy-v1",
+        policy,
     )
     evaluations = []
     for value in values:
+        series = _state_series(
+            work,
+            domain=StateAuthorityDomain.ETF_ROTATION,
+            logical_scope=value.etf_id,
+            policy=policy,
+            model_id=ModelId("free-data-etf-rotation-observation-v1"),
+            model_version="v1",
+            configuration_id=ArtifactId("free-data-etf-rotation-observation-configuration-v1"),
+            configuration_hash=canonical_hash({"schema": "free_data_etf_rotation_observation_configuration/v1"}),
+        )
         lineage = _lineage(
             work,
             config.model_id,
             config.model_version,
             config,
             available_at=value.available_at.value,
+            series=series,
+            policy=policy,
         )
         observation = EtfRotationObservation.create(
             etf_id=value.etf_id,
@@ -444,42 +463,34 @@ def _etf_stage(
             data_coverage=Decimal(str(value.data_coverage)),
             missing_evidence=(),
             counter_evidence=(),
-            reason_codes=tuple(
-                sorted({*value.reason_codes, "STATEFUL_ETF_EVIDENCE_BOUND"})
-            ),
+            reason_codes=tuple(sorted({*value.reason_codes, "STATEFUL_ETF_EVIDENCE_BOUND"})),
             lineage=lineage,
         )
         evaluation = evaluate_etf_rotation(
             observation,
-            previous=_previous_etf(work, value.etf_id),
+            previous=_previous_etf(work, series),
             configuration=config,
+            state_policy=policy,
         )
         _append_evaluation(
             work,
             StateDomain.ETF_ROTATION,
             value.etf_id,
             evaluation,
+            series=series,
+            policy=policy,
         )
         evaluations.append(evaluation)
     work.etfs = tuple(evaluations)
     return _bundle_artifact(
         StateResearchStage.ETF_ROTATION,
-        tuple(
-            (item.state.state_id, item.state.state_hash)
-            for item in evaluations
-        ),
+        tuple((item.state.state_id, item.state.state_hash) for item in evaluations),
         max(item.observation.lineage.available_at for item in evaluations),
-        tuple(
-            sorted(
-                {reason for item in evaluations for reason in item.state.reason_codes}
-            )
-        ),
+        tuple(sorted({reason for item in evaluations for reason in item.state.reason_codes})),
     )
 
 
-def _theme_stage(
-    work: _StateWork, context: StateResearchStageContext
-) -> StateResearchStageArtifact:
+def _theme_stage(work: _StateWork, context: StateResearchStageContext) -> StateResearchStageArtifact:
     inputs = work.research.artifact.inputs.supplemental_evidence
     if not inputs.theme_observations or not work.etfs:
         return _insufficient_stage(
@@ -496,47 +507,50 @@ def _theme_stage(
         snapshot.envelope.configuration_id,
         snapshot.envelope.configuration_hash,
     )
+    policy = engineering_state_transition_policy(StateAuthorityDomain.THEME_ROTATION)
     config = _state_configuration(
         ThemeRotationConfiguration,
         work,
         StateResearchStage.THEME_ROTATION,
+        policy,
     )
     capital = {item.theme_id: item for item in inputs.capital_observations}
     mappings = {item.etf_id: item for item in inputs.etf_theme_mappings}
     etf_by_id = {item.state.etf_id: item for item in work.etfs}
     evaluations = []
     for value in inputs.theme_observations:
-        related = tuple(
-            etf_by_id[item]
-            for item in value.proxy_etf_ids
-            if item in etf_by_id
-        )
+        related = tuple(etf_by_id[item] for item in value.proxy_etf_ids if item in etf_by_id)
         mapping_complete = bool(related) and all(
-            item in mappings and mappings[item].theme_id == value.theme_id
-            for item in value.proxy_etf_ids
+            item in mappings and mappings[item].theme_id == value.theme_id for item in value.proxy_etf_ids
         )
         if not related:
             continue
-        related_ids = tuple(
-            sorted((item.state.state_id for item in related), key=str)
-        )
+        related_ids = tuple(sorted((item.state.state_id for item in related), key=str))
         mapping_hash = canonical_hash(
             {
                 "theme_id": value.theme_id,
-                "mappings": [
-                    mappings[item].to_canonical_dict()
-                    for item in sorted(value.proxy_etf_ids)
-                    if item in mappings
-                ],
+                "mappings": [mappings[item].to_canonical_dict() for item in sorted(value.proxy_etf_ids) if item in mappings],
             }
         )
         capital_value = capital.get(value.theme_id)
+        series = _state_series(
+            work,
+            domain=StateAuthorityDomain.THEME_ROTATION,
+            logical_scope=value.theme_id,
+            policy=policy,
+            model_id=snapshot.envelope.model_id,
+            model_version=snapshot.envelope.model_version,
+            configuration_id=snapshot.envelope.configuration_id,
+            configuration_hash=snapshot.envelope.configuration_hash,
+        )
         lineage = _lineage(
             work,
             config.model_id,
             config.model_version,
             config,
             available_at=value.available_at.value,
+            series=series,
+            policy=policy,
         )
         observation = ThemeRotationObservation.create(
             theme_id=value.theme_id,
@@ -545,38 +559,32 @@ def _theme_stage(
             mapping_complete=mapping_complete,
             proxy_etf_ids=value.proxy_etf_ids,
             etf_rotation_state_ids=related_ids,
-            verified_etf_strength=_signed_to_unit_decimal(
-                fmean(float(item.state.rotation_score) for item in related)
-            ),
+            verified_etf_strength=_signed_to_unit_decimal(fmean(float(item.state.rotation_score) for item in related)),
             stock_breadth=_unit_decimal(value.breadth),
             participation_rate=_unit_decimal(value.participation_change),
             leader_resonance=_unit_decimal(value.leader_strength),
-            internal_concentration=_unit_decimal(
-                None
-                if capital_value is None
-                else capital_value.capital_concentration
-            ),
-            amount_persistence=_unit_decimal(
-                None
-                if capital_value is None
-                else capital_value.amount_persistence
-            ),
+            internal_concentration=_unit_decimal(None if capital_value is None else capital_value.capital_concentration),
+            amount_persistence=_unit_decimal(None if capital_value is None else capital_value.amount_persistence),
             data_coverage=Decimal(str(value.confidence)),
             missing_evidence=(),
             counter_evidence=(),
             reason_codes=tuple(sorted({*value.reason_codes, "THEME_EVIDENCE_BOUND"})),
             lineage=lineage,
+            state_policy=policy,
         )
         evaluation = evaluate_theme_rotation(
             observation,
-            previous=_previous_theme(work, value.theme_id),
+            previous=_previous_theme(work, series),
             configuration=config,
+            state_policy=policy,
         )
         _append_evaluation(
             work,
             StateDomain.THEME_ROTATION,
             value.theme_id,
             evaluation,
+            series=series,
+            policy=policy,
         )
         evaluations.append(evaluation)
     if not evaluations:
@@ -594,9 +602,7 @@ def _theme_stage(
     )
 
 
-def _capital_stage(
-    work: _StateWork, context: StateResearchStageContext
-) -> StateResearchStageArtifact:
+def _capital_stage(work: _StateWork, context: StateResearchStageContext) -> StateResearchStageArtifact:
     inputs = work.research.artifact.inputs.supplemental_evidence
     if not inputs.capital_observations or not work.themes:
         return _insufficient_stage(
@@ -613,10 +619,22 @@ def _capital_stage(
         snapshot.envelope.configuration_id,
         snapshot.envelope.configuration_hash,
     )
+    policy = engineering_state_transition_policy(StateAuthorityDomain.CAPITAL_STATE)
     config = _state_configuration(
         CapitalStateConfiguration,
         work,
         StateResearchStage.CAPITAL_STATE,
+        policy,
+    )
+    series = _state_series(
+        work,
+        domain=StateAuthorityDomain.CAPITAL_STATE,
+        logical_scope="A_SHARE_RESEARCH",
+        policy=policy,
+        model_id=snapshot.envelope.model_id,
+        model_version=snapshot.envelope.model_version,
+        configuration_id=snapshot.envelope.configuration_id,
+        configuration_hash=snapshot.envelope.configuration_hash,
     )
     theme_values = inputs.theme_observations
     capital_values = inputs.capital_observations
@@ -627,6 +645,8 @@ def _capital_stage(
         config.model_version,
         config,
         available_at=max(item.available_at.value for item in capital_values),
+        series=series,
+        policy=policy,
     )
     observation = CapitalObservation.create(
         scope_id="A_SHARE_RESEARCH",
@@ -646,14 +666,17 @@ def _capital_stage(
     )
     evaluation = evaluate_capital_state(
         observation,
-        previous=_previous_capital(work, "A_SHARE_RESEARCH"),
+        previous=_previous_capital(work, series),
         configuration=config,
+        state_policy=policy,
     )
     _append_evaluation(
         work,
         StateDomain.CAPITAL_STATE,
         "A_SHARE_RESEARCH",
         evaluation,
+        series=series,
+        policy=policy,
     )
     work.capital = evaluation
     return _state_artifact(
@@ -665,41 +688,42 @@ def _capital_stage(
     )
 
 
-def _pool_stage(
-    work: _StateWork, context: StateResearchStageContext
-) -> StateResearchStageArtifact:
+def _pool_stage(work: _StateWork, context: StateResearchStageContext) -> StateResearchStageArtifact:
     if work.market is None or not work.etfs or not work.themes or work.capital is None:
         return _insufficient_stage(
             work,
             StateResearchStage.DYNAMIC_POOL,
             ("MARKET_ETF_THEME_CAPITAL_STATE",),
         )
-    config = _pool_configuration()
+    policy = engineering_dynamic_pool_policy()
+    config = policy.as_legacy_configuration()
+    pool_model_hash = canonical_hash({"schema": "deterministic_dynamic_pool_model_configuration/v1"})
+    series = _state_series(
+        work,
+        domain=StateAuthorityDomain.DYNAMIC_POOL,
+        logical_scope="A_SHARE_DYNAMIC_POOL",
+        policy=policy,
+        model_id=ModelId("deterministic-dynamic-pool-model-v1"),
+        model_version="v1",
+        configuration_id=ArtifactId("deterministic-dynamic-pool-model-configuration-v1"),
+        configuration_hash=pool_model_hash,
+    )
     lineage = _lineage(
         work,
         ModelId("deterministic-dynamic-pool-policy-v1"),
         "v1",
         config,
+        series=series,
+        policy=policy,
     )
     universe = work.preparation.universe
-    memberships = {
-        item.symbol: item
-        for item in work.research.artifact.inputs.supplemental_evidence.theme_memberships
-    }
+    memberships = {item.symbol: item for item in work.research.artifact.inputs.supplemental_evidence.theme_memberships}
     eligibility = tuple(
         PoolEligibilityObservation(
             symbol=item.symbol,
             eligible=item.included,
-            eligibility_reason=(
-                "OPERATIONAL_UNIVERSE_ELIGIBLE"
-                if item.included
-                else item.exclusion_reasons[0]
-            ),
-            liquidity=(
-                Decimal("1")
-                if item.liquidity_evidence.median_daily_amount is not None
-                else Decimal("0")
-            ),
+            eligibility_reason=("OPERATIONAL_UNIVERSE_ELIGIBLE" if item.included else item.exclusion_reasons[0]),
+            liquidity=(Decimal("1") if item.liquidity_evidence.median_daily_amount is not None else Decimal("0")),
             board=item.exchange.value,
             is_st=item.st_status is STStatus.ST,
             suspended=item.suspension_status is SuspensionStatus.SUSPENDED,
@@ -759,22 +783,23 @@ def _pool_stage(
             *(item.observation.lineage.available_at for item in work.themes),
         ),
     )
-    previous_pool = _previous_pool(work)
+    previous_pool = _previous_pool(work, series)
     result = evaluate_dynamic_pool(
         state_context=state_context,
         eligibility=eligibility,
         previous=previous_pool,
         configuration=config,
         lineage=lineage,
+        state_policy=policy,
     )
     pool = result.pool
     if result.status is DynamicPoolEvaluationStatus.CREATED:
         work.repository.append_pool(
             pool,
             claim=_claim(work.request),
-            expected_previous_pool_id=(
-                None if previous_pool is None else previous_pool.pool_id
-            ),
+            expected_previous_pool_id=(None if previous_pool is None else previous_pool.pool_id),
+            state_series=series,
+            state_policy=policy,
         )
     work.pool = pool
     return _state_artifact(
@@ -786,9 +811,7 @@ def _pool_stage(
     )
 
 
-def _candidate_stage(
-    work: _StateWork, context: StateResearchStageContext
-) -> StateResearchStageArtifact:
+def _candidate_stage(work: _StateWork, context: StateResearchStageContext) -> StateResearchStageArtifact:
     if work.pool is None or work.market is None or work.capital is None:
         work.final_candidates = _block_candidates_without_pool(work.candidates)
         artifact = _insufficient_stage(
@@ -810,9 +833,7 @@ def _candidate_stage(
         capital_evolution=work.research.artifact.capital_evolution,
         configuration=work.research.artifact.configuration.candidate_discovery,
         code_revision=work.research.artifact.envelope.code_revision,
-        dynamic_pool_membership={
-            item.symbol: item.included for item in work.pool.members
-        },
+        dynamic_pool_membership={item.symbol: item.included for item in work.pool.members},
         dynamic_pool_reference=(work.pool.pool_id, work.pool.pool_hash),
     )
     _assert_selected_execution(
@@ -828,12 +849,8 @@ def _candidate_stage(
         candidate_set=final,
         dynamic_pool=work.pool,
         market_regime_state_id=work.market.state.state_id,
-        etf_rotation_state_ids=tuple(
-            sorted((item.state.state_id for item in work.etfs), key=str)
-        ),
-        theme_rotation_state_ids=tuple(
-            sorted((item.state.state_id for item in work.themes), key=str)
-        ),
+        etf_rotation_state_ids=tuple(sorted((item.state.state_id for item in work.etfs), key=str)),
+        theme_rotation_state_ids=tuple(sorted((item.state.state_id for item in work.themes), key=str)),
         capital_state_id=work.capital.state.state_id,
         feature_bundle_id=work.preparation.static_bundle.artifact_id,
         runtime_tick_id=work.request.tick_id,
@@ -895,18 +912,11 @@ def _constrain_candidates(
     ranks = {item.symbol: index for index, item in enumerate(ranked, start=1)}
     records = tuple(
         sorted(
-            (
-                replace(item, rank=ranks[item.symbol])
-                if item.symbol in ranks
-                else item
-                for item in prepared
-            ),
+            (replace(item, rank=ranks[item.symbol]) if item.symbol in ranks else item for item in prepared),
             key=lambda item: item.symbol,
         )
     )
-    reasons = tuple(
-        sorted({*candidates.reason_codes, "DYNAMIC_POOL_CANDIDATE_GATE_APPLIED"})
-    )
+    reasons = tuple(sorted({*candidates.reason_codes, "DYNAMIC_POOL_CANDIDATE_GATE_APPLIED"}))
     payload = {
         "records": [item.to_canonical_dict() for item in records],
         "minimum_candidate_population": candidates.minimum_candidate_population,
@@ -942,12 +952,7 @@ def _constrain_candidates(
         data_eligibility=DataEligibility.EXPLORATORY,
         evidence_authority=EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT,
         status=(
-            "RESEARCH_READY"
-            if any(
-                item.selection_status is CandidateSelectionStatus.SELECTED
-                for item in records
-            )
-            else "RESEARCH_BLOCKED"
+            "RESEARCH_READY" if any(item.selection_status is CandidateSelectionStatus.SELECTED for item in records) else "RESEARCH_BLOCKED"
         ),
         reason_codes=reasons,
         limitations=envelope.limitations,
@@ -1022,29 +1027,21 @@ def _block_candidates_without_pool(candidates: CandidateSet) -> CandidateSet:
     )
 
 
-def _state_scope(work: _StateWork, logical_scope: str) -> str:
-    """Partition mutable State heads by the owning Continuous Operation."""
-
-    return f"{work.request.run_id}:{logical_scope}"
-
-
 def _state_lineage(
     payload: Mapping[str, Any],
     created_at: datetime,
 ) -> StateLineage:
     lineage = _mapping(payload, "lineage")
-    return StateLineage.from_canonical_dict(
-        {**lineage, "created_at": canonical_datetime(created_at)}
-    )
+    return StateLineage.from_canonical_dict({**lineage, "created_at": canonical_datetime(created_at)})
 
 
 def _previous_market(
     work: _StateWork,
-    logical_scope: str,
+    series: StateSeries,
 ) -> StatefulMarketRegime | None:
-    stored = work.repository.read_current_state(
+    stored = work.repository.read_current_series_state(
         StateDomain.MARKET_REGIME,
-        _state_scope(work, logical_scope),
+        series.series_id,
     )
     if stored is None:
         return None
@@ -1057,9 +1054,7 @@ def _previous_market(
         previous_state=_optional_enum(MarketRegimeState, payload["previous_state"]),
         proposed_state=MarketRegimeState(str(payload["proposed_state"])),
         effective_state=MarketRegimeState(str(payload["effective_state"])),
-        state_entered_at=parse_canonical_datetime(
-            "state_entered_at", payload["state_entered_at"]
-        ),
+        state_entered_at=parse_canonical_datetime("state_entered_at", payload["state_entered_at"]),
         state_duration_seconds=_integer(payload["state_duration_seconds"]),
         observation_count=_integer(payload["observation_count"]),
         confirmation_count=_integer(payload["confirmation_count"]),
@@ -1079,11 +1074,11 @@ def _previous_market(
 
 def _previous_etf(
     work: _StateWork,
-    etf_id: str,
+    series: StateSeries,
 ) -> StatefulEtfRotation | None:
-    stored = work.repository.read_current_state(
+    stored = work.repository.read_current_series_state(
         StateDomain.ETF_ROTATION,
-        _state_scope(work, etf_id),
+        series.series_id,
     )
     if stored is None:
         return None
@@ -1097,9 +1092,7 @@ def _previous_etf(
         previous_state=_optional_enum(EtfRotationState, payload["previous_state"]),
         proposed_state=EtfRotationState(str(payload["proposed_state"])),
         effective_state=EtfRotationState(str(payload["effective_state"])),
-        state_entered_at=parse_canonical_datetime(
-            "state_entered_at", payload["state_entered_at"]
-        ),
+        state_entered_at=parse_canonical_datetime("state_entered_at", payload["state_entered_at"]),
         state_duration_seconds=_integer(payload["state_duration_seconds"]),
         observation_count=_integer(payload["observation_count"]),
         confirmation_count=_integer(payload["confirmation_count"]),
@@ -1120,11 +1113,11 @@ def _previous_etf(
 
 def _previous_theme(
     work: _StateWork,
-    theme_id: str,
+    series: StateSeries,
 ) -> StatefulThemeRotation | None:
-    stored = work.repository.read_current_state(
+    stored = work.repository.read_current_series_state(
         StateDomain.THEME_ROTATION,
-        _state_scope(work, theme_id),
+        series.series_id,
     )
     if stored is None:
         return None
@@ -1142,9 +1135,7 @@ def _previous_theme(
         previous_state=_optional_enum(ThemeRotationState, payload["previous_state"]),
         proposed_state=ThemeRotationState(str(payload["proposed_state"])),
         effective_state=ThemeRotationState(str(payload["effective_state"])),
-        state_entered_at=parse_canonical_datetime(
-            "state_entered_at", payload["state_entered_at"]
-        ),
+        state_entered_at=parse_canonical_datetime("state_entered_at", payload["state_entered_at"]),
         state_duration_seconds=_integer(payload["state_duration_seconds"]),
         observation_count=_integer(payload["observation_count"]),
         confirmation_count=_integer(payload["confirmation_count"]),
@@ -1165,11 +1156,11 @@ def _previous_theme(
 
 def _previous_capital(
     work: _StateWork,
-    logical_scope: str,
+    series: StateSeries,
 ) -> StatefulCapitalState | None:
-    stored = work.repository.read_current_state(
+    stored = work.repository.read_current_series_state(
         StateDomain.CAPITAL_STATE,
-        _state_scope(work, logical_scope),
+        series.series_id,
     )
     if stored is None:
         return None
@@ -1183,9 +1174,7 @@ def _previous_capital(
         previous_state=_optional_enum(CapitalState, payload["previous_state"]),
         proposed_state=CapitalState(str(payload["proposed_state"])),
         effective_state=CapitalState(str(payload["effective_state"])),
-        state_entered_at=parse_canonical_datetime(
-            "state_entered_at", payload["state_entered_at"]
-        ),
+        state_entered_at=parse_canonical_datetime("state_entered_at", payload["state_entered_at"]),
         state_duration_seconds=_integer(payload["state_duration_seconds"]),
         observation_count=_integer(payload["observation_count"]),
         confirmation_count=_integer(payload["confirmation_count"]),
@@ -1204,8 +1193,8 @@ def _previous_capital(
     )
 
 
-def _previous_pool(work: _StateWork) -> DynamicStockPoolVersion | None:
-    pool_id = work.repository.latest_pool_id(work.request.run_id)
+def _previous_pool(work: _StateWork, series: StateSeries) -> DynamicStockPoolVersion | None:
+    pool_id = work.repository.latest_pool_id_for_series(series.series_id)
     if pool_id is None:
         return None
     payload = work.repository.read_pool(pool_id)
@@ -1227,10 +1216,7 @@ def _previous_pool(work: _StateWork) -> DynamicStockPoolVersion | None:
         excluded_symbols=_strings(payload["excluded_symbols"]),
         added_symbols=_strings(payload["added_symbols"]),
         removed_symbols=_strings(payload["removed_symbols"]),
-        members=tuple(
-            _pool_member(_mapping(item, "member"))
-            for item in _sequence(payload["members"], "members")
-        ),
+        members=tuple(_pool_member(_mapping(item, "member")) for item in _sequence(payload["members"], "members")),
         missing_evidence=_strings(payload["missing_evidence"]),
         reason_codes=_strings(payload["reason_codes"]),
         configuration_version=str(payload["configuration_version"]),
@@ -1316,6 +1302,9 @@ def _append_evaluation(
     domain: StateDomain,
     scope_key: str,
     evaluation: object,
+    *,
+    series: StateSeries,
+    policy: StateTransitionPolicy,
 ) -> None:
     observation = evaluation.observation  # type: ignore[attr-defined]
     state = evaluation.state  # type: ignore[attr-defined]
@@ -1323,7 +1312,7 @@ def _append_evaluation(
     work.repository.append_state(
         StateArtifactWrite(
             domain=domain,
-            scope_key=_state_scope(work, scope_key),
+            scope_key=scope_key,
             observation_id=observation.observation_id,
             observation_hash=observation.observation_hash,
             observation_payload=observation.identity_payload(),
@@ -1336,6 +1325,8 @@ def _append_evaluation(
             transition_hash=transition.transition_hash,
             transition_payload=transition.identity_payload(),
             lineage=observation.lineage,
+            state_series=series,
+            state_policy=policy,
         ),
         claim=_claim(work.request),
         expected_previous_state_id=state.previous_state_id,
@@ -1367,28 +1358,23 @@ def _lineage(
     configuration: object,
     *,
     available_at: datetime | None = None,
+    series: StateSeries,
+    policy: StateTransitionPolicy | DynamicPoolPolicy,
 ) -> StateLineage:
     config_id = configuration.configuration_id  # type: ignore[attr-defined]
     config_hash = configuration.configuration_hash  # type: ignore[attr-defined]
     source_ids = tuple(
         sorted(
-            (
-                item.artifact_id
-                for item in work.research.artifact.inputs.supplemental_evidence.source_manifest.source_artifacts
-            ),
+            (item.artifact_id for item in work.research.artifact.inputs.supplemental_evidence.source_manifest.source_artifacts),
             key=str,
         )
     )
     return StateLineage(
         continuous_operation_id=work.request.run_id,
         runtime_tick_id=work.request.tick_id,
-        provider_attempt_ids=(
-            ArtifactId(f"provider-attempt:{work.request.provider_attempt_id}"),
-        ),
+        provider_attempt_ids=(ArtifactId(f"provider-attempt:{work.request.provider_attempt_id}"),),
         evidence_ids=(work.request.evidence_commit_id,),
-        dataset_id=DatasetId(
-            str(work.preparation.daily_dataset.artifact.dataset_id)
-        ),
+        dataset_id=DatasetId(str(work.preparation.daily_dataset.artifact.dataset_id)),
         feature_id=work.preparation.static_bundle.artifact_id,
         source_artifact_ids=source_ids,
         model_id=model_id,
@@ -1398,10 +1384,20 @@ def _lineage(
         as_of_time=work.request.as_of_time,
         available_at=available_at or _evidence_available_at(work),
         created_at=work.clock(),
+        state_series_id=series.series_id,
+        state_series_hash=series.series_hash,
+        state_policy_id=policy.policy_id,
+        state_policy_version=policy.policy_version,
+        state_policy_hash=policy.policy_hash,
     )
 
 
-def _state_configuration(cls, work: _StateWork, stage: StateResearchStage):
+def _state_configuration(
+    cls,
+    work: _StateWork,
+    stage: StateResearchStage,
+    policy: StateTransitionPolicy,
+):
     receipt = work.receipts[stage]
     if (
         receipt.status is not SelectionStatus.SELECTED
@@ -1412,15 +1408,12 @@ def _state_configuration(cls, work: _StateWork, stage: StateResearchStage):
     # Governance selects and executes the upstream snapshot model.  The
     # hysteresis transition is a separate deterministic, versioned State
     # policy and must not impersonate the selected model configuration.
-    policy_name = f"free-data-{stage.value.lower()}-state-transition-v1"
     return cls.create(
-        model_id=ModelId(policy_name),
+        model_id=ModelId(f"state-transition-evaluator-{stage.value.lower()}-v1"),
         model_version="v1",
-        configuration_id=ArtifactId(
-            f"{policy_name}-configuration"
-        ),
+        configuration_id=ArtifactId(f"state-transition-evaluator-config-{stage.value.lower()}-v1"),
         configuration_version="v1",
-        thresholds=_thresholds(),
+        thresholds=policy.thresholds,
     )
 
 
@@ -1451,37 +1444,51 @@ def _assert_selected_execution(
         raise ValueError("State input was not executed by the selected Model/configuration")
 
 
-def _deterministic_state_configuration(cls, name: str):
+def _deterministic_state_configuration(cls, name: str, policy: StateTransitionPolicy):
     return cls.create(
         model_id=ModelId(name),
         model_version="v1",
-        configuration_id=ArtifactId(f"{name}-configuration"),
+        configuration_id=ArtifactId(f"{name}-config-v1"),
         configuration_version="v1",
-        thresholds=_thresholds(),
+        thresholds=policy.thresholds,
     )
 
 
-def _thresholds() -> TransitionThresholds:
-    return TransitionThresholds(
-        enter_threshold=Decimal("0.60"),
-        exit_threshold=Decimal("0.40"),
-        hysteresis=Decimal("0.20"),
-        confirmation_count=1,
-        minimum_dwell_seconds=0,
-        minimum_coverage=Decimal("0.50"),
-        missing_data_policy=MissingDataPolicy.FAIL_CLOSED,
-    )
-
-
-def _pool_configuration() -> DynamicPoolConfiguration:
-    return DynamicPoolConfiguration.create(
-        configuration_id=ArtifactId("free-data-dynamic-pool-policy-v1"),
-        configuration_version="v1",
-        allowed_etf_states=("LEADING", "STARTING", "STRENGTHENING"),
-        allowed_theme_states=("LEADING", "STARTING", "STRENGTHENING"),
-        minimum_state_dwell_seconds=0,
-        minimum_evidence_coverage=Decimal("0.50"),
-        material_change_threshold=Decimal("0.05"),
+def _state_series(
+    work: _StateWork,
+    *,
+    domain: StateAuthorityDomain,
+    logical_scope: str,
+    policy: StateTransitionPolicy | DynamicPoolPolicy,
+    model_id: ModelId | None,
+    model_version: str | None,
+    configuration_id: ArtifactId,
+    configuration_hash: str,
+) -> StateSeries:
+    if model_id is None or model_version is None:
+        raise ValueError("State Series requires an explicit Model identity")
+    universe_policy = {
+        "schema": "operational_universe_policy_reference/v1",
+        "universe_schema": work.preparation.universe.schema_version,
+        "formal_pit_status": work.preparation.universe.formal_pit_status.value,
+        "data_eligibility": work.preparation.universe.data_eligibility.value,
+        "limitations": list(work.preparation.universe.limitations),
+    }
+    universe_policy_hash = canonical_hash(universe_policy)
+    return StateSeries.create(
+        domain=domain,
+        logical_scope=logical_scope,
+        research_family="FREE_DATA_STATE_RESEARCH_V2",
+        authority_mode=work.request.authority_mode.value,
+        universe_policy_id=ArtifactId(f"universe-policy:{universe_policy_hash[7:]}"),
+        universe_policy_hash=universe_policy_hash,
+        model_id=model_id,
+        model_version=model_version,
+        configuration_id=configuration_id,
+        configuration_hash=configuration_hash,
+        state_policy_id=policy.policy_id,
+        state_policy_version=policy.policy_version,
+        state_policy_hash=policy.policy_hash,
     )
 
 
@@ -1524,8 +1531,7 @@ def _bundle_artifact(
         {
             "stage": stage.value,
             "artifacts": [
-                {"artifact_id": str(item), "content_hash": item_hash}
-                for item, item_hash in sorted(items, key=lambda value: str(value[0]))
+                {"artifact_id": str(item), "content_hash": item_hash} for item, item_hash in sorted(items, key=lambda value: str(value[0]))
             ],
         }
     )

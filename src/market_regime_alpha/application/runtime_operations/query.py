@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Mapping
 
@@ -45,6 +45,12 @@ class CanonicalDagNodeType(str, Enum):
     SIGNAL = "SIGNAL"
     FORECAST = "FORECAST"
     SUMMARY = "SUMMARY"
+    SHADOW_SESSION = "SHADOW_SESSION"
+    SHADOW_DECISION = "SHADOW_DECISION"
+    OUTCOME = "OUTCOME"
+    TARGETED_OUTCOME = "TARGETED_OUTCOME"
+    PROSPECTIVE_ATTESTATION = "PROSPECTIVE_ATTESTATION"
+    EVALUATION = "EVALUATION"
 
 
 class CanonicalDagNodeStatus(str, Enum):
@@ -78,10 +84,7 @@ class CanonicalDagNode:
             require_sha256("content_hash", self.content_hash)
         if (self.artifact_id is None) != (self.content_hash is None):
             raise ValueError("DAG Artifact identity and hash are inseparable")
-        if self.observed_at is not None and (
-            self.observed_at.tzinfo is None
-            or self.observed_at.utcoffset() is None
-        ):
+        if self.observed_at is not None and (self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None):
             raise ValueError("DAG observed_at must be timezone-aware")
         if self.parent_node_ids != tuple(sorted(set(self.parent_node_ids))):
             raise ValueError("DAG parents must be unique and sorted")
@@ -110,9 +113,7 @@ class CanonicalDagNode:
             "artifact_id": artifact_id,
             "content_hash": content_hash,
             "status": status.value,
-            "observed_at": (
-                None if observed_at is None else canonical_datetime(observed_at)
-            ),
+            "observed_at": (None if observed_at is None else canonical_datetime(observed_at)),
             "parent_node_ids": normalized_parents,
             "reason_codes": normalized_reasons,
             "details": dict(details or {}),
@@ -143,11 +144,7 @@ class CanonicalDagNode:
             "artifact_id": self.artifact_id,
             "content_hash": self.content_hash,
             "status": self.status.value,
-            "observed_at": (
-                None
-                if self.observed_at is None
-                else canonical_datetime(self.observed_at)
-            ),
+            "observed_at": (None if self.observed_at is None else canonical_datetime(self.observed_at)),
             "parent_node_ids": list(self.parent_node_ids),
             "reason_codes": list(self.reason_codes),
             "details": dict(self.details),
@@ -176,9 +173,7 @@ class CanonicalRuntimeInspection:
     def read_only(self) -> bool:
         return True
 
-    def nodes_of_type(
-        self, *node_types: CanonicalDagNodeType
-    ) -> tuple[CanonicalDagNode, ...]:
+    def nodes_of_type(self, *node_types: CanonicalDagNodeType) -> tuple[CanonicalDagNode, ...]:
         selected = set(node_types)
         return tuple(item for item in self.nodes if item.node_type in selected)
 
@@ -210,12 +205,8 @@ class PostgresCanonicalRuntimeQuery:
         from datetime import UTC
 
         self._factory = factory
-        self._clock = clock or (
-            lambda: datetime.now(UTC).replace(microsecond=0)
-        )
-        self._journal = PostgresContinuousResearchJournal(
-            factory, apply_migrations=False
-        )
+        self._clock = clock or (lambda: datetime.now(UTC).replace(microsecond=0))
+        self._journal = PostgresContinuousResearchJournal(factory, apply_migrations=False)
         self._decisions = PostgresDecisionSystemRepository(factory)
 
     def inspect_run(self, run_id: ArtifactId) -> CanonicalRuntimeInspection:
@@ -232,23 +223,15 @@ class PostgresCanonicalRuntimeQuery:
                 status=_tick_status(tick.status.value),
                 observed_at=tick.command.observed_at,
                 parent_node_ids=(schedule_node.node_id,),
-                reason_codes=(
-                    ()
-                    if tick.last_error is None
-                    else ("TICK_LAST_ERROR_RECORDED",)
-                ),
+                reason_codes=(() if tick.last_error is None else ("TICK_LAST_ERROR_RECORDED",)),
                 details={
                     "tick_id": str(tick.command.tick_id),
                     "tick_sequence": tick.tick_sequence,
                     "session_phase": tick.session_phase.value,
                     "fencing_token": tick.fencing_token,
                     "claim_id": tick.claim_id,
-                    "lease_acquired_at": _canonical_optional(
-                        tick.lease_acquired_at
-                    ),
-                    "lease_expires_at": _canonical_optional(
-                        tick.lease_expires_at
-                    ),
+                    "lease_acquired_at": _canonical_optional(tick.lease_acquired_at),
+                    "lease_expires_at": _canonical_optional(tick.lease_expires_at),
                     "heartbeat_at": _canonical_optional(tick.heartbeat_at),
                     "completed_at": _canonical_optional(tick.completed_at),
                     "last_error": tick.last_error,
@@ -263,6 +246,7 @@ class PostgresCanonicalRuntimeQuery:
                     tick_node=tick_node,
                 )
             )
+        nodes.extend(self._shadow_nodes(run_id, tuple(nodes)))
         return CanonicalRuntimeInspection(
             run_id=run_id,
             run_status=snapshot.status.value,
@@ -270,9 +254,29 @@ class PostgresCanonicalRuntimeQuery:
             generated_at=self._clock(),
         )
 
-    def inspect_tick(
-        self, run_id: ArtifactId, tick_id: ArtifactId
-    ) -> dict[str, Any]:
+    def inspect_trading_date(self, trading_date: date) -> dict[str, Any]:
+        """Project every Canonical Runtime and research-shadow fact for one date."""
+
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT run_id FROM continuous_research_run
+                WHERE trading_date = %s ORDER BY run_id
+                """,
+                (trading_date,),
+            ).fetchall()
+        inspections = tuple(self.inspect_run(ArtifactId(str(row[0]))) for row in rows)
+        return {
+            "schema_version": "canonical-trading-date-inspection/v2",
+            "operation": "INSPECT_TRADING_DATE",
+            "trading_date": trading_date.isoformat(),
+            "generated_at": canonical_datetime(self._clock()),
+            "runs": [item.to_canonical_dict() for item in inspections],
+            "read_only": True,
+            "decision_recomputed": False,
+        }
+
+    def inspect_tick(self, run_id: ArtifactId, tick_id: ArtifactId) -> dict[str, Any]:
         inspection = self.inspect_run(run_id)
         tick_nodes = tuple(
             item
@@ -285,18 +289,12 @@ class PostgresCanonicalRuntimeQuery:
             raise KeyError(f"{run_id}:{tick_id}")
         return _inspection_projection(inspection, tick_nodes, "INSPECT_TICK")
 
-    def inspect_provider(
-        self, run_id: ArtifactId, *, attempt_id: int | None = None
-    ) -> dict[str, Any]:
+    def inspect_provider(self, run_id: ArtifactId, *, attempt_id: int | None = None) -> dict[str, Any]:
         return self._typed_projection(
             run_id,
             (CanonicalDagNodeType.PROVIDER,),
             operation="INSPECT_PROVIDER",
-            predicate=(
-                None
-                if attempt_id is None
-                else lambda item: item.details.get("attempt_id") == attempt_id
-            ),
+            predicate=(None if attempt_id is None else lambda item: item.details.get("attempt_id") == attempt_id),
         )
 
     def inspect_evidence(self, run_id: ArtifactId) -> dict[str, Any]:
@@ -357,17 +355,10 @@ class PostgresCanonicalRuntimeQuery:
         predicate: Any | None = None,
     ) -> dict[str, Any]:
         inspection = self.inspect_run(run_id)
-        selected = tuple(
-            item
-            for item in inspection.nodes
-            if item.node_type in node_types
-            and (predicate is None or predicate(item))
-        )
+        selected = tuple(item for item in inspection.nodes if item.node_type in node_types and (predicate is None or predicate(item)))
         return _inspection_projection(inspection, selected, operation)
 
-    def _schedule_node(
-        self, run_id: ArtifactId, fallback_time: datetime
-    ) -> CanonicalDagNode:
+    def _schedule_node(self, run_id: ArtifactId, fallback_time: datetime) -> CanonicalDagNode:
         try:
             schedule = self._journal.get_schedule(run_id)
             return CanonicalDagNode.create(
@@ -376,9 +367,7 @@ class PostgresCanonicalRuntimeQuery:
                 artifact_id=str(schedule.schedule_id),
                 content_hash=schedule.schedule_hash,
                 status=(
-                    CanonicalDagNodeStatus.AVAILABLE
-                    if schedule.status.value in {"ACTIVE", "CLOSED"}
-                    else CanonicalDagNodeStatus.BLOCKED
+                    CanonicalDagNodeStatus.AVAILABLE if schedule.status.value in {"ACTIVE", "CLOSED"} else CanonicalDagNodeStatus.BLOCKED
                 ),
                 observed_at=schedule.created_at,
                 details={
@@ -408,14 +397,10 @@ class PostgresCanonicalRuntimeQuery:
         nodes: list[CanonicalDagNode] = []
         provider_nodes = self._provider_nodes(run_id, tick_id, tick_node)
         nodes.extend(provider_nodes)
-        evidence_nodes = self._evidence_nodes(
-            run_id, tick_id, provider_nodes or (tick_node,)
-        )
+        evidence_nodes = self._evidence_nodes(run_id, tick_id, provider_nodes or (tick_node,))
         nodes.extend(evidence_nodes)
         parent = evidence_nodes[-1] if evidence_nodes else tick_node
-        child_nodes, child_by_kind = self._child_nodes(
-            run_id, tick_id, parent
-        )
+        child_nodes, child_by_kind = self._child_nodes(run_id, tick_id, parent)
         nodes.extend(child_nodes)
         try:
             summary = self._decisions.get_research_summary_for_tick(
@@ -437,6 +422,16 @@ class PostgresCanonicalRuntimeQuery:
             StateResearchStage.SIGNAL: CanonicalDagNodeType.SIGNAL,
             StateResearchStage.FORECAST: CanonicalDagNodeType.FORECAST,
         }
+        stage_owner = {
+            StateResearchStage.MARKET_REGIME: "STATE_SYSTEM",
+            StateResearchStage.ETF_ROTATION: "STATE_SYSTEM",
+            StateResearchStage.THEME_ROTATION: "STATE_SYSTEM",
+            StateResearchStage.CAPITAL_STATE: "STATE_SYSTEM",
+            StateResearchStage.DYNAMIC_POOL: "STATE_SYSTEM",
+            StateResearchStage.CANDIDATE: "STATE_SYSTEM",
+            StateResearchStage.SIGNAL: "SIGNAL_SYSTEM",
+            StateResearchStage.FORECAST: "PATH_FORECAST_SYSTEM",
+        }
         stage_nodes: dict[StateResearchStage, CanonicalDagNode] = {}
         previous = state_parent
         for stage in (
@@ -453,7 +448,7 @@ class PostgresCanonicalRuntimeQuery:
             output = evidence.output_reference
             node = CanonicalDagNode.create(
                 node_type=stage_type[stage],
-                owner="STATE_SYSTEM",
+                owner=stage_owner[stage],
                 artifact_id=None if output is None else str(output.artifact_id),
                 content_hash=None if output is None else output.content_hash,
                 status=_stage_status(evidence.status.value),
@@ -464,9 +459,7 @@ class PostgresCanonicalRuntimeQuery:
                     "tick_id": str(tick_id),
                     "stage": stage.value,
                     "result": evidence.result.value,
-                    "evidence_available_at": canonical_datetime(
-                        evidence.evidence_available_at
-                    ),
+                    "evidence_available_at": canonical_datetime(evidence.evidence_available_at),
                     "missing_evidence": list(evidence.missing_evidence),
                     "data_eligibility": evidence.data_eligibility.value,
                     "evidence_ceiling": evidence.evidence_ceiling.value,
@@ -489,9 +482,7 @@ class PostgresCanonicalRuntimeQuery:
                 )
             )
         if any("minute" in item.product.lower() for item in summary.provider_contracts):
-            minute_parent = stage_nodes.get(
-                StateResearchStage.CANDIDATE, state_parent
-            )
+            minute_parent = stage_nodes.get(StateResearchStage.CANDIDATE, state_parent)
             nodes.append(
                 CanonicalDagNode.create(
                     node_type=CanonicalDagNodeType.MINUTE,
@@ -503,15 +494,8 @@ class PostgresCanonicalRuntimeQuery:
                     parent_node_ids=(minute_parent.node_id,),
                     details={
                         "tick_id": str(tick_id),
-                        "contracts": [
-                            item.to_canonical_dict()
-                            for item in summary.provider_contracts
-                            if "minute" in item.product.lower()
-                        ],
-                        "source_references": [
-                            item.to_canonical_dict()
-                            for item in summary.provider_source_references
-                        ],
+                        "contracts": [item.to_canonical_dict() for item in summary.provider_contracts if "minute" in item.product.lower()],
+                        "source_references": [item.to_canonical_dict() for item in summary.provider_source_references],
                     },
                 )
             )
@@ -536,6 +520,244 @@ class PostgresCanonicalRuntimeQuery:
                 },
             )
         )
+        return tuple(nodes)
+
+    def _shadow_nodes(
+        self,
+        run_id: ArtifactId,
+        existing: tuple[CanonicalDagNode, ...],
+    ) -> tuple[CanonicalDagNode, ...]:
+        """Attach immutable Shadow/Outcome/Evaluation owner facts to the runtime DAG."""
+
+        by_artifact = {item.artifact_id: item for item in existing if item.artifact_id is not None}
+        schedule = next(item for item in existing if item.node_type is CanonicalDagNodeType.SCHEDULE)
+        with self._factory.connection(read_only=True) as connection:
+            sessions = connection.execute(
+                """
+                SELECT session_id, session_hash, status, outcome_status,
+                       trading_date, created_at, updated_at, decision_id
+                FROM shadow_research_session WHERE run_id = %s
+                ORDER BY created_at, session_id
+                """,
+                (str(run_id),),
+            ).fetchall()
+            decisions = connection.execute(
+                """
+                SELECT decision_id, decision_hash, session_id, summary_id,
+                       tick_id, decision_time, decision_frozen_at, created_at
+                FROM shadow_research_decision WHERE run_id = %s
+                ORDER BY created_at, decision_id
+                """,
+                (str(run_id),),
+            ).fetchall()
+            outcomes = connection.execute(
+                """
+                SELECT settlement_id, settlement_hash, shadow_decision_id,
+                       availability_status, next_session_date,
+                       outcome_available_at, created_at
+                FROM prospective_outcome_settlement WHERE run_id = %s
+                ORDER BY created_at, settlement_id
+                """,
+                (str(run_id),),
+            ).fetchall()
+            targeted = connection.execute(
+                """
+                SELECT settlement_id, settlement_hash, shadow_decision_id,
+                       factual_outcome_v1_id, target_protocol_id,
+                       availability_status, next_session_date,
+                       outcome_available_at, created_at
+                FROM targeted_shadow_outcome
+                WHERE shadow_decision_id IN (
+                    SELECT decision_id FROM shadow_research_decision WHERE run_id = %s
+                ) ORDER BY created_at, settlement_id
+                """,
+                (str(run_id),),
+            ).fetchall()
+            attestations = connection.execute(
+                """
+                SELECT attestation_id, attestation_hash, shadow_decision_id,
+                       outcome_settlement_id, status, clock_mode,
+                       runtime_origin, prospective_proven,
+                       outcome_available_at, created_at
+                FROM prospective_evidence_attestation WHERE run_id = %s
+                ORDER BY created_at, attestation_id
+                """,
+                (str(run_id),),
+            ).fetchall()
+            evaluations = connection.execute(
+                """
+                SELECT d.dataset_id, d.dataset_hash, l.shadow_decision_id,
+                       l.settlement_id, d.protocol_id, d.observation_count,
+                       d.included_count, d.excluded_count, d.missing_count,
+                       d.created_at
+                FROM research_evaluation_dataset d
+                JOIN research_evaluation_dataset_settlement l
+                  ON l.dataset_id = d.dataset_id
+                JOIN shadow_research_decision s
+                  ON s.decision_id = l.shadow_decision_id
+                WHERE s.run_id = %s ORDER BY d.created_at, d.dataset_id
+                """,
+                (str(run_id),),
+            ).fetchall()
+            panels = connection.execute(
+                """
+                SELECT p.panel_id, p.panel_hash, s.shadow_decision_id,
+                       s.targeted_outcome_id, p.target_protocol_id,
+                       p.slice_count, p.row_count, p.created_at
+                FROM research_evaluation_panel_v2 p
+                JOIN research_evaluation_panel_slice_v2 s
+                  ON s.panel_id = p.panel_id
+                WHERE s.run_id = %s ORDER BY p.created_at, p.panel_id
+                """,
+                (str(run_id),),
+            ).fetchall()
+
+        nodes: list[CanonicalDagNode] = []
+        session_nodes: dict[str, CanonicalDagNode] = {}
+        decision_nodes: dict[str, CanonicalDagNode] = {}
+        outcome_nodes: dict[str, CanonicalDagNode] = {}
+        targeted_nodes: dict[str, CanonicalDagNode] = {}
+        for row in sessions:
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.SHADOW_SESSION,
+                owner="SHADOW_RESEARCH",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=_shadow_session_status(str(row[2])),
+                observed_at=row[6],
+                parent_node_ids=(schedule.node_id,),
+                details={
+                    "run_id": str(run_id),
+                    "trading_date": row[4].isoformat(),
+                    "session_status": str(row[2]),
+                    "outcome_status": str(row[3]),
+                    "decision_id": row[7],
+                },
+            )
+            nodes.append(node)
+            session_nodes[str(row[0])] = node
+        for row in decisions:
+            parents = [session_nodes[str(row[2])].node_id]
+            summary = by_artifact.get(str(row[3]))
+            if summary is not None:
+                parents.append(summary.node_id)
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.SHADOW_DECISION,
+                owner="SHADOW_RESEARCH",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=CanonicalDagNodeStatus.AVAILABLE,
+                observed_at=row[7],
+                parent_node_ids=tuple(parents),
+                details={
+                    "run_id": str(run_id),
+                    "tick_id": str(row[4]),
+                    "summary_id": str(row[3]),
+                    "decision_time": canonical_datetime(row[5]),
+                    "decision_frozen_at": canonical_datetime(row[6]),
+                },
+            )
+            nodes.append(node)
+            decision_nodes[str(row[0])] = node
+        for row in outcomes:
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.OUTCOME,
+                owner="OUTCOME_AUTHORITY",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=_availability_status(str(row[3])),
+                observed_at=row[6],
+                parent_node_ids=(decision_nodes[str(row[2])].node_id,),
+                reason_codes=(() if str(row[3]) == "COMPLETE" else (f"OUTCOME_{row[3]}",)),
+                details={
+                    "next_session_date": row[4].isoformat(),
+                    "outcome_available_at": canonical_datetime(row[5]),
+                    "prospective_evidence": False,
+                },
+            )
+            nodes.append(node)
+            outcome_nodes[str(row[0])] = node
+        for row in targeted:
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.TARGETED_OUTCOME,
+                owner="OUTCOME_TARGET_AUTHORITY",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=_availability_status(str(row[5])),
+                observed_at=row[8],
+                parent_node_ids=(
+                    decision_nodes[str(row[2])].node_id,
+                    outcome_nodes[str(row[3])].node_id,
+                ),
+                reason_codes=(() if str(row[5]) == "COMPLETE" else (f"TARGET_OUTCOME_{row[5]}",)),
+                details={
+                    "target_protocol_id": str(row[4]),
+                    "next_session_date": row[6].isoformat(),
+                    "outcome_available_at": canonical_datetime(row[7]),
+                },
+            )
+            nodes.append(node)
+            targeted_nodes[str(row[0])] = node
+        for row in attestations:
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.PROSPECTIVE_ATTESTATION,
+                owner="PROSPECTIVE_EVIDENCE_ATTESTATION",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=(CanonicalDagNodeStatus.AVAILABLE if str(row[4]) == "ENGINEERING_ATTESTABLE" else CanonicalDagNodeStatus.BLOCKED),
+                observed_at=row[9],
+                parent_node_ids=(
+                    decision_nodes[str(row[2])].node_id,
+                    outcome_nodes[str(row[3])].node_id,
+                ),
+                reason_codes=(("PROSPECTIVE_EVIDENCE_NOT_PROVEN",) if not bool(row[7]) else ()),
+                details={
+                    "attestation_status": str(row[4]),
+                    "clock_mode": str(row[5]),
+                    "runtime_origin": str(row[6]),
+                    "prospective_proven": bool(row[7]),
+                    "outcome_available_at": canonical_datetime(row[8]),
+                },
+            )
+            nodes.append(node)
+        for row in evaluations:
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.EVALUATION,
+                owner="RESEARCH_EVALUATION",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=CanonicalDagNodeStatus.AVAILABLE,
+                observed_at=row[9],
+                parent_node_ids=(outcome_nodes[str(row[3])].node_id,),
+                details={
+                    "evaluation_schema": "v1",
+                    "shadow_decision_id": str(row[2]),
+                    "protocol_id": str(row[4]),
+                    "observation_count": int(row[5]),
+                    "included_count": int(row[6]),
+                    "excluded_count": int(row[7]),
+                    "missing_count": int(row[8]),
+                },
+            )
+            nodes.append(node)
+        for row in panels:
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.EVALUATION,
+                owner="RESEARCH_EVALUATION",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=CanonicalDagNodeStatus.AVAILABLE,
+                observed_at=row[7],
+                parent_node_ids=(targeted_nodes[str(row[3])].node_id,),
+                details={
+                    "evaluation_schema": "v2",
+                    "shadow_decision_id": str(row[2]),
+                    "target_protocol_id": str(row[4]),
+                    "slice_count": int(row[5]),
+                    "row_count": int(row[6]),
+                },
+            )
+            nodes.append(node)
         return tuple(nodes)
 
     def _provider_nodes(
@@ -611,18 +833,10 @@ class PostgresCanonicalRuntimeQuery:
                 owner="CONTINUOUS_RESEARCH",
                 artifact_id=str(row[0]),
                 content_hash=str(row[1]),
-                status=(
-                    CanonicalDagNodeStatus.AVAILABLE
-                    if str(row[3]) == "VALIDATED"
-                    else CanonicalDagNodeStatus.PARTIAL
-                ),
+                status=(CanonicalDagNodeStatus.AVAILABLE if str(row[3]) == "VALIDATED" else CanonicalDagNodeStatus.PARTIAL),
                 observed_at=row[6],
                 parent_node_ids=parent_ids,
-                reason_codes=(
-                    ()
-                    if str(row[3]) == "VALIDATED"
-                    else (f"QUALITY_{row[3]}",)
-                ),
+                reason_codes=(() if str(row[3]) == "VALIDATED" else (f"QUALITY_{row[3]}",)),
                 details={
                     "tick_id": str(tick_id),
                     "evidence_scope": str(row[5]),
@@ -657,16 +871,11 @@ class PostgresCanonicalRuntimeQuery:
             node = CanonicalDagNode.create(
                 node_type=kind_type[child.child_kind],
                 owner=child.child_kind.value,
-                artifact_id=str(
-                    child.child_artifact_id or child.child_receipt_id
-                ),
-                content_hash=(
-                    child.child_artifact_hash or child.child_receipt_hash
-                ),
+                artifact_id=str(child.child_artifact_id or child.child_receipt_id),
+                content_hash=(child.child_artifact_hash or child.child_receipt_hash),
                 status=(
                     CanonicalDagNodeStatus.REUSED
-                    if child.reference_disposition
-                    is ChildReferenceDisposition.REUSED
+                    if child.reference_disposition is ChildReferenceDisposition.REUSED
                     else CanonicalDagNodeStatus.AVAILABLE
                 ),
                 observed_at=child.created_at,
@@ -731,6 +940,26 @@ def _stage_status(status: str) -> CanonicalDagNodeStatus:
         "COMPLETED": CanonicalDagNodeStatus.AVAILABLE,
         "DATA_INSUFFICIENT": CanonicalDagNodeStatus.PARTIAL,
         "MODEL_NOT_QUALIFIED_FOR_MODE": CanonicalDagNodeStatus.BLOCKED,
+    }[status]
+
+
+def _shadow_session_status(status: str) -> CanonicalDagNodeStatus:
+    return {
+        "SCHEDULED": CanonicalDagNodeStatus.PENDING,
+        "RUNNING": CanonicalDagNodeStatus.PARTIAL,
+        "FROZEN": CanonicalDagNodeStatus.AVAILABLE,
+        "OUTCOME_PENDING": CanonicalDagNodeStatus.PENDING,
+        "SETTLED": CanonicalDagNodeStatus.AVAILABLE,
+        "FAILED": CanonicalDagNodeStatus.FAILED,
+        "INVALIDATED": CanonicalDagNodeStatus.BLOCKED,
+    }[status]
+
+
+def _availability_status(status: str) -> CanonicalDagNodeStatus:
+    return {
+        "COMPLETE": CanonicalDagNodeStatus.AVAILABLE,
+        "PARTIAL": CanonicalDagNodeStatus.PARTIAL,
+        "UNAVAILABLE": CanonicalDagNodeStatus.BLOCKED,
     }[status]
 
 

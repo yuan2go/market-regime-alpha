@@ -11,6 +11,12 @@ from typing import Any
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash, require_text
 from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.authority import (
+    StateAuthorityDomain,
+    StateTransitionPolicy,
+    require_transition_policy,
+    state_transition_parameter,
+)
 from market_regime_alpha.research.state_system.configuration import ThemeRotationConfiguration
 
 
@@ -133,19 +139,35 @@ class ThemeRotationObservation:
         counter_evidence: tuple[str, ...],
         reason_codes: tuple[str, ...],
         lineage: StateLineage,
+        state_policy: StateTransitionPolicy | None = None,
     ) -> ThemeRotationObservation:
+        policy = require_transition_policy(
+            lineage,
+            state_policy,
+            StateAuthorityDomain.THEME_ROTATION,
+        )
+        def parameter(name: str) -> Decimal:
+            return state_transition_parameter(
+                policy,
+                StateAuthorityDomain.THEME_ROTATION,
+                name,
+            )
         counters = set(counter_evidence)
         reasons = set(reason_codes)
         missing = set(missing_evidence)
         if not mapping_complete:
             missing.add("THEME_MAPPING")
             reasons.add("THEME_MAPPING_INCOMPLETE")
-        if verified_etf_strength >= Decimal("0.65") and (
-            stock_breadth < Decimal("0.45") or participation_rate < Decimal("0.45")
+        if verified_etf_strength >= parameter("conflict_etf_strength_threshold") and (
+            stock_breadth < parameter("conflict_breadth_threshold")
+            or participation_rate < parameter("conflict_participation_threshold")
         ):
             counters.add("ETF_STOCK_EVIDENCE_CONFLICT")
             reasons.add("ETF_STOCK_EVIDENCE_CONFLICT")
-        if leader_resonance >= Decimal("0.75") and participation_rate < Decimal("0.45"):
+        if (
+            leader_resonance >= parameter("leader_conflict_resonance_threshold")
+            and participation_rate < parameter("conflict_participation_threshold")
+        ):
             counters.add("LEADER_PARTICIPATION_CONFLICT")
             reasons.add("LEADER_PARTICIPATION_CONFLICT")
         ordered_proxy_etfs = tuple(sorted(set(proxy_etf_ids)))
@@ -272,10 +294,23 @@ def evaluate_theme_rotation(
     *,
     previous: StatefulThemeRotation | None,
     configuration: ThemeRotationConfiguration,
+    state_policy: StateTransitionPolicy | None = None,
 ) -> ThemeRotationEvaluation:
     _validate_binding(observation, previous, configuration)
-    score = _score(observation)
-    proposed, proposal_reasons = _propose(observation, previous, configuration, score)
+    policy = require_transition_policy(
+        observation.lineage,
+        state_policy,
+        StateAuthorityDomain.THEME_ROTATION,
+    )
+    _validate_previous_series(observation.lineage, None if previous is None else previous.lineage)
+    score = _score(observation, state_policy=policy)
+    proposed, proposal_reasons = _propose(
+        observation,
+        previous,
+        configuration,
+        score,
+        state_policy=policy,
+    )
     reasons = set(observation.reason_codes) | set(proposal_reasons)
     prior = None if previous is None else previous.effective_state
     entered = observation.lineage.as_of_time if previous is None else previous.state_entered_at
@@ -370,8 +405,22 @@ def evaluate_theme_rotation(
     return ThemeRotationEvaluation(observation, state, transition)
 
 
-def _score(value: ThemeRotationObservation) -> Decimal:
-    concentration_quality = Decimal("1") - abs(value.internal_concentration - Decimal("0.50")) * Decimal("2")
+def _score(
+    value: ThemeRotationObservation,
+    *,
+    state_policy: StateTransitionPolicy | None,
+) -> Decimal:
+    midpoint = state_transition_parameter(
+        state_policy,
+        StateAuthorityDomain.THEME_ROTATION,
+        "concentration_midpoint",
+    )
+    multiplier = state_transition_parameter(
+        state_policy,
+        StateAuthorityDomain.THEME_ROTATION,
+        "concentration_distance_multiplier",
+    )
+    concentration_quality = Decimal("1") - abs(value.internal_concentration - midpoint) * multiplier
     values = (
         value.verified_etf_strength,
         value.stock_breadth,
@@ -388,8 +437,16 @@ def _propose(
     previous: StatefulThemeRotation | None,
     configuration: ThemeRotationConfiguration,
     score: Decimal,
+    *,
+    state_policy: StateTransitionPolicy | None,
 ) -> tuple[ThemeRotationState, tuple[str, ...]]:
     threshold = configuration.thresholds
+    def parameter(name: str) -> Decimal:
+        return state_transition_parameter(
+            state_policy,
+            StateAuthorityDomain.THEME_ROTATION,
+            name,
+        )
     if not value.mapping_complete:
         return ThemeRotationState.DATA_INSUFFICIENT, ("THEME_MAPPING_INCOMPLETE",)
     if value.data_coverage < threshold.minimum_coverage:
@@ -398,19 +455,21 @@ def _propose(
         return ThemeRotationState.DIVERGING, ("THEME_MULTI_SOURCE_DIVERGENCE",)
     if previous is None:
         return (
-            ThemeRotationState.DORMANT if score < Decimal("0.20") else ThemeRotationState.STARTING,
+            ThemeRotationState.DORMANT
+            if score < parameter("initial_pulse_threshold")
+            else ThemeRotationState.STARTING,
             ("THEME_INITIAL_PULSE_CAPPED",),
         )
     current = previous.effective_state
     if current in {ThemeRotationState.LEADING, ThemeRotationState.DIVERGING} and score < threshold.exit_threshold:
         return ThemeRotationState.WEAKENING, ("THEME_ROTATION_WEAKENING",)
-    if current is ThemeRotationState.WEAKENING and score <= Decimal("0.20"):
+    if current is ThemeRotationState.WEAKENING and score <= parameter("failed_score_threshold"):
         return ThemeRotationState.FAILED, ("THEME_ROTATION_FAILED",)
-    if score >= Decimal("0.70"):
+    if score >= parameter("leading_score_threshold"):
         candidate = ThemeRotationState.LEADING
     elif score >= threshold.exit_threshold:
         candidate = ThemeRotationState.STRENGTHENING
-    elif score >= Decimal("0.20"):
+    elif score >= parameter("starting_score_threshold"):
         candidate = ThemeRotationState.STARTING
     else:
         candidate = ThemeRotationState.DORMANT
@@ -437,6 +496,18 @@ def _validate_binding(
             raise ValueError("Previous Theme state belongs to another Theme")
         if lineage.as_of_time <= previous.lineage.as_of_time:
             raise ValueError("Theme observations must advance As-of Time")
+
+
+def _validate_previous_series(
+    lineage: StateLineage,
+    previous: StateLineage | None,
+) -> None:
+    if (
+        previous is not None
+        and lineage.state_series_id is not None
+        and previous.state_series_id != lineage.state_series_id
+    ):
+        raise ValueError("Previous Theme state belongs to another State Series")
 
 
 def _state_payload(value: StatefulThemeRotation) -> dict[str, Any]:

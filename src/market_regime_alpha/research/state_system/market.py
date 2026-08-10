@@ -11,6 +11,12 @@ from typing import Any
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash
 from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.authority import (
+    StateAuthorityDomain,
+    StateTransitionPolicy,
+    require_transition_policy,
+    state_transition_parameter,
+)
 from market_regime_alpha.research.state_system.configuration import (
     MarketStateConfiguration,
 )
@@ -222,6 +228,7 @@ def evaluate_market_state(
     *,
     previous: StatefulMarketRegime | None,
     configuration: MarketStateConfiguration,
+    state_policy: StateTransitionPolicy | None = None,
 ) -> MarketStateEvaluation:
     """Deterministically evaluate one Observation against persisted prior state."""
 
@@ -229,14 +236,22 @@ def evaluate_market_state(
         raise ValueError("Observation model does not match selected configuration")
     if observation.lineage.configuration_id != configuration.configuration_id or observation.lineage.configuration_hash != configuration.configuration_hash:
         raise ValueError("Observation configuration does not match selected configuration")
+    policy = require_transition_policy(
+        observation.lineage,
+        state_policy,
+        StateAuthorityDomain.MARKET_REGIME,
+    )
     if previous is not None:
-        if previous.lineage.continuous_operation_id != observation.lineage.continuous_operation_id:
+        if observation.lineage.state_series_id is not None:
+            if previous.lineage.state_series_id != observation.lineage.state_series_id:
+                raise ValueError("Previous Market state belongs to another State Series")
+        elif previous.lineage.continuous_operation_id != observation.lineage.continuous_operation_id:
             raise ValueError("Previous state belongs to another Continuous Operation")
         if observation.lineage.as_of_time <= previous.lineage.as_of_time:
             raise ValueError("Market observations must advance As-of Time")
 
     thresholds = configuration.thresholds
-    proposed = _propose(observation, previous, configuration)
+    proposed = _propose(observation, previous, configuration, state_policy=policy)
     reasons = set(observation.reason_codes)
     prior_effective = None if previous is None else previous.effective_state
     prior_entered = observation.lineage.as_of_time if previous is None else previous.state_entered_at
@@ -361,14 +376,21 @@ def _propose(
     observation: MarketRegimeObservation,
     previous: StatefulMarketRegime | None,
     configuration: MarketStateConfiguration,
+    *,
+    state_policy: StateTransitionPolicy | None,
 ) -> MarketRegimeState:
     thresholds = configuration.thresholds
+    overheated = state_transition_parameter(
+        state_policy,
+        StateAuthorityDomain.MARKET_REGIME,
+        "overheated_threshold",
+    )
     if observation.data_coverage < thresholds.minimum_coverage:
         return MarketRegimeState.DATA_INSUFFICIENT
     score = observation.regime_score
     if previous is not None:
         current = previous.effective_state
-        if current is MarketRegimeState.RISK_ON and thresholds.exit_threshold <= score < Decimal("0.85"):
+        if current is MarketRegimeState.RISK_ON and thresholds.exit_threshold <= score < overheated:
             return MarketRegimeState.RISK_ON
         if current is MarketRegimeState.OVERHEATED and score >= thresholds.enter_threshold:
             return MarketRegimeState.OVERHEATED
@@ -379,7 +401,7 @@ def _propose(
                 return MarketRegimeState.RISK_OFF
             if score <= -thresholds.exit_threshold:
                 return MarketRegimeState.DEFENSIVE
-    if score >= Decimal("0.85"):
+    if score >= overheated:
         proposed = MarketRegimeState.OVERHEATED
     elif score >= thresholds.enter_threshold:
         proposed = MarketRegimeState.RISK_ON

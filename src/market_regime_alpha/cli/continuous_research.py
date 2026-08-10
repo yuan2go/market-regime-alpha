@@ -98,6 +98,7 @@ ARGUMENT_ERROR = 2
 DATABASE_ERROR = 3
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 _INSPECT_OPERATIONS = (
+    "inspect-trading-date",
     "inspect-run",
     "inspect-tick",
     "inspect-provider",
@@ -154,10 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--runtime-clock-mode",
         choices=("LIVE", "SIMULATED"),
         default="LIVE",
-        help=(
-            "LIVE requires --at to match the PostgreSQL host clock; SIMULATED "
-            "is an explicit engineering/replay mode."
-        ),
+        help=("LIVE requires --at to match the PostgreSQL host clock; SIMULATED is an explicit engineering/replay mode."),
     )
     run_due.add_argument(
         "--supplemental-evidence",
@@ -172,9 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=Decimal("10000000"),
     )
     run_due.add_argument("--provider-timeout-seconds", type=float, default=8.0)
-    preflight = subparsers.add_parser(
-        "preflight", help="Inspect engineering readiness without executing a Tick."
-    )
+    preflight = subparsers.add_parser("preflight", help="Inspect engineering readiness without executing a Tick.")
     preflight.add_argument("--trading-date", required=True)
     preflight.add_argument(
         "--runtime-mode",
@@ -188,12 +184,13 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--trading-calendar", type=Path, required=True)
     preflight.add_argument("--run-id")
     preflight.add_argument("--minimum-free-bytes", type=int, default=1_000_000_000)
-    preflight.add_argument(
-        "--maximum-clock-skew-seconds", type=float, default=5.0
-    )
+    preflight.add_argument("--maximum-clock-skew-seconds", type=float, default=5.0)
     for operation in _INSPECT_OPERATIONS:
         command = subparsers.add_parser(operation)
-        command.add_argument("--run-id", required=True)
+        if operation == "inspect-trading-date":
+            command.add_argument("--trading-date", required=True)
+        else:
+            command.add_argument("--run-id", required=True)
         if operation == "inspect-tick":
             command.add_argument("--tick-id", required=True)
         if operation == "inspect-provider":
@@ -214,23 +211,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             database_url=args.database_url,
             environ={},
         )
-        factory = PostgresConnectionFactory(
-            settings, application_schema=args.application_schema
-        )
+        factory = PostgresConnectionFactory(settings, application_schema=args.application_schema)
         read_only = args.operation in {
             "preflight",
             "report",
             "replay",
             *_INSPECT_OPERATIONS,
         }
-        journal = PostgresContinuousResearchJournal(
-            factory, apply_migrations=not read_only
-        )
-        output = (
-            _run_due(args, settings, factory, journal)
-            if args.operation == "run-due"
-            else _dispatch(args, journal, factory)
-        )
+        journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
+        output = _run_due(args, settings, factory, journal) if args.operation == "run-due" else _dispatch(args, journal, factory)
         _emit(output)
         return SUCCESS
     except FreeDataOperationBlocked as exc:
@@ -261,24 +250,18 @@ def _dispatch(
                 trading_date=date.fromisoformat(args.trading_date),
                 runtime_mode=RuntimeAuthorityMode(args.runtime_mode),
                 provider_profile_id=args.provider_profile_id,
-                operational_policy_effective_from=date.fromisoformat(
-                    args.operational_policy_effective_from
-                ),
+                operational_policy_effective_from=date.fromisoformat(args.operational_policy_effective_from),
                 artifact_root=args.artifact_root,
                 runtime_configuration_path=args.runtime_configuration,
                 trading_calendar_path=args.trading_calendar,
                 run_id=(None if args.run_id is None else ArtifactId(args.run_id)),
                 minimum_free_bytes=args.minimum_free_bytes,
-                maximum_clock_skew=timedelta(
-                    seconds=args.maximum_clock_skew_seconds
-                ),
+                maximum_clock_skew=timedelta(seconds=args.maximum_clock_skew_seconds),
             )
         )
         return {"operation": "PREFLIGHT", **report.to_canonical_dict()}
     if args.operation == "prepare":
-        run_command = ContinuousResearchCommand.from_canonical_dict(
-            _load_json_object(args.run_command)
-        )
+        run_command = ContinuousResearchCommand.from_canonical_dict(_load_json_object(args.run_command))
         snapshot = journal.create_or_get(run_command)
         return {
             "status": snapshot.status.value,
@@ -288,9 +271,7 @@ def _dispatch(
             **_authority_ceiling(),
         }
     if args.operation == "admit-tick":
-        tick_command = RuntimeTickCommand.from_canonical_dict(
-            _load_json_object(args.tick_command)
-        )
+        tick_command = RuntimeTickCommand.from_canonical_dict(_load_json_object(args.tick_command))
         tick = journal.admit_tick(
             tick_command,
             session_phase=ContinuousSessionPhase(args.session_phase),
@@ -304,12 +285,8 @@ def _dispatch(
             **_authority_ceiling(),
         }
     if args.operation == "schedule":
-        schedule_command = ContinuousResearchCommand.from_canonical_dict(
-            _load_json_object(args.run_command)
-        )
-        trading_day = TradingDayAssessment.from_canonical_dict(
-            _load_json_object(args.trading_day_assessment)
-        )
+        schedule_command = ContinuousResearchCommand.from_canonical_dict(_load_json_object(args.run_command))
+        trading_day = TradingDayAssessment.from_canonical_dict(_load_json_object(args.trading_day_assessment))
         journal.create_or_get(schedule_command)
         schedule = journal.initialize_schedule(
             run_command=schedule_command,
@@ -323,9 +300,7 @@ def _dispatch(
             **_authority_ceiling(),
         }
     if args.operation == "reserve-due-tick":
-        reserve_command = ContinuousResearchCommand.from_canonical_dict(
-            _load_json_object(args.run_command)
-        )
+        reserve_command = ContinuousResearchCommand.from_canonical_dict(_load_json_object(args.run_command))
         reserved_tick = journal.reserve_due_tick(
             run_command=reserve_command,
             policy=default_continuous_decision_window_policy(),
@@ -335,17 +310,15 @@ def _dispatch(
             "operation": "RESERVE_DUE_TICK",
             "status": "NOT_DUE" if reserved_tick is None else "PENDING",
             "run_id": str(reserve_command.run_id),
-            "tick_id": (
-                None if reserved_tick is None else str(reserved_tick.command.tick_id)
-            ),
-            "tick_sequence": (
-                None if reserved_tick is None else reserved_tick.tick_sequence
-            ),
+            "tick_id": (None if reserved_tick is None else str(reserved_tick.command.tick_id)),
+            "tick_sequence": (None if reserved_tick is None else reserved_tick.tick_sequence),
             **_authority_ceiling(),
         }
-    run_id = ArtifactId(args.run_id)
     if args.operation.startswith("inspect-"):
         query = PostgresCanonicalRuntimeQuery(factory)
+        if args.operation == "inspect-trading-date":
+            return query.inspect_trading_date(date.fromisoformat(args.trading_date))
+        run_id = ArtifactId(args.run_id)
         if args.operation == "inspect-run":
             return {
                 "operation": "INSPECT_RUN",
@@ -365,13 +338,10 @@ def _dispatch(
             "inspect-summary": query.inspect_summary,
         }[args.operation]
         return operation_method(run_id)
+    run_id = ArtifactId(args.run_id)
     if args.operation in {"trace", "metrics"}:
         observability = PostgresRuntimeObservability(factory)
-        return (
-            observability.trace_run(run_id)
-            if args.operation == "trace"
-            else observability.metrics(run_id)
-        )
+        return observability.trace_run(run_id) if args.operation == "trace" else observability.metrics(run_id)
     if args.operation == "resume":
         snapshot = journal.resume(run_id)
         return {
@@ -394,21 +364,12 @@ def _run_due(
     factory: PostgresConnectionFactory,
     journal: PostgresContinuousResearchJournal,
 ) -> dict[str, Any]:
-    run_command = ContinuousResearchCommand.from_canonical_dict(
-        _load_json_object(args.run_command)
-    )
-    trading_day = TradingDayAssessment.from_canonical_dict(
-        _load_json_object(args.trading_day_assessment)
-    )
+    run_command = ContinuousResearchCommand.from_canonical_dict(_load_json_object(args.run_command))
+    trading_day = TradingDayAssessment.from_canonical_dict(_load_json_object(args.trading_day_assessment))
     now = _instant(args.at).astimezone(UTC)
     operational_now = _operational_now()
-    if (
-        args.runtime_clock_mode == "LIVE"
-        and abs((now - operational_now).total_seconds()) > 5
-    ):
-        raise ValueError(
-            "LIVE --at must match the trusted runtime clock within five seconds"
-        )
+    if args.runtime_clock_mode == "LIVE" and abs((now - operational_now).total_seconds()) > 5:
+        raise ValueError("LIVE --at must match the trusted runtime clock within five seconds")
     configuration_path = args.runtime_configuration.resolve()
     configuration = load_controlled_runtime_configuration(configuration_path)
     if (
@@ -423,20 +384,13 @@ def _run_due(
     )
     decision_utc = decision.astimezone(UTC)
     free_request = FreeDataPreparationRequest(
-        scale=FreeDataOperationScale.from_symbol_count(
-            len(run_command.requested_symbols)
-        ),
+        scale=FreeDataOperationScale.from_symbol_count(len(run_command.requested_symbols)),
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
         decision_time=DecisionTime(decision),
         created_at=now,
         code_revision=run_command.code_revision,
-        instruments=tuple(
-            FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
-            for symbol in run_command.requested_symbols
-        ),
-        membership_source=(
-            f"CANONICAL_FREE_DATA_{len(run_command.requested_symbols)}"
-        ),
+        instruments=tuple(FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE) for symbol in run_command.requested_symbols),
+        membership_source=(f"CANONICAL_FREE_DATA_{len(run_command.requested_symbols)}"),
         minimum_history_sessions=args.minimum_history_sessions,
         liquidity_lookback_sessions=args.liquidity_lookback_sessions,
         minimum_median_daily_amount=args.minimum_median_daily_amount,
@@ -449,16 +403,8 @@ def _run_due(
     def simulated_sleep(seconds: float) -> None:
         simulated_runtime_now[0] += timedelta(seconds=seconds)
 
-    runtime_clock = (
-        _operational_now
-        if args.runtime_clock_mode == "LIVE"
-        else lambda: simulated_runtime_now[0]
-    )
-    runtime_sleeper = (
-        wall_time.sleep
-        if args.runtime_clock_mode == "LIVE"
-        else simulated_sleep
-    )
+    runtime_clock = _operational_now if args.runtime_clock_mode == "LIVE" else lambda: simulated_runtime_now[0]
+    runtime_sleeper = wall_time.sleep if args.runtime_clock_mode == "LIVE" else simulated_sleep
     history_client = BaoStockHistoryClient(
         clock=runtime_clock,
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
@@ -469,11 +415,7 @@ def _run_due(
         if (
             args.runtime_clock_mode == "LIVE"
             and args.supplemental_evidence is None
-            and run_command.trading_date
-            >= min(
-                item.effective_from
-                for item in canonical_supplemental_policy.themes
-            )
+            and run_command.trading_date >= min(item.effective_from for item in canonical_supplemental_policy.themes)
         )
         else None
     )
@@ -550,6 +492,7 @@ def _run_due(
                 "WAITING_FOR_TENCENT_DECISION_QUOTE",
             ),
         )
+
     def invocation() -> FreeDataPreparationInvocation:
         return FreeDataPreparationInvocation(
             request=free_request,
@@ -566,9 +509,7 @@ def _run_due(
     children = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation(),
-        model_selector=ControlledRuntimeModelSelector(
-            repositories.model_governance()
-        ),
+        model_selector=ControlledRuntimeModelSelector(repositories.model_governance()),
         summary_repository=repositories.decision_system(clock=runtime_clock),
         state_repository=repositories.state_system(clock=runtime_clock),
         clock=runtime_clock,
@@ -581,9 +522,7 @@ def _run_due(
         clock=runtime_clock,
     )
 
-    def provider_request_builder(
-        _: ContinuousResearchCommand, __: RuntimeTickCommand
-    ) -> ProviderAcquisitionRequest:
+    def provider_request_builder(_: ContinuousResearchCommand, __: RuntimeTickCommand) -> ProviderAcquisitionRequest:
         return ProviderAcquisitionRequest(
             provider_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
             product="BAOSTOCK_TENCENT_CANONICAL_FREE_DATA",

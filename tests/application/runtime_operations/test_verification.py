@@ -61,7 +61,7 @@ def _record_values(**overrides):
         "python_version": "3.12.2",
         "uv_version": "uv 0.8.15",
         "postgres_version": "16.14",
-        "migration_head": 37,
+        "migration_head": 42,
         "application_schema": "market_regime_alpha",
         "environment": "test",
         "dirty_worktree": False,

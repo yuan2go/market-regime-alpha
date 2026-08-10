@@ -8,6 +8,11 @@ import pytest
 
 from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId
 from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.authority import (
+    StateAuthorityDomain,
+    StateSeries,
+    engineering_state_transition_policy,
+)
 from market_regime_alpha.research.state_system.configuration import (
     MarketStateConfiguration,
     MissingDataPolicy,
@@ -300,4 +305,106 @@ def test_observation_rejects_lineage_configuration_mismatch() -> None:
                 config(),
                 configuration_hash="sha256:" + "f" * 64,
             ),
+        )
+
+
+def test_v2_previous_state_crosses_runs_only_within_the_same_series() -> None:
+    policy = engineering_state_transition_policy(StateAuthorityDomain.MARKET_REGIME)
+    selected = MarketStateConfiguration.create(
+        model_id=ModelId("state-transition-evaluator-market-regime-v1"),
+        model_version="v1",
+        configuration_id=policy.policy_id,
+        configuration_version=policy.policy_version,
+        thresholds=policy.thresholds,
+    )
+    series = StateSeries.create(
+        domain=StateAuthorityDomain.MARKET_REGIME,
+        logical_scope="A_SHARE_MARKET",
+        research_family="FREE_DATA_STATE_RESEARCH_V2",
+        authority_mode="SHADOW",
+        universe_policy_id=ArtifactId("universe-policy-v1"),
+        universe_policy_hash="sha256:" + "a" * 64,
+        model_id=ModelId("upstream-market-model-v1"),
+        model_version="1.0.0",
+        configuration_id=ArtifactId("upstream-market-configuration-v1"),
+        configuration_hash="sha256:" + "b" * 64,
+        state_policy_id=policy.policy_id,
+        state_policy_version=policy.policy_version,
+        state_policy_hash=policy.policy_hash,
+    )
+
+    def v2_observation(
+        at: datetime,
+        run_id: str,
+        suffix: str,
+        bound_series: StateSeries,
+    ) -> MarketRegimeObservation:
+        bound_lineage = StateLineage(
+            continuous_operation_id=ArtifactId(run_id),
+            runtime_tick_id=ArtifactId(f"tick-{suffix}"),
+            provider_attempt_ids=(ArtifactId(f"provider-{suffix}"),),
+            evidence_ids=(ArtifactId(f"evidence-{suffix}"),),
+            dataset_id=DatasetId(f"dataset-{suffix}"),
+            feature_id=ArtifactId(f"feature-{suffix}"),
+            source_artifact_ids=(ArtifactId(f"source-{suffix}"),),
+            model_id=selected.model_id,
+            model_version=selected.model_version,
+            configuration_id=selected.configuration_id,
+            configuration_hash=selected.configuration_hash,
+            as_of_time=at,
+            available_at=at,
+            created_at=at,
+            state_series_id=bound_series.series_id,
+            state_series_hash=bound_series.series_hash,
+            state_policy_id=policy.policy_id,
+            state_policy_version=policy.policy_version,
+            state_policy_hash=policy.policy_hash,
+        )
+        return MarketRegimeObservation.create(
+            v0_snapshot_id=ArtifactId(f"v0-{suffix}"),
+            regime_score=Decimal("0.10"),
+            data_coverage=Decimal("0.90"),
+            missing_evidence=(),
+            counter_evidence=(),
+            reason_codes=("V2_CROSS_SESSION_TEST",),
+            lineage=bound_lineage,
+        )
+
+    d1 = evaluate_market_state(
+        v2_observation(NOW, "run-d1", "d1", series),
+        previous=None,
+        configuration=selected,
+        state_policy=policy,
+    ).state
+    d2 = evaluate_market_state(
+        v2_observation(NOW + timedelta(days=1), "run-d2", "d2", series),
+        previous=d1,
+        configuration=selected,
+        state_policy=policy,
+    ).state
+
+    assert d2.previous_state_id == d1.state_id
+    assert d2.lineage.continuous_operation_id != d1.lineage.continuous_operation_id
+
+    other_series = StateSeries.create(
+        domain=StateAuthorityDomain.MARKET_REGIME,
+        logical_scope="OTHER_MARKET_SCOPE",
+        research_family=series.research_family,
+        authority_mode=series.authority_mode,
+        universe_policy_id=series.universe_policy_id,
+        universe_policy_hash=series.universe_policy_hash,
+        model_id=series.model_id,
+        model_version=series.model_version,
+        configuration_id=series.configuration_id,
+        configuration_hash=series.configuration_hash,
+        state_policy_id=series.state_policy_id,
+        state_policy_version=series.state_policy_version,
+        state_policy_hash=series.state_policy_hash,
+    )
+    with pytest.raises(ValueError, match="another State Series"):
+        evaluate_market_state(
+            v2_observation(NOW + timedelta(days=2), "run-d3", "d3", other_series),
+            previous=d2,
+            configuration=selected,
+            state_policy=policy,
         )

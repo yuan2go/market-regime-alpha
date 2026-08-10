@@ -53,6 +53,11 @@ class StateLineage:
     as_of_time: datetime
     available_at: datetime
     created_at: datetime
+    state_series_id: ArtifactId | None = None
+    state_series_hash: str | None = None
+    state_policy_id: ArtifactId | None = None
+    state_policy_version: str | None = None
+    state_policy_hash: str | None = None
 
     def __post_init__(self) -> None:
         _artifact_ids("provider_attempt_ids", self.provider_attempt_ids)
@@ -69,11 +74,24 @@ class StateLineage:
             raise ValueError("created_at must use canonical whole-second UTC")
         if available > as_of:
             raise ValueError("available_at must not exceed as_of_time")
+        authority = (
+            self.state_series_id,
+            self.state_series_hash,
+            self.state_policy_id,
+            self.state_policy_version,
+            self.state_policy_hash,
+        )
+        if any(value is not None for value in authority) and any(value is None for value in authority):
+            raise ValueError("State V2 series/policy lineage must be complete")
+        if self.state_series_hash is not None:
+            require_sha256("state_series_hash", self.state_series_hash)
+            require_sha256("state_policy_hash", self.state_policy_hash or "")
+            require_text("state_policy_version", self.state_policy_version or "")
 
     def identity_payload(self) -> dict[str, Any]:
         """CreatedAt is audit metadata and deliberately excluded from identity."""
 
-        return {
+        payload: dict[str, Any] = {
             "continuous_operation_id": str(self.continuous_operation_id),
             "runtime_tick_id": str(self.runtime_tick_id),
             "provider_attempt_ids": [str(value) for value in self.provider_attempt_ids],
@@ -88,6 +106,17 @@ class StateLineage:
             "as_of_time": canonical_datetime(self.as_of_time),
             "available_at": canonical_datetime(self.available_at),
         }
+        if self.state_series_id is not None:
+            payload.update(
+                {
+                    "state_series_id": str(self.state_series_id),
+                    "state_series_hash": self.state_series_hash,
+                    "state_policy_id": str(self.state_policy_id),
+                    "state_policy_version": self.state_policy_version,
+                    "state_policy_hash": self.state_policy_hash,
+                }
+            )
+        return payload
 
     @property
     def lineage_hash(self) -> str:
@@ -117,7 +146,14 @@ class StateLineage:
             "available_at",
             "created_at",
         }
-        if set(payload) != expected:
+        v2 = {
+            "state_series_id",
+            "state_series_hash",
+            "state_policy_id",
+            "state_policy_version",
+            "state_policy_hash",
+        }
+        if frozenset(payload) not in {frozenset(expected), frozenset(expected | v2)}:
             raise ValueError("StateLineage fields mismatch")
         return cls(
             continuous_operation_id=ArtifactId(str(payload["continuous_operation_id"])),
@@ -134,6 +170,11 @@ class StateLineage:
             as_of_time=parse_canonical_datetime("as_of_time", payload["as_of_time"]),
             available_at=parse_canonical_datetime("available_at", payload["available_at"]),
             created_at=parse_canonical_datetime("created_at", payload["created_at"]),
+            state_series_id=(None if "state_series_id" not in payload else ArtifactId(str(payload["state_series_id"]))),
+            state_series_hash=(None if "state_series_hash" not in payload else str(payload["state_series_hash"])),
+            state_policy_id=(None if "state_policy_id" not in payload else ArtifactId(str(payload["state_policy_id"]))),
+            state_policy_version=(None if "state_policy_version" not in payload else str(payload["state_policy_version"])),
+            state_policy_hash=(None if "state_policy_hash" not in payload else str(payload["state_policy_hash"])),
         )
 
 

@@ -3,10 +3,10 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Single authoritative current implementation-state document  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-09
+> **Last Updated:** 2026-08-10
 > **Supersedes:** ../constitution/implementation-status.md; ../research/R5-Current-Status.md; R5 task status documents as current authorities  
 > **Superseded By:** None  
-> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../evidence/WP-EVIDENCE-OPS-01-Acceptance.md, ../superpowers/specs/2026-08-09-prospective-formal-qualification-master-design.md, ../superpowers/plans/2026-08-09-prospective-formal-qualification-master.md
+> **Related Documents:** Capability-Matrix.md, Gap-Register.md, External-Blockers.md, ../architecture/09-Platform-Architecture-V2.md, ../architecture/10-Production-Decision-Lifecycle.md, ../architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md, ../architecture/12-Canonical-Runtime-and-Legacy-Migration.md, ../architecture/13-Canonical-Market-Data-and-Feature-Spine.md, ../architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md, ../architecture/16-Phase-A-Correctness-and-Research-Shadow-Operations.md, ../audit/Phase-A-Correctness-Shadow-Operations-Delivery.md, ../audit/WP-SIG-01A-Delivery.md, ../audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md, ../audit/H6-Composite-Operational-Evidence-Delivery.md, ../audit/H5-Thesis-Health-Delivery.md, ../audit/H4-Risk-Route-Delivery.md, ../audit/Production-Decision-Lifecycle-Delivery.md, ../audit/Production-Lifecycle-Hardening-Delivery.md, ../audit/Current-Main-Code-Audit-2026-08-01.md, ../evidence/WP-EVIDENCE-OPS-01-Acceptance.md, ../superpowers/specs/2026-08-09-prospective-formal-qualification-master-design.md, ../superpowers/plans/2026-08-09-prospective-formal-qualification-master.md
 > **Code Evidence:** Pre-live engineering checkpoints `04d8ee6b6734e00b8361956e6b94914d1f5511bd`, `385213601fbfed2e8262cb9ae7e27b6a05b9fba4`, `f68893cb79985564400991298ceb06eeb0b77694`, `d0f630f5a8be55dece3febaecd5b0625692c8e5b`, `ac350db8665efb456adbecd3d022a47e5e7a7bc1`, `0134fbe3c00e242adf3fe3634493f9ab08a5dadf`, `2a40c59a145a7ab08746520b5b300f2f86d944c6`; Canonical Feature Spine implementation/gate checkpoint `4f099069cde5191e46d3c242dd46788947997f9c`; canonical runtime merge baseline `9ccc751`; H4.5 hardened implementation checkpoint `b1d6533a0b3b1bbd9e180c7f6864b3be8dbd2254`; H6 hardened implementation checkpoint `654e025b97c5d9553d7614b4b5be0898272aacbc`; H5 checkpoint `831edd6b2ae044d3bd1f3abcec97a30e47082071`; H4 checkpoint `3672067549e1b72a8bfd390f8320e2a7c55c599e`
 > **Verification Boundary:** This status distinguishes current-code inspection, historical checkpoint test records and independently observed runtime evidence. Historical PASS records do not establish that the current HEAD passes.
 
@@ -145,10 +145,20 @@ All tests in this program use recorded/fixture Provider data. They establish
 engineering readiness only: no exact-window Live run, prospective Shadow sample,
 economic evidence, model qualification or Production authorization exists.
 
+Phase A correctness convergence makes the Canonical/Legacy write boundary
+machine-readable and guarded, replaces Run-scoped mutable State lookup with a
+stable cross-session State Series, and binds every Canonical V2 transition to
+an immutable State Policy. It also adds a six-horizon Outcome Target Protocol,
+a recoverable Research Shadow orchestration facade, an always-false V1
+Prospective Evidence Attestation, a complete frozen Research Panel V2 and a
+Shadow-aware read-only DAG. The same Continuous Runtime remains the only
+runtime owner. All Phase A evidence is recorded/fixture engineering evidence;
+prospective sample size remains zero.
+
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
 database test substitute. Bounded repositories now execute native psycopg SQL
-and PostgreSQL transactions. Central migrations 001–037 are the only database
+and PostgreSQL transactions. Central migrations 001–042 are the only database
 migration authority; an unavailable PostgreSQL connection fails closed.
 
 WP-DECISION-01 keeps the strict account-aware Production Decision child and now
@@ -742,6 +752,37 @@ blocked with `DATA_AVAILABLE_AFTER_DECISION_TIME`. Therefore the engineering
 runtime is proven, but a live exact-window BaoStock/Tencent Summary is not yet
 observed.
 
+### 3.20 Phase A correctness and Research Shadow operations
+
+Canonical executable writes now belong only to current Continuous Runtime,
+`daily_decision` Entry/Decision, independent Risk, manual Fill and Fill-derived
+Position authorities. The ENTER-capable `daily_research` contract is explicitly
+historical read/replay/migration compatibility. An AST architecture guard
+prevents Canonical composition from importing Legacy executable namespaces.
+
+State Authority V2 identifies Market, ETF, Theme, Capital and Dynamic Pool
+streams by stable semantic Series rather than Run/date. Immutable links retain
+Run, Tick, TradingDate, observation and evidence lineage while a separate head
+per Series provides predecessor CAS and fencing. Real PostgreSQL tests cover
+D1→D2→D3, Friday→Monday, missing days, same-day ticks, reset on policy/config
+change, stale predecessor, restart and replay. V1 tables and Readers are not
+rewritten.
+
+State/Pool transition policies are immutable, versioned and content-addressed.
+They include threshold, confirmation, dwell, hysteresis, coverage,
+missing-data and domain classification parameters, and enter State, frozen
+Decision and Evaluation V2 lineage. The shipped values are explicit
+engineering defaults, not selected economic parameters.
+
+The Research Shadow loop schedules and attaches to the existing Runtime,
+freezes a Summary, waits for factual T+1 settlement, derives protocol-bound
+Open/09:45/10:00/10:30/11:30/Close labels, records an ineligible engineering
+attestation and freezes the complete Pool/Candidate research panel. It supports
+report, replay, resume and invalidation without SQL assembly and without any
+Order, Fill, Broker or Position mutation. Read-only trading-date inspection
+joins Runtime→Summary→Decision→Outcome→Evaluation and uses `NOT_OBSERVED`
+instead of fabricated zero metrics.
+
 ## 4. Persistence, transactions and consistency
 
 PostgreSQL 16 is the only database authority selected through
@@ -750,7 +791,7 @@ PostgreSQL 16 is the only database authority selected through
 backend enumeration, database path, SQL/DB-API translation bridge, automatic
 fallback, persistent test substitute or runtime importer.
 
-PostgreSQL migration versions 001–033 are checksummed, contiguous and
+PostgreSQL migration versions 001–042 are checksummed, contiguous and
 serialized with an advisory lock. Migration 024 constrains the credential-free
 runtime binding to PostgreSQL without changing the published migration-017
 checksum. Migration 025 adds Decision Summary, Manual Account,
@@ -772,7 +813,11 @@ snapshots and explicit-set immutable Formal PIT validation evidence. Migration
 030–032 add typed results/timestamps, seven-stage State ownership and explicit
 Summary owner lineage while retaining historical schema checks. Migration 033
 adds the append-only State-owned Candidate payload needed for crash recovery,
-persists Stage reason codes and admits Summary V3 actual-source lineage. Fresh 001→033
+persists Stage reason codes and admits Summary V3 actual-source lineage.
+Migrations 034–037 add pre-live Shadow, Outcome, Evaluation V1 and reference
+authorities. Migrations 038–042 add State Policy/Series, Target Protocol,
+Prospective Attestation, Evaluation Panel V2 and Shadow Decision Policy
+lineage. Fresh 001→042
 and incremental migration paths are tested on PostgreSQL 16.
 
 Native repositories preserve idempotency, command hashes, compare-and-swap,
@@ -800,7 +845,7 @@ Not implemented:
 - distributed leases and multi-instance ownership;
 - cross-database or file/database transactions;
 - outbox/message delivery guarantees;
-- multi-instance or sustained scheduled Shadow operations.
+- multi-instance or sustained real scheduled Shadow operation evidence.
 
 ## 5. Frontend, scheduler and broker boundary
 
@@ -928,8 +973,8 @@ rerun. Remote CI and production admission are not claimed.
 - sustained real 14:55 Shadow runs;
 - qualified real Composite Operational Evidence packages and producer identity;
 - durable Holding/Exit schedules and acknowledgement state;
-- sustained scheduled Shadow operations, operator deadlines/acknowledgements,
-  metrics, tracing and alerts;
+- authenticated scheduling, operator deadlines/acknowledgements, external
+  metrics export, tracing and alerts for sustained real Shadow operations;
 - production authentication, authorization and operator signatures;
 - external statement/Fill reconciliation and authenticated resolution;
 - production-qualified PostgreSQL deployment and restore drill;
@@ -965,12 +1010,13 @@ Canonical Feature input preparation
   → Decimal Signal V3 with policy/calendar lineage
   → Path remains uncalibrated and Entry remains blocked
 
-P1 complete pre-Shadow mechanics
+P1 correctness-converged Research Shadow mechanics
   H5 Artifact-derived Thesis Health complete
   → H6 Composite Evidence Manifest complete
   → H4.5 Risk-Reducing Decision to Manual Execution Bridge complete
   → H7 Durable Holding/Exit Operations
-  → H8 sustained Shadow operations and control plane
+  → Research Shadow operating loop engineering ready
+  → H8 sustained real Shadow operation and authenticated control plane
   → H9 Validation Infrastructure
 
 P1 establish qualified evidence
@@ -994,7 +1040,7 @@ P2 production hardening
 
 The repository is best classified as:
 
-> **A pre-Shadow research decision platform with PostgreSQL-only local persistence, an auditable manual-account/reconciliation/research-portfolio/independent-risk loop, and verified H4, H4.5, H5 and H6 engineering checkpoints, but without formal Alpha, sustained Shadow operations, production readiness or trading authority.**
+> **A correctness-converged, Research-Shadow-engineering-ready decision platform with PostgreSQL-only persistence and an auditable manual decision lifecycle, but without prospective evidence, formal Alpha, sustained real Shadow operation, production readiness or trading authority.**
 
 The canonical-runtime branch does not change these admission facts:
 

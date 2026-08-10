@@ -110,6 +110,18 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "dynamic_stock_pool",
         "dynamic_stock_pool_member",
         "dynamic_stock_pool_change",
+        "state_policy_authority",
+        "state_series",
+        "state_series_link",
+        "state_series_head",
+        "outcome_target_protocol",
+        "outcome_target_definition",
+        "targeted_shadow_outcome",
+        "targeted_shadow_outcome_label",
+        "prospective_evidence_attestation",
+        "research_evaluation_panel_v2",
+        "research_evaluation_panel_slice_v2",
+        "research_evaluation_panel_row_v2",
         "state_runtime_receipt",
         "state_runtime_candidate_artifact",
         "state_research_stage_authority",
@@ -132,6 +144,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "research_summary_stage",
         "shadow_research_session",
         "shadow_research_decision",
+        "shadow_research_decision_state_policy",
         "shadow_research_event",
         "prospective_outcome_settlement",
         "research_evaluation_dataset",
@@ -225,6 +238,14 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("research_summary_stage", "research_summary_stage_no_update"),
         ("shadow_research_session", "shadow_research_session_guard"),
         ("shadow_research_decision", "shadow_research_decision_no_update"),
+        (
+            "shadow_research_decision_state_policy",
+            "shadow_decision_state_policy_no_update",
+        ),
+        (
+            "shadow_research_decision_state_policy",
+            "shadow_decision_state_policy_no_delete",
+        ),
         ("shadow_research_event", "shadow_research_event_no_update"),
         (
             "prospective_outcome_settlement",
@@ -294,6 +315,30 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("dynamic_stock_pool_member", "dynamic_stock_pool_member_no_delete"),
         ("dynamic_stock_pool_change", "dynamic_stock_pool_change_no_update"),
         ("dynamic_stock_pool_change", "dynamic_stock_pool_change_no_delete"),
+        ("state_policy_authority", "state_policy_authority_no_update"),
+        ("state_policy_authority", "state_policy_authority_no_delete"),
+        ("state_series", "state_series_no_update"),
+        ("state_series", "state_series_no_delete"),
+        ("state_series_link", "state_series_link_no_update"),
+        ("state_series_link", "state_series_link_no_delete"),
+        ("state_series_head", "state_series_head_no_delete"),
+        ("state_series_head", "state_series_head_cas_guard"),
+        ("outcome_target_protocol", "outcome_target_protocol_no_update"),
+        ("outcome_target_protocol", "outcome_target_protocol_no_delete"),
+        ("outcome_target_definition", "outcome_target_definition_no_update"),
+        ("outcome_target_definition", "outcome_target_definition_no_delete"),
+        ("targeted_shadow_outcome", "targeted_shadow_outcome_no_update"),
+        ("targeted_shadow_outcome", "targeted_shadow_outcome_no_delete"),
+        ("targeted_shadow_outcome_label", "targeted_shadow_outcome_label_no_update"),
+        ("targeted_shadow_outcome_label", "targeted_shadow_outcome_label_no_delete"),
+        ("prospective_evidence_attestation", "prospective_evidence_attestation_no_update"),
+        ("prospective_evidence_attestation", "prospective_evidence_attestation_no_delete"),
+        ("research_evaluation_panel_v2", "research_evaluation_panel_v2_no_update"),
+        ("research_evaluation_panel_v2", "research_evaluation_panel_v2_no_delete"),
+        ("research_evaluation_panel_slice_v2", "research_evaluation_panel_slice_v2_no_update"),
+        ("research_evaluation_panel_slice_v2", "research_evaluation_panel_slice_v2_no_delete"),
+        ("research_evaluation_panel_row_v2", "research_evaluation_panel_row_v2_no_update"),
+        ("research_evaluation_panel_row_v2", "research_evaluation_panel_row_v2_no_delete"),
         ("state_runtime_receipt", "state_runtime_receipt_no_update"),
         ("state_runtime_receipt", "state_runtime_receipt_no_delete"),
         ("state_runtime_candidate_artifact", "state_runtime_candidate_artifact_no_update"),
@@ -415,9 +460,7 @@ def _verify_primary_keys(
     present = {str(row[0]) for row in rows}
     missing = set(tables) - present
     if missing:
-        raise PostgresSchemaError(
-            f"tables without primary keys: {sorted(missing)}"
-        )
+        raise PostgresSchemaError(f"tables without primary keys: {sorted(missing)}")
 
 
 def _verify_foreign_key_indexes(connection: psycopg.Connection[Any]) -> None:
@@ -448,9 +491,7 @@ def _verify_foreign_key_indexes(connection: psycopg.Connection[Any]) -> None:
     ).fetchall()
     if rows:
         formatted = [f"{row[0]}.{row[1]}" for row in rows]
-        raise PostgresSchemaError(
-            f"foreign keys without supporting indexes: {formatted}"
-        )
+        raise PostgresSchemaError(f"foreign keys without supporting indexes: {formatted}")
 
 
 def _verify_triggers(connection: psycopg.Connection[Any]) -> None:

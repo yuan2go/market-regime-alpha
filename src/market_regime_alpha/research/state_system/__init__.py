@@ -9,6 +9,14 @@ from market_regime_alpha.research.state_system.capital import (
     evaluate_capital_state,
 )
 from market_regime_alpha.research.state_system.common import StateLineage
+from market_regime_alpha.research.state_system.authority import (
+    DynamicPoolPolicy,
+    StateAuthorityDomain,
+    StateSeries,
+    StateTransitionPolicy,
+    engineering_dynamic_pool_policy,
+    engineering_state_transition_policy,
+)
 from market_regime_alpha.research.state_system.configuration import (
     CapitalStateConfiguration,
     DynamicPoolConfiguration,
@@ -72,6 +80,7 @@ __all__ = [
     "CapitalTransition",
     "EtfRotationConfiguration",
     "DynamicPoolConfiguration",
+    "DynamicPoolPolicy",
     "DynamicPoolEvaluation",
     "DynamicPoolEvaluationStatus",
     "DynamicPoolStateContext",
@@ -92,6 +101,9 @@ __all__ = [
     "PoolEligibilityObservation",
     "SignalV4State",
     "StateLineage",
+    "StateAuthorityDomain",
+    "StateSeries",
+    "StateTransitionPolicy",
     "StatefulMarketRegime",
     "StateBoundCandidateSet",
     "StateBoundEmpiricalForecastV2",
@@ -110,6 +122,8 @@ __all__ = [
     "evaluate_capital_state",
     "evaluate_dynamic_pool",
     "evaluate_theme_rotation",
+    "engineering_dynamic_pool_policy",
+    "engineering_state_transition_policy",
     "audit_feature_exposures",
     "bind_candidate_set",
     "project_empirical_forecast_v2",
