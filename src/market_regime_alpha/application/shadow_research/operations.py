@@ -89,6 +89,9 @@ from market_regime_alpha.application.shadow_research.postgres_repository import 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.market_data.artifacts import VerifiedMarketDataDataset
 from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
+from market_regime_alpha.features.operational_overlay import (
+    StaticUniverseFeatureBundle,
+)
 from market_regime_alpha.forecasting.contracts import PathForecast
 from market_regime_alpha.signals.v3 import SignalRunArtifactV3
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
@@ -361,6 +364,7 @@ class ResearchShadowOperations:
         state_policy_references: tuple[RuntimeArtifactReference, ...],
         dataset: VerifiedMarketDataDataset,
         feature_bundle: VerifiedFeatureBundleV2,
+        feature_wrapper: StaticUniverseFeatureBundle | None = None,
         signal_run: SignalRunArtifactV3 | None,
         forecasts: tuple[PathForecast, ...],
         state_sources: tuple[CanonicalStateFactorSource, ...],
@@ -371,8 +375,11 @@ class ResearchShadowOperations:
         if (
             str(dataset.artifact.dataset_id) != str(decision.dataset.artifact_id)
             or dataset.artifact.content_hash != decision.dataset.content_hash
-            or str(feature_bundle.artifact.bundle_id) != str(decision.feature_bundle.artifact_id)
-            or feature_bundle.artifact.content_hash != decision.feature_bundle.content_hash
+            or not _feature_lineage_matches(
+                decision.feature_bundle,
+                feature_bundle,
+                feature_wrapper,
+            )
         ):
             raise ValueError("Panel enrichment Dataset/Feature Bundle differs from frozen Shadow Decision")
         expected_optional = (
@@ -562,6 +569,28 @@ def _session_dict(value: ShadowSessionSnapshot) -> dict[str, Any]:
         "updated_at": value.updated_at.isoformat(),
         "finished_at": None if value.finished_at is None else value.finished_at.isoformat(),
     }
+
+
+def _feature_lineage_matches(
+    frozen: RuntimeArtifactReference,
+    feature_bundle: VerifiedFeatureBundleV2,
+    feature_wrapper: StaticUniverseFeatureBundle | None,
+) -> bool:
+    bundle = feature_bundle.artifact
+    if (
+        frozen.reference_kind == "FEATURE_BUNDLE_V2"
+        and str(bundle.bundle_id) == str(frozen.artifact_id)
+        and bundle.content_hash == frozen.content_hash
+    ):
+        return True
+    return (
+        feature_wrapper is not None
+        and frozen.reference_kind == "STATIC_FEATURE_BUNDLE"
+        and str(feature_wrapper.artifact_id) == str(frozen.artifact_id)
+        and feature_wrapper.content_hash == frozen.content_hash
+        and str(feature_wrapper.feature_bundle_id) == str(bundle.bundle_id)
+        and feature_wrapper.feature_bundle_hash == bundle.content_hash
+    )
 
 
 __all__ = ["ResearchShadowOperations", "ShadowSettlementResult"]

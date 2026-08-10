@@ -70,6 +70,6 @@ def test_status_and_runbook_keep_authority_ceiling_explicit() -> None:
         "production_ready = false",
     ):
         assert declaration in status
-    assert "Expected head: migration 050" in runbook
+    assert "Expected head: migration 051" in runbook
     assert "Production qualification is currently forced closed" in runbook
     assert "no alternate persistent backend" in runbook

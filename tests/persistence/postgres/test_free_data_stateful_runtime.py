@@ -789,6 +789,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert calibration_engineering["status"] == "NOT_ESTIMABLE"
         assert calibration_engineering["hypothesis_count"] == 18
         assert calibration_engineering["calibrated"] is False
+        hypothesis = calibration_engineering["hypotheses"][0]
+        persisted_hypothesis = PostgresResearchValidationRepository(
+            postgres_factory,
+            apply_migrations=False,
+        ).get_payload(ArtifactId(hypothesis["hypothesis_artifact_id"]))
+        assert persisted_hypothesis["status"] == "NOT_ESTIMABLE"
+        assert persisted_hypothesis["reason_codes"]
+        assert persisted_hypothesis["calibrated"] is False
+        assert persisted_hypothesis["formal_oos"] is False
         strategy_observed_at = multi_target_available_at + timedelta(seconds=1)
         strategy_observation = StrategyDayObservation(
             trading_date=command.trading_date,
@@ -897,6 +906,17 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 trading_status=TradingStatus.TRADING,
                 price_limit_state=PriceLimitState.NORMAL,
                 trade_session=ShadowPortfolioTradeSession.CONTINUOUS_PM,
+                value_provenance=tuple(
+                    (name, ShadowParameterProvenance.OBSERVED_FACT)
+                    for name in (
+                        "average_daily_amount",
+                        "mark_price",
+                        "price_limit_state",
+                        "reference_price",
+                        "trade_session",
+                        "trading_status",
+                    )
+                ),
                 risk_weight=None,
                 risk_weight_provenance=None,
                 reason_codes=(),
@@ -1049,7 +1069,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                     "theme_rotation_state",
                 ),
             )
-        assert recovery.migration_head == 50
+        assert recovery.migration_head == 51
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

@@ -101,13 +101,26 @@ class PostgresFreeResearchUniverseRepository:
     def get(self, snapshot_id: ArtifactId) -> FreeResearchUniverseSnapshot:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT payload_json FROM free_data_research_universe_snapshot "
+                "SELECT snapshot_hash, payload_json "
+                "FROM free_data_research_universe_snapshot "
                 "WHERE snapshot_id = %s",
                 (str(snapshot_id),),
             ).fetchone()
-        if row is None or not isinstance(row[0], dict):
+            members = connection.execute(
+                "SELECT payload_json FROM free_data_research_universe_member "
+                "WHERE snapshot_id = %s ORDER BY symbol",
+                (str(snapshot_id),),
+            ).fetchall()
+        if row is None or not isinstance(row[1], dict):
             raise KeyError(str(snapshot_id))
-        return FreeResearchUniverseSnapshot.from_canonical_dict(row[0])
+        snapshot = FreeResearchUniverseSnapshot.from_canonical_dict(row[1])
+        if str(row[0]) != snapshot.snapshot_hash:
+            raise ValueError("Research Universe owner hash diverged")
+        stored_members = tuple(item[0] for item in members)
+        expected_members = tuple(item.to_canonical_dict() for item in snapshot.records)
+        if stored_members != expected_members:
+            raise ValueError("Research Universe member projection diverged")
+        return snapshot
 
     def latest_known_at(
         self, *, as_of_date: date, known_at: datetime

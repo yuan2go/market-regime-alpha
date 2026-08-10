@@ -95,25 +95,30 @@ class PostgresRecoveryAudit:
             retryable = connection.execute(
                 """
                 SELECT run_id, tick_id, status FROM continuous_runtime_tick
-                WHERE status IN ('FAILED', 'DATA_BLOCKED')
-                  AND (retry_at IS NULL OR retry_at <= %s)
+                WHERE status = 'PENDING'
+                  AND retry_at IS NOT NULL
+                  AND retry_at <= %s
                 ORDER BY run_id, tick_id
                 """,
                 (checked_at,),
             ).fetchall()
             provider_failures = connection.execute(
                 """
-                SELECT run_id, tick_id, status FROM (
+                SELECT latest.run_id, latest.tick_id, latest.status FROM (
                     SELECT DISTINCT ON (run_id, tick_id)
                            run_id, tick_id, status, retry_at
                     FROM continuous_provider_attempt
                     ORDER BY run_id, tick_id, attempt_number DESC
                 ) AS latest
-                WHERE status IN (
+                JOIN continuous_runtime_tick AS tick
+                  ON tick.run_id = latest.run_id
+                 AND tick.tick_id = latest.tick_id
+                WHERE latest.status IN (
                     'FAILED', 'TIMED_OUT', 'INVALID_RESPONSE', 'RATE_LIMITED',
                     'CIRCUIT_OPEN', 'LEASE_EXPIRED'
-                ) AND (retry_at IS NULL OR retry_at <= %s)
-                ORDER BY run_id, tick_id
+                ) AND tick.status = 'PENDING'
+                  AND latest.retry_at <= %s
+                ORDER BY latest.run_id, latest.tick_id
                 """,
                 (checked_at,),
             ).fetchall()
@@ -165,8 +170,9 @@ class PostgresRecoveryAudit:
                     "CONTINUOUS_RUNTIME_TICK",
                     f"{run_id}/{tick_id}",
                     str(status),
-                    f"continuous-research resume --run-id {run_id}",
-                    "POSTGRESQL_JOURNAL_RESUME_REQUIRED",
+                    "continuous-research run-day --run-command "
+                    "<frozen-run-command.json> ...",
+                    "DUE_PENDING_TICK_REQUIRES_CANONICAL_RUN_DAY",
                 )
             )
         for run_id, tick_id, status in provider_failures:
@@ -176,8 +182,9 @@ class PostgresRecoveryAudit:
                     "CONTINUOUS_PROVIDER_ATTEMPT",
                     f"{run_id}/{tick_id}",
                     str(status),
-                    f"continuous-research resume --run-id {run_id}",
-                    "EXPLICIT_PROVIDER_RETRY_REQUIRED",
+                    "continuous-research run-day --run-command "
+                    "<frozen-run-command.json> ...",
+                    "EXPLICIT_PROVIDER_RETRY_THROUGH_CANONICAL_RUN_DAY",
                 )
             )
         for session_id, run_id, status, trading_date in research_partial:
@@ -196,7 +203,8 @@ class PostgresRecoveryAudit:
                     (
                         "continuous-research settle-day"
                         if issue_kind is RecoveryIssueKind.MISSED_SETTLEMENT
-                        else f"continuous-research resume --run-id {run_id}"
+                        else "continuous-research run-day --run-command "
+                        "<frozen-run-command.json> ..."
                     ),
                     "POSTGRESQL_SHADOW_STATE_RESUME_REQUIRED",
                 )

@@ -10,7 +10,14 @@ from market_regime_alpha.application.shadow_research.free_data_settlement import
     FreeOutcomeDatasetBuilder,
     _resolve_operation_package,
 )
+from market_regime_alpha.application.shadow_research.operations import (
+    _feature_lineage_matches,
+)
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.market_data.contracts import Timeframe
 
 
@@ -143,6 +150,44 @@ def test_controlled_package_resolution_uses_frozen_package_identity(
 
     assert resolved is package
     assert run_root == tmp_path / "run"
+
+
+def test_feature_lineage_accepts_current_v2_and_verified_legacy_wrapper() -> None:
+    bundle_hash = canonical_hash({"feature": "v2"})
+    wrapper_hash = canonical_hash({"feature": "legacy-wrapper"})
+    feature = SimpleNamespace(
+        artifact=SimpleNamespace(
+            bundle_id=ArtifactId("feature-bundle-v2"),
+            content_hash=bundle_hash,
+        )
+    )
+    wrapper = SimpleNamespace(
+        artifact_id=ArtifactId("static-feature-wrapper"),
+        content_hash=wrapper_hash,
+        feature_bundle_id=ArtifactId("feature-bundle-v2"),
+        feature_bundle_hash=bundle_hash,
+    )
+
+    assert _feature_lineage_matches(
+        RuntimeArtifactReference(
+            "FEATURE_BUNDLE_V2",
+            ArtifactId("feature-bundle-v2"),
+            bundle_hash,
+        ),
+        feature,
+        None,
+    )
+    assert _feature_lineage_matches(
+        RuntimeArtifactReference(
+            "STATIC_FEATURE_BUNDLE",
+            ArtifactId("static-feature-wrapper"),
+            wrapper_hash,
+        ),
+        feature,
+        wrapper,
+    )
+
+
 def _frame(timestamps: tuple[str, ...]) -> pd.DataFrame:
     return pd.DataFrame(
         {

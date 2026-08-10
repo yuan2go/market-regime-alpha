@@ -29,6 +29,7 @@ def _observation(trading_date: date, index: int) -> _ResolvedCalibrationObservat
     return _ResolvedCalibrationObservation(
         trading_date=trading_date,
         label_end_date=trading_date + timedelta(days=1),
+        label_reference=_reference("TARGET_OUTCOME_LABEL", f"label-{index}"),
         target_reference=_reference("OUTCOME_TARGET", "target"),
         barrier_id="UP_1_PERCENT",
         observation_id=f"{trading_date.isoformat()}-{index}",

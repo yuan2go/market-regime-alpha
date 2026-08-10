@@ -325,6 +325,7 @@ class ShadowPortfolioMarketObservation:
     trading_status: TradingStatus
     price_limit_state: PriceLimitState
     trade_session: ShadowPortfolioTradeSession
+    value_provenance: tuple[tuple[str, ShadowParameterProvenance], ...]
     observed_at: datetime
     source_references: tuple[ValidationArtifactReference, ...]
     reason_codes: tuple[str, ...]
@@ -342,6 +343,12 @@ class ShadowPortfolioMarketObservation:
             raise ValueError("Shadow Portfolio risk weight must be positive")
         if (self.risk_weight is None) != (self.risk_weight_provenance is None):
             raise ValueError("Shadow Portfolio risk weight requires explicit provenance")
+        _validate_market_value_provenance(
+            self.value_provenance,
+            reference_price=self.reference_price,
+            mark_price=self.mark_price,
+            average_daily_amount=self.average_daily_amount,
+        )
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
             raise ValueError("Shadow Portfolio observation must be timezone-aware")
         if self.source_references != tuple(
@@ -370,6 +377,7 @@ class ShadowPortfolioMarketObservation:
             "trading_status": self.trading_status,
             "price_limit_state": self.price_limit_state,
             "trade_session": self.trade_session,
+            "value_provenance": self.value_provenance,
             "observed_at": self.observed_at,
             "source_references": self.source_references,
             "reason_codes": self.reason_codes,
@@ -391,12 +399,42 @@ class ShadowPortfolioMarketObservation:
             "trading_status": self.trading_status.value,
             "price_limit_state": self.price_limit_state.value,
             "trade_session": self.trade_session.value,
+            "value_provenance": {
+                name: provenance.value
+                for name, provenance in self.value_provenance
+            },
             "observed_at": timestamp(self.observed_at),
             "source_references": [
                 item.to_canonical_dict() for item in self.source_references
             ],
             "reason_codes": list(self.reason_codes),
         }
+
+
+def _validate_market_value_provenance(
+    value_provenance: tuple[tuple[str, ShadowParameterProvenance], ...],
+    *,
+    reference_price: Decimal | None,
+    mark_price: Decimal | None,
+    average_daily_amount: Decimal | None,
+) -> None:
+    if value_provenance != tuple(sorted(value_provenance)) or len(
+        {name for name, _ in value_provenance}
+    ) != len(value_provenance):
+        raise ValueError("Shadow Portfolio value provenance must be unique and sorted")
+    required = {"trading_status", "price_limit_state", "trade_session"}
+    for name, value in (
+        ("reference_price", reference_price),
+        ("mark_price", mark_price),
+        ("average_daily_amount", average_daily_amount),
+    ):
+        if value is not None:
+            required.add(name)
+    supplied = {name for name, _ in value_provenance}
+    if supplied != required:
+        raise ValueError(
+            "Shadow Portfolio value provenance must exactly cover result inputs"
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -88,6 +88,17 @@ def _observation(
         trading_status=trading_status,
         price_limit_state=limit_state,
         trade_session=ShadowPortfolioTradeSession.CONTINUOUS_PM,
+        value_provenance=tuple(
+            (name, ShadowParameterProvenance.OBSERVED_FACT)
+            for name in (
+                "average_daily_amount",
+                "mark_price",
+                "price_limit_state",
+                "reference_price",
+                "trade_session",
+                "trading_status",
+            )
+        ),
         observed_at=observed_at,
         source_references=(
             _reference("CANDIDATE_SET", f"candidate-{symbol}"),
@@ -166,6 +177,13 @@ def test_portfolio_shadow_fails_closed_for_limit_up_unknown_and_capacity() -> No
             **{
                 **_observation("000003.SZ", "0.7", "30").to_init_dict(),
                 "average_daily_amount": None,
+                "value_provenance": tuple(
+                    item
+                    for item in _observation(
+                        "000003.SZ", "0.7", "30"
+                    ).value_provenance
+                    if item[0] != "average_daily_amount"
+                ),
                 "reason_codes": ("ADV_MISSING",),
             }
         ),

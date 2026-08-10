@@ -29,6 +29,8 @@ from market_regime_alpha.application.research_validation.calibration import (
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
+    content_identity,
+    timestamp,
 )
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
@@ -46,6 +48,7 @@ PATH_CALIBRATION_SCORE_FACTOR = "forecast.return_quantile.0.5"
 class _ResolvedCalibrationObservation:
     trading_date: date
     label_end_date: date
+    label_reference: ValidationArtifactReference
     target_reference: ValidationArtifactReference
     barrier_id: str
     observation_id: str
@@ -139,14 +142,27 @@ class PostgresPathForecastCalibrationOperator:
                     minimum_validation_samples=minimum_validation_samples,
                 )
                 if partitioned is None:
+                    if not values:
+                        partition_reasons = tuple(
+                            sorted(
+                                {
+                                    *partition_reasons,
+                                    "NOT_ESTIMABLE_TARGET_BOUND_PATH_FORECAST_MISSING",
+                                }
+                            )
+                        )
                     results.append(
-                        _hypothesis_result(
+                        self._record_hypothesis(
+                            target_protocol=target_protocol,
                             target_reference=target_reference,
                             barrier_id=barrier.barrier_id,
                             protocol=protocol,
                             resolved=values,
                             observations=(),
-                            artifact_id=None,
+                            calibration_artifact_id=None,
+                            through_date=through_date,
+                            score_factor_id=score_factor_id,
+                            created_at=created_at,
                             status="NOT_ESTIMABLE",
                             reason_codes=partition_reasons,
                         )
@@ -164,13 +180,17 @@ class PostgresPathForecastCalibrationOperator:
                 )
                 fitted_count += 1
                 results.append(
-                    _hypothesis_result(
+                    self._record_hypothesis(
+                        target_protocol=target_protocol,
                         target_reference=target_reference,
                         barrier_id=barrier.barrier_id,
                         protocol=protocol,
                         resolved=values,
                         observations=partitioned,
-                        artifact_id=artifact.artifact_id,
+                        calibration_artifact_id=artifact.artifact_id,
+                        through_date=through_date,
+                        score_factor_id=score_factor_id,
+                        created_at=created_at,
                         status="FITTED_ENGINEERING_ONLY",
                         reason_codes=(
                             "CALIBRATED_FALSE",
@@ -208,6 +228,54 @@ class PostgresPathForecastCalibrationOperator:
             ],
         }
 
+    def _record_hypothesis(
+        self,
+        *,
+        target_protocol: OutcomeTargetProtocol,
+        target_reference: ValidationArtifactReference,
+        barrier_id: str,
+        protocol: CalibrationProtocol,
+        resolved: tuple[_ResolvedCalibrationObservation, ...],
+        observations: tuple[CalibrationObservation, ...],
+        calibration_artifact_id: ArtifactId | None,
+        through_date: date,
+        score_factor_id: str,
+        created_at: datetime,
+        status: str,
+        reason_codes: tuple[str, ...],
+    ) -> dict[str, Any]:
+        payload = _hypothesis_payload(
+            target_protocol=target_protocol,
+            target_reference=target_reference,
+            barrier_id=barrier_id,
+            protocol=protocol,
+            resolved=resolved,
+            observations=observations,
+            calibration_artifact_id=calibration_artifact_id,
+            through_date=through_date,
+            score_factor_id=score_factor_id,
+            created_at=created_at,
+            status=status,
+            reason_codes=reason_codes,
+        )
+        hypothesis_id, hypothesis_hash = content_identity(
+            "path-calibration-hypothesis",
+            payload,
+        )
+        self._repository.record(
+            artifact_id=hypothesis_id,
+            artifact_hash=hypothesis_hash,
+            artifact_kind="PATH_CALIBRATION_HYPOTHESIS",
+            evidence_authority="ENGINEERING_ONLY",
+            payload=payload,
+            created_at=created_at,
+        )
+        return {
+            "hypothesis_artifact_id": str(hypothesis_id),
+            "hypothesis_artifact_hash": hypothesis_hash,
+            **payload,
+        }
+
     def _load_observations(
         self,
         *,
@@ -224,7 +292,8 @@ class PostgresPathForecastCalibrationOperator:
                 """
                 SELECT slice.trading_date, slice.shadow_decision_id,
                        panel.panel_id, panel.panel_hash, row.symbol,
-                       exposure.exposure_json, label.label_json
+                       exposure.exposure_json,
+                       target_exposure.exposure_json, label.label_json
                 FROM research_evaluation_panel_slice_v2 AS slice
                 JOIN research_evaluation_panel_v2 AS panel
                   ON panel.panel_id = slice.panel_id
@@ -242,6 +311,15 @@ class PostgresPathForecastCalibrationOperator:
                  AND exposure.symbol = row.symbol
                  AND exposure.factor_family = 'FORECAST'
                  AND exposure.factor_id = %s
+                JOIN research_panel_factor_exposure AS target_exposure
+                  ON target_exposure.enrichment_id = enrichment.artifact_id
+                 AND target_exposure.symbol = row.symbol
+                 AND target_exposure.factor_family = 'FORECAST'
+                 AND target_exposure.factor_id = 'forecast.target_id'
+                 AND target_exposure.source_artifact_id
+                     = exposure.source_artifact_id
+                 AND target_exposure.source_content_hash
+                     = exposure.source_content_hash
                 JOIN targeted_shadow_outcome_label AS label
                   ON label.settlement_id = slice.targeted_outcome_id
                  AND label.symbol = row.symbol
@@ -268,16 +346,24 @@ class PostgresPathForecastCalibrationOperator:
             source = _mapping(exposure.get("source_reference"))
             if raw_score is None or source.get("artifact_kind") != "PATH_FORECAST":
                 continue
-            label = TargetOutcomeLabel.from_canonical_dict(_mapping(row[6]))
+            forecast_target = _mapping(row[6]).get("raw_text")
+            label = TargetOutcomeLabel.from_canonical_dict(_mapping(row[7]))
             target_id = str(label.target.artifact_id)
             if target_hashes.get(target_id) != label.target.content_hash:
                 raise ValueError("Path calibration Target lineage mismatch")
+            if forecast_target != target_id:
+                continue
             target_reference = ValidationArtifactReference(
                 "OUTCOME_TARGET",
                 label.target.artifact_id,
                 label.target.content_hash,
             )
             forecast_reference = ValidationArtifactReference.from_canonical_dict(source)
+            label_reference = ValidationArtifactReference(
+                "TARGET_OUTCOME_LABEL",
+                label.label_id,
+                label.label_hash,
+            )
             panel_reference = ValidationArtifactReference(
                 "RESEARCH_PANEL_V2",
                 ArtifactId(str(row[2])),
@@ -290,6 +376,7 @@ class PostgresPathForecastCalibrationOperator:
                     _ResolvedCalibrationObservation(
                         trading_date=row[0],
                         label_end_date=label.label_interval_end.date(),
+                        label_reference=label_reference,
                         target_reference=target_reference,
                         barrier_id=barrier_id,
                         observation_id=(
@@ -383,22 +470,39 @@ def _partition_observations(
     )
 
 
-def _hypothesis_result(
+def _hypothesis_payload(
     *,
+    target_protocol: OutcomeTargetProtocol,
     target_reference: ValidationArtifactReference,
     barrier_id: str,
     protocol: CalibrationProtocol,
     resolved: tuple[_ResolvedCalibrationObservation, ...],
     observations: tuple[CalibrationObservation, ...],
-    artifact_id: ArtifactId | None,
+    calibration_artifact_id: ArtifactId | None,
+    through_date: date,
+    score_factor_id: str,
+    created_at: datetime,
     status: str,
     reason_codes: tuple[str, ...],
 ) -> dict[str, Any]:
+    partitions = {item.observation_id: item.partition.value for item in observations}
     return {
+        "schema_version": "path-calibration-hypothesis/v1",
+        "target_protocol_reference": ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            target_protocol.protocol_id,
+            target_protocol.protocol_hash,
+        ).to_canonical_dict(),
         "target_reference": target_reference.to_canonical_dict(),
         "barrier_id": barrier_id,
-        "protocol_id": str(protocol.protocol_id),
+        "calibration_protocol_reference": ValidationArtifactReference(
+            "CALIBRATION_PROTOCOL",
+            protocol.protocol_id,
+            protocol.protocol_hash,
+        ).to_canonical_dict(),
         "method": protocol.method.value,
+        "through_date": through_date.isoformat(),
+        "score_factor_id": score_factor_id,
         "status": status,
         "resolved_sample_count": len(resolved),
         "fit_sample_count": sum(
@@ -408,25 +512,40 @@ def _hypothesis_result(
             item.partition is CalibrationPartition.VALIDATION
             for item in observations
         ),
-        "panel_references": [
-            item.to_canonical_dict()
-            for item in sorted(
-                {value.panel_reference for value in resolved},
-                key=lambda value: (str(value.artifact_id), value.content_hash),
-            )
-        ],
-        "forecast_references": [
-            item.to_canonical_dict()
-            for item in sorted(
-                {value.forecast_reference for value in resolved},
-                key=lambda value: (str(value.artifact_id), value.content_hash),
-            )
+        "observations": [
+            {
+                "observation_id": item.observation_id,
+                "trading_date": item.trading_date.isoformat(),
+                "label_end_date": item.label_end_date.isoformat(),
+                "label_reference": item.label_reference.to_canonical_dict(),
+                "target_reference": item.target_reference.to_canonical_dict(),
+                "barrier_id": item.barrier_id,
+                "raw_score": str(item.score),
+                "binary_outcome": item.outcome,
+                "partition": partitions.get(item.observation_id, "NOT_ASSIGNED"),
+                "panel_reference": item.panel_reference.to_canonical_dict(),
+                "forecast_reference": item.forecast_reference.to_canonical_dict(),
+            }
+            for item in resolved
         ],
         "calibration_artifact_id": (
-            None if artifact_id is None else str(artifact_id)
+            None
+            if calibration_artifact_id is None
+            else str(calibration_artifact_id)
         ),
+        "created_at": timestamp(created_at),
         "calibrated": False,
+        "formal_pit": False,
+        "formal_oos": False,
+        "production_authorized": False,
+        "qualification_evidence": None,
         "reason_codes": list(sorted(set(reason_codes))),
+        "limitations": [
+            "BACKFILLED_FREE_DATA_NOT_FORMAL_PIT",
+            "CALIBRATED_FALSE",
+            "FREE_DATA_EXPLORATORY",
+            "NO_TRADING_AUTHORITY",
+        ],
     }
 
 

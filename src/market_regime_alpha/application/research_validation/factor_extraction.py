@@ -590,6 +590,7 @@ def _forecast_exposures(symbols: tuple[str, ...], forecasts: tuple[PathForecast,
             continue
         reference = ValidationArtifactReference("PATH_FORECAST", forecast.envelope.artifact_id, forecast.envelope.content_hash)
         values = (
+            ("target_id", str(forecast.target_id)),
             ("expected_mfe", forecast.expected_mfe),
             ("expected_mae", forecast.expected_mae),
             ("usable_sample_count", forecast.usable_sample_count),

@@ -73,6 +73,17 @@ def _observation(day: int) -> ShadowPortfolioMarketObservation:
         trading_status=TradingStatus.TRADING,
         price_limit_state=PriceLimitState.NORMAL,
         trade_session=ShadowPortfolioTradeSession.CONTINUOUS_PM,
+        value_provenance=tuple(
+            (name, ShadowParameterProvenance.OBSERVED_FACT)
+            for name in (
+                "average_daily_amount",
+                "mark_price",
+                "price_limit_state",
+                "reference_price",
+                "trade_session",
+                "trading_status",
+            )
+        ),
         observed_at=observed_at,
         source_references=(_reference("MARKET_DATA", f"market-{day}"),),
         reason_codes=(),

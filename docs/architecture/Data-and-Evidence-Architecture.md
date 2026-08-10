@@ -49,7 +49,7 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 159 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–050 add only exploratory sample, Research Universe, Portfolio Shadow and engineering access-governance owners and do not weaken migration 046.
+The schema catalog currently contains 159 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–051 add only exploratory sample, Research Universe, Portfolio Shadow, engineering access-governance owners and Path Calibration Hypothesis evidence and do not weaken migration 046.
 
 ## Replay
 

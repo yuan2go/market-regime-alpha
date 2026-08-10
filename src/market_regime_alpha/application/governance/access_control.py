@@ -667,6 +667,118 @@ class PostgresAccessGovernance:
             reason_codes=tuple(sorted(reasons)),
         )
 
+    def authorize_operation(
+        self,
+        *,
+        principal_id: ArtifactId,
+        permission: SecurityPermission,
+        resource_reference: ValidationArtifactReference,
+        approval_decision_id: ArtifactId | None,
+        occurred_at: datetime,
+    ) -> AuthorizationDecision:
+        """Authorize and audit one operator invocation against an exact resource.
+
+        Non-Admin Shadow and recovery mutations require an independently approved
+        engineering resource.  This never grants Production or Broker authority.
+        """
+
+        def operation(connection: Any) -> AuthorizationDecision:
+            status = _principal_status(connection, principal_id)
+            roles = _current_roles(connection, principal_id)
+            allowed = status is PrincipalStatus.ACTIVE and any(
+                permission in _ROLE_PERMISSIONS[role] for role in roles
+            )
+            reasons: set[str] = set()
+            if status is not PrincipalStatus.ACTIVE:
+                reasons.add("PRINCIPAL_NOT_ACTIVE")
+            if not any(permission in _ROLE_PERMISSIONS[role] for role in roles):
+                reasons.add("PERMISSION_NOT_GRANTED")
+            approval_required = (
+                permission
+                in {SecurityPermission.RUN_SHADOW, SecurityPermission.RECOVER_RUNTIME}
+                and SecurityRole.ADMIN not in roles
+            )
+            if approval_required:
+                approval_reason = _validate_operation_approval(
+                    connection,
+                    principal_id=principal_id,
+                    permission=permission,
+                    resource_reference=resource_reference,
+                    approval_decision_id=approval_decision_id,
+                )
+                if approval_reason is not None:
+                    allowed = False
+                    reasons.add(approval_reason)
+                else:
+                    reasons.add("INDEPENDENT_ENGINEERING_APPROVAL_VERIFIED")
+            elif SecurityRole.ADMIN in roles:
+                reasons.add("ADMIN_ENGINEERING_APPROVAL_EXEMPTION")
+            if allowed:
+                reasons.add("ENGINEERING_PERMISSION_GRANTED")
+            self._audit(
+                connection,
+                event_kind=(
+                    "OPERATOR_INVOCATION_AUTHORIZED"
+                    if allowed
+                    else "OPERATOR_INVOCATION_DENIED"
+                ),
+                actor=principal_id,
+                target_kind=resource_reference.artifact_kind,
+                target_id=resource_reference.artifact_id,
+                details=tuple(
+                    sorted(
+                        {
+                            ("allowed", str(allowed).lower()),
+                            ("permission", permission.value),
+                            ("resource_hash", resource_reference.content_hash),
+                            *(
+                                ()
+                                if approval_decision_id is None
+                                else (("approval_decision_id", str(approval_decision_id)),)
+                            ),
+                            *(("reason_code", item) for item in reasons),
+                        }
+                    )
+                ),
+                occurred_at=occurred_at,
+            )
+            return AuthorizationDecision(
+                principal_id=principal_id,
+                status=status,
+                roles=roles,
+                permission=permission,
+                allowed=allowed,
+                reason_codes=tuple(sorted(reasons)),
+            )
+
+        return self._factory.run_transaction(operation)
+
+    def audit_denied_operation(
+        self,
+        *,
+        principal_id: ArtifactId,
+        resource_reference: ValidationArtifactReference,
+        reason_code: str,
+        occurred_at: datetime,
+    ) -> None:
+        def operation(connection: Any) -> None:
+            _principal_status(connection, principal_id)
+            self._audit(
+                connection,
+                event_kind="OPERATOR_INVOCATION_DENIED",
+                actor=principal_id,
+                target_kind=resource_reference.artifact_kind,
+                target_id=resource_reference.artifact_id,
+                details=(
+                    ("allowed", "false"),
+                    ("reason_code", reason_code),
+                    ("resource_hash", resource_reference.content_hash),
+                ),
+                occurred_at=occurred_at,
+            )
+
+        self._factory.run_transaction(operation)
+
     def request_approval(
         self,
         *,
@@ -1097,6 +1209,7 @@ class PostgresAccessGovernance:
                 audit_id, audit_hash, event_kind, actor_principal_id,
                 target_kind, target_id, payload_json, occurred_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (audit_id) DO NOTHING
             """,
             (
                 str(audit_id),
@@ -1152,6 +1265,52 @@ def _current_roles(
             key=lambda item: item.value,
         )
     )
+
+
+def _validate_operation_approval(
+    connection: Any,
+    *,
+    principal_id: ArtifactId,
+    permission: SecurityPermission,
+    resource_reference: ValidationArtifactReference,
+    approval_decision_id: ArtifactId | None,
+) -> str | None:
+    if approval_decision_id is None:
+        return "INDEPENDENT_ENGINEERING_APPROVAL_REQUIRED"
+    expected_action = {
+        SecurityPermission.RUN_SHADOW: ApprovalAction.SHADOW_OPERATION,
+        SecurityPermission.RECOVER_RUNTIME: ApprovalAction.RECOVERY_OPERATION,
+    }.get(permission)
+    if expected_action is None:
+        return "APPROVAL_ACTION_NOT_DEFINED"
+    row = connection.execute(
+        """
+        SELECT decision.decision, decision.decided_by,
+               approval.action_kind, approval.resource_kind,
+               approval.resource_id, approval.resource_hash,
+               approval.requested_by
+        FROM security_approval_decision AS decision
+        JOIN security_approval AS approval
+          ON approval.approval_id = decision.approval_id
+        WHERE decision.decision_id = %s
+        """,
+        (str(approval_decision_id),),
+    ).fetchone()
+    if row is None:
+        return "APPROVAL_DECISION_NOT_FOUND"
+    if str(row[0]) != ApprovalDecisionKind.APPROVED.value:
+        return "APPROVAL_NOT_APPROVED"
+    if str(row[1]) == str(principal_id) or str(row[6]) != str(principal_id):
+        return "APPROVAL_PRINCIPAL_SEPARATION_MISMATCH"
+    if str(row[2]) != expected_action.value:
+        return "APPROVAL_ACTION_MISMATCH"
+    if (
+        str(row[3]) != resource_reference.artifact_kind
+        or str(row[4]) != str(resource_reference.artifact_id)
+        or str(row[5]) != resource_reference.content_hash
+    ):
+        return "APPROVAL_RESOURCE_MISMATCH"
+    return None
 
 
 def _active_admin_count(connection: Any) -> int:

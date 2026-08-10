@@ -28,6 +28,7 @@ from market_regime_alpha.application.strategy_shadow.portfolio import (
     ShadowPortfolioMarketObservation,
     ShadowPortfolioPolicy,
     ShadowPortfolioTradeSession,
+    _validate_market_value_provenance,
     build_shadow_portfolio,
     run_shadow_portfolio_day,
 )
@@ -50,6 +51,7 @@ class PortfolioMarketInput:
     trading_status: TradingStatus
     price_limit_state: PriceLimitState
     trade_session: ShadowPortfolioTradeSession
+    value_provenance: tuple[tuple[str, ShadowParameterProvenance], ...]
     risk_weight: Decimal | None
     risk_weight_provenance: ShadowParameterProvenance | None
     reason_codes: tuple[str, ...]
@@ -59,6 +61,12 @@ class PortfolioMarketInput:
             raise ValueError("Portfolio risk weight requires explicit provenance")
         if self.risk_weight is not None and self.risk_weight <= 0:
             raise ValueError("Portfolio risk weight must be positive")
+        _validate_market_value_provenance(
+            self.value_provenance,
+            reference_price=self.reference_price,
+            mark_price=self.mark_price,
+            average_daily_amount=self.average_daily_amount,
+        )
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("Portfolio market reason codes must be sorted")
 
@@ -74,6 +82,17 @@ class PortfolioMarketInput:
             trading_status=TradingStatus(str(value["trading_status"])),
             price_limit_state=PriceLimitState(str(value["price_limit_state"])),
             trade_session=ShadowPortfolioTradeSession(str(value["trade_session"])),
+            value_provenance=tuple(
+                sorted(
+                    (
+                        str(name),
+                        ShadowParameterProvenance(str(provenance)),
+                    )
+                    for name, provenance in _mapping(
+                        value["value_provenance"]
+                    ).items()
+                )
+            ),
             risk_weight=risk_weight,
             risk_weight_provenance=(
                 None
@@ -94,6 +113,10 @@ class PortfolioMarketInput:
             "trading_status": self.trading_status.value,
             "price_limit_state": self.price_limit_state.value,
             "trade_session": self.trade_session.value,
+            "value_provenance": {
+                name: provenance.value
+                for name, provenance in self.value_provenance
+            },
             "risk_weight": _decimal_text(self.risk_weight),
             "risk_weight_provenance": (
                 None
@@ -369,6 +392,20 @@ class PortfolioShadowDayOperator:
                 trading_status=TradingStatus.UNKNOWN,
                 price_limit_state=PriceLimitState.UNKNOWN,
                 trade_session=ShadowPortfolioTradeSession.UNKNOWN,
+                value_provenance=(
+                    (
+                        "price_limit_state",
+                        ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                    ),
+                    (
+                        "trade_session",
+                        ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                    ),
+                    (
+                        "trading_status",
+                        ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                    ),
+                ),
                 risk_weight=None,
                 risk_weight_provenance=None,
                 reason_codes=("MARKET_OBSERVATION_MISSING",),
@@ -406,6 +443,7 @@ class PortfolioShadowDayOperator:
             trading_status=market_input.trading_status,
             price_limit_state=market_input.price_limit_state,
             trade_session=market_input.trade_session,
+            value_provenance=market_input.value_provenance,
             observed_at=observed_at,
             source_references=tuple(
                 sorted(

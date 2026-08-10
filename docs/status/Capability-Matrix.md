@@ -27,7 +27,7 @@
 | Prospective attestation | Implemented mechanics | owner-checked, always `prospective_proven=false` |
 | Evaluation Dataset / Panel V2 / Factor Extraction | Implemented | immutable engineering evidence |
 | Factor catalog / de-dup / ablation / liquidity-capacity | Implemented harness | versioned lineage and provenance; exploratory assumptions are not facts or calibration |
-| Calibration | Operational engineering complete | `settle-day` resolves Panel V2 forecasts and factual multi-horizon Target labels from PostgreSQL and records 18 default-Platt hypotheses with date partitions and label-aware purge; the harness also supports Isotonic/Binning; insufficient samples are `NOT_ESTIMABLE`; every result is `calibrated=false` |
+| Calibration | Operational engineering complete | `settle-day` persists 18 target/barrier hypotheses; fitting requires exact Forecast/Outcome Target identity, date partitions and label-aware purge, so the current multi-session Forecast remains `NOT_ESTIMABLE` for T+1 targets; the harness supports Platt/Isotonic/Binning and every result is `calibrated=false` |
 | Formal Evaluation | Engineering complete metric runtime | cross-sectional IC/RankIC, Top-K/spread/hit/MFE/MAE/turnover/drawdown/lift, cluster CI and multiple testing; durable Formal OOS Authority disabled |
 | Entry research | Implemented harness | Shadow decision only; no Canonical `ENTER` |
 | Strategy Shadow | Operational loop implemented | Entry/Fill/Position/Holding/Exit/Outcome via Continuous CLI; simulated ledger, no real mutation |
@@ -35,6 +35,6 @@
 | Operator surface convergence | Implemented | six installed scripts and six installed CLI module guards; day/settle/strategy/portfolio/report/resume/replay under existing CLIs |
 | Holding/Exit validation | Implemented engineering floors | `holding_exit_validated=false` |
 | Production Admission | Projection only | always `BLOCKED`; no final writer |
-| Principal/RBAC/Approval/Audit | Engineering complete | append-only PostgreSQL roles, serialized bootstrap/last-Admin invariants, revocation, separation and audit; Continuous CLI enforces operation permissions, but external authentication is not bound and no Production/Broker permission exists |
-| Recovery/DR | Operational engineering complete | journal resume, recovery-audit, replay and isolated PostgreSQL/artifact backup-restore verification; deployment drill evidence pending |
+| Principal/RBAC/Approval/Audit | Engineering complete | append-only PostgreSQL roles, serialized bootstrap/last-Admin invariants, revocation and separation; CLI resources and allowed/denied invocations are audited, non-Admin Shadow/recovery mutations require exact independent approval, and Production mode is rejected before Journal mutation; external authentication is not bound |
+| Recovery/DR | Operational engineering complete | expired leases use `resume`; due `PENDING`/Provider retries use canonical `run-day`; Shadow settlement/strategy recovery, replay and isolated PostgreSQL/artifact backup-restore verification are explicit; deployment drill evidence pending |
 | Broker integration | Prohibited/currently absent | no live adapter authority |

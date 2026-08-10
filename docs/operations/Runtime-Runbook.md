@@ -39,7 +39,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 050, `security_governance`. Expected schema catalog: 159 tables. Migrations 047–050 add retrospective free evidence, Research Universe, Portfolio Shadow and engineering access-governance owners; migration 046's qualification and Production constraints remain unchanged and fail-closed. Missing/unreachable PostgreSQL is a blocked operation; there is no alternate persistent backend.
+Expected head: migration 051, `path_calibration_hypothesis`. Expected schema catalog: 159 tables. Migrations 047–051 add retrospective free evidence, Research Universe, Portfolio Shadow, engineering access-governance owners and immutable calibration-hypothesis evidence; migration 046's qualification and Production constraints remain unchanged and fail-closed. Missing/unreachable PostgreSQL is a blocked operation; there is no alternate persistent backend.
 
 Migration 046 intentionally stops if an existing database contains reference-only qualified Validation or Historical Sample rows. Do not update or delete those append-only rows in place. Preserve/export the database, audit the owning evidence, and use a separately reviewed forward-repair migration before retrying 046.
 
@@ -67,7 +67,11 @@ Bootstrap and administer engineering Principals through `model-governance access
 `continuous-research` checks the active Role/Permission before any
 read or mutation. The Principal ID remains a caller assertion until a future
 external authentication binding exists, so this is engineering RBAC rather
-than production authentication. `run-due` remains the
+than production authentication. Every invocation is audited against a
+content-addressed operation resource. Non-Admin Shadow and recovery mutations
+also require `--approval-decision-id` for an exact independently approved
+resource; the denial output reports the required resource ID/hash. Production
+mode is rejected before any Runtime Journal mutation. `run-due` remains the
 canonical tick operation. `run-day` invokes that same operation and, for a
 completed `SHADOW` run, resolves its PostgreSQL Summary and freezes Research
 Shadow. Before a due Research/Shadow decision it also attempts the bounded
@@ -94,7 +98,10 @@ Research Shadow IDs from PostgreSQL and acquires BaoStock five-minute OHLC after
 close for both current and missed sessions. It writes Outcome, Targeted Outcome,
 Panel V2 and Factor Enrichment artifacts. The same step derives eighteen
 multi-horizon/barrier calibration hypotheses from the frozen Forecast exposure
-and factual Target labels. It records a versioned engineering protocol (Platt
+and factual Target labels. A hypothesis can fit only when the Forecast Target
+identity equals the Outcome Target identity; the current multi-session Forecast
+is therefore not reused as a T+1 forecast and remains `NOT_ESTIMABLE`. Positive
+and negative hypotheses persist their complete lineage. It records a versioned engineering protocol (Platt
 by default; the research harness also supports Isotonic and Binning) with
 trading-date partitions and label-aware purge; insufficient
 samples produce `NOT_ESTIMABLE`, and every artifact remains
@@ -113,7 +120,8 @@ only the isolated Strategy Shadow ledger.
 
 `portfolio-shadow-day` resolves current Candidate scores, the settled Panel
 and any previous Portfolio state from PostgreSQL. Its input supplies a stable
-versioned Policy and explicit market observations. Missing price, ADV,
+versioned Policy and explicit per-value provenance for prices, ADV, trading
+status, price-limit state and session observations. Missing price, ADV,
 trading-status, price-limit or session evidence becomes an unfilled Shadow
 Intent. `portfolio-shadow-replay` verifies the immutable predecessor/CAS chain.
 Shadow Fill/Position never become real Fill/Position.

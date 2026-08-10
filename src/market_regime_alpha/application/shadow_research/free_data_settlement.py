@@ -417,6 +417,7 @@ class FreeDataSettlementOperator:
             state_policy_references=decision.state_policy_references,
             dataset=decision_dataset,
             feature_bundle=feature_bundle,
+            feature_wrapper=static,
             signal_run=signal.artifact,
             forecasts=tuple(item.artifact.forecast for item in forecasts),
             state_sources=(),

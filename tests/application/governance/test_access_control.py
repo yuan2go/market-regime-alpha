@@ -210,6 +210,92 @@ def test_security_bootstrap_and_commands_are_single_use(
         )
 
 
+def test_shadow_operator_requires_exact_independent_approval_and_is_audited(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    governance = PostgresAccessGovernance(postgres_factory)
+    admin = governance.bootstrap_admin(
+        external_subject="local:operator-approval-admin",
+        display_name="Operator Approval Admin",
+        reason="operator approval fixture",
+        occurred_at=NOW,
+        idempotency_key="operator-approval-admin",
+    )
+    operator = governance.create_principal(
+        actor=admin.principal_id,
+        external_subject="local:shadow-operator",
+        display_name="Shadow Operator",
+        reason="operator approval fixture",
+        occurred_at=NOW + timedelta(seconds=1),
+        idempotency_key="shadow-operator",
+    )
+    approver = governance.create_principal(
+        actor=admin.principal_id,
+        external_subject="local:shadow-approver",
+        display_name="Shadow Approver",
+        reason="operator approval fixture",
+        occurred_at=NOW + timedelta(seconds=2),
+        idempotency_key="shadow-approver",
+    )
+    for principal, role, key, offset in (
+        (operator, SecurityRole.OPERATOR, "grant-shadow-operator", 3),
+        (approver, SecurityRole.APPROVER, "grant-shadow-approver", 4),
+    ):
+        governance.change_role(
+            actor=admin.principal_id,
+            principal_id=principal.principal_id,
+            role=role,
+            event_kind=RoleEventKind.GRANTED,
+            reason="operator approval fixture",
+            occurred_at=NOW + timedelta(seconds=offset),
+            idempotency_key=key,
+        )
+    resource = ValidationArtifactReference(
+        "CONTINUOUS_OPERATOR_OPERATION",
+        ArtifactId("continuous-operator:shadow-day"),
+        canonical_hash({"operation": "shadow-day"}),
+    )
+    denied = governance.authorize_operation(
+        principal_id=operator.principal_id,
+        permission=SecurityPermission.RUN_SHADOW,
+        resource_reference=resource,
+        approval_decision_id=None,
+        occurred_at=NOW + timedelta(seconds=5),
+    )
+    assert not denied.allowed
+    assert "INDEPENDENT_ENGINEERING_APPROVAL_REQUIRED" in denied.reason_codes
+    approval = governance.request_approval(
+        requester=operator.principal_id,
+        action_kind=ApprovalAction.SHADOW_OPERATION,
+        resource_reference=resource,
+        reason="approve exact Shadow operation",
+        requested_at=NOW + timedelta(seconds=6),
+        idempotency_key="request-shadow-operation",
+    )
+    approval_decision = governance.decide_approval(
+        approval_id=approval.approval_id,
+        approver=approver.principal_id,
+        decision=ApprovalDecisionKind.APPROVED,
+        reason="independent Shadow review",
+        decided_at=NOW + timedelta(seconds=7),
+        idempotency_key="approve-shadow-operation",
+    )
+    allowed = governance.authorize_operation(
+        principal_id=operator.principal_id,
+        permission=SecurityPermission.RUN_SHADOW,
+        resource_reference=resource,
+        approval_decision_id=approval_decision.decision_id,
+        occurred_at=NOW + timedelta(seconds=8),
+    )
+    assert allowed.allowed
+    assert "INDEPENDENT_ENGINEERING_APPROVAL_VERIFIED" in allowed.reason_codes
+    events = governance.audit_events(reader=approver.principal_id)
+    assert [item["event_kind"] for item in events[-2:]] == [
+        "APPROVAL_DECIDED",
+        "OPERATOR_INVOCATION_AUTHORIZED",
+    ]
+
+
 def test_security_global_invariants_are_serialized(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:

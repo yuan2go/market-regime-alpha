@@ -47,6 +47,7 @@ class PostgresResearchValidationRepository:
         qualified: bool = False,
         production_authorized: bool = False,
     ) -> None:
+        _reject_unresolved_authority_claims(payload)
         if (
             qualified
             or production_authorized
@@ -306,6 +307,10 @@ class PostgresResearchValidationRepository:
         artifact: CalibrationArtifact,
         observations: tuple[CalibrationObservation, ...],
     ) -> None:
+        if artifact.calibrated or artifact.qualification_evidence is not None:
+            raise ValueError(
+                "Calibration qualification requires a future owner-resolving writer"
+            )
         if artifact.protocol_reference.artifact_id != protocol.protocol_id or (
             artifact.protocol_reference.content_hash != protocol.protocol_hash
         ):
@@ -444,6 +449,7 @@ class PostgresResearchValidationRepository:
         payload: Mapping[str, Any],
         created_at: datetime,
     ) -> None:
+        _reject_unresolved_authority_claims(payload)
         if canonical_hash(dict(payload)) != artifact_hash:
             raise ValueError("Research Validation payload hash mismatch")
         connection.execute(
@@ -462,3 +468,21 @@ class PostgresResearchValidationRepository:
         ).fetchone()
         if stored is None or str(stored[0]) != artifact_hash:
             raise ValueError("Research Validation artifact identity conflict")
+
+
+def _reject_unresolved_authority_claims(payload: Mapping[str, Any]) -> None:
+    for field in (
+        "calibrated",
+        "formal_oos",
+        "formal_pit",
+        "production_authorized",
+        "qualified",
+    ):
+        if payload.get(field) is True:
+            raise ValueError(
+                f"Research Validation payload cannot claim unresolved {field} authority"
+            )
+    if payload.get("qualification_evidence") is not None:
+        raise ValueError(
+            "Research Validation payload cannot bind unresolved qualification evidence"
+        )

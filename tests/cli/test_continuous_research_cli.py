@@ -24,6 +24,7 @@ from tests.application.continuous_research.test_runner import NOW
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
+from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from tests.application.continuous_research.test_runner import _command, _tick
 from tests.persistence.postgres.conftest import (
     TEST_DATABASE_URL_ENV,
@@ -150,6 +151,8 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "research-universe-replay",
             "--snapshot-id",
             "research-universe-1",
+            "--artifact-root",
+            "runtime-output",
         ]
     )
     portfolio_day = build_parser().parse_args(
@@ -351,6 +354,52 @@ def test_cli_requires_authorized_principal_for_shadow_mutation(
             str(command_path),
         ]
     ) == SUCCESS
+
+
+def test_cli_rejects_production_mode_before_journal_mutation(
+    postgres_factory: PostgresConnectionFactory,
+    capsys,
+    tmp_path,
+) -> None:
+    research = _command()
+    production = type(research).create(
+        idempotency_key="cli-production-must-remain-closed",
+        trading_date=research.trading_date,
+        requested_symbols=research.requested_symbols,
+        trading_calendar_id=research.trading_calendar_id,
+        trading_calendar_hash=research.trading_calendar_hash,
+        policy_id=research.policy_id,
+        policy_hash=research.policy_hash,
+        provider_configuration_id=research.provider_configuration_id,
+        provider_configuration_hash=research.provider_configuration_hash,
+        research_configuration_id=research.research_configuration_id,
+        research_configuration_hash=research.research_configuration_hash,
+        code_revision=research.code_revision,
+        authority_mode=RuntimeAuthorityMode.PRODUCTION,
+        limitations=research.limitations,
+    )
+    command_path = tmp_path / "production-run.json"
+    command_path.write_text(
+        json.dumps(production.to_canonical_dict()),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            *_authority_args(postgres_factory),
+            "prepare",
+            "--run-command",
+            str(command_path),
+        ]
+    ) == ARGUMENT_ERROR
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason_code"] == "OPERATOR_NOT_AUTHORIZED"
+    with postgres_factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            "SELECT count(*) FROM continuous_research_run WHERE run_id = %s",
+            (str(production.run_id),),
+        ).fetchone()
+    assert row == (0,)
 
 
 def test_cli_schedules_and_reserves_a_due_tick(

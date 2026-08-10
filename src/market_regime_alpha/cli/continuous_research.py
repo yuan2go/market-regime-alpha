@@ -70,6 +70,9 @@ from market_regime_alpha.application.governance.access_control import (
     PostgresAccessGovernance,
     SecurityPermission,
 )
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
     FreeHistoricalSampleBuildResult,
@@ -110,6 +113,7 @@ from market_regime_alpha.application.strategy_shadow.portfolio_operator import (
     PortfolioShadowDayOperator,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
     BaoStockFreeSupplementalClient,
@@ -216,6 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--principal-id",
         help="Required active engineering Principal; caller identity is not authenticated.",
     )
+    parser.add_argument(
+        "--approval-decision-id",
+        help="Independent approval required for non-Admin Shadow/recovery mutations.",
+    )
     subparsers = parser.add_subparsers(dest="operation", required=True)
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--run-command", type=Path, required=True)
@@ -266,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     universe_sync.add_argument("--artifact-root", type=Path, required=True)
     universe_replay = subparsers.add_parser("research-universe-replay")
     universe_replay.add_argument("--snapshot-id", required=True)
+    universe_replay.add_argument("--artifact-root", type=Path, required=True)
     report_day = subparsers.add_parser("report-day")
     report_day.add_argument("--trading-date", required=True)
     report_day.add_argument("--at", required=True)
@@ -322,14 +331,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             factory,
             apply_migrations=False,
         )
-        permission = _required_permission(args)
-        decision = governance.authorization(
-            ArtifactId(args.principal_id),
-            permission,
+        resource_reference = _operator_resource(args)
+        try:
+            permission = _required_permission(args)
+        except PermissionError:
+            governance.audit_denied_operation(
+                principal_id=ArtifactId(args.principal_id),
+                resource_reference=resource_reference,
+                reason_code="PRODUCTION_RUNTIME_AUTHORITY_CLOSED",
+                occurred_at=_operational_now(),
+            )
+            raise
+        decision = governance.authorize_operation(
+            principal_id=ArtifactId(args.principal_id),
+            permission=permission,
+            resource_reference=resource_reference,
+            approval_decision_id=(
+                None
+                if args.approval_decision_id is None
+                else ArtifactId(args.approval_decision_id)
+            ),
+            occurred_at=_operational_now(),
         )
         if not decision.allowed:
             raise PermissionError(
-                f"Principal is not authorized for {permission.value}"
+                f"Principal is not authorized for {permission.value}; "
+                f"resource={resource_reference.artifact_id}@"
+                f"{resource_reference.content_hash}; "
+                f"reasons={','.join(decision.reason_codes)}"
             )
         journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
         output = (
@@ -402,7 +431,8 @@ def _dispatch(
         )
     if args.operation == "research-universe-replay":
         return FreeResearchUniverseOperator(factory).replay(
-            ArtifactId(args.snapshot_id)
+            ArtifactId(args.snapshot_id),
+            artifact_root=args.artifact_root.resolve(),
         )
     if args.operation == "recovery-audit":
         return PostgresRecoveryAudit(factory).inspect(
@@ -994,21 +1024,54 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         run_command = ContinuousResearchCommand.from_canonical_dict(
             _load_json_object(args.run_command)
         )
-        return (
-            SecurityPermission.RUN_RESEARCH
-            if run_command.authority_mode is RuntimeAuthorityMode.RESEARCH
-            else SecurityPermission.RUN_SHADOW
-        )
+        return _runtime_permission(run_command.authority_mode)
     if operation == "admit-tick":
         tick_command = RuntimeTickCommand.from_canonical_dict(
             _load_json_object(args.tick_command)
         )
-        return (
-            SecurityPermission.RUN_RESEARCH
-            if tick_command.authority_mode is RuntimeAuthorityMode.RESEARCH
-            else SecurityPermission.RUN_SHADOW
-        )
+        return _runtime_permission(tick_command.authority_mode)
     return SecurityPermission.RUN_SHADOW
+
+
+def _runtime_permission(mode: RuntimeAuthorityMode) -> SecurityPermission:
+    if mode is RuntimeAuthorityMode.RESEARCH:
+        return SecurityPermission.RUN_RESEARCH
+    if mode is RuntimeAuthorityMode.SHADOW:
+        return SecurityPermission.RUN_SHADOW
+    raise PermissionError(
+        "Free-data Continuous CLI cannot authorize Production Runtime mutations"
+    )
+
+
+def _operator_resource(args: argparse.Namespace) -> ValidationArtifactReference:
+    omitted = {
+        "approval_decision_id",
+        "application_schema",
+        "artifact_root",
+        "database_url",
+        "output_root",
+        "principal_id",
+    }
+    arguments: dict[str, Any] = {}
+    for name, value in sorted(vars(args).items()):
+        if name in omitted or value is None:
+            continue
+        if isinstance(value, Path):
+            if value.suffix.lower() == ".json" and value.is_file():
+                arguments[name] = _load_json_object(value)
+            continue
+        arguments[name] = value
+    payload = {
+        "schema_version": "continuous-operator-resource/v1",
+        "operation": str(args.operation),
+        "arguments": arguments,
+    }
+    digest = canonical_hash(payload)
+    return ValidationArtifactReference(
+        "CONTINUOUS_OPERATOR_OPERATION",
+        ArtifactId(f"continuous-operator:{digest[7:]}"),
+        digest,
+    )
 
 
 def _emit(payload: Mapping[str, Any]) -> None:

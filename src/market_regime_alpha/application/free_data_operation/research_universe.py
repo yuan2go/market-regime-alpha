@@ -21,6 +21,7 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.universe.postgres_research import (
     PostgresFreeResearchUniverseRepository,
 )
+from market_regime_alpha.universe.research import FreeDataEvidenceOrigin
 
 
 class FreeResearchUniverseAcquirer(Protocol):
@@ -59,8 +60,33 @@ class FreeResearchUniverseOperator:
         snapshot = self._repository.publish(acquired.snapshot)
         return _result(snapshot, archive_path=str(archive_path), replayed=False)
 
-    def replay(self, snapshot_id: ArtifactId) -> dict[str, object]:
-        return _result(self._repository.get(snapshot_id), archive_path=None, replayed=True)
+    def replay(
+        self,
+        snapshot_id: ArtifactId,
+        *,
+        artifact_root: Path,
+    ) -> dict[str, object]:
+        snapshot = self._repository.get(snapshot_id)
+        archive_path = (
+            artifact_root
+            / "free-data-research-universe"
+            / "raw-archives"
+            / snapshot.raw_archive_id
+        )
+        replay = SourceReplayArchiveReader().read(archive_path)
+        if (
+            replay.archive_id != snapshot.raw_archive_id
+            or replay.source_manifest.source_manifest_id
+            != snapshot.source_manifest_reference.artifact_id
+            or replay.source_manifest.content_hash
+            != snapshot.source_manifest_reference.content_hash
+        ):
+            raise ValueError("Research Universe replay archive lineage mismatch")
+        return _result(
+            snapshot,
+            archive_path=str(archive_path),
+            replayed=True,
+        )
 
 
 def _result(snapshot, *, archive_path: str | None, replayed: bool) -> dict[str, object]:
@@ -74,6 +100,11 @@ def _result(snapshot, *, archive_path: str | None, replayed: bool) -> dict[str, 
         "included_count": snapshot.included_count,
         "unknown_count": snapshot.unknown_count,
         "evidence_origin": snapshot.evidence_origin.value,
+        "runtime_evidence_origin": (
+            FreeDataEvidenceOrigin.ARCHIVED_REPLAY.value
+            if replayed
+            else snapshot.evidence_origin.value
+        ),
         "data_eligibility": snapshot.data_eligibility.value,
         "evidence_ceiling": snapshot.evidence_ceiling.value,
         "raw_archive": archive_path,

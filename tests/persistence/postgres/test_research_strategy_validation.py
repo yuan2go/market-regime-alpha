@@ -15,6 +15,7 @@ from market_regime_alpha.application.continuous_research.runtime_authority_evide
 )
 from market_regime_alpha.application.research_validation.common import ValidationArtifactReference
 from market_regime_alpha.application.research_validation.calibration import (
+    CalibrationArtifact,
     CalibrationMethod,
     CalibrationObservation,
     CalibrationPartition,
@@ -287,6 +288,55 @@ def test_postgres_calibration_records_complete_unqualified_lineage(
         ("validation-1", "VALIDATION"),
     ]
     assert artifact.calibrated is False
+
+
+def test_postgres_calibration_writer_rejects_caller_supplied_qualification(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    now = datetime(2026, 8, 10, 8, tzinfo=UTC)
+    protocol = CalibrationProtocol.create(
+        protocol_version="rejected-qualified-calibration-v1",
+        method=CalibrationMethod.PLATT_LOGISTIC,
+        minimum_fit_samples=2,
+        maximum_iterations=5,
+    )
+    observations = (
+        CalibrationObservation("fit-1", Decimal("0.1"), 0, CalibrationPartition.FIT),
+        CalibrationObservation("fit-2", Decimal("0.9"), 1, CalibrationPartition.FIT),
+        CalibrationObservation(
+            "validation-1", Decimal("0.8"), 1, CalibrationPartition.VALIDATION
+        ),
+        CalibrationObservation("oos-1", Decimal("0.7"), 1, CalibrationPartition.OOS),
+    )
+    engineering = fit_calibration(
+        protocol=protocol,
+        observations=observations,
+        created_at=now,
+    )
+    qualification = _ref("QUALIFICATION_EVIDENCE", "caller-supplied")
+    promoted_payload = {
+        **engineering.identity_payload(),
+        "calibrated": True,
+        "qualification_evidence": qualification.to_canonical_dict(),
+    }
+    promoted = CalibrationArtifact(
+        artifact_id=ArtifactId("caller-supplied-calibration"),
+        artifact_hash=canonical_hash(promoted_payload),
+        protocol_reference=engineering.protocol_reference,
+        fit=engineering.fit,
+        evaluations=engineering.evaluations,
+        calibrated=True,
+        qualification_evidence=qualification,
+        created_at=engineering.created_at,
+        limitations=engineering.limitations,
+    )
+
+    with pytest.raises(ValueError, match="future owner-resolving writer"):
+        PostgresResearchValidationRepository(postgres_factory).record_calibration(
+            protocol=protocol,
+            artifact=promoted,
+            observations=observations,
+        )
 
 
 def test_migration_046_rejects_reference_only_authority_rows(

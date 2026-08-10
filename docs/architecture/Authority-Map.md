@@ -106,11 +106,11 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Canonical Writer:** `FreeResearchUniverseOperator` through `PostgresFreeResearchUniverseRepository`.
 - **Reader:** snapshot/member reload, latest-as-of and replay Readers.
 - **Repository:** `PostgresFreeResearchUniverseRepository`.
-- **PostgreSQL tables:** `free_research_universe_snapshot`, `free_research_universe_member`.
+- **PostgreSQL tables:** `free_data_research_universe_snapshot`, `free_data_research_universe_member`.
 - **Artifact / Receipt:** content-addressed Security Master raw archive/SourceManifest and `FreeResearchUniverseSnapshot`.
 - **Runtime caller:** `continuous-research research-universe-sync`; archived replay uses `research-universe-replay`.
 - **Downstream consumer:** research population/audit Readers; the bounded Operational Universe remains a separate capacity control.
-- **Replay mechanism:** exact owner-row ID/hash reconstruction from immutable raw archive and member payloads.
+- **Replay mechanism:** exact owner-row ID/hash reconstruction, member-projection comparison and checksum/identity verification of the immutable raw archive supplied to `research-universe-replay`.
 - **Evidence ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_PIT_NOT_ESTABLISHED`; unknown listing facts remain `UNKNOWN` and are never silently included or discarded.
 - **Legacy replacement:** no listing-date or current-status heuristic may write Daily Eligibility or Formal PIT facts.
 
@@ -350,7 +350,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Artifact / Receipt:** engineering Validation artifacts, Historical Sample Dataset, Calibration artifact, Evaluation result and Entry/Holding evidence.
 - **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
 - **Downstream consumer:** human research review and future owner-specific qualification writers.
-- **Replay mechanism:** immutable payload/sample reload plus exact calibration protocol, fit, evaluation and partition-binding reload; no qualification replay/writer exists.
+- **Replay mechanism:** immutable payload/sample reload plus exact calibration hypothesis (including Target/label/Panel/Forecast references, raw score/outcome and negative reasons), protocol, fit, evaluation and partition-binding reload; no qualification replay/writer exists.
 - **Evidence ceiling:** migration 046 enforces engineering/unqualified only.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
@@ -380,7 +380,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Repository:** `PostgresAccessGovernance`.
 - **PostgreSQL tables:** `security_principal`, `security_principal_status_event`, `security_role_event`, `security_approval`, `security_approval_decision`, `security_audit_event`, `security_governance_command`.
 - **Artifact / Receipt:** content-addressed Principal, Role event, Approval and Approval Decision.
-- **Runtime caller:** `model-governance access-*` manages facts; every `continuous-research` command requires an active `--principal-id` and checks its operation-specific engineering permission.
+- **Runtime caller:** `model-governance access-*` manages facts; every `continuous-research` command requires an active `--principal-id`, binds an exact operation resource and writes an allowed/denied audit event. Non-Admin Shadow/recovery mutation also consumes an exact approved `--approval-decision-id`.
 - **Replay mechanism:** append-only status/role chains and idempotent command receipts.
 - **Evidence ceiling:** the caller-supplied Principal ID is role-authorized but not externally authenticated; there is no Production Admission permission, Broker permission or trading authority.
 
