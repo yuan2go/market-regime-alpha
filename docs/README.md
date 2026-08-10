@@ -4,7 +4,7 @@
 > **Authority:** Canonical documentation index
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** Current checkout, PostgreSQL migrations, composition roots, repositories, CLI and tests
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation describes the code; it does not create implementation or evidence authority.
 

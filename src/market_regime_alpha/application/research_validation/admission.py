@@ -34,7 +34,6 @@ class AdmissionFloor(str, Enum):
 class AdmissionFloorStatus(str, Enum):
     MISSING = "MISSING"
     REJECTED = "REJECTED"
-    SATISFIED = "SATISFIED"
 
 
 class ProductionAdmissionStatus(str, Enum):
@@ -49,11 +48,6 @@ class AdmissionFloorAssessment:
     reason_codes: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.status is AdmissionFloorStatus.SATISFIED:
-            raise ValueError(
-                "Admission floor satisfaction requires an owner-resolving "
-                "PostgreSQL writer, which is not implemented"
-            )
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("Admission floor reasons must be unique and sorted")
 
@@ -78,11 +72,7 @@ class ProductionAdmissionDecision:
             item.floor for item in self.assessments
         } != set(AdmissionFloor):
             raise ValueError("Production Admission must assess every Governance floor")
-        expected_blocked = tuple(
-            sorted(
-                (item.floor for item in self.assessments if item.status is not AdmissionFloorStatus.SATISFIED), key=lambda item: item.value
-            )
-        )
+        expected_blocked = tuple(sorted(AdmissionFloor, key=lambda item: item.value))
         if self.blocked_floors != expected_blocked:
             raise ValueError("Production Admission blocked-floor projection mismatch")
         if self.automatic_promotion:
@@ -120,9 +110,7 @@ def evaluate_production_admission(
     if len(ordered) != len(AdmissionFloor) or {item.floor for item in ordered} != set(AdmissionFloor):
         raise ValueError("Production Admission requires every floor exactly once")
     status = ProductionAdmissionStatus.BLOCKED
-    blocked = tuple(
-        sorted((item.floor for item in ordered if item.status is not AdmissionFloorStatus.SATISFIED), key=lambda item: item.value)
-    )
+    blocked = tuple(sorted(AdmissionFloor, key=lambda item: item.value))
     limitations = tuple(
         sorted(
             {

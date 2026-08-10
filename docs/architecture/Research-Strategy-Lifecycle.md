@@ -4,7 +4,7 @@
 > **Authority:** Canonical research/strategy responsibility split
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** `application/research_evaluation/**`, `application/research_validation/**`, `application/shadow_research/**`, `application/strategy_shadow/**`
+> **Code Evidence:** `src/market_regime_alpha/application/research_evaluation`, `src/market_regime_alpha/application/research_validation`, `src/market_regime_alpha/application/shadow_research`, `src/market_regime_alpha/application/strategy_shadow`
 
 ## Lifecycle
 

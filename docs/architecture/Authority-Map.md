@@ -4,7 +4,7 @@
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** `application/authority_boundary.py`, `persistence/repository_factory.py`, `persistence/postgres/schema.py`, migrations 001-046
+> **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
 
@@ -28,6 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
+| PostgreSQL Authority-schema tables | 148 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Owner map
 
@@ -41,7 +42,7 @@
 | State, StateSeries, Pool, Candidate | `PostgresStateSystemRepository` | typed Market/ETF/Theme/Capital observation/state/transition tables, `state_current_pointer`, `state_series*`, `dynamic_stock_pool*`, `state_policy_authority`, `state_runtime_*`, `state_research_stage_authority` | Continuous free-data composition | receipt, series and stage replay | research state; no Entry authority |
 | Controlled decision-time operation | `PostgresDecisionTimeOperationJournal` | `controlled_operation_run`, `controlled_operation_stage`, `controlled_operation_attempt`, `controlled_operation_receipt`, `controlled_operation_child_run`, `controlled_operation_event` | Continuous child | package/receipt replay | bounded Research/Shadow operation |
 | Canonical lifecycle | `PostgresLifecycleRunRepository` | `lifecycle_runs`, `lifecycle_stages`, `lifecycle_attempts`, `lifecycle_stage_receipts`, `lifecycle_events` | optional Controlled child | stage receipt replay | downstream human-in-loop continuation, not a scheduler |
-| Research Summary and Decision System | `PostgresDecisionSystemRepository` | `research_daily_summary`, `research_summary_stage`, `manual_account_observation`, `manual_position_observation`, `account_reconciliation`, `daily_decision_summary`, `daily_summary_candidate`, `research_portfolio_*`, `independent_risk_decision`, `decision_runtime_receipt`, configuration/evidence tables | Continuous Summary child; separate `decision-system` CLI | repository Readers; old `decision_replay_import` is migration-only | Summary is Research/Shadow; Production Decision remains blocked by Governance |
+| Research Summary and Decision System | `PostgresDecisionSystemRepository` | `research_daily_summary`, `research_summary_stage`, `manual_account_observation`, `manual_position_observation`, `account_reconciliation`, `daily_decision_summary`, `daily_summary_candidate`, `research_portfolio_*`, `independent_risk_decision`, `decision_runtime_receipt`, configuration/evidence tables | Continuous Summary child; separate `decision-system` CLI | current repository Readers; no composed full Decision replay | Summary is Research/Shadow; Production Decision remains blocked by Governance |
 | Opportunity and Thesis | `PostgresDecisionLifecycleRepository` | `decision_commands`, `trading_opportunities`, `opportunity_events`, `trading_theses`, `thesis_events` | Canonical lifecycle | append-only event restoration | proposal/thesis only, no actual Position |
 | Portfolio and Risk | portfolio repositories | `portfolio_risk_commands`, `portfolio_decisions`, `risk_decisions`, complete-account snapshot/decision tables, risk route tables | lifecycle and Decision System | event/decision Readers | decision support only; Risk rejection cannot be bypassed |
 | Manual execution and actual Position | manual execution and traceability repositories | `execution_commands`, `manual_trade_records`, `manual_trade_events`, `manual_fills`, `position_books`, `position_book_events`, `traceable_manual_trade_bindings` | explicit human record/import | append-only ledger replay | actual Position derives only from observed Fill |
@@ -89,5 +90,6 @@ This is closed by denial, not by claiming the missing evidence exists.
 | `dividend_t` | `HISTORICAL_READER` / characterization | legacy research reproduction and isolated legacy web view | canonical Runtime, Repository, Signal, Entry, Position or broker authority |
 | `legacy/**` | `COMPATIBILITY_REQUIRED` | explicit adapters | direct canonical import |
 | `migration/legacy/**` | `MIGRATION_ONLY` / `REPLAY_ONLY` | differential comparison and conversion | current business writes |
+| `decision_replay_import` table | `HISTORICAL_SCHEMA` | preserve already-recorded append-only rows and forward-only migration history | application writes, Reads, composition or Authority claims |
 
 Architecture tests enforce that installed CLI and Canonical compositions do not import Legacy producers.

@@ -4,7 +4,7 @@
 > **Authority:** Current forward engineering order
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** Current State and Gap Register
+> **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 ## P0 Architecture and Authority correctness
 

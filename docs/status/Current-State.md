@@ -4,7 +4,7 @@
 > **Authority:** Sole current implementation-status document
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** Current checkout and migration 046
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/046_close_reference_only_qualification.sql`, `tests`
 
 ## Implemented engineering boundary
 
@@ -31,7 +31,7 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 12 | one scheduler plus bounded operation/admin tools |
 | PostgreSQL migrations | 46 | contiguous, checksummed, forward-only |
-| PostgreSQL schema catalog tables | 148 | authorities, journals and projections combined |
+| PostgreSQL Authority-schema tables | 148 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 148 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 32 | bounded owners; not 32 competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 42 | immutable contracts across bounded contexts |
@@ -39,12 +39,13 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Protocol/Port class names | 16 | external/composition seams |
 | Qualification-named class types | 14 | contracts and statuses; only Model Governance is a current qualification writer |
 | Current canonical docs | 10 | index, four architecture, four status, one runbook |
-| Normative Constitution docs | 11 | unchanged |
+| Normative Constitution docs | 10 | unchanged `00` through `09` |
 | Current research registries | 1 | negative/inconclusive results |
-| Historical/archive docs | 1 | archive boundary index; detailed history lives in Git |
+| Historical/superseded/archive docs | 2 | archive boundary index plus superseded Constitution implementation-status; detailed history lives in Git |
 | Legacy `daily_research` | 10 files / about 1.6k lines | compatibility Readers and identities |
 | Legacy `dividend_t` | 49 files / about 23.5k lines | isolated characterization and legacy UI/research |
 | Explicit `legacy` and `migration/legacy` | 13 files / about 1.5k lines | adapters, migration and replay only |
+| Retired `decision_replay_import` schema | 1 table | immutable historical rows retained by forward-only migrations; no current application writer/Reader |
 
 ## Complexity classification
 

@@ -4,7 +4,7 @@
 > **Authority:** Current registry of failed, blocked or insufficient research claims
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** Current research artifacts and Readers
+> **Code Evidence:** `src/market_regime_alpha/research`, `src/market_regime_alpha/application/research_evaluation`
 
 | Claim | Current result | Evidence authority |
 |---|---|---|

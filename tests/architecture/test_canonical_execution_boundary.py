@@ -12,6 +12,7 @@ from market_regime_alpha.application.authority_boundary import (
     canonical_authority_catalog,
 )
 from market_regime_alpha.application.research_validation.admission import (
+    AdmissionFloorStatus,
     ProductionAdmissionStatus,
 )
 from market_regime_alpha.daily_decision.entry import EntryAssessmentState
@@ -120,6 +121,7 @@ def test_reference_only_research_helpers_cannot_grant_qualification() -> None:
             )
 
     assert prohibited.isdisjoint(definitions)
+    assert {item.value for item in AdmissionFloorStatus} == {"MISSING", "REJECTED"}
     assert {item.value for item in ProductionAdmissionStatus} == {"BLOCKED"}
 
 

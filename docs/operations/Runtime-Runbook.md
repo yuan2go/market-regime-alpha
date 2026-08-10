@@ -4,7 +4,7 @@
 > **Authority:** Current executable operator procedures
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** `pyproject.toml`, `scripts/*.py`, installed CLI modules
+> **Code Evidence:** `pyproject.toml`, `scripts/*.py`, `src/market_regime_alpha/cli`
 
 ## Install and verify environment
 
@@ -35,6 +35,8 @@ uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
 Expected head: migration 046, `close_reference_only_qualification`. Expected schema catalog: 148 tables. Missing/unreachable PostgreSQL is a blocked operation; there is no alternate persistent backend.
+
+Migration 046 intentionally stops if an existing database contains reference-only qualified Validation or Historical Sample rows. Do not update or delete those append-only rows in place. Preserve/export the database, audit the owning evidence, and use a separately reviewed forward-repair migration before retrying 046.
 
 ## Canonical Runtime
 

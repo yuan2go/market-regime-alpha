@@ -6,8 +6,6 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from market_regime_alpha.application.research_evaluation.targets import engineering_multi_horizon_protocol
 from market_regime_alpha.application.research_validation.ablation import (
     AblationProtocol,
@@ -18,7 +16,6 @@ from market_regime_alpha.application.research_validation.ablation import (
 )
 from market_regime_alpha.application.research_validation.admission import (
     AdmissionFloor,
-    AdmissionFloorAssessment,
     AdmissionFloorStatus,
     ProductionAdmissionStatus,
     current_engineering_blocked_admission,
@@ -355,17 +352,4 @@ def test_entry_and_production_admission_remain_blocked() -> None:
     assert admission.status is ProductionAdmissionStatus.BLOCKED
     assert admission.production_authorized is False
     assert set(admission.blocked_floors) == set(AdmissionFloor)
-    with pytest.raises(ValueError, match="owner-resolving PostgreSQL writer"):
-        AdmissionFloorAssessment(
-            AdmissionFloor.FORMAL_PIT,
-            AdmissionFloorStatus.SATISFIED,
-            _ref("ARBITRARY", "forged"),
-            ("FORGED",),
-        )
-    with pytest.raises(ValueError, match="owner-resolving PostgreSQL writer"):
-        AdmissionFloorAssessment(
-            AdmissionFloor.FORMAL_PIT,
-            AdmissionFloorStatus.SATISFIED,
-            _ref("FORMAL_PIT_EVIDENCE", "pit"),
-            ("SATISFIED",),
-        )
+    assert {item.value for item in AdmissionFloorStatus} == {"MISSING", "REJECTED"}

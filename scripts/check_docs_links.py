@@ -20,6 +20,7 @@ ALLOWED_STATUSES = {
 STATUS_RE = re.compile(r"^\s*>\s*\*\*Status:\*\*\s*(.+?)\s*$", re.IGNORECASE)
 META_RE = re.compile(r"^\s*>\s*\*\*([^*]+):\*\*\s*(.*?)\s*$")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
+CODE_EVIDENCE_PATH_RE = re.compile(r"`([^`]+)`")
 
 CANONICAL_DOCS = frozenset(
     {
@@ -36,6 +37,12 @@ CANONICAL_DOCS = frozenset(
         "docs/research/Negative-and-Inconclusive-Results.md",
         "docs/archive/README.md",
     }
+)
+SUPPLEMENTARY_DOC_ROOTS = (
+    "docs/archive/",
+    "docs/architecture/decisions/",
+    "docs/references/",
+    "docs/research/protocols/",
 )
 
 
@@ -116,10 +123,17 @@ def check_canonical_inventory(root: Path, docs: list[Path]) -> list[str]:
         if "docs/constitution/" not in path.relative_to(root).as_posix()
     }
     missing = sorted(CANONICAL_DOCS - actual)
-    unexpected = sorted(actual - CANONICAL_DOCS)
+    unexpected = sorted(
+        path
+        for path in actual - CANONICAL_DOCS
+        if not path.startswith(SUPPLEMENTARY_DOC_ROOTS)
+    )
     return [
         *(f"missing canonical document: {path}" for path in missing),
-        *(f"unexpected document outside canonical set: {path}" for path in unexpected),
+        *(
+            f"unexpected document outside canonical or supplementary set: {path}"
+            for path in unexpected
+        ),
     ]
 
 
@@ -140,8 +154,26 @@ def check_current_metadata(root: Path) -> list[str]:
     errors: list[str] = []
     for relative in sorted(CANONICAL_DOCS):
         metadata = parse_metadata(root / relative)
-        if relative != "docs/archive/README.md" and not metadata.get("Code Evidence"):
-            errors.append(f"{relative}: missing Code Evidence metadata")
+        if relative == "docs/archive/README.md":
+            continue
+        value = metadata.get("Code Evidence", "")
+        evidence_paths = CODE_EVIDENCE_PATH_RE.findall(value)
+        if not evidence_paths:
+            errors.append(f"{relative}: missing resolvable Code Evidence paths")
+            continue
+        for evidence_path in evidence_paths:
+            if Path(evidence_path).is_absolute() or ".." in Path(evidence_path).parts:
+                errors.append(
+                    f"{relative}: Code Evidence must be repository-relative: "
+                    f"{evidence_path}"
+                )
+                continue
+            matches = list(root.glob(evidence_path))
+            if not matches:
+                errors.append(
+                    f"{relative}: Code Evidence path does not resolve: "
+                    f"{evidence_path}"
+                )
     return errors
 
 

@@ -55,13 +55,33 @@ def test_unexpected_document_is_rejected(tmp_path: Path) -> None:
     assert any("unexpected document" in error for error in errors)
 
 
+def test_classified_supplementary_document_is_allowed(tmp_path: Path) -> None:
+    doc = tmp_path / "docs" / "architecture" / "decisions" / "ADR-001.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(
+        "# Decision\n\n> **Status:** CURRENT_ARCHITECTURE\n",
+        encoding="utf-8",
+    )
+
+    errors = docs_check.check_canonical_inventory(
+        tmp_path,
+        [
+            *(tmp_path / relative for relative in docs_check.CANONICAL_DOCS),
+            doc,
+        ],
+    )
+
+    assert errors == []
+
+
 def test_missing_code_evidence_metadata_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
     for relative in docs_check.CANONICAL_DOCS:
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         status = "HISTORICAL" if relative == "docs/archive/README.md" else "CURRENT_STATUS"
         path.write_text(
-            f"# X\n\n> **Status:** {status}\n> **Code Evidence:** current code\n",
+            f"# X\n\n> **Status:** {status}\n> **Code Evidence:** `pyproject.toml`\n",
             encoding="utf-8",
         )
     target = tmp_path / "docs/status/Current-State.md"
@@ -72,4 +92,22 @@ def test_missing_code_evidence_metadata_is_rejected(tmp_path: Path) -> None:
 
     errors = docs_check.check_current_metadata(tmp_path)
 
-    assert errors == ["docs/status/Current-State.md: missing Code Evidence metadata"]
+    assert errors == [
+        "docs/status/Current-State.md: missing resolvable Code Evidence paths"
+    ]
+
+
+def test_nonexistent_code_evidence_path_is_rejected(tmp_path: Path) -> None:
+    for relative in docs_check.CANONICAL_DOCS:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        status = "HISTORICAL" if relative == "docs/archive/README.md" else "CURRENT_STATUS"
+        path.write_text(
+            f"# X\n\n> **Status:** {status}\n"
+            "> **Code Evidence:** `missing/owner.py`\n",
+            encoding="utf-8",
+        )
+
+    errors = docs_check.check_current_metadata(tmp_path)
+
+    assert any("Code Evidence path does not resolve" in error for error in errors)

@@ -4,7 +4,7 @@
 > **Authority:** Canonical implementation architecture
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** `cli/continuous_research.py`, `application/continuous_research/**`, `persistence/repository_factory.py`, migrations 001-046
+> **Code Evidence:** `src/market_regime_alpha/cli/continuous_research.py`, `src/market_regime_alpha/application/continuous_research`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Shape
 

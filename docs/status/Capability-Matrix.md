@@ -4,7 +4,7 @@
 > **Authority:** Current capability and evidence-ceiling matrix
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** Current code, schema and tests
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 | Capability | Engineering state | Current Authority / ceiling |
 |---|---|---|

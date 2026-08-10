@@ -4,7 +4,7 @@
 > **Authority:** Canonical data, time and evidence rules
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** `data/**`, `market_data/**`, `evidence/**`, `data/postgres_pit_authority.py`, migrations 001-046
+> **Code Evidence:** `src/market_regime_alpha/data`, `src/market_regime_alpha/market_data`, `src/market_regime_alpha/evidence`, `src/market_regime_alpha/data/postgres_pit_authority.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Evidence is not a reference
 
