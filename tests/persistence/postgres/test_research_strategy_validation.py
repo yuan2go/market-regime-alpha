@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import psycopg
 import pytest
@@ -13,6 +14,13 @@ from market_regime_alpha.application.continuous_research.runtime_authority_evide
     RuntimeAuthorityEvidence,
 )
 from market_regime_alpha.application.research_validation.common import ValidationArtifactReference
+from market_regime_alpha.application.research_validation.calibration import (
+    CalibrationMethod,
+    CalibrationObservation,
+    CalibrationPartition,
+    CalibrationProtocol,
+    fit_calibration,
+)
 from market_regime_alpha.application.research_validation.factor_extraction import (
     FactorFamily,
     ResearchFactorExposure,
@@ -205,6 +213,80 @@ def test_postgres_historical_sample_reader_cannot_invent_qualification(
     )
     assert samples == (sample,)
     assert qualification == HistoricalSampleQualification.UNQUALIFIED.value
+
+
+def test_postgres_calibration_records_complete_unqualified_lineage(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    now = datetime(2026, 8, 10, 8, tzinfo=UTC)
+    protocol = CalibrationProtocol.create(
+        protocol_version="postgres-path-calibration-v1",
+        method=CalibrationMethod.PLATT_LOGISTIC,
+        minimum_fit_samples=2,
+        maximum_iterations=5,
+    )
+    observations = (
+        CalibrationObservation(
+            "fit-1", Decimal("0.1"), 0, CalibrationPartition.FIT
+        ),
+        CalibrationObservation(
+            "fit-2", Decimal("0.9"), 1, CalibrationPartition.FIT
+        ),
+        CalibrationObservation(
+            "validation-1",
+            Decimal("0.8"),
+            1,
+            CalibrationPartition.VALIDATION,
+        ),
+    )
+    artifact = fit_calibration(
+        protocol=protocol,
+        observations=observations,
+        created_at=now,
+    )
+    repository = PostgresResearchValidationRepository(postgres_factory)
+
+    repository.record_calibration(
+        protocol=protocol,
+        artifact=artifact,
+        observations=observations,
+    )
+    repository.record_calibration(
+        protocol=protocol,
+        artifact=artifact,
+        observations=observations,
+    )
+
+    assert repository.get_payload(artifact.artifact_id) == artifact.identity_payload()
+    with postgres_factory.connection(read_only=True) as connection:
+        kinds = connection.execute(
+            """
+            SELECT artifact_kind, count(*)
+            FROM research_validation_artifact
+            GROUP BY artifact_kind ORDER BY artifact_kind
+            """
+        ).fetchall()
+        bindings = connection.execute(
+            """
+            SELECT observation_id, partition_name
+            FROM calibration_partition_binding
+            WHERE calibration_artifact_id = %s
+            ORDER BY observation_id
+            """,
+            (str(artifact.artifact_id),),
+        ).fetchall()
+    assert dict(kinds) == {
+        "CALIBRATION_ARTIFACT": 1,
+        "CALIBRATION_EVALUATION": 1,
+        "CALIBRATION_FIT": 1,
+        "CALIBRATION_PROTOCOL": 1,
+    }
+    assert bindings == [
+        ("fit-1", "FIT"),
+        ("fit-2", "FIT"),
+        ("validation-1", "VALIDATION"),
+    ]
+    assert artifact.calibrated is False
 
 
 def test_migration_046_rejects_reference_only_authority_rows(

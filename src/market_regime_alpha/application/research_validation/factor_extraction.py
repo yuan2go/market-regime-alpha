@@ -215,16 +215,51 @@ def extract_canonical_factors(
         raise ValueError("Dynamic Pool is not available at Panel DecisionTime")
     if any(source.available_at is not None and source.available_at > decision_time for source in state_sources):
         raise ValueError("State factor source is not available at Panel DecisionTime")
-    if signal_run is not None and (
-        signal_run.market_data_dataset_id != dataset.artifact.dataset_id
-        or signal_run.market_data_dataset_hash != dataset.artifact.content_hash
-        or signal_run.feature_bundle_id != feature_bundle.artifact.bundle_id
-        or signal_run.feature_bundle_hash != feature_bundle.artifact.content_hash
-        or candidate_set is None
-        or signal_run.candidate_set.envelope.artifact_id != candidate_set.envelope.artifact_id
-        or signal_run.candidate_set.envelope.content_hash != candidate_set.envelope.content_hash
-    ):
-        raise ValueError("Signal does not bind the supplied Dataset/Feature Bundle/Candidate Set")
+    if signal_run is not None:
+        mismatches = tuple(
+            label
+            for label, matches in (
+                (
+                    "DATASET_ID",
+                    str(signal_run.market_data_dataset_id)
+                    == str(dataset.artifact.dataset_id),
+                ),
+                (
+                    "DATASET_HASH",
+                    signal_run.market_data_dataset_hash
+                    == dataset.artifact.content_hash,
+                ),
+                (
+                    "FEATURE_BUNDLE_ID",
+                    signal_run.feature_bundle_id
+                    == feature_bundle.artifact.bundle_id,
+                ),
+                (
+                    "FEATURE_BUNDLE_HASH",
+                    signal_run.feature_bundle_hash
+                    == feature_bundle.artifact.content_hash,
+                ),
+                ("CANDIDATE_SET", candidate_set is not None),
+                (
+                    "CANDIDATE_ID",
+                    candidate_set is not None
+                    and signal_run.candidate_set.envelope.artifact_id
+                    == candidate_set.envelope.artifact_id,
+                ),
+                (
+                    "CANDIDATE_HASH",
+                    candidate_set is not None
+                    and signal_run.candidate_set.envelope.content_hash
+                    == candidate_set.envelope.content_hash,
+                ),
+            )
+            if not matches
+        )
+        if mismatches:
+            raise ValueError(
+                "Signal does not bind the supplied Dataset/Feature Bundle/Candidate Set: "
+                + ",".join(mismatches)
+            )
     exposures: list[ResearchFactorExposure] = []
     exposures.extend(_market_bar_exposures(expected, dataset, decision_time))
     exposures.extend(_feature_exposures(expected, feature_bundle, decision_time))

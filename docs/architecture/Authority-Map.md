@@ -98,6 +98,22 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Evidence ceiling:** inherits Dataset authority; computation does not improve PIT or Provider status.
 - **Legacy replacement:** replaces recomputation from legacy feature files in current execution.
 
+### Free-data Security Master and Research Universe
+
+- **Domain / Capability:** Data / append-only BaoStock Security Master snapshot and full A-share historical research population.
+- **Classification:** exploratory Evidence Authority; distinct from Daily Eligibility, bounded Operational Universe, Dynamic Pool and Candidate.
+- **Owner:** Free Research Universe.
+- **Canonical Writer:** `FreeResearchUniverseOperator` through `PostgresFreeResearchUniverseRepository`.
+- **Reader:** snapshot/member reload, latest-as-of and replay Readers.
+- **Repository:** `PostgresFreeResearchUniverseRepository`.
+- **PostgreSQL tables:** `free_research_universe_snapshot`, `free_research_universe_member`.
+- **Artifact / Receipt:** content-addressed Security Master raw archive/SourceManifest and `FreeResearchUniverseSnapshot`.
+- **Runtime caller:** `continuous-research research-universe-sync`; archived replay uses `research-universe-replay`.
+- **Downstream consumer:** research population/audit Readers; the bounded Operational Universe remains a separate capacity control.
+- **Replay mechanism:** exact owner-row ID/hash reconstruction from immutable raw archive and member payloads.
+- **Evidence ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_PIT_NOT_ESTABLISHED`; unknown listing facts remain `UNKNOWN` and are never silently included or discarded.
+- **Legacy replacement:** no listing-date or current-status heuristic may write Daily Eligibility or Formal PIT facts.
+
 ### Formal PIT
 
 - **Domain / Capability:** Data governance / source qualification, bitemporal facts and as-of validation.
@@ -332,9 +348,9 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Repository:** `PostgresResearchValidationRepository`.
 - **PostgreSQL tables:** `research_validation_artifact`, `research_panel_factor_exposure`, `historical_path_sample_record`, `calibration_partition_binding`.
 - **Artifact / Receipt:** engineering Validation artifacts, Historical Sample Dataset, Calibration artifact, Evaluation result and Entry/Holding evidence.
-- **Runtime caller:** offline research harness only.
+- **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
 - **Downstream consumer:** human research review and future owner-specific qualification writers.
-- **Replay mechanism:** immutable payload/sample reload; no qualification replay/writer exists.
+- **Replay mechanism:** immutable payload/sample reload plus exact calibration protocol, fit, evaluation and partition-binding reload; no qualification replay/writer exists.
 - **Evidence ceiling:** migration 046 enforces engineering/unqualified only.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
@@ -364,9 +380,9 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Repository:** `PostgresAccessGovernance`.
 - **PostgreSQL tables:** `security_principal`, `security_principal_status_event`, `security_role_event`, `security_approval`, `security_approval_decision`, `security_audit_event`, `security_governance_command`.
 - **Artifact / Receipt:** content-addressed Principal, Role event, Approval and Approval Decision.
-- **Runtime caller:** `model-governance access-*` operator commands.
+- **Runtime caller:** `model-governance access-*` manages facts; every `continuous-research` command requires an active `--principal-id` and checks its operation-specific engineering permission.
 - **Replay mechanism:** append-only status/role chains and idempotent command receipts.
-- **Evidence ceiling:** no authentication proof, Production Admission permission, Broker permission or trading authority.
+- **Evidence ceiling:** the caller-supplied Principal ID is role-authorized but not externally authenticated; there is no Production Admission permission, Broker permission or trading authority.
 
 ### Production Admission
 

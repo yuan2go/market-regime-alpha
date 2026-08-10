@@ -8,9 +8,9 @@
 
 ## Implemented engineering boundary
 
-The system is a PostgreSQL-only modular monolith with one Continuous Research Runtime. It has durable source freeze, Dataset/Feature materialization, Model Governance selection, State/StateSeries/Pool/Candidate, controlled minute/Signal/Forecast work, Research Summary, Canonical Lifecycle mechanics, manual-account Decision support, Research Shadow, prospective outcomes, Panel V2 and Research Validation harnesses. Free-data operation includes an automatic retrospective BaoStock decision/outcome/sample pipeline, a PostgreSQL Historical Registry Reader in the Research/Shadow Forecast composition, a full-A-share exploratory Security Master/Research Universe snapshot, explicit Proxy/Derived/Declared reference semantics, T+1 settlement/enrichment and factor lineage/de-duplication evidence.
+The system is a PostgreSQL-only modular monolith with one Continuous Research Runtime. It has durable source freeze, Dataset/Feature materialization, Model Governance selection, State/StateSeries/Pool/Candidate, controlled minute/Signal/Forecast work, Research Summary, Canonical Lifecycle mechanics, manual-account Decision support, Research Shadow, prospective outcomes, Panel V2 and Research Validation harnesses. Free-data operation includes an automatic retrospective BaoStock decision/outcome/sample pipeline, a PostgreSQL Historical Registry Reader in the Research/Shadow Forecast composition, a full-A-share exploratory Security Master/Research Universe snapshot, explicit Proxy/Derived/Declared reference semantics, T+1 settlement/enrichment and factor lineage/de-duplication evidence. Research Summary and settlement bind the same Feature Bundle V2 identity used by Signal and Panel enrichment; the legacy static bundle remains its immutable Controlled-package wrapper, not a competing feature Authority.
 
-Phase B engineering also includes daily cross-sectional evaluation science, tie-aware RankIC, label-aware purging/embargo, trading-date moving-block bootstrap, explicit `NOT_ESTIMABLE`, calibration method harnesses and a PostgreSQL Portfolio Shadow ledger. Portfolio Shadow records Cash, Order Intent, Shadow Fill, Shadow Position, NAV, exposure, turnover, cost, capacity, drawdown and attribution while enforcing A-share T+1, 100-share lots, suspension, price-limit and continuous-auction constraints. Append-only Principal/Role/Approval/Audit governance and a read-only recovery audit are available through the existing CLIs. External authentication is not bound.
+Phase B engineering also includes daily cross-sectional evaluation science, tie-aware RankIC, label-aware purging/embargo, trading-date moving-block bootstrap, explicit `NOT_ESTIMABLE`, calibration method harnesses and a PostgreSQL Portfolio Shadow ledger. `settle-day` automatically derives eighteen horizon/barrier calibration hypotheses from PostgreSQL-owned Panel V2 forecast exposures and Targeted Outcome labels, records exact partition bindings with label-aware purging, and remains `NOT_ESTIMABLE` until the required factual samples exist. Every result remains `calibrated=false`. Portfolio Shadow records Cash, Order Intent, Shadow Fill, Shadow Position, NAV, exposure, turnover, cost, capacity, drawdown and attribution while enforcing A-share T+1, 100-share lots, suspension, price-limit and continuous-auction constraints. Append-only Principal/Role/Approval/Audit governance serializes bootstrap and last-Admin invariants; every Continuous CLI operation checks an active Principal's engineering permission. A read-only recovery audit is available through the same CLI. External authentication is not bound, so the caller-supplied Principal ID is not an authenticated identity proof.
 
 Actual positions derive only from observed manual fills. The system creates no broker order and does not automatically mutate actual positions.
 
@@ -30,8 +30,8 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 583 | broad modular monolith; size alone is not a defect |
-| Python test files | 410 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 584 | broad modular monolith; size alone is not a defect |
+| Python test files | 411 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
 | PostgreSQL migrations | 50 | contiguous, checksummed, forward-only; 046 remains the qualification ceiling |
@@ -64,6 +64,7 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 automatic_order_execution = false
 broker_integration_proven = false
 free_data_engineering_complete = true
+data_engineering_complete = true
 research_engineering_complete = true
 evaluation_engineering_complete = true
 strategy_validation_engineering_complete = true

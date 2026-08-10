@@ -9,9 +9,11 @@ from tests.persistence.postgres.conftest import postgres_factory as postgres_fac
 
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
+    content_identity,
 )
 from market_regime_alpha.application.strategy_shadow.portfolio import (
     PortfolioWeightingMethod,
+    ShadowPortfolio,
     ShadowParameterProvenance,
     ShadowPortfolioMarketObservation,
     ShadowPortfolioPolicy,
@@ -136,3 +138,47 @@ def test_postgres_portfolio_shadow_is_idempotent_cas_and_replayable(
         ).fetchall()
     assert row == (False, False, False)
     assert day_rows == [(False,), (False,)]
+
+
+def test_postgres_portfolio_rejects_policy_hash_mismatch(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    repository = PostgresShadowPortfolioRepository(postgres_factory)
+    policy = _policy()
+    wrong_reference = ValidationArtifactReference(
+        "SHADOW_PORTFOLIO_POLICY",
+        policy.policy_id,
+        canonical_hash({"wrong": "policy"}),
+    )
+    limitations = (
+        "ALPHA_VALIDATED_FALSE",
+        "EXPLORATORY_ONLY",
+        "FORMAL_OOS_FALSE",
+        "NO_TRADING_AUTHORITY",
+        "PORTFOLIO_SHADOW_ONLY",
+        "PRODUCTION_AUTHORIZED_FALSE",
+        "STRATEGY_SHADOW_PROVEN_FALSE",
+    )
+    values = {
+        "schema_version": "shadow-portfolio/v1",
+        "policy_reference": wrong_reference.to_canonical_dict(),
+        "research_reference": _reference("RESEARCH_PANEL_V2", "panel").to_canonical_dict(),
+        "candidate_reference": _reference("CANDIDATE_SET", "candidate").to_canonical_dict(),
+        "initial_cash": "100000",
+        "created_at": NOW.isoformat().replace("+00:00", "Z"),
+        "limitations": list(limitations),
+    }
+    portfolio_id, portfolio_hash = content_identity("shadow-portfolio", values)
+    portfolio = ShadowPortfolio(
+        portfolio_id=portfolio_id,
+        portfolio_hash=portfolio_hash,
+        policy_reference=wrong_reference,
+        research_reference=_reference("RESEARCH_PANEL_V2", "panel"),
+        candidate_reference=_reference("CANDIDATE_SET", "candidate"),
+        initial_cash=Decimal("100000"),
+        created_at=NOW,
+        limitations=limitations,
+    )
+
+    with pytest.raises(ValueError, match="Policy identity mismatch"):
+        repository.save_portfolio(policy=policy, portfolio=portfolio)

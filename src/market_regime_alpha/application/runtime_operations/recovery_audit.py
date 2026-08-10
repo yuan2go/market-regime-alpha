@@ -208,7 +208,7 @@ class PostgresRecoveryAudit:
                     "RESEARCH_SHADOW_SESSION",
                     str(session_id),
                     "SETTLED_WITHOUT_PANEL",
-                    f"continuous-research replay --run-id {run_id}",
+                    "continuous-research settle-day",
                     "EVALUATION_REBUILD_FROM_OWNER_ARTIFACTS_REQUIRED",
                 )
             )
@@ -219,7 +219,7 @@ class PostgresRecoveryAudit:
                     "STRATEGY_SHADOW_SESSION",
                     str(session_id),
                     str(status),
-                    f"continuous-research strategy-replay --session-id {session_id}",
+                    "continuous-research strategy-day --observations <recovery-input.json>",
                     "STRATEGY_SHADOW_RESUME_FROM_EVENT_JOURNAL",
                 )
             )

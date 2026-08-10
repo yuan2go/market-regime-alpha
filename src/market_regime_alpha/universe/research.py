@@ -313,6 +313,9 @@ def _record_from_baostock(
     elif delisting_date is not None and delisting_date <= as_of_date:
         membership = ResearchUniverseMembershipStatus.EXCLUDED
         reasons.add("DELISTED_BY_AS_OF_DATE")
+    elif listing_status is SecurityMasterListingStatus.UNKNOWN:
+        membership = ResearchUniverseMembershipStatus.UNKNOWN
+        reasons.add("CURRENT_LISTING_STATUS_UNKNOWN")
     else:
         membership = ResearchUniverseMembershipStatus.INCLUDED
         reasons.add("DERIVED_FROM_RETRIEVED_SECURITY_MASTER")

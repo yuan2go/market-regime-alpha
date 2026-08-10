@@ -45,6 +45,9 @@ from market_regime_alpha.application.research_validation.factor_research import 
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
 )
+from market_regime_alpha.application.research_validation.path_calibration import (
+    PostgresPathForecastCalibrationOperator,
+)
 from market_regime_alpha.application.shadow_research.attestation import (
     ClockMode,
     RuntimeOrigin,
@@ -71,6 +74,9 @@ from market_regime_alpha.data_sources.a_share_bars import (
 )
 from market_regime_alpha.features.materialization_v2 import (
     load_verified_feature_bundle_v2,
+)
+from market_regime_alpha.features.operational_overlay import (
+    load_static_universe_feature_bundle,
 )
 from market_regime_alpha.forecasting.artifact import (
     load_verified_path_forecast,
@@ -372,6 +378,7 @@ class FreeDataSettlementOperator:
                 artifact=factual_evidence,
             )
         assert evidence_path is not None
+        target_protocol = engineering_multi_horizon_protocol()
         settled = self._operations.settle(
             decision_id=decision.decision_id,
             source_archive=acquisition.source_archive,
@@ -379,7 +386,7 @@ class FreeDataSettlementOperator:
             factual_evidence=factual_evidence,
             next_session_date=next_session_date,
             session_status=SettlementSessionStatus.TRADING_DAY,
-            target_protocol=engineering_multi_horizon_protocol(),
+            target_protocol=target_protocol,
             expected_shadow_version=session.version,
             created_at=acquisition.retrieved_at,
             code_revision=package.code_revision,
@@ -390,7 +397,13 @@ class FreeDataSettlementOperator:
         if pool_payload is None:
             raise ValueError("settle-day requires frozen Dynamic Pool")
         pool = DynamicStockPoolVersion.from_canonical_dict(pool_payload)
-        feature_path = _reference_path(package, run_root, "STATIC_FEATURE_BUNDLE")
+        static = load_static_universe_feature_bundle(
+            _reference_path(package, run_root, "STATIC_FEATURE_BUNDLE")
+        )
+        feature_path = _identity_directory(
+            run_root / "static-features",
+            static.feature_bundle_id,
+        )
         feature_bundle = load_verified_feature_bundle_v2(
             feature_path,
             artifact_root=run_root / "static-features" / "feature-artifacts",
@@ -449,6 +462,14 @@ class FreeDataSettlementOperator:
             payload=deduplication.identity_payload(),
             created_at=deduplication.analyzed_at,
         )
+        calibration_engineering = PostgresPathForecastCalibrationOperator(
+            self._factory,
+            repository=self._validation,
+        ).run(
+            target_protocol=target_protocol,
+            through_date=trading_date,
+            created_at=acquisition.retrieved_at,
+        )
         return {
             "operation": "SETTLE_DAY",
             "status": settled.session.status.value,
@@ -461,6 +482,7 @@ class FreeDataSettlementOperator:
             "panel_enrichment_id": str(enrichment.enrichment_id),
             "factor_catalog_id": str(catalog.catalog_id),
             "factor_deduplication_report_id": str(deduplication.report_id),
+            "calibration_engineering": calibration_engineering,
             "outcome_source_archive": str(acquisition.source_archive_path),
             "outcome_dataset": str(acquisition.dataset_path),
             "outcome_evidence": str(evidence_path),
@@ -627,6 +649,13 @@ def _resolve_operation_package(
     if not matches:
         raise ValueError("settle-day cannot locate the frozen Controlled package")
     return max(matches, key=lambda item: (item[0].created_at, str(item[0].package_id)))
+
+
+def _identity_directory(root: Path, object_id: ArtifactId) -> Path:
+    matches = tuple(path for path in root.rglob(str(object_id)) if path.is_dir())
+    if len(matches) != 1:
+        raise ValueError(f"settle-day identity directory mismatch: {object_id}")
+    return matches[0]
 
 
 def _recover_acquisition(

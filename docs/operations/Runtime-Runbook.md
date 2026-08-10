@@ -62,7 +62,12 @@ uv run continuous-research inspect-run --help
 uv run continuous-research replay --help
 ```
 
-Every command requires an explicit database URL/schema. `run-due` remains the
+Every command requires an explicit database URL/schema and `--principal-id`.
+Bootstrap and administer engineering Principals through `model-governance access-*`;
+`continuous-research` checks the active Role/Permission before any
+read or mutation. The Principal ID remains a caller assertion until a future
+external authentication binding exists, so this is engineering RBAC rather
+than production authentication. `run-due` remains the
 canonical tick operation. `run-day` invokes that same operation and, for a
 completed `SHADOW` run, resolves its PostgreSQL Summary and freezes Research
 Shadow. Before a due Research/Shadow decision it also attempts the bounded
@@ -87,10 +92,17 @@ continuous-research replay-day --trading-date YYYY-MM-DD
 `settle-day` resolves the frozen Controlled package, Candidate, Dynamic Pool and
 Research Shadow IDs from PostgreSQL and acquires BaoStock five-minute OHLC after
 close for both current and missed sessions. It writes Outcome, Targeted Outcome,
-Panel V2 and Factor Enrichment artifacts. Tencent last-price snapshots remain
-runtime context and are never promoted to factual OHLC/barrier evidence. Once
-factual settlement exists, retries reload its PostgreSQL-owned identities and
-immutable packages without calling the Provider again.
+Panel V2 and Factor Enrichment artifacts. The same step derives eighteen
+multi-horizon/barrier calibration hypotheses from the frozen Forecast exposure
+and factual Target labels. It records a versioned engineering protocol (Platt
+by default; the research harness also supports Isotonic and Binning) with
+trading-date partitions and label-aware purge; insufficient
+samples produce `NOT_ESTIMABLE`, and every artifact remains
+`calibrated=false`. A forecast quantile is treated as a raw score, never as a
+probability. Tencent last-price snapshots remain runtime context and are never
+promoted to factual OHLC/barrier evidence. Once factual settlement exists,
+retries reload its PostgreSQL-owned identities and immutable packages without
+calling the Provider again.
 
 `strategy-day` resolves the settled Research Shadow, Panel and Candidate from
 PostgreSQL. Its observation file must explicitly provide every quantity,

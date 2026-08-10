@@ -162,6 +162,7 @@ class PostgresETFThemeReferenceRepository:
             evidence_ceiling=stored.evidence_ceiling,
             created_at=stored.created_at,
             limitations=stored.limitations,
+            schema_version=stored.schema_version,
         )
         if rebuilt != stored:
             raise ReferenceDataIntegrityError(

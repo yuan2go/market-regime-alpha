@@ -122,6 +122,9 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
 )
+from market_regime_alpha.application.research_validation.path_calibration import (
+    PostgresPathForecastCalibrationOperator,
+)
 from market_regime_alpha.application.research_validation.samples import (
     HistoricalPathSampleRecord,
     HistoricalSampleDataset,
@@ -748,19 +751,44 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 artifact_root=tmp_path / "rejected-evaluation-panels-v2",
                 created_at=multi_target_available_at,
             )
-        panel, panel_path = shadow_operations.build_evaluation(
-            decision_id=frozen.decision_id,
-            targeted_outcome_id=operational_settlement.targeted_outcome_v2.settlement_id,
-            target_protocol_id=target_protocol.protocol_id,
-            dynamic_pool=dynamic_pool,
-            candidate_set=execution.decision.candidate_set,
-            state_policy_references=frozen.state_policy_references,
-            artifact_root=tmp_path / "evaluation-panels-v2",
-            created_at=multi_target_available_at,
+        panel, enrichment, panel_path, enrichment_path = (
+            shadow_operations.build_enriched_evaluation(
+                decision_id=frozen.decision_id,
+                targeted_outcome_id=operational_settlement.targeted_outcome_v2.settlement_id,
+                target_protocol_id=target_protocol.protocol_id,
+                dynamic_pool=dynamic_pool,
+                candidate_set=execution.decision.candidate_set,
+                state_policy_references=frozen.state_policy_references,
+                dataset=execution.preparation.controlled_preparation.daily_dataset,
+                feature_bundle=(
+                    execution.preparation.controlled_preparation.static_feature_bundle
+                ),
+                signal_run=execution.decision.signal.artifact,
+                forecasts=tuple(
+                    item.artifact.forecast for item in execution.decision.forecasts
+                ),
+                state_sources=(),
+                artifact_root=tmp_path / "evaluation-panels-v2",
+                created_at=multi_target_available_at,
+            )
         )
         assert panel_path.exists()
+        assert enrichment_path.exists()
+        assert enrichment.panel_reference.artifact_id == panel.panel_id
         assert panel.row_count == len(dynamic_pool.members)
         assert panel.slices[0].state_policy_references == frozen.state_policy_references
+        calibration_engineering = PostgresPathForecastCalibrationOperator(
+            postgres_factory
+        ).run(
+            target_protocol=target_protocol,
+            through_date=command.trading_date,
+            created_at=multi_target_available_at,
+            minimum_fit_samples=1,
+            minimum_validation_samples=1,
+        )
+        assert calibration_engineering["status"] == "NOT_ESTIMABLE"
+        assert calibration_engineering["hypothesis_count"] == 18
+        assert calibration_engineering["calibrated"] is False
         strategy_observed_at = multi_target_available_at + timedelta(seconds=1)
         strategy_observation = StrategyDayObservation(
             trading_date=command.trading_date,

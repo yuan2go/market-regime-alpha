@@ -66,6 +66,10 @@ from market_regime_alpha.application.free_data_operation.service import (
 from market_regime_alpha.application.free_data_operation.research_universe import (
     FreeResearchUniverseOperator,
 )
+from market_regime_alpha.application.governance.access_control import (
+    PostgresAccessGovernance,
+    SecurityPermission,
+)
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
     FreeHistoricalSampleBuildResult,
@@ -154,6 +158,18 @@ _INSPECT_OPERATIONS = (
     "trace",
     "metrics",
 )
+_READ_OPERATIONS = {
+    "preflight",
+    "report",
+    "replay",
+    "report-day",
+    "replay-day",
+    "research-universe-replay",
+    "strategy-replay",
+    "portfolio-shadow-replay",
+    "recovery-audit",
+    *_INSPECT_OPERATIONS,
+}
 
 
 def _add_run_arguments(command: argparse.ArgumentParser) -> None:
@@ -195,6 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--application-schema",
         default="market_regime_alpha",
         help="Explicit lowercase PostgreSQL schema authority.",
+    )
+    parser.add_argument(
+        "--principal-id",
+        help="Required active engineering Principal; caller identity is not authenticated.",
     )
     subparsers = parser.add_subparsers(dest="operation", required=True)
     prepare = subparsers.add_parser("prepare")
@@ -290,21 +310,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = build_parser().parse_args(argv)
         if args.database_url is None:
             raise ValueError("explicit --database-url is required")
+        if args.principal_id is None:
+            raise ValueError("explicit --principal-id is required")
         settings = DatabaseSettings.from_sources(
             database_url=args.database_url,
             environ={},
         )
         factory = PostgresConnectionFactory(settings, application_schema=args.application_schema)
-        read_only = args.operation in {
-            "preflight",
-            "report",
-            "replay",
-            "replay-day",
-            "research-universe-replay",
-            "portfolio-shadow-replay",
-            "recovery-audit",
-            *_INSPECT_OPERATIONS,
-        }
+        read_only = args.operation in _READ_OPERATIONS
+        governance = PostgresAccessGovernance(
+            factory,
+            apply_migrations=False,
+        )
+        permission = _required_permission(args)
+        decision = governance.authorization(
+            ArtifactId(args.principal_id),
+            permission,
+        )
+        if not decision.allowed:
+            raise PermissionError(
+                f"Principal is not authorized for {permission.value}"
+            )
         journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
         output = (
             _run_due(args, settings, factory, journal)
@@ -321,6 +347,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except AShareDataError as exc:
         _emit_error("FREE_DATA_PROVIDER_FAILED", exc)
         return DATABASE_ERROR
+    except PermissionError as exc:
+        _emit_error("OPERATOR_NOT_AUTHORIZED", exc)
+        return ARGUMENT_ERROR
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         _emit_error("ARGUMENT_OR_IDENTITY_INVALID", exc)
         return ARGUMENT_ERROR
@@ -951,6 +980,35 @@ def _authority_ceiling() -> dict[str, bool]:
         "broker_authority_granted": False,
         "daily_decision_window_summary_delivered": False,
     }
+
+
+def _required_permission(args: argparse.Namespace) -> SecurityPermission:
+    operation = str(args.operation)
+    if operation in _READ_OPERATIONS:
+        return SecurityPermission.READ_RESEARCH
+    if operation == "research-universe-sync":
+        return SecurityPermission.RUN_RESEARCH
+    if operation == "resume":
+        return SecurityPermission.RECOVER_RUNTIME
+    if operation in {"prepare", "schedule", "reserve-due-tick", "run-due", "run-day"}:
+        run_command = ContinuousResearchCommand.from_canonical_dict(
+            _load_json_object(args.run_command)
+        )
+        return (
+            SecurityPermission.RUN_RESEARCH
+            if run_command.authority_mode is RuntimeAuthorityMode.RESEARCH
+            else SecurityPermission.RUN_SHADOW
+        )
+    if operation == "admit-tick":
+        tick_command = RuntimeTickCommand.from_canonical_dict(
+            _load_json_object(args.tick_command)
+        )
+        return (
+            SecurityPermission.RUN_RESEARCH
+            if tick_command.authority_mode is RuntimeAuthorityMode.RESEARCH
+            else SecurityPermission.RUN_SHADOW
+        )
+    return SecurityPermission.RUN_SHADOW
 
 
 def _emit(payload: Mapping[str, Any]) -> None:

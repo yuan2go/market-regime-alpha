@@ -373,7 +373,9 @@ class ETFThemeReferenceSnapshot:
             sorted(values["mappings"], key=lambda item: (item.etf_id, item.theme_id))
         )
         normalized["limitations"] = tuple(sorted(set(values["limitations"])))
-        normalized["schema_version"] = REFERENCE_SNAPSHOT_SCHEMA
+        normalized["schema_version"] = values.get(
+            "schema_version", REFERENCE_SNAPSHOT_SCHEMA
+        )
         digest = canonical_hash(_snapshot_payload(**normalized))
         return cls(
             snapshot_id=_content_id("etf-theme-reference", digest),

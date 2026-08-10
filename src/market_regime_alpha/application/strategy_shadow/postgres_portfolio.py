@@ -34,7 +34,10 @@ class PostgresShadowPortfolioRepository:
     def save_portfolio(
         self, *, policy: ShadowPortfolioPolicy, portfolio: ShadowPortfolio
     ) -> ShadowPortfolio:
-        if portfolio.policy_reference.artifact_id != policy.policy_id:
+        if (
+            portfolio.policy_reference.artifact_id != policy.policy_id
+            or portfolio.policy_reference.content_hash != policy.policy_hash
+        ):
             raise ValueError("Portfolio Shadow Policy identity mismatch")
 
         def operation(connection: Any) -> None:
@@ -219,7 +222,10 @@ class PostgresShadowPortfolioRepository:
         self, portfolio_id: ArtifactId
     ) -> tuple[ShadowPortfolioDayState, ...]:
         policy, portfolio = self.get_portfolio(portfolio_id)
-        if portfolio.policy_reference.artifact_id != policy.policy_id:
+        if (
+            portfolio.policy_reference.artifact_id != policy.policy_id
+            or portfolio.policy_reference.content_hash != policy.policy_hash
+        ):
             raise ValueError("Portfolio Shadow durable Policy chain is invalid")
         with self._factory.connection(read_only=True) as connection:
             rows = connection.execute(

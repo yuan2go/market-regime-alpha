@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Barrier
 
 import pytest
 
@@ -11,6 +13,7 @@ from market_regime_alpha.application.governance.access_control import (
     PrincipalStatus,
     RoleEventKind,
     SecurityPermission,
+    SecurityPrincipal,
     SecurityRole,
 )
 from market_regime_alpha.application.research_validation.common import (
@@ -205,3 +208,101 @@ def test_security_bootstrap_and_commands_are_single_use(
             occurred_at=NOW,
             idempotency_key="bootstrap",
         )
+
+
+def test_security_global_invariants_are_serialized(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    PostgresAccessGovernance(postgres_factory)
+    bootstrap_barrier = Barrier(2)
+
+    def bootstrap(index: int) -> SecurityPrincipal:
+        bootstrap_barrier.wait()
+        return PostgresAccessGovernance(
+            postgres_factory, apply_migrations=False
+        ).bootstrap_admin(
+            external_subject=f"local:concurrent-admin-{index}",
+            display_name=f"Concurrent Admin {index}",
+            reason="concurrent bootstrap",
+            occurred_at=NOW + timedelta(seconds=index),
+            idempotency_key=f"concurrent-bootstrap-{index}",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(bootstrap, index) for index in (1, 2)]
+        results: list[SecurityPrincipal] = []
+        errors: list[BaseException] = []
+        for future in futures:
+            try:
+                results.append(future.result())
+            except BaseException as exc:  # noqa: BLE001 - assert concurrent outcome.
+                errors.append(exc)
+
+    assert len(results) == 1, (results, errors)
+    assert len(errors) == 1
+    assert isinstance(errors[0], PermissionError)
+    first = results[0]
+    first_id = first.principal_id
+    governance = PostgresAccessGovernance(postgres_factory, apply_migrations=False)
+    second = governance.create_principal(
+        actor=first_id,
+        external_subject="local:second-admin",
+        display_name="Second Admin",
+        reason="last-admin concurrency test",
+        occurred_at=NOW + timedelta(seconds=3),
+        idempotency_key="create-second-admin",
+    )
+    governance.change_role(
+        actor=first_id,
+        principal_id=second.principal_id,
+        role=SecurityRole.ADMIN,
+        event_kind=RoleEventKind.GRANTED,
+        reason="last-admin concurrency test",
+        occurred_at=NOW + timedelta(seconds=4),
+        idempotency_key="grant-second-admin",
+    )
+    revoke_barrier = Barrier(2)
+
+    def revoke(*, actor: ArtifactId, target: ArtifactId, key: str) -> object:
+        revoke_barrier.wait()
+        return PostgresAccessGovernance(
+            postgres_factory, apply_migrations=False
+        ).change_role(
+            actor=actor,
+            principal_id=target,
+            role=SecurityRole.ADMIN,
+            event_kind=RoleEventKind.REVOKED,
+            reason="concurrent last-admin revocation",
+            occurred_at=NOW + timedelta(seconds=5),
+            idempotency_key=key,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(
+                revoke,
+                actor=first_id,
+                target=second.principal_id,
+                key="revoke-second-concurrently",
+            ),
+            executor.submit(
+                revoke,
+                actor=second.principal_id,
+                target=first_id,
+                key="revoke-first-concurrently",
+            ),
+        )
+        revoked = 0
+        denied = 0
+        for future in futures:
+            try:
+                future.result()
+                revoked += 1
+            except PermissionError:
+                denied += 1
+
+    assert (revoked, denied) == (1, 1)
+    assert sum(
+        governance.authorization(principal_id, SecurityPermission.MANAGE_ROLES).allowed
+        for principal_id in (first_id, second.principal_id)
+    ) == 1

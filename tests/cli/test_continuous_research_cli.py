@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 
 from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
@@ -13,6 +14,12 @@ from market_regime_alpha.cli.continuous_research import (
 from market_regime_alpha.application.continuous_research.scheduler import (
     TradingDayAssessment,
 )
+from market_regime_alpha.application.governance.access_control import (
+    PostgresAccessGovernance,
+    RoleEventKind,
+    SecurityRole,
+)
+from market_regime_alpha.core.identity import ArtifactId
 from tests.application.continuous_research.test_runner import NOW
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
@@ -25,11 +32,20 @@ from tests.persistence.postgres.conftest import (
 
 
 def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
+    admin = PostgresAccessGovernance(postgres_factory).bootstrap_admin(
+        external_subject="test:continuous-cli-admin",
+        display_name="Continuous CLI Admin",
+        reason="CLI authorization fixture",
+        occurred_at=datetime(2026, 8, 11, tzinfo=UTC),
+        idempotency_key="continuous-cli-admin",
+    )
     return [
         "--database-url",
         os.environ[TEST_DATABASE_URL_ENV],
         "--application-schema",
         postgres_factory.application_schema,
+        "--principal-id",
+        str(admin.principal_id),
     ]
 
 
@@ -273,6 +289,8 @@ def test_cli_requires_explicit_postgres_and_never_echoes_credentials(capsys) -> 
             [
                 "--database-url",
                 f"postgresql://user:{secret}@localhost/database",
+                "--principal-id",
+                "unavailable-database-principal",
                 "report",
                 "--run-id",
                 "missing-run",
@@ -285,6 +303,54 @@ def test_cli_requires_explicit_postgres_and_never_echoes_credentials(capsys) -> 
     failed = json.loads(output)
     assert failed["status"] == "FAILED"
     assert failed["reason_code"] == "POSTGRESQL_OPERATION_FAILED"
+
+
+def test_cli_requires_authorized_principal_for_shadow_mutation(
+    postgres_factory: PostgresConnectionFactory,
+    capsys,
+    tmp_path,
+) -> None:
+    authority = _authority_args(postgres_factory)
+    admin_id = ArtifactId(authority[-1])
+    governance = PostgresAccessGovernance(postgres_factory, apply_migrations=False)
+    researcher = governance.create_principal(
+        actor=admin_id,
+        external_subject="test:continuous-cli-researcher",
+        display_name="Continuous CLI Researcher",
+        reason="authorization boundary fixture",
+        occurred_at=datetime(2026, 8, 11, 0, 0, 1, tzinfo=UTC),
+        idempotency_key="continuous-cli-researcher",
+    )
+    governance.change_role(
+        actor=admin_id,
+        principal_id=researcher.principal_id,
+        role=SecurityRole.RESEARCHER,
+        event_kind=RoleEventKind.GRANTED,
+        reason="authorization boundary fixture",
+        occurred_at=datetime(2026, 8, 11, 0, 0, 2, tzinfo=UTC),
+        idempotency_key="continuous-cli-grant-researcher",
+    )
+    denied_authority = [*authority[:-1], str(researcher.principal_id)]
+
+    assert main(
+        [*denied_authority, "strategy-day", "--observations", "missing.json"]
+    ) == ARGUMENT_ERROR
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason_code"] == "OPERATOR_NOT_AUTHORIZED"
+
+    command_path = tmp_path / "research-run.json"
+    command_path.write_text(
+        json.dumps(_command().to_canonical_dict()),
+        encoding="utf-8",
+    )
+    assert main(
+        [
+            *denied_authority,
+            "prepare",
+            "--run-command",
+            str(command_path),
+        ]
+    ) == SUCCESS
 
 
 def test_cli_schedules_and_reserves_a_due_tick(

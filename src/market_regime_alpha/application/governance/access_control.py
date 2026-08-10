@@ -99,6 +99,10 @@ _ACTION_PERMISSION = {
     ApprovalAction.RECOVERY_OPERATION: SecurityPermission.RECOVER_RUNTIME,
 }
 
+# Serialize the two global governance invariants (single bootstrap and at least
+# one active Admin) without introducing a mutable singleton owner row.
+_SECURITY_GOVERNANCE_ADVISORY_LOCK = 5_114_731_902_026_081_106
+
 _LIMITATIONS = (
     "AUTHENTICATION_PROVIDER_NOT_BOUND",
     "BROKER_PERMISSION_ABSENT",
@@ -392,6 +396,7 @@ class PostgresAccessGovernance:
         command_hash = canonical_hash(command_payload)
 
         def operation(connection: Any) -> str:
+            _lock_security_governance(connection)
             existing = _existing_command(connection, idempotency_key, command_hash)
             if existing is not None:
                 return existing
@@ -464,6 +469,7 @@ class PostgresAccessGovernance:
         digest = canonical_hash(payload)
 
         def operation(connection: Any) -> str:
+            _lock_security_governance(connection)
             existing = _existing_command(connection, idempotency_key, digest)
             if existing is not None:
                 return existing
@@ -524,6 +530,7 @@ class PostgresAccessGovernance:
         digest = canonical_hash(payload)
 
         def operation(connection: Any) -> str:
+            _lock_security_governance(connection)
             existing = _existing_command(connection, idempotency_key, digest)
             if existing is not None:
                 return existing
@@ -588,6 +595,7 @@ class PostgresAccessGovernance:
         digest = canonical_hash(payload)
 
         def operation(connection: Any) -> str:
+            _lock_security_governance(connection)
             existing = _existing_command(connection, idempotency_key, digest)
             if existing is not None:
                 return existing
@@ -1114,6 +1122,13 @@ def _principal_status(connection: Any, principal_id: ArtifactId) -> PrincipalSta
     if row is None:
         raise KeyError(str(principal_id))
     return PrincipalStatus(str(row[0]))
+
+
+def _lock_security_governance(connection: Any) -> None:
+    connection.execute(
+        "SELECT pg_advisory_xact_lock(%s)",
+        (_SECURITY_GOVERNANCE_ADVISORY_LOCK,),
+    )
 
 
 def _current_roles(

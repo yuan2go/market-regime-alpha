@@ -666,7 +666,10 @@ def run_shadow_portfolio_day(
     previous: ShadowPortfolioDayState | None,
     recorded_at: datetime,
 ) -> ShadowPortfolioDayState:
-    if portfolio.policy_reference.artifact_id != policy.policy_id:
+    if (
+        portfolio.policy_reference.artifact_id != policy.policy_id
+        or portfolio.policy_reference.content_hash != policy.policy_hash
+    ):
         raise ValueError("Shadow Portfolio Policy identity mismatch")
     if not observations or tuple(item.symbol for item in observations) != tuple(
         sorted({item.symbol for item in observations})

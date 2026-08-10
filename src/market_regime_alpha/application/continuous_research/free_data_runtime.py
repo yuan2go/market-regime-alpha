@@ -459,9 +459,9 @@ def _build_summary(
         controlled.daily_dataset.artifact.content_hash,
     )
     feature = RuntimeArtifactReference(
-        "STATIC_FEATURE_BUNDLE",
-        controlled.static_bundle.artifact_id,
-        controlled.static_bundle.content_hash,
+        "FEATURE_BUNDLE_V2",
+        controlled.static_feature_bundle.artifact.bundle_id,
+        controlled.static_feature_bundle.artifact.content_hash,
     )
     stages = tuple(
         _stage_evidence(
@@ -1089,14 +1089,18 @@ def _runtime_lineage(
                 "runtime-feature-input:"
                 + canonical_hash(
                     {
-                        "static_bundle_id": str(controlled.static_bundle.artifact_id),
+                        "static_bundle_id": str(
+                            controlled.static_feature_bundle.artifact.bundle_id
+                        ),
                         "feature_definition_id": str(feature_id),
                     }
                 )[7:]
             ),
             content_hash=canonical_hash(
                 {
-                    "static_bundle_hash": controlled.static_bundle.content_hash,
+                    "static_bundle_hash": (
+                        controlled.static_feature_bundle.artifact.content_hash
+                    ),
                     "feature_definition_id": str(feature_id),
                 }
             ),

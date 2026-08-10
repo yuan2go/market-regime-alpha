@@ -263,6 +263,14 @@ class PortfolioShadowDayOperator:
             )
             for symbol in sorted(symbols)
         )
+        required_day_lineage = {panel_reference, candidate_reference}
+        if any(
+            not required_day_lineage.issubset(item.source_references)
+            for item in observations
+        ):
+            raise ValueError(
+                "Portfolio Shadow day omits current Panel/Candidate lineage"
+            )
         if request.policy.weighting_method is PortfolioWeightingMethod.RISK_WEIGHT:
             missing_risk = tuple(
                 item.symbol

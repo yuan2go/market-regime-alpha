@@ -63,6 +63,14 @@ def _snapshot():
                 "type": "",
                 "status": "",
             },
+            {
+                "code": "sz.000002",
+                "code_name": "上市状态未知但不得纳入",
+                "ipoDate": "1991-01-29",
+                "outDate": "",
+                "type": "1",
+                "status": "",
+            },
         ),
     )
 
@@ -75,8 +83,10 @@ def test_free_research_universe_retains_unknown_and_separates_population() -> No
     assert by_symbol["600001.SH"].membership_status is ResearchUniverseMembershipStatus.EXCLUDED
     assert by_symbol["300999.SZ"].membership_status is ResearchUniverseMembershipStatus.EXCLUDED
     assert by_symbol["689999.SH"].membership_status is ResearchUniverseMembershipStatus.UNKNOWN
-    assert snapshot.security_master_count == 4
+    assert by_symbol["000002.SZ"].membership_status is ResearchUniverseMembershipStatus.UNKNOWN
+    assert "CURRENT_LISTING_STATUS_UNKNOWN" in by_symbol["000002.SZ"].reason_codes
+    assert snapshot.security_master_count == 5
     assert snapshot.included_count == 1
-    assert snapshot.unknown_count == 1
+    assert snapshot.unknown_count == 2
     assert snapshot.formal_pit is False
     assert "FORMAL_PIT_NOT_ESTABLISHED" in snapshot.limitations

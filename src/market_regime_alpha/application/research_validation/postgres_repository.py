@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from psycopg.types.json import Jsonb
 
-from market_regime_alpha.application.research_validation.calibration import CalibrationArtifact, CalibrationObservation
+from market_regime_alpha.application.research_validation.calibration import (
+    CalibrationArtifact,
+    CalibrationObservation,
+    CalibrationProtocol,
+)
 from market_regime_alpha.application.research_validation.factor_extraction import ResearchPanelEnrichment
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleDataset
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleQualification
@@ -273,6 +277,101 @@ class PostgresResearchValidationRepository:
                     ) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
                     """,
                     (str(artifact.artifact_id), item.observation_id, item.partition.value),
+                )
+
+        self._factory.run_transaction(operation)
+
+    def record_calibration_protocol(
+        self,
+        protocol: CalibrationProtocol,
+        *,
+        recorded_at: datetime,
+    ) -> None:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                protocol.protocol_id,
+                protocol.protocol_hash,
+                "CALIBRATION_PROTOCOL",
+                "ENGINEERING_ONLY",
+                protocol.identity_payload(),
+                recorded_at,
+            )
+        )
+
+    def record_calibration(
+        self,
+        *,
+        protocol: CalibrationProtocol,
+        artifact: CalibrationArtifact,
+        observations: tuple[CalibrationObservation, ...],
+    ) -> None:
+        if artifact.protocol_reference.artifact_id != protocol.protocol_id or (
+            artifact.protocol_reference.content_hash != protocol.protocol_hash
+        ):
+            raise ValueError("Calibration Artifact Protocol lineage mismatch")
+        observation_ids = {item.observation_id for item in observations}
+        bound_ids = {
+            *artifact.fit.fit_observation_ids,
+            *(
+                observation_id
+                for evaluation in artifact.evaluations
+                for observation_id in evaluation.observation_ids
+            ),
+        }
+        if bound_ids != observation_ids:
+            raise ValueError("Calibration Artifact observation binding mismatch")
+
+        def operation(connection: Any) -> None:
+            self._insert_artifact(
+                connection,
+                protocol.protocol_id,
+                protocol.protocol_hash,
+                "CALIBRATION_PROTOCOL",
+                "ENGINEERING_ONLY",
+                protocol.identity_payload(),
+                artifact.created_at,
+            )
+            self._insert_artifact(
+                connection,
+                artifact.fit.fit_id,
+                artifact.fit.fit_hash,
+                "CALIBRATION_FIT",
+                "ENGINEERING_ONLY",
+                artifact.fit.identity_payload(),
+                artifact.fit.created_at,
+            )
+            for evaluation in artifact.evaluations:
+                self._insert_artifact(
+                    connection,
+                    evaluation.evaluation_id,
+                    evaluation.evaluation_hash,
+                    "CALIBRATION_EVALUATION",
+                    "ENGINEERING_ONLY",
+                    evaluation.identity_payload(),
+                    artifact.created_at,
+                )
+            self._insert_artifact(
+                connection,
+                artifact.artifact_id,
+                artifact.artifact_hash,
+                "CALIBRATION_ARTIFACT",
+                "ENGINEERING_ONLY",
+                artifact.identity_payload(),
+                artifact.created_at,
+            )
+            for item in observations:
+                connection.execute(
+                    """
+                    INSERT INTO calibration_partition_binding(
+                        calibration_artifact_id, observation_id, partition_name
+                    ) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        str(artifact.artifact_id),
+                        item.observation_id,
+                        item.partition.value,
+                    ),
                 )
 
         self._factory.run_transaction(operation)

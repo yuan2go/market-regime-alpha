@@ -64,6 +64,9 @@ from market_regime_alpha.application.free_data_operation import (
     FreeDataOperationService,
     FreeDataPreparationRequest,
 )
+from market_regime_alpha.application.governance.access_control import (
+    PostgresAccessGovernance,
+)
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
 )
@@ -551,6 +554,14 @@ def test_formal_run_due_entry_executes_staged_research_summary(
         "--application-schema",
         postgres_factory.application_schema,
     ]
+    admin = PostgresAccessGovernance(postgres_factory).bootstrap_admin(
+        external_subject="test:free-runtime-cli-admin",
+        display_name="Free Runtime CLI Admin",
+        reason="CLI authorization fixture",
+        occurred_at=datetime(2025, 2, 3, 5, 0, tzinfo=UTC),
+        idempotency_key="free-runtime-cli-admin",
+    )
+    authority.extend(("--principal-id", str(admin.principal_id)))
     common = [
         *authority,
         "run-due",
