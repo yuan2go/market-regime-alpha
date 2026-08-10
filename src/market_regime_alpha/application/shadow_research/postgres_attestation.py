@@ -51,14 +51,35 @@ class PostgresProspectiveAttestationRepository:
                 or str(outcome[1]) != str(attestation.shadow_decision.artifact_id)
             ):
                 raise ProspectiveAttestationConflict("Attestation Outcome lineage mismatch")
+            if attestation.runtime_authority_evidence is None:
+                raise ProspectiveAttestationConflict("Attestation Runtime Authority evidence missing")
+            runtime_authority = connection.execute(
+                """
+                SELECT evidence_hash, run_id, tick_id, clock_mode,
+                       runtime_origin, code_revision
+                FROM continuous_runtime_authority_evidence
+                WHERE evidence_id = %s
+                """,
+                (str(attestation.runtime_authority_evidence.artifact_id),),
+            ).fetchone()
+            if runtime_authority is None or (
+                str(runtime_authority[0]) != attestation.runtime_authority_evidence.content_hash
+                or str(runtime_authority[1]) != str(attestation.run_id)
+                or str(runtime_authority[2]) != str(attestation.tick_id)
+                or str(runtime_authority[3]) != attestation.clock_mode.value
+                or str(runtime_authority[4]) != attestation.runtime_origin.value
+                or str(runtime_authority[5]) != attestation.code_revision
+            ):
+                raise ProspectiveAttestationConflict("Attestation Runtime Authority lineage mismatch")
             connection.execute(
                 """
                 INSERT INTO prospective_evidence_attestation(
                     attestation_id, attestation_hash, shadow_decision_id,
                     outcome_settlement_id, run_id, tick_id, status, clock_mode,
                     runtime_origin, prospective_proven, decision_frozen_at,
-                    outcome_available_at, payload_json, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false, %s, %s, %s, %s)
+                    outcome_available_at, runtime_authority_evidence_id,
+                    payload_json, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false, %s, %s, %s, %s, %s)
                 ON CONFLICT (attestation_id) DO NOTHING
                 """,
                 (
@@ -73,6 +94,7 @@ class PostgresProspectiveAttestationRepository:
                     attestation.runtime_origin.value,
                     attestation.decision_frozen_at,
                     attestation.outcome_available_at,
+                    (None if attestation.runtime_authority_evidence is None else str(attestation.runtime_authority_evidence.artifact_id)),
                     Jsonb(attestation.to_canonical_dict()),
                     attestation.created_at,
                 ),

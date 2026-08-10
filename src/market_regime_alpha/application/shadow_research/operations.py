@@ -18,6 +18,10 @@ from market_regime_alpha.application.continuous_research.journal import (
 from market_regime_alpha.application.continuous_research.postgres_journal import (
     PostgresContinuousResearchJournal,
 )
+from market_regime_alpha.application.continuous_research.runtime_authority_evidence import (
+    PostgresRuntimeAuthorityEvidenceRepository,
+    RuntimeAuthorityEvidence,
+)
 
 from market_regime_alpha.application.controlled_operation.outcome_evidence import (
     TradeHorizonOutcomeEvidence,
@@ -42,6 +46,18 @@ from market_regime_alpha.application.research_evaluation.panel_v2 import (
 )
 from market_regime_alpha.application.research_evaluation.postgres_panel_v2 import (
     PostgresResearchPanelRepository,
+)
+from market_regime_alpha.application.research_validation.factor_extraction import (
+    CanonicalStateFactorSource,
+    ResearchPanelEnrichment,
+    extract_canonical_factors,
+    publish_research_panel_enrichment,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
 )
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
     TargetedShadowOutcome,
@@ -69,6 +85,9 @@ from market_regime_alpha.application.shadow_research.postgres_repository import 
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.market_data.artifacts import VerifiedMarketDataDataset
+from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
+from market_regime_alpha.forecasting.contracts import PathForecast
+from market_regime_alpha.signals.v3 import SignalRunArtifactV3
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
@@ -92,11 +111,16 @@ class ResearchShadowOperations:
             factory,
             apply_migrations=False,
         )
+        self._runtime_authority = PostgresRuntimeAuthorityEvidenceRepository(factory)
         self._shadow = PostgresShadowResearchRepository(factory)
         self._outcomes = PostgresProspectiveOutcomeRepository(factory, apply_migrations=False)
         self._targets = PostgresTargetOutcomeRepository(factory, apply_migrations=False)
         self._attestations = PostgresProspectiveAttestationRepository(factory, apply_migrations=False)
         self._panels = PostgresResearchPanelRepository(factory, apply_migrations=False)
+        self._validation = PostgresResearchValidationRepository(
+            factory,
+            apply_migrations=False,
+        )
 
     def schedule(self, command: ShadowSessionCommand) -> ShadowSessionSnapshot:
         return self._shadow.schedule(command)
@@ -153,6 +177,28 @@ class ResearchShadowOperations:
         if runtime.command.authority_mode is not RuntimeAuthorityMode.SHADOW:
             raise ValueError("Attestation Runtime is not SHADOW authority")
         try:
+            runtime_evidence = self._runtime_authority.get(
+                decision.run_id,
+                decision.tick_id,
+            )
+        except KeyError:
+            runtime_evidence = self._runtime_authority.record(
+                RuntimeAuthorityEvidence.create(
+                    run_id=decision.run_id,
+                    tick_id=decision.tick_id,
+                    clock_mode=ClockMode.UNKNOWN,
+                    runtime_origin=RuntimeOrigin.UNKNOWN,
+                    clock_source="RUNTIME_EVIDENCE_MISSING_AT_SETTLEMENT",
+                    origin_source="RUNTIME_EVIDENCE_MISSING_AT_SETTLEMENT",
+                    observed_at=decision.decision_frozen_at,
+                    recorded_at=created_at,
+                    code_revision=runtime.command.code_revision,
+                )
+            )
+        # The CLI fields are compatibility assertions only.  They are never the
+        # final source used by the Attestation.
+        del clock_mode, runtime_origin
+        try:
             factual = self._outcomes.get_for_decision(decision_id)
         except KeyError:
             factual = self._outcomes.build(
@@ -189,8 +235,7 @@ class ResearchShadowOperations:
             source_acquisition_receipts=decision.provider_source_references,
             code_revision=code_revision,
             runtime_mode=runtime.command.authority_mode,
-            clock_mode=clock_mode,
-            runtime_origin=runtime_origin,
+            runtime_authority=runtime_evidence,
             created_at=created_at,
         )
         attestation = self._attestations.record(attestation)
@@ -243,6 +288,75 @@ class ResearchShadowOperations:
         )
         path = publish_research_panel_v2(root=artifact_root, panel=panel)
         return self._panels.register(panel, artifact_path=path), path
+
+    def build_enriched_evaluation(
+        self,
+        *,
+        decision_id: ArtifactId,
+        targeted_outcome_id: ArtifactId,
+        target_protocol_id: ArtifactId,
+        dynamic_pool: DynamicStockPoolVersion,
+        candidate_set: CandidateSet,
+        state_policy_references: tuple[RuntimeArtifactReference, ...],
+        dataset: VerifiedMarketDataDataset,
+        feature_bundle: VerifiedFeatureBundleV2,
+        signal_run: SignalRunArtifactV3 | None,
+        forecasts: tuple[PathForecast, ...],
+        state_sources: tuple[CanonicalStateFactorSource, ...],
+        artifact_root: Path,
+        created_at: datetime,
+    ) -> tuple[FrozenResearchPanelV2, ResearchPanelEnrichment, Path, Path]:
+        decision = self._shadow.replay(decision_id)
+        if (
+            str(dataset.artifact.dataset_id) != str(decision.dataset.artifact_id)
+            or dataset.artifact.content_hash != decision.dataset.content_hash
+            or str(feature_bundle.artifact.bundle_id) != str(decision.feature_bundle.artifact_id)
+            or feature_bundle.artifact.content_hash != decision.feature_bundle.content_hash
+        ):
+            raise ValueError("Panel enrichment Dataset/Feature Bundle differs from frozen Shadow Decision")
+        expected_optional = (
+            (decision.dynamic_pool, dynamic_pool.pool_id, dynamic_pool.pool_hash, "Dynamic Pool"),
+            (decision.candidate_set, candidate_set.envelope.artifact_id, candidate_set.envelope.content_hash, "Candidate Set"),
+        )
+        for expected, artifact_id, digest, label in expected_optional:
+            if expected is None or str(expected.artifact_id) != str(artifact_id) or expected.content_hash != digest:
+                raise ValueError(f"Panel enrichment {label} differs from frozen Shadow Decision")
+        if signal_run is not None and (
+            decision.signal is None
+            or str(decision.signal.artifact_id) != str(signal_run.artifact_id)
+            or decision.signal.content_hash != signal_run.envelope.content_hash
+        ):
+            raise ValueError("Panel enrichment Signal differs from frozen Shadow Decision")
+        panel, panel_path = self.build_evaluation(
+            decision_id=decision_id,
+            targeted_outcome_id=targeted_outcome_id,
+            target_protocol_id=target_protocol_id,
+            dynamic_pool=dynamic_pool,
+            candidate_set=candidate_set,
+            state_policy_references=state_policy_references,
+            artifact_root=artifact_root,
+            created_at=created_at,
+        )
+        symbols = tuple(sorted({row.symbol for panel_slice in panel.slices for row in panel_slice.rows}))
+        enrichment = extract_canonical_factors(
+            panel_reference=ValidationArtifactReference("RESEARCH_PANEL_V2", panel.panel_id, panel.panel_hash),
+            symbols=symbols,
+            dataset=dataset,
+            feature_bundle=feature_bundle,
+            dynamic_pool=dynamic_pool,
+            candidate_set=candidate_set,
+            signal_run=signal_run,
+            forecasts=forecasts,
+            state_sources=state_sources,
+            decision_time=decision.decision_time,
+            extracted_at=created_at,
+        )
+        enrichment_path = publish_research_panel_enrichment(
+            root=artifact_root / "enrichments",
+            enrichment=enrichment,
+        )
+        self._validation.record_panel_enrichment(enrichment)
+        return panel, enrichment, panel_path, enrichment_path
 
     def invalidate(
         self,

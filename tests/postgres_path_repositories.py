@@ -124,7 +124,9 @@ def _factory(path: str | Path) -> PostgresConnectionFactory:
         return factory
 
 
-def _cleanup() -> None:
+def cleanup_postgres_path_repositories() -> None:
+    """Release path-keyed test authorities after one pytest item completes."""
+
     with _LOCK:
         factories = tuple(_FACTORIES.values())
         _FACTORIES.clear()
@@ -137,13 +139,13 @@ def _cleanup() -> None:
         if database_url and _SCHEMA.fullmatch(schema):
             with psycopg.connect(database_url, autocommit=True) as connection:
                 connection.execute(
-                    sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
                         sql.Identifier(schema)
                     )
                 )
 
 
-atexit.register(_cleanup)
+atexit.register(cleanup_postgres_path_repositories)
 
 
 def _bind_test_scope(

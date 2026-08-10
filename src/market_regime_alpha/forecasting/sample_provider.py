@@ -73,8 +73,54 @@ class UnavailablePathForecastSampleProvider:
         )
 
 
+class HistoricalRegistrySampleReader(Protocol):
+    """Narrow Reader port implemented by HistoricalSampleRegistry Authority."""
+
+    def load_available_samples(
+        self,
+        *,
+        symbol: str,
+        target_id: object,
+        decision_time: DecisionTime,
+    ) -> tuple[tuple[PathForecastSample, ...], str, tuple[str, ...]]: ...
+
+
+class HistoricalRegistryPathForecastSampleProvider:
+    """Read already-observed samples without deriving any from current Signal."""
+
+    def __init__(self, reader: HistoricalRegistrySampleReader) -> None:
+        self._reader = reader
+
+    def load_samples(
+        self,
+        *,
+        signal_snapshot: SignalSnapshotAuthority,
+        configuration: PathForecastConfig,
+        decision_time: DecisionTime,
+    ) -> PathForecastSampleBatch:
+        samples, qualification, reasons = self._reader.load_available_samples(
+            symbol=signal_snapshot.symbol,
+            target_id=configuration.target_contract.target_id,
+            decision_time=decision_time,
+        )
+        return PathForecastSampleBatch(
+            samples=samples,
+            reason_codes=tuple(sorted(set(reasons))),
+            limitations=tuple(
+                sorted(
+                    {
+                        "FORMAL_OOS_ALPHA_NOT_ESTABLISHED",
+                        "NO_SAMPLES_FABRICATED_FROM_CURRENT_SIGNAL",
+                        f"HISTORICAL_SAMPLE_QUALIFICATION_{qualification}",
+                    }
+                )
+            ),
+        )
+
+
 __all__ = [
     "PathForecastSampleBatch",
     "PathForecastSampleProvider",
+    "HistoricalRegistryPathForecastSampleProvider",
     "UnavailablePathForecastSampleProvider",
 ]

@@ -1,0 +1,239 @@
+"""Durable PostgreSQL registry for immutable validation artifacts."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Mapping
+
+from psycopg.types.json import Jsonb
+
+from market_regime_alpha.application.research_validation.calibration import CalibrationArtifact, CalibrationObservation
+from market_regime_alpha.application.research_validation.factor_extraction import ResearchPanelEnrichment
+from market_regime_alpha.application.research_validation.samples import HistoricalSampleDataset
+from market_regime_alpha.application.research_validation.samples import HistoricalSampleQualification
+from market_regime_alpha.core.identity import ArtifactId, TargetId
+from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.forecasting.path import PathForecastSample
+from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
+from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
+
+
+class PostgresResearchValidationRepository:
+    def __init__(self, factory: PostgresConnectionFactory, *, apply_migrations: bool = True) -> None:
+        self._factory = factory
+        if apply_migrations:
+            PostgresMigrator().apply_all(factory)
+
+    def record(
+        self,
+        *,
+        artifact_id: ArtifactId,
+        artifact_hash: str,
+        artifact_kind: str,
+        evidence_authority: str,
+        payload: Mapping[str, Any],
+        created_at: datetime,
+        qualified: bool = False,
+        production_authorized: bool = False,
+    ) -> None:
+        if qualified or production_authorized or evidence_authority == "AUTHORIZED":
+            raise ValueError("Generic Validation Artifact recording cannot grant qualification or Production authority")
+        if canonical_hash(dict(payload)) != artifact_hash:
+            raise ValueError("Research Validation payload hash mismatch")
+
+        def operation(connection: Any) -> None:
+            connection.execute(
+                """
+                INSERT INTO research_validation_artifact(
+                    artifact_id, artifact_hash, artifact_kind,
+                    evidence_authority, qualified, production_authorized,
+                    payload_json, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (artifact_id) DO NOTHING
+                """,
+                (
+                    str(artifact_id),
+                    artifact_hash,
+                    artifact_kind,
+                    evidence_authority,
+                    qualified,
+                    production_authorized,
+                    Jsonb(dict(payload)),
+                    created_at,
+                ),
+            )
+            row = connection.execute(
+                "SELECT artifact_hash FROM research_validation_artifact WHERE artifact_id = %s", (str(artifact_id),)
+            ).fetchone()
+            if row is None or str(row[0]) != artifact_hash:
+                raise ValueError("Research Validation artifact identity conflict")
+
+        self._factory.run_transaction(operation)
+
+    def record_panel_enrichment(self, enrichment: ResearchPanelEnrichment) -> None:
+        def operation(connection: Any) -> None:
+            self._insert_artifact(
+                connection,
+                enrichment.enrichment_id,
+                enrichment.enrichment_hash,
+                "PANEL_ENRICHMENT",
+                "EXPLORATORY",
+                enrichment.identity_payload(),
+                enrichment.extracted_at,
+            )
+            for item in enrichment.exposures:
+                connection.execute(
+                    """
+                    INSERT INTO research_panel_factor_exposure(
+                        enrichment_id, symbol, factor_family, factor_id,
+                        timeframe, source_artifact_id, source_content_hash,
+                        exposure_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        str(enrichment.enrichment_id),
+                        item.symbol,
+                        item.family.value,
+                        item.factor_id,
+                        item.timeframe or "",
+                        str(item.source_reference.artifact_id),
+                        item.source_reference.content_hash,
+                        Jsonb(item.to_canonical_dict()),
+                    ),
+                )
+
+        self._factory.run_transaction(operation)
+
+    def record_sample_dataset(self, dataset: HistoricalSampleDataset) -> None:
+        def operation(connection: Any) -> None:
+            self._insert_artifact(
+                connection,
+                dataset.dataset_id,
+                dataset.dataset_hash,
+                "HISTORICAL_SAMPLE_DATASET",
+                "EXPLORATORY",
+                dataset.identity_payload(),
+                dataset.available_at,
+            )
+            for item in dataset.records:
+                connection.execute(
+                    """
+                    INSERT INTO historical_path_sample_record(
+                        record_id, record_hash, dataset_id, sample_id, symbol,
+                        target_id, sample_decision_time, available_at,
+                        qualification, payload_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (record_id) DO NOTHING
+                    """,
+                    (
+                        str(item.record_id),
+                        item.record_hash,
+                        str(dataset.dataset_id),
+                        str(item.sample.sample_id),
+                        item.sample.symbol,
+                        str(item.sample.target_id),
+                        item.sample.sample_decision_time.value,
+                        item.sample.available_at.value,
+                        item.qualification.value,
+                        Jsonb(item.identity_payload()),
+                    ),
+                )
+
+        self._factory.run_transaction(operation)
+
+    def bind_calibration_partitions(self, artifact: CalibrationArtifact, observations: tuple[CalibrationObservation, ...]) -> None:
+        def operation(connection: Any) -> None:
+            for item in observations:
+                connection.execute(
+                    """
+                    INSERT INTO calibration_partition_binding(
+                        calibration_artifact_id, observation_id, partition_name
+                    ) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+                    """,
+                    (str(artifact.artifact_id), item.observation_id, item.partition.value),
+                )
+
+        self._factory.run_transaction(operation)
+
+    def get_payload(self, artifact_id: ArtifactId) -> dict[str, Any]:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT artifact_hash, payload_json FROM research_validation_artifact WHERE artifact_id = %s", (str(artifact_id),)
+            ).fetchone()
+        if row is None or not isinstance(row[1], dict):
+            raise KeyError(str(artifact_id))
+        if canonical_hash(row[1]) != str(row[0]):
+            raise ValueError("Research Validation stored payload diverged")
+        return row[1]
+
+    def read_for_forecast(
+        self,
+        *,
+        symbol: str,
+        target_id: TargetId,
+        decision_time: DecisionTime,
+    ) -> HistoricalSampleDataset | None:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT artifact_id, artifact_hash, payload_json
+                FROM research_validation_artifact
+                WHERE artifact_kind = 'HISTORICAL_SAMPLE_DATASET'
+                  AND created_at < %s
+                ORDER BY created_at DESC, artifact_id DESC
+                """,
+                (decision_time.value,),
+            ).fetchall()
+        for row in rows:
+            if not isinstance(row[2], dict):
+                raise ValueError("Historical Sample Dataset payload is invalid")
+            value = {"dataset_id": str(row[0]), "dataset_hash": str(row[1]), **row[2]}
+            dataset = HistoricalSampleDataset.from_canonical_dict(value)
+            if (
+                dataset.available_at < decision_time.value
+                and str(dataset.target_reference.artifact_id) == str(target_id)
+                and any(item.sample.symbol == symbol for item in dataset.records)
+            ):
+                return dataset
+        return None
+
+    def load_available_samples(
+        self,
+        *,
+        symbol: str,
+        target_id: object,
+        decision_time: DecisionTime,
+    ) -> tuple[tuple[PathForecastSample, ...], str, tuple[str, ...]]:
+        dataset = self.read_for_forecast(symbol=symbol, target_id=TargetId(str(target_id)), decision_time=decision_time)
+        if dataset is None:
+            return (), HistoricalSampleQualification.UNQUALIFIED.value, ("HISTORICAL_SAMPLE_DATASET_NOT_AVAILABLE",)
+        samples = tuple(
+            item.sample for item in dataset.records if item.sample.symbol == symbol and item.sample.available_at.value < decision_time.value
+        )
+        reasons = ("HISTORICAL_SAMPLE_DATASET_LOADED",) if samples else ("HISTORICAL_SAMPLES_NOT_AVAILABLE_AT_DECISION_TIME",)
+        return samples, dataset.qualification.value, reasons
+
+    @staticmethod
+    def _insert_artifact(
+        connection: Any,
+        artifact_id: ArtifactId,
+        artifact_hash: str,
+        kind: str,
+        authority: str,
+        payload: Mapping[str, Any],
+        created_at: datetime,
+    ) -> None:
+        if canonical_hash(dict(payload)) != artifact_hash:
+            raise ValueError("Research Validation payload hash mismatch")
+        connection.execute(
+            """
+            INSERT INTO research_validation_artifact(
+                artifact_id, artifact_hash, artifact_kind, evidence_authority,
+                qualified, production_authorized, payload_json, created_at
+            ) VALUES (%s, %s, %s, %s, false, false, %s, %s)
+            ON CONFLICT (artifact_id) DO NOTHING
+            """,
+            (str(artifact_id), artifact_hash, kind, authority, Jsonb(dict(payload)), created_at),
+        )

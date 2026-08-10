@@ -94,6 +94,7 @@ from market_regime_alpha.universe import (
     SuspensionStatus,
     publish_operational_universe,
 )
+from market_regime_alpha.universe.daily_exploratory import DailyUniversePolicy
 
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -472,6 +473,13 @@ def _build_universe(
     dataset: MarketDataDatasetArtifact,
     full_source_manifest: SourceManifest,
 ) -> OperationalUniverseArtifact:
+    policy = DailyUniversePolicy(
+        name=f"free-data-{request.scale.name.lower()}",
+        version="v1",
+        symbols=request.symbols,
+        minimum_history_sessions=request.minimum_history_sessions,
+        minimum_median_daily_amount=float(request.minimum_median_daily_amount),
+    )
     bars_by_symbol = {
         symbol: tuple(
             sorted(
@@ -605,6 +613,9 @@ def _build_universe(
             "FREE_DATA_OPERATIONAL_UNIVERSE",
             "MEMBERSHIP_NOT_FORMAL_PIT",
         ),
+        universe_policy_id=policy.policy_id,
+        universe_policy_hash=policy.content_hash,
+        universe_policy_version=policy.policy_version,
     )
 
 
@@ -765,33 +776,35 @@ def _build_supplemental(
         quote_coverage == 1.0
         and len({item.source_artifact_id for item in eligible_quotes}) == 1
     )
-    market_direction = (
-        _mean([float(item.change_fraction) for item in eligible_quotes])
-        if use_decision_quotes
-        else _mean(latest_returns)
+    quote_changes = tuple(
+        float(item.change_fraction)
+        for item in eligible_quotes
+        if item.change_fraction is not None
     )
+    market_direction = _mean(quote_changes) if use_decision_quotes else _mean(latest_returns)
     amount_change = _mean(amount_changes)
     breadth = (
-        sum(float(item.change_fraction) > 0.0 for item in eligible_quotes)
-        / len(eligible_quotes)
+        sum(value > 0.0 for value in quote_changes) / len(eligible_quotes)
         if use_decision_quotes
         else sum(1 for item in latest_returns if item > 0) / len(latest_returns)
         if latest_returns
         else None
     )
-    intraday_range = (
-        _mean(
-            [
+    quote_ranges: list[float] = []
+    for item in eligible_quotes:
+        denominator = item.previous_close if item.previous_close is not None else item.price
+        if item.high_price is not None and item.low_price is not None and denominator is not None:
+            quote_ranges.append(
                 (float(item.high_price) - float(item.low_price))
-                / float(item.previous_close or item.price)
-                for item in eligible_quotes
-            ]
-        )
-        if use_decision_quotes
-        else None
-    )
+                / float(denominator)
+            )
+    intraday_range = _mean(quote_ranges) if use_decision_quotes else None
     market_available_at = (
-        max(item.available_time.value for item in eligible_quotes)
+        max(
+            item.available_time.value
+            for item in eligible_quotes
+            if item.available_time is not None
+        )
         if use_decision_quotes
         else dataset.available_at
     )
@@ -905,11 +918,17 @@ def _latest_return(bars: tuple[CanonicalMarketBar, ...]) -> float | None:
 
 
 def _latest_amount_change(bars: tuple[CanonicalMarketBar, ...]) -> float | None:
-    if len(bars) < 2 or bars[-2].amount in {None, Decimal("0")}:
+    if len(bars) < 2:
         return None
-    if bars[-1].amount is None:
+    previous_amount = bars[-2].amount
+    current_amount = bars[-1].amount
+    if (
+        previous_amount is None
+        or previous_amount == Decimal("0")
+        or current_amount is None
+    ):
         return None
-    return float(bars[-1].amount / bars[-2].amount - Decimal("1"))
+    return float(current_amount / previous_amount - Decimal("1"))
 
 
 def _mean(values: Iterable[float]) -> float | None:

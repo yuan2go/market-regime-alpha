@@ -65,7 +65,7 @@ Migrations are contiguous PostgreSQL SQL under
 uv run python scripts/apply_postgres_migrations.py
 ```
 
-The current sequence is 001–042:
+The current sequence is 001–045:
 
 - 001–023: historical PostgreSQL authorities through Stateful Research;
 - 024: current runtime binding is constrained to `backend = 'postgres'`;
@@ -81,10 +81,15 @@ The current sequence is 001–042:
 - 038–042: cross-session State Policy/Series, multi-horizon Target Protocol,
   Prospective Evidence Attestation, Evaluation Panel V2 and frozen Decision
   State Policy lineage.
+- 043: Research Validation artifacts, factor exposures, Historical Samples and
+  Calibration partition bindings.
+- 044: isolated Strategy Shadow CAS session/event/artifact authority.
+- 045: Continuous Runtime clock/origin evidence and Prospective Attestation V2
+  binding.
 
 Published migrations are immutable. Migration 024 supersedes the historical
 binding vocabulary in 017 without editing its checksum. Both an empty-database
-001→042 apply and incremental upgrade from the actual prior head must pass.
+001→045 apply and incremental upgrade from the actual prior head must pass.
 
 Migration 026 preserves rows written by the prerelease v1 Decision payloads
 without rewriting their immutable identities. Legacy v1 Runtime receipts remain
@@ -127,7 +132,7 @@ Immutable Artifact / authority identities
 → frozen Fill-derived account view at the original as-of
 → optional content-addressed T+1 calendar/session settlement evidence
 → isolated PostgreSQL schema
-→ apply 001–042
+→ apply 001–045
 → restore/import explicitly bound identities
 → re-execute Reconciliation, Portfolio and independent Risk
 → reload every Risk authority input from the isolated PostgreSQL import

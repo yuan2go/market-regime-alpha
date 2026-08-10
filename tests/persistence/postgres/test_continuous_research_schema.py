@@ -22,6 +22,7 @@ CONTINUOUS_TABLES = {
     "continuous_child_run",
     "continuous_runtime_event",
     "continuous_runtime_schedule",
+    "continuous_runtime_authority_evidence",
 }
 
 
@@ -43,12 +44,10 @@ def test_migration_020_adds_exact_continuous_runtime_authorities(
                 """
             ).fetchall()
         }
-        migration = connection.execute(
-            "SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1"
-        ).fetchone()
+        migration = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
 
     assert tables == CONTINUOUS_TABLES
-    assert migration == (42, "shadow_decision_state_policy")
+    assert migration == (45, "runtime_authority_evidence")
 
 
 def test_migration_020_extends_runtime_binding_scope_without_weakening_it(
@@ -119,4 +118,12 @@ def test_continuous_history_tables_have_mutation_guards(
         ("continuous_runtime_event", "continuous_runtime_event_no_delete"),
         ("continuous_runtime_schedule", "continuous_runtime_schedule_identity_immutable"),
         ("continuous_runtime_schedule", "continuous_runtime_schedule_no_delete"),
+        (
+            "continuous_runtime_authority_evidence",
+            "continuous_runtime_authority_evidence_no_update",
+        ),
+        (
+            "continuous_runtime_authority_evidence",
+            "continuous_runtime_authority_evidence_no_delete",
+        ),
     }

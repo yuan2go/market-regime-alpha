@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date, datetime
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -23,6 +24,13 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
 from market_regime_alpha.application.research_evaluation.targets import (
     engineering_multi_horizon_protocol,
 )
+from market_regime_alpha.application.research_validation.factor_extraction import (
+    CanonicalStateFactorSource,
+    FactorFamily,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.application.shadow_research.attestation import (
     ClockMode,
     RuntimeOrigin,
@@ -34,12 +42,17 @@ from market_regime_alpha.application.shadow_research.operations import (
     ResearchShadowOperations,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.features.materialization_v2 import (
+    load_verified_feature_bundle_v2,
+)
+from market_regime_alpha.forecasting.contracts import PathForecast
 from market_regime_alpha.market_data.artifacts import load_verified_market_data_dataset
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
+from market_regime_alpha.signals.v3 import load_verified_signal_run_v3
 
 
 SUCCESS = 0
@@ -84,15 +97,26 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
 
-    evaluation = commands.add_parser("build-evaluation")
-    evaluation.add_argument("--decision-id", required=True)
-    evaluation.add_argument("--targeted-outcome-id", required=True)
-    evaluation.add_argument("--target-protocol-id", required=True)
-    evaluation.add_argument("--dynamic-pool", type=Path, required=True)
-    evaluation.add_argument("--candidate-set", type=Path, required=True)
-    evaluation.add_argument("--state-policy-references", type=Path, required=True)
-    evaluation.add_argument("--artifact-root", type=Path, required=True)
-    evaluation.add_argument("--created-at", required=True)
+    evaluations = {
+        name: commands.add_parser(name)
+        for name in ("build-evaluation", "build-enriched-evaluation")
+    }
+    for evaluation in evaluations.values():
+        evaluation.add_argument("--decision-id", required=True)
+        evaluation.add_argument("--targeted-outcome-id", required=True)
+        evaluation.add_argument("--target-protocol-id", required=True)
+        evaluation.add_argument("--dynamic-pool", type=Path, required=True)
+        evaluation.add_argument("--candidate-set", type=Path, required=True)
+        evaluation.add_argument("--state-policy-references", type=Path, required=True)
+        evaluation.add_argument("--artifact-root", type=Path, required=True)
+        evaluation.add_argument("--created-at", required=True)
+    enriched = evaluations["build-enriched-evaluation"]
+    enriched.add_argument("--dataset", type=Path, required=True)
+    enriched.add_argument("--feature-bundle", type=Path, required=True)
+    enriched.add_argument("--feature-artifact-root", type=Path, required=True)
+    enriched.add_argument("--signal-run", type=Path)
+    enriched.add_argument("--forecasts", type=Path, required=True)
+    enriched.add_argument("--state-sources", type=Path, required=True)
     settle.add_argument("--expected-version", type=int, required=True)
     settle.add_argument("--created-at", required=True)
     settle.add_argument("--code-revision", required=True)
@@ -189,32 +213,49 @@ def _dispatch(args: argparse.Namespace, operations: ResearchShadowOperations) ->
             "targeted_outcome_v2": result.targeted_outcome_v2.to_canonical_dict(),
             "attestation": result.attestation.to_canonical_dict(),
         }
-    if args.operation == "build-evaluation":
+    if args.operation in {"build-evaluation", "build-enriched-evaluation"}:
         pool_payload = _json_object(args.dynamic_pool)
         candidate_payload = _json_object(args.candidate_set)
-        references_payload = _json_value(args.state_policy_references)
-        if not isinstance(references_payload, list):
-            raise ValueError("State Policy references must be an array")
-        references = tuple(
-            RuntimeArtifactReference(
-                reference_kind=str(item["reference_kind"]),
-                artifact_id=ArtifactId(str(item["artifact_id"])),
-                content_hash=str(item["content_hash"]),
+        references = _runtime_references(args.state_policy_references)
+        common = {
+            "decision_id": ArtifactId(args.decision_id),
+            "targeted_outcome_id": ArtifactId(args.targeted_outcome_id),
+            "target_protocol_id": ArtifactId(args.target_protocol_id),
+            "dynamic_pool": DynamicStockPoolVersion.from_canonical_dict(pool_payload),
+            "candidate_set": CandidateSet.from_canonical_dict(candidate_payload),
+            "state_policy_references": references,
+            "artifact_root": args.artifact_root,
+            "created_at": _instant(args.created_at),
+        }
+        if args.operation == "build-enriched-evaluation":
+            forecasts = _forecasts(args.forecasts)
+            state_sources = _state_sources(args.state_sources)
+            signal = None if args.signal_run is None else load_verified_signal_run_v3(args.signal_run).artifact
+            panel, enrichment, panel_path, enrichment_path = operations.build_enriched_evaluation(
+                **common,
+                dataset=load_verified_market_data_dataset(args.dataset),
+                feature_bundle=load_verified_feature_bundle_v2(
+                    args.feature_bundle,
+                    artifact_root=args.feature_artifact_root,
+                ),
+                signal_run=signal,
+                forecasts=forecasts,
+                state_sources=state_sources,
             )
-            for item in references_payload
-            if isinstance(item, dict)
-        )
-        if len(references) != len(references_payload):
-            raise ValueError("State Policy references must contain only objects")
+            return {
+                "operation": "BUILD_ENRICHED_EVALUATION",
+                "panel_id": str(panel.panel_id),
+                "panel_hash": panel.panel_hash,
+                "row_count": panel.row_count,
+                "enrichment_id": str(enrichment.enrichment_id),
+                "enrichment_hash": enrichment.enrichment_hash,
+                "exposure_count": len(enrichment.exposures),
+                "panel_artifact_path": str(panel_path),
+                "enrichment_artifact_path": str(enrichment_path),
+                **_authority(),
+            }
         panel, path = operations.build_evaluation(
-            decision_id=ArtifactId(args.decision_id),
-            targeted_outcome_id=ArtifactId(args.targeted_outcome_id),
-            target_protocol_id=ArtifactId(args.target_protocol_id),
-            dynamic_pool=DynamicStockPoolVersion.from_canonical_dict(pool_payload),
-            candidate_set=CandidateSet.from_canonical_dict(candidate_payload),
-            state_policy_references=references,
-            artifact_root=args.artifact_root,
-            created_at=_instant(args.created_at),
+            **common,
         )
         return {
             "operation": "BUILD_EVALUATION",
@@ -291,6 +332,63 @@ def _json_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
+
+
+def _runtime_references(path: Path) -> tuple[RuntimeArtifactReference, ...]:
+    values = _json_value(path)
+    if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
+        raise ValueError("State Policy references must be an array of objects")
+    return tuple(
+        RuntimeArtifactReference(
+            reference_kind=str(item["reference_kind"]),
+            artifact_id=ArtifactId(str(item["artifact_id"])),
+            content_hash=str(item["content_hash"]),
+        )
+        for item in values
+    )
+
+
+def _forecasts(path: Path) -> tuple[PathForecast, ...]:
+    values = _json_value(path)
+    if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
+        raise ValueError("Forecasts must be an array of canonical Path Forecast objects")
+    return tuple(PathForecast.from_canonical_dict(item) for item in values)
+
+
+def _state_sources(path: Path) -> tuple[CanonicalStateFactorSource, ...]:
+    values = _json_value(path)
+    if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
+        raise ValueError("State sources must be an array of canonical source objects")
+    result: list[CanonicalStateFactorSource] = []
+    for item in values:
+        reference = item.get("reference")
+        source_values = item.get("values")
+        missingness = item.get("missingness", [])
+        if not isinstance(reference, dict) or not isinstance(source_values, dict):
+            raise ValueError("State source reference and values must be objects")
+        if not isinstance(missingness, list):
+            raise ValueError("State source missingness must be an array")
+        available = item.get("available_at")
+        result.append(
+            CanonicalStateFactorSource(
+                family=FactorFamily(str(item["family"])),
+                reference=ValidationArtifactReference.from_canonical_dict(reference),
+                values={str(name): _state_value(value) for name, value in source_values.items()},
+                symbol=None if item.get("symbol") is None else str(item["symbol"]),
+                available_at=None if available is None else _instant(str(available)),
+                gate_result=None if item.get("gate_result") is None else str(item["gate_result"]),
+                missingness=tuple(sorted({str(value) for value in missingness})),
+            )
+        )
+    return tuple(result)
+
+
+def _state_value(value: object) -> Decimal | int | str | bool | None:
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return Decimal(str(value))
+    raise ValueError("State source values must be scalar JSON values")
 
 
 def _emit(payload: Mapping[str, Any]) -> None:

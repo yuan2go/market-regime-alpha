@@ -42,6 +42,10 @@ from market_regime_alpha.application.continuous_research.scheduler import (
 from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
 )
+from market_regime_alpha.application.continuous_research.runtime_authority_evidence import (
+    PostgresRuntimeAuthorityEvidenceRepository,
+    RuntimeAuthorityEvidence,
+)
 from market_regime_alpha.application.continuous_research.ports import (
     ProviderAcquisitionRequest,
 )
@@ -68,6 +72,10 @@ from market_regime_alpha.application.runtime_operations.preflight import (
 )
 from market_regime_alpha.application.runtime_operations.query import (
     PostgresCanonicalRuntimeQuery,
+)
+from market_regime_alpha.application.shadow_research.attestation import (
+    ClockMode,
+    RuntimeOrigin,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
@@ -368,8 +376,17 @@ def _run_due(
     trading_day = TradingDayAssessment.from_canonical_dict(_load_json_object(args.trading_day_assessment))
     now = _instant(args.at).astimezone(UTC)
     operational_now = _operational_now()
-    if args.runtime_clock_mode == "LIVE" and abs((now - operational_now).total_seconds()) > 5:
-        raise ValueError("LIVE --at must match the trusted runtime clock within five seconds")
+    with factory.connection(read_only=True) as connection:
+        row = connection.execute("SELECT clock_timestamp()").fetchone()
+    if row is None or not isinstance(row[0], datetime):
+        raise ValueError("PostgreSQL clock authority is unavailable")
+    postgres_now = row[0].astimezone(UTC)
+    if args.runtime_clock_mode == "LIVE" and (
+        abs((now - operational_now).total_seconds()) > 5
+        or abs((now - postgres_now).total_seconds()) > 5
+        or abs((operational_now - postgres_now).total_seconds()) > 5
+    ):
+        raise ValueError("LIVE --at, host clock and PostgreSQL clock must agree within five seconds")
     configuration_path = args.runtime_configuration.resolve()
     configuration = load_controlled_runtime_configuration(configuration_path)
     if (
@@ -544,10 +561,26 @@ def _run_due(
     summary_id = None
     summary_outcome = None
     if result.tick_result is not None:
+        tick_id = result.tick_result.tick.command.tick_id
+        PostgresRuntimeAuthorityEvidenceRepository(factory).record(
+            RuntimeAuthorityEvidence.create(
+                run_id=run_command.run_id,
+                tick_id=tick_id,
+                clock_mode=(ClockMode.LIVE_TRUSTED if args.runtime_clock_mode == "LIVE" else ClockMode.SIMULATED),
+                runtime_origin=RuntimeOrigin.LIVE_ACQUISITION,
+                clock_source=(
+                    "POSTGRESQL_AND_SYSTEM_UTC_CLOCK" if args.runtime_clock_mode == "LIVE" else "EXPLICIT_SIMULATED_RUNTIME_CLOCK"
+                ),
+                origin_source="BAOSTOCK_TENCENT_CANONICAL_FREE_DATA",
+                observed_at=(postgres_now if args.runtime_clock_mode == "LIVE" else now),
+                recorded_at=(postgres_now if args.runtime_clock_mode == "LIVE" else max(postgres_now, now)),
+                code_revision=run_command.code_revision,
+            )
+        )
         try:
             summary = repositories.decision_system().get_research_summary_for_tick(
                 run_id=run_command.run_id,
-                tick_id=result.tick_result.tick.command.tick_id,
+                tick_id=tick_id,
                 runtime_mode=run_command.authority_mode,
             )
         except (KeyError, ValueError):

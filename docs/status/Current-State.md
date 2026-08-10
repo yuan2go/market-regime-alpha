@@ -14,6 +14,17 @@
 
 The repository is a research-first A-share Alpha Research Operating System and manual decision-support platform. It is not a production broker execution system and it has not established formal out-of-sample Alpha.
 
+Research/Strategy Validation engineering now contains the complete fail-closed
+mechanics for canonical factor extraction, Panel enrichment, factor ablation,
+liquidity/capacity, historical path samples, calibration, locked evaluation,
+Entry research/qualification, Holding/Exit validation, Strategy Shadow and
+Production Admission. Migrations 043–045 persist these authorities and durable
+Runtime clock/origin evidence. This is `ENGINEERING_COMPLETE`, not validated,
+qualified or Production-authorized evidence. The current values of Real Formal
+PIT, Formal OOS, Alpha validation, Calibration qualification, Entry
+qualification, Holding/Exit validation, sustained Strategy Shadow proof and
+Production authorization remain false.
+
 The implemented architecture separates:
 
 ```text
@@ -158,7 +169,7 @@ prospective sample size remains zero.
 WP-PGSQL-01 removes the executable file-database backend, backend selection,
 SQL translation bridge, local database migrations, file-backed replay and
 database test substitute. Bounded repositories now execute native psycopg SQL
-and PostgreSQL transactions. Central migrations 001–042 are the only database
+and PostgreSQL transactions. Central migrations 001–045 are the only database
 migration authority; an unavailable PostgreSQL connection fails closed.
 
 WP-DECISION-01 keeps the strict account-aware Production Decision child and now
@@ -791,7 +802,7 @@ PostgreSQL 16 is the only database authority selected through
 backend enumeration, database path, SQL/DB-API translation bridge, automatic
 fallback, persistent test substitute or runtime importer.
 
-PostgreSQL migration versions 001–042 are checksummed, contiguous and
+PostgreSQL migration versions 001–045 are checksummed, contiguous and
 serialized with an advisory lock. Migration 024 constrains the credential-free
 runtime binding to PostgreSQL without changing the published migration-017
 checksum. Migration 025 adds Decision Summary, Manual Account,

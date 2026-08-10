@@ -20,7 +20,7 @@ Use this order to determine what the project **should** do:
 ```text
 1. Latest explicit user decision that has not been superseded
 2. docs/constitution/00–09
-3. docs/architecture/00–16 and architecture/domains/**
+3. docs/architecture/00–17 and architecture/domains/**
 4. docs/research/Current-Research-Program.md and focused current research programs
 5. docs/specs/** and docs/roadmap/work-packages/**
 6. HISTORICAL/SUPERSEDED material for context only
@@ -79,6 +79,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Canonical Signal Authority and Operational Feature Handoff](architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md)
 - [Controlled 14:55 Decision-Time Operation](architecture/15-Controlled-Decision-Time-Operation.md)
 - [Phase A Correctness and Research Shadow Operations](architecture/16-Phase-A-Correctness-and-Research-Shadow-Operations.md)
+- [Research and Strategy Validation Engineering](architecture/17-Research-Strategy-Validation-Engineering.md)
 - [Historical PostgreSQL Free-Data Migration Matrix](architecture/audits/PostgreSQL-Free-Data-Migration-Matrix.md)
 - [Architecture Decision Records](architecture/decisions/README.md)
 
@@ -152,6 +153,8 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [Pre-Live Engineering Hardening Implementation Plan](superpowers/plans/2026-08-09-pre-live-engineering-hardening.md)
 - [Phase A Correctness and Research Shadow Operations Design](superpowers/specs/2026-08-10-phase-a-correctness-shadow-operations-design.md)
 - [Phase A Correctness and Research Shadow Operations Implementation Plan](superpowers/plans/2026-08-10-phase-a-correctness-shadow-operations.md)
+- [Research and Strategy Validation Engineering Design](superpowers/specs/2026-08-10-research-strategy-validation-engineering-design.md)
+- [Research and Strategy Validation Engineering Implementation Plan](superpowers/plans/2026-08-10-research-strategy-validation-engineering.md)
 - [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
 - [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
 - [WP-PGSQL-01 PostgreSQL Authority Only](roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md)
@@ -196,6 +199,7 @@ The canonical Constitution ends at `09`. Historical platform-kernel merge materi
 - [WP-STATE-01 Acceptance Evidence](evidence/WP-STATE-01-Acceptance.md)
 - [WP-EVIDENCE-OPS-01 Acceptance Evidence](evidence/WP-EVIDENCE-OPS-01-Acceptance.md)
 - [Phase A Correctness and Research Shadow Operations Delivery](audit/Phase-A-Correctness-Shadow-Operations-Delivery.md)
+- [Research and Strategy Validation Engineering Delivery](audit/Research-Strategy-Validation-Engineering-Delivery.md)
 - [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
 - [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
 - [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)

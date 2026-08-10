@@ -1467,20 +1467,26 @@ def _state_series(
 ) -> StateSeries:
     if model_id is None or model_version is None:
         raise ValueError("State Series requires an explicit Model identity")
-    universe_policy = {
-        "schema": "operational_universe_policy_reference/v1",
-        "universe_schema": work.preparation.universe.schema_version,
-        "formal_pit_status": work.preparation.universe.formal_pit_status.value,
-        "data_eligibility": work.preparation.universe.data_eligibility.value,
-        "limitations": list(work.preparation.universe.limitations),
-    }
-    universe_policy_hash = canonical_hash(universe_policy)
+    universe = work.preparation.universe
+    if universe.universe_policy_id is not None and universe.universe_policy_hash is not None:
+        universe_policy_id = universe.universe_policy_id
+        universe_policy_hash = universe.universe_policy_hash
+    else:
+        legacy_reference = {
+            "schema": "operational_universe_policy_reference/v1",
+            "universe_schema": universe.schema_version,
+            "formal_pit_status": universe.formal_pit_status.value,
+            "data_eligibility": universe.data_eligibility.value,
+            "limitations": list(universe.limitations),
+        }
+        universe_policy_hash = canonical_hash(legacy_reference)
+        universe_policy_id = ArtifactId(f"universe-policy:{universe_policy_hash[7:]}")
     return StateSeries.create(
         domain=domain,
         logical_scope=logical_scope,
         research_family="FREE_DATA_STATE_RESEARCH_V2",
         authority_mode=work.request.authority_mode.value,
-        universe_policy_id=ArtifactId(f"universe-policy:{universe_policy_hash[7:]}"),
+        universe_policy_id=universe_policy_id,
         universe_policy_hash=universe_policy_hash,
         model_id=model_id,
         model_version=model_version,
