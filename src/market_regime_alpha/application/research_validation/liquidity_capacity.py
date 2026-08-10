@@ -1,0 +1,245 @@
+"""Liquidity and capacity engineering with explicit evidence provenance."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
+from statistics import median
+from typing import Any, Iterable
+
+from market_regime_alpha.application.research_validation.common import (
+    ENGINEERING_LIMITATIONS,
+    ValidationArtifactReference,
+    content_identity,
+    decimal_text,
+    timestamp,
+)
+from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
+from market_regime_alpha.market_data import CanonicalMarketBar, PriceLimitState, TradingStatus
+
+
+class CapacityValueProvenance(str, Enum):
+    OBSERVED_FACT = "OBSERVED_FACT"
+    ENGINEERING_ASSUMPTION = "ENGINEERING_ASSUMPTION"
+    CALIBRATED_PARAMETER = "CALIBRATED_PARAMETER"
+
+
+@dataclass(frozen=True, slots=True)
+class CapacityParameter:
+    name: str
+    value: Decimal
+    provenance: CapacityValueProvenance
+    evidence_reference: ValidationArtifactReference | None = None
+
+    def __post_init__(self) -> None:
+        require_text("name", self.name)
+        if self.provenance is CapacityValueProvenance.CALIBRATED_PARAMETER and self.evidence_reference is None:
+            raise ValueError("calibrated Capacity parameter requires evidence")
+        if self.provenance is CapacityValueProvenance.OBSERVED_FACT:
+            raise ValueError("configuration parameter cannot masquerade as observed fact")
+
+
+@dataclass(frozen=True, slots=True)
+class LiquidityCapacityAssessment:
+    assessment_id: ArtifactId
+    assessment_hash: str
+    symbol: str
+    as_of_date: date
+    market_data_reference: ValidationArtifactReference
+    adv5: Decimal | None
+    adv20: Decimal | None
+    median_amount: Decimal | None
+    turnover_rate: Decimal | None
+    requested_position: Decimal
+    requested_order: Decimal
+    participation_rate: Decimal | None
+    position_adv_ratio: Decimal | None
+    order_adv_ratio: Decimal | None
+    limit_state: str
+    suspended: bool
+    estimated_slippage_bps: Decimal | None
+    estimated_market_impact_bps: Decimal | None
+    fillability: Decimal
+    capacity_ceiling: Decimal | None
+    parameters: tuple[CapacityParameter, ...]
+    observed_fields: tuple[str, ...]
+    assumption_fields: tuple[str, ...]
+    calibrated_fields: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+    created_at: datetime
+    limitations: tuple[str, ...]
+    schema_version: str = "liquidity-capacity-assessment/v1"
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        require_sha256("assessment_hash", self.assessment_hash)
+        if not Decimal("0") <= self.fillability <= Decimal("1"):
+            raise ValueError("fillability must be within [0, 1]")
+        if self.requested_position < 0 or self.requested_order < 0:
+            raise ValueError("requested values must be non-negative")
+        if self.parameters != tuple(sorted(self.parameters, key=lambda item: item.name)):
+            raise ValueError("Capacity parameters must be unique and sorted")
+        for values in (self.observed_fields, self.assumption_fields, self.calibrated_fields, self.reason_codes, self.limitations):
+            if values != tuple(sorted(set(values))):
+                raise ValueError("Capacity evidence fields must be unique and sorted")
+        if set(self.observed_fields) & (set(self.assumption_fields) | set(self.calibrated_fields)):
+            raise ValueError("observed and modeled Capacity fields cannot overlap")
+        if canonical_hash(self.identity_payload()) != self.assessment_hash:
+            raise ValueError("Liquidity Capacity assessment hash mismatch")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        symbol: str,
+        as_of_date: date,
+        market_data_reference: ValidationArtifactReference,
+        bars: tuple[CanonicalMarketBar, ...],
+        requested_position: Decimal,
+        requested_order: Decimal,
+        parameters: tuple[CapacityParameter, ...],
+        created_at: datetime,
+    ) -> LiquidityCapacityAssessment:
+        scoped = tuple(
+            sorted((item for item in bars if item.symbol == symbol and item.market_date <= as_of_date), key=lambda item: item.market_date)
+        )
+        amounts = [item.amount for item in scoped if item.amount is not None]
+        adv5 = _mean(amounts[-5:])
+        adv20 = _mean(amounts[-20:])
+        median_amount = None if not amounts else Decimal(str(median(amounts[-20:])))
+        latest = scoped[-1] if scoped else None
+        turnover = None if latest is None else latest.turnover_rate
+        parameter_map = {item.name: item for item in parameters}
+        participation = parameter_map.get("participation_rate")
+        impact = parameter_map.get("impact_coefficient_bps")
+        slippage = parameter_map.get("slippage_bps")
+        capacity = None if adv20 is None or participation is None else adv20 * participation.value
+        position_adv = None if adv20 is None or adv20 == 0 else requested_position / adv20
+        order_adv = None if adv20 is None or adv20 == 0 else requested_order / adv20
+        suspended = latest is None or latest.trading_status is not TradingStatus.TRADING
+        limit_state = "UNKNOWN" if latest is None else latest.price_limit_state.value
+        limit_blocked = latest is not None and latest.price_limit_state is not PriceLimitState.NORMAL
+        if suspended or limit_blocked or adv20 in (None, Decimal("0")):
+            fillability = Decimal("0")
+        else:
+            ratio_penalty = min(Decimal("1"), order_adv or Decimal("0"))
+            fillability = max(Decimal("0"), Decimal("1") - ratio_penalty)
+        reasons = set()
+        if latest is None:
+            reasons.add("LIQUIDITY_OBSERVATION_MISSING")
+        if suspended:
+            reasons.add("SUSPENDED_OR_NOT_NORMAL")
+        if limit_blocked:
+            reasons.add("PRICE_LIMIT_FILLABILITY_BLOCKED")
+        if impact is not None and impact.provenance is CapacityValueProvenance.ENGINEERING_ASSUMPTION:
+            reasons.add("IMPACT_PARAMETER_UNCALIBRATED")
+        if slippage is not None and slippage.provenance is CapacityValueProvenance.ENGINEERING_ASSUMPTION:
+            reasons.add("SLIPPAGE_PARAMETER_UNCALIBRATED")
+        calibrated = tuple(sorted(item.name for item in parameters if item.provenance is CapacityValueProvenance.CALIBRATED_PARAMETER))
+        assumptions = tuple(sorted(item.name for item in parameters if item.provenance is CapacityValueProvenance.ENGINEERING_ASSUMPTION))
+        observed = ("adv5", "adv20", "limit_state", "median_amount", "suspended", "turnover_rate")
+        values: dict[str, Any] = {
+            "symbol": symbol,
+            "as_of_date": as_of_date.isoformat(),
+            "market_data_reference": market_data_reference.to_canonical_dict(),
+            "adv5": decimal_text(adv5),
+            "adv20": decimal_text(adv20),
+            "median_amount": decimal_text(median_amount),
+            "turnover_rate": decimal_text(turnover),
+            "requested_position": str(requested_position),
+            "requested_order": str(requested_order),
+            "participation_rate": None if participation is None else str(participation.value),
+            "position_adv_ratio": decimal_text(position_adv),
+            "order_adv_ratio": decimal_text(order_adv),
+            "limit_state": limit_state,
+            "suspended": suspended,
+            "estimated_slippage_bps": None if slippage is None else str(slippage.value),
+            "estimated_market_impact_bps": None if impact is None or order_adv is None else str(impact.value * order_adv),
+            "fillability": str(fillability),
+            "capacity_ceiling": decimal_text(capacity),
+            "parameters": [_parameter_payload(item) for item in sorted(parameters, key=lambda item: item.name)],
+            "observed_fields": list(observed),
+            "assumption_fields": list(assumptions),
+            "calibrated_fields": list(calibrated),
+            "reason_codes": sorted(reasons),
+            "created_at": timestamp(created_at),
+            "limitations": list(tuple(sorted({*ENGINEERING_LIMITATIONS, "IMPACT_AND_SLIPPAGE_NOT_VALIDATED"}))),
+            "schema_version": "liquidity-capacity-assessment/v1",
+        }
+        artifact_id, digest = content_identity("liquidity-capacity", values)
+        return cls(
+            artifact_id,
+            digest,
+            symbol,
+            as_of_date,
+            market_data_reference,
+            adv5,
+            adv20,
+            median_amount,
+            turnover,
+            requested_position,
+            requested_order,
+            None if participation is None else participation.value,
+            position_adv,
+            order_adv,
+            limit_state,
+            suspended,
+            None if slippage is None else slippage.value,
+            None if impact is None or order_adv is None else impact.value * order_adv,
+            fillability,
+            capacity,
+            tuple(sorted(parameters, key=lambda item: item.name)),
+            observed,
+            assumptions,
+            calibrated,
+            tuple(sorted(reasons)),
+            created_at,
+            tuple(sorted({*ENGINEERING_LIMITATIONS, "IMPACT_AND_SLIPPAGE_NOT_VALIDATED"})),
+        )
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "as_of_date": self.as_of_date.isoformat(),
+            "market_data_reference": self.market_data_reference.to_canonical_dict(),
+            "adv5": decimal_text(self.adv5),
+            "adv20": decimal_text(self.adv20),
+            "median_amount": decimal_text(self.median_amount),
+            "turnover_rate": decimal_text(self.turnover_rate),
+            "requested_position": str(self.requested_position),
+            "requested_order": str(self.requested_order),
+            "participation_rate": decimal_text(self.participation_rate),
+            "position_adv_ratio": decimal_text(self.position_adv_ratio),
+            "order_adv_ratio": decimal_text(self.order_adv_ratio),
+            "limit_state": self.limit_state,
+            "suspended": self.suspended,
+            "estimated_slippage_bps": decimal_text(self.estimated_slippage_bps),
+            "estimated_market_impact_bps": decimal_text(self.estimated_market_impact_bps),
+            "fillability": str(self.fillability),
+            "capacity_ceiling": decimal_text(self.capacity_ceiling),
+            "parameters": [_parameter_payload(item) for item in self.parameters],
+            "observed_fields": list(self.observed_fields),
+            "assumption_fields": list(self.assumption_fields),
+            "calibrated_fields": list(self.calibrated_fields),
+            "reason_codes": list(self.reason_codes),
+            "created_at": timestamp(self.created_at),
+            "limitations": list(self.limitations),
+            "schema_version": self.schema_version,
+        }
+
+
+def _parameter_payload(item: CapacityParameter) -> dict[str, Any]:
+    return {
+        "name": item.name,
+        "value": str(item.value),
+        "provenance": item.provenance.value,
+        "evidence_reference": None if item.evidence_reference is None else item.evidence_reference.to_canonical_dict(),
+    }
+
+
+def _mean(values: Iterable[Decimal]) -> Decimal | None:
+    collected = tuple(values)
+    return None if not collected else sum(collected, Decimal("0")) / Decimal(len(collected))

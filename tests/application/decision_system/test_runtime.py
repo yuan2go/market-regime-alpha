@@ -172,9 +172,7 @@ def _record_decision_fixture_formal_pit(
         PITArtifactReference(
             "FEATURE_MATERIALIZATION",
             ArtifactId(f"decision-pit-feature-{suffix}-{index}"),
-            canonical_hash(
-                {"decision_pit_feature": suffix, "feature_index": index}
-            ),
+            canonical_hash({"decision_pit_feature": suffix, "feature_index": index}),
         )
         for index, _ in enumerate(runtime_lineage.feature_materializations)
     )
@@ -187,9 +185,7 @@ def _record_decision_fixture_formal_pit(
         source_manifests=(source_manifest,),
         universe=universe,
         eligibility=eligibility,
-        feature_definition_ids=tuple(
-            str(item) for item in model_lineage.feature_definition_ids
-        ),
+        feature_definition_ids=tuple(str(item) for item in model_lineage.feature_definition_ids),
         feature_materializations=pit_features,
         configuration=PITArtifactReference(
             "CONFIGURATION",
@@ -204,19 +200,11 @@ def _record_decision_fixture_formal_pit(
     facts = [
         PITRequiredFact(f"calendar:{suffix}", PITFactKind.TRADING_CALENDAR, "XSHG"),
         PITRequiredFact(f"market:{suffix}", PITFactKind.MARKET_DATA, "600000.SH"),
-        PITRequiredFact(
-            f"universe:{suffix}", PITFactKind.UNIVERSE_MEMBERSHIP, "600000.SH"
-        ),
-        PITRequiredFact(
-            f"trading-status:{suffix}", PITFactKind.TRADING_STATUS, "600000.SH"
-        ),
+        PITRequiredFact(f"universe:{suffix}", PITFactKind.UNIVERSE_MEMBERSHIP, "600000.SH"),
+        PITRequiredFact(f"trading-status:{suffix}", PITFactKind.TRADING_STATUS, "600000.SH"),
         PITRequiredFact(f"st-status:{suffix}", PITFactKind.ST_STATUS, "600000.SH"),
-        PITRequiredFact(
-            f"listing-status:{suffix}", PITFactKind.LISTING_STATUS, "600000.SH"
-        ),
-        PITRequiredFact(
-            f"eligibility:{suffix}", PITFactKind.TRADING_ELIGIBILITY, "600000.SH"
-        ),
+        PITRequiredFact(f"listing-status:{suffix}", PITFactKind.LISTING_STATUS, "600000.SH"),
+        PITRequiredFact(f"eligibility:{suffix}", PITFactKind.TRADING_ELIGIBILITY, "600000.SH"),
     ]
     facts.extend(
         PITRequiredFact(
@@ -250,9 +238,7 @@ def _record_decision_fixture_formal_pit(
     )
     for index, required in enumerate(facts):
         if required.fact_kind is PITFactKind.FEATURE_MATERIALIZATION:
-            artifact = validation_lineage.feature_materializations[
-                index - (len(facts) - len(validation_lineage.feature_materializations))
-            ]
+            artifact = validation_lineage.feature_materializations[index - (len(facts) - len(validation_lineage.feature_materializations))]
         else:
             artifact = artifact_by_kind.get(
                 required.fact_kind,
@@ -371,9 +357,7 @@ def test_runtime_receipt_producer_rejects_noncanonical_unicode() -> None:
 
 
 def _scoped_hash(label: str, claim) -> str:
-    return canonical_hash(
-        {"label": label, "run_id": str(claim.run_id), "tick_id": str(claim.tick_id)}
-    )
+    return canonical_hash({"label": label, "run_id": str(claim.run_id), "tick_id": str(claim.tick_id)})
 
 
 def _scoped_id(label: str, claim) -> ArtifactId:
@@ -403,11 +387,7 @@ def _runtime_lineage(
     )
     bound = bind_decision_candidate_evidence(
         base,
-        (
-            (candidate(dynamic_pool_id=base.dynamic_pool_id, current_quantity=0),)
-            if has_candidates
-            else ()
-        ),
+        ((candidate(dynamic_pool_id=base.dynamic_pool_id, current_quantity=0),) if has_candidates else ()),
     )
     pipeline_id, pipeline_hash = state_research_pipeline_identity(
         run_id=claim.run_id,
@@ -501,9 +481,7 @@ def _runtime_stage_specs(claim, decision_lineage):
     )
 
 
-def _state_receipt_payload(
-    *, pipeline_id, pipeline_hash, stage_specs, data_eligibility
-):
+def _state_receipt_payload(*, pipeline_id, pipeline_hash, stage_specs, data_eligibility):
     return {
         "schema": "state_system_runtime_receipt/v2",
         "request_idempotency_key": "decision-test-state-request",
@@ -581,9 +559,7 @@ def _inputs(
     *,
     data_eligibility: DataEligibility = DataEligibility.EXPLORATORY,
 ) -> DecisionRuntimeInputs:
-    runtime_lineage = _runtime_lineage(
-        claim, data_eligibility=data_eligibility
-    )
+    runtime_lineage = _runtime_lineage(claim, data_eligibility=data_eligibility)
     candidates = (
         candidate(
             dynamic_pool_id=runtime_lineage.dynamic_pool_id,
@@ -612,8 +588,7 @@ def _inputs(
                         runtime_lineage.signal_bundle_id,
                         runtime_lineage.signal_bundle_hash,
                     )
-                    if model_id
-                    in {str(item.signal_model_id) for item in candidates}
+                    if model_id in {str(item.signal_model_id) for item in candidates}
                     else ArtifactLineageReference(
                         "DECISION_FORECAST_BUNDLE",
                         runtime_lineage.forecast_bundle_id,
@@ -624,14 +599,7 @@ def _inputs(
                 data_eligibility=data_eligibility,
             )
             for model_id in sorted(
-                {
-                    str(item.signal_model_id)
-                    for item in candidates
-                }
-                | {
-                    str(item.forecast_model_id)
-                    for item in candidates
-                }
+                {str(item.signal_model_id) for item in candidates} | {str(item.forecast_model_id) for item in candidates}
             )
         ),
         finalize=True,
@@ -661,12 +629,8 @@ def _seed_production_model_governance(
         idempotency_key="decision-replay-production-policy",
     )
     runtime_lineages: list[RuntimeModelLineage] = []
-    slot_by_model = {
-        str(item.signal_model_id): "STATE_SIGNAL"
-        for item in inputs.candidates
-    } | {
-        str(item.forecast_model_id): "STATE_FORECAST"
-        for item in inputs.candidates
+    slot_by_model = {str(item.signal_model_id): "STATE_SIGNAL" for item in inputs.candidates} | {
+        str(item.forecast_model_id): "STATE_FORECAST" for item in inputs.candidates
     }
     for original in inputs.model_runtime_lineages:
         suffix = sha256(str(original.model_id).encode("utf-8")).hexdigest()[:12]
@@ -680,9 +644,7 @@ def _seed_production_model_governance(
             universe_id=original.universe_id,
             feature_ids=original.feature_definition_ids,
             implementation_ref=f"tests.decision_fixture:{suffix}",
-            parameter_hash=original.configuration.content_hash.removeprefix(
-                "sha256:"
-            ),
+            parameter_hash=original.configuration.content_hash.removeprefix("sha256:"),
             decision_time_convention="Decision State receipt AsOfTime",
             horizon="current decision window",
             supported_data_eligibilities=(DataEligibility.FORMAL_RESEARCH,),
@@ -704,19 +666,13 @@ def _seed_production_model_governance(
             versioned = registry.transition(
                 definition.model_id,
                 expected_version=versioned.version,
-                idempotency_key=(
-                    f"decision-replay-lifecycle-{suffix}-{status.value}"
-                ),
+                idempotency_key=(f"decision-replay-lifecycle-{suffix}-{status.value}"),
                 to_status=status,
                 changed_at=AS_OF - timedelta(minutes=3) + timedelta(seconds=index),
                 reason="explicit test-only lifecycle evidence",
                 evidence_refs=(f"fixture-lifecycle:{suffix}:{status.value}",),
                 evidence_level=EvidenceLevel.FORMAL_RESEARCH,
-                approval_ref=(
-                    f"fixture-approval:{suffix}"
-                    if status is ModelLifecycleStatus.ACTIVE
-                    else None
-                ),
+                approval_ref=(f"fixture-approval:{suffix}" if status is ModelLifecycleStatus.ACTIVE else None),
             )
         model_lineage = ModelVersionLineage.create(
             model_id=definition.model_id,
@@ -755,9 +711,7 @@ def _seed_production_model_governance(
                     model_lineage=model_lineage,
                     actor="pytest-governance-reviewer",
                     reason="consume Decision Formal PIT fixture evidence",
-                    idempotency_key=(
-                        f"decision-replay-evidence-{suffix}-{kind.value}"
-                    ),
+                    idempotency_key=(f"decision-replay-evidence-{suffix}-{kind.value}"),
                 )
                 continue
             repository.record_evidence(
@@ -828,9 +782,7 @@ def _seed_production_model_governance(
         )
     return replace(
         inputs,
-        model_runtime_lineages=tuple(
-            sorted(runtime_lineages, key=lambda item: str(item.model_id))
-        ),
+        model_runtime_lineages=tuple(sorted(runtime_lineages, key=lambda item: str(item.model_id))),
     )
 
 
@@ -905,9 +857,14 @@ def _seed_state_authority(
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    str(observation_id), observation_hash, str(claim.run_id),
-                    str(claim.tick_id), AS_OF, AS_OF,
-                    json.dumps(observation_payload, sort_keys=True), AS_OF,
+                    str(observation_id),
+                    observation_hash,
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    AS_OF,
+                    AS_OF,
+                    json.dumps(observation_payload, sort_keys=True),
+                    AS_OF,
                 ),
             )
             connection.execute(  # noqa: S608 - fixed test table allowlist
@@ -918,9 +875,13 @@ def _seed_state_authority(
                 ) VALUES (%s, %s, %s, NULL, %s, %s, %s, %s)
                 """,
                 (
-                    str(state_id), state_hash, str(observation_id),
-                    scope_key, effective,
-                    json.dumps(state_payload, sort_keys=True), AS_OF,
+                    str(state_id),
+                    state_hash,
+                    str(observation_id),
+                    scope_key,
+                    effective,
+                    json.dumps(state_payload, sort_keys=True),
+                    AS_OF,
                 ),
             )
         pool_hash = _scoped_hash("dynamic-pool-content", claim)
@@ -929,10 +890,7 @@ def _seed_state_authority(
             run_id=claim.run_id,
             tick_id=claim.tick_id,
             as_of_time=AS_OF,
-            stages=tuple(
-                (stage, artifact_id, artifact_hash, AS_OF)
-                for stage, artifact_id, artifact_hash in stage_specs
-            ),
+            stages=tuple((stage, artifact_id, artifact_hash, AS_OF) for stage, artifact_id, artifact_hash in stage_specs),
         )
         receipt_payload = _state_receipt_payload(
             pipeline_id=pipeline_id,
@@ -966,12 +924,22 @@ def _seed_state_authority(
             )
             """,
             (
-                str(decision_lineage.dynamic_pool_id), pool_hash,
-                claim.tick_sequence, str(claim.run_id), str(claim.tick_id),
-                claim.claim_id, claim.fencing_token, claim.tick_version,
-                AS_OF, AS_OF, AS_OF, _scoped_hash("material-state", claim),
-                "state-config-a", HASH_A,
-                json.dumps({"schema_version": "decision-test-pool/v1"}), AS_OF,
+                str(decision_lineage.dynamic_pool_id),
+                pool_hash,
+                claim.tick_sequence,
+                str(claim.run_id),
+                str(claim.tick_id),
+                claim.claim_id,
+                claim.fencing_token,
+                claim.tick_version,
+                AS_OF,
+                AS_OF,
+                AS_OF,
+                _scoped_hash("material-state", claim),
+                "state-config-a",
+                HASH_A,
+                json.dumps({"schema_version": "decision-test-pool/v1"}),
+                AS_OF,
             ),
         )
         connection.execute(
@@ -981,7 +949,8 @@ def _seed_state_authority(
             ) VALUES (%s, %s, TRUE, 1, %s)
             """,
             (
-                str(decision_lineage.dynamic_pool_id), "600000.SH",
+                str(decision_lineage.dynamic_pool_id),
+                "600000.SH",
                 json.dumps({"symbol": "600000.SH", "included": True, "rank": 1}),
             ),
         )
@@ -994,9 +963,12 @@ def _seed_state_authority(
             """,
             (
                 str(decision_lineage.state_receipt_id),
-                decision_lineage.state_receipt_hash, str(claim.run_id),
-                str(claim.tick_id), str(decision_lineage.dynamic_pool_id),
-                json.dumps(receipt_json, sort_keys=True), AS_OF,
+                decision_lineage.state_receipt_hash,
+                str(claim.run_id),
+                str(claim.tick_id),
+                str(decision_lineage.dynamic_pool_id),
+                json.dumps(receipt_json, sort_keys=True),
+                AS_OF,
             ),
         )
         for stage, artifact_id, artifact_hash in stage_specs:
@@ -1008,10 +980,15 @@ def _seed_state_authority(
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    str(claim.run_id), str(claim.tick_id),
-                    str(decision_lineage.state_receipt_id), stage,
-                    str(artifact_id), artifact_hash,
-                    decision_lineage.data_eligibility.value, AS_OF, AS_OF,
+                    str(claim.run_id),
+                    str(claim.tick_id),
+                    str(decision_lineage.state_receipt_id),
+                    stage,
+                    str(artifact_id),
+                    artifact_hash,
+                    decision_lineage.data_eligibility.value,
+                    AS_OF,
+                    AS_OF,
                 ),
             )
         connection.commit()
@@ -1057,9 +1034,7 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             data_eligibility=DataEligibility.FORMAL_RESEARCH,
         ),
     )
-    _seed_state_authority(
-        postgres_factory, claim, decision_lineage=inputs.lineage
-    )
+    _seed_state_authority(postgres_factory, claim, decision_lineage=inputs.lineage)
     request = _request(claim, decision_lineage=inputs.lineage)
     delegate = DecisionSystemDelegate(
         _DecisionSystemRuntimeService(
@@ -1078,18 +1053,12 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     )
 
     assert replay == result
-    assert receipt.risk_decision_id is not None, tuple(
-        (item.stage, item.status, item.reason_codes)
-        for item in receipt.stage_receipts
-    )
+    assert receipt.risk_decision_id is not None, tuple((item.stage, item.status, item.reason_codes) for item in receipt.stage_receipts)
     persisted_risk = repository.get_risk_decision(receipt.risk_decision_id)
     assert receipt.status == "BLOCKED", (
         persisted_risk.result,
         persisted_risk.reason_codes,
-        tuple(
-            (item.stage, item.status, item.reason_codes)
-            for item in receipt.stage_receipts
-        ),
+        tuple((item.stage, item.status, item.reason_codes) for item in receipt.stage_receipts),
     )
     assert tuple(item.stage for item in receipt.stage_receipts) == (DECISION_RUNTIME_STAGE_ORDER)
     assert receipt.summary_id is not None
@@ -1102,9 +1071,7 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     replay_schema = f"test_mra_{uuid.uuid4().hex}"
     database_url = os.environ[TEST_DATABASE_URL_ENV]
     with psycopg.connect(database_url, autocommit=True) as connection:
-        connection.execute(
-            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(replay_schema))
-        )
+        connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(replay_schema)))
     replay_factory = PostgresConnectionFactory(
         DatabaseSettings.from_sources(database_url=database_url, environ={}),
         min_size=0,
@@ -1129,18 +1096,10 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
             replay_repository=replay_repository,
         )
         with replay_factory.connection(read_only=True) as connection:
-            imported_count = connection.execute(
-                "SELECT count(*) FROM decision_replay_import"
-            ).fetchone()[0]
-            replay_migration_version = connection.execute(
-                "SELECT max(version) FROM schema_migrations"
-            ).fetchone()[0]
-            replay_selection_count = connection.execute(
-                "SELECT count(*) FROM model_selection_receipt"
-            ).fetchone()[0]
-        imported_artifacts = replay_repository.get_replay_artifacts(
-            first_replay.replay_session_id
-        )
+            imported_count = connection.execute("SELECT count(*) FROM decision_replay_import").fetchone()[0]
+            replay_migration_version = connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0]
+            replay_selection_count = connection.execute("SELECT count(*) FROM model_selection_receipt").fetchone()[0]
+        imported_artifacts = replay_repository.get_replay_artifacts(first_replay.replay_session_id)
         conflicting = list(imported_artifacts)
         conflicting[0] = {
             **conflicting[0],
@@ -1165,20 +1124,14 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
                 replay_session_id=first_replay.replay_session_id,
                 artifacts=conflicting_artifacts,
             )
-        after_conflict_count = len(
-            replay_repository.get_replay_artifacts(first_replay.replay_session_id)
-        )
+        after_conflict_count = len(replay_repository.get_replay_artifacts(first_replay.replay_session_id))
     finally:
         replay_factory.close()
         with psycopg.connect(database_url, autocommit=True) as connection:
-            connection.execute(
-                sql.SQL("DROP SCHEMA {} CASCADE").format(
-                    sql.Identifier(replay_schema)
-                )
-            )
+            connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(replay_schema)))
     assert first_replay == second_replay
     assert imported_count == 12
-    assert replay_migration_version == 42
+    assert replay_migration_version == 45
     assert replay_selection_count == 2
     assert after_conflict_count == imported_count
     assert first_replay.verified_authority_count == 12
@@ -1197,10 +1150,7 @@ def test_runtime_ignores_forged_candidate_qualification_and_fails_closed(
     account = repository.record_manual_observation(observation(positions=()))
     _seed_state_authority(postgres_factory, claim)
     inputs = _inputs(claim, account.observation_id)
-    assert all(
-        item.model_qualification.value == "QUALIFIED"
-        for item in inputs.candidates
-    )
+    assert all(item.model_qualification.value == "QUALIFIED" for item in inputs.candidates)
 
     receipt = _DecisionSystemRuntimeService(
         repository,
@@ -1215,14 +1165,9 @@ def test_runtime_ignores_forged_candidate_qualification_and_fails_closed(
     assert receipt.proposal_id is None
     assert receipt.risk_decision_id is None
     assert receipt.stage_receipts[-1].stage is DecisionRuntimeStage.MODEL_GOVERNANCE
-    assert "CHAMPION_AUTHORITY_MISSING" in (
-        receipt.stage_receipts[-1].reason_codes
-    )
+    assert "CHAMPION_AUTHORITY_MISSING" in (receipt.stage_receipts[-1].reason_codes)
     with postgres_factory.connection(read_only=True) as connection:
-        statuses = connection.execute(
-            "SELECT selection_status FROM model_selection_receipt "
-            "ORDER BY model_slot"
-        ).fetchall()
+        statuses = connection.execute("SELECT selection_status FROM model_selection_receipt ORDER BY model_slot").fetchall()
     assert statuses == [("REJECTED",), ("REJECTED",)]
 
 
@@ -1244,9 +1189,7 @@ def test_runtime_derives_qualified_output_when_caller_claims_unqualified(
             for item in inputs.candidates
         ),
     )
-    _seed_state_authority(
-        postgres_factory, claim, decision_lineage=inputs.lineage
-    )
+    _seed_state_authority(postgres_factory, claim, decision_lineage=inputs.lineage)
 
     receipt = DecisionSystemRuntimeService(repository).execute(
         request=_request(claim, decision_lineage=inputs.lineage),
@@ -1255,10 +1198,7 @@ def test_runtime_derives_qualified_output_when_caller_claims_unqualified(
 
     assert receipt.summary_id is not None
     summary = repository.get_summary(receipt.summary_id)
-    assert all(
-        item.model_qualification.value == "QUALIFIED"
-        for item in summary.candidates
-    )
+    assert all(item.model_qualification.value == "QUALIFIED" for item in summary.candidates)
 
 
 def test_runtime_persists_rejection_for_caller_forged_dynamic_model_lineage(
@@ -1284,13 +1224,8 @@ def test_runtime_persists_rejection_for_caller_forged_dynamic_model_lineage(
 
     assert receipt.status == "BLOCKED"
     with postgres_factory.connection(read_only=True) as connection:
-        payloads = connection.execute(
-            "SELECT payload_json FROM model_selection_receipt"
-        ).fetchall()
-    assert any(
-        "RUNTIME_LINEAGE_AUTHORITY_MISMATCH" in row[0]["reason_codes"]
-        for row in payloads
-    )
+        payloads = connection.execute("SELECT payload_json FROM model_selection_receipt").fetchall()
+    assert any("RUNTIME_LINEAGE_AUTHORITY_MISMATCH" in row[0]["reason_codes"] for row in payloads)
 
 
 def test_runtime_cannot_uplift_persisted_exploratory_data_to_formal(
@@ -1301,9 +1236,7 @@ def test_runtime_cannot_uplift_persisted_exploratory_data_to_formal(
     repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
     account = repository.record_manual_observation(observation(positions=()))
     inputs = _inputs(claim, account.observation_id)
-    _seed_state_authority(
-        postgres_factory, claim, decision_lineage=inputs.lineage
-    )
+    _seed_state_authority(postgres_factory, claim, decision_lineage=inputs.lineage)
     original = inputs.model_runtime_lineages[0]
     forged = RuntimeModelLineage.create(
         model_id=original.model_id,
@@ -1333,14 +1266,8 @@ def test_runtime_cannot_uplift_persisted_exploratory_data_to_formal(
 
     assert receipt.status == "BLOCKED"
     with postgres_factory.connection(read_only=True) as connection:
-        reasons = connection.execute(
-            "SELECT payload_json->'reason_codes' "
-            "FROM model_selection_receipt"
-        ).fetchall()
-    assert any(
-        "RUNTIME_LINEAGE_AUTHORITY_MISMATCH" in row[0]
-        for row in reasons
-    )
+        reasons = connection.execute("SELECT payload_json->'reason_codes' FROM model_selection_receipt").fetchall()
+    assert any("RUNTIME_LINEAGE_AUTHORITY_MISMATCH" in row[0] for row in reasons)
 
 
 def test_runtime_cannot_complete_formal_decision_without_model_selection(

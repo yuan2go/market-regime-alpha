@@ -57,8 +57,9 @@ class PostgresProspectiveAttestationRepository:
                     attestation_id, attestation_hash, shadow_decision_id,
                     outcome_settlement_id, run_id, tick_id, status, clock_mode,
                     runtime_origin, prospective_proven, decision_frozen_at,
-                    outcome_available_at, payload_json, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false, %s, %s, %s, %s)
+                    outcome_available_at, runtime_authority_evidence_id,
+                    payload_json, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false, %s, %s, %s, %s, %s)
                 ON CONFLICT (attestation_id) DO NOTHING
                 """,
                 (
@@ -73,6 +74,7 @@ class PostgresProspectiveAttestationRepository:
                     attestation.runtime_origin.value,
                     attestation.decision_frozen_at,
                     attestation.outcome_available_at,
+                    (None if attestation.runtime_authority_evidence is None else str(attestation.runtime_authority_evidence.artifact_id)),
                     Jsonb(attestation.to_canonical_dict()),
                     attestation.created_at,
                 ),

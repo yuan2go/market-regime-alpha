@@ -69,14 +69,17 @@ FREE_RUNTIME_MIGRATIONS = (
     (40, "prospective_evidence_attestation"),
     (41, "research_evaluation_panel_v2"),
     (42, "shadow_decision_state_policy"),
+    (43, "research_validation_engineering"),
+    (44, "strategy_shadow_validation"),
+    (45, "runtime_authority_evidence"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 43))
-    assert len({item.name for item in migrations}) == 42
+    assert tuple(item.version for item in migrations) == tuple(range(1, 46))
+    assert len({item.name for item in migrations}) == 45
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -98,11 +101,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 43))
+    assert tuple(item.version for item in first) == tuple(range(1, 46))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 42
+    assert len(rows) == 45
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -159,17 +162,21 @@ def test_migration_021_upgrades_an_existing_020_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (21, "continuous_runtime_schedule"),
-        (22, "state_system_dynamic_pool"),
-        (23, "state_system_runtime_child"),
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (21, "continuous_runtime_schedule"),
+            (22, "state_system_dynamic_pool"),
+            (23, "state_system_runtime_child"),
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
 
 
 def test_migration_022_upgrades_an_existing_021_authority(
@@ -180,16 +187,20 @@ def test_migration_022_upgrades_an_existing_021_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (22, "state_system_dynamic_pool"),
-        (23, "state_system_runtime_child"),
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (22, "state_system_dynamic_pool"),
+            (23, "state_system_runtime_child"),
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
 
 
 def test_migration_023_upgrades_an_existing_022_authority(
@@ -200,15 +211,19 @@ def test_migration_023_upgrades_an_existing_022_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (23, "state_system_runtime_child"),
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (23, "state_system_runtime_child"),
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
 
 
 def test_migrations_024_through_028_upgrade_existing_023_authority(
@@ -219,14 +234,18 @@ def test_migrations_024_through_028_upgrade_existing_023_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
     with postgres_factory.connection(read_only=True) as connection:
         latest = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
         decision_table = connection.execute("SELECT to_regclass('daily_decision_summary')").fetchone()
@@ -278,19 +297,19 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
-        applied = connection.execute(
-            "SELECT max(version) FROM schema_migrations"
-        ).fetchone()
-    restored = PostgresDecisionSystemRepository(
-        postgres_factory
-    ).get_manual_observation(account.observation_id)
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (42,)
+        applied = connection.execute("SELECT max(version) FROM schema_migrations").fetchone()
+    restored = PostgresDecisionSystemRepository(postgres_factory).get_manual_observation(account.observation_id)
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
+    assert applied == (45,)
     assert restored == account
 
 
@@ -362,18 +381,21 @@ def test_migration_027_backfills_existing_registry_history_and_guards_it(
     upgraded = PostgresMigrator().apply_all(postgres_factory)
     with postgres_factory.connection(read_only=True) as connection:
         actions = connection.execute(
-            "SELECT action_type, aggregate_id FROM model_governance_action "
-            "ORDER BY governance_revision"
+            "SELECT action_type, aggregate_id FROM model_governance_action ORDER BY governance_revision"
         ).fetchall()
         stored_version = connection.execute(
             "SELECT version FROM model_registrations WHERE model_id = %s",
             (str(definition.model_id),),
         ).fetchone()
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
     assert actions == [
         ("MODEL_REGISTER", str(definition.model_id)),
         ("MODEL_REGISTER", str(definition.model_id)),
@@ -382,9 +404,7 @@ def test_migration_027_backfills_existing_registry_history_and_guards_it(
     assert stored_version == (1,)
     with postgres_factory.connection() as connection:
         with pytest.raises(Exception, match="append-only"):
-            connection.execute(
-                "UPDATE model_governance_action SET reason = 'tamper'"
-            )
+            connection.execute("UPDATE model_governance_action SET reason = 'tamper'")
         connection.rollback()
 
 
@@ -417,29 +437,20 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
         run_id=request.run_id,
         tick_id=request.tick_id,
         as_of_time=request.as_of_time,
-        stages=tuple(
-            (item.stage.value, item.artifact_id, item.artifact_hash, item.available_at)
-            for item in legacy_stages
-        ),
+        stages=tuple((item.stage.value, item.artifact_id, item.artifact_hash, item.available_at) for item in legacy_stages),
     )
     receipt_payload = {
         "schema": "state_system_runtime_receipt/v1",
         "request_idempotency_key": request.idempotency_key,
         "pipeline_artifact_id": str(pipeline_id),
         "pipeline_artifact_hash": pipeline_hash,
-        "stage_references": [
-            item.to_reference().to_canonical_dict()
-            for item in legacy_stages
-        ],
+        "stage_references": [item.to_reference().to_canonical_dict() for item in legacy_stages],
         "reason_codes": list(pipeline_result.reason_codes),
     }
     receipt_hash = canonical_hash(receipt_payload)
     result = ChildExecutionResult(
         child_kind=ContinuousChildKind.STATE_SYSTEM,
-        child_run_id=ArtifactId(
-            "state-system-run:"
-            f"{request.idempotency_key.removeprefix('continuous-children-')}"
-        ),
+        child_run_id=ArtifactId(f"state-system-run:{request.idempotency_key.removeprefix('continuous-children-')}"),
         child_receipt_id=ArtifactId(f"state-system-receipt:{receipt_hash[7:]}"),
         child_receipt_hash=receipt_hash,
         child_artifact_id=pipeline_id,
@@ -455,13 +466,8 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
         "child_receipt_hash": result.child_receipt_hash,
         "child_artifact_id": str(result.child_artifact_id),
         "child_artifact_hash": result.child_artifact_hash,
-        "input_references": [
-            item.to_canonical_dict() for item in result.input_references
-        ],
-        "configuration_references": [
-            item.to_canonical_dict()
-            for item in result.configuration_references
-        ],
+        "input_references": [item.to_canonical_dict() for item in result.input_references],
+        "configuration_references": [item.to_canonical_dict() for item in result.configuration_references],
         "receipt_payload": receipt_payload,
     }
     with postgres_factory.connection() as connection:
@@ -503,14 +509,9 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
 
     PostgresMigrator().apply_all(postgres_factory)
 
-    restored = PostgresStateSystemRepository(
-        postgres_factory, clock=clock
-    ).lookup_runtime_child(request)
+    restored = PostgresStateSystemRepository(postgres_factory, clock=clock).lookup_runtime_child(request)
     with postgres_factory.connection(read_only=True) as connection:
-        eligibilities = connection.execute(
-            "SELECT DISTINCT data_eligibility "
-            "FROM state_research_stage_authority"
-        ).fetchall()
+        eligibilities = connection.execute("SELECT DISTINCT data_eligibility FROM state_research_stage_authority").fetchall()
     assert restored == result
     assert eligibilities == [(None,)]
 
@@ -523,21 +524,22 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
     with postgres_factory.connection(read_only=True) as connection:
         tables = {
             row[0]
             for row in connection.execute(
-                "SELECT tablename FROM pg_catalog.pg_tables "
-                "WHERE schemaname = current_schema() AND tablename LIKE 'pit_%'"
+                "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'pit_%'"
             ).fetchall()
         }
-        evidence_table = connection.execute(
-            "SELECT to_regclass('formal_pit_validation_evidence')"
-        ).fetchone()
+        evidence_table = connection.execute("SELECT to_regclass('formal_pit_validation_evidence')").fetchone()
         guards = {
             row[0]
             for row in connection.execute(
@@ -570,15 +572,12 @@ def test_migration_029_adds_append_only_research_summary_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert tuple((item.version, item.name) for item in upgraded) == ((29, "research_runtime_summary"),) + FREE_RUNTIME_MIGRATIONS
     with postgres_factory.connection(read_only=True) as connection:
         tables = tuple(
             str(value)
             for value in connection.execute(
-                "SELECT to_regclass('research_daily_summary'), "
-                "to_regclass('research_summary_stage')"
+                "SELECT to_regclass('research_daily_summary'), to_regclass('research_summary_stage')"
             ).fetchone()
         )
         guards = {

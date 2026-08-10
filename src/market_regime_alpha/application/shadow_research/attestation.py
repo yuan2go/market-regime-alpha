@@ -80,15 +80,24 @@ class ProspectiveEvidenceAttestation:
     runtime_mode: RuntimeAuthorityMode
     clock_mode: ClockMode
     runtime_origin: RuntimeOrigin
+    runtime_authority_evidence: RuntimeArtifactReference | None
     checks: tuple[AttestationCheck, ...]
     status: AttestationStatus
     created_at: datetime
     limitations: tuple[str, ...]
-    schema_version: str = "prospective-evidence-attestation/v1"
+    schema_version: str = "prospective-evidence-attestation/v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "prospective-evidence-attestation/v1":
+        if self.schema_version not in {
+            "prospective-evidence-attestation/v1",
+            "prospective-evidence-attestation/v2",
+        }:
             raise ValueError("unsupported prospective attestation schema")
+        if self.schema_version == "prospective-evidence-attestation/v2":
+            if self.runtime_authority_evidence is None:
+                raise ValueError("Prospective Attestation V2 requires durable Runtime Authority evidence")
+        elif self.runtime_authority_evidence is not None:
+            raise ValueError("Prospective Attestation V1 cannot bind Runtime Authority evidence")
         require_sha256("attestation_hash", self.attestation_hash)
         require_text("code_revision", self.code_revision)
         for label, value in (
@@ -147,6 +156,7 @@ class ProspectiveEvidenceAttestation:
         runtime_mode: RuntimeAuthorityMode,
         clock_mode: ClockMode,
         runtime_origin: RuntimeOrigin,
+        runtime_authority_evidence: RuntimeArtifactReference,
         created_at: datetime,
     ) -> ProspectiveEvidenceAttestation:
         if outcome.shadow_decision.artifact_id != decision.decision_id:
@@ -166,6 +176,13 @@ class ProspectiveEvidenceAttestation:
         checks = tuple(
             sorted(
                 (
+                    AttestationCheck(
+                        "DURABLE_RUNTIME_AUTHORITY",
+                        runtime_authority_evidence.reference_kind == "RUNTIME_AUTHORITY_EVIDENCE",
+                        "DURABLE_RUNTIME_AUTHORITY_BOUND"
+                        if runtime_authority_evidence.reference_kind == "RUNTIME_AUTHORITY_EVIDENCE"
+                        else "DURABLE_RUNTIME_AUTHORITY_INVALID",
+                    ),
                     AttestationCheck(
                         "DECISION_PRECEDES_OUTCOME",
                         decision.decision_frozen_at < outcome.outcome_available_at,
@@ -214,6 +231,7 @@ class ProspectiveEvidenceAttestation:
             "runtime_mode": runtime_mode,
             "clock_mode": clock_mode,
             "runtime_origin": runtime_origin,
+            "runtime_authority_evidence": runtime_authority_evidence,
             "checks": checks,
             "status": (
                 AttestationStatus.ENGINEERING_ATTESTABLE if all(item.satisfied for item in checks) else AttestationStatus.INELIGIBLE
@@ -271,6 +289,9 @@ class ProspectiveEvidenceAttestation:
             runtime_mode=RuntimeAuthorityMode(str(payload["runtime_mode"])),
             clock_mode=ClockMode(str(payload["clock_mode"])),
             runtime_origin=RuntimeOrigin(str(payload["runtime_origin"])),
+            runtime_authority_evidence=(
+                _reference(payload["runtime_authority_evidence"]) if payload.get("runtime_authority_evidence") is not None else None
+            ),
             checks=tuple(
                 AttestationCheck(
                     check_name=str(item["check_name"]),
@@ -302,6 +323,7 @@ def _value_names() -> tuple[str, ...]:
         "runtime_mode",
         "clock_mode",
         "runtime_origin",
+        "runtime_authority_evidence",
         "checks",
         "status",
         "created_at",
@@ -310,8 +332,11 @@ def _value_names() -> tuple[str, ...]:
 
 
 def _payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "prospective-evidence-attestation/v1",
+    runtime_evidence = values["runtime_authority_evidence"]
+    payload = {
+        "schema_version": (
+            "prospective-evidence-attestation/v2" if runtime_evidence is not None else "prospective-evidence-attestation/v1"
+        ),
         "shadow_decision": values["shadow_decision"].to_canonical_dict(),
         "outcome_settlement": values["outcome_settlement"].to_canonical_dict(),
         "frozen_summary": values["frozen_summary"].to_canonical_dict(),
@@ -331,6 +356,9 @@ def _payload(**values: Any) -> dict[str, Any]:
         "created_at": canonical_datetime(values["created_at"]),
         "limitations": list(values["limitations"]),
     }
+    if runtime_evidence is not None:
+        payload["runtime_authority_evidence"] = runtime_evidence.to_canonical_dict()
+    return payload
 
 
 def _reference(value: object) -> RuntimeArtifactReference:

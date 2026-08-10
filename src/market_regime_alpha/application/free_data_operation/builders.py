@@ -94,6 +94,7 @@ from market_regime_alpha.universe import (
     SuspensionStatus,
     publish_operational_universe,
 )
+from market_regime_alpha.universe.daily_exploratory import DailyUniversePolicy
 
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -126,9 +127,7 @@ def prepare_free_data_inputs(
     history_manifest = SourceManifest(
         provider_profile_id=request.provider_profile_id,
         decision_time=request.decision_time,
-        source_artifacts=tuple(
-            item.reference for item in history_source.batch.raw_payloads
-        ),
+        source_artifacts=tuple(item.reference for item in history_source.batch.raw_payloads),
         fields=(),
         source_conflicts=history_source.batch.source_conflicts,
         limitations=tuple(
@@ -211,10 +210,7 @@ def prepare_free_data_inputs(
                 policy=operational_supplemental_policy,
                 created_at=created_at,
             )
-            if (
-                operational_supplemental_source is not None
-                and operational_supplemental_policy is not None
-            )
+            if (operational_supplemental_source is not None and operational_supplemental_policy is not None)
             else _build_supplemental(
                 request=request,
                 dataset=daily_dataset,
@@ -231,9 +227,7 @@ def prepare_free_data_inputs(
     active_configuration_path: Path | None = None
     active_configuration = None
     if runtime_configuration_path is not None:
-        template = load_controlled_runtime_configuration(
-            runtime_configuration_path.resolve()
-        )
+        template = load_controlled_runtime_configuration(runtime_configuration_path.resolve())
         active_configuration = ControlledOperationRuntimeConfiguration.create(
             static_feature_set=template.static_feature_set,
             intraday_feature_set=template.intraday_feature_set,
@@ -241,15 +235,11 @@ def prepare_free_data_inputs(
             signal_model=template.signal_model,
             signal_mapping=template.signal_mapping,
             signal_requirement=template.signal_requirement,
-            signal_freshness=canonical_signal_freshness_policy(
-                trading_calendar=calendar
-            ),
+            signal_freshness=canonical_signal_freshness_policy(trading_calendar=calendar),
             path_forecast=template.path_forecast,
             feature_max_workers=template.feature_max_workers,
             minute_concurrency_limit=template.minute_concurrency_limit,
-            minute_per_request_timeout_seconds=(
-                template.minute_per_request_timeout_seconds
-            ),
+            minute_per_request_timeout_seconds=(template.minute_per_request_timeout_seconds),
             minute_max_attempts=template.minute_max_attempts,
             minute_retry_backoff_seconds=template.minute_retry_backoff_seconds,
             provider_profile_id=template.provider_profile_id,
@@ -367,16 +357,10 @@ def _load_explicit_supplemental(
         raise ValueError("supplemental evidence DecisionTime mismatch")
     if bundle.source_manifest.decision_time.value != request.decision_time.value:
         raise ValueError("supplemental SourceManifest DecisionTime mismatch")
-    if any(
-        item.retrieved_at.value > request.decision_time.value
-        for item in bundle.source_manifest.source_artifacts
-    ):
+    if any(item.retrieved_at.value > request.decision_time.value for item in bundle.source_manifest.source_artifacts):
         raise ValueError("supplemental evidence is available after DecisionTime")
     universe_symbols = set(universe.symbols)
-    if any(
-        item.symbol not in universe_symbols
-        for item in bundle.theme_memberships
-    ):
+    if any(item.symbol not in universe_symbols for item in bundle.theme_memberships):
         raise ValueError("supplemental theme membership exceeds Operational Universe")
     if bundle.data_eligibility is not DataEligibility.EXPLORATORY:
         raise ValueError("free supplemental evidence must remain EXPLORATORY")
@@ -403,8 +387,7 @@ def _validate_source_bindings(
         raise ValueError("SourceManifest profile does not match free-data request")
     if (
         full_source_manifest.decision_time != request.decision_time
-        or full_source_manifest.source_artifacts
-        != provider_result.source_artifact_references
+        or full_source_manifest.source_artifacts != provider_result.source_artifact_references
     ):
         raise ValueError("full SourceManifest does not bind ProviderResult")
     observed = {item.symbol for item in provider_result.bars}
@@ -472,23 +455,23 @@ def _build_universe(
     dataset: MarketDataDatasetArtifact,
     full_source_manifest: SourceManifest,
 ) -> OperationalUniverseArtifact:
+    policy = DailyUniversePolicy(
+        name=f"free-data-{request.scale.name.lower()}",
+        version="v1",
+        symbols=request.symbols,
+        minimum_history_sessions=request.minimum_history_sessions,
+        minimum_median_daily_amount=float(request.minimum_median_daily_amount),
+    )
     bars_by_symbol = {
         symbol: tuple(
             sorted(
-                (
-                    item
-                    for item in dataset.iter_bars()
-                    if item.symbol == symbol and item.timeframe is Timeframe.DAILY
-                ),
+                (item for item in dataset.iter_bars() if item.symbol == symbol and item.timeframe is Timeframe.DAILY),
                 key=lambda item: item.event_end,
             )
         )
         for symbol in request.symbols
     }
-    source_hash_by_id = {
-        item.artifact_id: item.content_hash
-        for item in full_source_manifest.source_artifacts
-    }
+    source_hash_by_id = {item.artifact_id: item.content_hash for item in full_source_manifest.source_artifacts}
     statuses = _current_statuses(
         full_source_manifest,
         decision_time=request.decision_time.value,
@@ -513,14 +496,9 @@ def _build_universe(
         if len(bars) < request.minimum_history_sessions:
             exclusions.append("HISTORY_INSUFFICIENT")
         median_amount = Decimal(median(amounts)) if amounts else None
-        if (
-            median_amount is None
-            or median_amount < request.minimum_median_daily_amount
-        ):
+        if median_amount is None or median_amount < request.minimum_median_daily_amount:
             exclusions.append("LIQUIDITY_BELOW_MINIMUM")
-        refs = {
-            (item.source_artifact_id, item.source_content_hash) for item in bars
-        }
+        refs = {(item.source_artifact_id, item.source_content_hash) for item in bars}
         refs.update(
             (field.source_artifact_id, source_hash_by_id[field.source_artifact_id])
             for field in status.values()
@@ -555,19 +533,13 @@ def _build_universe(
                 included=included,
                 inclusion_reasons=("FREE_DATA_OPERATIONAL_ELIGIBLE",) if included else (),
                 exclusion_reasons=tuple(sorted(exclusions)),
-                source_artifact_references=tuple(
-                    sorted(refs, key=lambda item: (str(item[0]), item[1]))
-                ),
+                source_artifact_references=tuple(sorted(refs, key=lambda item: (str(item[0]), item[1]))),
                 data_eligibility=DataEligibility.EXPLORATORY,
             )
         )
     all_refs = tuple(
         sorted(
-            {
-                item
-                for record in records
-                for item in record.source_artifact_references
-            },
+            {item for record in records for item in record.source_artifact_references},
             key=lambda item: (str(item[0]), item[1]),
         )
     )
@@ -580,10 +552,7 @@ def _build_universe(
         )
     )
     status_availability = tuple(
-        field.available_time.value
-        for fields in statuses.values()
-        for field in fields.values()
-        if field.available_time is not None
+        field.available_time.value for fields in statuses.values() for field in fields.values() if field.available_time is not None
     )
     available_at = normalize_canonical_datetime(
         max(
@@ -605,6 +574,9 @@ def _build_universe(
             "FREE_DATA_OPERATIONAL_UNIVERSE",
             "MEMBERSHIP_NOT_FORMAL_PIT",
         ),
+        universe_policy_id=policy.policy_id,
+        universe_policy_hash=policy.content_hash,
+        universe_policy_version=policy.policy_version,
     )
 
 
@@ -619,10 +591,11 @@ def _current_statuses(
             item.symbol is None
             or item.available_time is None
             or item.available_time.value > decision_time
-            or item.critical_fact not in {
-            CriticalSourceFact.LISTING_STATUS,
-            CriticalSourceFact.ST_STATUS,
-            CriticalSourceFact.TRADING_STATUS,
+            or item.critical_fact
+            not in {
+                CriticalSourceFact.LISTING_STATUS,
+                CriticalSourceFact.ST_STATUS,
+                CriticalSourceFact.TRADING_STATUS,
             }
         ):
             continue
@@ -696,11 +669,7 @@ def _build_supplemental(
     )
     included = set(universe.symbols)
     bars_by_symbol = {
-        symbol: tuple(
-            item
-            for item in dataset.iter_bars()
-            if item.symbol == symbol and item.timeframe is Timeframe.DAILY
-        )
+        symbol: tuple(item for item in dataset.iter_bars() if item.symbol == symbol and item.timeframe is Timeframe.DAILY)
         for symbol in universe.symbols
     }
     latest_returns: list[float] = []
@@ -729,10 +698,7 @@ def _build_supplemental(
                 rank_persistence=None,
                 amount_persistence=None,
                 liquidity_eligible=record.included,
-                history_complete=(
-                    record.history_sessions_observed
-                    >= record.history_sessions_required
-                ),
+                history_complete=(record.history_sessions_observed >= record.history_sessions_required),
                 status_known=(
                     record.listing_status is not ListingStatus.UNKNOWN
                     and record.st_status is not STStatus.UNKNOWN
@@ -761,43 +727,29 @@ def _build_supplemental(
         )
     )
     quote_coverage = len(eligible_quotes) / len(included) if included else 0.0
-    use_decision_quotes = (
-        quote_coverage == 1.0
-        and len({item.source_artifact_id for item in eligible_quotes}) == 1
-    )
-    market_direction = (
-        _mean([float(item.change_fraction) for item in eligible_quotes])
-        if use_decision_quotes
-        else _mean(latest_returns)
-    )
+    use_decision_quotes = quote_coverage == 1.0 and len({item.source_artifact_id for item in eligible_quotes}) == 1
+    quote_changes = tuple(float(item.change_fraction) for item in eligible_quotes if item.change_fraction is not None)
+    market_direction = _mean(quote_changes) if use_decision_quotes else _mean(latest_returns)
     amount_change = _mean(amount_changes)
     breadth = (
-        sum(float(item.change_fraction) > 0.0 for item in eligible_quotes)
-        / len(eligible_quotes)
+        sum(value > 0.0 for value in quote_changes) / len(eligible_quotes)
         if use_decision_quotes
         else sum(1 for item in latest_returns if item > 0) / len(latest_returns)
         if latest_returns
         else None
     )
-    intraday_range = (
-        _mean(
-            [
-                (float(item.high_price) - float(item.low_price))
-                / float(item.previous_close or item.price)
-                for item in eligible_quotes
-            ]
-        )
-        if use_decision_quotes
-        else None
-    )
+    quote_ranges: list[float] = []
+    for item in eligible_quotes:
+        denominator = item.previous_close if item.previous_close is not None else item.price
+        if item.high_price is not None and item.low_price is not None and denominator is not None:
+            quote_ranges.append((float(item.high_price) - float(item.low_price)) / float(denominator))
+    intraday_range = _mean(quote_ranges) if use_decision_quotes else None
     market_available_at = (
-        max(item.available_time.value for item in eligible_quotes)
+        max(item.available_time.value for item in eligible_quotes if item.available_time is not None)
         if use_decision_quotes
         else dataset.available_at
     )
-    market_source_id = (
-        eligible_quotes[0].source_artifact_id if use_decision_quotes else dataset_id
-    )
+    market_source_id = eligible_quotes[0].source_artifact_id if use_decision_quotes else dataset_id
     market_observation = MarketObservation(
         available_at=AvailabilityTime(market_available_at),
         source_artifact_id=market_source_id,
@@ -806,19 +758,9 @@ def _build_supplemental(
         market_amount_change_same_cutoff=amount_change,
         candidate_breadth_at_cutoff=breadth,
         limit_structure_score=None,
-        coverage=(
-            quote_coverage
-            if use_decision_quotes
-            else len(latest_returns) / len(included)
-            if included
-            else 0.0
-        ),
+        coverage=(quote_coverage if use_decision_quotes else len(latest_returns) / len(included) if included else 0.0),
         reason_codes=(
-            (
-                "TENCENT_DECISION_QUOTE_MARKET_PROXY"
-                if use_decision_quotes
-                else "EQUAL_WEIGHTED_PRIOR_SESSION_MARKET_PROXY"
-            ),
+            ("TENCENT_DECISION_QUOTE_MARKET_PROXY" if use_decision_quotes else "EQUAL_WEIGHTED_PRIOR_SESSION_MARKET_PROXY"),
             "INDEX_PROXY_NOT_PROVIDED",
             *(() if use_decision_quotes else ("INTRADAY_MARKET_EVIDENCE_MISSING",)),
             "PRIOR_SESSION_AMOUNT_CHANGE_PROXY",
@@ -835,11 +777,7 @@ def _build_supplemental(
             amount=float(bar.amount),
         )
         for bar in dataset.iter_bars()
-        if (
-            bar.symbol in included
-            and bar.timeframe is Timeframe.DAILY
-            and bar.amount is not None
-        )
+        if (bar.symbol in included and bar.timeframe is Timeframe.DAILY and bar.amount is not None)
     )
     missing = tuple(
         sorted(
@@ -905,11 +843,13 @@ def _latest_return(bars: tuple[CanonicalMarketBar, ...]) -> float | None:
 
 
 def _latest_amount_change(bars: tuple[CanonicalMarketBar, ...]) -> float | None:
-    if len(bars) < 2 or bars[-2].amount in {None, Decimal("0")}:
+    if len(bars) < 2:
         return None
-    if bars[-1].amount is None:
+    previous_amount = bars[-2].amount
+    current_amount = bars[-1].amount
+    if previous_amount is None or previous_amount == Decimal("0") or current_amount is None:
         return None
-    return float(bars[-1].amount / bars[-2].amount - Decimal("1"))
+    return float(current_amount / previous_amount - Decimal("1"))
 
 
 def _mean(values: Iterable[float]) -> float | None:

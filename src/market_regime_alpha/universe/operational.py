@@ -37,6 +37,7 @@ from market_regime_alpha.market_data.contracts import (
 
 
 OPERATIONAL_UNIVERSE_SCHEMA = "operational-universe-artifact-v1"
+OPERATIONAL_UNIVERSE_POLICY_SCHEMA = "operational-universe-artifact-v2"
 
 
 class ListingStatus(str, Enum):
@@ -68,11 +69,7 @@ class OperationalLiquidityEvidence:
     source_content_hash: str
 
     def __post_init__(self) -> None:
-        if (
-            isinstance(self.lookback_sessions, bool)
-            or not isinstance(self.lookback_sessions, int)
-            or self.lookback_sessions <= 0
-        ):
+        if isinstance(self.lookback_sessions, bool) or not isinstance(self.lookback_sessions, int) or self.lookback_sessions <= 0:
             raise ValueError("lookback_sessions must be positive")
         if (
             isinstance(self.observed_sessions, bool)
@@ -101,9 +98,7 @@ class OperationalLiquidityEvidence:
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> OperationalLiquidityEvidence:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> OperationalLiquidityEvidence:
         _exact(
             payload,
             {
@@ -189,16 +184,13 @@ class OperationalUniverseRecord:
             "inclusion_reasons": list(self.inclusion_reasons),
             "exclusion_reasons": list(self.exclusion_reasons),
             "source_artifact_references": [
-                {"artifact_id": str(item), "content_hash": digest}
-                for item, digest in self.source_artifact_references
+                {"artifact_id": str(item), "content_hash": digest} for item, digest in self.source_artifact_references
             ],
             "data_eligibility": self.data_eligibility.value,
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> OperationalUniverseRecord:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> OperationalUniverseRecord:
         _exact(
             payload,
             {
@@ -233,12 +225,8 @@ class OperationalUniverseRecord:
             st_status=STStatus(str(payload["st_status"])),
             suspension_status=SuspensionStatus(str(payload["suspension_status"])),
             liquidity_evidence=OperationalLiquidityEvidence.from_canonical_dict(liquidity),
-            history_sessions_observed=_integer(
-                payload["history_sessions_observed"], "history_sessions_observed"
-            ),
-            history_sessions_required=_integer(
-                payload["history_sessions_required"], "history_sessions_required"
-            ),
+            history_sessions_observed=_integer(payload["history_sessions_observed"], "history_sessions_observed"),
+            history_sessions_required=_integer(payload["history_sessions_required"], "history_sessions_required"),
             included=_boolean(payload["included"], "included"),
             inclusion_reasons=_string_tuple(payload["inclusion_reasons"], "inclusion reasons"),
             exclusion_reasons=_string_tuple(payload["exclusion_reasons"], "exclusion reasons"),
@@ -266,10 +254,30 @@ class OperationalUniverseArtifact:
     data_eligibility: DataEligibility
     source_artifact_references: tuple[tuple[ArtifactId, str], ...]
     limitations: tuple[str, ...]
+    universe_policy_id: ArtifactId | None = None
+    universe_policy_hash: str | None = None
+    universe_policy_version: str | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != OPERATIONAL_UNIVERSE_SCHEMA:
+        if self.schema_version not in {
+            OPERATIONAL_UNIVERSE_SCHEMA,
+            OPERATIONAL_UNIVERSE_POLICY_SCHEMA,
+        }:
             raise ValueError("unsupported Operational Universe schema")
+        policy_values = (
+            self.universe_policy_id,
+            self.universe_policy_hash,
+            self.universe_policy_version,
+        )
+        if self.schema_version == OPERATIONAL_UNIVERSE_POLICY_SCHEMA:
+            if any(value is None for value in policy_values):
+                raise ValueError("Operational Universe V2 requires exact Policy binding")
+            assert self.universe_policy_hash is not None
+            require_sha256("universe_policy_hash", self.universe_policy_hash)
+            assert self.universe_policy_version is not None
+            require_text("universe_policy_version", self.universe_policy_version)
+        elif any(value is not None for value in policy_values):
+            raise ValueError("Operational Universe V1 cannot carry Policy binding")
         require_sha256("content_hash", self.content_hash)
         require_utc_second("effective_at", self.effective_at)
         require_utc_second("available_at", self.available_at)
@@ -310,6 +318,9 @@ class OperationalUniverseArtifact:
         data_eligibility: DataEligibility,
         source_artifact_references: tuple[tuple[ArtifactId, str], ...],
         limitations: tuple[str, ...],
+        universe_policy_id: ArtifactId | None = None,
+        universe_policy_hash: str | None = None,
+        universe_policy_version: str | None = None,
     ) -> OperationalUniverseArtifact:
         ordered = tuple(sorted(records, key=lambda item: item.symbol))
         sources = tuple(sorted(source_artifact_references, key=lambda item: (str(item[0]), item[1])))
@@ -323,10 +334,13 @@ class OperationalUniverseArtifact:
             data_eligibility=data_eligibility,
             source_artifact_references=sources,
             limitations=limitations,
+            universe_policy_id=universe_policy_id,
+            universe_policy_hash=universe_policy_hash,
+            universe_policy_version=universe_policy_version,
         )
         digest = canonical_hash(semantic)
         result = cls(
-            schema_version=OPERATIONAL_UNIVERSE_SCHEMA,
+            schema_version=(OPERATIONAL_UNIVERSE_POLICY_SCHEMA if universe_policy_id is not None else OPERATIONAL_UNIVERSE_SCHEMA),
             universe_id=UniverseId(f"operational-universe-{digest.split(':', 1)[1][:24]}"),
             content_hash=digest,
             decision_date=decision_date,
@@ -337,6 +351,9 @@ class OperationalUniverseArtifact:
             data_eligibility=data_eligibility,
             source_artifact_references=sources,
             limitations=limitations,
+            universe_policy_id=universe_policy_id,
+            universe_policy_hash=universe_policy_hash,
+            universe_policy_version=universe_policy_version,
         )
         result.verify_identity()
         return result
@@ -351,6 +368,9 @@ class OperationalUniverseArtifact:
             data_eligibility=self.data_eligibility,
             source_artifact_references=self.source_artifact_references,
             limitations=self.limitations,
+            universe_policy_id=self.universe_policy_id,
+            universe_policy_hash=self.universe_policy_hash,
+            universe_policy_version=self.universe_policy_version,
         )
 
     def verify_identity(self) -> None:
@@ -368,9 +388,7 @@ class OperationalUniverseArtifact:
         }
 
     @classmethod
-    def from_canonical_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> OperationalUniverseArtifact:
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> OperationalUniverseArtifact:
         expected = {
             "schema_version",
             "universe_id",
@@ -384,6 +402,13 @@ class OperationalUniverseArtifact:
             "source_artifact_references",
             "limitations",
         }
+        schema_version = str(payload.get("schema_version"))
+        if schema_version == OPERATIONAL_UNIVERSE_POLICY_SCHEMA:
+            expected |= {
+                "universe_policy_id",
+                "universe_policy_hash",
+                "universe_policy_version",
+            }
         _exact(payload, expected, "Operational Universe")
         records = _object_array(payload["records"], "records")
         refs = _object_array(payload["source_artifact_references"], "source references")
@@ -398,18 +423,22 @@ class OperationalUniverseArtifact:
             formal_pit_status=FormalPitStatus(str(payload["formal_pit_status"])),
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
             source_artifact_references=tuple(
-                (ArtifactId(str(_required(item, "artifact_id"))), str(_required(item, "content_hash")))
-                for item in refs
+                (ArtifactId(str(_required(item, "artifact_id"))), str(_required(item, "content_hash"))) for item in refs
             ),
             limitations=_string_tuple(payload["limitations"], "limitations"),
+            universe_policy_id=(
+                ArtifactId(str(payload["universe_policy_id"])) if schema_version == OPERATIONAL_UNIVERSE_POLICY_SCHEMA else None
+            ),
+            universe_policy_hash=(str(payload["universe_policy_hash"]) if schema_version == OPERATIONAL_UNIVERSE_POLICY_SCHEMA else None),
+            universe_policy_version=(
+                str(payload["universe_policy_version"]) if schema_version == OPERATIONAL_UNIVERSE_POLICY_SCHEMA else None
+            ),
         )
         result.verify_identity()
         return result
 
 
-def publish_operational_universe(
-    *, root: Path, artifact: OperationalUniverseArtifact
-) -> Path:
+def publish_operational_universe(*, root: Path, artifact: OperationalUniverseArtifact) -> Path:
     artifact.verify_identity()
     root.mkdir(parents=True, exist_ok=True)
     final = root / str(artifact.universe_id)
@@ -423,9 +452,7 @@ def publish_operational_universe(
         payload = (canonical_json(artifact.to_canonical_dict()) + "\n").encode()
         (stage / "artifact.json").write_bytes(payload)
         checksums = {"artifact.json": f"sha256:{sha256(payload).hexdigest()}"}
-        (stage / "SHA256SUMS.json").write_text(
-            canonical_json(checksums) + "\n", encoding="utf-8"
-        )
+        (stage / "SHA256SUMS.json").write_text(canonical_json(checksums) + "\n", encoding="utf-8")
         _fsync_tree(stage)
         _load_operational_universe(stage, enforce_identity=False)
         os.replace(stage, final)
@@ -441,9 +468,7 @@ def load_operational_universe(path: Path) -> OperationalUniverseArtifact:
     return _load_operational_universe(path, enforce_identity=True)
 
 
-def _load_operational_universe(
-    path: Path, *, enforce_identity: bool
-) -> OperationalUniverseArtifact:
+def _load_operational_universe(path: Path, *, enforce_identity: bool) -> OperationalUniverseArtifact:
     root = path.resolve()
     if not root.is_dir() or {item.name for item in root.iterdir()} != {
         "SHA256SUMS.json",
@@ -473,21 +498,31 @@ def _universe_payload(
     data_eligibility: DataEligibility,
     source_artifact_references: tuple[tuple[ArtifactId, str], ...],
     limitations: tuple[str, ...],
+    universe_policy_id: ArtifactId | None,
+    universe_policy_hash: str | None,
+    universe_policy_version: str | None,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": OPERATIONAL_UNIVERSE_SCHEMA,
+    schema_version = OPERATIONAL_UNIVERSE_POLICY_SCHEMA if universe_policy_id is not None else OPERATIONAL_UNIVERSE_SCHEMA
+    payload: dict[str, Any] = {
+        "schema_version": schema_version,
         "decision_date": decision_date.isoformat(),
         "effective_at": canonical_datetime(effective_at),
         "available_at": canonical_datetime(available_at),
         "records": [item.to_canonical_dict() for item in records],
         "formal_pit_status": formal_pit_status.value,
         "data_eligibility": data_eligibility.value,
-        "source_artifact_references": [
-            {"artifact_id": str(item), "content_hash": digest}
-            for item, digest in source_artifact_references
-        ],
+        "source_artifact_references": [{"artifact_id": str(item), "content_hash": digest} for item, digest in source_artifact_references],
         "limitations": list(limitations),
     }
+    if schema_version == OPERATIONAL_UNIVERSE_POLICY_SCHEMA:
+        payload.update(
+            {
+                "universe_policy_id": str(universe_policy_id),
+                "universe_policy_hash": universe_policy_hash,
+                "universe_policy_version": universe_policy_version,
+            }
+        )
+    return payload
 
 
 def _decimal(value: Decimal | None) -> str | None:
