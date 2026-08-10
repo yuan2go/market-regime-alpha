@@ -41,7 +41,7 @@ UNKNOWN_REQUIRES_REVIEW
    - merge only after checks pass and the user has authorized merging.
 7. Never merge stale historical branches again merely to make ancestry green.
 8. Never delete remote branches unless explicitly requested.
-9. Publish or update a commit-bound branch reconciliation audit.
+9. Return the commit-bound reconciliation report in the task; do not create a new audit-document hierarchy.
 
 ## Report
 

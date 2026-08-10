@@ -1,4 +1,9 @@
-"""Unified, fail-closed Production Admission projection."""
+"""Fail-closed Production Admission gap projection.
+
+No current PostgreSQL owner resolves every admission floor.  Consequently this
+module records missing/rejected floors only; it cannot promote references into
+review eligibility or Production authority.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +15,6 @@ from typing import Any
 from market_regime_alpha.application.research_validation.common import ValidationArtifactReference, content_identity, timestamp
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
-from market_regime_alpha.platform.runtime_governance import (
-    ModelQualificationDecision,
-    QualificationStatus,
-    RuntimePurpose,
-)
 
 
 class AdmissionFloor(str, Enum):
@@ -39,23 +39,6 @@ class AdmissionFloorStatus(str, Enum):
 
 class ProductionAdmissionStatus(str, Enum):
     BLOCKED = "BLOCKED"
-    ELIGIBLE_FOR_OPERATOR_REVIEW = "ELIGIBLE_FOR_OPERATOR_REVIEW"
-    AUTHORIZED = "AUTHORIZED"
-
-
-_FLOOR_EVIDENCE_KINDS = {
-    AdmissionFloor.FORMAL_PIT: "FORMAL_PIT_EVIDENCE",
-    AdmissionFloor.FORMAL_OOS: "FORMAL_OOS_EVIDENCE",
-    AdmissionFloor.ECONOMIC_VALIDATION: "ECONOMIC_VALIDATION_EVIDENCE",
-    AdmissionFloor.CALIBRATION: "CALIBRATION_ARTIFACT",
-    AdmissionFloor.COST_CAPACITY: "LIQUIDITY_CAPACITY_QUALIFICATION",
-    AdmissionFloor.ENTRY_QUALIFICATION: "ENTRY_QUALIFICATION_EVIDENCE",
-    AdmissionFloor.HOLDING_EXIT_VALIDATION: "HOLDING_EXIT_EVIDENCE",
-    AdmissionFloor.SUSTAINED_STRATEGY_SHADOW: "STRATEGY_SHADOW_EVIDENCE",
-    AdmissionFloor.OPERATOR_APPROVAL: "OPERATOR_APPROVAL",
-    AdmissionFloor.AUTH_RBAC: "AUTH_RBAC_EVIDENCE",
-    AdmissionFloor.BROKER_READINESS: "BROKER_READINESS_EVIDENCE",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,14 +49,11 @@ class AdmissionFloorAssessment:
     reason_codes: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.status is AdmissionFloorStatus.SATISFIED and self.evidence_reference is None:
-            raise ValueError("satisfied Admission floor requires evidence")
-        if (
-            self.status is AdmissionFloorStatus.SATISFIED
-            and self.evidence_reference is not None
-            and self.evidence_reference.artifact_kind != _FLOOR_EVIDENCE_KINDS[self.floor]
-        ):
-            raise ValueError(f"{self.floor.value} requires {_FLOOR_EVIDENCE_KINDS[self.floor]}")
+        if self.status is AdmissionFloorStatus.SATISFIED:
+            raise ValueError(
+                "Admission floor satisfaction requires an owner-resolving "
+                "PostgreSQL writer, which is not implemented"
+            )
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("Admission floor reasons must be unique and sorted")
 
@@ -107,14 +87,16 @@ class ProductionAdmissionDecision:
             raise ValueError("Production Admission blocked-floor projection mismatch")
         if self.automatic_promotion:
             raise ValueError("automatic Production promotion is prohibited")
-        if self.status is ProductionAdmissionStatus.AUTHORIZED and self.governance_decision_reference is None:
-            raise ValueError("Production authorization requires existing Model Governance decision")
+        if self.status is not ProductionAdmissionStatus.BLOCKED:
+            raise ValueError("Production Admission is currently a blocked projection")
+        if self.governance_decision_reference is not None:
+            raise ValueError("blocked Admission cannot claim a Governance authorization")
         if canonical_hash(self.identity_payload()) != self.decision_hash:
             raise ValueError("Production Admission hash mismatch")
 
     @property
     def production_authorized(self) -> bool:
-        return self.status is ProductionAdmissionStatus.AUTHORIZED
+        return False
 
     def identity_payload(self) -> dict[str, Any]:
         return _payload(
@@ -133,47 +115,26 @@ def evaluate_production_admission(
     governance_version: str,
     assessments: tuple[AdmissionFloorAssessment, ...],
     evaluated_at: datetime,
-    governance_decision: ModelQualificationDecision | None = None,
 ) -> ProductionAdmissionDecision:
     ordered = tuple(sorted(assessments, key=lambda item: item.floor.value))
     if len(ordered) != len(AdmissionFloor) or {item.floor for item in ordered} != set(AdmissionFloor):
         raise ValueError("Production Admission requires every floor exactly once")
-    by_floor = {item.floor: item for item in ordered}
-    review_floors = set(AdmissionFloor) - {AdmissionFloor.OPERATOR_APPROVAL, AdmissionFloor.AUTH_RBAC, AdmissionFloor.BROKER_READINESS}
-    review_ready = all(by_floor[floor].status is AdmissionFloorStatus.SATISFIED for floor in review_floors)
-    all_ready = all(item.status is AdmissionFloorStatus.SATISFIED for item in ordered)
-    governance_authorized = (
-        governance_decision is not None
-        and governance_decision.status is QualificationStatus.QUALIFIED
-        and governance_decision.purpose is RuntimePurpose.PRODUCTION_DECISION
-        and governance_decision.production_authorized
-        and governance_decision.approval_ref is not None
-        and governance_decision.decided_at <= evaluated_at
-    )
     status = ProductionAdmissionStatus.BLOCKED
-    if all_ready and governance_authorized:
-        status = ProductionAdmissionStatus.AUTHORIZED
-    elif review_ready:
-        status = ProductionAdmissionStatus.ELIGIBLE_FOR_OPERATOR_REVIEW
     blocked = tuple(
         sorted((item.floor for item in ordered if item.status is not AdmissionFloorStatus.SATISFIED), key=lambda item: item.value)
     )
     limitations = tuple(
         sorted(
-            {"AUTOMATIC_PROMOTION_FALSE", "BROKER_MUTATION_FALSE", *(())}
-            | ({"PRODUCTION_AUTHORIZED_FALSE"} if status is not ProductionAdmissionStatus.AUTHORIZED else set())
+            {
+                "ADMISSION_FLOOR_OWNER_RESOLUTION_NOT_IMPLEMENTED",
+                "AUTOMATIC_PROMOTION_FALSE",
+                "BROKER_MUTATION_FALSE",
+                "PRODUCTION_AUTHORIZED_FALSE",
+            }
         )
     )
-    governance_ref = (
-        None
-        if governance_decision is None
-        else ValidationArtifactReference(
-            "MODEL_QUALIFICATION_DECISION",
-            governance_decision.decision_id,
-            governance_decision.decision_hash,
-        )
-    )
-    payload = _payload(governance_version, ordered, status, blocked, evaluated_at, governance_ref, limitations)
+    governance_ref = None
+    payload = _payload(governance_version, ordered, status, blocked, evaluated_at, None, limitations)
     artifact_id, digest = content_identity("production-admission-decision", payload)
     return ProductionAdmissionDecision(
         artifact_id,

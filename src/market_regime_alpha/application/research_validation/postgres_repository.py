@@ -37,8 +37,16 @@ class PostgresResearchValidationRepository:
         qualified: bool = False,
         production_authorized: bool = False,
     ) -> None:
-        if qualified or production_authorized or evidence_authority == "AUTHORIZED":
-            raise ValueError("Generic Validation Artifact recording cannot grant qualification or Production authority")
+        if (
+            qualified
+            or production_authorized
+            or evidence_authority
+            not in {"EXPLORATORY", "ENGINEERING_ONLY", "BLOCKED"}
+        ):
+            raise ValueError(
+                "Research Validation recording cannot grant unresolved "
+                "evidence, qualification, or Production authority"
+            )
         if canonical_hash(dict(payload)) != artifact_hash:
             raise ValueError("Research Validation payload hash mismatch")
 
@@ -107,6 +115,12 @@ class PostgresResearchValidationRepository:
         self._factory.run_transaction(operation)
 
     def record_sample_dataset(self, dataset: HistoricalSampleDataset) -> None:
+        if dataset.qualification is not HistoricalSampleQualification.UNQUALIFIED:
+            raise ValueError(
+                "Historical Sample qualification requires a future "
+                "owner-resolving PostgreSQL writer"
+            )
+
         def operation(connection: Any) -> None:
             self._insert_artifact(
                 connection,

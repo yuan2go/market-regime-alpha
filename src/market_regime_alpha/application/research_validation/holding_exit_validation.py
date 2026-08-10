@@ -9,8 +9,6 @@ from typing import Any
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
-    GOVERNED_NON_PRODUCTION_LIMITATIONS,
-    GovernanceQualificationBinding,
     ValidationArtifactReference,
     content_identity,
     timestamp,
@@ -18,7 +16,6 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.strategy_shadow.contracts import HoldingRuleKind, StrategyOutcome
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
-from market_regime_alpha.platform.runtime_governance import QualificationEvidenceKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,56 +167,6 @@ def evaluate_holding_exit(
         reasons,
         created_at,
         limitations,
-    )
-
-
-def qualify_holding_exit(
-    *,
-    evidence: HoldingExitValidationEvidence,
-    governance: GovernanceQualificationBinding,
-    created_at: datetime,
-) -> HoldingExitValidationEvidence:
-    if evidence.holding_exit_validated:
-        return evidence
-    if evidence.formal_oos_reference is None:
-        raise ValueError("Holding/Exit qualification requires Formal OOS evidence")
-    if "HOLDING_EXIT_ENGINEERING_FLOORS_MET" not in evidence.reason_codes:
-        raise ValueError("Holding/Exit engineering floors are not met")
-    evidence_reference = ValidationArtifactReference("HOLDING_EXIT_EVIDENCE", evidence.evidence_id, evidence.evidence_hash)
-    governance.require_artifact(evidence.formal_oos_reference, QualificationEvidenceKind.FORMAL_OOS)
-    governance.require_artifact(evidence_reference, QualificationEvidenceKind.ECONOMIC_VALIDATION)
-    approval = governance.decision_reference
-    reasons = ("HOLDING_EXIT_VALIDATED_BY_GOVERNANCE",)
-    payload = _payload(
-        evidence.protocol_reference,
-        evidence.outcome_references,
-        evidence.formal_oos_reference,
-        approval,
-        evidence.sample_count,
-        evidence.observed_exit_rule_coverage,
-        evidence.mean_net_return,
-        evidence.mean_mae,
-        True,
-        reasons,
-        created_at,
-        GOVERNED_NON_PRODUCTION_LIMITATIONS,
-    )
-    evidence_id, digest = content_identity("holding-exit-validation-evidence", payload)
-    return HoldingExitValidationEvidence(
-        evidence_id,
-        digest,
-        evidence.protocol_reference,
-        evidence.outcome_references,
-        evidence.formal_oos_reference,
-        approval,
-        evidence.sample_count,
-        evidence.observed_exit_rule_coverage,
-        evidence.mean_net_return,
-        evidence.mean_mae,
-        True,
-        reasons,
-        created_at,
-        GOVERNED_NON_PRODUCTION_LIMITATIONS,
     )
 
 

@@ -1,4 +1,4 @@
-"""Sustained Strategy Shadow qualification remains an explicit Governance act."""
+"""Engineering-floor evaluation for sustained Strategy Shadow evidence."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ from typing import Any
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
-    GOVERNED_NON_PRODUCTION_LIMITATIONS,
-    GovernanceQualificationBinding,
     ValidationArtifactReference,
     content_identity,
     timestamp,
@@ -17,7 +15,6 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.strategy_shadow.operations import StrategyShadowDailyReport
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
-from market_regime_alpha.platform.runtime_governance import QualificationEvidenceKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,45 +144,6 @@ def evaluate_strategy_shadow_qualification(
         reasons,
         created_at,
         limitations,
-    )
-
-
-def qualify_strategy_shadow(
-    *,
-    evidence: StrategyShadowQualificationEvidence,
-    governance: GovernanceQualificationBinding,
-    created_at: datetime,
-) -> StrategyShadowQualificationEvidence:
-    if evidence.sustained_strategy_shadow_proven:
-        return evidence
-    if "STRATEGY_SHADOW_ENGINEERING_FLOORS_MET" not in evidence.reason_codes:
-        raise ValueError("Strategy Shadow engineering floors are not met")
-    evidence_reference = ValidationArtifactReference("STRATEGY_SHADOW_EVIDENCE", evidence.evidence_id, evidence.evidence_hash)
-    governance.require_artifact(evidence_reference, QualificationEvidenceKind.SHADOW_OPERATION)
-    approval = governance.decision_reference
-    reasons = ("SUSTAINED_STRATEGY_SHADOW_PROVEN_BY_GOVERNANCE",)
-    payload = _payload(
-        evidence.protocol_reference,
-        evidence.report_references,
-        evidence.prospective_attestation_references,
-        approval,
-        True,
-        reasons,
-        created_at,
-        GOVERNED_NON_PRODUCTION_LIMITATIONS,
-    )
-    evidence_id, digest = content_identity("strategy-shadow-qualification-evidence", payload)
-    return StrategyShadowQualificationEvidence(
-        evidence_id,
-        digest,
-        evidence.protocol_reference,
-        evidence.report_references,
-        evidence.prospective_attestation_references,
-        approval,
-        True,
-        reasons,
-        created_at,
-        GOVERNED_NON_PRODUCTION_LIMITATIONS,
     )
 
 

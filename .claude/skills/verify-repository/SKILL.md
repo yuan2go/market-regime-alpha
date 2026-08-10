@@ -25,7 +25,7 @@ python -m mypy
 
 5. Run additional focused tests required by the changed bounded contexts.
 6. Inspect CI configuration and compare local commands with GitHub Actions.
-7. Check Current State, Capability Matrix, Gap Register and Work Package evidence against the actual code/tests.
+7. Check Current State, Capability Matrix, Gap Register and Roadmap against the actual code/tests.
 8. Use the `repository-verifier` subagent for an independent read-only review when available.
 
 ## Reporting

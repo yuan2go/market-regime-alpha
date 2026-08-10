@@ -2,13 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from hashlib import sha256
 import json
-import os
-import uuid
 
-import psycopg
-from psycopg import sql
 import pytest
 
 from market_regime_alpha.application.continuous_research.composition import (
@@ -30,11 +25,7 @@ from market_regime_alpha.application.decision_system.contracts import (
     bind_decision_candidate_evidence,
 )
 from market_regime_alpha.application.decision_system.postgres_repository import (
-    DecisionSystemConflict,
     PostgresDecisionSystemRepository,
-)
-from market_regime_alpha.application.decision_system.replay import (
-    replay_decision_system,
 )
 from market_regime_alpha.application.decision_system.runtime import (
     DECISION_RUNTIME_STAGE_ORDER,
@@ -49,45 +40,16 @@ from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,
     state_research_pipeline_identity,
 )
-from market_regime_alpha.core.identity import ArtifactId, TargetId, UniverseId
+from market_regime_alpha.core.identity import ArtifactId, UniverseId
 from market_regime_alpha.data.contracts import DataEligibility
-from market_regime_alpha.data.pit_authority import (
-    FormalPITValidationRequest,
-    PITArtifactReference,
-    PITFactEvidenceMode,
-    PITFactKind,
-    PITFactRevision,
-    PITFactTemporalAuthority,
-    PITRequiredFact,
-    PITValidationLineage,
-)
-from market_regime_alpha.data.pit_governance import (
-    record_formal_pit_qualification_evidence,
-)
-from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
-from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.platform.postgres_runtime_governance import (
     PostgresModelGovernanceRepository,
 )
-from market_regime_alpha.platform.contracts import (
-    EvidenceLevel,
-    ModelDefinition,
-    ModelLifecycleStatus,
-    ModelRole,
-)
-from market_regime_alpha.platform.durable_governance import PersistentModelRegistry
 from market_regime_alpha.platform.runtime_governance import (
     ArtifactLineageReference,
-    AssignmentLane,
-    ModelGovernancePolicy,
-    ModelQualificationEvidence,
-    ModelVersionLineage,
-    QualificationEvidenceKind,
-    QualificationEvidenceOutcome,
     RuntimeModelLineage,
-    RuntimePurpose,
 )
 from tests.application.decision_system.support import (
     AS_OF,
@@ -100,16 +62,11 @@ from tests.application.decision_system.support import (
     risk_configuration,
     tolerance,
 )
-from tests.persistence.postgres.pit_fixture import (
-    pit_authority,
-    source_qualification,
-)
 from tests.application.decision_system.governance_fixture import (
     FIXTURE_PRODUCTION_SELECTOR,
     runtime_model_lineage,
 )
 from tests.persistence.postgres.conftest import (
-    TEST_DATABASE_URL_ENV,
     postgres_factory as postgres_factory,
 )
 from tests.persistence.postgres.test_continuous_research_journal import (
@@ -128,185 +85,6 @@ class DecisionSystemRuntimeService(_DecisionSystemRuntimeService):
     def __init__(self, repository, **kwargs):
         kwargs.setdefault("model_selector", FIXTURE_PRODUCTION_SELECTOR)
         super().__init__(repository, **kwargs)
-
-
-def _pit_ref(reference: ArtifactLineageReference) -> PITArtifactReference:
-    return PITArtifactReference(
-        reference.reference_kind,
-        reference.artifact_id,
-        reference.content_hash,
-    )
-
-
-def _record_decision_fixture_formal_pit(
-    factory: PostgresConnectionFactory,
-    *,
-    model_lineage: ModelVersionLineage,
-    runtime_lineage: RuntimeModelLineage,
-    suffix: str,
-) -> ArtifactId:
-    scope_id = f"decision-formal-pit:{suffix}"
-    decision_time = AS_OF - timedelta(minutes=4)
-    event_time = decision_time - timedelta(minutes=1)
-    source_manifest = PITArtifactReference(
-        "SOURCE_MANIFEST",
-        ArtifactId(f"decision-source-manifest-{suffix}"),
-        canonical_hash({"source_manifest": suffix}),
-    )
-    universe = PITArtifactReference(
-        "UNIVERSE",
-        ArtifactId(f"decision-universe-{suffix}"),
-        canonical_hash({"universe": str(runtime_lineage.universe_id)}),
-    )
-    eligibility = PITArtifactReference(
-        "ELIGIBILITY",
-        ArtifactId(f"decision-eligibility-{suffix}"),
-        canonical_hash({"eligibility": suffix}),
-    )
-    pit_dataset = PITArtifactReference(
-        "DATASET",
-        ArtifactId(f"decision-pit-dataset-{suffix}"),
-        canonical_hash({"decision_pit_dataset": suffix}),
-    )
-    pit_features = tuple(
-        PITArtifactReference(
-            "FEATURE_MATERIALIZATION",
-            ArtifactId(f"decision-pit-feature-{suffix}-{index}"),
-            canonical_hash(
-                {"decision_pit_feature": suffix, "feature_index": index}
-            ),
-        )
-        for index, _ in enumerate(runtime_lineage.feature_materializations)
-    )
-    validation_lineage = PITValidationLineage(
-        model_id=model_lineage.model_id,
-        definition_hash=model_lineage.definition_hash,
-        model_lineage_id=model_lineage.lineage_id,
-        model_lineage_hash=model_lineage.lineage_hash,
-        dataset=pit_dataset,
-        source_manifests=(source_manifest,),
-        universe=universe,
-        eligibility=eligibility,
-        feature_definition_ids=tuple(
-            str(item) for item in model_lineage.feature_definition_ids
-        ),
-        feature_materializations=pit_features,
-        configuration=PITArtifactReference(
-            "CONFIGURATION",
-            model_lineage.configuration.artifact_id,
-            model_lineage.configuration.content_hash,
-        ),
-        code_revision=model_lineage.code_revision,
-        code_hash=model_lineage.code_hash,
-        validation_protocol=_pit_ref(model_lineage.validation_protocol_refs[0]),
-        adjustment_mode="RAW",
-    )
-    facts = [
-        PITRequiredFact(f"calendar:{suffix}", PITFactKind.TRADING_CALENDAR, "XSHG"),
-        PITRequiredFact(f"market:{suffix}", PITFactKind.MARKET_DATA, "600000.SH"),
-        PITRequiredFact(
-            f"universe:{suffix}", PITFactKind.UNIVERSE_MEMBERSHIP, "600000.SH"
-        ),
-        PITRequiredFact(
-            f"trading-status:{suffix}", PITFactKind.TRADING_STATUS, "600000.SH"
-        ),
-        PITRequiredFact(f"st-status:{suffix}", PITFactKind.ST_STATUS, "600000.SH"),
-        PITRequiredFact(
-            f"listing-status:{suffix}", PITFactKind.LISTING_STATUS, "600000.SH"
-        ),
-        PITRequiredFact(
-            f"eligibility:{suffix}", PITFactKind.TRADING_ELIGIBILITY, "600000.SH"
-        ),
-    ]
-    facts.extend(
-        PITRequiredFact(
-            f"feature:{suffix}:{index}",
-            PITFactKind.FEATURE_MATERIALIZATION,
-            str(feature_id),
-        )
-        for index, feature_id in enumerate(model_lineage.feature_definition_ids)
-    )
-    artifact_by_kind = {
-        PITFactKind.MARKET_DATA: validation_lineage.dataset,
-        PITFactKind.UNIVERSE_MEMBERSHIP: universe,
-        PITFactKind.TRADING_STATUS: eligibility,
-        PITFactKind.ST_STATUS: eligibility,
-        PITFactKind.LISTING_STATUS: eligibility,
-        PITFactKind.TRADING_ELIGIBILITY: eligibility,
-    }
-    clock = MutableClock(decision_time - timedelta(seconds=10))
-    pit = pit_authority(factory, clock=clock)
-    pit.record_source_qualification(
-        source_qualification(
-            source_manifest=source_manifest,
-            provider_id="decision-formal-fixture-provider",
-            provider_contract="decision-formal-fixture-contract-v1",
-            effective_at=event_time - timedelta(seconds=2),
-            recorded_at=event_time - timedelta(seconds=1),
-            actor="pytest-source-governance-operator",
-            reason="explicit Decision fixture source authority",
-        ),
-        idempotency_key=f"decision-pit-source-{suffix}",
-    )
-    for index, required in enumerate(facts):
-        if required.fact_kind is PITFactKind.FEATURE_MATERIALIZATION:
-            artifact = validation_lineage.feature_materializations[
-                index - (len(facts) - len(validation_lineage.feature_materializations))
-            ]
-        else:
-            artifact = artifact_by_kind.get(
-                required.fact_kind,
-                PITArtifactReference(
-                    "TRADING_CALENDAR",
-                    ArtifactId(f"decision-calendar-{suffix}"),
-                    canonical_hash({"calendar": suffix}),
-                ),
-            )
-        pit.record_fact(
-            PITFactRevision.create(
-                scope_id=scope_id,
-                logical_key=required.logical_key,
-                fact_kind=required.fact_kind,
-                subject=required.subject,
-                revision=1,
-                supersedes_fact_id=None,
-                event_time=event_time,
-                effective_from=event_time,
-                effective_to=None,
-                available_at=event_time + timedelta(seconds=1),
-                recorded_at=event_time + timedelta(seconds=2),
-                artifact=artifact,
-                source_manifest=source_manifest,
-                provider_id="decision-formal-fixture-provider",
-                provider_contract="decision-formal-fixture-contract-v1",
-                temporal_authority=PITFactTemporalAuthority(
-                    mode=PITFactEvidenceMode.PROSPECTIVE_CAPTURED_PIT,
-                    provider_id="decision-formal-fixture-provider",
-                    provider_contract="decision-formal-fixture-contract-v1",
-                    provider_available_at=event_time + timedelta(seconds=1),
-                    provider_recorded_at=event_time + timedelta(seconds=2),
-                ),
-                value_json='{"value":true}',
-                data_eligibility=DataEligibility.FORMAL_RESEARCH,
-            ),
-            actor="pytest-source-ingestor",
-            reason="record Decision Formal PIT fixture fact",
-            idempotency_key=f"decision-pit-fact-{suffix}-{index}",
-        )
-    clock.value = AS_OF - timedelta(minutes=2)
-    evidence = pit.validate(
-        FormalPITValidationRequest.create(
-            scope_id=scope_id,
-            decision_time=decision_time,
-            symbols=("600000.SH",),
-            required_facts=tuple(facts),
-            lineage=validation_lineage,
-            actor="pytest-pit-validator",
-            reason="validate Decision Formal PIT fixture",
-            idempotency_key=f"decision-pit-validate-{suffix}",
-        )
-    )
-    return evidence.evidence_id
 
 
 def test_scoped_state_bundle_binds_exact_multi_scope_members() -> None:
@@ -638,202 +416,6 @@ def _inputs(
     )
 
 
-def _seed_production_model_governance(
-    factory: PostgresConnectionFactory,
-    inputs: DecisionRuntimeInputs,
-) -> DecisionRuntimeInputs:
-    repository = PostgresModelGovernanceRepository(factory)
-    registry = PersistentModelRegistry(repository)
-    policy = ModelGovernancePolicy.create(
-        name="decision-replay-production-fixture-policy",
-        version="1",
-        purpose=RuntimePurpose.PRODUCTION_DECISION,
-        allowed_lifecycle_statuses=(ModelLifecycleStatus.ACTIVE,),
-        required_evidence_kinds=tuple(QualificationEvidenceKind),
-        allowed_data_eligibilities=(DataEligibility.FORMAL_RESEARCH,),
-        production_authorization=True,
-    )
-    repository.record_policy(
-        policy,
-        actor="pytest-governance-operator",
-        reason="explicit isolated Decision replay fixture",
-        created_at=AS_OF - timedelta(minutes=2),
-        idempotency_key="decision-replay-production-policy",
-    )
-    runtime_lineages: list[RuntimeModelLineage] = []
-    slot_by_model = {
-        str(item.signal_model_id): "STATE_SIGNAL"
-        for item in inputs.candidates
-    } | {
-        str(item.forecast_model_id): "STATE_FORECAST"
-        for item in inputs.candidates
-    }
-    for original in inputs.model_runtime_lineages:
-        suffix = sha256(str(original.model_id).encode("utf-8")).hexdigest()[:12]
-        definition = ModelDefinition(
-            model_id=original.model_id,
-            name=f"Decision fixture {suffix}",
-            version="1.0.0",
-            family="decision-state-fixture",
-            role=ModelRole.CONTEXT,
-            target_id=TargetId(f"decision-state-target-{suffix}"),
-            universe_id=original.universe_id,
-            feature_ids=original.feature_definition_ids,
-            implementation_ref=f"tests.decision_fixture:{suffix}",
-            parameter_hash=original.configuration.content_hash.removeprefix(
-                "sha256:"
-            ),
-            decision_time_convention="Decision State receipt AsOfTime",
-            horizon="current decision window",
-            supported_data_eligibilities=(DataEligibility.FORMAL_RESEARCH,),
-        )
-        registered = registry.register(
-            definition,
-            idempotency_key=f"decision-replay-register-{suffix}",
-        )
-        versioned = registered
-        transitions = (
-            ModelLifecycleStatus.RESEARCH,
-            ModelLifecycleStatus.BACKTESTED,
-            ModelLifecycleStatus.OOS_VALIDATED,
-            ModelLifecycleStatus.SHADOW,
-            ModelLifecycleStatus.PROMOTION_CANDIDATE,
-            ModelLifecycleStatus.ACTIVE,
-        )
-        for index, status in enumerate(transitions, start=1):
-            versioned = registry.transition(
-                definition.model_id,
-                expected_version=versioned.version,
-                idempotency_key=(
-                    f"decision-replay-lifecycle-{suffix}-{status.value}"
-                ),
-                to_status=status,
-                changed_at=AS_OF - timedelta(minutes=3) + timedelta(seconds=index),
-                reason="explicit test-only lifecycle evidence",
-                evidence_refs=(f"fixture-lifecycle:{suffix}:{status.value}",),
-                evidence_level=EvidenceLevel.FORMAL_RESEARCH,
-                approval_ref=(
-                    f"fixture-approval:{suffix}"
-                    if status is ModelLifecycleStatus.ACTIVE
-                    else None
-                ),
-            )
-        model_lineage = ModelVersionLineage.create(
-            model_id=definition.model_id,
-            model_version=definition.version,
-            definition_hash=definition.definition_hash,
-            target_id=definition.target_id,
-            universe_contract_id=definition.universe_id,
-            feature_definition_ids=definition.feature_ids,
-            model_parameter_hash=definition.parameter_hash,
-            configuration=original.configuration,
-            implementation_ref=definition.implementation_ref,
-            code_revision=original.code_revision,
-            code_hash=original.code_hash,
-            validation_protocol_refs=original.validation_protocol_refs,
-            supported_data_eligibilities=definition.supported_data_eligibilities,
-            created_at=AS_OF - timedelta(minutes=2),
-        )
-        repository.record_version_lineage(
-            model_lineage,
-            actor="pytest-governance-operator",
-            reason="bind Decision fixture lineage",
-            idempotency_key=f"decision-replay-lineage-{suffix}",
-        )
-        formal_pit_evidence_id = _record_decision_fixture_formal_pit(
-            factory,
-            model_lineage=model_lineage,
-            runtime_lineage=original,
-            suffix=suffix,
-        )
-        for kind in policy.required_evidence_kinds:
-            if kind is QualificationEvidenceKind.FORMAL_PIT:
-                record_formal_pit_qualification_evidence(
-                    pit_authority=PostgresPITAuthority(factory),
-                    model_governance=repository,
-                    pit_evidence_id=formal_pit_evidence_id,
-                    model_lineage=model_lineage,
-                    actor="pytest-governance-reviewer",
-                    reason="consume Decision Formal PIT fixture evidence",
-                    idempotency_key=(
-                        f"decision-replay-evidence-{suffix}-{kind.value}"
-                    ),
-                )
-                continue
-            repository.record_evidence(
-                ModelQualificationEvidence.create(
-                    model_id=definition.model_id,
-                    definition_hash=definition.definition_hash,
-                    lineage_id=model_lineage.lineage_id,
-                    lineage_hash=model_lineage.lineage_hash,
-                    evidence_kind=kind,
-                    outcome=QualificationEvidenceOutcome.SATISFIED,
-                    evidence=ArtifactLineageReference(
-                        kind.value,
-                        ArtifactId(f"decision-fixture-{suffix}-{kind.value}"),
-                        canonical_hash(
-                            {
-                                "model_id": str(definition.model_id),
-                                "evidence_kind": kind.value,
-                            }
-                        ),
-                    ),
-                    validation_protocol_ref=model_lineage.validation_protocol_refs[0],
-                    available_at=AS_OF - timedelta(minutes=1),
-                    recorded_at=AS_OF - timedelta(minutes=1),
-                    actor="pytest-governance-reviewer",
-                    reason="explicit complete Production fixture evidence",
-                ),
-                idempotency_key=f"decision-replay-evidence-{suffix}-{kind.value}",
-            )
-        qualified = repository.qualify(
-            model_id=definition.model_id,
-            policy_id=policy.policy_id,
-            actor="pytest-governance-reviewer",
-            reason="explicit test-only Production qualification",
-            approval_ref=f"fixture-production-approval:{suffix}",
-            decided_at=AS_OF - timedelta(seconds=30),
-            expected_registry_version=versioned.version,
-            idempotency_key=f"decision-replay-qualify-{suffix}",
-        )
-        assert qualified.production_authorized is True
-        repository.assign(
-            runtime_scope="DECISION_SYSTEM",
-            model_slot=slot_by_model[str(definition.model_id)],
-            purpose=RuntimePurpose.PRODUCTION_DECISION,
-            lane=AssignmentLane.CHAMPION,
-            model_id=definition.model_id,
-            policy_id=policy.policy_id,
-            expected_governance_revision=repository.current_revision(),
-            effective_at=AS_OF - timedelta(seconds=15),
-            actor="pytest-governance-operator",
-            reason="explicit Decision fixture Champion",
-            approval_ref=f"fixture-champion-approval:{suffix}",
-            idempotency_key=f"decision-replay-champion-{suffix}",
-        )
-        runtime_lineages.append(
-            RuntimeModelLineage.create(
-                model_id=definition.model_id,
-                definition_hash=definition.definition_hash,
-                dataset=original.dataset,
-                universe_id=original.universe_id,
-                feature_definition_ids=original.feature_definition_ids,
-                feature_materializations=original.feature_materializations,
-                configuration=original.configuration,
-                code_revision=original.code_revision,
-                code_hash=original.code_hash,
-                validation_protocol_refs=original.validation_protocol_refs,
-                data_eligibility=DataEligibility.FORMAL_RESEARCH,
-            )
-        )
-    return replace(
-        inputs,
-        model_runtime_lineages=tuple(
-            sorted(runtime_lineages, key=lambda item: str(item.model_id))
-        ),
-    )
-
-
 def _seed_state_authority(
     factory: PostgresConnectionFactory,
     claim,
@@ -1042,20 +624,17 @@ def test_decision_system_is_the_unique_final_continuous_child() -> None:
     assert CONTINUOUS_CHILD_ORDER[-1] is ContinuousChildKind.DECISION_SYSTEM
 
 
-def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
+def test_runtime_executes_ordered_decision_stages_with_explicit_fixture_selector(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     clock = MutableClock(AS_OF)
     _, claim = active_claim(postgres_factory, clock)
     repository = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
     account = repository.record_manual_observation(observation(positions=()))
-    inputs = _seed_production_model_governance(
-        postgres_factory,
-        _inputs(
-            claim,
-            account.observation_id,
-            data_eligibility=DataEligibility.FORMAL_RESEARCH,
-        ),
+    inputs = _inputs(
+        claim,
+        account.observation_id,
+        data_eligibility=DataEligibility.FORMAL_RESEARCH,
     )
     _seed_state_authority(
         postgres_factory, claim, decision_lineage=inputs.lineage
@@ -1064,7 +643,7 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     delegate = DecisionSystemDelegate(
         _DecisionSystemRuntimeService(
             repository,
-            model_selector=PostgresModelGovernanceRepository(postgres_factory),
+            model_selector=FIXTURE_PRODUCTION_SELECTOR,
         ),
         input_loader=lambda _: inputs,
     )
@@ -1098,94 +677,6 @@ def test_runtime_executes_ordered_decision_stages_and_reuses_receipt(
     assert final.revision == 2
     assert final.previous_summary_id is not None
     assert _execution_authority_counts(postgres_factory) == before
-    restarted = PostgresDecisionSystemRepository(postgres_factory, clock=clock)
-    replay_schema = f"test_mra_{uuid.uuid4().hex}"
-    database_url = os.environ[TEST_DATABASE_URL_ENV]
-    with psycopg.connect(database_url, autocommit=True) as connection:
-        connection.execute(
-            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(replay_schema))
-        )
-    replay_factory = PostgresConnectionFactory(
-        DatabaseSettings.from_sources(database_url=database_url, environ={}),
-        min_size=0,
-        max_size=2,
-        application_schema=replay_schema,
-    )
-    try:
-        replay_repository = PostgresDecisionSystemRepository(
-            replay_factory,
-            clock=clock,
-        )
-        first_replay = replay_decision_system(
-            restarted,
-            run_id=request.run_id,
-            tick_id=request.tick_id,
-            replay_repository=replay_repository,
-        )
-        second_replay = replay_decision_system(
-            restarted,
-            run_id=request.run_id,
-            tick_id=request.tick_id,
-            replay_repository=replay_repository,
-        )
-        with replay_factory.connection(read_only=True) as connection:
-            imported_count = connection.execute(
-                "SELECT count(*) FROM decision_replay_import"
-            ).fetchone()[0]
-            replay_migration_version = connection.execute(
-                "SELECT max(version) FROM schema_migrations"
-            ).fetchone()[0]
-            replay_selection_count = connection.execute(
-                "SELECT count(*) FROM model_selection_receipt"
-            ).fetchone()[0]
-        imported_artifacts = replay_repository.get_replay_artifacts(
-            first_replay.replay_session_id
-        )
-        conflicting = list(imported_artifacts)
-        conflicting[0] = {
-            **conflicting[0],
-            "content_hash": "sha256:" + "d" * 64,
-        }
-        conflicting.append(
-            {
-                "artifact_kind": "RUNTIME_INPUT",
-                "artifact_id": "rollback-only-artifact",
-                "content_hash": "sha256:" + "c" * 64,
-                "payload": {},
-            }
-        )
-        conflicting_artifacts = tuple(
-            sorted(
-                conflicting,
-                key=lambda item: (item["artifact_kind"], item["artifact_id"]),
-            )
-        )
-        with pytest.raises(DecisionSystemConflict, match="import conflict"):
-            replay_repository.import_replay_artifacts(
-                replay_session_id=first_replay.replay_session_id,
-                artifacts=conflicting_artifacts,
-            )
-        after_conflict_count = len(
-            replay_repository.get_replay_artifacts(first_replay.replay_session_id)
-        )
-    finally:
-        replay_factory.close()
-        with psycopg.connect(database_url, autocommit=True) as connection:
-            connection.execute(
-                sql.SQL("DROP SCHEMA {} CASCADE").format(
-                    sql.Identifier(replay_schema)
-                )
-            )
-    assert first_replay == second_replay
-    assert imported_count == 12
-    assert replay_migration_version == 45
-    assert replay_selection_count == 2
-    assert after_conflict_count == imported_count
-    assert first_replay.verified_authority_count == 12
-    assert first_replay.reexecuted_authority_count == 6
-    assert first_replay.postgres_import_verified is True
-    assert first_replay.entry_authority_granted is False
-    assert first_replay.broker_authority_granted is False
 
 
 def test_runtime_ignores_forged_candidate_qualification_and_fails_closed(

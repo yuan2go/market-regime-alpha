@@ -13,15 +13,12 @@ from typing import Any
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
-    GOVERNED_NON_PRODUCTION_LIMITATIONS,
-    GovernanceQualificationBinding,
     ValidationArtifactReference,
     content_identity,
     timestamp,
 )
 from market_regime_alpha.core.identity import ArtifactId, ModelId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
-from market_regime_alpha.platform.runtime_governance import QualificationEvidenceKind
 
 
 class EntryResearchVariant(str, Enum):
@@ -337,65 +334,6 @@ def build_unqualified_entry_evidence(
         False,
         False,
         tuple(sorted(reasons)),
-        created_at,
-        limitations,
-    )
-
-
-def qualify_entry(
-    *,
-    protocol: EntryQualificationProtocol,
-    evaluation: EntryEvaluation,
-    formal_oos_reference: ValidationArtifactReference,
-    calibration_reference: ValidationArtifactReference,
-    governance: GovernanceQualificationBinding,
-    created_at: datetime,
-) -> EntryQualificationEvidence:
-    expected_kinds = (
-        (formal_oos_reference, "FORMAL_OOS_EVIDENCE"),
-        (calibration_reference, "CALIBRATION_ARTIFACT"),
-    )
-    for reference, expected_kind in expected_kinds:
-        if reference.artifact_kind != expected_kind:
-            raise ValueError(f"Entry qualification requires {expected_kind}")
-    evaluation_ref = ValidationArtifactReference("ENTRY_EVALUATION", evaluation.evaluation_id, evaluation.evaluation_hash)
-    governance.require_artifact(formal_oos_reference, QualificationEvidenceKind.FORMAL_OOS)
-    governance.require_artifact(calibration_reference, QualificationEvidenceKind.BACKTEST_VALIDATION)
-    governance.require_artifact(evaluation_ref, QualificationEvidenceKind.ECONOMIC_VALIDATION)
-    governance_approval_reference = governance.decision_reference
-    if evaluation.sample_count < protocol.minimum_samples:
-        raise ValueError("Entry qualification sample floor not met")
-    if evaluation.hit_rate is None or evaluation.hit_rate < protocol.minimum_hit_rate:
-        raise ValueError("Entry qualification hit-rate floor not met")
-    if evaluation.cost_adjusted_return is None or evaluation.cost_adjusted_return < protocol.minimum_cost_adjusted_return:
-        raise ValueError("Entry qualification economic floor not met")
-    protocol_ref = ValidationArtifactReference("ENTRY_QUALIFICATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash)
-    reasons = ("ENTRY_QUALIFIED_BY_GOVERNANCE",)
-    limitations = GOVERNED_NON_PRODUCTION_LIMITATIONS
-    payload = _qualification_payload(
-        protocol_ref,
-        evaluation_ref,
-        formal_oos_reference,
-        calibration_reference,
-        governance_approval_reference,
-        True,
-        True,
-        reasons,
-        created_at,
-        limitations,
-    )
-    artifact_id, digest = content_identity("entry-qualification-evidence", payload)
-    return EntryQualificationEvidence(
-        artifact_id,
-        digest,
-        protocol_ref,
-        evaluation_ref,
-        formal_oos_reference,
-        calibration_reference,
-        governance_approval_reference,
-        True,
-        True,
-        reasons,
         created_at,
         limitations,
     )
