@@ -1352,12 +1352,13 @@ def evaluate_qualification(
     reason: str,
     approval_ref: str | None,
     governance_revision: int,
+    authority_rejection_codes: tuple[str, ...] = (),
 ) -> ModelQualificationDecision:
     if registration.definition.model_id != lineage.model_id:
         raise ValueError("qualification Registry/lineage model mismatch")
     if registration.definition.definition_hash != lineage.definition_hash:
         raise ValueError("qualification Registry/lineage definition mismatch")
-    reasons: set[str] = set()
+    reasons: set[str] = set(authority_rejection_codes)
     if registration.lifecycle_status not in policy.allowed_lifecycle_statuses:
         reasons.add("LIFECYCLE_NOT_ALLOWED")
     by_kind: dict[QualificationEvidenceKind, ModelQualificationEvidence] = {}

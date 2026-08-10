@@ -23,7 +23,6 @@ from market_regime_alpha.application.research_validation.samples import (
     HistoricalPathSampleRecord,
     HistoricalSampleDataset,
     HistoricalSampleQualification,
-    advance_sample_qualification,
 )
 from market_regime_alpha.application.shadow_research.attestation import ClockMode, RuntimeOrigin
 from market_regime_alpha.application.strategy_shadow.operations import (
@@ -161,7 +160,7 @@ def test_panel_enrichment_and_strategy_shadow_replay_on_postgres(postgres_factor
         strategy.save(running, expected_revision=1)
 
 
-def test_postgres_historical_sample_reader_replays_qualification_transitions(
+def test_postgres_historical_sample_reader_cannot_invent_qualification(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     now = datetime(2026, 8, 10, 6, 55, tzinfo=UTC)
@@ -190,12 +189,6 @@ def test_postgres_historical_sample_reader_replays_qualification_transitions(
         pit_lineage=(),
         registered_at=now - timedelta(days=1),
     )
-    qualified = advance_sample_qualification(
-        record=record,
-        qualification=HistoricalSampleQualification.PIT_ELIGIBLE,
-        authority_evidence=_ref("FORMAL_PIT_EVIDENCE", "pit-evidence"),
-        registered_at=now,
-    )
     repository = PostgresResearchValidationRepository(postgres_factory)
     repository.record_sample_dataset(
         HistoricalSampleDataset.create(
@@ -205,19 +198,62 @@ def test_postgres_historical_sample_reader_replays_qualification_transitions(
             available_at=now - timedelta(days=1),
         )
     )
-    repository.record_sample_dataset(
-        HistoricalSampleDataset.create(
-            registry_version="v2",
-            target_reference=target,
-            records=(qualified,),
-            available_at=now,
-        )
-    )
-
     samples, qualification, _reasons = repository.load_available_samples(
         symbol="000001.SZ",
         target_id=target_id,
         decision_time=DecisionTime(now + timedelta(seconds=1)),
     )
     assert samples == (sample,)
-    assert qualification == HistoricalSampleQualification.PIT_ELIGIBLE.value
+    assert qualification == HistoricalSampleQualification.UNQUALIFIED.value
+
+
+def test_migration_046_rejects_reference_only_authority_rows(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    now = datetime(2026, 8, 10, 6, 55, tzinfo=UTC)
+    PostgresResearchValidationRepository(postgres_factory)
+    dataset_id = "migration-046-dataset"
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO research_validation_artifact(
+                artifact_id, artifact_hash, artifact_kind,
+                evidence_authority, payload_json, created_at
+            ) VALUES (%s, %s, 'HISTORICAL_SAMPLE_DATASET',
+                      'ENGINEERING_ONLY', '{}'::jsonb, %s)
+            """,
+            (dataset_id, "sha256:" + "a" * 64, now),
+        )
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with postgres_factory.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO research_validation_artifact(
+                    artifact_id, artifact_hash, artifact_kind,
+                    evidence_authority, qualified, payload_json, created_at
+                ) VALUES ('forged-formal-oos', %s, 'FORMAL_EVALUATION_RESULT',
+                          'FORMAL_OOS', true, '{}'::jsonb, %s)
+                """,
+                ("sha256:" + "b" * 64, now),
+            )
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with postgres_factory.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO historical_path_sample_record(
+                    record_id, record_hash, dataset_id, sample_id, symbol,
+                    target_id, sample_decision_time, available_at,
+                    qualification, payload_json
+                ) VALUES ('forged-pit-sample', %s, %s, 'sample-046',
+                          '000001.SZ', 'target-046', %s, %s,
+                          'PIT_ELIGIBLE', '{}'::jsonb)
+                """,
+                (
+                    "sha256:" + "c" * 64,
+                    dataset_id,
+                    now - timedelta(days=2),
+                    now - timedelta(days=1),
+                ),
+            )

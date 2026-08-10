@@ -176,48 +176,6 @@ class HistoricalSampleDataset:
         )
 
 
-def advance_sample_qualification(
-    *,
-    record: HistoricalPathSampleRecord,
-    qualification: HistoricalSampleQualification,
-    authority_evidence: ValidationArtifactReference,
-    registered_at: datetime,
-) -> HistoricalPathSampleRecord:
-    """Monotonic qualification; current Signal can never act as evidence."""
-    if _qualification_rank(qualification) != _qualification_rank(record.qualification) + 1:
-        raise ValueError("Historical sample qualification must advance exactly one governed state")
-    required_evidence_kind = {
-        HistoricalSampleQualification.PIT_ELIGIBLE: "FORMAL_PIT_EVIDENCE",
-        HistoricalSampleQualification.OOS_ELIGIBLE: "FORMAL_OOS_EVIDENCE",
-        HistoricalSampleQualification.QUALIFIED: "MODEL_GOVERNANCE_APPROVAL",
-    }[qualification]
-    if authority_evidence.artifact_kind != required_evidence_kind:
-        raise ValueError(f"{qualification.value} requires {required_evidence_kind}")
-    pit_lineage = tuple(sorted({*record.pit_lineage, authority_evidence}, key=_reference_key))
-    reasons = (f"QUALIFICATION_ADVANCED_TO_{qualification.value}",)
-    values = _record_payload(
-        record.sample,
-        record.target_reference,
-        record.outcome_reference,
-        pit_lineage,
-        qualification,
-        registered_at,
-        reasons,
-    )
-    record_id, digest = content_identity("historical-path-sample", values)
-    return HistoricalPathSampleRecord(
-        record_id,
-        digest,
-        record.sample,
-        record.target_reference,
-        record.outcome_reference,
-        pit_lineage,
-        qualification,
-        registered_at,
-        reasons,
-    )
-
-
 class HistoricalSampleRegistryReader(Protocol):
     def read_for_forecast(
         self,

@@ -54,7 +54,7 @@ class BacktestResult:
 
 
 def load_ohlcv_csv(path: str | Path, symbol: str | None = None) -> list[OHLCVBar]:
-    """Load a single-symbol OHLCV CSV that follows docs/Data-Spec.md."""
+    """Load a single-symbol OHLCV CSV under the canonical data contract."""
     csv_path = Path(path)
     rows: list[OHLCVBar] = []
 
@@ -232,4 +232,3 @@ def _max_drawdown(equity_curve: Sequence[float]) -> float:
         drawdown = equity / peak - 1.0
         worst_drawdown = min(worst_drawdown, drawdown)
     return worst_drawdown
-

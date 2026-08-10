@@ -11,6 +11,10 @@ from market_regime_alpha.application.authority_boundary import (
     AuthorityCapability,
     canonical_authority_catalog,
 )
+from market_regime_alpha.application.research_validation.admission import (
+    AdmissionFloorStatus,
+    ProductionAdmissionStatus,
+)
 from market_regime_alpha.daily_decision.entry import EntryAssessmentState
 
 
@@ -91,3 +95,35 @@ def test_installed_cli_entry_points_are_not_legacy_producers() -> None:
         target.startswith(LEGACY_EXECUTABLE_PREFIXES)
         for target in scripts.values()
     )
+
+
+def test_reference_only_research_helpers_cannot_grant_qualification() -> None:
+    prohibited = {
+        "advance_sample_qualification",
+        "qualify_calibration",
+        "qualify_entry",
+        "qualify_holding_exit",
+        "qualify_strategy_shadow",
+    }
+    roots = (
+        SOURCE / "application" / "research_validation",
+        SOURCE / "application" / "strategy_shadow",
+    )
+    definitions: set[str] = set()
+    for root in roots:
+        for path in root.rglob("*.py"):
+            definitions.update(
+                node.name
+                for node in ast.walk(
+                    ast.parse(path.read_text(encoding="utf-8"))
+                )
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+
+    assert prohibited.isdisjoint(definitions)
+    assert {item.value for item in AdmissionFloorStatus} == {"MISSING", "REJECTED"}
+    assert {item.value for item in ProductionAdmissionStatus} == {"BLOCKED"}
+
+
+def test_uncomposed_decision_replay_cannot_reenter_application_code() -> None:
+    assert not (SOURCE / "application" / "decision_system" / "replay.py").exists()

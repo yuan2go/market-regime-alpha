@@ -515,6 +515,13 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     reason=reason,
                     approval_ref=approval_ref,
                     governance_revision=revision,
+                    authority_rejection_codes=(
+                        (
+                            "PRODUCTION_EVIDENCE_OWNER_RESOLUTION_NOT_IMPLEMENTED",
+                        )
+                        if policy.purpose is RuntimePurpose.PRODUCTION_DECISION
+                        else ()
+                    ),
                 )
                 connection.execute(
                     """

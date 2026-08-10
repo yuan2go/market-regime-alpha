@@ -1,16 +1,11 @@
-# Archive
+# Historical Documentation Boundary
 
-> **Status:** HISTORICAL  
-> **Authority:** Index for superseded designs, dated plans and Legacy runbooks  
-> **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-07-26  
-> **Supersedes:** None  
-> **Superseded By:** None  
-> **Related Documents:** ../README.md, Document-Migration-Manifest.md  
-> **Code Evidence:** Historical evidence only
+> **Status:** HISTORICAL
+> **Authority:** Archive boundary notice only
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-10
+> **Code Evidence:** Git history before the architecture/documentation convergence
 
-Archive content preserves research history and negative evidence. It does not define current implementation or roadmap authority.
+Historical audits, delivery reports, work packages, temporary plans, superseded architectures and designed-only specifications are retained in Git history, not in the default documentation tree.
 
-- `superpowers/`: dated implementation plans/specifications/checkpoints.
-- `legacy/`: Legacy Dividend-T/Cosco/Tushare user-facing runbooks and system descriptions.
-- Existing research files marked `HISTORICAL` remain in place when stable paths are needed for evidence references.
+They may be consulted for provenance or migration archaeology. They must not be loaded as current implementation context and cannot override code, PostgreSQL schema, Runtime composition, current tests or the canonical documents linked from `docs/README.md`.

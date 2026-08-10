@@ -6,8 +6,7 @@ import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNBOOK = ROOT / "docs/operations/PostgreSQL-Authority-Runbook.md"
-EVIDENCE = ROOT / "docs/evidence/PostgreSQL-Authority-Migration-Evidence.md"
+RUNBOOK = ROOT / "docs/operations/Runtime-Runbook.md"
 
 
 def test_postgres_runbook_references_existing_repository_commands() -> None:
@@ -60,9 +59,9 @@ def test_tracked_files_exclude_operator_credentials() -> None:
     assert violations == []
 
 
-def test_status_and_evidence_keep_authority_ceiling_explicit() -> None:
+def test_status_and_runbook_keep_authority_ceiling_explicit() -> None:
     status = (ROOT / "docs/status/Current-State.md").read_text(encoding="utf-8")
-    evidence = EVIDENCE.read_text(encoding="utf-8")
+    runbook = RUNBOOK.read_text(encoding="utf-8")
 
     for declaration in (
         "automatic_order_execution = false",
@@ -71,13 +70,6 @@ def test_status_and_evidence_keep_authority_ceiling_explicit() -> None:
         "production_ready = false",
     ):
         assert declaration in status
-    for declaration in (
-        "FORMAL_PIT_ESTABLISHED = false",
-        "FORMAL_OOS_ALPHA_ESTABLISHED = false",
-        "SHADOW_READY = false",
-        "BROKER_INTEGRATION_PROVEN = false",
-        "PRODUCTION_READY = false",
-    ):
-        assert declaration in evidence
-    assert "0 -> 0" in evidence
-    assert "undiscovered" in evidence
+    assert "Expected head: migration 046" in runbook
+    assert "Production qualification is currently forced closed" in runbook
+    assert "no alternate persistent backend" in runbook

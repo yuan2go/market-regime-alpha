@@ -12,15 +12,12 @@ from typing import Any
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
-    GOVERNED_NON_PRODUCTION_LIMITATIONS,
-    GovernanceQualificationBinding,
     ValidationArtifactReference,
     content_identity,
     timestamp,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
-from market_regime_alpha.platform.runtime_governance import QualificationEvidenceKind
 
 
 class CalibrationMethod(str, Enum):
@@ -185,46 +182,6 @@ def fit_calibration(
     payload = _artifact_payload(protocol_ref, fit_artifact, evaluations, False, None, created_at, limitations)
     artifact_id, artifact_hash = content_identity("calibration-artifact", payload)
     return CalibrationArtifact(artifact_id, artifact_hash, protocol_ref, fit_artifact, evaluations, False, None, created_at, limitations)
-
-
-def qualify_calibration(
-    *,
-    artifact: CalibrationArtifact,
-    governance: GovernanceQualificationBinding,
-    created_at: datetime,
-) -> CalibrationArtifact:
-    """Explicit Governance transition; fitting alone never invokes this path."""
-    if artifact.calibrated:
-        return artifact
-    if CalibrationPartition.OOS not in {item.partition for item in artifact.evaluations}:
-        raise ValueError("Calibration qualification requires locked OOS evaluation")
-    governance.require_artifact(
-        ValidationArtifactReference("CALIBRATION_ARTIFACT", artifact.artifact_id, artifact.artifact_hash),
-        QualificationEvidenceKind.BACKTEST_VALIDATION,
-    )
-    qualification_evidence = governance.decision_reference
-    limitations = GOVERNED_NON_PRODUCTION_LIMITATIONS
-    payload = _artifact_payload(
-        artifact.protocol_reference,
-        artifact.fit,
-        artifact.evaluations,
-        True,
-        qualification_evidence,
-        created_at,
-        limitations,
-    )
-    artifact_id, artifact_hash = content_identity("calibration-artifact", payload)
-    return CalibrationArtifact(
-        artifact_id,
-        artifact_hash,
-        artifact.protocol_reference,
-        artifact.fit,
-        artifact.evaluations,
-        True,
-        qualification_evidence,
-        created_at,
-        limitations,
-    )
 
 
 def _fit_method(

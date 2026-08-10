@@ -6,8 +6,6 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from market_regime_alpha.application.research_evaluation.targets import engineering_multi_horizon_protocol
 from market_regime_alpha.application.research_validation.ablation import (
     AblationProtocol,
@@ -18,11 +16,9 @@ from market_regime_alpha.application.research_validation.ablation import (
 )
 from market_regime_alpha.application.research_validation.admission import (
     AdmissionFloor,
-    AdmissionFloorAssessment,
     AdmissionFloorStatus,
     ProductionAdmissionStatus,
     current_engineering_blocked_admission,
-    evaluate_production_admission,
 )
 from market_regime_alpha.application.research_validation.calibration import (
     CalibrationMethod,
@@ -265,6 +261,7 @@ def test_formal_evaluation_runs_but_cannot_emit_oos_without_formal_pit() -> None
     assert result.formal_oos is False
     assert result.authority is ResearchEvidenceAuthority.ENGINEERING_ONLY
     assert "REAL_FORMAL_PIT_REQUIRED" in result.reason_codes
+    assert "FORMAL_OOS_OWNER_RESOLUTION_NOT_IMPLEMENTED" in result.reason_codes
     assert {item.partition for item in result.metrics} == {EvaluationPartition.VALIDATION}
     assert {item.sensitivity_return_multiplier for item in result.metrics} == {
         Decimal("0.9"),
@@ -355,33 +352,4 @@ def test_entry_and_production_admission_remain_blocked() -> None:
     assert admission.status is ProductionAdmissionStatus.BLOCKED
     assert admission.production_authorized is False
     assert set(admission.blocked_floors) == set(AdmissionFloor)
-    with pytest.raises(ValueError, match="FORMAL_PIT_EVIDENCE"):
-        AdmissionFloorAssessment(
-            AdmissionFloor.FORMAL_PIT,
-            AdmissionFloorStatus.SATISFIED,
-            _ref("ARBITRARY", "forged"),
-            ("FORGED",),
-        )
-    kinds = {
-        AdmissionFloor.FORMAL_PIT: "FORMAL_PIT_EVIDENCE",
-        AdmissionFloor.FORMAL_OOS: "FORMAL_OOS_EVIDENCE",
-        AdmissionFloor.ECONOMIC_VALIDATION: "ECONOMIC_VALIDATION_EVIDENCE",
-        AdmissionFloor.CALIBRATION: "CALIBRATION_ARTIFACT",
-        AdmissionFloor.COST_CAPACITY: "LIQUIDITY_CAPACITY_QUALIFICATION",
-        AdmissionFloor.ENTRY_QUALIFICATION: "ENTRY_QUALIFICATION_EVIDENCE",
-        AdmissionFloor.HOLDING_EXIT_VALIDATION: "HOLDING_EXIT_EVIDENCE",
-        AdmissionFloor.SUSTAINED_STRATEGY_SHADOW: "STRATEGY_SHADOW_EVIDENCE",
-        AdmissionFloor.OPERATOR_APPROVAL: "OPERATOR_APPROVAL",
-        AdmissionFloor.AUTH_RBAC: "AUTH_RBAC_EVIDENCE",
-        AdmissionFloor.BROKER_READINESS: "BROKER_READINESS_EVIDENCE",
-    }
-    review_only = evaluate_production_admission(
-        governance_version="v1",
-        assessments=tuple(
-            AdmissionFloorAssessment(floor, AdmissionFloorStatus.SATISFIED, _ref(kinds[floor], floor.value), ("SATISFIED",))
-            for floor in AdmissionFloor
-        ),
-        evaluated_at=NOW,
-    )
-    assert review_only.status is ProductionAdmissionStatus.ELIGIBLE_FOR_OPERATOR_REVIEW
-    assert review_only.production_authorized is False
+    assert {item.value for item in AdmissionFloorStatus} == {"MISSING", "REJECTED"}

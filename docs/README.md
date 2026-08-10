@@ -1,265 +1,41 @@
-# Documentation Authority and Navigation
+# Documentation Authority
 
-> **Status:** CURRENT_STATUS  
-> **Authority:** Canonical documentation entry point and authority policy  
-> **Owner:** Market Regime Alpha maintainers  
+> **Status:** CURRENT_STATUS
+> **Authority:** Canonical documentation index
+> **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Supersedes:** None  
-> **Superseded By:** None  
-> **Related Documents:** constitution/**, architecture/**, research/**, specs/**, status/**, roadmap/**, audit/**, archive/**  
-> **Code Evidence:** Repository-wide
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
-## Two independent authority orders
+Documentation describes the code; it does not create implementation or evidence authority.
 
-Normative authority and implementation-fact authority answer different questions. They must never be merged into one precedence list.
+## Normative authority order
 
-### Normative authority order
+1. latest explicit user decision not superseded;
+2. `docs/constitution/00` through `09`;
+3. the current architecture documents below;
+4. current status and roadmap;
+5. historical Git revisions as context only.
 
-Use this order to determine what the project **should** do:
+## Implementation fact authority order
 
-```text
-1. Latest explicit user decision that has not been superseded
-2. docs/constitution/00–09
-3. docs/architecture/00–17 and architecture/domains/**
-4. docs/research/Current-Research-Program.md and focused current research programs
-5. docs/specs/** and docs/roadmap/work-packages/**
-6. HISTORICAL/SUPERSEDED material for context only
-```
+1. current executable code and actual call chains;
+2. PostgreSQL schema and current migration head;
+3. tests and static checks;
+4. reproducible runtime/evidence artifacts;
+5. current status documents.
 
-### Implementation fact authority order
+## Current canonical documents
 
-Use this order to determine what the repository **actually does now**:
-
-```text
-1. Current executable code at the audited commit
-2. Current tests and static checks
-3. Reproducible runtime/research Artifacts and manifests
-4. docs/status/Current-State.md and Capability-Matrix.md
-5. Audit evidence tied to an exact commit
-6. Historical status reports and plans
-```
-
-A lower normative document cannot override Constitution. A document cannot establish implementation by assertion when code/tests/artifacts disagree.
-
-## Current documents
-
-### Constitution
-
-- [00 Project Vision](constitution/00-Project-Vision.md)
-- [01 Core Principles](constitution/01-Core-Principles.md)
-- [02 Architecture Blueprint](constitution/02-Architecture-Blueprint.md)
-- [03 Research Framework](constitution/03-Research-Framework.md)
-- [04 Data Constitution](constitution/04-Data-Constitution.md)
-- [05 Factor Constitution](constitution/05-Factor-Constitution.md)
-- [06 Strategy Constitution](constitution/06-Strategy-Constitution.md)
-- [07 Validation Constitution](constitution/07-Validation-Constitution.md)
-- [08 Constitutional Roadmap](constitution/08-Roadmap.md)
-- [09 Glossary](constitution/09-Glossary.md)
-
-The canonical Constitution ends at `09`. Historical platform-kernel merge material is archived and cannot create a new constitutional authority.
-
-### Current architecture
-
-- [System Context](architecture/00-System-Context.md)
-- [Domain Boundaries](architecture/01-Domain-Boundaries.md)
-- [Domain Design Index](architecture/domains/README.md)
-- [End-to-End Flow](architecture/02-End-to-End-Research-and-Decision-Flow.md)
-- [Research Artifact Architecture](architecture/03-Research-Artifact-Architecture.md)
-- [Data and Time Semantics](architecture/04-Data-and-Time-Semantics.md)
-- [Phase D Daily Decision Engine](architecture/05-Phase-D-Daily-Decision-Engine-V1.md)
-- [ADR: Daily Research Contract Convergence](architecture/decisions/ADR-Daily-Research-Contract-Convergence.md)
-- [Legacy Migration](architecture/06-Legacy-Migration.md)
-- [QuantDesk Boundary](architecture/07-QuantDesk-Integration-Boundary.md)
-- [Deployment and Operations Boundary](architecture/08-Deployment-Operations-Boundary.md)
-- [Platform Architecture V2](architecture/09-Platform-Architecture-V2.md)
-- [Production Decision Lifecycle](architecture/10-Production-Decision-Lifecycle.md)
-- [Production Lifecycle Hardening and Shadow Operations](architecture/11-Production-Lifecycle-Hardening-and-Shadow-Operations.md)
-- [Canonical Runtime and Legacy Model Migration](architecture/12-Canonical-Runtime-and-Legacy-Migration.md)
-- [Canonical Market Data and Feature Spine](architecture/13-Canonical-Market-Data-and-Feature-Spine.md)
-- [Canonical Signal Authority and Operational Feature Handoff](architecture/14-Canonical-Signal-Authority-and-Operational-Feature-Handoff.md)
-- [Controlled 14:55 Decision-Time Operation](architecture/15-Controlled-Decision-Time-Operation.md)
-- [Phase A Correctness and Research Shadow Operations](architecture/16-Phase-A-Correctness-and-Research-Shadow-Operations.md)
-- [Research and Strategy Validation Engineering](architecture/17-Research-Strategy-Validation-Engineering.md)
-- [Historical PostgreSQL Free-Data Migration Matrix](architecture/audits/PostgreSQL-Free-Data-Migration-Matrix.md)
-- [Architecture Decision Records](architecture/decisions/README.md)
-
-### Current delivery evidence
-
-- [PostgreSQL Free-Data Canonical Runtime V1](delivery/PostgreSQL-Free-Data-Canonical-Runtime-V1.md)
-
-### Current research
-
-- [Current Research Program](research/Current-Research-Program.md)
-- [Candidate Research](research/Candidate-Research.md)
-- [Research Platform Multi-model Candidate Slice V1](research/Research-Platform-Vertical-Slice-V1.md)
-- [Entry Research](research/Entry-Research.md)
-- [Position Lifecycle Research](research/Position-Lifecycle-Research.md)
-- [Exit Research](research/Exit-Research.md)
-- [ETF, Theme and Capital Context](research/ETF-Theme-Capital-Context-Research.md)
-- [Validation and Ablation](research/Validation-and-Ablation.md)
-- [Failure Attribution](research/Failure-Attribution.md)
-- [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md)
-
-### Specifications and roadmap
-
-- [Specification Index](specs/README.md)
-- [Contract Conventions](specs/Contract-Conventions.md)
-- [Error Catalog](specs/Error-Catalog.md)
-- [Production Decision Lifecycle Requirements](specs/Production-Decision-Lifecycle-Requirements.md)
-- [Phase D Work Package Index](roadmap/Phase-D-Work-Packages.md)
-- [Detailed Work Packages](roadmap/work-packages/README.md)
-- [Run-First Exploratory Daily Platform Implementation Plan](superpowers/plans/2026-07-28-run-first-exploratory-daily-platform.md)
-- [Public LIVE Semantic Closure Implementation Plan](superpowers/plans/2026-07-29-public-live-semantic-closure.md)
-- [WP-D3.1 Real Decision Evidence Implementation Plan](superpowers/plans/2026-07-30-wp-d3-1-real-decision-evidence.md)
-- [WP-D3.1 Real Decision Evidence Design](superpowers/specs/2026-07-30-wp-d3-1-real-decision-evidence-design.md)
-- [Production Decision Lifecycle Approved Design](superpowers/specs/2026-08-01-production-decision-lifecycle-design.md)
-- [Production Decision Lifecycle Implementation Plan](superpowers/plans/2026-08-01-production-decision-lifecycle.md)
-- [Production Lifecycle Hardening and Shadow Readiness Plan](superpowers/plans/2026-08-01-production-lifecycle-hardening-shadow-readiness.md)
-- [H4 Reducing-Risk Decision Route Design](superpowers/specs/2026-08-03-h4-reducing-risk-decision-route-design.md)
-- [H4 Reducing-Risk Decision Route Implementation Plan](superpowers/plans/2026-08-03-h4-reducing-risk-decision-route.md)
-- [H5 Artifact-Derived Thesis Health Design](superpowers/specs/2026-08-04-h5-artifact-derived-thesis-health-design.md)
-- [H5 Artifact-Derived Thesis Health Implementation Plan](superpowers/plans/2026-08-04-h5-artifact-derived-thesis-health.md)
-- [H6 Composite Operational Evidence Design](superpowers/specs/2026-08-04-h6-composite-operational-evidence-design.md)
-- [H6 Composite Operational Evidence Implementation Plan](superpowers/plans/2026-08-04-h6-composite-operational-evidence.md)
-- [H4.5 Risk-Reduction Manual Intent Design](superpowers/specs/2026-08-04-h4-5-risk-reduction-manual-intent-design.md)
-- [H4.5 Risk-Reduction Manual Intent Implementation Plan](superpowers/plans/2026-08-04-h4-5-risk-reduction-manual-intent.md)
-- [Canonical Runtime and Legacy Model Migration Infrastructure Design](superpowers/specs/2026-08-04-canonical-runtime-and-legacy-migration-design.md)
-- [Canonical Runtime and Legacy Model Migration Implementation Plan](superpowers/plans/2026-08-04-canonical-runtime-and-legacy-migration.md)
-- [Canonical Feature Spine and Signal Inputs Design](superpowers/specs/2026-08-04-canonical-feature-spine-and-signal-inputs-design.md)
-- [PostgreSQL Free-Data Canonical Runtime V1 Design](superpowers/specs/2026-08-05-postgres-free-data-canonical-runtime-v1-design.md)
-- [PostgreSQL Free-Data Canonical Runtime V1 Plan](superpowers/plans/2026-08-05-postgres-free-data-canonical-runtime-v1.md)
-- [Canonical Feature Spine and Signal Inputs Implementation Plan](superpowers/plans/2026-08-04-canonical-feature-spine-and-signal-inputs.md)
-- [Controlled 14:55 Operational Evidence Design](superpowers/specs/2026-08-05-controlled-1455-operational-evidence-design.md)
-- [Controlled 14:55 Operational Evidence Implementation Plan](superpowers/plans/2026-08-05-controlled-1455-operational-evidence.md)
-- [PostgreSQL Authority Migration Design](superpowers/specs/2026-08-05-postgresql-authority-migration-design.md)
-- [PostgreSQL Authority Migration Implementation Plan](superpowers/plans/2026-08-05-postgresql-authority-migration.md)
-- [WP-CRR-01 Continuous Research Runtime Design](superpowers/specs/2026-08-06-continuous-research-runtime-design.md)
-- [WP-CRR-01 Continuous Research Runtime Implementation Plan](superpowers/plans/2026-08-06-wp-crr-01-continuous-research-runtime.md)
-- [WP-STATE-01 Stateful Research System Design](superpowers/specs/2026-08-06-wp-state-01-state-system-design.md)
-- [WP-STATE-01 State System Implementation Plan](superpowers/plans/2026-08-06-wp-state-01-state-system.md)
-- [PostgreSQL-Only Decision Closure Design](superpowers/specs/2026-08-06-postgresql-only-decision-closure-design.md)
-- [PostgreSQL-Only Decision Closure Implementation Plan](superpowers/plans/2026-08-06-wp-pgsql-decision-closure.md)
-- [WP-GOV-01 Model Governance and Runtime Selector Design](superpowers/specs/2026-08-08-wp-gov-01-model-governance-runtime-selector-design.md)
-- [WP-GOV-01 Model Governance and Runtime Selector Implementation Plan](superpowers/plans/2026-08-08-wp-gov-01-model-governance-runtime-selector.md)
-- [WP-PIT-01 Formal Point-in-Time Authority Design](superpowers/specs/2026-08-08-wp-pit-01-formal-point-in-time-authority-design.md)
-- [WP-PIT-01 Formal Point-in-Time Authority Implementation Plan](superpowers/plans/2026-08-08-wp-pit-01-formal-point-in-time-authority.md)
-- [Free-Data Research and Shadow Runtime Convergence Design](superpowers/specs/2026-08-09-free-data-research-shadow-runtime-convergence-design.md)
-- [Free-Data Research and Shadow Runtime Convergence Implementation Plan](superpowers/plans/2026-08-09-free-data-research-shadow-runtime-convergence.md)
-- [Free Runtime V2 Canonical Convergence Design](superpowers/specs/2026-08-09-free-runtime-v2-canonical-convergence-design.md)
-- [Free Runtime V2 Canonical Convergence Implementation Plan](superpowers/plans/2026-08-09-free-runtime-v2-canonical-convergence.md)
-- [Prospective Research to Formal Qualification Master Design](superpowers/specs/2026-08-09-prospective-formal-qualification-master-design.md)
-- [Prospective Research to Formal Qualification Master Plan](superpowers/plans/2026-08-09-prospective-formal-qualification-master.md)
-- [Pre-Live Engineering Hardening Design](superpowers/specs/2026-08-09-pre-live-engineering-hardening-design.md)
-- [Pre-Live Engineering Hardening Implementation Plan](superpowers/plans/2026-08-09-pre-live-engineering-hardening.md)
-- [Phase A Correctness and Research Shadow Operations Design](superpowers/specs/2026-08-10-phase-a-correctness-shadow-operations-design.md)
-- [Phase A Correctness and Research Shadow Operations Implementation Plan](superpowers/plans/2026-08-10-phase-a-correctness-shadow-operations.md)
-- [Research and Strategy Validation Engineering Design](superpowers/specs/2026-08-10-research-strategy-validation-engineering-design.md)
-- [Research and Strategy Validation Engineering Implementation Plan](superpowers/plans/2026-08-10-research-strategy-validation-engineering.md)
-- [WP-CRR-01 Continuous Research Runtime Work Package](roadmap/work-packages/WP-CRR-01-Continuous-Research-Runtime.md)
-- [WP-STATE-01 Stateful Research System Work Package](roadmap/work-packages/WP-STATE-01-Stateful-Research-System.md)
-- [WP-PGSQL-01 PostgreSQL Authority Only](roadmap/work-packages/WP-PGSQL-01-PostgreSQL-Authority-Only.md)
-- [WP-DECISION-01 Daily Research Decision Closure](roadmap/work-packages/WP-DECISION-01-Daily-Decision-Closure.md)
-- [WP-PAV2 Platform Architecture V2 and Research Layer MVP](roadmap/work-packages/WP-PAV2-Platform-Architecture-V2-and-Research-Layer-MVP.md)
-- [WP-PDL Production Decision Lifecycle](roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md)
-- [WP-PDL-HARDENING Production Lifecycle Hardening and Shadow Readiness](roadmap/work-packages/WP-PDL-Hardening-and-Shadow-Readiness.md)
-
-### Operations and implementation prompts
-
-- [Production Decision Lifecycle Runbook](operations/Production-Decision-Lifecycle-Runbook.md)
-- [PostgreSQL Authority Runbook](operations/PostgreSQL-Authority-Runbook.md)
-- [Daily Decision System Runbook](operations/Daily-Decision-System-Runbook.md)
-- [Continuous Research Runtime Runbook](runbooks/Continuous-Research-Runtime.md)
-- [Stateful Research Runtime Runbook](runbooks/Stateful-Research-Runtime.md)
-- [Research Shadow Operations Runbook](operations/Research-Shadow-Operations-Runbook.md)
-- [Claude Code Production Decision Lifecycle Master Prompt](prompts/Claude-Code-Production-Decision-Lifecycle.md)
-
-### Current status
-
+- [System Architecture](architecture/System-Architecture.md)
+- [Authority Map](architecture/Authority-Map.md)
+- [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
+- [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
 - [Current State](status/Current-State.md)
 - [Capability Matrix](status/Capability-Matrix.md)
 - [Gap Register](status/Gap-Register.md)
-- [External Blockers](status/External-Blockers.md)
+- [Roadmap](status/Roadmap.md)
+- [Runtime Runbook](operations/Runtime-Runbook.md)
 
-### Audit and archive
+The Constitution remains the normative source. [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the sole current research-claim registry.
 
-- [Claude Code Engineering Program Update — 2026-08-01](audit/Claude-Code-Engineering-Program-Update-2026-08-01.md)
-- [Current Main Code Audit — 2026-08-01](audit/Current-Main-Code-Audit-2026-08-01.md)
-- [H4.5 Risk-Reduction Manual Intent Delivery](audit/H4-5-Risk-Reduction-Manual-Intent-Delivery.md)
-- [H4 Risk Route Delivery](audit/H4-Risk-Route-Delivery.md)
-- [H5 Thesis Health Delivery](audit/H5-Thesis-Health-Delivery.md)
-- [H6 Composite Operational Evidence Delivery](audit/H6-Composite-Operational-Evidence-Delivery.md)
-- [Canonical Feature Spine Delivery](audit/Canonical-Feature-Spine-Delivery.md)
-- [WP-SIG-01A Delivery](audit/WP-SIG-01A-Delivery.md)
-- [WP-DATA-OPS-01 Delivery](audit/WP-DATA-OPS-01-Delivery.md)
-- [WP-CRR-01 CRR-00 Baseline and Write Authority](audit/WP-CRR-01-CRR-00-Baseline.md)
-- [WP-CRR-01 Final Review](audit/WP-CRR-01-Final-Review.md)
-- [WP-PGSQL-01 SQLite and Compatibility Inventory](audit/WP-PGSQL-01-SQLite-Inventory.md)
-- [WP-PGSQL-01 / WP-DECISION-01 Delivery Evidence](audit/WP-PGSQL-01-WP-DECISION-01-Delivery.md)
-- [WP-CRR-01 Acceptance Evidence](evidence/WP-CRR-01-Acceptance.md)
-- [WP-STATE-01 Acceptance Evidence](evidence/WP-STATE-01-Acceptance.md)
-- [WP-EVIDENCE-OPS-01 Acceptance Evidence](evidence/WP-EVIDENCE-OPS-01-Acceptance.md)
-- [Phase A Correctness and Research Shadow Operations Delivery](audit/Phase-A-Correctness-Shadow-Operations-Delivery.md)
-- [Research and Strategy Validation Engineering Delivery](audit/Research-Strategy-Validation-Engineering-Delivery.md)
-- [Production Decision Lifecycle Gap Analysis](audit/Production-Decision-Lifecycle-Gap-Analysis.md)
-- [Production Decision Lifecycle Documentation Delivery](audit/Production-Decision-Lifecycle-Documentation-Delivery.md)
-- [Production Decision Lifecycle Delivery](audit/Production-Decision-Lifecycle-Delivery.md)
-- [Production Lifecycle Hardening Baseline](audit/Production-Lifecycle-Hardening-Baseline.md)
-- [Production Lifecycle Hardening Delivery](audit/Production-Lifecycle-Hardening-Delivery.md)
-- [PostgreSQL Authority Migration Evidence](evidence/PostgreSQL-Authority-Migration-Evidence.md)
-- [Run-First Daily Platform Baseline Audit](audit/Run-First-Daily-Platform-Baseline-Audit.md)
-- [Run-First Exploratory Daily Platform Delivery](audit/Run-First-Daily-Platform-Delivery.md)
-- [WP-D3 Public LIVE Semantic Closure Audit](audit/WP-D3-Public-Live-Semantic-Closure.md)
-- [WP-D3.1 Real Decision Evidence Baseline Audit](audit/WP-D3-1-Real-Decision-Evidence-Baseline.md)
-- [WP-D3.1 Real Decision Evidence Delivery](audit/WP-D3-1-Real-Decision-Evidence-Delivery.md)
-- [WP-PAV2 Platform Architecture V2 Delivery](audit/WP-PAV2-Platform-Architecture-V2-Delivery.md)
-- [Repository Audit Baseline](audit/Repository-Audit-Baseline-2026-07-26.md)
-- [Post-Merge Reconciliation Audit](audit/Post-Merge-Reconciliation-2026-07-26.md)
-- [Post-Consolidation Code Audit](audit/Post-Consolidation-Code-Audit-2026-07-26.md)
-- [Branch Reconciliation Audit — 2026-08-08](audit/Branch-Reconciliation-2026-08-08.md)
-- [Historical Branch Reconciliation Audit — 2026-07-26](audit/Branch-Reconciliation-2026-07-26.md)
-- [Repository Map](audit/Repository-Map.md)
-- [Documentation Problem Report](audit/Docs-Problem-Report.md)
-- [Document Inventory and Migration Plan](audit/Docs-Inventory-and-Migration-Plan.md)
-- [Conversation Decision Ledger](audit/Conversation-Decision-Ledger.md)
-- [Conversation Evidence Index](audit/Conversation-Evidence-Index.md)
-- [Conversation-to-Repository Traceability](audit/Conversation-to-Repository-Traceability.md)
-- [Conflict Register](audit/Conflict-Register.md)
-- [Supersession Registry](audit/Supersession-Registry.tsv)
-- [Code Evidence Registry](audit/Code-Evidence-Registry.tsv)
-- [Archive Index](archive/README.md)
-- [Historical Research Platform Kernel V1](archive/research-platform/Research-Platform-Kernel-V1.md)
-
-### Agent project assets
-
-- [`CLAUDE.md`](../CLAUDE.md) — Claude Code project memory and current WP-PDL execution priority.
-- [`AGENTS.md`](../AGENTS.md) — shared cross-agent execution contract.
-- [Claude project asset guide](../.claude/README.md) — shared Skills and Subagents.
-- [Continuous WP-PDL Skill](../.claude/skills/advance-production-lifecycle/SKILL.md) — dependency-ordered whole-program execution.
-- [Single Work Package Skill](../.claude/skills/implement-work-package/SKILL.md) — one bounded work package or phase.
-
-### Provider operational authorities
-
-- [Xuntou PIT Field Mapping V4](specs/Xuntou-PIT-Field-Mapping-V4.md)
-- [Xuntou PIT Validation Bundle V4](specs/Xuntou-PIT-Validation-Bundle-V4.md)
-- [Xuntou PIT Validation Export Runbook](runbooks/Xuntou-PIT-Validation-Export.md)
-
-## Status vocabulary
-
-```text
-CONSTITUTION
-CURRENT_ARCHITECTURE
-CURRENT_RESEARCH_PROGRAM
-CURRENT_SPECIFICATION
-CURRENT_EXECUTION_PROMPT
-CURRENT_STATUS
-PROPOSED_ARCHITECTURE
-PROPOSED_REQUIREMENTS
-PROPOSED_OPERATIONS
-ROADMAP
-PLANNED
-HISTORICAL
-SUPERSEDED
-DRAFT
-```
-
-Every Markdown document has exactly one machine-readable `> **Status:**` header. Historical embedded status text must use `Historical Status at Original Publication`, never a second active Status field.
+Historical audits, plans, deliveries, superseded architectures, work packages and designed-only specifications were removed from the default tree during the 2026-08-10 convergence. Git history preserves them; [Archive](archive/README.md) explains the boundary.

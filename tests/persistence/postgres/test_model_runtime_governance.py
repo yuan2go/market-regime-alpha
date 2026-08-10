@@ -24,6 +24,7 @@ from market_regime_alpha.platform.runtime_governance import (
     ArtifactLineageReference,
     AssignmentLane,
     AssignmentStatus,
+    ModelGovernancePolicy,
     ModelSelectionRequest,
     QualificationEvidenceKind,
     QualificationEvidenceOutcome,
@@ -594,3 +595,45 @@ def test_evidence_protocol_must_be_declared_by_model_lineage(
             ),
             idempotency_key="wrong-evidence-protocol",
         )
+
+
+def test_production_qualification_stays_closed_without_owner_resolved_floors(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    repository = PostgresModelGovernanceRepository(postgres_factory)
+    definition, _lineage_record, _research_policy_record, research = (
+        _governed_model(repository)
+    )
+    policy = ModelGovernancePolicy.create(
+        name="closed-production-policy",
+        version="1",
+        purpose=RuntimePurpose.PRODUCTION_DECISION,
+        allowed_lifecycle_statuses=(ModelLifecycleStatus.ACTIVE,),
+        required_evidence_kinds=tuple(QualificationEvidenceKind),
+        allowed_data_eligibilities=(DataEligibility.FORMAL_RESEARCH,),
+        production_authorization=True,
+    )
+    repository.record_policy(
+        policy,
+        actor="governance-operator",
+        reason="prove fail-closed Production qualification",
+        created_at=NOW,
+        idempotency_key="closed-production-policy",
+    )
+
+    decision = repository.qualify(
+        model_id=definition.model_id,
+        policy_id=policy.policy_id,
+        actor="governance-reviewer",
+        reason="reference-only floors cannot authorize Production",
+        approval_ref="approval:still-insufficient",
+        decided_at=NOW,
+        expected_registry_version=research.version,
+        idempotency_key="closed-production-qualification",
+    )
+
+    assert decision.status is QualificationStatus.NOT_QUALIFIED
+    assert decision.production_authorized is False
+    assert "PRODUCTION_EVIDENCE_OWNER_RESOLUTION_NOT_IMPLEMENTED" in (
+        decision.reason_codes
+    )

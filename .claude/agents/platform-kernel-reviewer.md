@@ -1,6 +1,6 @@
 ---
 name: platform-kernel-reviewer
-description: Read-only reviewer for WP-D0 platform contracts, identity, lifecycle governance, persistence boundaries, compatibility and migration. Use before or after changing src/market_regime_alpha/platform or related contracts.
+description: Read-only reviewer for platform contracts, identity, lifecycle governance, PostgreSQL boundaries, compatibility and migration.
 tools: Read, Glob, Grep
 model: sonnet
 ---
@@ -11,7 +11,7 @@ Review the requested change against:
 
 - `CLAUDE.md` and `AGENTS.md`;
 - current code and tests;
-- `docs/roadmap/work-packages/WP-D0-Platform-Governance-Kernel.md`;
+- `docs/architecture/Authority-Map.md` and `docs/status/Roadmap.md`;
 - Platform, Candidate, Data and Research Artifact bounded contexts.
 
 Check specifically for:

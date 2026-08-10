@@ -14,7 +14,6 @@ from typing import Any, Callable
 from market_regime_alpha.application.research_evaluation.targets import OutcomeTargetProtocol
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
-    GOVERNED_NON_PRODUCTION_LIMITATIONS,
     ResearchEvidenceAuthority,
     ValidationArtifactReference,
     content_identity,
@@ -238,10 +237,14 @@ def run_formal_evaluation(
         panel_source_references=panel_source_references,
         evaluated_at=created_at,
     )
-    real_formal_pit = not formal_pit_rejections
+    real_formal_pit_candidate = not formal_pit_rejections
     locked_oos_present = any(window.partition is EvaluationPartition.LOCKED_OOS for _item, window in admitted)
-    formal = real_formal_pit and locked_oos_present
-    authority = ResearchEvidenceAuthority.FORMAL_OOS if formal else ResearchEvidenceAuthority.ENGINEERING_ONLY
+    # This pure research harness cannot reload the PIT owner or persist a
+    # qualified Formal OOS artifact.  Migration 046 enforces the same ceiling
+    # in PostgreSQL.  A future owner-resolving writer must perform that
+    # transition; typed caller input is deliberately insufficient.
+    formal = False
+    authority = ResearchEvidenceAuthority.ENGINEERING_ONLY
     pit_ref = (
         None
         if formal_pit_evidence is None
@@ -303,17 +306,16 @@ def run_formal_evaluation(
     metrics = tuple(EvaluationMetric(*item, adjusted[index]) for index, item in enumerate(raw))
     reasons: tuple[str, ...]
     limitations: tuple[str, ...]
-    if formal:
-        reasons = ("FORMAL_OOS_EVIDENCE_EMITTED", "LOCKED_OOS_EVALUATED", "REAL_FORMAL_PIT_ACCEPTED")
-        limitations = GOVERNED_NON_PRODUCTION_LIMITATIONS
-    else:
-        reason_set = {"FORMAL_OOS_BLOCKED"}
-        if not real_formal_pit:
-            reason_set.update(formal_pit_rejections)
-        if not locked_oos_present:
-            reason_set.add("LOCKED_OOS_OBSERVATIONS_REQUIRED")
-        reasons = tuple(sorted(reason_set))
-        limitations = tuple(sorted({*ENGINEERING_LIMITATIONS, "FORMAL_OOS_FALSE"}))
+    reason_set = {
+        "FORMAL_OOS_BLOCKED",
+        "FORMAL_OOS_OWNER_RESOLUTION_NOT_IMPLEMENTED",
+    }
+    if not real_formal_pit_candidate:
+        reason_set.update(formal_pit_rejections)
+    if not locked_oos_present:
+        reason_set.add("LOCKED_OOS_OBSERVATIONS_REQUIRED")
+    reasons = tuple(sorted(reason_set))
+    limitations = tuple(sorted({*ENGINEERING_LIMITATIONS, "FORMAL_OOS_FALSE"}))
     protocol_ref = ValidationArtifactReference("FORMAL_EVALUATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash)
     payload = _result_payload(
         protocol_ref,

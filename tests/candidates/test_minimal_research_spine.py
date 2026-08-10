@@ -164,7 +164,7 @@ def test_minimal_data_universe_feature_candidate_research_spine() -> None:
 
 
 def test_score_cannot_be_laundered_into_invalid_probability_semantics() -> None:
-    with pytest.raises(ValueError, match="calibrated_probability must be in \[0, 1\]"):
+    with pytest.raises(ValueError, match=r"calibrated_probability must be in \[0, 1\]"):
         CandidatePrediction(
             symbol="000001.SZ",
             universe_id=UniverseId("universe-v1"),

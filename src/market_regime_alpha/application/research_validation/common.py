@@ -19,13 +19,6 @@ from market_regime_alpha.evidence.canonical import (
     require_sha256,
     require_text,
 )
-from market_regime_alpha.platform.runtime_governance import (
-    ModelQualificationDecision,
-    ModelQualificationEvidence,
-    QualificationEvidenceKind,
-    QualificationEvidenceOutcome,
-    QualificationStatus,
-)
 
 
 class ResearchEvidenceAuthority(str, Enum):
@@ -60,52 +53,6 @@ class ValidationArtifactReference:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class GovernanceQualificationBinding:
-    """Existing Model Governance decision with its exact immutable evidence set."""
-
-    decision: ModelQualificationDecision
-    evidence: tuple[ModelQualificationEvidence, ...]
-
-    def __post_init__(self) -> None:
-        ordered = tuple(sorted(self.evidence, key=lambda item: str(item.evidence_id)))
-        if self.evidence != ordered:
-            raise ValueError("Governance evidence must be unique and sorted")
-        if self.decision.status is not QualificationStatus.QUALIFIED:
-            raise ValueError("Validation qualification requires an existing QUALIFIED Governance decision")
-        if self.decision.evidence_ids != tuple(item.evidence_id for item in ordered) or self.decision.evidence_hashes != tuple(
-            item.evidence_hash for item in ordered
-        ):
-            raise ValueError("Governance decision/evidence set mismatch")
-        if any(
-            item.outcome is not QualificationEvidenceOutcome.SATISFIED
-            or item.model_id != self.decision.model_id
-            or item.definition_hash != self.decision.definition_hash
-            or item.lineage_id != self.decision.lineage_id
-            or item.lineage_hash != self.decision.lineage_hash
-            for item in ordered
-        ):
-            raise ValueError("Governance evidence is not satisfied or lineage-bound")
-
-    @property
-    def decision_reference(self) -> ValidationArtifactReference:
-        return ValidationArtifactReference("MODEL_QUALIFICATION_DECISION", self.decision.decision_id, self.decision.decision_hash)
-
-    def require_artifact(
-        self,
-        reference: ValidationArtifactReference,
-        evidence_kind: QualificationEvidenceKind,
-    ) -> None:
-        if not any(
-            item.evidence_kind is evidence_kind
-            and item.evidence.reference_kind == reference.artifact_kind
-            and item.evidence.artifact_id == reference.artifact_id
-            and item.evidence.content_hash == reference.content_hash
-            for item in self.evidence
-        ):
-            raise ValueError(f"Governance decision lacks bound {evidence_kind.value} evidence")
-
-
 def content_identity(prefix: str, payload: Mapping[str, Any]) -> tuple[ArtifactId, str]:
     require_text("prefix", prefix)
     digest = canonical_hash(dict(payload))
@@ -124,12 +71,6 @@ ENGINEERING_LIMITATIONS = (
     "ALPHA_VALIDATED_FALSE",
     "EXPLORATORY_ONLY",
     "FORMAL_OOS_FALSE",
-    "NO_TRADING_AUTHORITY",
-    "PRODUCTION_AUTHORIZED_FALSE",
-)
-
-GOVERNED_NON_PRODUCTION_LIMITATIONS = (
-    "ALPHA_VALIDATED_FALSE",
     "NO_TRADING_AUTHORITY",
     "PRODUCTION_AUTHORIZED_FALSE",
 )

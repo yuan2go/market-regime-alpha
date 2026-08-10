@@ -433,50 +433,6 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             for row in rows
         )
 
-    def import_replay_artifacts(
-        self,
-        *,
-        replay_session_id: ArtifactId,
-        artifacts: tuple[dict[str, Any], ...],
-    ) -> tuple[dict[str, Any], ...]:
-        """Atomically import an immutable replay bundle into this PG schema."""
-
-        def operation(connection: PostgresConnection) -> tuple[dict[str, Any], ...]:
-            acquire_scope_lock(
-                connection,
-                namespace="decision-replay-import",
-                identity=replay_session_id,
-            )
-            for artifact in artifacts:
-                connection.execute(
-                    """
-                    INSERT INTO decision_replay_import(
-                        replay_session_id, artifact_kind, artifact_id,
-                        content_hash, payload_json, imported_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (replay_session_id, artifact_kind, artifact_id)
-                    DO NOTHING
-                    """,
-                    (
-                        str(replay_session_id), artifact["artifact_kind"],
-                        artifact["artifact_id"], artifact["content_hash"],
-                        Jsonb(artifact["payload"]), self._clock(),
-                    ),
-                )
-            imported = self._load_replay_artifacts(connection, replay_session_id)
-            if imported != artifacts:
-                raise DecisionSystemConflict("Decision Replay import conflict")
-            return imported
-
-        return cast(tuple[dict[str, Any], ...], self._run(operation))
-
-    def get_replay_artifacts(
-        self,
-        replay_session_id: ArtifactId,
-    ) -> tuple[dict[str, Any], ...]:
-        with self._connect() as connection:
-            return self._load_replay_artifacts(connection, replay_session_id)
-
     def validate_summary_authority(
         self,
         summary: DailyDecisionWindowSummary,
@@ -1793,37 +1749,6 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
             raise DecisionSystemIntegrityError(
                 "stored Position settlement evidence failed canonical verification"
             ) from exc
-
-    def _load_replay_artifacts(
-        self,
-        connection: PostgresConnection,
-        replay_session_id: ArtifactId,
-    ) -> tuple[dict[str, Any], ...]:
-        rows = connection.execute(
-            """
-            SELECT artifact_kind, artifact_id, content_hash, payload_json
-            FROM decision_replay_import
-            WHERE replay_session_id = %s
-            ORDER BY artifact_kind, artifact_id
-            """,
-            (str(replay_session_id),),
-        ).fetchall()
-        artifacts: list[dict[str, Any]] = []
-        for row in rows:
-            payload = row["payload_json"]
-            if not isinstance(payload, dict):
-                raise DecisionSystemIntegrityError(
-                    "stored Decision Replay payload is not an object"
-                )
-            artifacts.append(
-                {
-                    "artifact_kind": str(row["artifact_kind"]),
-                    "artifact_id": str(row["artifact_id"]),
-                    "content_hash": str(row["content_hash"]),
-                    "payload": payload,
-                }
-            )
-        return tuple(artifacts)
 
     def _load_observation(self, connection: PostgresConnection, observation_id: ArtifactId) -> ManualAccountObservation:
         return _load_payload(

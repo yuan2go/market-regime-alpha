@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -31,6 +32,20 @@ from tests.persistence.postgres.conftest import (
 )
 
 
+def _assert_credential_free_locator(
+    *, locator: str, configured: DatabaseSettings, schema: str
+) -> None:
+    source = urlsplit(configured.require_database_url())
+    rendered = urlsplit(locator)
+
+    assert rendered.username == source.username
+    assert rendered.password == ("***" if source.password is not None else None)
+    assert rendered.hostname == source.hostname
+    assert rendered.port == source.port
+    assert rendered.path == source.path
+    assert rendered.query == f"schema={schema}"
+
+
 def test_repository_factory_builds_postgres_authorities_on_one_pool(
     postgres_factory,
 ) -> None:
@@ -58,8 +73,11 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
         PostgresExperimentGovernanceRepository,
     )
     assert isinstance(continuous, PostgresContinuousResearchJournal)
-    assert "***" in binding.locator
-    assert configured.require_database_url() not in binding.locator
+    _assert_credential_free_locator(
+        locator=binding.locator,
+        configured=configured,
+        schema=postgres_factory.application_schema,
+    )
 
 
 def test_postgres_runtime_binding_is_immutable_idempotent_and_credential_free(
@@ -84,7 +102,11 @@ def test_postgres_runtime_binding_is_immutable_idempotent_and_credential_free(
 
     assert first == second == asserted
     assert first.locator == repositories.binding.locator
-    assert configured.require_database_url() not in first.locator
+    _assert_credential_free_locator(
+        locator=first.locator,
+        configured=configured,
+        schema=postgres_factory.application_schema,
+    )
     with postgres_factory.connection(read_only=True) as connection:
         row = connection.execute(
             "SELECT backend, locator FROM runtime_database_bindings"

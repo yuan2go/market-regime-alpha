@@ -1,22 +1,21 @@
 ---
 name: implement-work-package
-description: Execute one declared Market Regime Alpha Work Package or one bounded WP-PDL phase from code audit through a validated checkpoint commit. Use when the user supplies a work-package path or requests exactly one bounded phase.
+description: Execute one user-supplied bounded specification or one current Roadmap item from code audit through a validated checkpoint commit.
 disable-model-invocation: true
 ---
 
-Implement exactly one Work Package or one explicitly bounded phase. Examples:
+Implement exactly one user-supplied specification or one bounded item from `docs/status/Roadmap.md`. Example:
 
 ```text
-/implement-work-package docs/roadmap/work-packages/WP-D0-Platform-Governance-Kernel.md
-/implement-work-package docs/roadmap/work-packages/WP-PDL-Production-Decision-Lifecycle.md phase-2
+/implement-work-package docs/status/Roadmap.md P1-exact-window-operation
 ```
 
-For continuous execution of the complete WP-PDL program, use `/advance-production-lifecycle` instead.
+There is no standing WP-PDL program. Do not restore deleted plans from Git history.
 
 ## Required procedure
 
 1. Read `CLAUDE.md`, `AGENTS.md`, `docs/README.md`, Current State, Capability Matrix and Gap Register.
-2. Resolve the requested Work Package or phase and read every related architecture, domain, research, specification, audit and runbook document.
+2. Resolve the bounded request against the current architecture, Current State, Gap Register and Roadmap.
 3. Inspect the current workspace with `git status --short --branch`, `git rev-parse HEAD`, `git diff --stat` and untracked-file review.
 4. Preserve all user changes. Do not fetch, pull, switch, reset, clean, stash or rewrite history unless explicitly authorized.
 5. Never implement directly on `main`; use the current valid isolated branch or create a dedicated branch from the verified local HEAD without discarding changes.
@@ -34,7 +33,7 @@ For continuous execution of the complete WP-PDL program, use `/advance-productio
 11. Run focused tests after each coherent increment and fix ordinary failures.
 12. Use relevant project subagents for bounded read-only architecture, evidence and verification reviews.
 13. Run the full validation suite from `CLAUDE.md`.
-14. Update Current State, Capability Matrix, Gap Register, Work Package evidence, architecture/runbook and delivery audit documents when implementation facts change.
+14. Update only the current canonical architecture, status and runbook documents when implementation facts change.
 15. Review `git diff --check`, the complete diff, migrations, generated files and untracked files.
 16. Create one or more semantic checkpoint commits for the completed phase.
 17. Do not merge automatically. Open or update a Draft PR only when requested or required by repository workflow.
