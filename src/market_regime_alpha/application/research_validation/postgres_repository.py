@@ -10,7 +10,10 @@ from psycopg.types.json import Jsonb
 from market_regime_alpha.application.research_validation.calibration import CalibrationArtifact, CalibrationObservation
 from market_regime_alpha.application.research_validation.factor_extraction import ResearchPanelEnrichment
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleDataset
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.research_validation.samples import HistoricalSampleQualification
+from market_regime_alpha.core.identity import ArtifactId, TargetId
+from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.forecasting.path import PathForecastSample
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
@@ -34,6 +37,8 @@ class PostgresResearchValidationRepository:
         qualified: bool = False,
         production_authorized: bool = False,
     ) -> None:
+        if qualified or production_authorized or evidence_authority == "AUTHORIZED":
+            raise ValueError("Generic Validation Artifact recording cannot grant qualification or Production authority")
         if canonical_hash(dict(payload)) != artifact_hash:
             raise ValueError("Research Validation payload hash mismatch")
 
@@ -162,6 +167,53 @@ class PostgresResearchValidationRepository:
         if canonical_hash(row[1]) != str(row[0]):
             raise ValueError("Research Validation stored payload diverged")
         return row[1]
+
+    def read_for_forecast(
+        self,
+        *,
+        symbol: str,
+        target_id: TargetId,
+        decision_time: DecisionTime,
+    ) -> HistoricalSampleDataset | None:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT artifact_id, artifact_hash, payload_json
+                FROM research_validation_artifact
+                WHERE artifact_kind = 'HISTORICAL_SAMPLE_DATASET'
+                  AND created_at < %s
+                ORDER BY created_at DESC, artifact_id DESC
+                """,
+                (decision_time.value,),
+            ).fetchall()
+        for row in rows:
+            if not isinstance(row[2], dict):
+                raise ValueError("Historical Sample Dataset payload is invalid")
+            value = {"dataset_id": str(row[0]), "dataset_hash": str(row[1]), **row[2]}
+            dataset = HistoricalSampleDataset.from_canonical_dict(value)
+            if (
+                dataset.available_at < decision_time.value
+                and str(dataset.target_reference.artifact_id) == str(target_id)
+                and any(item.sample.symbol == symbol for item in dataset.records)
+            ):
+                return dataset
+        return None
+
+    def load_available_samples(
+        self,
+        *,
+        symbol: str,
+        target_id: object,
+        decision_time: DecisionTime,
+    ) -> tuple[tuple[PathForecastSample, ...], str, tuple[str, ...]]:
+        dataset = self.read_for_forecast(symbol=symbol, target_id=TargetId(str(target_id)), decision_time=decision_time)
+        if dataset is None:
+            return (), HistoricalSampleQualification.UNQUALIFIED.value, ("HISTORICAL_SAMPLE_DATASET_NOT_AVAILABLE",)
+        samples = tuple(
+            item.sample for item in dataset.records if item.sample.symbol == symbol and item.sample.available_at.value < decision_time.value
+        )
+        reasons = ("HISTORICAL_SAMPLE_DATASET_LOADED",) if samples else ("HISTORICAL_SAMPLES_NOT_AVAILABLE_AT_DECISION_TIME",)
+        return samples, dataset.qualification.value, reasons
 
     @staticmethod
     def _insert_artifact(

@@ -51,6 +51,26 @@ class PostgresProspectiveAttestationRepository:
                 or str(outcome[1]) != str(attestation.shadow_decision.artifact_id)
             ):
                 raise ProspectiveAttestationConflict("Attestation Outcome lineage mismatch")
+            if attestation.runtime_authority_evidence is None:
+                raise ProspectiveAttestationConflict("Attestation Runtime Authority evidence missing")
+            runtime_authority = connection.execute(
+                """
+                SELECT evidence_hash, run_id, tick_id, clock_mode,
+                       runtime_origin, code_revision
+                FROM continuous_runtime_authority_evidence
+                WHERE evidence_id = %s
+                """,
+                (str(attestation.runtime_authority_evidence.artifact_id),),
+            ).fetchone()
+            if runtime_authority is None or (
+                str(runtime_authority[0]) != attestation.runtime_authority_evidence.content_hash
+                or str(runtime_authority[1]) != str(attestation.run_id)
+                or str(runtime_authority[2]) != str(attestation.tick_id)
+                or str(runtime_authority[3]) != attestation.clock_mode.value
+                or str(runtime_authority[4]) != attestation.runtime_origin.value
+                or str(runtime_authority[5]) != attestation.code_revision
+            ):
+                raise ProspectiveAttestationConflict("Attestation Runtime Authority lineage mismatch")
             connection.execute(
                 """
                 INSERT INTO prospective_evidence_attestation(

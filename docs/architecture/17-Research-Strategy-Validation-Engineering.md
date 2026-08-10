@@ -34,7 +34,10 @@ Fill, Position or Broker repositories.
 raw numeric/text exposure, missingness, gate state, availability and exact
 source identity. Normalization and contribution remain empty unless an owner
 Artifact supplied them. A missing canonical family becomes an explicit missing
-exposure; it is not recomputed.
+exposure; it is not recomputed. Extraction is bounded by the frozen Shadow
+DecisionTime and verifies Dataset, Feature Bundle, Candidate and Signal
+lineage. `research-shadow build-enriched-evaluation` publishes both the Panel
+and its immutable PostgreSQL-recorded factor sidecar.
 
 The Ablation runtime supports full, family deletion, price/volume controls,
 static/dynamic controls and arbitrary factor deletion. IC, Rank IC, Top-K,
@@ -49,7 +52,10 @@ or independently calibrated participation, impact and slippage parameters.
 Historical path samples bind Target, Outcome, PIT lineage and availability.
 Qualification is monotonic across `UNQUALIFIED`, `PIT_ELIGIBLE`,
 `OOS_ELIGIBLE` and `QUALIFIED`; current construction starts at `UNQUALIFIED`
-and never derives a sample from the current Signal.
+and never derives a sample from the current Signal. PostgreSQL stores each
+append-only qualification state, reconstructs the latest Dataset through its
+Reader/replay path and exposes only samples strictly available before the
+forecast DecisionTime.
 
 Calibration supports Platt/logistic, isotonic and binning with disjoint Fit,
 Validation and OOS identities plus Brier, Log Loss, reliability, ECE and
@@ -59,28 +65,41 @@ Governance evidence can perform the qualification transition.
 Formal Evaluation locks Train, Validation and Locked OOS windows, supports
 walk-forward folds, purges overlapping labels, derives embargo from the
 existing Outcome Target Protocol, bootstraps confidence intervals, corrects
-multiple testing and produces regime/liquidity/market-cap/theme slices. Without
-a satisfied existing `FormalPITEvidenceArtifact`, it emits engineering evidence
-and `formal_oos=false`.
+multiple testing and produces partition-, fold- and sensitivity-specific
+regime/liquidity/market-cap/theme slices. Formal OOS requires an existing
+satisfied `FormalPITEvidenceArtifact` whose selected facts use PostgreSQL clock
+authority, whose availability predates evaluation, whose locked protocol and
+Dataset lineage exactly match the evaluation Panel, and whose Locked OOS
+partition contains observations. Fixture clocks or an unbound PIT reference
+emit engineering evidence and `formal_oos=false`.
 
 ## Strategy Shadow and Production Admission
 
 Entry Research models Candidate-only, Candidate+Signal, Candidate+Forecast and
 Candidate+Intraday variants. Fit/evaluation cannot unlock Canonical Entry.
 Qualification requires Formal OOS, qualified Calibration and explicit
-Governance approval evidence.
+typed evidence from the existing Model Governance decision and its exact
+evidence set. A generic validation reference cannot grant qualification.
 
 Strategy Shadow attaches to an existing Continuous Runtime Run/Tick and frozen
 Research Shadow Decision. Its CAS journal supports schedule, resume/recovery,
-replay, settlement, incident/drift events and daily reports. Holding/Exit rules
-cover fixed time, reversal/deterioration, trailing/protection and multi-horizon
-assessment. Sustained proof requires a separate locked protocol, prospective
-attestations and Governance approval.
+replay, settlement, incident/drift events and daily reports. The controlled
+event sequence is Entry, Fill, Position, Holding, Exit and Strategy Outcome;
+each event atomically persists its typed immutable Shadow Artifact, and replay
+reconstructs the session from the append-only PostgreSQL event journal.
+Holding/Exit rules cover fixed time, reversal/deterioration,
+trailing/protection and multi-horizon assessment. Sustained proof requires a
+separate locked protocol, prospective attestations and typed evidence from the
+existing Model Governance authority.
 
 Production Admission assesses Formal PIT, Formal OOS, economic validation,
 Calibration, cost/capacity, Entry, Holding/Exit, sustained Strategy Shadow,
 operator approval, Auth/RBAC and Broker readiness. Missing any floor produces
-`BLOCKED`; no component performs automatic model or Production promotion.
+`BLOCKED`. Even eleven satisfied, correctly typed floor references produce at
+most `ELIGIBLE_FOR_OPERATOR_REVIEW` unless an existing qualified
+`PRODUCTION_DECISION` Model Governance decision explicitly carries Production
+authorization and operator approval. No generic repository writer can persist
+qualification or Production authorization.
 
 ## Correctness boundary fixes
 

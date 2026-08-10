@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 import pytest
@@ -19,18 +19,29 @@ from market_regime_alpha.application.research_validation.factor_extraction impor
     ResearchPanelEnrichment,
 )
 from market_regime_alpha.application.research_validation.postgres_repository import PostgresResearchValidationRepository
+from market_regime_alpha.application.research_validation.samples import (
+    HistoricalPathSampleRecord,
+    HistoricalSampleDataset,
+    HistoricalSampleQualification,
+    advance_sample_qualification,
+)
 from market_regime_alpha.application.shadow_research.attestation import ClockMode, RuntimeOrigin
 from market_regime_alpha.application.strategy_shadow.operations import (
+    StrategyShadowArtifactKind,
+    StrategyShadowArtifactRecord,
     StrategyShadowEventKind,
     StrategyShadowSession,
     StrategyShadowSessionStatus,
     replay_strategy_shadow,
 )
 from market_regime_alpha.application.strategy_shadow.postgres_repository import PostgresStrategyShadowRepository
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import ArtifactId, TargetId
+from market_regime_alpha.core.time import AvailabilityTime, DecisionTime
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
+from market_regime_alpha.forecasting.path import PATH_FORECAST_SAMPLE_SCHEMA, PathForecastSample
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from market_regime_alpha.strategies.entry.contracts import EntryPathObservationStatus, EntryPathReasonCode
 from tests.persistence.postgres.test_free_data_continuous_runtime import _calendar, _configuration, _continuous_command
 
 
@@ -120,5 +131,93 @@ def test_panel_enrichment_and_strategy_shadow_replay_on_postgres(postgres_factor
     restored = strategy.save(running, expected_revision=1)
 
     assert replay_strategy_shadow(restored) == running
+    artifact_payload = {"entry": "shadow-only"}
+    artifact_reference = ValidationArtifactReference("SHADOW_ENTRY", ArtifactId("pg-shadow-entry"), canonical_hash(artifact_payload))
+    artifact = StrategyShadowArtifactRecord(
+        artifact_reference,
+        StrategyShadowArtifactKind.ENTRY,
+        session.session_id,
+        artifact_payload,
+        now,
+    )
+    with_entry = running.append(
+        event_kind=StrategyShadowEventKind.ENTRY_CREATED,
+        occurred_at=now,
+        artifact_reference=artifact_reference,
+    )
+    assert strategy.save_with_artifact(with_entry, expected_revision=2, artifact=artifact) == with_entry
+    with postgres_factory.connection(read_only=True) as connection:
+        stored_artifact = connection.execute(
+            "SELECT payload_json FROM strategy_shadow_artifact WHERE artifact_id = %s",
+            (str(artifact_reference.artifact_id),),
+        ).fetchone()
+        stored_event = connection.execute(
+            "SELECT payload_json FROM strategy_shadow_event WHERE session_id = %s AND sequence = 3",
+            (str(session.session_id),),
+        ).fetchone()
+    assert stored_artifact is not None and stored_artifact[0] == artifact_payload
+    assert stored_event is not None and stored_event[0]["artifact_reference"]["artifact_id"] == "pg-shadow-entry"
     with pytest.raises(ValueError, match="CAS conflict"):
         strategy.save(running, expected_revision=1)
+
+
+def test_postgres_historical_sample_reader_replays_qualification_transitions(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    now = datetime(2026, 8, 10, 6, 55, tzinfo=UTC)
+    target_id = TargetId("target-path")
+    sample = PathForecastSample(
+        sample_id=ArtifactId("sample-path"),
+        source_artifact_id=ArtifactId("outcome-path"),
+        source_content_hash=canonical_hash({"outcome": "path"}),
+        symbol="000001.SZ",
+        target_id=target_id,
+        sample_decision_time=DecisionTime(now - timedelta(days=5)),
+        available_at=AvailabilityTime(now - timedelta(days=1)),
+        observation_status=EntryPathObservationStatus.AVAILABLE,
+        observation_reason_code=EntryPathReasonCode.OUTCOME_RESOLVED,
+        realized_mfe=0.05,
+        realized_mae=-0.02,
+        realized_return=0.03,
+        schema_version=PATH_FORECAST_SAMPLE_SCHEMA,
+    )
+    target = _ref("OUTCOME_TARGET", str(target_id))
+    target = ValidationArtifactReference(target.artifact_kind, ArtifactId(str(target_id)), target.content_hash)
+    record = HistoricalPathSampleRecord.register_unqualified(
+        sample=sample,
+        target_reference=target,
+        outcome_reference=_ref("FACTUAL_OUTCOME", "outcome-path"),
+        pit_lineage=(),
+        registered_at=now - timedelta(days=1),
+    )
+    qualified = advance_sample_qualification(
+        record=record,
+        qualification=HistoricalSampleQualification.PIT_ELIGIBLE,
+        authority_evidence=_ref("FORMAL_PIT_EVIDENCE", "pit-evidence"),
+        registered_at=now,
+    )
+    repository = PostgresResearchValidationRepository(postgres_factory)
+    repository.record_sample_dataset(
+        HistoricalSampleDataset.create(
+            registry_version="v1",
+            target_reference=target,
+            records=(record,),
+            available_at=now - timedelta(days=1),
+        )
+    )
+    repository.record_sample_dataset(
+        HistoricalSampleDataset.create(
+            registry_version="v2",
+            target_reference=target,
+            records=(qualified,),
+            available_at=now,
+        )
+    )
+
+    samples, qualification, _reasons = repository.load_available_samples(
+        symbol="000001.SZ",
+        target_id=target_id,
+        decision_time=DecisionTime(now + timedelta(seconds=1)),
+    )
+    assert samples == (sample,)
+    assert qualification == HistoricalSampleQualification.PIT_ELIGIBLE.value

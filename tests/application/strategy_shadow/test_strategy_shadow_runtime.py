@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
+
 from market_regime_alpha.application.research_validation.common import ValidationArtifactReference
+from market_regime_alpha.application.research_validation.holding_exit_validation import (
+    HoldingExitValidationProtocol,
+    evaluate_holding_exit,
+)
 from market_regime_alpha.application.strategy_shadow.contracts import (
     HoldingRuleKind,
     ShadowExitDecision,
@@ -17,7 +23,10 @@ from market_regime_alpha.application.strategy_shadow.contracts import (
 )
 from market_regime_alpha.application.strategy_shadow.operations import (
     InMemoryStrategyShadowRepository,
+    StrategyShadowArtifactKind,
+    StrategyShadowArtifactRecord,
     StrategyShadowEventKind,
+    StrategyShadowOperations,
     StrategyShadowSession,
     StrategyShadowSessionStatus,
     build_daily_report,
@@ -90,6 +99,21 @@ def test_shadow_lifecycle_never_creates_real_trading_authority() -> None:
     assert "STRATEGY_SHADOW_PROVEN_FALSE" in outcome.limitations
     assert "NOT_REAL_FILL" in fill.limitations
     assert "NOT_REAL_POSITION" in position.limitations
+    validation = evaluate_holding_exit(
+        protocol=HoldingExitValidationProtocol.create(
+            protocol_version="v1",
+            minimum_samples=1,
+            minimum_net_return=Decimal("-1"),
+            maximum_mean_mae=Decimal("0"),
+            required_exit_rule_coverage=(HoldingRuleKind.FIXED_TIME,),
+            locked_at=NOW,
+        ),
+        outcomes=(outcome,),
+        formal_oos_reference=None,
+        created_at=NOW,
+    )
+    assert validation.observed_exit_rule_coverage == (HoldingRuleKind.FIXED_TIME,)
+    assert validation.holding_exit_validated is False
 
 
 def test_strategy_shadow_schedule_cas_replay_and_daily_report() -> None:
@@ -113,3 +137,54 @@ def test_strategy_shadow_schedule_cas_replay_and_daily_report() -> None:
     assert replay_strategy_shadow(repository.get(session.session_id)) == recovered
     assert report.sustained_prospective_proof is False
     assert "NOT_SUSTAINED_PROSPECTIVE_EVIDENCE" in report.limitations
+
+
+def test_strategy_shadow_operations_enforce_state_and_persist_artifact() -> None:
+    repository = InMemoryStrategyShadowRepository()
+    operations = StrategyShadowOperations(repository)
+    scheduled = operations.schedule(
+        trading_date=date(2026, 8, 10),
+        scheduled_for=NOW,
+        research_shadow_reference=_ref("SHADOW_DECISION", "decision-ops"),
+        runtime_run_reference=_ref("RUNTIME_RUN", "run-ops"),
+        runtime_tick_reference=_ref("RUNTIME_TICK", "tick-ops"),
+        policy_reference=_ref("STRATEGY_SHADOW_POLICY", "policy-ops"),
+        created_at=NOW,
+    )
+    running = operations.start(scheduled.session_id, expected_revision=1, occurred_at=NOW)
+    payload = {"entry": "shadow-only"}
+    reference = ValidationArtifactReference("SHADOW_ENTRY", ArtifactId("entry-ops"), canonical_hash(payload))
+    recorded = operations.record_artifact(
+        scheduled.session_id,
+        expected_revision=2,
+        event_kind=StrategyShadowEventKind.ENTRY_CREATED,
+        artifact=StrategyShadowArtifactRecord(
+            reference,
+            StrategyShadowArtifactKind.ENTRY,
+            scheduled.session_id,
+            payload,
+            NOW,
+        ),
+        occurred_at=NOW,
+    )
+
+    assert running.status is StrategyShadowSessionStatus.RUNNING
+    assert operations.replay(scheduled.session_id) == recorded
+    with pytest.raises(ValueError, match="invalid Strategy Shadow transition"):
+        scheduled.append(event_kind=StrategyShadowEventKind.ENTRY_CREATED, occurred_at=NOW)
+    with pytest.raises(ValueError, match="missing prerequisite ENTRY_CREATED"):
+        running.append(event_kind=StrategyShadowEventKind.FILL_OBSERVED, occurred_at=NOW)
+    with pytest.raises(ValueError, match="requires FILL Artifact"):
+        operations.record_artifact(
+            scheduled.session_id,
+            expected_revision=recorded.revision,
+            event_kind=StrategyShadowEventKind.FILL_OBSERVED,
+            artifact=StrategyShadowArtifactRecord(
+                _ref("SHADOW_ENTRY", "wrong-fill-kind"),
+                StrategyShadowArtifactKind.ENTRY,
+                scheduled.session_id,
+                {"name": "wrong-fill-kind"},
+                NOW,
+            ),
+            occurred_at=NOW,
+        )

@@ -113,6 +113,42 @@ class AblationVariant:
 
 
 @dataclass(frozen=True, slots=True)
+class AblationProtocol:
+    protocol_id: ArtifactId
+    protocol_hash: str
+    protocol_version: str
+    variants: tuple[AblationVariant, ...]
+    top_k: int
+    scoring_contract: str
+    created_at: datetime
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        protocol_version: str,
+        variants: tuple[AblationVariant, ...],
+        top_k: int,
+        scoring_contract: str,
+        created_at: datetime,
+    ) -> AblationProtocol:
+        ordered = tuple(sorted(variants, key=lambda item: item.variant_id))
+        if not ordered or len({item.variant_id for item in ordered}) != len(ordered) or top_k <= 0:
+            raise ValueError("Ablation Protocol variants/top_k are invalid")
+        require_text("scoring_contract", scoring_contract)
+        payload = {
+            "schema": "ablation-protocol/v1",
+            "protocol_version": protocol_version,
+            "variants": [_variant_payload(item) for item in ordered],
+            "top_k": top_k,
+            "scoring_contract": scoring_contract,
+            "created_at": timestamp(created_at),
+        }
+        artifact_id, digest = content_identity("ablation-protocol", payload)
+        return cls(artifact_id, digest, protocol_version, ordered, top_k, scoring_contract, created_at)
+
+
+@dataclass(frozen=True, slots=True)
 class AblationObservation:
     observation_id: str
     session_key: str
@@ -238,11 +274,10 @@ ScoreFunction = Callable[[AblationObservation, AblationVariant], Decimal]
 
 def run_factor_ablation(
     *,
-    protocol_reference: ValidationArtifactReference,
+    protocol: AblationProtocol,
     panel_reference: ValidationArtifactReference,
     observations: tuple[AblationObservation, ...],
     variant: AblationVariant,
-    top_k: int,
     score_function: ScoreFunction | None,
     baseline_metrics: AblationMetrics | None,
     baseline_result: ValidationArtifactReference | None,
@@ -250,10 +285,14 @@ def run_factor_ablation(
 ) -> FactorAblationResult:
     if not observations:
         raise ValueError("Ablation requires observations")
-    if top_k <= 0:
-        raise ValueError("top_k must be positive")
-    scored = tuple((item, (score_function or _default_score)(item, variant)) for item in observations)
-    metrics = _metrics(scored, top_k=top_k, baseline=baseline_metrics)
+    if variant not in protocol.variants:
+        raise ValueError("Ablation variant is not frozen in Protocol")
+    if variant.kind is not AblationVariantKind.FULL and score_function is None:
+        raise ValueError("Ablated variants require a protocol-bound scoring function; raw factors cannot be averaged")
+    scorer = (lambda item, _variant: item.score) if score_function is None else score_function
+    scored = tuple((item, scorer(item, variant)) for item in observations)
+    metrics = _metrics(scored, top_k=protocol.top_k, baseline=baseline_metrics)
+    protocol_reference = ValidationArtifactReference("ABLATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash)
     return FactorAblationResult.create(
         protocol_reference=protocol_reference,
         panel_reference=panel_reference,
@@ -262,13 +301,6 @@ def run_factor_ablation(
         baseline_result=baseline_result,
         created_at=created_at,
     )
-
-
-def _default_score(item: AblationObservation, variant: AblationVariant) -> Decimal:
-    kept = [value for family, factor_id, value in item.factor_values if variant.includes(family, factor_id)]
-    if not kept:
-        return Decimal("0")
-    return sum(kept, Decimal("0")) / Decimal(len(kept))
 
 
 def _metrics(
@@ -298,12 +330,13 @@ def _metrics(
         top_returns.extend(float(item.realized_return) for item, _score in top)
         bottom_returns.extend(float(item.realized_return) for item, _score in bottom)
         selected = {item.symbol for item, _score in top}
+        full_selected = {item.symbol for item, _score in pairs if item.selected}
         previous = {item.symbol for item, _score in pairs if item.previous_selected}
-        overlaps.append(len(selected & previous) / max(1, len(selected | previous)))
+        overlaps.append(len(selected & full_selected) / max(1, len(selected | full_selected)))
         turnovers.append(len(selected.symmetric_difference(previous)) / max(1, len(selected | previous)))
         equity_returns.append(fmean(float(item.realized_return) for item, _score in top))
     mean_return = fmean(returns)
-    baseline_return = None if baseline is None or baseline.mean_return is None else float(baseline.mean_return)
+    baseline_return = None if baseline is None or baseline.top_k_return is None else float(baseline.top_k_return)
     return AblationMetrics(
         sample_count=len(scored),
         ic=_decimal(ic),
@@ -317,7 +350,7 @@ def _metrics(
         turnover=_mean_decimal(turnovers),
         max_drawdown=_decimal(_max_drawdown(equity_returns)),
         overlap=_mean_decimal(overlaps),
-        incremental_lift=None if baseline_return is None else _decimal(mean_return - baseline_return),
+        incremental_lift=None if baseline_return is None or not top_returns else _decimal(fmean(top_returns) - baseline_return),
     )
 
 
@@ -387,4 +420,14 @@ def _result_payload(
         "created_at": timestamp(created_at),
         "authority": ResearchEvidenceAuthority.EXPLORATORY.value,
         "limitations": list(tuple(sorted({*ENGINEERING_LIMITATIONS, "NOT_GOVERNANCE_QUALIFICATION"}))),
+    }
+
+
+def _variant_payload(variant: AblationVariant) -> dict[str, Any]:
+    return {
+        "variant_id": variant.variant_id,
+        "kind": variant.kind.value,
+        "included_families": [item.value for item in variant.included_families],
+        "deleted_families": [item.value for item in variant.deleted_families],
+        "deleted_factor_ids": list(variant.deleted_factor_ids),
     }

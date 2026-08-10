@@ -28,7 +28,12 @@ CREATE TABLE strategy_shadow_event (
     sequence bigint NOT NULL CHECK (sequence >= 1),
     event_id text NOT NULL UNIQUE,
     event_hash text NOT NULL UNIQUE CHECK (event_hash ~ '^sha256:[0-9a-f]{64}$'),
-    event_kind text NOT NULL,
+    event_kind text NOT NULL CHECK (event_kind IN (
+        'SCHEDULED', 'STARTED', 'ENTRY_CREATED', 'FILL_OBSERVED',
+        'POSITION_OPENED', 'HOLDING_ASSESSED', 'EXIT_ASSESSED',
+        'OUTCOME_SETTLED', 'INCIDENT_RECORDED', 'DRIFT_RECORDED',
+        'RECOVERED', 'FAILED'
+    )),
     occurred_at timestamptz NOT NULL,
     artifact_id text,
     payload_json jsonb NOT NULL CHECK (jsonb_typeof(payload_json) = 'object'),
@@ -38,14 +43,15 @@ CREATE TABLE strategy_shadow_event (
 CREATE TABLE strategy_shadow_artifact (
     artifact_id text PRIMARY KEY,
     artifact_hash text NOT NULL UNIQUE CHECK (artifact_hash ~ '^sha256:[0-9a-f]{64}$'),
-    session_id text NOT NULL REFERENCES strategy_shadow_session(session_id) ON DELETE RESTRICT,
+    session_id text REFERENCES strategy_shadow_session(session_id) ON DELETE RESTRICT,
     artifact_kind text NOT NULL CHECK (artifact_kind IN (
         'POLICY', 'ENTRY', 'FILL', 'POSITION', 'HOLDING_ASSESSMENT',
         'EXIT_ASSESSMENT', 'STRATEGY_OUTCOME', 'DAILY_REPORT'
     )),
     real_trading_mutation boolean NOT NULL DEFAULT false CHECK (NOT real_trading_mutation),
     payload_json jsonb NOT NULL CHECK (jsonb_typeof(payload_json) = 'object'),
-    created_at timestamptz NOT NULL
+    created_at timestamptz NOT NULL,
+    CHECK ((artifact_kind = 'DAILY_REPORT') = (session_id IS NULL))
 );
 
 CREATE INDEX strategy_shadow_artifact_session_idx

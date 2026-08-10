@@ -13,12 +13,14 @@ from typing import Any
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
     GOVERNED_NON_PRODUCTION_LIMITATIONS,
+    GovernanceQualificationBinding,
     ValidationArtifactReference,
     content_identity,
     timestamp,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
+from market_regime_alpha.platform.runtime_governance import QualificationEvidenceKind
 
 
 class CalibrationMethod(str, Enum):
@@ -188,7 +190,7 @@ def fit_calibration(
 def qualify_calibration(
     *,
     artifact: CalibrationArtifact,
-    qualification_evidence: ValidationArtifactReference,
+    governance: GovernanceQualificationBinding,
     created_at: datetime,
 ) -> CalibrationArtifact:
     """Explicit Governance transition; fitting alone never invokes this path."""
@@ -196,6 +198,11 @@ def qualify_calibration(
         return artifact
     if CalibrationPartition.OOS not in {item.partition for item in artifact.evaluations}:
         raise ValueError("Calibration qualification requires locked OOS evaluation")
+    governance.require_artifact(
+        ValidationArtifactReference("CALIBRATION_ARTIFACT", artifact.artifact_id, artifact.artifact_hash),
+        QualificationEvidenceKind.BACKTEST_VALIDATION,
+    )
+    qualification_evidence = governance.decision_reference
     limitations = GOVERNED_NON_PRODUCTION_LIMITATIONS
     payload = _artifact_payload(
         artifact.protocol_reference,

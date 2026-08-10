@@ -195,6 +195,7 @@ def extract_canonical_factors(
     signal_run: SignalRunArtifactV3 | None,
     forecasts: tuple[PathForecast, ...],
     state_sources: tuple[CanonicalStateFactorSource, ...],
+    decision_time: datetime,
     extracted_at: datetime,
 ) -> ResearchPanelEnrichment:
     """Copy canonical values into a lineage-complete panel sidecar."""
@@ -202,9 +203,31 @@ def extract_canonical_factors(
     expected = tuple(sorted(set(symbols)))
     if not expected:
         raise ValueError("factor extraction requires an evaluated symbol universe")
+    if extracted_at < decision_time:
+        raise ValueError("Panel enrichment cannot predate DecisionTime")
+    if (
+        feature_bundle.artifact.dataset_id != dataset.artifact.dataset_id
+        or feature_bundle.artifact.dataset_hash != dataset.artifact.content_hash
+        or feature_bundle.artifact.decision_time != decision_time
+    ):
+        raise ValueError("Feature Bundle does not bind the Panel Dataset/DecisionTime")
+    if dynamic_pool is not None and (dynamic_pool.decision_time != decision_time or dynamic_pool.available_at > decision_time):
+        raise ValueError("Dynamic Pool is not available at Panel DecisionTime")
+    if any(source.available_at is not None and source.available_at > decision_time for source in state_sources):
+        raise ValueError("State factor source is not available at Panel DecisionTime")
+    if signal_run is not None and (
+        signal_run.market_data_dataset_id != dataset.artifact.dataset_id
+        or signal_run.market_data_dataset_hash != dataset.artifact.content_hash
+        or signal_run.feature_bundle_id != feature_bundle.artifact.bundle_id
+        or signal_run.feature_bundle_hash != feature_bundle.artifact.content_hash
+        or candidate_set is None
+        or signal_run.candidate_set.envelope.artifact_id != candidate_set.envelope.artifact_id
+        or signal_run.candidate_set.envelope.content_hash != candidate_set.envelope.content_hash
+    ):
+        raise ValueError("Signal does not bind the supplied Dataset/Feature Bundle/Candidate Set")
     exposures: list[ResearchFactorExposure] = []
-    exposures.extend(_market_bar_exposures(expected, dataset))
-    exposures.extend(_feature_exposures(expected, feature_bundle))
+    exposures.extend(_market_bar_exposures(expected, dataset, decision_time))
+    exposures.extend(_feature_exposures(expected, feature_bundle, decision_time))
     exposures.extend(_state_exposures(expected, state_sources))
     exposures.extend(_pool_exposures(expected, dynamic_pool))
     exposures.extend(_candidate_exposures(expected, candidate_set))
@@ -248,7 +271,9 @@ def publish_research_panel_enrichment(*, root: Path, enrichment: ResearchPanelEn
     return path
 
 
-def _market_bar_exposures(symbols: tuple[str, ...], dataset: VerifiedMarketDataDataset) -> list[ResearchFactorExposure]:
+def _market_bar_exposures(
+    symbols: tuple[str, ...], dataset: VerifiedMarketDataDataset, decision_time: datetime
+) -> list[ResearchFactorExposure]:
     result: list[ResearchFactorExposure] = []
     reference = ValidationArtifactReference(
         "MARKET_DATA_DATASET",
@@ -256,7 +281,11 @@ def _market_bar_exposures(symbols: tuple[str, ...], dataset: VerifiedMarketDataD
         dataset.artifact.content_hash,
     )
     for symbol in symbols:
-        bars = [item for item in dataset.bars if item.symbol == symbol]
+        bars = [
+            item
+            for item in dataset.bars
+            if item.symbol == symbol and item.event_end <= decision_time and item.available_at <= decision_time
+        ]
         latest_by_timeframe: dict[Timeframe, Any] = {}
         for bar in bars:
             current = latest_by_timeframe.get(bar.timeframe)
@@ -321,7 +350,7 @@ def _market_bar_exposures(symbols: tuple[str, ...], dataset: VerifiedMarketDataD
     return result
 
 
-def _feature_exposures(symbols: tuple[str, ...], bundle: VerifiedFeatureBundleV2) -> list[ResearchFactorExposure]:
+def _feature_exposures(symbols: tuple[str, ...], bundle: VerifiedFeatureBundleV2, decision_time: datetime) -> list[ResearchFactorExposure]:
     result: list[ResearchFactorExposure] = []
     allowed = set(symbols)
     for verified in bundle.artifacts:
@@ -330,6 +359,8 @@ def _feature_exposures(symbols: tuple[str, ...], bundle: VerifiedFeatureBundleV2
             continue
         reference = ValidationArtifactReference("FEATURE_ARTIFACT_V2", artifact.artifact_id, artifact.content_hash)
         for value in artifact.values:
+            if value.available_at > decision_time:
+                continue
             family = _feature_family(artifact.feature_id, value.output_id, artifact.timeframe)
             missing = value.missing_reason_codes if value.state is FeatureValueState.MISSING else ()
             numeric, text = _split_scalar(value.value)
@@ -429,17 +460,23 @@ def _candidate_exposures(symbols: tuple[str, ...], candidates: CandidateSet | No
     reference = ValidationArtifactReference("CANDIDATE_SET", candidates.envelope.artifact_id, candidates.envelope.content_hash)
     records = {item.symbol: item for item in candidates.records}
     result: list[ResearchFactorExposure] = []
-    names = ("candidate_discovery_score", "market_regime_score", "theme_score", "capital_evolution_score", "rank")
+    families = {
+        "candidate_discovery_score": FactorFamily.CANDIDATE,
+        "market_regime_score": FactorFamily.MARKET_REGIME,
+        "theme_score": FactorFamily.THEME,
+        "capital_evolution_score": FactorFamily.CAPITAL,
+        "rank": FactorFamily.CANDIDATE,
+    }
     for symbol in symbols:
         item = records.get(symbol)
         if item is None:
             continue
-        for name in names:
+        for name, family in families.items():
             numeric, text = _split_scalar(getattr(item, name))
             result.append(
                 ResearchFactorExposure(
                     symbol,
-                    FactorFamily.CANDIDATE,
+                    family,
                     f"candidate.{name}",
                     None,
                     numeric,

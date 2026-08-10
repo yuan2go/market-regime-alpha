@@ -9,6 +9,7 @@ from typing import Any
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
     GOVERNED_NON_PRODUCTION_LIMITATIONS,
+    GovernanceQualificationBinding,
     ValidationArtifactReference,
     content_identity,
     timestamp,
@@ -16,6 +17,7 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.strategy_shadow.operations import StrategyShadowDailyReport
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
+from market_regime_alpha.platform.runtime_governance import QualificationEvidenceKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,10 +99,11 @@ def evaluate_strategy_shadow_qualification(
     protocol: StrategyShadowQualificationProtocol,
     reports: tuple[StrategyShadowDailyReport, ...],
     prospective_attestation_references: tuple[ValidationArtifactReference, ...],
-    governance_approval_reference: ValidationArtifactReference | None,
     created_at: datetime,
 ) -> StrategyShadowQualificationEvidence:
-    sessions = sum(item.scheduled_count for item in reports)
+    if any(item.artifact_kind != "PROSPECTIVE_ATTESTATION" for item in prospective_attestation_references):
+        raise ValueError("Strategy Shadow qualification requires Prospective Attestation evidence")
+    sessions = sum(item.settled_count for item in reports)
     days = len({item.trading_date for item in reports})
     incidents = sum(item.incident_count for item in reports)
     drifts = sum(item.drift_count for item in reports)
@@ -109,8 +112,10 @@ def evaluate_strategy_shadow_qualification(
         and days >= protocol.minimum_distinct_days
         and incidents <= protocol.maximum_incidents
         and drifts <= protocol.maximum_drifts
+        and sum(item.failed_count for item in reports) == 0
+        and len(prospective_attestation_references) >= sessions
     )
-    proven = floors and bool(prospective_attestation_references) and governance_approval_reference is not None
+    proven = False
     report_refs = tuple(
         sorted(
             (ValidationArtifactReference("STRATEGY_SHADOW_DAILY_REPORT", item.report_id, item.report_hash) for item in reports),
@@ -118,12 +123,18 @@ def evaluate_strategy_shadow_qualification(
         )
     )
     attestation_refs = tuple(sorted(set(prospective_attestation_references), key=lambda item: str(item.artifact_id)))
-    reasons = ("SUSTAINED_STRATEGY_SHADOW_PROVEN_BY_GOVERNANCE",) if proven else ("STRATEGY_SHADOW_PROVEN_FALSE",)
-    limitations = (
-        GOVERNED_NON_PRODUCTION_LIMITATIONS if proven else tuple(sorted({*ENGINEERING_LIMITATIONS, "STRATEGY_SHADOW_PROVEN_FALSE"}))
+    reasons = tuple(
+        sorted(
+            {
+                "GOVERNANCE_QUALIFICATION_REQUIRED",
+                "STRATEGY_SHADOW_PROVEN_FALSE",
+                "STRATEGY_SHADOW_ENGINEERING_FLOORS_MET" if floors else "STRATEGY_SHADOW_ENGINEERING_FLOORS_NOT_MET",
+            }
+        )
     )
+    limitations = tuple(sorted({*ENGINEERING_LIMITATIONS, "STRATEGY_SHADOW_PROVEN_FALSE"}))
     protocol_ref = ValidationArtifactReference("STRATEGY_SHADOW_QUALIFICATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash)
-    payload = _payload(protocol_ref, report_refs, attestation_refs, governance_approval_reference, proven, reasons, created_at, limitations)
+    payload = _payload(protocol_ref, report_refs, attestation_refs, None, proven, reasons, created_at, limitations)
     artifact_id, digest = content_identity("strategy-shadow-qualification-evidence", payload)
     return StrategyShadowQualificationEvidence(
         artifact_id,
@@ -131,11 +142,50 @@ def evaluate_strategy_shadow_qualification(
         protocol_ref,
         report_refs,
         attestation_refs,
-        governance_approval_reference,
+        None,
         proven,
         reasons,
         created_at,
         limitations,
+    )
+
+
+def qualify_strategy_shadow(
+    *,
+    evidence: StrategyShadowQualificationEvidence,
+    governance: GovernanceQualificationBinding,
+    created_at: datetime,
+) -> StrategyShadowQualificationEvidence:
+    if evidence.sustained_strategy_shadow_proven:
+        return evidence
+    if "STRATEGY_SHADOW_ENGINEERING_FLOORS_MET" not in evidence.reason_codes:
+        raise ValueError("Strategy Shadow engineering floors are not met")
+    evidence_reference = ValidationArtifactReference("STRATEGY_SHADOW_EVIDENCE", evidence.evidence_id, evidence.evidence_hash)
+    governance.require_artifact(evidence_reference, QualificationEvidenceKind.SHADOW_OPERATION)
+    approval = governance.decision_reference
+    reasons = ("SUSTAINED_STRATEGY_SHADOW_PROVEN_BY_GOVERNANCE",)
+    payload = _payload(
+        evidence.protocol_reference,
+        evidence.report_references,
+        evidence.prospective_attestation_references,
+        approval,
+        True,
+        reasons,
+        created_at,
+        GOVERNED_NON_PRODUCTION_LIMITATIONS,
+    )
+    evidence_id, digest = content_identity("strategy-shadow-qualification-evidence", payload)
+    return StrategyShadowQualificationEvidence(
+        evidence_id,
+        digest,
+        evidence.protocol_reference,
+        evidence.report_references,
+        evidence.prospective_attestation_references,
+        approval,
+        True,
+        reasons,
+        created_at,
+        GOVERNED_NON_PRODUCTION_LIMITATIONS,
     )
 
 

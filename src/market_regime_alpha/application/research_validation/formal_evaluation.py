@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from math import sqrt
@@ -14,6 +14,7 @@ from typing import Any, Callable
 from market_regime_alpha.application.research_evaluation.targets import OutcomeTargetProtocol
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
+    GOVERNED_NON_PRODUCTION_LIMITATIONS,
     ResearchEvidenceAuthority,
     ValidationArtifactReference,
     content_identity,
@@ -62,6 +63,7 @@ class FormalEvaluationProtocol:
     bootstrap_iterations: int
     confidence_level: Decimal
     multiple_testing_method: MultipleTestingMethod
+    sensitivity_return_multipliers: tuple[Decimal, ...]
     locked_at: datetime
 
     @classmethod
@@ -75,17 +77,33 @@ class FormalEvaluationProtocol:
         confidence_level: Decimal,
         multiple_testing_method: MultipleTestingMethod,
         locked_at: datetime,
+        sensitivity_return_multipliers: tuple[Decimal, ...] = (
+            Decimal("0.9"),
+            Decimal("1"),
+            Decimal("1.1"),
+        ),
     ) -> FormalEvaluationProtocol:
         ordered = tuple(sorted(windows, key=lambda item: (item.fold, item.partition.value, item.start_date)))
         if not ordered or len({item.window_id for item in ordered}) != len(ordered):
             raise ValueError("Formal Evaluation windows must be non-empty and unique")
         if not Decimal("0") < confidence_level < Decimal("1") or bootstrap_iterations <= 0:
             raise ValueError("Formal Evaluation statistics configuration is invalid")
+        sensitivity = tuple(sorted(set(sensitivity_return_multipliers)))
+        if not sensitivity or any(value <= 0 for value in sensitivity) or Decimal("1") not in sensitivity:
+            raise ValueError("Formal Evaluation sensitivity requires positive multipliers including baseline 1")
         _validate_fold_windows(ordered)
         embargo = derive_embargo_sessions(target_protocol)
         target_ref = ValidationArtifactReference("OUTCOME_TARGET_PROTOCOL", target_protocol.protocol_id, target_protocol.protocol_hash)
         values = _protocol_payload(
-            protocol_version, target_ref, ordered, embargo, bootstrap_iterations, confidence_level, multiple_testing_method, locked_at
+            protocol_version,
+            target_ref,
+            ordered,
+            embargo,
+            bootstrap_iterations,
+            confidence_level,
+            multiple_testing_method,
+            sensitivity,
+            locked_at,
         )
         artifact_id, digest = content_identity("formal-evaluation-protocol", values)
         return cls(
@@ -99,6 +117,7 @@ class FormalEvaluationProtocol:
             bootstrap_iterations,
             confidence_level,
             multiple_testing_method,
+            sensitivity,
             locked_at,
         )
 
@@ -130,6 +149,9 @@ class EvaluationObservation:
 
 @dataclass(frozen=True, slots=True)
 class EvaluationMetric:
+    fold: int
+    partition: EvaluationPartition
+    sensitivity_return_multiplier: Decimal
     metric_name: str
     slice_kind: str
     slice_value: str
@@ -148,6 +170,7 @@ class FormalEvaluationResult:
     protocol_reference: ValidationArtifactReference
     pit_evidence_reference: ValidationArtifactReference | None
     panel_reference: ValidationArtifactReference
+    panel_source_references: tuple[ValidationArtifactReference, ...]
     metrics: tuple[EvaluationMetric, ...]
     excluded_observation_ids: tuple[str, ...]
     authority: ResearchEvidenceAuthority
@@ -163,6 +186,13 @@ class FormalEvaluationResult:
             raise ValueError("Formal OOS flag and evidence authority mismatch")
         if self.formal_oos and self.pit_evidence_reference is None:
             raise ValueError("Formal OOS result requires Formal PIT evidence")
+        if self.panel_source_references != tuple(
+            sorted(
+                set(self.panel_source_references),
+                key=lambda item: (item.artifact_kind, str(item.artifact_id), item.content_hash),
+            )
+        ):
+            raise ValueError("Formal Evaluation Panel lineage must be unique and sorted")
         if canonical_hash(self.identity_payload()) != self.result_hash:
             raise ValueError("Formal Evaluation result hash mismatch")
 
@@ -171,6 +201,7 @@ class FormalEvaluationResult:
             self.protocol_reference,
             self.pit_evidence_reference,
             self.panel_reference,
+            self.panel_source_references,
             self.metrics,
             self.excluded_observation_ids,
             self.authority,
@@ -191,6 +222,7 @@ def run_formal_evaluation(
     observations: tuple[EvaluationObservation, ...],
     formal_pit_evidence: FormalPITEvidenceArtifact | None,
     created_at: datetime,
+    panel_source_references: tuple[ValidationArtifactReference, ...] = (),
 ) -> FormalEvaluationResult:
     if not observations:
         raise ValueError("Evaluation Runtime requires observations")
@@ -200,12 +232,26 @@ def run_formal_evaluation(
     admitted, excluded = _admit_observations(protocol, observations)
     if not admitted:
         raise ValueError("purging and Embargo removed every Evaluation observation")
-    formal = formal_pit_evidence is not None and formal_pit_evidence.outcome is PITValidationOutcome.SATISFIED
+    formal_pit_rejections = _formal_pit_rejections(
+        protocol=protocol,
+        evidence=formal_pit_evidence,
+        panel_source_references=panel_source_references,
+        evaluated_at=created_at,
+    )
+    real_formal_pit = not formal_pit_rejections
+    locked_oos_present = any(window.partition is EvaluationPartition.LOCKED_OOS for _item, window in admitted)
+    formal = real_formal_pit and locked_oos_present
     authority = ResearchEvidenceAuthority.FORMAL_OOS if formal else ResearchEvidenceAuthority.ENGINEERING_ONLY
     pit_ref = (
         None
         if formal_pit_evidence is None
         else ValidationArtifactReference("FORMAL_PIT_EVIDENCE", formal_pit_evidence.evidence_id, formal_pit_evidence.evidence_hash)
+    )
+    ordered_panel_sources = tuple(
+        sorted(
+            set(panel_source_references),
+            key=lambda item: (item.artifact_kind, str(item.artifact_id), item.content_hash),
+        )
     )
     metric_specs: tuple[tuple[str, MetricFunction], ...] = (
         ("IC", _ic),
@@ -215,29 +261,72 @@ def run_formal_evaluation(
         ("MFE", _mfe),
         ("MAE", _mae),
     )
-    raw: list[tuple[str, str, str, int, Decimal, Decimal, Decimal, Decimal]] = []
-    for slice_kind, groups in _slices(admitted).items():
-        for slice_value, values in groups.items():
-            for metric_name, function in metric_specs:
-                available = _metric_available(metric_name, values)
-                if not available:
-                    continue
-                estimate = function(available)
-                low, high, p_value = _bootstrap(
-                    function,
-                    available,
-                    protocol.bootstrap_iterations,
-                    protocol.confidence_level,
-                    seed=f"{slice_kind}:{slice_value}:{metric_name}",
-                )
-                raw.append((metric_name, slice_kind, slice_value, len(available), estimate, low, high, p_value))
+    raw: list[tuple[int, EvaluationPartition, Decimal, str, str, str, int, Decimal, Decimal, Decimal, Decimal]] = []
+    fold_partitions = sorted(
+        {(window.fold, window.partition) for _observation, window in admitted},
+        key=lambda item: (item[0], item[1].value),
+    )
+    for fold, partition in fold_partitions:
+        partition_values = tuple(observation for observation, window in admitted if window.fold == fold and window.partition is partition)
+        for multiplier in protocol.sensitivity_return_multipliers:
+            sensitivity_values = tuple(_apply_return_sensitivity(item, multiplier) for item in partition_values)
+            for slice_kind, groups in _slices(sensitivity_values).items():
+                for slice_value, values in groups.items():
+                    for metric_name, function in metric_specs:
+                        available = _metric_available(metric_name, values)
+                        if not available:
+                            continue
+                        estimate = function(available)
+                        low, high, p_value = _bootstrap(
+                            function,
+                            available,
+                            protocol.bootstrap_iterations,
+                            protocol.confidence_level,
+                            seed=f"{fold}:{partition.value}:{multiplier}:{slice_kind}:{slice_value}:{metric_name}",
+                        )
+                        raw.append(
+                            (
+                                fold,
+                                partition,
+                                multiplier,
+                                metric_name,
+                                slice_kind,
+                                slice_value,
+                                len(available),
+                                estimate,
+                                low,
+                                high,
+                                p_value,
+                            )
+                        )
     adjusted = _adjust_p_values([item[-1] for item in raw], protocol.multiple_testing_method)
     metrics = tuple(EvaluationMetric(*item, adjusted[index]) for index, item in enumerate(raw))
-    reasons = ("REAL_FORMAL_PIT_ACCEPTED", "FORMAL_OOS_EVIDENCE_EMITTED") if formal else ("FORMAL_OOS_BLOCKED", "REAL_FORMAL_PIT_REQUIRED")
-    limitations = tuple(sorted(set(ENGINEERING_LIMITATIONS) | (set() if formal else {"FORMAL_OOS_FALSE"})))
+    reasons: tuple[str, ...]
+    limitations: tuple[str, ...]
+    if formal:
+        reasons = ("FORMAL_OOS_EVIDENCE_EMITTED", "LOCKED_OOS_EVALUATED", "REAL_FORMAL_PIT_ACCEPTED")
+        limitations = GOVERNED_NON_PRODUCTION_LIMITATIONS
+    else:
+        reason_set = {"FORMAL_OOS_BLOCKED"}
+        if not real_formal_pit:
+            reason_set.update(formal_pit_rejections)
+        if not locked_oos_present:
+            reason_set.add("LOCKED_OOS_OBSERVATIONS_REQUIRED")
+        reasons = tuple(sorted(reason_set))
+        limitations = tuple(sorted({*ENGINEERING_LIMITATIONS, "FORMAL_OOS_FALSE"}))
     protocol_ref = ValidationArtifactReference("FORMAL_EVALUATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash)
     payload = _result_payload(
-        protocol_ref, pit_ref, panel_reference, metrics, tuple(sorted(excluded)), authority, formal, reasons, created_at, limitations
+        protocol_ref,
+        pit_ref,
+        panel_reference,
+        ordered_panel_sources,
+        metrics,
+        tuple(sorted(excluded)),
+        authority,
+        formal,
+        reasons,
+        created_at,
+        limitations,
     )
     result_id, digest = content_identity("formal-evaluation-result", payload)
     return FormalEvaluationResult(
@@ -246,6 +335,7 @@ def run_formal_evaluation(
         protocol_ref,
         pit_ref,
         panel_reference,
+        ordered_panel_sources,
         metrics,
         tuple(sorted(excluded)),
         authority,
@@ -258,26 +348,66 @@ def run_formal_evaluation(
 
 def _admit_observations(
     protocol: FormalEvaluationProtocol, observations: tuple[EvaluationObservation, ...]
-) -> tuple[tuple[EvaluationObservation, ...], set[str]]:
-    admitted: list[EvaluationObservation] = []
+) -> tuple[tuple[tuple[EvaluationObservation, EvaluationWindow], ...], set[str]]:
+    admitted: list[tuple[EvaluationObservation, EvaluationWindow]] = []
     excluded: set[str] = set()
     for observation in observations:
         windows = [item for item in protocol.windows if item.start_date <= observation.session_date <= item.end_date]
         if not windows:
             excluded.add(observation.observation_id)
             continue
-        window = windows[0]
-        future_windows = [item for item in protocol.windows if item.fold == window.fold and item.partition is not EvaluationPartition.TRAIN]
-        boundary = min((item.start_date for item in future_windows), default=None)
-        if (
-            window.partition is EvaluationPartition.TRAIN
-            and boundary is not None
-            and observation.label_end_date >= boundary - timedelta(days=protocol.embargo_sessions)
-        ):
+        observation_admitted = False
+        for window in windows:
+            future_windows = [
+                item for item in protocol.windows if item.fold == window.fold and item.partition is not EvaluationPartition.TRAIN
+            ]
+            boundary = min((item.start_date for item in future_windows), default=None)
+            if window.partition is EvaluationPartition.TRAIN and boundary is not None:
+                train_dates = sorted({item.session_date for item in observations if window.start_date <= item.session_date < boundary})
+                embargo_dates = set(train_dates[-protocol.embargo_sessions :])
+                if observation.label_end_date >= boundary or observation.session_date in embargo_dates:
+                    continue
+            admitted.append((observation, window))
+            observation_admitted = True
+        if not observation_admitted:
             excluded.add(observation.observation_id)
-            continue
-        admitted.append(observation)
     return tuple(admitted), excluded
+
+
+def _apply_return_sensitivity(observation: EvaluationObservation, multiplier: Decimal) -> EvaluationObservation:
+    return replace(
+        observation,
+        realized_return=observation.realized_return * multiplier,
+        mfe=None if observation.mfe is None else observation.mfe * multiplier,
+        mae=None if observation.mae is None else observation.mae * multiplier,
+    )
+
+
+def _formal_pit_rejections(
+    *,
+    protocol: FormalEvaluationProtocol,
+    evidence: FormalPITEvidenceArtifact | None,
+    panel_source_references: tuple[ValidationArtifactReference, ...],
+    evaluated_at: datetime,
+) -> tuple[str, ...]:
+    if evidence is None:
+        return ("REAL_FORMAL_PIT_REQUIRED",)
+    reasons: set[str] = set()
+    if evidence.outcome is not PITValidationOutcome.SATISFIED:
+        reasons.add("FORMAL_PIT_NOT_SATISFIED")
+    if not evidence.selected_fact_authorities or any(
+        item.system_time_authority != "POSTGRESQL_CLOCK" for item in evidence.selected_fact_authorities
+    ):
+        reasons.add("REAL_FORMAL_PIT_POSTGRESQL_CLOCK_REQUIRED")
+    if evidence.available_at > evaluated_at or evidence.recorded_at > evaluated_at:
+        reasons.add("FORMAL_PIT_NOT_AVAILABLE_AT_EVALUATION")
+    validation_protocol = evidence.lineage.validation_protocol
+    if validation_protocol.artifact_id != protocol.protocol_id or validation_protocol.content_hash != protocol.protocol_hash:
+        reasons.add("FORMAL_PIT_PROTOCOL_LINEAGE_MISMATCH")
+    dataset = evidence.lineage.dataset
+    if not any(item.artifact_id == dataset.artifact_id and item.content_hash == dataset.content_hash for item in panel_source_references):
+        reasons.add("FORMAL_PIT_PANEL_DATASET_LINEAGE_MISMATCH")
+    return tuple(sorted(reasons))
 
 
 def _slices(values: tuple[EvaluationObservation, ...]) -> dict[str, dict[str, tuple[EvaluationObservation, ...]]]:
@@ -391,6 +521,7 @@ def _protocol_payload(
     iterations: int,
     confidence: Decimal,
     method: MultipleTestingMethod,
+    sensitivity: tuple[Decimal, ...],
     locked_at: datetime,
 ) -> dict[str, Any]:
     return {
@@ -412,6 +543,7 @@ def _protocol_payload(
         "bootstrap_iterations": iterations,
         "confidence_level": str(confidence),
         "multiple_testing_method": method.value,
+        "sensitivity_return_multipliers": [str(item) for item in sensitivity],
         "locked_at": timestamp(locked_at),
     }
 
@@ -420,6 +552,7 @@ def _result_payload(
     protocol: ValidationArtifactReference,
     pit: ValidationArtifactReference | None,
     panel: ValidationArtifactReference,
+    panel_sources: tuple[ValidationArtifactReference, ...],
     metrics: tuple[EvaluationMetric, ...],
     excluded: tuple[str, ...],
     authority: ResearchEvidenceAuthority,
@@ -433,8 +566,12 @@ def _result_payload(
         "protocol_reference": protocol.to_canonical_dict(),
         "pit_evidence_reference": None if pit is None else pit.to_canonical_dict(),
         "panel_reference": panel.to_canonical_dict(),
+        "panel_source_references": [item.to_canonical_dict() for item in panel_sources],
         "metrics": [
             {
+                "fold": item.fold,
+                "partition": item.partition.value,
+                "sensitivity_return_multiplier": str(item.sensitivity_return_multiplier),
                 "metric_name": item.metric_name,
                 "slice_kind": item.slice_kind,
                 "slice_value": item.slice_value,

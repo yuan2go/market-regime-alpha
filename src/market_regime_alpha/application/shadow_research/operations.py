@@ -235,13 +235,7 @@ class ResearchShadowOperations:
             source_acquisition_receipts=decision.provider_source_references,
             code_revision=code_revision,
             runtime_mode=runtime.command.authority_mode,
-            clock_mode=runtime_evidence.clock_mode,
-            runtime_origin=runtime_evidence.runtime_origin,
-            runtime_authority_evidence=RuntimeArtifactReference(
-                "RUNTIME_AUTHORITY_EVIDENCE",
-                runtime_evidence.evidence_id,
-                runtime_evidence.evidence_hash,
-            ),
+            runtime_authority=runtime_evidence,
             created_at=created_at,
         )
         attestation = self._attestations.record(attestation)
@@ -312,6 +306,27 @@ class ResearchShadowOperations:
         artifact_root: Path,
         created_at: datetime,
     ) -> tuple[FrozenResearchPanelV2, ResearchPanelEnrichment, Path, Path]:
+        decision = self._shadow.replay(decision_id)
+        if (
+            str(dataset.artifact.dataset_id) != str(decision.dataset.artifact_id)
+            or dataset.artifact.content_hash != decision.dataset.content_hash
+            or str(feature_bundle.artifact.bundle_id) != str(decision.feature_bundle.artifact_id)
+            or feature_bundle.artifact.content_hash != decision.feature_bundle.content_hash
+        ):
+            raise ValueError("Panel enrichment Dataset/Feature Bundle differs from frozen Shadow Decision")
+        expected_optional = (
+            (decision.dynamic_pool, dynamic_pool.pool_id, dynamic_pool.pool_hash, "Dynamic Pool"),
+            (decision.candidate_set, candidate_set.envelope.artifact_id, candidate_set.envelope.content_hash, "Candidate Set"),
+        )
+        for expected, artifact_id, digest, label in expected_optional:
+            if expected is None or str(expected.artifact_id) != str(artifact_id) or expected.content_hash != digest:
+                raise ValueError(f"Panel enrichment {label} differs from frozen Shadow Decision")
+        if signal_run is not None and (
+            decision.signal is None
+            or str(decision.signal.artifact_id) != str(signal_run.artifact_id)
+            or decision.signal.content_hash != signal_run.envelope.content_hash
+        ):
+            raise ValueError("Panel enrichment Signal differs from frozen Shadow Decision")
         panel, panel_path = self.build_evaluation(
             decision_id=decision_id,
             targeted_outcome_id=targeted_outcome_id,
@@ -333,6 +348,7 @@ class ResearchShadowOperations:
             signal_run=signal_run,
             forecasts=forecasts,
             state_sources=state_sources,
+            decision_time=decision.decision_time,
             extracted_at=created_at,
         )
         enrichment_path = publish_research_panel_enrichment(

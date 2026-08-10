@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
@@ -94,6 +94,21 @@ class HistoricalPathSampleRecord:
             self.reason_codes,
         )
 
+    @classmethod
+    def from_canonical_dict(cls, value: Mapping[str, Any]) -> HistoricalPathSampleRecord:
+        return cls(
+            record_id=ArtifactId(str(value["record_id"])),
+            record_hash=str(value["record_hash"]),
+            sample=PathForecastSample.from_canonical_dict(_object(value["sample"])),
+            target_reference=ValidationArtifactReference.from_canonical_dict(_object(value["target_reference"])),
+            outcome_reference=ValidationArtifactReference.from_canonical_dict(_object(value["outcome_reference"])),
+            pit_lineage=tuple(ValidationArtifactReference.from_canonical_dict(_object(item)) for item in _sequence(value["pit_lineage"])),
+            qualification=HistoricalSampleQualification(str(value["qualification"])),
+            registered_at=datetime.fromisoformat(str(value["registered_at"])),
+            reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+            schema_version=str(value["schema_version"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class HistoricalSampleDataset:
@@ -146,6 +161,20 @@ class HistoricalSampleDataset:
             self.registry_version, self.target_reference, self.records, self.available_at, self.qualification, self.limitations
         )
 
+    @classmethod
+    def from_canonical_dict(cls, value: Mapping[str, Any]) -> HistoricalSampleDataset:
+        return cls(
+            dataset_id=ArtifactId(str(value["dataset_id"])),
+            dataset_hash=str(value["dataset_hash"]),
+            registry_version=str(value["registry_version"]),
+            target_reference=ValidationArtifactReference.from_canonical_dict(_object(value["target_reference"])),
+            records=tuple(HistoricalPathSampleRecord.from_canonical_dict(_object(item)) for item in _sequence(value["records"])),
+            available_at=datetime.fromisoformat(str(value["available_at"])),
+            qualification=HistoricalSampleQualification(str(value["qualification"])),
+            limitations=tuple(str(item) for item in _sequence(value["limitations"])),
+            schema_version=str(value["schema_version"]),
+        )
+
 
 def advance_sample_qualification(
     *,
@@ -155,8 +184,15 @@ def advance_sample_qualification(
     registered_at: datetime,
 ) -> HistoricalPathSampleRecord:
     """Monotonic qualification; current Signal can never act as evidence."""
-    if _qualification_rank(qualification) <= _qualification_rank(record.qualification):
-        raise ValueError("Historical sample qualification must advance monotonically")
+    if _qualification_rank(qualification) != _qualification_rank(record.qualification) + 1:
+        raise ValueError("Historical sample qualification must advance exactly one governed state")
+    required_evidence_kind = {
+        HistoricalSampleQualification.PIT_ELIGIBLE: "FORMAL_PIT_EVIDENCE",
+        HistoricalSampleQualification.OOS_ELIGIBLE: "FORMAL_OOS_EVIDENCE",
+        HistoricalSampleQualification.QUALIFIED: "MODEL_GOVERNANCE_APPROVAL",
+    }[qualification]
+    if authority_evidence.artifact_kind != required_evidence_kind:
+        raise ValueError(f"{qualification.value} requires {required_evidence_kind}")
     pit_lineage = tuple(sorted({*record.pit_lineage, authority_evidence}, key=_reference_key))
     reasons = (f"QUALIFICATION_ADVANCED_TO_{qualification.value}",)
     values = _record_payload(
@@ -216,7 +252,7 @@ class InMemoryHistoricalSampleRegistry:
             dataset
             for (stored_target, _version), dataset in self._datasets.items()
             if stored_target == str(target_id)
-            and dataset.available_at <= decision_time.value
+            and dataset.available_at < decision_time.value
             and any(item.sample.symbol == symbol for item in dataset.records)
         ]
         if not matches:
@@ -238,9 +274,7 @@ class InMemoryHistoricalSampleRegistry:
         if dataset is None:
             return (), HistoricalSampleQualification.UNQUALIFIED.value, ("HISTORICAL_SAMPLE_DATASET_NOT_AVAILABLE",)
         samples = tuple(
-            item.sample
-            for item in dataset.records
-            if item.sample.symbol == symbol and item.sample.available_at.value <= decision_time.value
+            item.sample for item in dataset.records if item.sample.symbol == symbol and item.sample.available_at.value < decision_time.value
         )
         reasons = ("HISTORICAL_SAMPLE_DATASET_LOADED",) if samples else ("HISTORICAL_SAMPLES_NOT_AVAILABLE_AT_DECISION_TIME",)
         return samples, dataset.qualification.value, reasons
@@ -309,3 +343,15 @@ def _qualification_rank(item: HistoricalSampleQualification) -> int:
         HistoricalSampleQualification.OOS_ELIGIBLE: 2,
         HistoricalSampleQualification.QUALIFIED: 3,
     }[item]
+
+
+def _object(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Historical Sample payload object required")
+    return value
+
+
+def _sequence(value: object) -> tuple[object, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("Historical Sample payload sequence required")
+    return tuple(value)

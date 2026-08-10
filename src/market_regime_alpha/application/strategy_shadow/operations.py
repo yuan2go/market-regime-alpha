@@ -36,6 +36,18 @@ class StrategyShadowEventKind(str, Enum):
     INCIDENT_RECORDED = "INCIDENT_RECORDED"
     DRIFT_RECORDED = "DRIFT_RECORDED"
     RECOVERED = "RECOVERED"
+    FAILED = "FAILED"
+
+
+class StrategyShadowArtifactKind(str, Enum):
+    POLICY = "POLICY"
+    ENTRY = "ENTRY"
+    FILL = "FILL"
+    POSITION = "POSITION"
+    HOLDING_ASSESSMENT = "HOLDING_ASSESSMENT"
+    EXIT_ASSESSMENT = "EXIT_ASSESSMENT"
+    STRATEGY_OUTCOME = "STRATEGY_OUTCOME"
+    DAILY_REPORT = "DAILY_REPORT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +60,25 @@ class StrategyShadowEvent:
     occurred_at: datetime
     artifact_reference: ValidationArtifactReference | None
     details: tuple[tuple[str, str], ...]
+
+    def __post_init__(self) -> None:
+        if self.sequence <= 0 or self.details != tuple(sorted(set(self.details))):
+            raise ValueError("Strategy Shadow event sequence/details invalid")
+        if canonical_hash(self.identity_payload()) != self.event_hash:
+            raise ValueError("Strategy Shadow event hash mismatch")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "session_id": str(self.session_id),
+            "sequence": self.sequence,
+            "event_kind": self.event_kind.value,
+            "occurred_at": timestamp(self.occurred_at),
+            "artifact_reference": None if self.artifact_reference is None else self.artifact_reference.to_canonical_dict(),
+            "details": [list(item) for item in self.details],
+        }
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {"event_id": str(self.event_id), "event_hash": self.event_hash, **self.identity_payload()}
 
     @classmethod
     def create(
@@ -154,6 +185,9 @@ class StrategyShadowSession:
         details: tuple[tuple[str, str], ...] = (),
         status: StrategyShadowSessionStatus | None = None,
     ) -> StrategyShadowSession:
+        next_status = self.status if status is None else status
+        _validate_transition(self.status, event_kind, next_status)
+        _validate_event_prerequisites(self.events, event_kind)
         event = StrategyShadowEvent.create(
             session_id=self.session_id,
             sequence=len(self.events) + 1,
@@ -162,7 +196,6 @@ class StrategyShadowSession:
             artifact_reference=artifact_reference,
             details=tuple(sorted(set(details))),
         )
-        next_status = self.status if status is None else status
         values = (
             self.trading_date,
             self.scheduled_for,
@@ -208,10 +241,48 @@ class StrategyShadowRepository(Protocol):
     def get(self, session_id: ArtifactId) -> StrategyShadowSession | None: ...
     def save(self, session: StrategyShadowSession, *, expected_revision: int | None) -> None: ...
 
+    def save_with_artifact(
+        self,
+        session: StrategyShadowSession,
+        *,
+        expected_revision: int,
+        artifact: StrategyShadowArtifactRecord,
+    ) -> None: ...
+
+    def save_artifact(self, artifact: StrategyShadowArtifactRecord) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyShadowArtifactRecord:
+    artifact_reference: ValidationArtifactReference
+    artifact_kind: StrategyShadowArtifactKind
+    session_id: ArtifactId | None
+    payload: dict[str, Any]
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        if canonical_hash(self.payload) != self.artifact_reference.content_hash:
+            raise ValueError("Strategy Shadow Artifact payload hash mismatch")
+        if (self.artifact_kind is StrategyShadowArtifactKind.DAILY_REPORT) != (self.session_id is None):
+            raise ValueError("only daily reports are independent of one Strategy Shadow session")
+        expected_reference_kind = {
+            StrategyShadowArtifactKind.POLICY: "STRATEGY_SHADOW_POLICY",
+            StrategyShadowArtifactKind.ENTRY: "SHADOW_ENTRY",
+            StrategyShadowArtifactKind.FILL: "SHADOW_FILL",
+            StrategyShadowArtifactKind.POSITION: "SHADOW_POSITION",
+            StrategyShadowArtifactKind.HOLDING_ASSESSMENT: "HOLDING_ASSESSMENT",
+            StrategyShadowArtifactKind.EXIT_ASSESSMENT: "EXIT_ASSESSMENT",
+            StrategyShadowArtifactKind.STRATEGY_OUTCOME: "STRATEGY_OUTCOME",
+            StrategyShadowArtifactKind.DAILY_REPORT: "STRATEGY_SHADOW_DAILY_REPORT",
+        }[self.artifact_kind]
+        if self.artifact_reference.artifact_kind != expected_reference_kind:
+            raise ValueError(f"{self.artifact_kind.value} requires {expected_reference_kind}")
+
 
 class InMemoryStrategyShadowRepository:
     def __init__(self) -> None:
         self._sessions: dict[ArtifactId, StrategyShadowSession] = {}
+        self._artifacts: dict[ArtifactId, StrategyShadowArtifactRecord] = {}
 
     def get(self, session_id: ArtifactId) -> StrategyShadowSession | None:
         return self._sessions.get(session_id)
@@ -223,12 +294,37 @@ class InMemoryStrategyShadowRepository:
             raise ValueError("Strategy Shadow CAS conflict")
         self._sessions[session.session_id] = session
 
+    def save_with_artifact(
+        self,
+        session: StrategyShadowSession,
+        *,
+        expected_revision: int,
+        artifact: StrategyShadowArtifactRecord,
+    ) -> None:
+        if artifact.session_id != session.session_id:
+            raise ValueError("Strategy Shadow Artifact/session mismatch")
+        self.save(session, expected_revision=expected_revision)
+        self.save_artifact(artifact)
+
+    def save_artifact(self, artifact: StrategyShadowArtifactRecord) -> None:
+        existing = self._artifacts.get(artifact.artifact_reference.artifact_id)
+        if existing is not None and existing != artifact:
+            raise ValueError("Strategy Shadow Artifact identity conflict")
+        self._artifacts[artifact.artifact_reference.artifact_id] = artifact
+
 
 def replay_strategy_shadow(session: StrategyShadowSession) -> StrategyShadowSession:
     if not session.events or session.events[0].event_kind is not StrategyShadowEventKind.SCHEDULED:
         raise ValueError("Strategy Shadow replay requires Scheduled root")
     if session.events[-1].sequence != session.revision:
         raise ValueError("Strategy Shadow revision/event divergence")
+    status = StrategyShadowSessionStatus.SCHEDULED
+    for event in session.events[1:]:
+        next_status = _status_after_event(status, event.event_kind)
+        _validate_transition(status, event.event_kind, next_status)
+        status = next_status
+    if status is not session.status:
+        raise ValueError("Strategy Shadow event replay status divergence")
     if canonical_hash(session.identity_payload()) != session.session_hash:
         raise ValueError("Strategy Shadow replay hash mismatch")
     return session
@@ -320,6 +416,152 @@ def build_daily_report(
     )
 
 
+class StrategyShadowOperations:
+    """Controlled lifecycle over an existing Runtime/Research Shadow lineage."""
+
+    def __init__(self, repository: StrategyShadowRepository) -> None:
+        self._repository = repository
+
+    def schedule(self, **values: Any) -> StrategyShadowSession:
+        session = StrategyShadowSession.schedule(**values)
+        self._repository.save(session, expected_revision=None)
+        return self._repository.get(session.session_id) or session
+
+    def start(self, session_id: ArtifactId, *, expected_revision: int, occurred_at: datetime) -> StrategyShadowSession:
+        return self._append(
+            session_id,
+            expected_revision=expected_revision,
+            event_kind=StrategyShadowEventKind.STARTED,
+            occurred_at=occurred_at,
+            status=StrategyShadowSessionStatus.RUNNING,
+        )
+
+    def record_artifact(
+        self,
+        session_id: ArtifactId,
+        *,
+        expected_revision: int,
+        event_kind: StrategyShadowEventKind,
+        artifact: StrategyShadowArtifactRecord,
+        occurred_at: datetime,
+    ) -> StrategyShadowSession:
+        if event_kind not in {
+            StrategyShadowEventKind.ENTRY_CREATED,
+            StrategyShadowEventKind.FILL_OBSERVED,
+            StrategyShadowEventKind.POSITION_OPENED,
+            StrategyShadowEventKind.HOLDING_ASSESSED,
+            StrategyShadowEventKind.EXIT_ASSESSED,
+            StrategyShadowEventKind.OUTCOME_SETTLED,
+        }:
+            raise ValueError("Strategy Shadow Artifact event kind is invalid")
+        expected_artifact_kind = {
+            StrategyShadowEventKind.ENTRY_CREATED: StrategyShadowArtifactKind.ENTRY,
+            StrategyShadowEventKind.FILL_OBSERVED: StrategyShadowArtifactKind.FILL,
+            StrategyShadowEventKind.POSITION_OPENED: StrategyShadowArtifactKind.POSITION,
+            StrategyShadowEventKind.HOLDING_ASSESSED: StrategyShadowArtifactKind.HOLDING_ASSESSMENT,
+            StrategyShadowEventKind.EXIT_ASSESSED: StrategyShadowArtifactKind.EXIT_ASSESSMENT,
+            StrategyShadowEventKind.OUTCOME_SETTLED: StrategyShadowArtifactKind.STRATEGY_OUTCOME,
+        }[event_kind]
+        if artifact.artifact_kind is not expected_artifact_kind:
+            raise ValueError(f"{event_kind.value} requires {expected_artifact_kind.value} Artifact")
+        current = self._require_revision(session_id, expected_revision)
+        next_status = (
+            StrategyShadowSessionStatus.SETTLED
+            if event_kind is StrategyShadowEventKind.OUTCOME_SETTLED
+            else StrategyShadowSessionStatus.RUNNING
+        )
+        updated = current.append(
+            event_kind=event_kind,
+            occurred_at=occurred_at,
+            artifact_reference=artifact.artifact_reference,
+            status=next_status,
+        )
+        self._repository.save_with_artifact(updated, expected_revision=expected_revision, artifact=artifact)
+        return self._repository.get(session_id) or updated
+
+    def incident(self, session_id: ArtifactId, *, expected_revision: int, occurred_at: datetime, code: str) -> StrategyShadowSession:
+        return self._append(
+            session_id,
+            expected_revision=expected_revision,
+            event_kind=StrategyShadowEventKind.INCIDENT_RECORDED,
+            occurred_at=occurred_at,
+            details=(("code", code),),
+        )
+
+    def drift(self, session_id: ArtifactId, *, expected_revision: int, occurred_at: datetime, code: str) -> StrategyShadowSession:
+        return self._append(
+            session_id,
+            expected_revision=expected_revision,
+            event_kind=StrategyShadowEventKind.DRIFT_RECORDED,
+            occurred_at=occurred_at,
+            details=(("code", code),),
+        )
+
+    def fail(self, session_id: ArtifactId, *, expected_revision: int, occurred_at: datetime, code: str) -> StrategyShadowSession:
+        return self._append(
+            session_id,
+            expected_revision=expected_revision,
+            event_kind=StrategyShadowEventKind.FAILED,
+            occurred_at=occurred_at,
+            details=(("code", code),),
+            status=StrategyShadowSessionStatus.FAILED,
+        )
+
+    def recover(self, session_id: ArtifactId, *, expected_revision: int, occurred_at: datetime, reason: str) -> StrategyShadowSession:
+        return self._append(
+            session_id,
+            expected_revision=expected_revision,
+            event_kind=StrategyShadowEventKind.RECOVERED,
+            occurred_at=occurred_at,
+            details=(("reason", reason),),
+            status=StrategyShadowSessionStatus.RUNNING,
+        )
+
+    def replay(self, session_id: ArtifactId) -> StrategyShadowSession:
+        session = self._repository.get(session_id)
+        if session is None:
+            raise KeyError(str(session_id))
+        return replay_strategy_shadow(session)
+
+    def daily_report(
+        self, *, trading_date: date, sessions: tuple[StrategyShadowSession, ...], generated_at: datetime
+    ) -> StrategyShadowDailyReport:
+        report = build_daily_report(trading_date=trading_date, sessions=sessions, generated_at=generated_at)
+        self._repository.save_artifact(
+            StrategyShadowArtifactRecord(
+                ValidationArtifactReference("STRATEGY_SHADOW_DAILY_REPORT", report.report_id, report.report_hash),
+                StrategyShadowArtifactKind.DAILY_REPORT,
+                None,
+                _daily_report_payload(report),
+                generated_at,
+            )
+        )
+        return report
+
+    def _append(
+        self,
+        session_id: ArtifactId,
+        *,
+        expected_revision: int,
+        event_kind: StrategyShadowEventKind,
+        occurred_at: datetime,
+        details: tuple[tuple[str, str], ...] = (),
+        status: StrategyShadowSessionStatus | None = None,
+    ) -> StrategyShadowSession:
+        current = self._require_revision(session_id, expected_revision)
+        updated = current.append(event_kind=event_kind, occurred_at=occurred_at, details=details, status=status)
+        self._repository.save(updated, expected_revision=expected_revision)
+        return self._repository.get(session_id) or updated
+
+    def _require_revision(self, session_id: ArtifactId, expected_revision: int) -> StrategyShadowSession:
+        current = self._repository.get(session_id)
+        if current is None:
+            raise KeyError(str(session_id))
+        if current.revision != expected_revision:
+            raise ValueError("Strategy Shadow CAS conflict")
+        return current
+
+
 def _session_payload(
     trading_date: date,
     scheduled_for: datetime,
@@ -359,6 +601,94 @@ def _session_payload(
         "created_at": timestamp(created_at),
         "updated_at": timestamp(updated_at),
         "limitations": list(limitations),
+    }
+
+
+def _status_after_event(current: StrategyShadowSessionStatus, event_kind: StrategyShadowEventKind) -> StrategyShadowSessionStatus:
+    if event_kind in {StrategyShadowEventKind.STARTED, StrategyShadowEventKind.RECOVERED}:
+        return StrategyShadowSessionStatus.RUNNING
+    if event_kind is StrategyShadowEventKind.OUTCOME_SETTLED:
+        return StrategyShadowSessionStatus.SETTLED
+    if event_kind is StrategyShadowEventKind.FAILED:
+        return StrategyShadowSessionStatus.FAILED
+    return current
+
+
+def _validate_transition(
+    current: StrategyShadowSessionStatus,
+    event_kind: StrategyShadowEventKind,
+    next_status: StrategyShadowSessionStatus,
+) -> None:
+    if current is StrategyShadowSessionStatus.SETTLED:
+        raise ValueError("settled Strategy Shadow session is terminal")
+    allowed = {
+        StrategyShadowSessionStatus.SCHEDULED: {
+            StrategyShadowEventKind.STARTED,
+            StrategyShadowEventKind.FAILED,
+        },
+        StrategyShadowSessionStatus.RUNNING: {
+            StrategyShadowEventKind.ENTRY_CREATED,
+            StrategyShadowEventKind.FILL_OBSERVED,
+            StrategyShadowEventKind.POSITION_OPENED,
+            StrategyShadowEventKind.HOLDING_ASSESSED,
+            StrategyShadowEventKind.EXIT_ASSESSED,
+            StrategyShadowEventKind.OUTCOME_SETTLED,
+            StrategyShadowEventKind.INCIDENT_RECORDED,
+            StrategyShadowEventKind.DRIFT_RECORDED,
+            StrategyShadowEventKind.RECOVERED,
+            StrategyShadowEventKind.FAILED,
+        },
+        StrategyShadowSessionStatus.FAILED: {
+            StrategyShadowEventKind.RECOVERED,
+            StrategyShadowEventKind.INCIDENT_RECORDED,
+            StrategyShadowEventKind.DRIFT_RECORDED,
+        },
+    }.get(current, set())
+    if event_kind not in allowed or next_status is not _status_after_event(current, event_kind):
+        raise ValueError(f"invalid Strategy Shadow transition {current.value}/{event_kind.value}/{next_status.value}")
+
+
+def _validate_event_prerequisites(
+    events: tuple[StrategyShadowEvent, ...],
+    event_kind: StrategyShadowEventKind,
+) -> None:
+    kinds = tuple(item.event_kind for item in events)
+    requirements = {
+        StrategyShadowEventKind.ENTRY_CREATED: (StrategyShadowEventKind.STARTED,),
+        StrategyShadowEventKind.FILL_OBSERVED: (StrategyShadowEventKind.ENTRY_CREATED,),
+        StrategyShadowEventKind.POSITION_OPENED: (StrategyShadowEventKind.FILL_OBSERVED,),
+        StrategyShadowEventKind.HOLDING_ASSESSED: (StrategyShadowEventKind.POSITION_OPENED,),
+        StrategyShadowEventKind.EXIT_ASSESSED: (StrategyShadowEventKind.HOLDING_ASSESSED,),
+        StrategyShadowEventKind.OUTCOME_SETTLED: (StrategyShadowEventKind.EXIT_ASSESSED,),
+    }
+    required = requirements.get(event_kind, ())
+    if any(item not in kinds for item in required):
+        missing = ",".join(item.value for item in required if item not in kinds)
+        raise ValueError(f"Strategy Shadow {event_kind.value} missing prerequisite {missing}")
+    singletons = {
+        StrategyShadowEventKind.STARTED,
+        StrategyShadowEventKind.ENTRY_CREATED,
+        StrategyShadowEventKind.FILL_OBSERVED,
+        StrategyShadowEventKind.POSITION_OPENED,
+        StrategyShadowEventKind.EXIT_ASSESSED,
+        StrategyShadowEventKind.OUTCOME_SETTLED,
+    }
+    if event_kind in singletons and event_kind in kinds:
+        raise ValueError(f"Strategy Shadow {event_kind.value} already recorded")
+
+
+def _daily_report_payload(report: StrategyShadowDailyReport) -> dict[str, Any]:
+    return {
+        "trading_date": report.trading_date.isoformat(),
+        "session_references": [item.to_canonical_dict() for item in report.session_references],
+        "scheduled_count": report.scheduled_count,
+        "settled_count": report.settled_count,
+        "failed_count": report.failed_count,
+        "incident_count": report.incident_count,
+        "drift_count": report.drift_count,
+        "generated_at": timestamp(report.generated_at),
+        "sustained_prospective_proof": report.sustained_prospective_proof,
+        "limitations": list(report.limitations),
     }
 
 

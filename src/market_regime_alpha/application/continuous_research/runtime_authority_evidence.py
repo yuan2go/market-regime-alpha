@@ -68,6 +68,15 @@ class RuntimeAuthorityEvidence:
 
     def __post_init__(self) -> None:
         require_sha256("evidence_hash", self.evidence_hash)
+        if self.clock_mode is ClockMode.LIVE_TRUSTED and (
+            self.clock_source != "POSTGRESQL_AND_SYSTEM_UTC_CLOCK"
+            or self.runtime_origin is not RuntimeOrigin.LIVE_ACQUISITION
+            or self.origin_source != "BAOSTOCK_TENCENT_CANONICAL_FREE_DATA"
+            or self.observed_at != self.recorded_at
+        ):
+            raise ValueError("LIVE_TRUSTED Runtime evidence requires exact PostgreSQL/host/acquisition authority")
+        if self.runtime_origin is RuntimeOrigin.LIVE_ACQUISITION and self.origin_source != "BAOSTOCK_TENCENT_CANONICAL_FREE_DATA":
+            raise ValueError("LIVE acquisition origin requires the executable Canonical free-data path")
         if canonical_hash(self.identity_payload()) != self.evidence_hash:
             raise ValueError("Runtime Authority evidence hash mismatch")
 

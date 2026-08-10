@@ -376,8 +376,17 @@ def _run_due(
     trading_day = TradingDayAssessment.from_canonical_dict(_load_json_object(args.trading_day_assessment))
     now = _instant(args.at).astimezone(UTC)
     operational_now = _operational_now()
-    if args.runtime_clock_mode == "LIVE" and abs((now - operational_now).total_seconds()) > 5:
-        raise ValueError("LIVE --at must match the trusted runtime clock within five seconds")
+    with factory.connection(read_only=True) as connection:
+        row = connection.execute("SELECT clock_timestamp()").fetchone()
+    if row is None or not isinstance(row[0], datetime):
+        raise ValueError("PostgreSQL clock authority is unavailable")
+    postgres_now = row[0].astimezone(UTC)
+    if args.runtime_clock_mode == "LIVE" and (
+        abs((now - operational_now).total_seconds()) > 5
+        or abs((now - postgres_now).total_seconds()) > 5
+        or abs((operational_now - postgres_now).total_seconds()) > 5
+    ):
+        raise ValueError("LIVE --at, host clock and PostgreSQL clock must agree within five seconds")
     configuration_path = args.runtime_configuration.resolve()
     configuration = load_controlled_runtime_configuration(configuration_path)
     if (
@@ -559,10 +568,12 @@ def _run_due(
                 tick_id=tick_id,
                 clock_mode=(ClockMode.LIVE_TRUSTED if args.runtime_clock_mode == "LIVE" else ClockMode.SIMULATED),
                 runtime_origin=RuntimeOrigin.LIVE_ACQUISITION,
-                clock_source=("SYSTEM_UTC_CLOCK" if args.runtime_clock_mode == "LIVE" else "EXPLICIT_SIMULATED_RUNTIME_CLOCK"),
+                clock_source=(
+                    "POSTGRESQL_AND_SYSTEM_UTC_CLOCK" if args.runtime_clock_mode == "LIVE" else "EXPLICIT_SIMULATED_RUNTIME_CLOCK"
+                ),
                 origin_source="BAOSTOCK_TENCENT_CANONICAL_FREE_DATA",
-                observed_at=now,
-                recorded_at=max(runtime_clock(), now),
+                observed_at=(postgres_now if args.runtime_clock_mode == "LIVE" else now),
+                recorded_at=(postgres_now if args.runtime_clock_mode == "LIVE" else max(postgres_now, now)),
                 code_revision=run_command.code_revision,
             )
         )

@@ -192,6 +192,7 @@ class StrategyOutcome:
     net_return: Decimal
     mfe: Decimal | None
     mae: Decimal | None
+    exit_rule_kinds: tuple[HoldingRuleKind, ...]
     settled: bool
     limitations: tuple[str, ...]
 
@@ -216,6 +217,7 @@ class StrategyOutcome:
             self.net_return,
             self.mfe,
             self.mae,
+            self.exit_rule_kinds,
             self.limitations,
         )
 
@@ -468,6 +470,7 @@ def settle_strategy_outcome(
         net,
         mfe,
         mae,
+        exit_assessment.triggered_rules,
         limitations,
     )
     artifact_id, digest = content_identity("strategy-shadow-outcome", payload)
@@ -486,6 +489,7 @@ def settle_strategy_outcome(
         net,
         mfe,
         mae,
+        exit_assessment.triggered_rules,
         True,
         limitations,
     )
@@ -504,6 +508,7 @@ def _outcome_payload(
     net: Decimal,
     mfe: Decimal | None,
     mae: Decimal | None,
+    exit_rule_kinds: tuple[HoldingRuleKind, ...],
     limitations: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
@@ -520,6 +525,7 @@ def _outcome_payload(
         "net_return": str(net),
         "mfe": None if mfe is None else str(mfe),
         "mae": None if mae is None else str(mae),
+        "exit_rule_kinds": [item.value for item in exit_rule_kinds],
         "settled": True,
         "limitations": list(limitations),
     }

@@ -38,8 +38,51 @@ class CapacityParameter:
         require_text("name", self.name)
         if self.provenance is CapacityValueProvenance.CALIBRATED_PARAMETER and self.evidence_reference is None:
             raise ValueError("calibrated Capacity parameter requires evidence")
+        if (
+            self.provenance is CapacityValueProvenance.CALIBRATED_PARAMETER
+            and self.evidence_reference is not None
+            and self.evidence_reference.artifact_kind != "CALIBRATION_ARTIFACT"
+        ):
+            raise ValueError("calibrated Capacity parameter requires Calibration Artifact")
         if self.provenance is CapacityValueProvenance.OBSERVED_FACT:
             raise ValueError("configuration parameter cannot masquerade as observed fact")
+
+
+@dataclass(frozen=True, slots=True)
+class LiquidityCapacityProtocol:
+    protocol_id: ArtifactId
+    protocol_hash: str
+    protocol_version: str
+    parameters: tuple[CapacityParameter, ...]
+    adv_short_sessions: int
+    adv_long_sessions: int
+    created_at: datetime
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        protocol_version: str,
+        parameters: tuple[CapacityParameter, ...],
+        created_at: datetime,
+        adv_short_sessions: int = 5,
+        adv_long_sessions: int = 20,
+    ) -> LiquidityCapacityProtocol:
+        ordered = tuple(sorted(parameters, key=lambda item: item.name))
+        if len({item.name for item in ordered}) != len(ordered):
+            raise ValueError("Liquidity/Capacity parameters must be unique")
+        if adv_short_sessions != 5 or adv_long_sessions != 20:
+            raise ValueError("Current Liquidity/Capacity contract requires ADV5 and ADV20")
+        payload = {
+            "schema": "liquidity-capacity-protocol/v1",
+            "protocol_version": protocol_version,
+            "parameters": [_parameter_payload(item) for item in ordered],
+            "adv_short_sessions": adv_short_sessions,
+            "adv_long_sessions": adv_long_sessions,
+            "created_at": timestamp(created_at),
+        }
+        artifact_id, digest = content_identity("liquidity-capacity-protocol", payload)
+        return cls(artifact_id, digest, protocol_version, ordered, adv_short_sessions, adv_long_sessions, created_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +92,7 @@ class LiquidityCapacityAssessment:
     symbol: str
     as_of_date: date
     market_data_reference: ValidationArtifactReference
+    protocol_reference: ValidationArtifactReference
     adv5: Decimal | None
     adv20: Decimal | None
     median_amount: Decimal | None
@@ -100,9 +144,11 @@ class LiquidityCapacityAssessment:
         bars: tuple[CanonicalMarketBar, ...],
         requested_position: Decimal,
         requested_order: Decimal,
-        parameters: tuple[CapacityParameter, ...],
+        protocol: LiquidityCapacityProtocol,
         created_at: datetime,
     ) -> LiquidityCapacityAssessment:
+        parameters = protocol.parameters
+        protocol_reference = ValidationArtifactReference("LIQUIDITY_CAPACITY_PROTOCOL", protocol.protocol_id, protocol.protocol_hash)
         scoped = tuple(
             sorted((item for item in bars if item.symbol == symbol and item.market_date <= as_of_date), key=lambda item: item.market_date)
         )
@@ -140,11 +186,12 @@ class LiquidityCapacityAssessment:
             reasons.add("SLIPPAGE_PARAMETER_UNCALIBRATED")
         calibrated = tuple(sorted(item.name for item in parameters if item.provenance is CapacityValueProvenance.CALIBRATED_PARAMETER))
         assumptions = tuple(sorted(item.name for item in parameters if item.provenance is CapacityValueProvenance.ENGINEERING_ASSUMPTION))
-        observed = ("adv5", "adv20", "limit_state", "median_amount", "suspended", "turnover_rate")
+        observed = tuple(sorted(("adv5", "adv20", "limit_state", "median_amount", "suspended", "turnover_rate")))
         values: dict[str, Any] = {
             "symbol": symbol,
             "as_of_date": as_of_date.isoformat(),
             "market_data_reference": market_data_reference.to_canonical_dict(),
+            "protocol_reference": protocol_reference.to_canonical_dict(),
             "adv5": decimal_text(adv5),
             "adv20": decimal_text(adv20),
             "median_amount": decimal_text(median_amount),
@@ -176,6 +223,7 @@ class LiquidityCapacityAssessment:
             symbol,
             as_of_date,
             market_data_reference,
+            protocol_reference,
             adv5,
             adv20,
             median_amount,
@@ -205,6 +253,7 @@ class LiquidityCapacityAssessment:
             "symbol": self.symbol,
             "as_of_date": self.as_of_date.isoformat(),
             "market_data_reference": self.market_data_reference.to_canonical_dict(),
+            "protocol_reference": self.protocol_reference.to_canonical_dict(),
             "adv5": decimal_text(self.adv5),
             "adv20": decimal_text(self.adv20),
             "median_amount": decimal_text(self.median_amount),

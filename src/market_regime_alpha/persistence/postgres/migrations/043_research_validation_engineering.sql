@@ -45,7 +45,7 @@ CREATE TABLE historical_path_sample_record (
     record_id text PRIMARY KEY,
     record_hash text NOT NULL UNIQUE CHECK (record_hash ~ '^sha256:[0-9a-f]{64}$'),
     dataset_id text NOT NULL REFERENCES research_validation_artifact(artifact_id) ON DELETE RESTRICT,
-    sample_id text NOT NULL UNIQUE,
+    sample_id text NOT NULL,
     symbol text NOT NULL,
     target_id text NOT NULL,
     sample_decision_time timestamptz NOT NULL,
@@ -56,6 +56,9 @@ CREATE TABLE historical_path_sample_record (
     payload_json jsonb NOT NULL CHECK (jsonb_typeof(payload_json) = 'object'),
     CHECK (available_at > sample_decision_time)
 );
+
+CREATE UNIQUE INDEX historical_path_sample_transition_idx
+ON historical_path_sample_record(sample_id, qualification);
 
 CREATE INDEX historical_path_sample_lookup_idx
 ON historical_path_sample_record(target_id, symbol, available_at);
