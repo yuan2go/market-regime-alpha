@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from math import sqrt
 from random import Random
 from statistics import fmean, pstdev
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from market_regime_alpha.application.research_evaluation.targets import OutcomeTargetProtocol
 from market_regime_alpha.application.research_validation.common import (
@@ -36,6 +36,11 @@ class MultipleTestingMethod(str, Enum):
     BENJAMINI_HOCHBERG = "BENJAMINI_HOCHBERG"
 
 
+class EvaluationMetricStatus(str, Enum):
+    ESTIMATED = "ESTIMATED"
+    NOT_ESTIMABLE = "NOT_ESTIMABLE"
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluationWindow:
     window_id: str
@@ -60,8 +65,11 @@ class FormalEvaluationProtocol:
     embargo_sessions: int
     purge_overlapping_labels: bool
     bootstrap_iterations: int
+    bootstrap_block_sessions: int
     confidence_level: Decimal
     multiple_testing_method: MultipleTestingMethod
+    hypothesis_family_id: str
+    top_k: int
     sensitivity_return_multipliers: tuple[Decimal, ...]
     locked_at: datetime
 
@@ -73,8 +81,11 @@ class FormalEvaluationProtocol:
         target_protocol: OutcomeTargetProtocol,
         windows: tuple[EvaluationWindow, ...],
         bootstrap_iterations: int,
+        bootstrap_block_sessions: int = 1,
         confidence_level: Decimal,
         multiple_testing_method: MultipleTestingMethod,
+        hypothesis_family_id: str | None = None,
+        top_k: int = 5,
         locked_at: datetime,
         sensitivity_return_multipliers: tuple[Decimal, ...] = (
             Decimal("0.9"),
@@ -85,8 +96,15 @@ class FormalEvaluationProtocol:
         ordered = tuple(sorted(windows, key=lambda item: (item.fold, item.partition.value, item.start_date)))
         if not ordered or len({item.window_id for item in ordered}) != len(ordered):
             raise ValueError("Formal Evaluation windows must be non-empty and unique")
-        if not Decimal("0") < confidence_level < Decimal("1") or bootstrap_iterations <= 0:
+        if (
+            not Decimal("0") < confidence_level < Decimal("1")
+            or bootstrap_iterations <= 0
+            or bootstrap_block_sessions <= 0
+            or top_k <= 0
+        ):
             raise ValueError("Formal Evaluation statistics configuration is invalid")
+        family_id = hypothesis_family_id or f"ENGINEERING:{protocol_version}"
+        require_text("hypothesis_family_id", family_id)
         sensitivity = tuple(sorted(set(sensitivity_return_multipliers)))
         if not sensitivity or any(value <= 0 for value in sensitivity) or Decimal("1") not in sensitivity:
             raise ValueError("Formal Evaluation sensitivity requires positive multipliers including baseline 1")
@@ -99,8 +117,11 @@ class FormalEvaluationProtocol:
             ordered,
             embargo,
             bootstrap_iterations,
+            bootstrap_block_sessions,
             confidence_level,
             multiple_testing_method,
+            family_id,
+            top_k,
             sensitivity,
             locked_at,
         )
@@ -114,8 +135,11 @@ class FormalEvaluationProtocol:
             embargo,
             True,
             bootstrap_iterations,
+            bootstrap_block_sessions,
             confidence_level,
             multiple_testing_method,
+            family_id,
+            top_k,
             sensitivity,
             locked_at,
         )
@@ -145,6 +169,12 @@ class EvaluationObservation:
     market_cap_slice: str
     theme_slice: str
 
+    def __post_init__(self) -> None:
+        require_text("observation_id", self.observation_id)
+        require_text("symbol", self.symbol)
+        if self.label_end_date < self.session_date:
+            raise ValueError("Evaluation label cannot end before its session")
+
 
 @dataclass(frozen=True, slots=True)
 class EvaluationMetric:
@@ -155,11 +185,30 @@ class EvaluationMetric:
     slice_kind: str
     slice_value: str
     sample_count: int
-    estimate: Decimal
-    confidence_low: Decimal
-    confidence_high: Decimal
-    raw_p_value: Decimal
-    adjusted_p_value: Decimal
+    status: EvaluationMetricStatus
+    estimate: Decimal | None
+    confidence_low: Decimal | None
+    confidence_high: Decimal | None
+    raw_p_value: Decimal | None
+    adjusted_p_value: Decimal | None
+    hypothesis_family_id: str
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        require_text("metric_name", self.metric_name)
+        require_text("hypothesis_family_id", self.hypothesis_family_id)
+        values = (
+            self.estimate,
+            self.confidence_low,
+            self.confidence_high,
+            self.raw_p_value,
+            self.adjusted_p_value,
+        )
+        if self.status is EvaluationMetricStatus.ESTIMATED:
+            if any(value is None for value in values) or self.reason_codes:
+                raise ValueError("estimated Evaluation metric requires complete statistics")
+        elif any(value is not None for value in values) or not self.reason_codes:
+            raise ValueError("NOT_ESTIMABLE metric requires reasons and no statistics")
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +226,7 @@ class FormalEvaluationResult:
     reason_codes: tuple[str, ...]
     created_at: datetime
     limitations: tuple[str, ...]
-    schema_version: str = "formal-evaluation-result/v1"
+    schema_version: str = "formal-evaluation-result/v2"
 
     def __post_init__(self) -> None:
         require_sha256("result_hash", self.result_hash)
@@ -211,7 +260,7 @@ class FormalEvaluationResult:
         )
 
 
-MetricFunction = Callable[[tuple[EvaluationObservation, ...]], Decimal]
+MetricFunction = Callable[[tuple[EvaluationObservation, ...]], Decimal | None]
 
 
 def run_formal_evaluation(
@@ -259,12 +308,40 @@ def run_formal_evaluation(
     metric_specs: tuple[tuple[str, MetricFunction], ...] = (
         ("IC", _ic),
         ("RANK_IC", _rank_ic),
-        ("HIT_RATE", _hit_rate),
+        ("ICIR", _icir),
+        ("POSITIVE_IC_RATIO", _positive_ic_ratio),
+        ("TOP_K_RETURN", lambda values: _top_k_return(values, protocol.top_k)),
+        ("SPREAD", lambda values: _spread(values, protocol.top_k)),
+        ("HIT_RATE", lambda values: _hit_rate(values, protocol.top_k)),
         ("RETURN", _return),
         ("MFE", _mfe),
         ("MAE", _mae),
+        ("TURNOVER", lambda values: _turnover(values, protocol.top_k)),
+        ("DRAWDOWN", lambda values: _drawdown(values, protocol.top_k)),
+        (
+            "INCREMENTAL_LIFT",
+            lambda values: _incremental_lift(values, protocol.top_k),
+        ),
     )
-    raw: list[tuple[int, EvaluationPartition, Decimal, str, str, str, int, Decimal, Decimal, Decimal, Decimal]] = []
+    raw: list[
+        tuple[
+            int,
+            EvaluationPartition,
+            Decimal,
+            str,
+            str,
+            str,
+            int,
+            EvaluationMetricStatus,
+            Decimal | None,
+            Decimal | None,
+            Decimal | None,
+            Decimal | None,
+            Decimal | None,
+            str,
+            tuple[str, ...],
+        ]
+    ] = []
     fold_partitions = sorted(
         {(window.fold, window.partition) for _observation, window in admitted},
         key=lambda item: (item[0], item[1].value),
@@ -277,14 +354,34 @@ def run_formal_evaluation(
                 for slice_value, values in groups.items():
                     for metric_name, function in metric_specs:
                         available = _metric_available(metric_name, values)
-                        if not available:
-                            continue
                         estimate = function(available)
+                        if estimate is None:
+                            raw.append(
+                                (
+                                    fold,
+                                    partition,
+                                    multiplier,
+                                    metric_name,
+                                    slice_kind,
+                                    slice_value,
+                                    len(available),
+                                    EvaluationMetricStatus.NOT_ESTIMABLE,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    protocol.hypothesis_family_id,
+                                    (_not_estimable_reason(metric_name),),
+                                )
+                            )
+                            continue
                         low, high, p_value = _bootstrap(
                             function,
                             available,
                             protocol.bootstrap_iterations,
                             protocol.confidence_level,
+                            block_sessions=protocol.bootstrap_block_sessions,
                             seed=f"{fold}:{partition.value}:{multiplier}:{slice_kind}:{slice_value}:{metric_name}",
                         )
                         raw.append(
@@ -296,14 +393,28 @@ def run_formal_evaluation(
                                 slice_kind,
                                 slice_value,
                                 len(available),
+                                EvaluationMetricStatus.ESTIMATED,
                                 estimate,
                                 low,
                                 high,
                                 p_value,
+                                None,
+                                protocol.hypothesis_family_id,
+                                (),
                             )
                         )
-    adjusted = _adjust_p_values([item[-1] for item in raw], protocol.multiple_testing_method)
-    metrics = tuple(EvaluationMetric(*item, adjusted[index]) for index, item in enumerate(raw))
+    estimable_indices = [
+        index
+        for index, item in enumerate(raw)
+        if item[7] is EvaluationMetricStatus.ESTIMATED
+    ]
+    adjusted = _adjust_p_values(
+        [cast(Decimal, raw[index][11]) for index in estimable_indices],
+        protocol.multiple_testing_method,
+    )
+    for index, adjusted_value in zip(estimable_indices, adjusted, strict=True):
+        raw[index] = (*raw[index][:12], adjusted_value, *raw[index][13:])
+    metrics = tuple(EvaluationMetric(*item) for item in raw)
     reasons: tuple[str, ...]
     limitations: tuple[str, ...]
     reason_set = {
@@ -360,13 +471,27 @@ def _admit_observations(
             continue
         observation_admitted = False
         for window in windows:
+            partition_order = {
+                EvaluationPartition.TRAIN: 0,
+                EvaluationPartition.VALIDATION: 1,
+                EvaluationPartition.LOCKED_OOS: 2,
+            }
             future_windows = [
-                item for item in protocol.windows if item.fold == window.fold and item.partition is not EvaluationPartition.TRAIN
+                item
+                for item in protocol.windows
+                if item.fold == window.fold
+                and partition_order[item.partition] == partition_order[window.partition] + 1
             ]
             boundary = min((item.start_date for item in future_windows), default=None)
-            if window.partition is EvaluationPartition.TRAIN and boundary is not None:
-                train_dates = sorted({item.session_date for item in observations if window.start_date <= item.session_date < boundary})
-                embargo_dates = set(train_dates[-protocol.embargo_sessions :])
+            if boundary is not None:
+                partition_dates = sorted(
+                    {
+                        item.session_date
+                        for item in observations
+                        if window.start_date <= item.session_date <= window.end_date
+                    }
+                )
+                embargo_dates = set(partition_dates[-protocol.embargo_sessions :])
                 if observation.label_end_date >= boundary or observation.session_date in embargo_dates:
                     continue
             admitted.append((observation, window))
@@ -437,35 +562,179 @@ def _metric_available(name: str, values: tuple[EvaluationObservation, ...]) -> t
     return values
 
 
-def _ic(values: tuple[EvaluationObservation, ...]) -> Decimal:
-    return _correlation([float(item.score) for item in values], [float(item.realized_return) for item in values])
+def _ic(values: tuple[EvaluationObservation, ...]) -> Decimal | None:
+    return _mean_optional(_daily_correlations(values, ranked=False))
 
 
-def _rank_ic(values: tuple[EvaluationObservation, ...]) -> Decimal:
-    return _correlation(_ranks([float(item.score) for item in values]), _ranks([float(item.realized_return) for item in values]))
+def _rank_ic(values: tuple[EvaluationObservation, ...]) -> Decimal | None:
+    return _mean_optional(_daily_correlations(values, ranked=True))
 
 
-def _hit_rate(values: tuple[EvaluationObservation, ...]) -> Decimal:
-    return Decimal(sum(item.realized_return > 0 for item in values)) / Decimal(len(values))
+def _icir(values: tuple[EvaluationObservation, ...]) -> Decimal | None:
+    daily = _daily_correlations(values, ranked=False)
+    if len(daily) < 2:
+        return None
+    deviation = pstdev(float(item) for item in daily)
+    if deviation == 0:
+        return None
+    return Decimal(str(fmean(float(item) for item in daily) / deviation))
 
 
-def _return(values: tuple[EvaluationObservation, ...]) -> Decimal:
-    return sum((item.realized_return for item in values), Decimal("0")) / Decimal(len(values))
+def _positive_ic_ratio(values: tuple[EvaluationObservation, ...]) -> Decimal | None:
+    daily = _daily_correlations(values, ranked=False)
+    if not daily:
+        return None
+    return Decimal(sum(item > 0 for item in daily)) / Decimal(len(daily))
 
 
-def _mfe(values: tuple[EvaluationObservation, ...]) -> Decimal:
-    return sum((item.mfe for item in values if item.mfe is not None), Decimal("0")) / Decimal(len(values))
+def _top_k_return(
+    values: tuple[EvaluationObservation, ...], top_k: int
+) -> Decimal | None:
+    daily = [
+        _mean(tuple(item.realized_return for item in ordered[:top_k]))
+        for ordered in _ordered_daily(values)
+        if ordered
+    ]
+    return _mean_optional(tuple(daily))
 
 
-def _mae(values: tuple[EvaluationObservation, ...]) -> Decimal:
-    return sum((item.mae for item in values if item.mae is not None), Decimal("0")) / Decimal(len(values))
+def _spread(
+    values: tuple[EvaluationObservation, ...], top_k: int
+) -> Decimal | None:
+    daily: list[Decimal] = []
+    for ordered in _ordered_daily(values):
+        count = min(top_k, len(ordered))
+        if count == 0:
+            continue
+        daily.append(
+            _mean(tuple(item.realized_return for item in ordered[:count]))
+            - _mean(tuple(item.realized_return for item in ordered[-count:]))
+        )
+    return _mean_optional(tuple(daily))
+
+
+def _hit_rate(
+    values: tuple[EvaluationObservation, ...], top_k: int
+) -> Decimal | None:
+    selected = tuple(
+        item
+        for ordered in _ordered_daily(values)
+        for item in ordered[: min(top_k, len(ordered))]
+    )
+    if not selected:
+        return None
+    return Decimal(sum(item.realized_return > 0 for item in selected)) / Decimal(
+        len(selected)
+    )
+
+
+def _return(values: tuple[EvaluationObservation, ...]) -> Decimal | None:
+    return None if not values else _mean(tuple(item.realized_return for item in values))
+
+
+def _mfe(values: tuple[EvaluationObservation, ...]) -> Decimal | None:
+    return (
+        None
+        if not values
+        else _mean(tuple(item.mfe for item in values if item.mfe is not None))
+    )
+
+
+def _mae(values: tuple[EvaluationObservation, ...]) -> Decimal | None:
+    return (
+        None
+        if not values
+        else _mean(tuple(item.mae for item in values if item.mae is not None))
+    )
+
+
+def _turnover(
+    values: tuple[EvaluationObservation, ...], top_k: int
+) -> Decimal | None:
+    selected = [
+        {item.symbol for item in ordered[: min(top_k, len(ordered))]}
+        for ordered in _ordered_daily(values)
+    ]
+    if len(selected) < 2:
+        return None
+    values_by_date = tuple(
+        Decimal(len(current.symmetric_difference(previous)))
+        / Decimal(max(1, len(current | previous)))
+        for previous, current in zip(selected, selected[1:])
+    )
+    return _mean(values_by_date)
+
+
+def _drawdown(
+    values: tuple[EvaluationObservation, ...], top_k: int
+) -> Decimal | None:
+    returns = tuple(
+        _mean(tuple(item.realized_return for item in ordered[: min(top_k, len(ordered))]))
+        for ordered in _ordered_daily(values)
+        if ordered
+    )
+    if not returns:
+        return None
+    wealth = peak = Decimal("1")
+    drawdown = Decimal("0")
+    for value in returns:
+        wealth *= Decimal("1") + value
+        peak = max(peak, wealth)
+        drawdown = min(drawdown, wealth / peak - Decimal("1"))
+    return drawdown
+
+
+def _incremental_lift(
+    values: tuple[EvaluationObservation, ...], top_k: int
+) -> Decimal | None:
+    top = _top_k_return(values, top_k)
+    if top is None:
+        return None
+    daily_baseline = tuple(
+        _mean(tuple(item.realized_return for item in ordered))
+        for ordered in _ordered_daily(values)
+        if ordered
+    )
+    baseline = _mean_optional(daily_baseline)
+    return None if baseline is None else top - baseline
 
 
 def _bootstrap(
-    function: MetricFunction, values: tuple[EvaluationObservation, ...], iterations: int, confidence: Decimal, *, seed: str
+    function: MetricFunction,
+    values: tuple[EvaluationObservation, ...],
+    iterations: int,
+    confidence: Decimal,
+    *,
+    block_sessions: int,
+    seed: str,
 ) -> tuple[Decimal, Decimal, Decimal]:
+    sessions = _group_by_session(values)
+    if not sessions:
+        raise ValueError("cluster bootstrap requires trading-date observations")
     random = Random(seed)
-    estimates = sorted(function(tuple(random.choice(values) for _ in values)) for _ in range(iterations))
+    estimates: list[Decimal] = []
+    session_dates = tuple(sorted(sessions))
+    for _iteration in range(iterations):
+        sampled: list[EvaluationObservation] = []
+        sample_slot = 0
+        while sample_slot < len(session_dates):
+            start = random.randrange(len(session_dates))
+            for offset in range(block_sessions):
+                if sample_slot >= len(session_dates):
+                    break
+                source_date = session_dates[(start + offset) % len(session_dates)]
+                synthetic_date = date.min + timedelta(days=sample_slot)
+                sampled.extend(
+                    replace(item, session_date=synthetic_date)
+                    for item in sessions[source_date]
+                )
+                sample_slot += 1
+        estimate = function(tuple(sampled))
+        if estimate is not None:
+            estimates.append(estimate)
+    if not estimates:
+        raise ValueError("cluster bootstrap produced no estimable draws")
+    estimates.sort()
     alpha = (Decimal("1") - confidence) / Decimal("2")
     low = estimates[min(len(estimates) - 1, int(alpha * len(estimates)))]
     high = estimates[min(len(estimates) - 1, int((Decimal("1") - alpha) * len(estimates)))]
@@ -487,9 +756,9 @@ def _adjust_p_values(values: list[Decimal], method: MultipleTestingMethod) -> li
     return adjusted
 
 
-def _correlation(left: list[float], right: list[float]) -> Decimal:
+def _correlation(left: list[float], right: list[float]) -> Decimal | None:
     if len(left) < 2 or pstdev(left) == 0 or pstdev(right) == 0:
-        return Decimal("0")
+        return None
     lm, rm = fmean(left), fmean(right)
     denominator = sqrt(sum((item - lm) ** 2 for item in left) * sum((item - rm) ** 2 for item in right))
     return Decimal(str(sum((x - lm) * (y - rm) for x, y in zip(left, right, strict=True)) / denominator))
@@ -498,9 +767,77 @@ def _correlation(left: list[float], right: list[float]) -> Decimal:
 def _ranks(values: list[float]) -> list[float]:
     ordered = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
     result = [0.0] * len(values)
-    for rank, (index, _value) in enumerate(ordered, start=1):
-        result[index] = float(rank)
+    index = 0
+    while index < len(ordered):
+        end = index + 1
+        while end < len(ordered) and ordered[end][1] == ordered[index][1]:
+            end += 1
+        rank = (index + 1 + end) / 2
+        for original, _value in ordered[index:end]:
+            result[original] = rank
+        index = end
     return result
+
+
+def _group_by_session(
+    values: tuple[EvaluationObservation, ...],
+) -> dict[date, tuple[EvaluationObservation, ...]]:
+    grouped: dict[date, list[EvaluationObservation]] = {}
+    for item in values:
+        grouped.setdefault(item.session_date, []).append(item)
+    return {
+        session: tuple(sorted(items, key=lambda item: item.symbol))
+        for session, items in grouped.items()
+    }
+
+
+def _ordered_daily(
+    values: tuple[EvaluationObservation, ...],
+) -> tuple[tuple[EvaluationObservation, ...], ...]:
+    grouped = _group_by_session(values)
+    return tuple(
+        tuple(
+            sorted(
+                grouped[session],
+                key=lambda item: (-item.score, item.symbol),
+            )
+        )
+        for session in sorted(grouped)
+    )
+
+
+def _daily_correlations(
+    values: tuple[EvaluationObservation, ...], *, ranked: bool
+) -> tuple[Decimal, ...]:
+    correlations: list[Decimal] = []
+    for observations in _group_by_session(values).values():
+        scores = [float(item.score) for item in observations]
+        returns = [float(item.realized_return) for item in observations]
+        if ranked:
+            scores = _ranks(scores)
+            returns = _ranks(returns)
+        correlation = _correlation(scores, returns)
+        if correlation is not None:
+            correlations.append(correlation)
+    return tuple(correlations)
+
+
+def _mean(values: tuple[Decimal, ...]) -> Decimal:
+    if not values:
+        raise ValueError("mean requires values")
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _mean_optional(values: tuple[Decimal, ...]) -> Decimal | None:
+    return None if not values else _mean(values)
+
+
+def _not_estimable_reason(metric_name: str) -> str:
+    if metric_name in {"IC", "RANK_IC", "ICIR", "POSITIVE_IC_RATIO"}:
+        return "INSUFFICIENT_DAILY_CROSS_SECTIONS"
+    if metric_name == "TURNOVER":
+        return "INSUFFICIENT_ORDERED_TRADING_DATES"
+    return "INSUFFICIENT_METRIC_OBSERVATIONS"
 
 
 def _validate_fold_windows(windows: tuple[EvaluationWindow, ...]) -> None:
@@ -521,13 +858,16 @@ def _protocol_payload(
     windows: tuple[EvaluationWindow, ...],
     embargo: int,
     iterations: int,
+    block_sessions: int,
     confidence: Decimal,
     method: MultipleTestingMethod,
+    hypothesis_family_id: str,
+    top_k: int,
     sensitivity: tuple[Decimal, ...],
     locked_at: datetime,
 ) -> dict[str, Any]:
     return {
-        "schema": "formal-evaluation-protocol/v1",
+        "schema": "formal-evaluation-protocol/v2",
         "protocol_version": version,
         "target_protocol_reference": target.to_canonical_dict(),
         "windows": [
@@ -543,8 +883,12 @@ def _protocol_payload(
         "embargo_sessions": embargo,
         "purge_overlapping_labels": True,
         "bootstrap_iterations": iterations,
+        "bootstrap_method": "TRADING_DATE_MOVING_BLOCK",
+        "bootstrap_block_sessions": block_sessions,
         "confidence_level": str(confidence),
         "multiple_testing_method": method.value,
+        "hypothesis_family_id": hypothesis_family_id,
+        "top_k": top_k,
         "sensitivity_return_multipliers": [str(item) for item in sensitivity],
         "locked_at": timestamp(locked_at),
     }
@@ -564,7 +908,7 @@ def _result_payload(
     limitations: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
-        "schema_version": "formal-evaluation-result/v1",
+        "schema_version": "formal-evaluation-result/v2",
         "protocol_reference": protocol.to_canonical_dict(),
         "pit_evidence_reference": None if pit is None else pit.to_canonical_dict(),
         "panel_reference": panel.to_canonical_dict(),
@@ -578,11 +922,14 @@ def _result_payload(
                 "slice_kind": item.slice_kind,
                 "slice_value": item.slice_value,
                 "sample_count": item.sample_count,
-                "estimate": str(item.estimate),
-                "confidence_low": str(item.confidence_low),
-                "confidence_high": str(item.confidence_high),
-                "raw_p_value": str(item.raw_p_value),
-                "adjusted_p_value": str(item.adjusted_p_value),
+                "status": item.status.value,
+                "estimate": None if item.estimate is None else str(item.estimate),
+                "confidence_low": None if item.confidence_low is None else str(item.confidence_low),
+                "confidence_high": None if item.confidence_high is None else str(item.confidence_high),
+                "raw_p_value": None if item.raw_p_value is None else str(item.raw_p_value),
+                "adjusted_p_value": None if item.adjusted_p_value is None else str(item.adjusted_p_value),
+                "hypothesis_family_id": item.hypothesis_family_id,
+                "reason_codes": list(item.reason_codes),
             }
             for item in metrics
         ],

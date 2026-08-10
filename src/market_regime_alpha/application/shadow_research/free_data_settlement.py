@@ -37,6 +37,14 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
 from market_regime_alpha.application.research_evaluation.targets import (
     engineering_multi_horizon_protocol,
 )
+from market_regime_alpha.application.research_validation.factor_research import (
+    analyze_factor_deduplication,
+    build_factor_research_catalog,
+    publish_factor_research_artifact,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
+)
 from market_regime_alpha.application.shadow_research.attestation import (
     ClockMode,
     RuntimeOrigin,
@@ -290,6 +298,10 @@ class FreeDataSettlementOperator:
             factory,
             apply_migrations=False,
         )
+        self._validation = PostgresResearchValidationRepository(
+            factory,
+            apply_migrations=False,
+        )
         self._acquisition = acquisition or FreeOutcomeDatasetBuilder(clock=clock)
 
     def settle_day(
@@ -398,6 +410,45 @@ class FreeDataSettlementOperator:
             artifact_root=artifact_root / "free-data-settlement" / "research-evaluation",
             created_at=acquisition.retrieved_at,
         )
+        catalog = build_factor_research_catalog(
+            enrichment=enrichment,
+            created_at=acquisition.retrieved_at,
+        )
+        deduplication = analyze_factor_deduplication(
+            enrichment=enrichment,
+            catalog=catalog,
+            analyzed_at=acquisition.retrieved_at,
+        )
+        factor_root = (
+            artifact_root
+            / "free-data-settlement"
+            / "research-evaluation"
+            / "factor-research"
+        )
+        catalog_path = publish_factor_research_artifact(
+            root=factor_root,
+            artifact=catalog,
+        )
+        deduplication_path = publish_factor_research_artifact(
+            root=factor_root,
+            artifact=deduplication,
+        )
+        self._validation.record(
+            artifact_id=catalog.catalog_id,
+            artifact_hash=catalog.catalog_hash,
+            artifact_kind="FACTOR_RESEARCH_CATALOG",
+            evidence_authority="EXPLORATORY",
+            payload=catalog.identity_payload(),
+            created_at=catalog.created_at,
+        )
+        self._validation.record(
+            artifact_id=deduplication.report_id,
+            artifact_hash=deduplication.report_hash,
+            artifact_kind="FACTOR_DEDUPLICATION_REPORT",
+            evidence_authority="EXPLORATORY",
+            payload=deduplication.identity_payload(),
+            created_at=deduplication.analyzed_at,
+        )
         return {
             "operation": "SETTLE_DAY",
             "status": settled.session.status.value,
@@ -408,11 +459,15 @@ class FreeDataSettlementOperator:
             "target_protocol_id": str(settled.targeted_outcome_v2.target_protocol_id),
             "panel_id": str(panel.panel_id),
             "panel_enrichment_id": str(enrichment.enrichment_id),
+            "factor_catalog_id": str(catalog.catalog_id),
+            "factor_deduplication_report_id": str(deduplication.report_id),
             "outcome_source_archive": str(acquisition.source_archive_path),
             "outcome_dataset": str(acquisition.dataset_path),
             "outcome_evidence": str(evidence_path),
             "panel_artifact": str(panel_path),
             "panel_enrichment_artifact": str(enrichment_path),
+            "factor_catalog_artifact": str(catalog_path),
+            "factor_deduplication_artifact": str(deduplication_path),
             "outcome_provider": acquisition.provider_id,
             "outcome_minute_timeframe": acquisition.minute_timeframe.value,
             "recovered_from_postgres_authority": recovered,
