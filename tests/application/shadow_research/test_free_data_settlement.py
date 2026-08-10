@@ -18,6 +18,7 @@ from market_regime_alpha.application.continuous_research.journal import (
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.data_sources.a_share_bars import AShareDataError
 from market_regime_alpha.market_data.contracts import Timeframe
 
 
@@ -49,6 +50,18 @@ class _PerSymbolProvider(_Provider):
         result = self.frames[symbol].copy()
         result["symbol"] = symbol
         return result
+
+
+class _NoDataErrorProvider(_PerSymbolProvider):
+    def minute_bars(self, symbol: str, *, freq: str, start_date: str, end_date: str):
+        if symbol == "000002.SZ":
+            raise AShareDataError("data source returned no rows")
+        return super().minute_bars(
+            symbol,
+            freq=freq,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
 
 def test_current_session_outcome_builds_post_close_baostock_five_minute_dataset(tmp_path) -> None:
@@ -133,6 +146,62 @@ def test_outcome_acquisition_retains_missing_symbol_as_partial_coverage(
     assert "PARTIAL_SYMBOL_COVERAGE_EXPLICIT" in (
         result.dataset.artifact.limitations
     )
+
+
+def test_outcome_acquisition_classifies_baostock_no_rows_as_missing(
+    tmp_path,
+) -> None:
+    available = _frame(
+        (
+            "2026-08-07 09:35:00",
+            "2026-08-07 10:30:00",
+            "2026-08-07 15:00:00",
+        )
+    )
+    provider = _NoDataErrorProvider(
+        {"000001.SZ": available, "000002.SZ": available}
+    )
+
+    result = FreeOutcomeDatasetBuilder(
+        clock=lambda: datetime(2026, 8, 10, 7, 5, tzinfo=UTC),
+        historical_provider=provider,
+    ).acquire(
+        symbols=("000001.SZ", "000002.SZ"),
+        next_session_date=date(2026, 8, 7),
+        output_root=tmp_path,
+    )
+
+    assert result.dataset.artifact.coverage.missing_symbol_timeframes == (
+        "000002.SZ|DAILY",
+        "000002.SZ|MINUTE_5",
+    )
+
+
+def test_outcome_acquisition_does_not_reclassify_provider_failure(
+    tmp_path,
+) -> None:
+    class FailedProvider(_Provider):
+        def minute_bars(
+            self,
+            symbol: str,
+            *,
+            freq: str,
+            start_date: str,
+            end_date: str,
+        ):
+            raise AShareDataError("BaoStock login failed: unavailable")
+
+    builder = FreeOutcomeDatasetBuilder(
+        clock=lambda: datetime(2026, 8, 10, 7, 5, tzinfo=UTC),
+        historical_provider=FailedProvider(_frame(("2026-08-07 09:35:00",))),
+    )
+
+    with pytest.raises(AShareDataError, match="login failed"):
+        builder.acquire(
+            symbols=("000001.SZ",),
+            next_session_date=date(2026, 8, 7),
+            output_root=tmp_path,
+        )
 
 
 def test_current_session_outcome_fails_closed_before_market_close(tmp_path) -> None:

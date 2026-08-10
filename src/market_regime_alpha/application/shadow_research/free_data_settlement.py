@@ -79,6 +79,7 @@ from market_regime_alpha.data.source_manifest import (
 )
 from market_regime_alpha.data_sources.a_share_bars import (
     AShareBarProvider,
+    AShareDataError,
     BaoStockADataProvider,
 )
 from market_regime_alpha.features.materialization_v2 import (
@@ -165,12 +166,18 @@ class FreeOutcomeDatasetBuilder:
         frames = []
         missing_symbols: set[str] = set()
         for symbol in symbols:
-            frame = provider.minute_bars(
-                symbol,
-                freq="5min",
-                start_date=next_session_date.isoformat(),
-                end_date=next_session_date.isoformat(),
-            )
+            try:
+                frame = provider.minute_bars(
+                    symbol,
+                    freq="5min",
+                    start_date=next_session_date.isoformat(),
+                    end_date=next_session_date.isoformat(),
+                )
+            except AShareDataError as exc:
+                if not _is_explicit_no_data_error(exc):
+                    raise
+                missing_symbols.add(symbol)
+                continue
             scoped = frame[
                 frame["timestamp"].map(
                     lambda value: _timestamp(value).astimezone(_SHANGHAI).date()
@@ -665,6 +672,13 @@ def _canonical_bars(
             )
         )
     return tuple(sorted((*minute_bars, *daily_bars), key=lambda item: (item.symbol, item.timeframe.value, item.event_start)))
+
+
+def _is_explicit_no_data_error(error: AShareDataError) -> bool:
+    return str(error) in {
+        "data source returned no rows",
+        "normalized minute bars are empty",
+    }
 
 
 def _is_continuous_session_stamp(
