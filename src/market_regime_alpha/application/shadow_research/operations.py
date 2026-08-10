@@ -36,6 +36,9 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
     ProspectiveShadowOutcome,
     SettlementSessionStatus,
 )
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    PostgresDecisionSystemRepository,
+)
 from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
     PostgresTargetOutcomeRepository,
 )
@@ -111,6 +114,7 @@ class ResearchShadowOperations:
             factory,
             apply_migrations=False,
         )
+        self._summaries = PostgresDecisionSystemRepository(factory)
         self._runtime_authority = PostgresRuntimeAuthorityEvidenceRepository(factory)
         self._shadow = PostgresShadowResearchRepository(factory)
         self._outcomes = PostgresProspectiveOutcomeRepository(factory, apply_migrations=False)
@@ -124,6 +128,63 @@ class ResearchShadowOperations:
 
     def schedule(self, command: ShadowSessionCommand) -> ShadowSessionSnapshot:
         return self._shadow.schedule(command)
+
+    def run_day(self, run_id: ArtifactId) -> tuple[ShadowSessionSnapshot, ShadowDecision]:
+        """Attach/freeze one SHADOW Canonical run and advance it to Outcome Pending."""
+
+        runtime = self._continuous.get_run(run_id)
+        if runtime.command.authority_mode is not RuntimeAuthorityMode.SHADOW:
+            raise ValueError("Research Shadow run-day requires SHADOW Runtime authority")
+        summary = None
+        for tick in reversed(runtime.ticks):
+            try:
+                summary = self._summaries.get_research_summary_for_tick(
+                    run_id=run_id,
+                    tick_id=tick.command.tick_id,
+                    runtime_mode=RuntimeAuthorityMode.SHADOW,
+                )
+            except KeyError:
+                continue
+            break
+        if summary is None:
+            raise ValueError("Research Shadow run-day requires a durable Daily Summary")
+        command = ShadowSessionCommand.create(
+            idempotency_key=f"{run_id}:free-data-research-shadow-v1",
+            run_id=run_id,
+            trading_date=runtime.command.trading_date,
+            runtime_mode=RuntimeAuthorityMode.SHADOW,
+            scheduled_at=summary.created_at,
+            operator_observation="FREE_DATA_CANONICAL_RUNTIME_AUTO_ATTACH",
+        )
+        session = self.schedule(command)
+        if session.status is ShadowSessionStatus.SCHEDULED:
+            session = self.run_or_attach(
+                command.session_id,
+                expected_version=session.version,
+            )
+        if session.status is ShadowSessionStatus.RUNNING:
+            decision = self.freeze(
+                command.session_id,
+                summary_id=summary.summary_id,
+                decision_frozen_at=summary.created_at,
+                expected_version=session.version,
+            )
+            session = self._shadow.get_session(command.session_id)
+        else:
+            decision = self._shadow.get_decision_for_session(command.session_id)
+        if session.status is ShadowSessionStatus.FROZEN:
+            session = self.outcome_pending(
+                command.session_id,
+                expected_version=session.version,
+            )
+        if session.status not in {
+            ShadowSessionStatus.OUTCOME_PENDING,
+            ShadowSessionStatus.SETTLED,
+        }:
+            raise ValueError(
+                f"Research Shadow run-day cannot advance status {session.status.value}"
+            )
+        return session, decision
 
     def run_or_attach(self, session_id: ArtifactId, *, expected_version: int) -> ShadowSessionSnapshot:
         """Attach to the Canonical Runtime; no parallel Runtime is created."""

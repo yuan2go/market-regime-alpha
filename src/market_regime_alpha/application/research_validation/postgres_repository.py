@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from psycopg.types.json import Jsonb
 
@@ -17,6 +17,12 @@ from market_regime_alpha.forecasting.path import PathForecastSample
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
+
+if TYPE_CHECKING:
+    from market_regime_alpha.application.research_validation.free_historical_samples import (
+        FreeHistoricalDecision,
+        FreeHistoricalMultiHorizonOutcome,
+    )
 
 
 class PostgresResearchValidationRepository:
@@ -121,41 +127,141 @@ class PostgresResearchValidationRepository:
                 "owner-resolving PostgreSQL writer"
             )
 
+        self._factory.run_transaction(
+            lambda connection: self._insert_sample_dataset(connection, dataset)
+        )
+
+    def record_free_historical_pipeline(
+        self,
+        *,
+        decisions: tuple[FreeHistoricalDecision, ...],
+        outcomes: tuple[FreeHistoricalMultiHorizonOutcome, ...],
+        dataset: HistoricalSampleDataset,
+    ) -> None:
+        """Atomically persist the retrospective evidence chain and Registry."""
+
+        if dataset.qualification is not HistoricalSampleQualification.UNQUALIFIED:
+            raise ValueError("Free Historical Sample pipeline must remain UNQUALIFIED")
+        decision_ids = {item.decision_id for item in decisions}
+        if any(item.decision_reference.artifact_id not in decision_ids for item in outcomes):
+            raise ValueError("Free Historical Outcome omits its Decision payload")
+
         def operation(connection: Any) -> None:
-            self._insert_artifact(
-                connection,
-                dataset.dataset_id,
-                dataset.dataset_hash,
-                "HISTORICAL_SAMPLE_DATASET",
-                "EXPLORATORY",
-                dataset.identity_payload(),
-                dataset.available_at,
-            )
-            for item in dataset.records:
-                connection.execute(
-                    """
-                    INSERT INTO historical_path_sample_record(
-                        record_id, record_hash, dataset_id, sample_id, symbol,
-                        target_id, sample_decision_time, available_at,
-                        qualification, payload_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (record_id) DO NOTHING
-                    """,
-                    (
-                        str(item.record_id),
-                        item.record_hash,
-                        str(dataset.dataset_id),
-                        str(item.sample.sample_id),
-                        item.sample.symbol,
-                        str(item.sample.target_id),
-                        item.sample.sample_decision_time.value,
-                        item.sample.available_at.value,
-                        item.qualification.value,
-                        Jsonb(item.identity_payload()),
-                    ),
+            for decision in decisions:
+                self._insert_artifact(
+                    connection,
+                    decision.decision_id,
+                    decision.decision_hash,
+                    "FREE_HISTORICAL_DECISION",
+                    "EXPLORATORY",
+                    decision.identity_payload(),
+                    decision.retrieved_at,
                 )
+            for outcome in outcomes:
+                self._insert_artifact(
+                    connection,
+                    outcome.outcome_id,
+                    outcome.outcome_hash,
+                    "FREE_HISTORICAL_MULTI_HORIZON_OUTCOME",
+                    "EXPLORATORY",
+                    outcome.identity_payload(),
+                    outcome.retrieved_at,
+                )
+            for record in dataset.records:
+                stored = connection.execute(
+                    """
+                    SELECT artifact_hash, artifact_kind
+                    FROM research_validation_artifact
+                    WHERE artifact_id = %s
+                    """,
+                    (str(record.outcome_reference.artifact_id),),
+                ).fetchone()
+                if (
+                    stored is None
+                    or str(stored[0]) != record.outcome_reference.content_hash
+                    or str(stored[1]) != "FREE_HISTORICAL_MULTI_HORIZON_OUTCOME"
+                ):
+                    raise ValueError("Historical Sample Dataset omits its Outcome payload")
+            self._insert_sample_dataset(connection, dataset)
 
         self._factory.run_transaction(operation)
+
+    def _insert_sample_dataset(
+        self,
+        connection: Any,
+        dataset: HistoricalSampleDataset,
+    ) -> None:
+        self._insert_artifact(
+            connection,
+            dataset.dataset_id,
+            dataset.dataset_hash,
+            "HISTORICAL_SAMPLE_DATASET",
+            "EXPLORATORY",
+            dataset.identity_payload(),
+            dataset.available_at,
+        )
+        for item in dataset.records:
+            connection.execute(
+                """
+                INSERT INTO historical_path_sample_record(
+                    record_id, record_hash, dataset_id, sample_id, symbol,
+                    target_id, sample_decision_time, available_at,
+                    qualification, payload_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (record_id) DO NOTHING
+                """,
+                (
+                    str(item.record_id),
+                    item.record_hash,
+                    str(dataset.dataset_id),
+                    str(item.sample.sample_id),
+                    item.sample.symbol,
+                    str(item.sample.target_id),
+                    item.sample.sample_decision_time.value,
+                    item.sample.available_at.value,
+                    item.qualification.value,
+                    Jsonb(item.identity_payload()),
+                ),
+            )
+            stored = connection.execute(
+                "SELECT record_hash, dataset_id FROM historical_path_sample_record WHERE record_id = %s",
+                (str(item.record_id),),
+            ).fetchone()
+            if (
+                stored is None
+                or str(stored[0]) != item.record_hash
+                or str(stored[1]) != str(dataset.dataset_id)
+            ):
+                raise ValueError("Historical Sample record identity conflict")
+
+    def find_sample_dataset(
+        self,
+        *,
+        registry_version: str,
+        target_id: TargetId,
+    ) -> HistoricalSampleDataset | None:
+        """Return the latest immutable build for one deterministic operator scope."""
+
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT artifact_id, artifact_hash, payload_json
+                FROM research_validation_artifact
+                WHERE artifact_kind = 'HISTORICAL_SAMPLE_DATASET'
+                ORDER BY created_at DESC, artifact_id DESC
+                """
+            ).fetchall()
+        for row in rows:
+            if not isinstance(row[2], dict):
+                raise ValueError("Historical Sample Dataset payload is invalid")
+            if row[2].get("registry_version") != registry_version:
+                continue
+            dataset = HistoricalSampleDataset.from_canonical_dict(
+                {"dataset_id": str(row[0]), "dataset_hash": str(row[1]), **row[2]}
+            )
+            if str(dataset.target_reference.artifact_id) == str(target_id):
+                return dataset
+        return None
 
     def bind_calibration_partitions(self, artifact: CalibrationArtifact, observations: tuple[CalibrationObservation, ...]) -> None:
         def operation(connection: Any) -> None:
@@ -251,3 +357,9 @@ class PostgresResearchValidationRepository:
             """,
             (str(artifact_id), artifact_hash, kind, authority, Jsonb(dict(payload)), created_at),
         )
+        stored = connection.execute(
+            "SELECT artifact_hash FROM research_validation_artifact WHERE artifact_id = %s",
+            (str(artifact_id),),
+        ).fetchone()
+        if stored is None or str(stored[0]) != artifact_hash:
+            raise ValueError("Research Validation artifact identity conflict")

@@ -41,6 +41,7 @@ class StrategyShadowEventKind(str, Enum):
 
 class StrategyShadowArtifactKind(str, Enum):
     POLICY = "POLICY"
+    LIQUIDITY_OBSERVATION = "LIQUIDITY_OBSERVATION"
     ENTRY = "ENTRY"
     FILL = "FILL"
     POSITION = "POSITION"
@@ -239,7 +240,12 @@ class StrategyShadowSession:
 
 class StrategyShadowRepository(Protocol):
     def get(self, session_id: ArtifactId) -> StrategyShadowSession | None: ...
-    def save(self, session: StrategyShadowSession, *, expected_revision: int | None) -> None: ...
+    def save(
+        self,
+        session: StrategyShadowSession,
+        *,
+        expected_revision: int | None,
+    ) -> StrategyShadowSession | None: ...
 
     def save_with_artifact(
         self,
@@ -247,7 +253,7 @@ class StrategyShadowRepository(Protocol):
         *,
         expected_revision: int,
         artifact: StrategyShadowArtifactRecord,
-    ) -> None: ...
+    ) -> StrategyShadowSession | None: ...
 
     def save_artifact(self, artifact: StrategyShadowArtifactRecord) -> None: ...
 
@@ -267,6 +273,7 @@ class StrategyShadowArtifactRecord:
             raise ValueError("only daily reports are independent of one Strategy Shadow session")
         expected_reference_kind = {
             StrategyShadowArtifactKind.POLICY: "STRATEGY_SHADOW_POLICY",
+            StrategyShadowArtifactKind.LIQUIDITY_OBSERVATION: "FREE_DATA_SHADOW_LIQUIDITY_OBSERVATION",
             StrategyShadowArtifactKind.ENTRY: "SHADOW_ENTRY",
             StrategyShadowArtifactKind.FILL: "SHADOW_FILL",
             StrategyShadowArtifactKind.POSITION: "SHADOW_POSITION",
@@ -424,8 +431,19 @@ class StrategyShadowOperations:
 
     def schedule(self, **values: Any) -> StrategyShadowSession:
         session = StrategyShadowSession.schedule(**values)
+        try:
+            existing = self._repository.get(session.session_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if existing.events[0] != session.events[0] or existing.created_at != session.created_at:
+                raise ValueError("Strategy Shadow schedule identity conflict")
+            return existing
         self._repository.save(session, expected_revision=None)
-        return self._repository.get(session.session_id) or session
+        try:
+            return self._repository.get(session.session_id) or session
+        except KeyError:
+            return session
 
     def start(self, session_id: ArtifactId, *, expected_revision: int, occurred_at: datetime) -> StrategyShadowSession:
         return self._append(
@@ -670,7 +688,6 @@ def _validate_event_prerequisites(
         StrategyShadowEventKind.ENTRY_CREATED,
         StrategyShadowEventKind.FILL_OBSERVED,
         StrategyShadowEventKind.POSITION_OPENED,
-        StrategyShadowEventKind.EXIT_ASSESSED,
         StrategyShadowEventKind.OUTCOME_SETTLED,
     }
     if event_kind in singletons and event_kind in kinds:

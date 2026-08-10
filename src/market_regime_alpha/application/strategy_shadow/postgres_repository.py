@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.strategy_shadow.operations import (
+    StrategyShadowArtifactKind,
     StrategyShadowArtifactRecord,
     StrategyShadowSession,
     strategy_shadow_session_from_canonical_dict,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 
@@ -69,6 +74,83 @@ class PostgresStrategyShadowRepository:
             raise ValueError("Strategy Shadow durable event payload is invalid")
         payload = {**row[0], "events": event_payloads}
         return strategy_shadow_session_from_canonical_dict(payload)
+
+    def list_sessions(self, *, trading_date: date) -> tuple[StrategyShadowSession, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                "SELECT session_id FROM strategy_shadow_session WHERE trading_date = %s ORDER BY session_id",
+                (trading_date,),
+            ).fetchall()
+        return tuple(self.get(ArtifactId(str(row[0]))) for row in rows)
+
+    def get_artifact(
+        self,
+        *,
+        session_id: ArtifactId,
+        artifact_kind: StrategyShadowArtifactKind,
+    ) -> StrategyShadowArtifactRecord | None:
+        rows = self.list_artifacts(
+            session_id=session_id,
+            artifact_kind=artifact_kind,
+        )
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise ValueError(f"Strategy Shadow {artifact_kind.value} Artifact is not unique")
+        return rows[0]
+
+    def list_artifacts(
+        self,
+        *,
+        session_id: ArtifactId,
+        artifact_kind: StrategyShadowArtifactKind | None = None,
+    ) -> tuple[StrategyShadowArtifactRecord, ...]:
+        predicate = "" if artifact_kind is None else " AND artifact_kind = %s"
+        parameters = (
+            (str(session_id),)
+            if artifact_kind is None
+            else (str(session_id), artifact_kind.value)
+        )
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT artifact_id, artifact_hash, artifact_kind,
+                       payload_json, created_at
+                FROM strategy_shadow_artifact
+                WHERE session_id = %s
+                """ + predicate + " ORDER BY created_at, artifact_id",
+                parameters,
+            ).fetchall()
+        output = []
+        for row in rows:
+            if not isinstance(row[3], dict):
+                raise ValueError("Strategy Shadow Artifact payload is invalid")
+            stored_kind = StrategyShadowArtifactKind(str(row[2]))
+            reference_kind = {
+                StrategyShadowArtifactKind.POLICY: "STRATEGY_SHADOW_POLICY",
+                StrategyShadowArtifactKind.LIQUIDITY_OBSERVATION: "FREE_DATA_SHADOW_LIQUIDITY_OBSERVATION",
+                StrategyShadowArtifactKind.ENTRY: "SHADOW_ENTRY",
+                StrategyShadowArtifactKind.FILL: "SHADOW_FILL",
+                StrategyShadowArtifactKind.POSITION: "SHADOW_POSITION",
+                StrategyShadowArtifactKind.HOLDING_ASSESSMENT: "HOLDING_ASSESSMENT",
+                StrategyShadowArtifactKind.EXIT_ASSESSMENT: "EXIT_ASSESSMENT",
+                StrategyShadowArtifactKind.STRATEGY_OUTCOME: "STRATEGY_OUTCOME",
+                StrategyShadowArtifactKind.DAILY_REPORT: "STRATEGY_SHADOW_DAILY_REPORT",
+            }[stored_kind]
+            output.append(
+                StrategyShadowArtifactRecord(
+                    artifact_reference=ValidationArtifactReference(
+                        reference_kind,
+                        ArtifactId(str(row[0])),
+                        str(row[1]),
+                    ),
+                    artifact_kind=stored_kind,
+                    session_id=session_id,
+                    payload=row[3],
+                    created_at=row[4],
+                )
+            )
+        return tuple(output)
 
     @staticmethod
     def _save_session(

@@ -407,6 +407,19 @@ class PostgresStateSystemRepository:
         self._factory.run_transaction(operation)
 
     def read_runtime_candidate(self, request: ChildExecutionRequest) -> CandidateSet:
+        return self.get_runtime_candidate(
+            run_id=request.run_id,
+            tick_id=request.tick_id,
+        )
+
+    def get_runtime_candidate(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+    ) -> CandidateSet:
+        """Owner Reader for operator/replay flows that do not hold a live lease."""
+
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
                 """
@@ -415,7 +428,7 @@ class PostgresStateSystemRepository:
                 FROM state_runtime_candidate_artifact
                 WHERE run_id = %s AND tick_id = %s
                 """,
-                (str(request.run_id), str(request.tick_id)),
+                (str(run_id), str(tick_id)),
             ).fetchone()
             stage = connection.execute(
                 """
@@ -423,7 +436,7 @@ class PostgresStateSystemRepository:
                 FROM state_research_stage_authority
                 WHERE run_id = %s AND tick_id = %s AND stage = 'CANDIDATE'
                 """,
-                (str(request.run_id), str(request.tick_id)),
+                (str(run_id), str(tick_id)),
             ).fetchone()
             if row is None or stage is None:
                 raise StateSystemIntegrityError("State Candidate recovery authority is missing")

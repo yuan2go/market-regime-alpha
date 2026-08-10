@@ -63,6 +63,14 @@ from market_regime_alpha.application.free_data_operation.blocked import (
 from market_regime_alpha.application.free_data_operation.service import (
     FreeDataOperationService,
 )
+from market_regime_alpha.application.research_validation.free_historical_samples import (
+    AShareBarProviderReader,
+    FreeHistoricalSampleBuildResult,
+    FreeHistoricalSamplePipeline,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
+)
 from market_regime_alpha.application.runtime_operations.observability import (
     PostgresRuntimeObservability,
 )
@@ -77,6 +85,16 @@ from market_regime_alpha.application.shadow_research.attestation import (
     ClockMode,
     RuntimeOrigin,
 )
+from market_regime_alpha.application.shadow_research.operations import (
+    ResearchShadowOperations,
+)
+from market_regime_alpha.application.shadow_research.free_data_settlement import (
+    FreeDataSettlementOperator,
+)
+from market_regime_alpha.application.strategy_shadow.operator import (
+    StrategyDayObservation,
+    StrategyShadowDayOperator,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
@@ -90,7 +108,13 @@ from market_regime_alpha.data.providers.public_composite import (
 from market_regime_alpha.data.free_operational_policy import (
     canonical_free_operational_evidence_policy,
 )
-from market_regime_alpha.data_sources.a_share_bars import AShareDataError
+from market_regime_alpha.data_sources.a_share_bars import (
+    AShareDataError,
+    BaoStockADataProvider,
+)
+from market_regime_alpha.forecasting.sample_provider import (
+    HistoricalRegistryPathForecastSampleProvider,
+)
 from market_regime_alpha.market_data import AssetType
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
@@ -122,6 +146,35 @@ _INSPECT_OPERATIONS = (
 )
 
 
+def _add_run_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--run-command", type=Path, required=True)
+    command.add_argument("--trading-day-assessment", type=Path, required=True)
+    command.add_argument("--runtime-configuration", type=Path, required=True)
+    command.add_argument("--output-root", type=Path, required=True)
+    command.add_argument("--at", required=True)
+    command.add_argument(
+        "--runtime-clock-mode",
+        choices=("LIVE", "SIMULATED"),
+        default="LIVE",
+        help="LIVE binds host/PostgreSQL clocks; SIMULATED is explicit engineering/replay.",
+    )
+    command.add_argument(
+        "--supplemental-evidence",
+        type=Path,
+        help="Explicit immutable Free Supplemental Evidence bundle; no discovery/fallback.",
+    )
+    command.add_argument("--minimum-history-sessions", type=int, default=21)
+    command.add_argument("--liquidity-lookback-sessions", type=int, default=21)
+    command.add_argument(
+        "--minimum-median-daily-amount",
+        type=Decimal,
+        default=Decimal("10000000"),
+    )
+    command.add_argument("--provider-timeout-seconds", type=float, default=8.0)
+    command.add_argument("--historical-sample-lookback-calendar-days", type=int, default=180)
+    command.add_argument("--historical-sample-maximum-per-symbol", type=int, default=60)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -150,34 +203,32 @@ def build_parser() -> argparse.ArgumentParser:
     reserve = subparsers.add_parser("reserve-due-tick")
     reserve.add_argument("--run-command", type=Path, required=True)
     reserve.add_argument("--at", required=True)
-    run_due = subparsers.add_parser(
-        "run-due",
-        help="Execute one due BaoStock/Tencent Canonical Runtime Tick.",
+    for name, help_text in (
+        ("run-due", "Execute one due BaoStock/Tencent Canonical Runtime Tick."),
+        ("run-day", "Execute the same Canonical Tick and attach/freeze Research Shadow when in SHADOW mode."),
+    ):
+        run_command = subparsers.add_parser(name, help=help_text)
+        _add_run_arguments(run_command)
+    strategy_day = subparsers.add_parser(
+        "strategy-day",
+        help="Run Entry Research through Strategy Shadow Outcome from PostgreSQL lineage.",
     )
-    run_due.add_argument("--run-command", type=Path, required=True)
-    run_due.add_argument("--trading-day-assessment", type=Path, required=True)
-    run_due.add_argument("--runtime-configuration", type=Path, required=True)
-    run_due.add_argument("--output-root", type=Path, required=True)
-    run_due.add_argument("--at", required=True)
-    run_due.add_argument(
-        "--runtime-clock-mode",
-        choices=("LIVE", "SIMULATED"),
-        default="LIVE",
-        help=("LIVE requires --at to match the PostgreSQL host clock; SIMULATED is an explicit engineering/replay mode."),
+    strategy_day.add_argument("--observations", type=Path, required=True)
+    settle_day = subparsers.add_parser(
+        "settle-day",
+        help="Acquire free T+1 evidence, settle Research Shadow and build Panel V2 enrichment.",
     )
-    run_due.add_argument(
-        "--supplemental-evidence",
-        type=Path,
-        help="Explicit immutable Free Supplemental Evidence bundle; no discovery/fallback.",
-    )
-    run_due.add_argument("--minimum-history-sessions", type=int, default=21)
-    run_due.add_argument("--liquidity-lookback-sessions", type=int, default=21)
-    run_due.add_argument(
-        "--minimum-median-daily-amount",
-        type=Decimal,
-        default=Decimal("10000000"),
-    )
-    run_due.add_argument("--provider-timeout-seconds", type=float, default=8.0)
+    settle_day.add_argument("--trading-date", required=True)
+    settle_day.add_argument("--next-session-date", required=True)
+    settle_day.add_argument("--artifact-root", type=Path, required=True)
+    settle_day.add_argument("--at", required=True)
+    strategy_replay = subparsers.add_parser("strategy-replay")
+    strategy_replay.add_argument("--session-id", required=True)
+    report_day = subparsers.add_parser("report-day")
+    report_day.add_argument("--trading-date", required=True)
+    report_day.add_argument("--at", required=True)
+    replay_day = subparsers.add_parser("replay-day")
+    replay_day.add_argument("--trading-date", required=True)
     preflight = subparsers.add_parser("preflight", help="Inspect engineering readiness without executing a Tick.")
     preflight.add_argument("--trading-date", required=True)
     preflight.add_argument(
@@ -224,10 +275,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             "preflight",
             "report",
             "replay",
+            "replay-day",
             *_INSPECT_OPERATIONS,
         }
         journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
-        output = _run_due(args, settings, factory, journal) if args.operation == "run-due" else _dispatch(args, journal, factory)
+        output = (
+            _run_due(args, settings, factory, journal)
+            if args.operation == "run-due"
+            else _run_day(args, settings, factory, journal)
+            if args.operation == "run-day"
+            else _dispatch(args, journal, factory)
+        )
         _emit(output)
         return SUCCESS
     except FreeDataOperationBlocked as exc:
@@ -252,6 +310,93 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "strategy-day":
+        return StrategyShadowDayOperator(factory).run(
+            StrategyDayObservation.from_canonical_dict(
+                _load_json_object(args.observations)
+            )
+        )
+    if args.operation == "settle-day":
+        return FreeDataSettlementOperator(
+            factory,
+            clock=lambda: _instant(args.at),
+        ).settle_day(
+            trading_date=date.fromisoformat(args.trading_date),
+            next_session_date=date.fromisoformat(args.next_session_date),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "strategy-replay":
+        return StrategyShadowDayOperator(factory).replay(
+            ArtifactId(args.session_id)
+        )
+    if args.operation == "report-day":
+        trading_date = date.fromisoformat(args.trading_date)
+        runtime = PostgresCanonicalRuntimeQuery(factory).inspect_trading_date(
+            trading_date
+        )
+        with factory.connection(read_only=True) as connection:
+            shadow_rows = connection.execute(
+                """
+                SELECT session_id
+                FROM shadow_research_session
+                WHERE trading_date = %s
+                ORDER BY session_id
+                """,
+                (trading_date,),
+            ).fetchall()
+        research_reports = [
+            ResearchShadowOperations(factory).report(ArtifactId(str(row[0])))
+            for row in shadow_rows
+        ]
+        strategy_report = StrategyShadowDayOperator(factory).report_day(
+            trading_date,
+            generated_at=_instant(args.at),
+        )
+        return {
+            "operation": "REPORT_DAY",
+            "trading_date": trading_date.isoformat(),
+            "runtime": runtime,
+            "research_shadow": research_reports,
+            "strategy_shadow": strategy_report,
+            **_authority_ceiling(),
+        }
+    if args.operation == "replay-day":
+        trading_date = date.fromisoformat(args.trading_date)
+        with factory.connection(read_only=True) as connection:
+            run_rows = connection.execute(
+                "SELECT run_id FROM continuous_research_run WHERE trading_date = %s ORDER BY run_id",
+                (trading_date,),
+            ).fetchall()
+            decision_rows = connection.execute(
+                """
+                SELECT decision.decision_id
+                FROM shadow_research_decision AS decision
+                JOIN shadow_research_session AS session
+                  ON session.session_id = decision.session_id
+                WHERE session.trading_date = %s
+                ORDER BY decision.decision_id
+                """,
+                (trading_date,),
+            ).fetchall()
+        research = ResearchShadowOperations(factory)
+        strategy_operator = StrategyShadowDayOperator(factory)
+        strategy_sessions = strategy_operator.list_sessions(trading_date)
+        return {
+            "operation": "REPLAY_DAY",
+            "trading_date": trading_date.isoformat(),
+            "continuous_runtime": [
+                replay_continuous_research(journal, ArtifactId(str(row[0]))).to_canonical_dict()
+                for row in run_rows
+            ],
+            "research_shadow": [
+                research.replay(ArtifactId(str(row[0]))).to_canonical_dict()
+                for row in decision_rows
+            ],
+            "strategy_shadow": [
+                strategy_operator.replay(item.session_id) for item in strategy_sessions
+            ],
+            **_authority_ceiling(),
+        }
     if args.operation == "preflight":
         report = CanonicalRuntimePreflight(factory).inspect(
             RuntimePreflightRequest(
@@ -468,6 +613,21 @@ def _run_due(
         apply_migrations=False,
     )
 
+    historical_sample_build: FreeHistoricalSampleBuildResult | None = None
+    forecast_sample_provider = None
+    validation_repository = None
+    if run_command.authority_mode in {
+        RuntimeAuthorityMode.RESEARCH,
+        RuntimeAuthorityMode.SHADOW,
+    }:
+        validation_repository = PostgresResearchValidationRepository(
+            factory,
+            apply_migrations=False,
+        )
+        forecast_sample_provider = HistoricalRegistryPathForecastSampleProvider(
+            validation_repository
+        )
+
     service = FreeDataOperationService(
         repositories=repositories,
         output_root=args.output_root,
@@ -475,6 +635,7 @@ def _run_due(
         clock=runtime_clock,
         live_profile=profile,
         sleeper=runtime_sleeper,
+        forecast_sample_provider=forecast_sample_provider,
         operational_supplemental_policy=supplemental_policy,
     )
     policy = default_continuous_decision_window_policy()
@@ -508,6 +669,19 @@ def _run_due(
                 "ENTRY_BLOCKED",
                 "WAITING_FOR_TENCENT_DECISION_QUOTE",
             ),
+        )
+
+    if validation_repository is not None:
+        historical_sample_build = FreeHistoricalSamplePipeline(
+            reader=AShareBarProviderReader(BaoStockADataProvider()),
+            repository=validation_repository,
+            clock=runtime_clock,
+            lookback_calendar_days=args.historical_sample_lookback_calendar_days,
+            maximum_samples_per_symbol=args.historical_sample_maximum_per_symbol,
+        ).build_and_register(
+            symbols=run_command.requested_symbols,
+            configuration=configuration.path_forecast,
+            current_decision_time=DecisionTime(decision),
         )
 
     def invocation() -> FreeDataPreparationInvocation:
@@ -601,7 +775,43 @@ def _run_due(
         "entry_authority_granted": False,
         "broker_authority_granted": False,
         "daily_decision_window_summary_delivered": summary_id is not None,
+        "historical_sample_build": (
+            None
+            if historical_sample_build is None
+            else historical_sample_build.to_canonical_dict()
+        ),
+        "path_forecast_registry_wired": forecast_sample_provider is not None,
     }
+
+
+def _run_day(
+    args: argparse.Namespace,
+    settings: DatabaseSettings,
+    factory: PostgresConnectionFactory,
+    journal: PostgresContinuousResearchJournal,
+) -> dict[str, Any]:
+    output = _run_due(args, settings, factory, journal)
+    output["operation"] = "RUN_DAY"
+    if output.get("status") != "COMPLETED":
+        output["research_shadow_status"] = "NOT_READY"
+        return output
+    run_id = ArtifactId(str(output["run_id"]))
+    runtime = journal.get_run(run_id)
+    if runtime.command.authority_mode is not RuntimeAuthorityMode.SHADOW:
+        output["research_shadow_status"] = "NOT_APPLICABLE"
+        return output
+    session, decision = ResearchShadowOperations(factory).run_day(run_id)
+    output.update(
+        {
+            "research_shadow_status": session.status.value,
+            "research_shadow_session_id": str(session.command.session_id),
+            "research_shadow_decision_id": str(decision.decision_id),
+            "shadow_order_created": False,
+            "shadow_fill_created": False,
+            "real_position_mutated": False,
+        }
+    )
+    return output
 
 
 def _run_due_stage_output(

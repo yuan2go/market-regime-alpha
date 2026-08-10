@@ -6,7 +6,6 @@ import argparse
 from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
-import sys
 from typing import NoReturn, Sequence, cast
 
 import psycopg
@@ -473,7 +472,3 @@ def _build_runner(
         configurations=configurations,
         clock=_utc_now,
     )
-
-
-if __name__ == "__main__":
-    sys.exit(main())

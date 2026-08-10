@@ -6,7 +6,6 @@ import argparse
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
-import sys
 from typing import NoReturn, Sequence
 
 from market_regime_alpha.application.canonical_lifecycle.contracts import (
@@ -199,7 +198,3 @@ def _safety_declarations() -> dict[str, bool]:
         "entry_model_empirically_validated": False,
         "production_ready": False,
     }
-
-
-if __name__ == "__main__":
-    sys.exit(main())

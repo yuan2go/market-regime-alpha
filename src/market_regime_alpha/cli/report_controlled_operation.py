@@ -85,7 +85,3 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if repositories is not None:
             repositories.close()
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

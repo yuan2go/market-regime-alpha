@@ -8,7 +8,6 @@ from decimal import Decimal, InvalidOperation
 import json
 from math import isfinite
 from pathlib import Path
-import sys
 from typing import Any, NoReturn, Sequence
 
 import psycopg
@@ -336,7 +335,3 @@ def _object(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be a JSON object")
     return value
-
-
-if __name__ == "__main__":
-    sys.exit(main())

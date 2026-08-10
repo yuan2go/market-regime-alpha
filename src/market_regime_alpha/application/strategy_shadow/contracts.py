@@ -54,9 +54,9 @@ class StrategyShadowPolicy:
     policy_version: str
     rule_kinds: tuple[HoldingRuleKind, ...]
     fixed_horizon_sessions: int
-    trailing_drawdown: Decimal
-    protection_return: Decimal
-    participation_rate: Decimal
+    trailing_drawdown: Decimal | None
+    protection_return: Decimal | None
+    participation_rate: Decimal | None
     limitations: tuple[str, ...]
 
     @classmethod
@@ -66,28 +66,36 @@ class StrategyShadowPolicy:
         policy_version: str,
         rule_kinds: tuple[HoldingRuleKind, ...],
         fixed_horizon_sessions: int,
-        trailing_drawdown: Decimal,
-        protection_return: Decimal,
-        participation_rate: Decimal,
+        trailing_drawdown: Decimal | None,
+        protection_return: Decimal | None,
+        participation_rate: Decimal | None,
     ) -> StrategyShadowPolicy:
         ordered = tuple(sorted(set(rule_kinds), key=lambda item: item.value))
-        if (
-            not ordered
-            or fixed_horizon_sessions <= 0
-            or trailing_drawdown <= 0
-            or protection_return >= 0
-            or not Decimal("0") < participation_rate <= Decimal("1")
-        ):
+        if not ordered or fixed_horizon_sessions <= 0:
             raise ValueError("Strategy Shadow Policy configuration is invalid")
+        if (
+            HoldingRuleKind.TRAILING_PROTECTION in ordered
+            and trailing_drawdown is None
+        ) or (trailing_drawdown is not None and trailing_drawdown <= 0):
+            raise ValueError("Strategy Shadow trailing protection configuration is invalid")
+        if (
+            HoldingRuleKind.LOSS_PROTECTION in ordered
+            and protection_return is None
+        ) or (protection_return is not None and protection_return >= 0):
+            raise ValueError("Strategy Shadow loss protection configuration is invalid")
+        if participation_rate is not None and not (
+            Decimal("0") < participation_rate <= Decimal("1")
+        ):
+            raise ValueError("Strategy Shadow participation configuration is invalid")
         limitations = tuple(sorted({*ENGINEERING_LIMITATIONS, "HOLDING_EXIT_VALIDATED_FALSE", "STRATEGY_SHADOW_PROVEN_FALSE"}))
         payload = {
             "schema": "strategy-shadow-policy/v1",
             "policy_version": policy_version,
             "rule_kinds": [item.value for item in ordered],
             "fixed_horizon_sessions": fixed_horizon_sessions,
-            "trailing_drawdown": str(trailing_drawdown),
-            "protection_return": str(protection_return),
-            "participation_rate": str(participation_rate),
+            "trailing_drawdown": None if trailing_drawdown is None else str(trailing_drawdown),
+            "protection_return": None if protection_return is None else str(protection_return),
+            "participation_rate": None if participation_rate is None else str(participation_rate),
             "limitations": list(limitations),
         }
         artifact_id, digest = content_identity("strategy-shadow-policy", payload)
@@ -375,8 +383,16 @@ def assess_holding(
             (HoldingRuleKind.MARKET_DETERIORATION, market_deteriorated),
             (HoldingRuleKind.THEME_DETERIORATION, theme_deteriorated),
             (HoldingRuleKind.CAPITAL_DETERIORATION, capital_deteriorated),
-            (HoldingRuleKind.TRAILING_PROTECTION, drawdown <= -policy.trailing_drawdown),
-            (HoldingRuleKind.LOSS_PROTECTION, unrealized <= policy.protection_return),
+            (
+                HoldingRuleKind.TRAILING_PROTECTION,
+                policy.trailing_drawdown is not None
+                and drawdown <= -policy.trailing_drawdown,
+            ),
+            (
+                HoldingRuleKind.LOSS_PROTECTION,
+                policy.protection_return is not None
+                and unrealized <= policy.protection_return,
+            ),
             (HoldingRuleKind.MULTI_HORIZON, sessions_held in {1, policy.fixed_horizon_sessions}),
         )
         triggered = {kind for kind, result in checks if kind in policy.rule_kinds and result}
@@ -493,6 +509,229 @@ def settle_strategy_outcome(
         True,
         limitations,
     )
+
+
+def strategy_shadow_artifact_payload(
+    value: StrategyShadowPolicy
+    | ShadowEntry
+    | ShadowFill
+    | ShadowPosition
+    | HoldingAssessment
+    | ExitAssessment
+    | StrategyOutcome,
+) -> dict[str, Any]:
+    """Canonical payload used by the immutable Strategy Shadow Artifact store."""
+
+    if isinstance(value, StrategyShadowPolicy):
+        return {
+            "schema": "strategy-shadow-policy/v1",
+            "policy_version": value.policy_version,
+            "rule_kinds": [item.value for item in value.rule_kinds],
+            "fixed_horizon_sessions": value.fixed_horizon_sessions,
+            "trailing_drawdown": None if value.trailing_drawdown is None else str(value.trailing_drawdown),
+            "protection_return": None if value.protection_return is None else str(value.protection_return),
+            "participation_rate": None if value.participation_rate is None else str(value.participation_rate),
+            "limitations": list(value.limitations),
+        }
+    if isinstance(value, ShadowEntry):
+        return {
+            "assessment_reference": value.assessment_reference.to_canonical_dict(),
+            "policy_reference": value.policy_reference.to_canonical_dict(),
+            "symbol": value.symbol,
+            "decision_time": timestamp(value.decision_time),
+            "intended_quantity": str(value.intended_quantity),
+            "intended_reference_price": str(value.intended_reference_price),
+            "source_references": [item.to_canonical_dict() for item in value.source_references],
+            "limitations": list(value.limitations),
+        }
+    if isinstance(value, ShadowFill):
+        return {
+            "entry_reference": value.entry_reference.to_canonical_dict(),
+            "status": value.status.value,
+            "filled_quantity": str(value.filled_quantity),
+            "fill_price": None if value.fill_price is None else str(value.fill_price),
+            "slippage_cost": str(value.slippage_cost),
+            "market_impact_cost": str(value.market_impact_cost),
+            "commission_cost": str(value.commission_cost),
+            "observed_at": timestamp(value.observed_at),
+            "liquidity_reference": value.liquidity_reference.to_canonical_dict(),
+            "limitations": list(value.limitations),
+        }
+    if isinstance(value, ShadowPosition):
+        return {
+            "fill_reference": value.fill_reference.to_canonical_dict(),
+            "symbol": value.symbol,
+            "quantity": str(value.quantity),
+            "average_cost": str(value.average_cost),
+            "opened_at": timestamp(value.opened_at),
+            "peak_price": str(value.peak_price),
+            "limitations": list(value.limitations),
+        }
+    if isinstance(value, HoldingAssessment):
+        return {
+            "position_reference": value.position_reference.to_canonical_dict(),
+            "policy_reference": value.policy_reference.to_canonical_dict(),
+            "assessed_at": timestamp(value.assessed_at),
+            "sessions_held": value.sessions_held,
+            "current_price": None if value.current_price is None else str(value.current_price),
+            "unrealized_return": None if value.unrealized_return is None else str(value.unrealized_return),
+            "peak_drawdown": None if value.peak_drawdown is None else str(value.peak_drawdown),
+            "triggered_rules": [item.value for item in value.triggered_rules],
+            "decision": value.decision.value,
+            "reason_codes": list(value.reason_codes),
+        }
+    if isinstance(value, ExitAssessment):
+        return {
+            "holding_reference": value.holding_reference.to_canonical_dict(),
+            "decision": value.decision.value,
+            "exit_price": None if value.exit_price is None else str(value.exit_price),
+            "exit_quantity": str(value.exit_quantity),
+            "triggered_rules": [item.value for item in value.triggered_rules],
+            "assessed_at": timestamp(value.assessed_at),
+            "reason_codes": list(value.reason_codes),
+        }
+    return value.identity_payload()
+
+
+def restore_strategy_shadow_artifact(
+    *,
+    artifact_kind: str,
+    artifact_id: ArtifactId,
+    artifact_hash: str,
+    payload: dict[str, Any],
+) -> (
+    StrategyShadowPolicy
+    | ShadowEntry
+    | ShadowFill
+    | ShadowPosition
+    | HoldingAssessment
+    | ExitAssessment
+    | StrategyOutcome
+):
+    """Restore one immutable owner row without recomputing operator inputs."""
+
+    def ref(name: str) -> ValidationArtifactReference:
+        return ValidationArtifactReference.from_canonical_dict(payload[name])
+
+    def instant(name: str) -> datetime:
+        value = datetime.fromisoformat(str(payload[name]))
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Strategy Shadow Artifact timestamp must be timezone-aware")
+        return value
+
+    def decimal(name: str) -> Decimal:
+        return Decimal(str(payload[name]))
+
+    def optional_decimal(name: str) -> Decimal | None:
+        return None if payload[name] is None else decimal(name)
+
+    if artifact_kind == "POLICY":
+        restored: Any = StrategyShadowPolicy(
+            artifact_id,
+            artifact_hash,
+            str(payload["policy_version"]),
+            tuple(HoldingRuleKind(str(item)) for item in payload["rule_kinds"]),
+            int(payload["fixed_horizon_sessions"]),
+            optional_decimal("trailing_drawdown"),
+            optional_decimal("protection_return"),
+            optional_decimal("participation_rate"),
+            tuple(str(item) for item in payload["limitations"]),
+        )
+    elif artifact_kind == "ENTRY":
+        restored = ShadowEntry(
+            artifact_id,
+            artifact_hash,
+            ref("assessment_reference"),
+            ref("policy_reference"),
+            str(payload["symbol"]),
+            instant("decision_time"),
+            decimal("intended_quantity"),
+            decimal("intended_reference_price"),
+            tuple(
+                ValidationArtifactReference.from_canonical_dict(item)
+                for item in payload["source_references"]
+            ),
+            tuple(str(item) for item in payload["limitations"]),
+        )
+    elif artifact_kind == "FILL":
+        restored = ShadowFill(
+            artifact_id,
+            artifact_hash,
+            ref("entry_reference"),
+            ShadowFillStatus(str(payload["status"])),
+            decimal("filled_quantity"),
+            optional_decimal("fill_price"),
+            decimal("slippage_cost"),
+            decimal("market_impact_cost"),
+            decimal("commission_cost"),
+            instant("observed_at"),
+            ref("liquidity_reference"),
+            tuple(str(item) for item in payload["limitations"]),
+        )
+    elif artifact_kind == "POSITION":
+        restored = ShadowPosition(
+            artifact_id,
+            artifact_hash,
+            ref("fill_reference"),
+            str(payload["symbol"]),
+            decimal("quantity"),
+            decimal("average_cost"),
+            instant("opened_at"),
+            decimal("peak_price"),
+            tuple(str(item) for item in payload["limitations"]),
+        )
+    elif artifact_kind == "HOLDING_ASSESSMENT":
+        restored = HoldingAssessment(
+            artifact_id,
+            artifact_hash,
+            ref("position_reference"),
+            ref("policy_reference"),
+            instant("assessed_at"),
+            int(payload["sessions_held"]),
+            optional_decimal("current_price"),
+            optional_decimal("unrealized_return"),
+            optional_decimal("peak_drawdown"),
+            tuple(HoldingRuleKind(str(item)) for item in payload["triggered_rules"]),
+            ShadowHoldingDecision(str(payload["decision"])),
+            tuple(str(item) for item in payload["reason_codes"]),
+        )
+    elif artifact_kind == "EXIT_ASSESSMENT":
+        restored = ExitAssessment(
+            artifact_id,
+            artifact_hash,
+            ref("holding_reference"),
+            ShadowExitDecision(str(payload["decision"])),
+            optional_decimal("exit_price"),
+            decimal("exit_quantity"),
+            tuple(HoldingRuleKind(str(item)) for item in payload["triggered_rules"]),
+            instant("assessed_at"),
+            tuple(str(item) for item in payload["reason_codes"]),
+        )
+    elif artifact_kind == "STRATEGY_OUTCOME":
+        restored = StrategyOutcome(
+            artifact_id,
+            artifact_hash,
+            ref("entry_reference"),
+            ref("fill_reference"),
+            ref("position_reference"),
+            ref("exit_reference"),
+            str(payload["symbol"]),
+            instant("opened_at"),
+            instant("closed_at"),
+            decimal("gross_return"),
+            decimal("total_cost"),
+            decimal("net_return"),
+            optional_decimal("mfe"),
+            optional_decimal("mae"),
+            tuple(HoldingRuleKind(str(item)) for item in payload["exit_rule_kinds"]),
+            bool(payload["settled"]),
+            tuple(str(item) for item in payload["limitations"]),
+        )
+    else:
+        raise ValueError(f"unsupported restorable Strategy Shadow Artifact {artifact_kind}")
+    if strategy_shadow_artifact_payload(restored) != payload:
+        raise ValueError("Strategy Shadow Artifact canonical restoration mismatch")
+    return restored
 
 
 def _outcome_payload(

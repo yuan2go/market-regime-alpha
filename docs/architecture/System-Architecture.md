@@ -44,15 +44,28 @@ BaoStock/Tencent recorded provider evidence
 -> Controlled Operation
    -> pre-decision minute evidence
    -> Signal
-   -> uncalibrated PathForecast
+   -> PostgreSQL Historical Sample Registry Reader
+   -> uncalibrated exploratory PathForecast
    -> optional Canonical Lifecycle child
 -> ResearchDailySummary
 -> Continuous child receipts and terminal tick
 ```
 
+Before the decision child, the Research/Shadow composition may retrospectively
+build exact-14:55 BaoStock decisions, T+1 multi-horizon outcomes and PathForecast
+samples. The resulting Historical Sample Dataset is immutable, PostgreSQL-owned,
+`UNQUALIFIED` and `FREE_DATA_EXPLORATORY`. Its retrieval time is its earliest
+availability time, so the current run cannot consume a dataset retrieved at or
+after its own decision time. A first run therefore remains fail-closed; a later
+decision may consume already-registered samples. Production composition never
+receives this Reader. BaoStock `adjustflag=3` is accepted only when the frozen
+Target declares `RAW_UNADJUSTED_TRADABLE_PRICE_V1`; adjustment semantics are
+never substituted or promoted.
+
 The runtime denies `PRODUCTION` when the input is free public evidence. A missing or invalid stage is represented by typed blocked evidence; the runtime does not synthesize a missing Canonical Lifecycle receipt.
 
-The post-runtime research chain is separately invoked and is not part of the canonical daily writer:
+The post-runtime chain is orchestrated by thin commands on the same runtime and
+the existing PostgreSQL owners; it is not a second scheduler or daily writer:
 
 ```text
 ResearchDailySummary
@@ -70,15 +83,37 @@ ResearchDailySummary
 
 ## Installed CLI boundary
 
-There are 12 installed scripts:
+There are six installed scripts and exactly the same six CLI modules have
+`__main__` guards: `continuous-research`, `state-system`, `decision-system`,
+`model-governance`, `pit-authority` and `research-shadow`.
 
-- six bounded free-data operation commands: prepare, run-window, resume, replay, report and inspect;
-- `continuous-research`, the sole all-day scheduler/runtime entry;
-- `state-system` and `decision-system`, bounded operator commands;
-- `model-governance` and `pit-authority`, Authority administration commands;
-- `research-shadow`, a research operation command.
+The prior 18 guarded modules are classified as follows. Removing a guard does
+not remove an importable compatibility function or its tests.
 
-Additional modules with `__main__` guards are internal tools, compatibility utilities or research harnesses. They do not become canonical merely because Python can execute them.
+| Module | Classification | Executable treatment |
+|---|---|---|
+| `continuous_research` | `PUBLIC_OPERATOR` | installed; owns `run-day`, `settle-day`, `strategy-day`, `report-day`, resume and replay |
+| `state_system` | `PUBLIC_OPERATOR` | installed bounded owner/admin command |
+| `decision_system` | `PUBLIC_OPERATOR` | installed bounded decision-support command |
+| `model_governance` | `PUBLIC_OPERATOR` | installed Authority administration command |
+| `pit_authority` | `PUBLIC_OPERATOR` | installed Authority administration command; Formal qualification remains closed |
+| `research_shadow` | `PUBLIC_OPERATOR` | installed bounded research command |
+| `compare_legacy_features` | `RESEARCH_TOOL` | importable harness; main guard removed |
+| `materialize_features` | `RESEARCH_TOOL` | importable harness; main guard removed |
+| `replay_feature_bundle` | `RESEARCH_TOOL` | importable harness; main guard removed |
+| `prepare_controlled_operation` | `INTERNAL_ONLY` | called through the canonical composition; main guard removed |
+| `report_controlled_operation` | `INTERNAL_ONLY` | compatibility function; main guard removed |
+| `resume_controlled_operation` | `INTERNAL_ONLY` | compatibility function; main guard removed |
+| `replay_controlled_operation` | `INTERNAL_ONLY` | compatibility function; main guard removed |
+| `settle_controlled_operation` | `INTERNAL_ONLY` | reused by settlement owner; main guard removed |
+| `run_canonical_lifecycle` | `INTERNAL_ONLY` | bounded child implementation; main guard removed |
+| `replay_canonical_lifecycle` | `INTERNAL_ONLY` | bounded child replay; main guard removed |
+| `create_manual_trade_from_risk_decision` | `INTERNAL_ONLY` | manual-account application helper; main guard removed |
+| `run_decision_window` | `LEGACY` | compatibility composition only; main guard removed |
+
+No reviewed guarded module was `DEAD`; deletion would remove still-tested
+compatibility behavior. The six former `*-free-data-operation` installed aliases
+were duplicate entry points and were removed from packaging.
 
 ## Package responsibilities
 
