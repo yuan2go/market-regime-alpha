@@ -43,6 +43,26 @@ from market_regime_alpha.evidence.canonical import canonical_hash
 NOW = datetime(2026, 8, 10, 8, tzinfo=UTC)
 
 
+_VALUE_PROVENANCE = {
+    "intended_quantity": "OPERATOR_INPUT",
+    "decision_reference_price": "OBSERVED_FACT",
+    "observed_fill_price": "OBSERVED_FACT",
+    "fillability": "ENGINEERING_ASSUMPTION",
+    "slippage_bps": "ENGINEERING_ASSUMPTION",
+    "impact_bps": "ENGINEERING_ASSUMPTION",
+    "commission_bps": "ENGINEERING_ASSUMPTION",
+    "sessions_held": "OBSERVED_FACT",
+    "current_price": "OBSERVED_FACT",
+    "signal_reversed": "OBSERVED_FACT",
+    "market_deteriorated": "OBSERVED_FACT",
+    "theme_deteriorated": "OBSERVED_FACT",
+    "capital_deteriorated": "OBSERVED_FACT",
+    "exit_cost": "ENGINEERING_ASSUMPTION",
+    "mfe": "OBSERVED_FACT",
+    "mae": "OBSERVED_FACT",
+}
+
+
 def _ref(kind: str, name: str) -> ValidationArtifactReference:
     return ValidationArtifactReference(kind, ArtifactId(name), canonical_hash({"name": name}))
 
@@ -52,17 +72,34 @@ def test_strategy_day_accepts_an_initial_holding_observation_for_later_resume() 
         "trading_date": "2026-08-10",
         "observed_at": NOW.isoformat(),
         "symbol": "000001.SZ",
+        "intended_quantity": "100",
         "decision_reference_price": "10",
         "observed_fill_price": "10.01",
         "fillability": "1",
+        "slippage_bps": "5",
+        "impact_bps": "3",
+        "commission_bps": "2",
         "sessions_held": 0,
         "current_price": None,
+        "signal_reversed": False,
+        "market_deteriorated": False,
+        "theme_deteriorated": False,
+        "capital_deteriorated": False,
+        "exit_cost": "0",
+        "mfe": None,
+        "mae": None,
+        "value_provenance": _VALUE_PROVENANCE,
     }
 
     observation = StrategyDayObservation.from_canonical_dict(values)
 
     assert observation.sessions_held == 0
     assert observation.current_price is None
+
+    missing_cost = dict(values)
+    del missing_cost["slippage_bps"]
+    with pytest.raises(KeyError):
+        StrategyDayObservation.from_canonical_dict(missing_cost)
 
 
 def test_shadow_lifecycle_never_creates_real_trading_authority() -> None:

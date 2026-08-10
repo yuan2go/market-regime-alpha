@@ -133,6 +133,17 @@ from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyDayObservation,
     StrategyShadowDayOperator,
 )
+from market_regime_alpha.application.strategy_shadow.portfolio import (
+    PortfolioWeightingMethod,
+    ShadowParameterProvenance,
+    ShadowPortfolioPolicy,
+    ShadowPortfolioTradeSession,
+)
+from market_regime_alpha.application.strategy_shadow.portfolio_operator import (
+    PortfolioMarketInput,
+    PortfolioShadowDayInput,
+    PortfolioShadowDayOperator,
+)
 from market_regime_alpha.application.state_system.runtime import (
     StateResearchStage,
 )
@@ -761,6 +772,28 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             exit_cost=Decimal("1"),
             mfe=Decimal("0.03"),
             mae=Decimal("-0.01"),
+            value_provenance=tuple(
+                sorted(
+                    {
+                        "intended_quantity": ShadowParameterProvenance.OPERATOR_INPUT,
+                        "decision_reference_price": ShadowParameterProvenance.OBSERVED_FACT,
+                        "observed_fill_price": ShadowParameterProvenance.OBSERVED_FACT,
+                        "fillability": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                        "slippage_bps": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                        "impact_bps": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                        "commission_bps": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                        "sessions_held": ShadowParameterProvenance.OBSERVED_FACT,
+                        "current_price": ShadowParameterProvenance.OBSERVED_FACT,
+                        "signal_reversed": ShadowParameterProvenance.OBSERVED_FACT,
+                        "market_deteriorated": ShadowParameterProvenance.OBSERVED_FACT,
+                        "theme_deteriorated": ShadowParameterProvenance.OBSERVED_FACT,
+                        "capital_deteriorated": ShadowParameterProvenance.OBSERVED_FACT,
+                        "exit_cost": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                        "mfe": ShadowParameterProvenance.OBSERVED_FACT,
+                        "mae": ShadowParameterProvenance.OBSERVED_FACT,
+                    }.items()
+                )
+            ),
         )
         strategy_operator = StrategyShadowDayOperator(postgres_factory)
         holding_result = strategy_operator.run(strategy_observation)
@@ -787,6 +820,78 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert strategy_replay["status"] == "SETTLED"
         assert strategy_replay["event_count"] == 10
         assert strategy_replay["artifact_count"] == 10
+        portfolio_policy = ShadowPortfolioPolicy.create(
+            policy_version="free-data-stateful-e2e-v1",
+            top_k=1,
+            weighting_method=PortfolioWeightingMethod.EQUAL_WEIGHT,
+            lot_size=100,
+            t_plus_one=True,
+            parameters={
+                "commission_bps": (
+                    Decimal("2"),
+                    ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                ),
+                "slippage_bps": (
+                    Decimal("5"),
+                    ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                ),
+                "impact_bps": (
+                    Decimal("3"),
+                    ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                ),
+                "exit_cost_bps": (
+                    Decimal("2"),
+                    ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                ),
+                "max_participation_rate": (
+                    Decimal("0.1"),
+                    ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+                ),
+            },
+            created_at=summary.decision_time,
+        )
+        market_inputs = tuple(
+            PortfolioMarketInput(
+                symbol=item.symbol,
+                reference_price=Decimal("10"),
+                mark_price=Decimal("10.1"),
+                average_daily_amount=Decimal("10000000"),
+                trading_status=TradingStatus.TRADING,
+                price_limit_state=PriceLimitState.NORMAL,
+                trade_session=ShadowPortfolioTradeSession.CONTINUOUS_PM,
+                risk_weight=None,
+                risk_weight_provenance=None,
+                reason_codes=(),
+            )
+            for item in execution.decision.candidate_set.selected
+        )
+        portfolio_request = PortfolioShadowDayInput(
+            research_trading_date=command.trading_date,
+            trading_date=command.trading_date,
+            observed_at=strategy_observed_at,
+            portfolio_id=None,
+            initial_cash=Decimal("1000000"),
+            policy=portfolio_policy,
+            market_inputs=market_inputs,
+        )
+        portfolio_operator = PortfolioShadowDayOperator(postgres_factory)
+        portfolio_result = portfolio_operator.run(portfolio_request)
+        assert portfolio_result["status"] == "RECORDED"
+        assert portfolio_result["shadow_fill_is_real_fill"] is False
+        assert portfolio_operator.run(portfolio_request)["status"] == "RECOVERED_IDEMPOTENT"
+        portfolio_next = portfolio_operator.run(
+            replace(
+                portfolio_request,
+                trading_date=next_session_date,
+                observed_at=strategy_observed_at + timedelta(days=1),
+            )
+        )
+        assert portfolio_next["sequence"] == 2
+        portfolio_replay = portfolio_operator.replay(
+            ArtifactId(str(portfolio_result["portfolio_id"]))
+        )
+        assert portfolio_replay["state_count"] == 2
+        assert portfolio_replay["shadow_position_is_real_position"] is False
         report = shadow_operations.report(shadow_command.session_id)
         assert report["authority"]["research_shadow_engineering_ready"] is True
         assert report["authority"]["prospective_proven"] is False
@@ -844,7 +949,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 47
+        assert recovery.migration_head == 49
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

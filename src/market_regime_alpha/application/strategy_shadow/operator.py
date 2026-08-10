@@ -65,9 +65,34 @@ from market_regime_alpha.application.strategy_shadow.operations import (
 from market_regime_alpha.application.strategy_shadow.postgres_repository import (
     PostgresStrategyShadowRepository,
 )
+from market_regime_alpha.application.strategy_shadow.portfolio import (
+    ShadowParameterProvenance,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
+)
+
+
+_RESULT_VALUE_FIELDS = frozenset(
+    {
+        "intended_quantity",
+        "decision_reference_price",
+        "observed_fill_price",
+        "fillability",
+        "slippage_bps",
+        "impact_bps",
+        "commission_bps",
+        "sessions_held",
+        "current_price",
+        "signal_reversed",
+        "market_deteriorated",
+        "theme_deteriorated",
+        "capital_deteriorated",
+        "exit_cost",
+        "mfe",
+        "mae",
+    }
 )
 
 
@@ -92,6 +117,7 @@ class StrategyDayObservation:
     exit_cost: Decimal
     mfe: Decimal | None
     mae: Decimal | None
+    value_provenance: tuple[tuple[str, ShadowParameterProvenance], ...]
 
     def __post_init__(self) -> None:
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
@@ -104,29 +130,44 @@ class StrategyDayObservation:
             raise ValueError("Strategy day sessions/cost cannot be negative")
         if self.current_price is not None and self.current_price <= 0:
             raise ValueError("Strategy day current price must be positive")
+        if self.value_provenance != tuple(sorted(set(self.value_provenance))):
+            raise ValueError("Strategy day value provenance must be sorted and unique")
+        if {name for name, _provenance in self.value_provenance} != _RESULT_VALUE_FIELDS:
+            raise ValueError("Strategy day requires exact result-value provenance")
 
     @classmethod
     def from_canonical_dict(cls, value: Mapping[str, Any]) -> StrategyDayObservation:
         return cls(
             trading_date=date.fromisoformat(str(value["trading_date"])),
             observed_at=datetime.fromisoformat(str(value["observed_at"])),
-            symbol=None if value.get("symbol") is None else str(value["symbol"]),
-            intended_quantity=Decimal(str(value.get("intended_quantity", "100"))),
+            symbol=None if value["symbol"] is None else str(value["symbol"]),
+            intended_quantity=Decimal(str(value["intended_quantity"])),
             decision_reference_price=Decimal(str(value["decision_reference_price"])),
-            observed_fill_price=_optional_decimal(value.get("observed_fill_price")),
-            fillability=Decimal(str(value.get("fillability", "1"))),
-            slippage_bps=Decimal(str(value.get("slippage_bps", "5"))),
-            impact_bps=Decimal(str(value.get("impact_bps", "3"))),
-            commission_bps=Decimal(str(value.get("commission_bps", "2"))),
-            sessions_held=int(value.get("sessions_held", 1)),
-            current_price=_optional_decimal(value.get("current_price")),
-            signal_reversed=_boolean(value.get("signal_reversed", False)),
-            market_deteriorated=_boolean(value.get("market_deteriorated", False)),
-            theme_deteriorated=_boolean(value.get("theme_deteriorated", False)),
-            capital_deteriorated=_boolean(value.get("capital_deteriorated", False)),
-            exit_cost=Decimal(str(value.get("exit_cost", "0"))),
-            mfe=_optional_decimal(value.get("mfe")),
-            mae=_optional_decimal(value.get("mae")),
+            observed_fill_price=_optional_decimal(value["observed_fill_price"]),
+            fillability=Decimal(str(value["fillability"])),
+            slippage_bps=Decimal(str(value["slippage_bps"])),
+            impact_bps=Decimal(str(value["impact_bps"])),
+            commission_bps=Decimal(str(value["commission_bps"])),
+            sessions_held=int(value["sessions_held"]),
+            current_price=_optional_decimal(value["current_price"]),
+            signal_reversed=_boolean(value["signal_reversed"]),
+            market_deteriorated=_boolean(value["market_deteriorated"]),
+            theme_deteriorated=_boolean(value["theme_deteriorated"]),
+            capital_deteriorated=_boolean(value["capital_deteriorated"]),
+            exit_cost=Decimal(str(value["exit_cost"])),
+            mfe=_optional_decimal(value["mfe"]),
+            mae=_optional_decimal(value["mae"]),
+            value_provenance=tuple(
+                sorted(
+                    (
+                        str(name),
+                        ShadowParameterProvenance(str(provenance)),
+                    )
+                    for name, provenance in _mapping(
+                        value["value_provenance"]
+                    ).items()
+                )
+            ),
         )
 
 
@@ -331,6 +372,13 @@ class StrategyShadowDayOperator:
                     if observation.observed_fill_price is None
                     else str(observation.observed_fill_price)
                 ),
+                "slippage_bps": str(observation.slippage_bps),
+                "impact_bps": str(observation.impact_bps),
+                "commission_bps": str(observation.commission_bps),
+                "value_provenance": [
+                    [name, provenance.value]
+                    for name, provenance in observation.value_provenance
+                ],
                 "limitations": [
                     "FREE_DATA_EXPLORATORY",
                     "NOT_ORDER_BOOK_EVIDENCE",
@@ -817,6 +865,12 @@ def _optional_decimal(value: object) -> Decimal | None:
 def _boolean(value: object) -> bool:
     if not isinstance(value, bool):
         raise ValueError("Strategy day boolean field must be bool")
+    return value
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Strategy day value_provenance must be an object")
     return value
 
 

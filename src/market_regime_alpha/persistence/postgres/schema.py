@@ -157,6 +157,8 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "strategy_shadow_session",
         "strategy_shadow_event",
         "strategy_shadow_artifact",
+        "strategy_shadow_portfolio",
+        "strategy_shadow_portfolio_day",
         "continuous_runtime_authority_evidence",
         "free_data_research_universe_snapshot",
         "free_data_research_universe_member",
@@ -165,6 +167,14 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
 
 EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
+        (
+            "strategy_shadow_portfolio",
+            "strategy_shadow_portfolio_no_update",
+        ),
+        (
+            "strategy_shadow_portfolio_day",
+            "strategy_shadow_portfolio_day_no_update",
+        ),
         (
             "free_data_research_universe_snapshot",
             "free_data_research_universe_snapshot_no_update",

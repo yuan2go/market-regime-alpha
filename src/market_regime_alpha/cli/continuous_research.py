@@ -98,6 +98,10 @@ from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyDayObservation,
     StrategyShadowDayOperator,
 )
+from market_regime_alpha.application.strategy_shadow.portfolio_operator import (
+    PortfolioShadowDayInput,
+    PortfolioShadowDayOperator,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.providers.public_composite import (
@@ -227,6 +231,13 @@ def build_parser() -> argparse.ArgumentParser:
     settle_day.add_argument("--at", required=True)
     strategy_replay = subparsers.add_parser("strategy-replay")
     strategy_replay.add_argument("--session-id", required=True)
+    portfolio_day = subparsers.add_parser(
+        "portfolio-shadow-day",
+        help="Append one PostgreSQL-owned A-share Portfolio Shadow day.",
+    )
+    portfolio_day.add_argument("--observations", type=Path, required=True)
+    portfolio_replay = subparsers.add_parser("portfolio-shadow-replay")
+    portfolio_replay.add_argument("--portfolio-id", required=True)
     universe_sync = subparsers.add_parser("research-universe-sync")
     universe_sync.add_argument("--as-of-date", required=True)
     universe_sync.add_argument("--artifact-root", type=Path, required=True)
@@ -285,6 +296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "replay",
             "replay-day",
             "research-universe-replay",
+            "portfolio-shadow-replay",
             *_INSPECT_OPERATIONS,
         }
         journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
@@ -338,6 +350,16 @@ def _dispatch(
         return StrategyShadowDayOperator(factory).replay(
             ArtifactId(args.session_id)
         )
+    if args.operation == "portfolio-shadow-day":
+        return PortfolioShadowDayOperator(factory).run(
+            PortfolioShadowDayInput.from_canonical_dict(
+                _load_json_object(args.observations)
+            )
+        )
+    if args.operation == "portfolio-shadow-replay":
+        return PortfolioShadowDayOperator(factory).replay(
+            ArtifactId(args.portfolio_id)
+        )
     if args.operation == "research-universe-sync":
         return FreeResearchUniverseOperator(factory).sync(
             as_of_date=date.fromisoformat(args.as_of_date),
@@ -362,6 +384,16 @@ def _dispatch(
                 """,
                 (trading_date,),
             ).fetchall()
+            portfolio_rows = connection.execute(
+                """
+                SELECT portfolio_id, state_id, sequence, cash, nav,
+                       gross_exposure, turnover, drawdown, total_cost
+                FROM strategy_shadow_portfolio_day
+                WHERE trading_date = %s
+                ORDER BY portfolio_id
+                """,
+                (trading_date,),
+            ).fetchall()
         research_reports = [
             ResearchShadowOperations(factory).report(ArtifactId(str(row[0])))
             for row in shadow_rows
@@ -376,6 +408,22 @@ def _dispatch(
             "runtime": runtime,
             "research_shadow": research_reports,
             "strategy_shadow": strategy_report,
+            "portfolio_shadow": [
+                {
+                    "portfolio_id": str(row[0]),
+                    "state_id": str(row[1]),
+                    "sequence": int(row[2]),
+                    "cash": str(row[3]),
+                    "nav": str(row[4]),
+                    "gross_exposure": str(row[5]),
+                    "turnover": str(row[6]),
+                    "drawdown": str(row[7]),
+                    "total_cost": str(row[8]),
+                    "shadow_fill_is_real_fill": False,
+                    "shadow_position_is_real_position": False,
+                }
+                for row in portfolio_rows
+            ],
             **_authority_ceiling(),
         }
     if args.operation == "replay-day":
@@ -396,9 +444,17 @@ def _dispatch(
                 """,
                 (trading_date,),
             ).fetchall()
+            portfolio_rows = connection.execute(
+                """
+                SELECT portfolio_id FROM strategy_shadow_portfolio_day
+                WHERE trading_date = %s ORDER BY portfolio_id
+                """,
+                (trading_date,),
+            ).fetchall()
         research = ResearchShadowOperations(factory)
         strategy_operator = StrategyShadowDayOperator(factory)
         strategy_sessions = strategy_operator.list_sessions(trading_date)
+        portfolio_operator = PortfolioShadowDayOperator(factory)
         return {
             "operation": "REPLAY_DAY",
             "trading_date": trading_date.isoformat(),
@@ -412,6 +468,10 @@ def _dispatch(
             ],
             "strategy_shadow": [
                 strategy_operator.replay(item.session_id) for item in strategy_sessions
+            ],
+            "portfolio_shadow": [
+                portfolio_operator.replay(ArtifactId(str(row[0])))
+                for row in portfolio_rows
             ],
             **_authority_ceiling(),
         }
