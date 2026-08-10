@@ -36,12 +36,71 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
     PostgresResearchValidationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import (
+    canonical_hash,
+    require_sha256,
+    require_text,
+)
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 
 
 PATH_CALIBRATION_SCORE_FACTOR = "forecast.return_quantile.0.5"
+PATH_CALIBRATION_PARTITION_POLICY_VERSION = (
+    "trading-date-label-aware-purge-v1"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationPartitionPolicy:
+    """Content-addressed rules deciding calibration partitions and floors."""
+
+    policy_id: ArtifactId
+    policy_hash: str
+    policy_version: str
+    minimum_fit_samples: int
+    minimum_validation_samples: int
+
+    def __post_init__(self) -> None:
+        require_sha256("policy_hash", self.policy_hash)
+        require_text("policy_version", self.policy_version)
+        if self.minimum_fit_samples <= 0 or self.minimum_validation_samples <= 0:
+            raise ValueError("Calibration partition sample floors must be positive")
+        if canonical_hash(self.identity_payload()) != self.policy_hash:
+            raise ValueError("Calibration Partition Policy hash mismatch")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        minimum_fit_samples: int,
+        minimum_validation_samples: int,
+        policy_version: str = PATH_CALIBRATION_PARTITION_POLICY_VERSION,
+    ) -> CalibrationPartitionPolicy:
+        payload = _partition_policy_payload(
+            policy_version=policy_version,
+            minimum_fit_samples=minimum_fit_samples,
+            minimum_validation_samples=minimum_validation_samples,
+        )
+        policy_id, policy_hash = content_identity(
+            "path-calibration-partition-policy",
+            payload,
+        )
+        return cls(
+            policy_id,
+            policy_hash,
+            policy_version,
+            minimum_fit_samples,
+            minimum_validation_samples,
+        )
+
+    def identity_payload(self) -> dict[str, Any]:
+        return _partition_policy_payload(
+            policy_version=self.policy_version,
+            minimum_fit_samples=self.minimum_fit_samples,
+            minimum_validation_samples=self.minimum_validation_samples,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +147,10 @@ class PostgresPathForecastCalibrationOperator:
             raise ValueError("Path calibration created_at must be timezone-aware")
         if minimum_fit_samples <= 0 or minimum_validation_samples <= 0:
             raise ValueError("Path calibration sample floors must be positive")
+        partition_policy = CalibrationPartitionPolicy.create(
+            minimum_fit_samples=minimum_fit_samples,
+            minimum_validation_samples=minimum_validation_samples,
+        )
         resolved = self._load_observations(
             target_protocol=target_protocol,
             through_date=through_date,
@@ -138,8 +201,7 @@ class PostgresPathForecastCalibrationOperator:
                 )
                 partitioned, partition_reasons = _partition_observations(
                     values,
-                    minimum_fit_samples=minimum_fit_samples,
-                    minimum_validation_samples=minimum_validation_samples,
+                    policy=partition_policy,
                 )
                 if partitioned is None:
                     if not values:
@@ -157,6 +219,7 @@ class PostgresPathForecastCalibrationOperator:
                             target_reference=target_reference,
                             barrier_id=barrier.barrier_id,
                             protocol=protocol,
+                            partition_policy=partition_policy,
                             resolved=values,
                             observations=(),
                             calibration_artifact_id=None,
@@ -185,6 +248,7 @@ class PostgresPathForecastCalibrationOperator:
                         target_reference=target_reference,
                         barrier_id=barrier.barrier_id,
                         protocol=protocol,
+                        partition_policy=partition_policy,
                         resolved=values,
                         observations=partitioned,
                         calibration_artifact_id=artifact.artifact_id,
@@ -212,6 +276,8 @@ class PostgresPathForecastCalibrationOperator:
             "target_protocol_id": str(target_protocol.protocol_id),
             "through_date": through_date.isoformat(),
             "score_factor_id": score_factor_id,
+            "partition_policy_id": str(partition_policy.policy_id),
+            "partition_policy_hash": partition_policy.policy_hash,
             "hypothesis_count": len(results),
             "fitted_count": fitted_count,
             "hypotheses": results,
@@ -235,6 +301,7 @@ class PostgresPathForecastCalibrationOperator:
         target_reference: ValidationArtifactReference,
         barrier_id: str,
         protocol: CalibrationProtocol,
+        partition_policy: CalibrationPartitionPolicy,
         resolved: tuple[_ResolvedCalibrationObservation, ...],
         observations: tuple[CalibrationObservation, ...],
         calibration_artifact_id: ArtifactId | None,
@@ -249,6 +316,7 @@ class PostgresPathForecastCalibrationOperator:
             target_reference=target_reference,
             barrier_id=barrier_id,
             protocol=protocol,
+            partition_policy=partition_policy,
             resolved=resolved,
             observations=observations,
             calibration_artifact_id=calibration_artifact_id,
@@ -405,8 +473,7 @@ class PostgresPathForecastCalibrationOperator:
 def _partition_observations(
     values: tuple[_ResolvedCalibrationObservation, ...],
     *,
-    minimum_fit_samples: int,
-    minimum_validation_samples: int,
+    policy: CalibrationPartitionPolicy,
 ) -> tuple[tuple[CalibrationObservation, ...] | None, tuple[str, ...]]:
     dates = tuple(sorted({item.trading_date for item in values}))
     if len(dates) < 2:
@@ -430,8 +497,8 @@ def _partition_observations(
             item for item in values if item.trading_date >= validation_start
         )
         if (
-            len(fit) >= minimum_fit_samples
-            and len(validation) >= minimum_validation_samples
+            len(fit) >= policy.minimum_fit_samples
+            and len(validation) >= policy.minimum_validation_samples
         ):
             target_validation = max(1, len(values) // 5)
             candidates.append(
@@ -476,6 +543,7 @@ def _hypothesis_payload(
     target_reference: ValidationArtifactReference,
     barrier_id: str,
     protocol: CalibrationProtocol,
+    partition_policy: CalibrationPartitionPolicy,
     resolved: tuple[_ResolvedCalibrationObservation, ...],
     observations: tuple[CalibrationObservation, ...],
     calibration_artifact_id: ArtifactId | None,
@@ -500,6 +568,11 @@ def _hypothesis_payload(
             protocol.protocol_id,
             protocol.protocol_hash,
         ).to_canonical_dict(),
+        "partition_policy": {
+            "policy_id": str(partition_policy.policy_id),
+            "policy_hash": partition_policy.policy_hash,
+            **partition_policy.identity_payload(),
+        },
         "method": protocol.method.value,
         "through_date": through_date.isoformat(),
         "score_factor_id": score_factor_id,
@@ -555,7 +628,34 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return value
 
 
+def _partition_policy_payload(
+    *,
+    policy_version: str,
+    minimum_fit_samples: int,
+    minimum_validation_samples: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "path-calibration-partition-policy/v1",
+        "policy_version": policy_version,
+        "split_unit": "TRADING_DATE",
+        "fit_rule": (
+            "TRADING_DATE_LT_VALIDATION_START_AND_"
+            "LABEL_END_DATE_LT_VALIDATION_START"
+        ),
+        "validation_rule": "TRADING_DATE_GTE_VALIDATION_START",
+        "oos_rule": "NOT_ASSIGNED_BY_EXPLORATORY_OPERATOR",
+        "candidate_selection_rule": (
+            "MIN_VALIDATION_TARGET_DELTA_THEN_MAX_FIT_THEN_EARLIEST_SPLIT"
+        ),
+        "validation_target_fraction": "1/5",
+        "minimum_fit_samples": minimum_fit_samples,
+        "minimum_validation_samples": minimum_validation_samples,
+    }
+
+
 __all__ = [
+    "CalibrationPartitionPolicy",
     "PATH_CALIBRATION_SCORE_FACTOR",
+    "PATH_CALIBRATION_PARTITION_POLICY_VERSION",
     "PostgresPathForecastCalibrationOperator",
 ]

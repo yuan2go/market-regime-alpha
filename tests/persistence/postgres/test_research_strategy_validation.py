@@ -339,6 +339,95 @@ def test_postgres_calibration_writer_rejects_caller_supplied_qualification(
         )
 
 
+def test_postgres_calibration_writer_rejects_partition_lineage_mismatch(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    now = datetime(2026, 8, 10, 8, tzinfo=UTC)
+    protocol = CalibrationProtocol.create(
+        protocol_version="partition-owner-verification-v1",
+        method=CalibrationMethod.PLATT_LOGISTIC,
+        minimum_fit_samples=2,
+        maximum_iterations=5,
+    )
+    observations = (
+        CalibrationObservation("fit-1", Decimal("0.1"), 0, CalibrationPartition.FIT),
+        CalibrationObservation("fit-2", Decimal("0.9"), 1, CalibrationPartition.FIT),
+        CalibrationObservation(
+            "validation-1", Decimal("0.8"), 1, CalibrationPartition.VALIDATION
+        ),
+    )
+    artifact = fit_calibration(
+        protocol=protocol,
+        observations=observations,
+        created_at=now,
+    )
+    swapped = (
+        CalibrationObservation(
+            "fit-1", Decimal("0.1"), 0, CalibrationPartition.VALIDATION
+        ),
+        CalibrationObservation("fit-2", Decimal("0.9"), 1, CalibrationPartition.FIT),
+        CalibrationObservation(
+            "validation-1", Decimal("0.8"), 1, CalibrationPartition.FIT
+        ),
+    )
+
+    with pytest.raises(ValueError, match="observation partition mismatch"):
+        PostgresResearchValidationRepository(postgres_factory).record_calibration(
+            protocol=protocol,
+            artifact=artifact,
+            observations=swapped,
+        )
+
+
+def test_postgres_calibration_writer_detects_existing_partition_conflict(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    now = datetime(2026, 8, 10, 8, tzinfo=UTC)
+    protocol = CalibrationProtocol.create(
+        protocol_version="partition-binding-conflict-v1",
+        method=CalibrationMethod.PLATT_LOGISTIC,
+        minimum_fit_samples=2,
+        maximum_iterations=5,
+    )
+    observations = (
+        CalibrationObservation("fit-1", Decimal("0.1"), 0, CalibrationPartition.FIT),
+        CalibrationObservation("fit-2", Decimal("0.9"), 1, CalibrationPartition.FIT),
+        CalibrationObservation(
+            "validation-1", Decimal("0.8"), 1, CalibrationPartition.VALIDATION
+        ),
+    )
+    artifact = fit_calibration(
+        protocol=protocol,
+        observations=observations,
+        created_at=now,
+    )
+    repository = PostgresResearchValidationRepository(postgres_factory)
+    repository.record(
+        artifact_id=artifact.artifact_id,
+        artifact_hash=artifact.artifact_hash,
+        artifact_kind="CALIBRATION_ARTIFACT",
+        evidence_authority="ENGINEERING_ONLY",
+        payload=artifact.identity_payload(),
+        created_at=now,
+    )
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO calibration_partition_binding(
+                calibration_artifact_id, observation_id, partition_name
+            ) VALUES (%s, 'fit-1', 'VALIDATION')
+            """,
+            (str(artifact.artifact_id),),
+        )
+
+    with pytest.raises(ValueError, match="conflicts with Artifact"):
+        repository.record_calibration(
+            protocol=protocol,
+            artifact=artifact,
+            observations=observations,
+        )
+
+
 def test_migration_046_rejects_reference_only_authority_rows(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:

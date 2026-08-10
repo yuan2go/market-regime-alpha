@@ -7,6 +7,7 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.application.research_validation.path_calibration import (
+    CalibrationPartitionPolicy,
     _ResolvedCalibrationObservation,
     _partition_observations,
 )
@@ -50,8 +51,10 @@ def test_path_calibration_partitions_by_date_and_purges_overlapping_labels() -> 
 
     observations, reasons = _partition_observations(
         values,
-        minimum_fit_samples=2,
-        minimum_validation_samples=2,
+        policy=CalibrationPartitionPolicy.create(
+            minimum_fit_samples=2,
+            minimum_validation_samples=2,
+        ),
     )
 
     assert observations is not None
@@ -74,9 +77,27 @@ def test_path_calibration_partitions_by_date_and_purges_overlapping_labels() -> 
 def test_path_calibration_returns_not_estimable_without_date_partition() -> None:
     observations, reasons = _partition_observations(
         (_observation(date(2026, 8, 3), 1),),
-        minimum_fit_samples=1,
-        minimum_validation_samples=1,
+        policy=CalibrationPartitionPolicy.create(
+            minimum_fit_samples=1,
+            minimum_validation_samples=1,
+        ),
     )
 
     assert observations is None
     assert reasons == ("NOT_ESTIMABLE_TRADING_DATE_PARTITION",)
+
+
+def test_path_calibration_partition_policy_identity_freezes_validation_floor() -> None:
+    first = CalibrationPartitionPolicy.create(
+        minimum_fit_samples=10,
+        minimum_validation_samples=2,
+    )
+    second = CalibrationPartitionPolicy.create(
+        minimum_fit_samples=10,
+        minimum_validation_samples=3,
+    )
+
+    assert first.policy_id != second.policy_id
+    assert first.policy_hash != second.policy_hash
+    assert first.identity_payload()["minimum_validation_samples"] == 2
+    assert first.identity_payload()["fit_rule"].startswith("TRADING_DATE_LT")

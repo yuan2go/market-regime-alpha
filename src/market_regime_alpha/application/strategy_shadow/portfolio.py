@@ -790,9 +790,14 @@ def run_shadow_portfolio_day(
                 fill.notional, policy, selling=True
             )
             cash += proceeds
+            explicit_exit_cost = _explicit_cash_cost(
+                fill.notional,
+                policy,
+                selling=True,
+            )
             realized[symbol] = (
                 (fill.fill_price - position.average_cost) * fill.filled_quantity
-                - fill.total_cost
+                - explicit_exit_cost
             )
             traded_notional += fill.notional
             remaining_quantity = position.quantity - fill.filled_quantity
@@ -898,14 +903,17 @@ def run_shadow_portfolio_day(
             if cash < 0:
                 raise ValueError("Shadow Portfolio fill exceeded available Cash")
             mark = observation.mark_price or fill.fill_price
+            average_cost = (
+                fill.notional + cash_cost
+            ) / fill.filled_quantity
             positions[observation.symbol] = ShadowPortfolioPosition(
                 observation.symbol,
                 fill.filled_quantity,
-                fill.fill_price,
+                average_cost,
                 trading_date,
                 mark,
                 mark * fill.filled_quantity,
-                (mark - fill.fill_price) * fill.filled_quantity,
+                (mark - average_cost) * fill.filled_quantity,
             )
             traded_notional += fill.notional
 

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from market_regime_alpha.application.canonical_lifecycle.input_manifest import (
     LifecycleAuthorityCeiling,
 )
@@ -57,10 +59,13 @@ def _settlement_dataset(
     tmp_path: Path,
     *,
     minute_count: int = 60,
+    minute_timeframe: Timeframe = Timeframe.MINUTE_1,
     include_daily: bool = True,
     name: str = "settlement-dataset",
 ):
     session_date = DECISION_TIME.date() + timedelta(days=1)
+    minute_duration = minute_timeframe.duration
+    assert minute_duration is not None
     minute_start = datetime.combine(session_date, datetime.min.time(), tzinfo=UTC) + timedelta(
         hours=1, minutes=30
     )
@@ -69,11 +74,11 @@ def _settlement_dataset(
             symbol="600000.SH",
             exchange=Exchange.SH,
             asset_type=AssetType.A_SHARE,
-            timeframe=Timeframe.MINUTE_1,
+            timeframe=minute_timeframe,
             market_date=session_date,
-            event_start=minute_start + timedelta(minutes=index),
-            event_end=minute_start + timedelta(minutes=index + 1),
-            available_at=minute_start + timedelta(minutes=index + 1),
+            event_start=minute_start + minute_duration * index,
+            event_end=minute_start + minute_duration * (index + 1),
+            available_at=minute_start + minute_duration * (index + 1),
             open=Decimal("10.00") + Decimal(index) / Decimal("1000"),
             high=Decimal("10.02") + Decimal(index) / Decimal("1000"),
             low=Decimal("9.98") + Decimal(index) / Decimal("1000"),
@@ -122,7 +127,7 @@ def _settlement_dataset(
         created_at=daily.available_at,
         bars=(*minutes, *((daily,) if include_daily else ())),
         expected_symbols=("600000.SH",),
-        expected_timeframes=(Timeframe.DAILY, Timeframe.MINUTE_1),
+        expected_timeframes=(Timeframe.DAILY, minute_timeframe),
         adjustment_policy=PriceAdjustmentPolicy.create(
             policy_version="outcome-raw-v1",
             mode=AdjustmentMode.RAW,
@@ -138,7 +143,15 @@ def _settlement_dataset(
     return load_verified_market_data_dataset(path)
 
 
-def test_t1_outcome_is_factual_complete_immutable_and_replayable(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("minute_timeframe", "minute_count"),
+    ((Timeframe.MINUTE_1, 60), (Timeframe.MINUTE_5, 12)),
+)
+def test_t1_outcome_is_factual_complete_immutable_and_replayable(
+    tmp_path: Path,
+    minute_timeframe: Timeframe,
+    minute_count: int,
+) -> None:
     (
         static,
         overlay,
@@ -188,7 +201,11 @@ def test_t1_outcome_is_factual_complete_immutable_and_replayable(tmp_path: Path)
         daily_dataset_id=daily.artifact.dataset_id,
         daily_dataset_hash=daily.artifact.content_hash,
     )
-    settlement = _settlement_dataset(tmp_path)
+    settlement = _settlement_dataset(
+        tmp_path,
+        minute_count=minute_count,
+        minute_timeframe=minute_timeframe,
+    )
     evidence = build_trade_horizon_outcome_evidence(
         operation_package=package,
         candidate_set=candidates,
@@ -221,7 +238,8 @@ def test_t1_outcome_is_factual_complete_immutable_and_replayable(tmp_path: Path)
         decision_dataset=daily,
         settlement_dataset=_settlement_dataset(
             tmp_path,
-            minute_count=59,
+            minute_count=minute_count - 1,
+            minute_timeframe=minute_timeframe,
             name="settlement-missing-minute",
         ),
         next_session_date=DECISION_TIME.date() + timedelta(days=1),
@@ -237,6 +255,8 @@ def test_t1_outcome_is_factual_complete_immutable_and_replayable(tmp_path: Path)
         settlement_dataset=_settlement_dataset(
             tmp_path,
             include_daily=False,
+            minute_count=minute_count,
+            minute_timeframe=minute_timeframe,
             name="settlement-missing-close",
         ),
         next_session_date=DECISION_TIME.date() + timedelta(days=1),

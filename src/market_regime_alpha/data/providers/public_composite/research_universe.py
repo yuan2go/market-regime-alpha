@@ -150,10 +150,9 @@ class BaoStockResearchUniverseClient:
             provider_result=provider_result,
             source_manifest=manifest,
         )
-        rows = tuple(
-            dict(zip(response["fields"], row, strict=True))
-            for row in response["rows"]
-            if len(row) == len(response["fields"])
+        rows = _normalize_security_master_rows(
+            fields=tuple(str(item) for item in response["fields"]),
+            rows=tuple(tuple(str(item) for item in row) for row in response["rows"]),
         )
         snapshot = build_free_research_universe_snapshot(
             as_of_date=as_of_date,
@@ -184,6 +183,33 @@ def _consume_result(result: Any) -> dict[str, Any]:
         "fields": fields,
         "rows": rows,
     }
+
+
+def _normalize_security_master_rows(
+    *,
+    fields: tuple[str, ...],
+    rows: tuple[tuple[str, ...], ...],
+) -> tuple[dict[str, Any], ...]:
+    if not fields or len(fields) != len(set(fields)) or "code" not in fields:
+        raise AShareDataError("BaoStock Security Master fields are unusable")
+    normalized: list[dict[str, Any]] = []
+    code_index = fields.index("code")
+    for index, row in enumerate(rows):
+        if code_index >= len(row) or not row[code_index].strip():
+            raise AShareDataError(
+                "BaoStock malformed Security Master row has no security code: "
+                f"row {index}"
+            )
+        malformed = len(row) != len(fields)
+        values = {
+            field: (row[field_index] if field_index < len(row) else "")
+            for field_index, field in enumerate(fields)
+        }
+        if malformed:
+            values["_provider_row_malformed"] = True
+            values["_provider_row_field_count"] = len(row)
+        normalized.append(values)
+    return tuple(normalized)
 
 
 __all__ = [

@@ -301,7 +301,16 @@ def _record_from_baostock(
         "0": SecurityMasterListingStatus.DELISTED,
     }.get(str(row.get("status", "")), SecurityMasterListingStatus.UNKNOWN)
     reasons: set[str] = set()
-    if security_type is None or listing_date is None:
+    if row.get("_provider_row_malformed") is True:
+        membership = ResearchUniverseMembershipStatus.UNKNOWN
+        listing_status = SecurityMasterListingStatus.UNKNOWN
+        reasons.update(
+            {
+                "PROVIDER_ROW_FIELD_COUNT_MISMATCH",
+                "SECURITY_MASTER_FIELDS_UNKNOWN",
+            }
+        )
+    elif security_type is None or listing_date is None:
         membership = ResearchUniverseMembershipStatus.UNKNOWN
         reasons.add("SECURITY_MASTER_FIELDS_UNKNOWN")
     elif security_type != "1":

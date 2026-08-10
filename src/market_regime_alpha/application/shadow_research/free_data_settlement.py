@@ -62,11 +62,20 @@ from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId, ProviderId
-from market_regime_alpha.core.time import DecisionTime, RetrievedAt
+from market_regime_alpha.core.time import (
+    AvailabilityTime,
+    DecisionTime,
+    RetrievedAt,
+)
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.source_manifest import (
+    CriticalSourceFact,
     SourceArtifactReference,
+    SourceAuthorityKind,
+    SourceFieldFinality,
+    SourceFieldQualityStatus,
     SourceManifest,
+    SourceManifestField,
 )
 from market_regime_alpha.data_sources.a_share_bars import (
     AShareBarProvider,
@@ -154,6 +163,7 @@ class FreeOutcomeDatasetBuilder:
         provider = self._historical
         timeframe = Timeframe.MINUTE_5
         frames = []
+        missing_symbols: set[str] = set()
         for symbol in symbols:
             frame = provider.minute_bars(
                 symbol,
@@ -168,8 +178,13 @@ class FreeOutcomeDatasetBuilder:
                 )
             ]
             if scoped.empty:
-                raise ValueError(f"Free Outcome provider returned no {next_session_date} bars for {symbol}")
+                missing_symbols.add(symbol)
+                continue
             frames.append((symbol, scoped))
+        if not frames:
+            raise ValueError(
+                "Free Outcome provider returned no bars for any requested symbol"
+            )
 
         source_id = ArtifactId(
             f"free-outcome-source-{next_session_date.isoformat()}-"
@@ -199,25 +214,74 @@ class FreeOutcomeDatasetBuilder:
         if encode_recorded_outcome_bars(bars) != raw_payload:
             raise ValueError("Free Outcome recorded payload is not hash-stable")
         provider_id = "BAOSTOCK_HISTORICAL_5MIN_FREE_EXPLORATORY"
+        provider_reference_id = ProviderId(provider_id.lower())
+        manifest_fields = tuple(
+            SourceManifestField(
+                field_id="outcome_bars.MINUTE_5",
+                symbol=symbol,
+                critical_fact=CriticalSourceFact.PRICE,
+                provider_id=provider_reference_id,
+                source_artifact_id=source_id,
+                event_time=datetime.combine(
+                    next_session_date,
+                    time(15),
+                    tzinfo=_SHANGHAI,
+                ).astimezone(UTC),
+                available_time=(
+                    None
+                    if symbol in missing_symbols
+                    else AvailabilityTime(retrieved_at)
+                ),
+                retrieved_time=RetrievedAt(retrieved_at),
+                decision_time=DecisionTime(retrieved_at),
+                unit="OHLCV_5MIN",
+                adjustment_basis="RAW_UNADJUSTED",
+                finality=SourceFieldFinality.UNKNOWN,
+                data_eligibility=DataEligibility.EXPLORATORY,
+                quality_status=(
+                    SourceFieldQualityStatus.INSUFFICIENT
+                    if symbol in missing_symbols
+                    else SourceFieldQualityStatus.COMPLETE
+                ),
+                reason_codes=(
+                    ("AVAILABILITY_UNKNOWN", "OUTCOME_BARS_MISSING")
+                    if symbol in missing_symbols
+                    else ()
+                ),
+                schema_version=SourceManifestField.SCHEMA_V2,
+                authority_kind=SourceAuthorityKind.PROVIDER,
+                value=("MISSING" if symbol in missing_symbols else "OBSERVED"),
+            )
+            for symbol in symbols
+        )
         manifest = SourceManifest(
             provider_profile_id=provider_id,
             decision_time=DecisionTime(retrieved_at),
             source_artifacts=(
                 SourceArtifactReference(
                     artifact_id=source_id,
-                    provider_id=ProviderId(provider_id.lower()),
+                    provider_id=provider_reference_id,
                     retrieved_at=RetrievedAt(retrieved_at),
                     content_hash=source_hash,
                     locator=f"free-data://outcome/{next_session_date.isoformat()}",
                 ),
             ),
-            fields=(),
+            fields=manifest_fields,
             source_conflicts=(),
-            limitations=(
-                "BACKFILL_NOT_POINT_IN_TIME",
-                "FREE_DATA_EXPLORATORY",
-                "PROVIDER_NOT_QUALIFIED",
-                "SOURCE_TRANSPORT_REENCODED_AS_CANONICAL_BARS",
+            limitations=tuple(
+                sorted(
+                    {
+                        "BACKFILL_NOT_POINT_IN_TIME",
+                        "FREE_DATA_EXPLORATORY",
+                        "PROVIDER_NOT_QUALIFIED",
+                        "SOURCE_TRANSPORT_REENCODED_AS_CANONICAL_BARS",
+                        *(
+                            ("PARTIAL_SYMBOL_COVERAGE_EXPLICIT",)
+                            if missing_symbols
+                            else ()
+                        ),
+                    }
+                )
             ),
             data_eligibility=DataEligibility.EXPLORATORY,
             schema_version=SourceManifest.SCHEMA_V2,
@@ -240,12 +304,21 @@ class FreeOutcomeDatasetBuilder:
             ),
             data_eligibility=DataEligibility.EXPLORATORY,
             formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
-            limitations=(
-                "ALPHA_VALIDATED_FALSE",
-                "FORMAL_OOS_FALSE",
-                "FORMAL_PIT_FALSE",
-                "FREE_DATA_EXPLORATORY",
-                "PRODUCTION_AUTHORIZED_FALSE",
+            limitations=tuple(
+                sorted(
+                    {
+                        "ALPHA_VALIDATED_FALSE",
+                        "FORMAL_OOS_FALSE",
+                        "FORMAL_PIT_FALSE",
+                        "FREE_DATA_EXPLORATORY",
+                        "PRODUCTION_AUTHORIZED_FALSE",
+                        *(
+                            ("PARTIAL_SYMBOL_COVERAGE_EXPLICIT",)
+                            if missing_symbols
+                            else ()
+                        ),
+                    }
+                )
             ),
         )
         dataset_path = publish_market_data_dataset(
@@ -493,6 +566,9 @@ class FreeDataSettlementOperator:
             "factor_deduplication_artifact": str(deduplication_path),
             "outcome_provider": acquisition.provider_id,
             "outcome_minute_timeframe": acquisition.minute_timeframe.value,
+            "missing_outcome_symbol_timeframes": list(
+                acquisition.dataset.artifact.coverage.missing_symbol_timeframes
+            ),
             "recovered_from_postgres_authority": recovered,
             "formal_pit": False,
             "formal_oos": False,

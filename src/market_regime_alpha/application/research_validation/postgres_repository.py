@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 from market_regime_alpha.application.research_validation.calibration import (
     CalibrationArtifact,
     CalibrationObservation,
+    CalibrationPartition,
     CalibrationProtocol,
 )
 from market_regime_alpha.application.research_validation.factor_extraction import ResearchPanelEnrichment
@@ -268,20 +269,6 @@ class PostgresResearchValidationRepository:
                 return dataset
         return None
 
-    def bind_calibration_partitions(self, artifact: CalibrationArtifact, observations: tuple[CalibrationObservation, ...]) -> None:
-        def operation(connection: Any) -> None:
-            for item in observations:
-                connection.execute(
-                    """
-                    INSERT INTO calibration_partition_binding(
-                        calibration_artifact_id, observation_id, partition_name
-                    ) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
-                    """,
-                    (str(artifact.artifact_id), item.observation_id, item.partition.value),
-                )
-
-        self._factory.run_transaction(operation)
-
     def record_calibration_protocol(
         self,
         protocol: CalibrationProtocol,
@@ -315,17 +302,12 @@ class PostgresResearchValidationRepository:
             artifact.protocol_reference.content_hash != protocol.protocol_hash
         ):
             raise ValueError("Calibration Artifact Protocol lineage mismatch")
-        observation_ids = {item.observation_id for item in observations}
-        bound_ids = {
-            *artifact.fit.fit_observation_ids,
-            *(
-                observation_id
-                for evaluation in artifact.evaluations
-                for observation_id in evaluation.observation_ids
-            ),
-        }
-        if bound_ids != observation_ids:
-            raise ValueError("Calibration Artifact observation binding mismatch")
+        if artifact.fit.protocol_reference != artifact.protocol_reference:
+            raise ValueError("Calibration Fit Protocol lineage mismatch")
+        expected_bindings = _validated_calibration_partition_bindings(
+            artifact,
+            observations,
+        )
 
         def operation(connection: Any) -> None:
             self._insert_artifact(
@@ -365,7 +347,7 @@ class PostgresResearchValidationRepository:
                 artifact.identity_payload(),
                 artifact.created_at,
             )
-            for item in observations:
+            for observation_id, partition_name in expected_bindings:
                 connection.execute(
                     """
                     INSERT INTO calibration_partition_binding(
@@ -374,9 +356,24 @@ class PostgresResearchValidationRepository:
                     """,
                     (
                         str(artifact.artifact_id),
-                        item.observation_id,
-                        item.partition.value,
+                        observation_id,
+                        partition_name,
                     ),
+                )
+            stored_bindings = connection.execute(
+                """
+                SELECT observation_id, partition_name
+                FROM calibration_partition_binding
+                WHERE calibration_artifact_id = %s
+                ORDER BY observation_id
+                """,
+                (str(artifact.artifact_id),),
+            ).fetchall()
+            if tuple((str(row[0]), str(row[1])) for row in stored_bindings) != (
+                expected_bindings
+            ):
+                raise ValueError(
+                    "Calibration PostgreSQL partition binding conflicts with Artifact"
                 )
 
         self._factory.run_transaction(operation)
@@ -486,3 +483,52 @@ def _reject_unresolved_authority_claims(payload: Mapping[str, Any]) -> None:
         raise ValueError(
             "Research Validation payload cannot bind unresolved qualification evidence"
         )
+
+
+def _validated_calibration_partition_bindings(
+    artifact: CalibrationArtifact,
+    observations: tuple[CalibrationObservation, ...],
+) -> tuple[tuple[str, str], ...]:
+    observation_bindings: dict[str, CalibrationPartition] = {}
+    for observation in observations:
+        if observation.observation_id in observation_bindings:
+            raise ValueError("Calibration observations must be globally disjoint")
+        observation_bindings[observation.observation_id] = observation.partition
+
+    artifact_bindings: dict[str, CalibrationPartition] = {}
+
+    def bind_artifact_ids(
+        observation_ids: tuple[str, ...],
+        partition: CalibrationPartition,
+    ) -> None:
+        for observation_id in observation_ids:
+            if observation_id in artifact_bindings:
+                raise ValueError(
+                    "Calibration Artifact partitions must be globally disjoint"
+                )
+            artifact_bindings[observation_id] = partition
+
+    bind_artifact_ids(
+        artifact.fit.fit_observation_ids,
+        CalibrationPartition.FIT,
+    )
+    evaluation_partitions: set[CalibrationPartition] = set()
+    for evaluation in artifact.evaluations:
+        if evaluation.partition is CalibrationPartition.FIT:
+            raise ValueError("Calibration FIT partition cannot be an evaluation")
+        if evaluation.partition in evaluation_partitions:
+            raise ValueError(
+                "Calibration Artifact has duplicate evaluation partition"
+            )
+        evaluation_partitions.add(evaluation.partition)
+        bind_artifact_ids(evaluation.observation_ids, evaluation.partition)
+    if CalibrationPartition.VALIDATION not in evaluation_partitions:
+        raise ValueError("Calibration Artifact requires VALIDATION evaluation")
+    if artifact_bindings != observation_bindings:
+        raise ValueError("Calibration Artifact observation partition mismatch")
+    return tuple(
+        sorted(
+            (observation_id, partition.value)
+            for observation_id, partition in observation_bindings.items()
+        )
+    )

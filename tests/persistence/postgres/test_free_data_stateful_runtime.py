@@ -796,6 +796,12 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         ).get_payload(ArtifactId(hypothesis["hypothesis_artifact_id"]))
         assert persisted_hypothesis["status"] == "NOT_ESTIMABLE"
         assert persisted_hypothesis["reason_codes"]
+        assert persisted_hypothesis["partition_policy"][
+            "minimum_validation_samples"
+        ] == 1
+        assert persisted_hypothesis["partition_policy"]["policy_hash"] == (
+            calibration_engineering["partition_policy_hash"]
+        )
         assert persisted_hypothesis["calibrated"] is False
         assert persisted_hypothesis["formal_oos"] is False
         strategy_observed_at = multi_target_available_at + timedelta(seconds=1)

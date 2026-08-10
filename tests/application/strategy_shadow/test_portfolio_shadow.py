@@ -151,6 +151,62 @@ def test_portfolio_shadow_builds_cash_fill_position_nav_and_attribution() -> Non
     assert type(state).from_canonical_dict(state.to_canonical_dict()) == state
 
 
+def test_portfolio_shadow_cost_inclusive_pnl_reconciles_to_cash_and_nav() -> None:
+    policy = _policy(top_k=1)
+    initial_cash = Decimal("100000")
+    portfolio = build_shadow_portfolio(
+        policy=policy,
+        research_reference=_reference("RESEARCH_PANEL_V2", "panel-reconcile"),
+        candidate_reference=_reference("CANDIDATE_SET", "candidate-reconcile"),
+        initial_cash=initial_cash,
+        created_at=NOW,
+    )
+    first = run_shadow_portfolio_day(
+        portfolio=portfolio,
+        policy=policy,
+        trading_date=date(2026, 8, 10),
+        observations=(_observation("000001.SZ", "0.9", "10"),),
+        previous=None,
+        recorded_at=NOW,
+    )
+
+    assert first.nav - initial_cash == first.attribution[0].unrealized_pnl
+
+    next_time = NOW + timedelta(days=1)
+    second = run_shadow_portfolio_day(
+        portfolio=portfolio,
+        policy=policy,
+        trading_date=date(2026, 8, 11),
+        observations=(
+            replace(
+                _observation(
+                    "000001.SZ",
+                    "0.1",
+                    "11",
+                    observed_at=next_time,
+                ),
+                score=None,
+            ),
+        ),
+        previous=first,
+        recorded_at=next_time,
+    )
+
+    assert second.positions == ()
+    assert second.attribution[0].realized_pnl == second.cash - initial_cash
+    sell = second.fills[0]
+    assert sell.total_cost > _explicit_sell_cost(sell.notional, policy)
+
+
+def _explicit_sell_cost(
+    notional: Decimal,
+    policy: ShadowPortfolioPolicy,
+) -> Decimal:
+    return notional * (
+        policy.parameter("commission_bps") + policy.parameter("exit_cost_bps")
+    ) / Decimal("10000")
+
+
 def test_portfolio_shadow_fails_closed_for_limit_up_unknown_and_capacity() -> None:
     policy = _policy()
     portfolio = build_shadow_portfolio(

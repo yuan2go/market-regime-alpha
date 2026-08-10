@@ -38,6 +38,19 @@ class _Provider:
         return result
 
 
+class _PerSymbolProvider(_Provider):
+    def __init__(self, frames: dict[str, pd.DataFrame]) -> None:
+        self.frames = frames
+        self.calls = []
+
+    def minute_bars(self, symbol: str, *, freq: str, start_date: str, end_date: str):
+        del start_date, end_date
+        self.calls.append((symbol, freq))
+        result = self.frames[symbol].copy()
+        result["symbol"] = symbol
+        return result
+
+
 def test_current_session_outcome_builds_post_close_baostock_five_minute_dataset(tmp_path) -> None:
     frame = _frame(("2026-08-10 09:35:00", "2026-08-10 10:30:00", "2026-08-10 15:00:00"))
     historical = _Provider(frame)
@@ -86,6 +99,40 @@ def test_missed_session_uses_baostock_five_minute_without_inventing_one_minute(t
     assert result.minute_timeframe is Timeframe.MINUTE_5
     assert historical.calls == [("000001.SZ", "5min")]
     assert Timeframe.MINUTE_1 not in {item.timeframe for item in result.dataset.bars}
+
+
+def test_outcome_acquisition_retains_missing_symbol_as_partial_coverage(
+    tmp_path,
+) -> None:
+    available = _frame(
+        (
+            "2026-08-07 09:35:00",
+            "2026-08-07 10:30:00",
+            "2026-08-07 15:00:00",
+        )
+    )
+    missing = available.iloc[0:0]
+    provider = _PerSymbolProvider(
+        {"000001.SZ": available, "000002.SZ": missing}
+    )
+
+    result = FreeOutcomeDatasetBuilder(
+        clock=lambda: datetime(2026, 8, 10, 7, 5, tzinfo=UTC),
+        historical_provider=provider,
+    ).acquire(
+        symbols=("000001.SZ", "000002.SZ"),
+        next_session_date=date(2026, 8, 7),
+        output_root=tmp_path,
+    )
+
+    assert result.dataset.artifact.coverage.state.value == "PARTIAL"
+    assert result.dataset.artifact.coverage.missing_symbol_timeframes == (
+        "000002.SZ|DAILY",
+        "000002.SZ|MINUTE_5",
+    )
+    assert "PARTIAL_SYMBOL_COVERAGE_EXPLICIT" in (
+        result.dataset.artifact.limitations
+    )
 
 
 def test_current_session_outcome_fails_closed_before_market_close(tmp_path) -> None:

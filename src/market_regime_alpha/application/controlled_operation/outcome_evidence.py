@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from hashlib import sha256
@@ -542,9 +542,20 @@ def _build_observation(
     ]
     zone = ZoneInfo(horizon.timezone_name)
     minutes = sorted(
-        (item for item in bars if item.timeframe is Timeframe.MINUTE_1),
+        (
+            item
+            for item in bars
+            if item.timeframe in {Timeframe.MINUTE_1, Timeframe.MINUTE_5}
+        ),
         key=lambda item: item.event_start,
     )
+    minute_1 = [
+        item for item in minutes if item.timeframe is Timeframe.MINUTE_1
+    ]
+    minute_5 = [
+        item for item in minutes if item.timeframe is Timeframe.MINUTE_5
+    ]
+    minutes = minute_1 or minute_5
     morning = [
         item for item in minutes
         if horizon.morning_start
@@ -644,13 +655,20 @@ def _has_complete_minute_window(
     start: time,
     end: time,
 ) -> bool:
-    expected_count = int(
-        (
-            datetime.combine(date.min, end)
-            - datetime.combine(date.min, start)
-        ).total_seconds()
-        // 60
-    )
+    if not bars:
+        return False
+    timeframe = bars[0].timeframe
+    if timeframe not in {Timeframe.MINUTE_1, Timeframe.MINUTE_5} or any(
+        item.timeframe is not timeframe for item in bars
+    ):
+        return False
+    duration = timeframe.duration
+    if duration is None:
+        return False
+    window = datetime.combine(date.min, end) - datetime.combine(date.min, start)
+    if window.total_seconds() % duration.total_seconds() != 0:
+        return False
+    expected_count = int(window.total_seconds() // duration.total_seconds())
     if len(bars) != expected_count:
         return False
     expected_start = datetime.combine(
@@ -659,8 +677,9 @@ def _has_complete_minute_window(
         tzinfo=zone,
     )
     return all(
-        item.event_start.astimezone(zone) == expected_start + timedelta(minutes=index)
-        and item.event_end.astimezone(zone) == expected_start + timedelta(minutes=index + 1)
+        item.event_start.astimezone(zone) == expected_start + duration * index
+        and item.event_end.astimezone(zone)
+        == expected_start + duration * (index + 1)
         for index, item in enumerate(bars)
     )
 
