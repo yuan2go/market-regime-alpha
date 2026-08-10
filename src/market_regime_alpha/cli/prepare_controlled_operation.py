@@ -68,7 +68,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         if repository_exception(exc):
             return ControlledExitCode.REPOSITORY_ERROR
         return ControlledExitCode.ARGUMENT_ERROR
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

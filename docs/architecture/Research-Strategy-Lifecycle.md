@@ -24,6 +24,12 @@ Canonical Dataset / Feature / State / Candidate / Signal / Forecast
 -> blocked Production Admission projection
 ```
 
+For free-data operation, retrospective decisions and later outcomes additionally
+feed an immutable Historical Sample Dataset in PostgreSQL. The Registry Reader
+may supply those already-available `UNQUALIFIED` samples to a later
+Research/Shadow PathForecast. This is operational sample plumbing, not PIT/OOS
+qualification or empirical validation.
+
 ## Responsibility split
 
 - Factor Extraction reads verified canonical Dataset, FeatureBundle, State, Pool, Candidate, Signal and Forecast values. It records missingness; it does not recompute those owners.
@@ -32,13 +38,17 @@ Canonical Dataset / Feature / State / Candidate / Signal / Forecast
 - Calibration fits and evaluates Platt/isotonic/binning mappings on disjoint partitions. It remains `calibrated=false` until a future owner-resolving writer exists.
 - Entry research evaluates Candidate-only, Candidate+Signal, Candidate+Forecast and Candidate+Intraday variants. Its strongest output is `SHADOW_ENTER`; Canonical Entry still has no `ENTER` state.
 - Research Shadow freezes what the research system knew and later binds factual outcomes. It has no simulated account or execution ledger.
-- Strategy Shadow owns an isolated simulated Entry/Fill/Position/Holding/Exit session. Every stored artifact has `real_trading_mutation=false`.
+- Strategy Shadow owns an isolated simulated Entry/Fill/Position/Holding/Exit session. The free-data operator uses a selected-Candidate pass-through with no score threshold and a T+1 fixed-time observation contract, not tuned model parameters. Later invocations reload Entry/Fill/Position and append Holding/Exit observations until settlement. Every stored artifact has `real_trading_mutation=false`.
 - Holding/Exit validation consumes Strategy Shadow outcomes only. It cannot mutate actual `position_books` or `manual_fills`.
 - Production Admission lists missing floors. It is not an Authority and cannot reach review eligibility or authorization.
 
 ## Qualification state
 
-The repository contains engineering mechanics for Historical Sample, Calibration, Entry, Holding/Exit and Strategy Shadow assessment. It deliberately contains no public function that converts a reference tuple into a qualified artifact. Migration 046 enforces that choice at the database layer.
+The repository contains an operational writer for `UNQUALIFIED` free-data
+Historical Samples and engineering mechanics for Calibration, Entry,
+Holding/Exit and Strategy Shadow assessment. It deliberately contains no public
+function that converts those exploratory artifacts into qualified evidence.
+Migration 046 enforces that choice at the database layer.
 
 The next legitimate implementation is a set of narrow owner-specific writers, added only after real inputs exist. A universal evidence resolver or a caller-supplied “resolved” DTO would recreate the same false-Authority problem.
 

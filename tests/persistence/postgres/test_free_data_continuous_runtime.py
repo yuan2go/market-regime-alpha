@@ -5,8 +5,10 @@ from decimal import Decimal
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import pytest
 
 from market_regime_alpha.application.continuous_research.composition import (
@@ -62,6 +64,9 @@ from market_regime_alpha.application.free_data_operation import (
     FreeDataOperationService,
     FreeDataPreparationRequest,
 )
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
+)
 from market_regime_alpha.application.state_system.runtime import StateResearchStage
 from market_regime_alpha.core.identity import (
     ArtifactId,
@@ -86,6 +91,9 @@ from market_regime_alpha.features.technical.catalog import (
     static_technical_feature_set,
 )
 from market_regime_alpha.market_data import AssetType
+from market_regime_alpha.forecasting.sample_provider import (
+    HistoricalRegistryPathForecastSampleProvider,
+)
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -535,6 +543,8 @@ def test_formal_run_due_entry_executes_staged_research_summary(
         "TencentCurrentQuoteClient",
         lambda **_: quote,
     )
+    historical_minutes = _HistoricalMinuteProvider()
+    monkeypatch.setattr(continuous_cli, "BaoStockADataProvider", lambda: historical_minutes)
     authority = [
         "--database-url",
         os.environ[TEST_DATABASE_URL_ENV],
@@ -568,9 +578,46 @@ def test_formal_run_due_entry_executes_staged_research_summary(
     assert completed["status"] == "COMPLETED", json.dumps(completed, sort_keys=True)
     assert completed["daily_decision_window_summary_delivered"] is True
     assert completed["summary_outcome"] == "MODEL_NOT_QUALIFIED_FOR_MODE"
+    assert completed["path_forecast_registry_wired"] is True
+    assert completed["historical_sample_build"]["qualification"] == "UNQUALIFIED"
+    assert completed["historical_sample_build"]["evidence_class"] == "FREE_DATA_EXPLORATORY"
+    assert completed["historical_sample_build"]["sample_count"] >= 20 * len(policy.symbols)
     assert completed["entry_authority_granted"] is False
     assert completed["broker_authority_granted"] is False
     assert (history.calls, status.calls, quote.calls) == (1, 1, 1)
+    assert historical_minutes.calls == list(policy.symbols)
+    with postgres_factory.connection(read_only=True) as connection:
+        historical_kinds = dict(
+            connection.execute(
+                """
+                SELECT artifact_kind, count(*)
+                FROM research_validation_artifact
+                WHERE artifact_kind IN (
+                    'FREE_HISTORICAL_DECISION',
+                    'FREE_HISTORICAL_MULTI_HORIZON_OUTCOME',
+                    'HISTORICAL_SAMPLE_DATASET'
+                )
+                GROUP BY artifact_kind
+                """
+            ).fetchall()
+        )
+    assert historical_kinds == {
+        "FREE_HISTORICAL_DECISION": completed["historical_sample_build"]["decision_count"],
+        "FREE_HISTORICAL_MULTI_HORIZON_OUTCOME": completed["historical_sample_build"]["outcome_count"],
+        "HISTORICAL_SAMPLE_DATASET": 1,
+    }
+
+    registry_provider = HistoricalRegistryPathForecastSampleProvider(
+        PostgresResearchValidationRepository(postgres_factory, apply_migrations=False)
+    )
+    sample_batch = registry_provider.load_samples(
+        signal_snapshot=SimpleNamespace(symbol=policy.symbols[0]),
+        configuration=configuration.path_forecast,
+        decision_time=DECISION,
+    )
+    assert len(sample_batch.samples) >= 20
+    assert "HISTORICAL_SAMPLE_DATASET_LOADED" in sample_batch.reason_codes
+    assert "HISTORICAL_SAMPLE_QUALIFICATION_UNQUALIFIED" in sample_batch.limitations
 
 
 def _calendar():
@@ -591,6 +638,42 @@ def _calendar():
             for offset in range(30, -1, -1)
         ),
     )
+
+
+class _HistoricalMinuteProvider:
+    name = "baostock-test-history"
+    data_source = "baostock-test-history"
+    is_realtime = False
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def minute_bars(self, symbol: str, **kwargs):
+        del kwargs
+        self.calls.append(symbol)
+        rows = []
+        for offset in range(35, 0, -1):
+            session_date = DECISION.value.date() - timedelta(days=offset)
+            for observed_time in (
+                time(9, 35),
+                time(9, 45),
+                time(10),
+                time(10, 30),
+                time(11, 30),
+                time(14, 55),
+                time(15),
+            ):
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "timestamp": datetime.combine(session_date, observed_time, tzinfo=SHANGHAI),
+                        "open": 10.0,
+                        "high": 10.1,
+                        "low": 9.9,
+                        "close": 10.0,
+                    }
+                )
+        return pd.DataFrame(rows)
 
 
 def _configuration(calendar) -> ControlledOperationRuntimeConfiguration:

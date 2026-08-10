@@ -4,15 +4,18 @@
 > **Authority:** Sole current implementation-status document
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
-> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/046_close_reference_only_qualification.sql`, `tests`
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/046_close_reference_only_qualification.sql`, `src/market_regime_alpha/persistence/postgres/migrations/047_free_historical_evidence_registry.sql`, `tests`
 
 ## Implemented engineering boundary
 
-The system is a PostgreSQL-only modular monolith with one Continuous Research Runtime. It has durable source freeze, Dataset/Feature materialization, Model Governance selection, State/StateSeries/Pool/Candidate, controlled minute/Signal/Forecast work, Research Summary, Canonical Lifecycle mechanics, manual-account Decision support, Research Shadow, prospective outcomes, Panel V2, Research Validation harnesses and isolated Strategy Shadow mechanics.
+The system is a PostgreSQL-only modular monolith with one Continuous Research Runtime. It has durable source freeze, Dataset/Feature materialization, Model Governance selection, State/StateSeries/Pool/Candidate, controlled minute/Signal/Forecast work, Research Summary, Canonical Lifecycle mechanics, manual-account Decision support, Research Shadow, prospective outcomes, Panel V2, Research Validation harnesses and isolated Strategy Shadow mechanics. Free-data operation now includes an automatic retrospective BaoStock decision/outcome/sample pipeline, a PostgreSQL Historical Registry Reader in the Research/Shadow Forecast composition, T+1 settlement/enrichment and an idempotent Strategy Shadow operator flow.
 
 Actual positions derive only from observed manual fills. The system creates no broker order and does not automatically mutate actual positions.
 
-Migration 046 removes reference-only qualification paths from the current architecture:
+Migration 047 permits immutable free retrospective Decision/Outcome artifact
+kinds and an owner kind for Strategy Shadow liquidity observations. It does not
+alter migration 046, which removes reference-only
+qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
 - Historical Samples persist as `UNQUALIFIED` only;
@@ -26,11 +29,11 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 569 | broad modular monolith; size alone is not a defect |
-| Python test files | 399 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 572 | broad modular monolith; size alone is not a defect |
+| Python test files | 401 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
-| Installed CLI entry points | 12 | one scheduler plus bounded operation/admin tools |
-| PostgreSQL migrations | 46 | contiguous, checksummed, forward-only |
+| Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
+| PostgreSQL migrations | 47 | contiguous, checksummed, forward-only; 046 remains the qualification ceiling |
 | PostgreSQL Authority-schema tables | 148 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 148 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 32 | bounded owners; not 32 competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
@@ -50,7 +53,7 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 ## Complexity classification
 
 - **Essential:** semantic time, immutable identities, PIT resolution, PostgreSQL fences/CAS, separate Candidate/Signal/Forecast/Decision/Position Authorities, replay, actual-Fill Position derivation.
-- **Accidental:** many bounded internal `__main__` tools and some fixture-heavy test compositions; address only when touching those workflows.
+- **Accidental:** duplicate executable surfaces have been removed; some fixture-heavy test compositions remain.
 - **Legacy:** `daily_research`, `dividend_t`, explicit legacy adapters and their compatibility tests. They are isolated from Canonical composition but still carry maintenance cost.
 - **AI-generated:** 273 stale/historical Markdown files, five reference-only promotion functions, a generic Governance binding DTO, an 800-line uncomposed Decision replay library and its 400-line pseudo-Production test seeder were removed in this convergence.
 

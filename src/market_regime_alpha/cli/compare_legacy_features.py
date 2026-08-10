@@ -147,7 +147,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
     )
     return EXIT_CANONICAL_REGRESSION if regression else EXIT_SUCCESS
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())

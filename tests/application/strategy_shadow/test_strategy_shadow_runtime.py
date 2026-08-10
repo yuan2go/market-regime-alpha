@@ -20,6 +20,7 @@ from market_regime_alpha.application.strategy_shadow.contracts import (
     make_shadow_fill,
     make_shadow_position,
     settle_strategy_outcome,
+    strategy_shadow_artifact_payload,
 )
 from market_regime_alpha.application.strategy_shadow.operations import (
     InMemoryStrategyShadowRepository,
@@ -32,6 +33,9 @@ from market_regime_alpha.application.strategy_shadow.operations import (
     build_daily_report,
     replay_strategy_shadow,
 )
+from market_regime_alpha.application.strategy_shadow.operator import (
+    StrategyDayObservation,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 
@@ -41,6 +45,24 @@ NOW = datetime(2026, 8, 10, 8, tzinfo=UTC)
 
 def _ref(kind: str, name: str) -> ValidationArtifactReference:
     return ValidationArtifactReference(kind, ArtifactId(name), canonical_hash({"name": name}))
+
+
+def test_strategy_day_accepts_an_initial_holding_observation_for_later_resume() -> None:
+    values = {
+        "trading_date": "2026-08-10",
+        "observed_at": NOW.isoformat(),
+        "symbol": "000001.SZ",
+        "decision_reference_price": "10",
+        "observed_fill_price": "10.01",
+        "fillability": "1",
+        "sessions_held": 0,
+        "current_price": None,
+    }
+
+    observation = StrategyDayObservation.from_canonical_dict(values)
+
+    assert observation.sessions_held == 0
+    assert observation.current_price is None
 
 
 def test_shadow_lifecycle_never_creates_real_trading_authority() -> None:
@@ -99,6 +121,13 @@ def test_shadow_lifecycle_never_creates_real_trading_authority() -> None:
     assert "STRATEGY_SHADOW_PROVEN_FALSE" in outcome.limitations
     assert "NOT_REAL_FILL" in fill.limitations
     assert "NOT_REAL_POSITION" in position.limitations
+    assert canonical_hash(strategy_shadow_artifact_payload(policy)) == policy.policy_hash
+    assert canonical_hash(strategy_shadow_artifact_payload(entry)) == entry.entry_hash
+    assert canonical_hash(strategy_shadow_artifact_payload(fill)) == fill.fill_hash
+    assert canonical_hash(strategy_shadow_artifact_payload(position)) == position.position_hash
+    assert canonical_hash(strategy_shadow_artifact_payload(holding)) == holding.assessment_hash
+    assert canonical_hash(strategy_shadow_artifact_payload(exit_assessment)) == exit_assessment.assessment_hash
+    assert canonical_hash(strategy_shadow_artifact_payload(outcome)) == outcome.outcome_hash
     validation = evaluate_holding_exit(
         protocol=HoldingExitValidationProtocol.create(
             protocol_version="v1",

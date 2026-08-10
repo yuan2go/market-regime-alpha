@@ -33,7 +33,7 @@ def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
     ]
 
 
-def test_cli_exposes_one_formal_free_data_execution_entry() -> None:
+def test_cli_exposes_converged_free_data_day_operations() -> None:
     args = build_parser().parse_args(
         [
             "--database-url",
@@ -54,6 +54,74 @@ def test_cli_exposes_one_formal_free_data_execution_entry() -> None:
 
     assert args.operation == "run-due"
     assert args.runtime_clock_mode == "LIVE"
+
+    run_day = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "run-day",
+            "--run-command",
+            "run.json",
+            "--trading-day-assessment",
+            "trading-day.json",
+            "--runtime-configuration",
+            "configuration.json",
+            "--output-root",
+            "runtime-output",
+            "--at",
+            "2025-02-03T14:54:00+08:00",
+        ]
+    )
+    strategy_day = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "strategy-day",
+            "--observations",
+            "observations.json",
+        ]
+    )
+    settle_day = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "settle-day",
+            "--trading-date",
+            "2025-02-03",
+            "--next-session-date",
+            "2025-02-04",
+            "--artifact-root",
+            "runtime-output",
+            "--at",
+            "2025-02-04T15:01:00+08:00",
+        ]
+    )
+    report_day = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "report-day",
+            "--trading-date",
+            "2025-02-03",
+            "--at",
+            "2025-02-04T15:01:00+08:00",
+        ]
+    )
+    replay_day = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "replay-day",
+            "--trading-date",
+            "2025-02-03",
+        ]
+    )
+
+    assert run_day.operation == "run-day"
+    assert strategy_day.operation == "strategy-day"
+    assert settle_day.operation == "settle-day"
+    assert report_day.operation == "report-day"
+    assert replay_day.operation == "replay-day"
 
 
 def test_cli_exposes_read_only_preflight_and_canonical_inspection() -> None:

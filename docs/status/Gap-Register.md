@@ -10,17 +10,17 @@
 
 | Gap | Current fact | Exit condition |
 |---|---|---|
-| Owner-resolved Historical Sample transitions | migration 046 allows `UNQUALIFIED` only | a narrow writer reloads PIT/OOS/Governance owners and binds exact sample lineage/time |
+| Owner-resolved Historical Sample qualification transitions | free-data writer and Registry Reader persist/consume `UNQUALIFIED` only; migration 046 remains closed | a separately authorized narrow writer reloads qualified PIT/OOS/Governance owners and binds exact lineage/time |
 | Owner-resolved Formal OOS writer | metric harness is engineering-only | PostgreSQL writer reloads Formal PIT, frozen protocol, Panel/Dataset and persists immutable Formal OOS evidence |
 | Production evidence floor resolution | Model Governance forces Production not-qualified | every required kind has an explicit owner Repository; operator/RBAC/broker owners exist; no generic resolver |
 | Production Admission Authority | projection is always blocked | authenticated, append-only final writer exists under separate approval and does not imply broker execution |
-| Internal executable inventory | 18 CLI modules have main guards but 12 scripts are installed | classify each internal main as operator tool, research harness or remove it |
 
 ## P1 remaining engineering completion
 
 | Gap | Current fact | Exit condition |
 |---|---|---|
 | Exact-window sustained operation | mechanics pass locally; no sustained real 14:30-14:55 series | consecutive real runs replay with no duplicate Provider calls or fence violations |
+| Free-data operator deployment evidence | run/settle/strategy/report/replay mechanics exist locally | repeated real PostgreSQL day cycles recover provider, partial-journal and missed-settlement scenarios under an operator runbook |
 | Durable prospective sample | attestation mechanism exists but proves zero real sessions | nonzero trusted-clock/live-origin outcomes satisfy frozen-before-available semantics |
 | State/Pool/Signal model validation preparation | mechanics and policies exist | frozen protocols and qualified inputs exist without parameter tuning in implementation code |
 | Authentication and RBAC | absent | authenticated principals and role-separated approvals are durable and audited |

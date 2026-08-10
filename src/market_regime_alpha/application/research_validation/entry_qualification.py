@@ -22,6 +22,7 @@ from market_regime_alpha.evidence.canonical import canonical_hash, require_sha25
 
 
 class EntryResearchVariant(str, Enum):
+    SELECTED_CANDIDATE_PASS_THROUGH = "SELECTED_CANDIDATE_PASS_THROUGH"
     CANDIDATE_ONLY = "CANDIDATE_ONLY"
     CANDIDATE_SIGNAL = "CANDIDATE_SIGNAL"
     CANDIDATE_FORECAST = "CANDIDATE_FORECAST"
@@ -40,15 +41,27 @@ class EntryResearchModel:
     model_hash: str
     model_version: str
     variant: EntryResearchVariant
-    score_threshold: Decimal
+    score_threshold: Decimal | None
     required_inputs: tuple[str, ...]
     limitations: tuple[str, ...]
 
     @classmethod
-    def create(cls, *, model_version: str, variant: EntryResearchVariant, score_threshold: Decimal) -> EntryResearchModel:
-        if not Decimal("0") <= score_threshold <= Decimal("1"):
+    def create(
+        cls,
+        *,
+        model_version: str,
+        variant: EntryResearchVariant,
+        score_threshold: Decimal | None,
+    ) -> EntryResearchModel:
+        if variant is EntryResearchVariant.SELECTED_CANDIDATE_PASS_THROUGH:
+            if score_threshold is not None:
+                raise ValueError("Selected-Candidate pass-through cannot add a threshold")
+        elif score_threshold is None or not Decimal("0") <= score_threshold <= Decimal("1"):
             raise ValueError("Entry research threshold must be within [0, 1]")
         required = {
+            EntryResearchVariant.SELECTED_CANDIDATE_PASS_THROUGH: (
+                "candidate_score",
+            ),
             EntryResearchVariant.CANDIDATE_ONLY: ("candidate_score",),
             EntryResearchVariant.CANDIDATE_SIGNAL: ("candidate_score", "signal_score"),
             EntryResearchVariant.CANDIDATE_FORECAST: ("candidate_score", "forecast_score"),
@@ -59,12 +72,24 @@ class EntryResearchModel:
             "schema": "entry-research-model/v1",
             "model_version": model_version,
             "variant": variant.value,
-            "score_threshold": str(score_threshold),
+            "score_threshold": None if score_threshold is None else str(score_threshold),
             "required_inputs": list(required),
             "limitations": list(limitations),
         }
         artifact_id, digest = content_identity("entry-research-model", payload)
         return cls(ModelId(str(artifact_id)), digest, model_version, variant, score_threshold, required, limitations)
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "schema": "entry-research-model/v1",
+            "model_version": self.model_version,
+            "variant": self.variant.value,
+            "score_threshold": (
+                None if self.score_threshold is None else str(self.score_threshold)
+            ),
+            "required_inputs": list(self.required_inputs),
+            "limitations": list(self.limitations),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,12 +241,18 @@ def assess_entry(
         EntryResearchDecision.DATA_INSUFFICIENT
         if missing
         else EntryResearchDecision.SHADOW_ENTER
-        if score is not None and score >= model.score_threshold
+        if model.variant is EntryResearchVariant.SELECTED_CANDIDATE_PASS_THROUGH
+        else EntryResearchDecision.SHADOW_ENTER
+        if score is not None
+        and model.score_threshold is not None
+        and score >= model.score_threshold
         else EntryResearchDecision.SHADOW_WAIT
     )
     reasons = (
         missing
         if missing
+        else ("SELECTED_CANDIDATE_PASS_THROUGH",)
+        if model.variant is EntryResearchVariant.SELECTED_CANDIDATE_PASS_THROUGH
         else ("RESEARCH_THRESHOLD_MET",)
         if decision is EntryResearchDecision.SHADOW_ENTER
         else ("RESEARCH_THRESHOLD_NOT_MET",)

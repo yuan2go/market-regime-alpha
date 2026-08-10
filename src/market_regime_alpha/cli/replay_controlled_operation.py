@@ -79,7 +79,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

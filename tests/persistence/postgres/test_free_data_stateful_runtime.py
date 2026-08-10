@@ -106,6 +106,16 @@ from market_regime_alpha.application.research_evaluation import (
 from market_regime_alpha.application.research_evaluation.targets import (
     engineering_multi_horizon_protocol,
 )
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
+)
+from market_regime_alpha.application.research_validation.samples import (
+    HistoricalPathSampleRecord,
+    HistoricalSampleDataset,
+)
 from market_regime_alpha.application.shadow_research.attestation import (
     AttestationStatus,
     ClockMode,
@@ -117,9 +127,11 @@ from market_regime_alpha.application.shadow_research.operations import (
 )
 from market_regime_alpha.application.shadow_research import (
     PostgresShadowResearchRepository,
-    ShadowResearchConflict,
-    ShadowSessionCommand,
     ShadowSessionStatus,
+)
+from market_regime_alpha.application.strategy_shadow.operator import (
+    StrategyDayObservation,
+    StrategyShadowDayOperator,
 )
 from market_regime_alpha.application.state_system.runtime import (
     StateResearchStage,
@@ -145,7 +157,10 @@ from market_regime_alpha.forecasting.path import (
     PATH_FORECAST_SAMPLE_SCHEMA,
     PathForecastSample,
 )
-from market_regime_alpha.forecasting.sample_provider import PathForecastSampleBatch
+from market_regime_alpha.forecasting.sample_provider import (
+    HistoricalRegistryPathForecastSampleProvider,
+    PathForecastSampleBatch,
+)
 from market_regime_alpha.market_data import (
     AdjustmentMode,
     AssetType,
@@ -300,6 +315,12 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     def advance(seconds: float) -> None:
         runtime_now[0] += timedelta(seconds=seconds)
 
+    forecast_sample_provider = _seed_historical_registry(
+        factory=postgres_factory,
+        symbols=policy.symbols,
+        configuration=configuration,
+        decision=decision,
+    )
     service = FreeDataOperationService(
         repositories=repositories,
         output_root=tmp_path / "stateful-runtime",
@@ -322,7 +343,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         ),
         minute_client_factory=minute_factory,
         sleeper=advance,
-        forecast_sample_provider=_HistoricalSampleProvider(decision),
+        forecast_sample_provider=forecast_sample_provider,
         operational_supplemental_policy=(evidence_policy if operational_producer else None),
     )
     captured_executions = []
@@ -493,6 +514,12 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         expected_signal_result = ResearchStageResult.WATCH if watch_only else ResearchStageResult.RESEARCH_QUALIFIED
         assert by_stage[StateResearchStage.SIGNAL].result is expected_signal_result
         assert by_stage[StateResearchStage.FORECAST].result is ResearchStageResult.RESEARCH_QUALIFIED
+        assert forecast_sample_provider.loaded_batches
+        assert all(
+            "HISTORICAL_SAMPLE_DATASET_LOADED" in item.reason_codes
+            and "HISTORICAL_SAMPLE_QUALIFICATION_UNQUALIFIED" in item.limitations
+            for item in forecast_sample_provider.loaded_batches
+        )
         assert minute_calls
         assert all(started <= received <= decision for _, started, received in minute_calls)
     else:
@@ -530,39 +557,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert trace["decision_input"] is False
     if authority_mode is RuntimeAuthorityMode.SHADOW:
         shadow_repository = PostgresShadowResearchRepository(postgres_factory, clock=lambda: runtime_now[0])
-        shadow_command = ShadowSessionCommand.create(
-            idempotency_key=f"{command.run_id}:shadow-session",
-            run_id=command.run_id,
-            trading_date=command.trading_date,
-            runtime_mode=RuntimeAuthorityMode.SHADOW,
-            scheduled_at=decision - timedelta(minutes=25),
-            operator_observation="RECORDED_PROVIDER_ENGINEERING_EVIDENCE",
-        )
         with postgres_factory.connection(read_only=True) as connection:
             before_trade_counts = connection.execute(
                 "SELECT (SELECT count(*) FROM manual_fills), (SELECT count(*) FROM position_book_events)"
             ).fetchone()
-        shadow_session = shadow_repository.schedule(shadow_command)
-        shadow_session = shadow_repository.mark_running(
-            shadow_command.session_id,
-            expected_version=shadow_session.version,
-        )
-        frozen = shadow_repository.freeze(
-            shadow_command.session_id,
-            summary_id=summary.summary_id,
-            decision_frozen_at=summary.created_at,
-            expected_version=shadow_session.version,
-        )
-        with pytest.raises(ShadowResearchConflict, match="status/version CAS"):
-            shadow_repository.mark_outcome_pending(
-                shadow_command.session_id,
-                expected_version=shadow_session.version,
-            )
-        frozen_session = shadow_repository.get_session(shadow_command.session_id)
-        pending = shadow_repository.mark_outcome_pending(
-            shadow_command.session_id,
-            expected_version=frozen_session.version,
-        )
+        shadow_operations = ResearchShadowOperations(postgres_factory)
+        pending, frozen = shadow_operations.run_day(command.run_id)
+        repeated_pending, repeated_frozen = shadow_operations.run_day(command.run_id)
+        assert (repeated_pending, repeated_frozen) == (pending, frozen)
+        shadow_command = pending.command
         assert pending.status is ShadowSessionStatus.OUTCOME_PENDING
         assert shadow_repository.replay(frozen.decision_id) == frozen
         assert frozen.no_order and frozen.no_fill and frozen.no_broker
@@ -620,7 +623,6 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             )
             == outcome
         )
-        shadow_operations = ResearchShadowOperations(postgres_factory)
         target_protocol = engineering_multi_horizon_protocol()
         multi_target_available_at = datetime(
             next_session_date.year,
@@ -660,6 +662,9 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             clock_mode=ClockMode.SIMULATED,
             runtime_origin=RuntimeOrigin.FIXTURE,
         )
+        repeated_settled_session, repeated_settled_decision = shadow_operations.run_day(command.run_id)
+        assert repeated_settled_session.status is ShadowSessionStatus.SETTLED
+        assert repeated_settled_decision == frozen
         assert operational_settlement.factual_outcome_v1 == outcome
         assert operational_settlement.targeted_outcome_v2.target_protocol_id == target_protocol.protocol_id
         assert {item.target.artifact_id for item in operational_settlement.targeted_outcome_v2.labels} == {
@@ -735,6 +740,53 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert panel_path.exists()
         assert panel.row_count == len(dynamic_pool.members)
         assert panel.slices[0].state_policy_references == frozen.state_policy_references
+        strategy_observed_at = multi_target_available_at + timedelta(seconds=1)
+        strategy_observation = StrategyDayObservation(
+            trading_date=command.trading_date,
+            observed_at=strategy_observed_at,
+            symbol=execution.decision.candidate_set.selected[0].symbol,
+            intended_quantity=Decimal("100"),
+            decision_reference_price=Decimal("10"),
+            observed_fill_price=Decimal("10.01"),
+            fillability=Decimal("1"),
+            slippage_bps=Decimal("5"),
+            impact_bps=Decimal("3"),
+            commission_bps=Decimal("2"),
+            sessions_held=0,
+            current_price=Decimal("10.10"),
+            signal_reversed=False,
+            market_deteriorated=False,
+            theme_deteriorated=False,
+            capital_deteriorated=False,
+            exit_cost=Decimal("1"),
+            mfe=Decimal("0.03"),
+            mae=Decimal("-0.01"),
+        )
+        strategy_operator = StrategyShadowDayOperator(postgres_factory)
+        holding_result = strategy_operator.run(strategy_observation)
+        assert holding_result["status"] == "SHADOW_HOLD"
+        assert strategy_operator.run(strategy_observation) == holding_result
+        strategy_result = strategy_operator.run(
+            replace(
+                strategy_observation,
+                observed_at=strategy_observed_at + timedelta(days=1),
+                sessions_held=1,
+                current_price=Decimal("10.20"),
+            )
+        )
+        assert strategy_result["status"] == "SETTLED"
+        assert strategy_operator.run(
+            replace(
+                strategy_observation,
+                observed_at=strategy_observed_at + timedelta(days=1),
+                sessions_held=1,
+                current_price=Decimal("10.20"),
+            )
+        ) == strategy_result
+        strategy_replay = strategy_operator.replay(ArtifactId(strategy_result["session_id"]))
+        assert strategy_replay["status"] == "SETTLED"
+        assert strategy_replay["event_count"] == 10
+        assert strategy_replay["artifact_count"] == 10
         report = shadow_operations.report(shadow_command.session_id)
         assert report["authority"]["research_shadow_engineering_ready"] is True
         assert report["authority"]["prospective_proven"] is False
@@ -792,7 +844,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 46
+        assert recovery.migration_head == 47
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),
@@ -1285,3 +1337,69 @@ class _HistoricalSampleProvider:
             reason_codes=("EXPLORATORY_HISTORICAL_SAMPLES_BOUND",),
             limitations=("FORMAL_OOS_NOT_ESTABLISHED",),
         )
+
+
+def _seed_historical_registry(
+    *,
+    factory: PostgresConnectionFactory,
+    symbols: tuple[str, ...],
+    configuration: ControlledOperationRuntimeConfiguration,
+    decision: datetime,
+) -> _TrackingHistoricalRegistryPathForecastSampleProvider:
+    repository = PostgresResearchValidationRepository(factory)
+    target = configuration.path_forecast.target_contract
+    target_reference = ValidationArtifactReference(
+        "ENTRY_PATH_TARGET",
+        ArtifactId(str(target.target_id)),
+        canonical_hash(configuration.path_forecast.to_canonical_dict()["target_contract"]),
+    )
+    generated = _HistoricalSampleProvider(decision)
+    records = []
+    for symbol in symbols:
+        batch = generated.load_samples(
+            signal_snapshot=type("SignalIdentity", (), {"symbol": symbol})(),
+            configuration=configuration.path_forecast,
+            decision_time=DecisionTime(decision),
+        )
+        records.extend(
+            HistoricalPathSampleRecord.register_unqualified(
+                sample=sample,
+                target_reference=target_reference,
+                outcome_reference=ValidationArtifactReference(
+                    "FREE_HISTORICAL_MULTI_HORIZON_OUTCOME",
+                    sample.source_artifact_id,
+                    sample.source_content_hash,
+                ),
+                pit_lineage=(),
+                registered_at=decision - timedelta(seconds=2),
+                reason_codes=(
+                    "FREE_DATA_EXPLORATORY",
+                    "FORMAL_OOS_FALSE",
+                    "FORMAL_PIT_FALSE",
+                    "UNQUALIFIED",
+                ),
+            )
+            for sample in batch.samples
+        )
+    repository.record_sample_dataset(
+        HistoricalSampleDataset.create(
+            registry_version="stateful-runtime-free-data-registry-v1",
+            target_reference=target_reference,
+            records=tuple(records),
+            available_at=decision - timedelta(seconds=2),
+        )
+    )
+    return _TrackingHistoricalRegistryPathForecastSampleProvider(repository)
+
+
+class _TrackingHistoricalRegistryPathForecastSampleProvider(
+    HistoricalRegistryPathForecastSampleProvider
+):
+    def __init__(self, reader) -> None:
+        super().__init__(reader)
+        self.loaded_batches: list[PathForecastSampleBatch] = []
+
+    def load_samples(self, **kwargs) -> PathForecastSampleBatch:
+        batch = super().load_samples(**kwargs)
+        self.loaded_batches.append(batch)
+        return batch

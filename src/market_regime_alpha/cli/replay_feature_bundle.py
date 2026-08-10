@@ -77,7 +77,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
     )
     return EXIT_SUCCESS
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())

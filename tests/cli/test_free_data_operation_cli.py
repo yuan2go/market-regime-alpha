@@ -103,9 +103,18 @@ def test_payload_names_engineering_and_authority_boundaries(tmp_path: Path) -> N
     assert payload["NO_POSITION_MUTATION"] is True
 
 
-def test_pyproject_exposes_all_six_free_data_commands() -> None:
+def test_pyproject_exposes_only_converged_operator_commands() -> None:
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     for command in (
+        "continuous-research",
+        "state-system",
+        "decision-system",
+        "model-governance",
+        "pit-authority",
+        "research-shadow",
+    ):
+        assert f"{command} =" in pyproject
+    for removed_alias in (
         "prepare-free-data-operation",
         "run-free-data-decision-window",
         "resume-free-data-operation",
@@ -113,4 +122,20 @@ def test_pyproject_exposes_all_six_free_data_commands() -> None:
         "report-free-data-operation",
         "inspect-free-data-operation",
     ):
-        assert f"{command} =" in pyproject
+        assert f"{removed_alias} =" not in pyproject
+
+    guarded = tuple(
+        sorted(
+            path.stem
+            for path in Path("src/market_regime_alpha/cli").glob("*.py")
+            if '__name__ == "__main__"' in path.read_text(encoding="utf-8")
+        )
+    )
+    assert guarded == (
+        "continuous_research",
+        "decision_system",
+        "model_governance",
+        "pit_authority",
+        "research_shadow",
+        "state_system",
+    )

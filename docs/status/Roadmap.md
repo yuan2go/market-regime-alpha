@@ -10,7 +10,7 @@
 
 1. Preserve the single Continuous Runtime and PostgreSQL-only composition.
 2. Keep migration 046 fail-closed while designing owner-specific Historical Sample and Formal OOS writers.
-3. Inventory internal executable modules and either expose an intentional operator command or remove dead entry paths.
+3. Preserve the converged six-script/six-main-guard operator boundary.
 4. Continue Legacy consumer measurement; delete only after Reader/replay/migration demand reaches zero.
 
 P0 must not add model parameters, Alpha claims or trading permissions.
