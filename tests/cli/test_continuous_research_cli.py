@@ -8,6 +8,7 @@ from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
     DATABASE_ERROR,
     SUCCESS,
+    _operator_resource,
     build_parser,
     main,
 )
@@ -71,6 +72,9 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
 
     assert args.operation == "run-due"
     assert args.runtime_clock_mode == "LIVE"
+    assert _operator_resource(args).artifact_kind == (
+        "CONTINUOUS_OPERATOR_OPERATION"
+    )
 
     run_day = build_parser().parse_args(
         [

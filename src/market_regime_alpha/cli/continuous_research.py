@@ -1060,7 +1060,7 @@ def _operator_resource(args: argparse.Namespace) -> ValidationArtifactReference:
             if value.suffix.lower() == ".json" and value.is_file():
                 arguments[name] = _load_json_object(value)
             continue
-        arguments[name] = value
+        arguments[name] = _canonical_operator_argument(value)
     payload = {
         "schema_version": "continuous-operator-resource/v1",
         "operation": str(args.operation),
@@ -1071,6 +1071,25 @@ def _operator_resource(args: argparse.Namespace) -> ValidationArtifactReference:
         "CONTINUOUS_OPERATOR_OPERATION",
         ArtifactId(f"continuous-operator:{digest[7:]}"),
         digest,
+    )
+
+
+def _canonical_operator_argument(value: object) -> object:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (date, datetime, time)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {
+            str(name): _canonical_operator_argument(item)
+            for name, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_operator_argument(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(
+        f"Unsupported Continuous operator argument type: {type(value).__name__}"
     )
 
 

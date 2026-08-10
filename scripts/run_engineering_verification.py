@@ -71,6 +71,10 @@ def main() -> int:
     commit_sha = _capture(("git", "rev-parse", "HEAD"), cwd=repo_root).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
         raise RuntimeError("Git did not return one full commit SHA")
+    postgres_version, migration_head = _postgres_environment(
+        args.database_url,
+        args.database_schema,
+    )
     gates = tuple(
         _run_gate(name, command, repo_root=repo_root, output_root=output_root)
         for name, command in GATES
@@ -82,10 +86,6 @@ def main() -> int:
         EngineeringReadiness.ENGINEERING_READY
         if not dirty and all(item.status is VerificationStatus.PASS for item in gates)
         else EngineeringReadiness.ENGINEERING_NOT_READY
-    )
-    postgres_version, migration_head = _postgres_environment(
-        args.database_url,
-        args.database_schema,
     )
     record = EngineeringVerificationRecord.create(
         commit_sha=commit_sha,
