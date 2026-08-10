@@ -5,7 +5,7 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-10
 > **Start SHA:** `66d9e8cac5015684a179de18c854ab4991423e87`
-> **Engineering SHA:** Added after the verified engineering checkpoint commit
+> **Engineering SHA:** `abc1fb7822c2df5b8e64d04d32cd67d485d0dd52`
 > **Related Documents:** ../architecture/17-Research-Strategy-Validation-Engineering.md, ../superpowers/plans/2026-08-10-research-strategy-validation-engineering.md
 
 ## Delivered scope
@@ -31,9 +31,29 @@ Research Shadow, Runtime Authority Evidence, Panel Enrichment and Strategy
 Shadow CAS/replay tests passed. These observations are local engineering
 evidence only.
 
-The final frozen dependency sync, full pytest, Ruff, mypy, build, docs and
-diff-check results are recorded here after the consolidated gate. GitHub CI is
-`CI_NOT_RUN` until a remote run is actually observed.
+## Consolidated engineering gate
+
+The following commands were observed against Engineering SHA
+`abc1fb7822c2df5b8e64d04d32cd67d485d0dd52`. The full suite used an isolated
+loopback PostgreSQL 16.14 cluster and a credential-bearing test URL so the
+database-binding redaction contract was exercised.
+
+| Gate | Result | Observed evidence |
+| --- | --- | --- |
+| `uv sync --frozen --extra dev --extra postgres` | PASS | 78 packages checked |
+| `pytest` | PASS | 2633 passed, 6 warnings, 8 subtests passed in 586.10s |
+| `ruff` | PASS | All checks passed |
+| `mypy` | PASS | No issues in 389 source files |
+| `build` | PASS | sdist and wheel built successfully |
+| `python scripts/check_docs_links.py` | PASS | Authority, links, evidence, supersession and inventory OK |
+| `pytest -q tests/scripts/test_check_docs_links.py` | PASS | 8 passed |
+| `git diff --check` | PASS | No whitespace errors |
+| GitHub CI | CI_NOT_RUN | No remote CI result observed at record time |
+
+The six warnings are pre-existing pandas DataFrame fragmentation warnings in
+the Top-1000 screened portfolio backtest path; they are not failures. Generated
+build output and the isolated test cluster are disposable verification assets,
+not repository or runtime authority.
 
 ## Authority declaration
 
