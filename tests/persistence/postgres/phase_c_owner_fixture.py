@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
@@ -190,30 +190,22 @@ def record_phase_c_protocol_owners(
         universe_id=UniverseId("universe-a"),
         feature_ids=(FeatureDefinitionId("feature-a"),),
     )
-    target_reference = ValidationArtifactReference(
-        "OUTCOME_TARGET", target.target_id, target.target_hash
-    )
+    target_reference = ValidationArtifactReference("OUTCOME_TARGET", target.target_id, target.target_hash)
 
     calendar = _calendar()
     evaluation = _evaluation(targets)
     validation = PostgresResearchValidationRepository(factory)
     validation.record_formal_evaluation_protocol(evaluation)
 
-    universe_reference = ValidationArtifactReference(
-        "UNIVERSE", ArtifactId(str(definition.universe_id)), HASH_A
-    )
-    dataset_reference = ValidationArtifactReference(
-        "MARKET_DATA_DATASET", ArtifactId("dataset-a"), HASH_A
-    )
+    universe_reference = ValidationArtifactReference("UNIVERSE", ArtifactId(str(definition.universe_id)), HASH_A)
+    dataset_reference = ValidationArtifactReference("MARKET_DATA_DATASET", ArtifactId("dataset-a"), HASH_A)
     pit = PostgresPITAuthority(
         factory,
         clock=MutableClock(NOW),
         artifact_resolver=StablePhaseCPITResolver(),
         provider_policy=fixture_provider_policy(),
     )
-    calendar_reference = ValidationArtifactReference(
-        "TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash
-    )
+    calendar_reference = ValidationArtifactReference("TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash)
     for reference in (calendar_reference, universe_reference, dataset_reference):
         pit.resolve_artifact(
             PITArtifactReference(
@@ -228,12 +220,7 @@ def record_phase_c_protocol_owners(
     PostgresPITTradingCalendarSnapshotRepository(factory).record(calendar)
 
     historical_datasets = tuple(
-        _historical_dataset(
-            ValidationArtifactReference(
-                "OUTCOME_TARGET", item.target_id, item.target_hash
-            )
-        )
-        for item in targets.targets
+        _historical_dataset(ValidationArtifactReference("OUTCOME_TARGET", item.target_id, item.target_hash)) for item in targets.targets
     )
     for historical in historical_datasets:
         validation.record_sample_dataset(historical)
@@ -258,15 +245,11 @@ def record_phase_c_protocol_owners(
     validation.record_feature_definition_set(feature_set)
     enrichment = _factor_enrichment(feature_set.definitions[0])
     validation.record_panel_enrichment(enrichment)
-    factor_catalog = build_factor_research_catalog(
-        enrichment=enrichment, created_at=NOW
-    )
+    factor_catalog = build_factor_research_catalog(enrichment=enrichment, created_at=NOW)
     validation.record_factor_catalog(factor_catalog)
 
     governance = PostgresModelGovernanceRepository(factory)
-    PersistentModelRegistry(governance).register(
-        definition, idempotency_key="phase-c-owner-model-register"
-    )
+    PersistentModelRegistry(governance).register(definition, idempotency_key="phase-c-owner-model-register")
     model_lineage = governance.record_version_lineage(
         ModelVersionLineage.create(
             model_id=definition.model_id,
@@ -283,9 +266,7 @@ def record_phase_c_protocol_owners(
             ),
             implementation_ref=definition.implementation_ref,
             code_revision="80bd8e85daf6115bbf147fcd3bfbe60ce781e02c",
-            code_hash=canonical_hash(
-                {"code_revision": "phase-c-owner-model-code-v1"}
-            ),
+            code_hash=canonical_hash({"code_revision": "phase-c-owner-model-code-v1"}),
             validation_protocol_refs=(
                 ArtifactLineageReference(
                     reference_kind="VALIDATION_PROTOCOL",
@@ -341,9 +322,7 @@ def record_phase_c_protocol_owners(
     validation.record_calibration_protocol(calibration_protocol, recorded_at=NOW)
     calibration_policy = CalibrationQualificationPolicy.create(
         policy_version="phase-c-owner-v1",
-        target_protocol_reference=ValidationArtifactReference(
-            "OUTCOME_TARGET_PROTOCOL", targets.protocol_id, targets.protocol_hash
-        ),
+        target_protocol_reference=ValidationArtifactReference("OUTCOME_TARGET_PROTOCOL", targets.protocol_id, targets.protocol_hash),
         target_reference=target_reference,
         barrier_id=target.barriers[0].barrier_id,
         calibration_protocol_reference=ValidationArtifactReference(
@@ -358,9 +337,7 @@ def record_phase_c_protocol_owners(
         minimum_coverage=Decimal("0.90"),
         locked_at=NOW,
     )
-    PostgresCalibrationQualificationAuthority(factory).record_policy(
-        calibration_policy
-    )
+    PostgresCalibrationQualificationAuthority(factory).record_policy(calibration_policy)
 
     strategy_policy = StrategyShadowPolicy.create(
         policy_version="phase-c-owner-v1",
@@ -370,9 +347,7 @@ def record_phase_c_protocol_owners(
         protection_return=None,
         participation_rate=Decimal("0.1"),
     )
-    PostgresStrategyShadowRepository(factory).save_policy(
-        strategy_policy, created_at=NOW
-    )
+    PostgresStrategyShadowRepository(factory).save_policy(strategy_policy, created_at=NOW)
     portfolio_policy = _portfolio_policy()
     portfolio = build_shadow_portfolio(
         policy=portfolio_policy,
@@ -381,9 +356,7 @@ def record_phase_c_protocol_owners(
         initial_cash=Decimal("100000"),
         created_at=NOW,
     )
-    PostgresShadowPortfolioRepository(factory).save_portfolio(
-        policy=portfolio_policy, portfolio=portfolio
-    )
+    PostgresShadowPortfolioRepository(factory).save_portfolio(policy=portfolio_policy, portfolio=portfolio)
     entry_model = EntryResearchModel.create(
         model_version="phase-c-owner-v1",
         variant=EntryResearchVariant.CANDIDATE_FORECAST,
@@ -425,14 +398,10 @@ def record_phase_c_protocol_owners(
         ),
         locked_at=NOW,
     )
-    PostgresPhaseCGateAuthority(factory).record_entry_holding_exit_policy(
-        entry_policy
-    )
+    PostgresPhaseCGateAuthority(factory).record_entry_holding_exit_policy(entry_policy)
 
     with factory.connection(read_only=True) as connection:
-        protocol_locked_at = connection.execute(
-            "SELECT date_trunc('second', clock_timestamp())"
-        ).fetchone()[0]
+        protocol_locked_at = connection.execute("SELECT date_trunc('second', clock_timestamp())").fetchone()[0]
     protocol = FormalResearchProtocol.create(
         protocol_version="phase-c-owner-v1",
         target_protocol=targets,
@@ -447,17 +416,13 @@ def record_phase_c_protocol_owners(
             feature_set.definition_set_id,
             feature_set.definition_set_hash,
         ),
-        factor_reference=ValidationArtifactReference(
-            "FACTOR_CATALOG", factor_catalog.catalog_id, factor_catalog.catalog_hash
-        ),
+        factor_reference=ValidationArtifactReference("FACTOR_CATALOG", factor_catalog.catalog_id, factor_catalog.catalog_hash),
         model_reference=ValidationArtifactReference(
             "MODEL_VERSION_LINEAGE",
             model_lineage.lineage_id,
             model_lineage.lineage_hash,
         ),
-        threshold_policy_reference=ValidationArtifactReference(
-            "THRESHOLD_POLICY", threshold.policy_id, threshold.policy_hash
-        ),
+        threshold_policy_reference=ValidationArtifactReference("THRESHOLD_POLICY", threshold.policy_id, threshold.policy_hash),
         formal_oos_qualification_policy_reference=ValidationArtifactReference(
             "FORMAL_OOS_QUALIFICATION_POLICY",
             oos_policy.policy_id,
@@ -517,9 +482,7 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
         protocol_version="phase-c-owner-v1",
         target_protocol=targets,
         windows=(
-            EvaluationWindow(
-                "train", EvaluationPartition.TRAIN, date(2026, 1, 5), date(2026, 1, 12), 1
-            ),
+            EvaluationWindow("train", EvaluationPartition.TRAIN, date(2026, 1, 5), date(2026, 1, 12), 1),
             EvaluationWindow(
                 "validation",
                 EvaluationPartition.VALIDATION,
@@ -544,16 +507,21 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
 
 def _historical_dataset(
     target_reference: ValidationArtifactReference,
+    *,
+    decision_time: datetime = datetime(2026, 1, 6, 6, 45, tzinfo=UTC),
+    available_at: datetime = datetime(2026, 1, 7, 8, 0, tzinfo=UTC),
+    identity_suffix: str = "",
 ) -> HistoricalSampleDataset:
     suffix = str(target_reference.artifact_id)
+    sample_suffix = f"{suffix}{identity_suffix}"
     sample = PathForecastSample(
-        sample_id=ArtifactId(f"phase-c-owner-sample:{suffix}"),
-        source_artifact_id=ArtifactId(f"phase-c-owner-outcome:{suffix}"),
-        source_content_hash=canonical_hash({"outcome": "phase-c-owner", "target": suffix}),
+        sample_id=ArtifactId(f"phase-c-owner-sample:{sample_suffix}"),
+        source_artifact_id=ArtifactId(f"phase-c-owner-outcome:{sample_suffix}"),
+        source_content_hash=canonical_hash({"outcome": "phase-c-owner", "target": sample_suffix}),
         symbol="000001.SZ",
         target_id=TargetId(str(target_reference.artifact_id)),
-        sample_decision_time=DecisionTime(NOW - timedelta(days=5)),
-        available_at=AvailabilityTime(NOW - timedelta(days=1)),
+        sample_decision_time=DecisionTime(decision_time),
+        available_at=AvailabilityTime(available_at),
         observation_status=EntryPathObservationStatus.AVAILABLE,
         observation_reason_code=EntryPathReasonCode.OUTCOME_RESOLVED,
         realized_mfe=0.04,
@@ -564,15 +532,15 @@ def _historical_dataset(
     record = HistoricalPathSampleRecord.register_unqualified(
         sample=sample,
         target_reference=target_reference,
-        outcome_reference=_reference("FACTUAL_OUTCOME", f"phase-c-owner-outcome:{suffix}"),
+        outcome_reference=_reference("FACTUAL_OUTCOME", f"phase-c-owner-outcome:{sample_suffix}"),
         pit_lineage=(),
-        registered_at=NOW - timedelta(days=1),
+        registered_at=available_at,
     )
     return HistoricalSampleDataset.create(
         registry_version="phase-c-owner-v1",
         target_reference=target_reference,
         records=(record,),
-        available_at=NOW - timedelta(days=1),
+        available_at=available_at,
     )
 
 

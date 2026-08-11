@@ -177,8 +177,10 @@ payload snapshot is accepted only when it is anchored to the existing PIT
 Artifact Authority resolution; it is not a second Calendar owner. Caller-supplied
 component payloads are rejected. Model Governance also freezes current lifecycle,
 Registry version and exact governance action revisions; terminal models are
-rejected. Pre-057 Protocols are replay-compatible after migration backfill but
-cannot enter a new Formal research path. `qualification-forecast-record` accepts only
+rejected. Migration-027 Registry action envelopes are accepted only while
+replaying a pre-057 Protocol; they cannot authorize a new Protocol freeze.
+Pre-057 Protocols are replay-compatible after migration backfill but cannot
+enter a new Formal research path. `qualification-forecast-record` accepts only
 Formal Protocol, Formal PIT, symbol/scope and idempotency references. PostgreSQL
 derives DecisionTime from the PIT request, resolves exact Model/Configuration/
 Code/Feature/Factor/Threshold/Dataset/Universe/Target lineage, invokes only its
@@ -188,8 +190,12 @@ unsupported exact executors persist `NOT_ESTIMABLE` receipts.
 `qualification-evaluation-record` accepts only immutable C3 qualification,
 Forecast, Target Outcome Label and Panel slice/row bindings. Before reading any
 Locked-OOS Label, PostgreSQL owner-resolves one SATISFIED C3 decision per frozen
-Target, proves the exact PIT set is consumed and runs the frozen Train/Validation
-metric floor over the complete family. Only then does it reconstruct Locked-OOS
+Target from metadata-only Dataset lineage, proves the exact PIT set is consumed
+and runs the frozen Train/Validation metric floor over the complete family.
+Formal C3 Datasets for new Protocols are Train/Validation-only; their realized
+payload is not loaded by the pre-OOS barrier. Label identity, Target, symbol and
+interval metadata are checked before any label value payload. Only then does it
+reconstruct Locked-OOS
 returns, label intervals and slices and freeze the complete result-affecting
 lineage. A raw subject/decision-session/outcome-session path is unlocked once;
 only that already-frozen family may then consume its Target-specific labels.
@@ -197,8 +203,8 @@ The family ledger is bridged to the migration-056 legacy ledger, so neither path
 can make previously read evidence pristine again. It never accepts caller-supplied
 observation values or result timestamps. `qualification-historical` binds each
 sample record to its exact DecisionTime PIT and owner-computed Forecast receipt.
-`qualification-oos` requires the Locked-OOS record set to equal the qualified C3
-record set inside the exact Locked-OOS windows for every frozen Target. It first
+`qualification-oos` requires the Train/Validation observation record set to equal
+the qualified C3 record set for every frozen Target. It first
 requires estimable Train and Validation floor metrics for every required
 Target/fold/sensitivity, then replays Locked-OOS observations, Calendar and
 family-level multiplicity before persisting C4. For every Formal operator JSON

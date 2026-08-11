@@ -29,6 +29,7 @@ from market_regime_alpha.application.research_validation.postgres_qualification 
     ResearchQualificationConflict,
     _historical_pit_temporal_reason_codes,
     _historical_target_label_reason_codes,
+    _load_evaluation_label_metadata,
 )
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
@@ -137,9 +138,7 @@ def test_historical_sample_owner_persists_missing_formal_evidence_as_blocked(
         "FORMAL_RESEARCH_PROTOCOL_MISSING",
     )
     with postgres_factory.connection(read_only=True) as connection:
-        stored = connection.execute(
-            "SELECT outcome, qualified FROM historical_sample_qualification_decision"
-        ).fetchone()
+        stored = connection.execute("SELECT outcome, qualified FROM historical_sample_qualification_decision").fetchone()
     assert stored == ("BLOCKED", False)
 
     with pytest.raises(ResearchQualificationConflict, match="idempotency"):
@@ -174,9 +173,7 @@ def test_family_evaluation_rejects_c3_before_reading_or_unlocking_locked_oos(
     groups = tuple(
         FamilyEvaluationObservationBindings(
             target_reference=target,
-            panel_reference=_reference(
-                "RESEARCH_PANEL_V2", f"unread-panel:{target.artifact_id}"
-            ),
+            panel_reference=_reference("RESEARCH_PANEL_V2", f"unread-panel:{target.artifact_id}"),
             observation_bindings=(
                 FormalEvaluationObservationBinding.create(
                     forecast_reference=_reference(
@@ -228,6 +225,63 @@ def test_family_evaluation_rejects_c3_before_reading_or_unlocking_locked_oos(
     assert counts == (0, 0, 0, 0)
 
 
+def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
+    target_protocol = _reference("OUTCOME_TARGET_PROTOCOL", "metadata-protocol")
+    target = _reference("OUTCOME_TARGET", "metadata-target")
+    label = _reference("TARGET_OUTCOME_LABEL", "substituted-locked-label")
+    forecast_time = NOW - timedelta(days=30)
+    locked_time = NOW - timedelta(days=1)
+    binding = FormalEvaluationObservationBinding.create(
+        forecast_reference=_reference("OUTCOME_TARGET_BOUND_FORECAST", "train-forecast"),
+        label_reference=label,
+        panel_slice_reference=_reference("RESEARCH_PANEL_SLICE_V2", "train-slice"),
+        panel_row_reference=_reference("RESEARCH_PANEL_ROW_V2", "train-row"),
+    )
+
+    class MetadataOnlyResult:
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            return [
+                (
+                    "locked-settlement",
+                    label.content_hash,
+                    str(target_protocol.artifact_id),
+                    str(target.artifact_id),
+                    "000001.SZ",
+                    locked_time,
+                    locked_time + timedelta(days=1),
+                    OutcomeAvailabilityStatus.COMPLETE.value,
+                    canonical_hash({"settlement": "locked"}),
+                    "locked-decision",
+                    canonical_hash({"decision": "locked"}),
+                )
+            ]
+
+    class MetadataOnlyConnection:
+        queries: list[str]
+
+        def __init__(self) -> None:
+            self.queries = []
+
+        def execute(self, query: str, _parameters: object) -> MetadataOnlyResult:
+            self.queries.append(query)
+            assert "label_json" not in query
+            return MetadataOnlyResult()
+
+    connection = MetadataOnlyConnection()
+    with pytest.raises(
+        ResearchQualificationConflict,
+        match="Label metadata/Forecast temporal mismatch",
+    ):
+        _load_evaluation_label_metadata(
+            connection,
+            protocol=SimpleNamespace(outcome_target_protocol_reference=target_protocol),  # type: ignore[arg-type]
+            target_reference=target,
+            binding=binding,
+            forecast=SimpleNamespace(symbol="000001.SZ", decision_time=forecast_time),  # type: ignore[arg-type]
+        )
+    assert len(connection.queries) == 1
+
+
 def test_historical_label_lineage_rejects_unrelated_market_dataset(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -237,9 +291,7 @@ def test_historical_label_lineage_rejects_unrelated_market_dataset(
     available_at = NOW - timedelta(days=1)
     label = TargetOutcomeLabel.create(
         symbol="000001.SZ",
-        target=RuntimeArtifactReference(
-            "OUTCOME_TARGET", target.artifact_id, target.content_hash
-        ),
+        target=RuntimeArtifactReference("OUTCOME_TARGET", target.artifact_id, target.content_hash),
         label_interval_start=decision_time,
         label_interval_end=decision_time + timedelta(days=1),
         decision_reference_price=Decimal("10"),
@@ -265,15 +317,9 @@ def test_historical_label_lineage_rejects_unrelated_market_dataset(
                 ArtifactId("historical-lineage-factual"),
                 canonical_hash({"outcome": "historical-lineage"}),
             ),
-            source_dataset=RuntimeArtifactReference(
-                source.artifact_kind, source.artifact_id, source.content_hash
-            ),
-            target_protocol_id=(
-                fixture.protocol.outcome_target_protocol_reference.artifact_id
-            ),
-            target_protocol_hash=(
-                fixture.protocol.outcome_target_protocol_reference.content_hash
-            ),
+            source_dataset=RuntimeArtifactReference(source.artifact_kind, source.artifact_id, source.content_hash),
+            target_protocol_id=(fixture.protocol.outcome_target_protocol_reference.artifact_id),
+            target_protocol_hash=(fixture.protocol.outcome_target_protocol_reference.content_hash),
             next_session_date=(decision_time + timedelta(days=1)).date(),
             labels=(label,),
             availability_status=OutcomeAvailabilityStatus.COMPLETE,
@@ -307,22 +353,21 @@ def test_historical_label_lineage_rejects_unrelated_market_dataset(
     record = HistoricalPathSampleRecord.register_unqualified(
         sample=sample,
         target_reference=target,
-        outcome_reference=ValidationArtifactReference(
-            "TARGET_OUTCOME_LABEL", label.label_id, label.label_hash
-        ),
+        outcome_reference=ValidationArtifactReference("TARGET_OUTCOME_LABEL", label.label_id, label.label_hash),
         pit_lineage=(),
         registered_at=available_at,
     )
-    assert _historical_target_label_reason_codes(
-        protocol=fixture.protocol,
-        record=record,
-        outcome=canonical_outcome,
-        label=label,
-    ) == ()
-
-    unrelated_outcome = outcome(
-        _reference("MARKET_DATA_DATASET", "unrelated-market-dataset")
+    assert (
+        _historical_target_label_reason_codes(
+            protocol=fixture.protocol,
+            record=record,
+            outcome=canonical_outcome,
+            label=label,
+        )
+        == ()
     )
+
+    unrelated_outcome = outcome(_reference("MARKET_DATA_DATASET", "unrelated-market-dataset"))
     assert "TARGET_OUTCOME_DATASET_OR_PROTOCOL_LINEAGE_MISMATCH" in (
         _historical_target_label_reason_codes(
             protocol=fixture.protocol,

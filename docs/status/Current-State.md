@@ -50,7 +50,9 @@ RBAC expose owner freeze, Protocol freeze, Formal Forecast compute and family
 evaluation without a generic artifact registrar. The command actor must equal
 the authorized RBAC principal. C4 requires estimable Train and Validation floor
 metrics for every Target/fold/sensitivity before evaluating Locked OOS; its C3
-record-set comparison filters exactly the frozen Locked-OOS windows. These writers can
+record-set comparison covers only the frozen Train/Validation windows. New Formal
+C3 Dataset owners may not bundle Locked-OOS records; their metadata is verified
+without loading realized values before the pre-OOS readiness barrier. These writers can
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.
 
