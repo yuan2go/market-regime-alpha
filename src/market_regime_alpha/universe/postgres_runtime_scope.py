@@ -12,6 +12,7 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
+from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 from market_regime_alpha.universe.runtime_scope import (
     ResearchUniversePolicy,
     RuntimeScopeDecision,
@@ -65,6 +66,7 @@ class PostgresRuntimeScopeRepository:
         *,
         policy: ResearchUniversePolicy,
         receipt: RuntimeScopeReceipt,
+        operational_universes: tuple[OperationalUniverseArtifact, ...] = (),
     ) -> RuntimeScopeReceipt:
         if receipt.policy_id != policy.policy_id or receipt.policy_hash != policy.policy_hash:
             raise ValueError("Runtime Scope receipt does not bind the supplied Policy")
@@ -146,7 +148,55 @@ class PostgresRuntimeScopeRepository:
                         Jsonb(item.to_canonical_dict()),
                     ),
                 )
+            expected_inputs = {
+                (
+                    item.artifact_kind,
+                    str(item.artifact_id),
+                    item.content_hash,
+                )
+                for item in receipt.input_references
+            }
+            for ordinal, universe in enumerate(
+                sorted(operational_universes, key=lambda item: str(item.universe_id)),
+                start=1,
+            ):
+                universe.verify_identity()
+                if (
+                    "OPERATIONAL_UNIVERSE",
+                    str(universe.universe_id),
+                    universe.content_hash,
+                ) not in expected_inputs:
+                    raise ValueError(
+                        "Runtime Scope Operational Universe is not input-bound"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO runtime_scope_operational_input(
+                        scope_id, ordinal, universe_id, universe_hash,
+                        decision_date, effective_at, available_at,
+                        payload_json, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (scope_id, ordinal) DO NOTHING
+                    """,
+                    (
+                        str(receipt.scope_id),
+                        ordinal,
+                        str(universe.universe_id),
+                        universe.content_hash,
+                        universe.decision_date,
+                        universe.effective_at,
+                        universe.available_at,
+                        Jsonb(universe.to_canonical_dict()),
+                        receipt.built_at,
+                    ),
+                )
             self._verify_counts(connection, receipt)
+            if operational_universes:
+                self._verify_operational_inputs(
+                    connection,
+                    receipt,
+                    operational_universes,
+                )
 
         self._factory.run_transaction(operation)
         return self.get(receipt.scope_id)
@@ -231,6 +281,33 @@ class PostgresRuntimeScopeRepository:
             raise KeyError("no Runtime Scope receipt was known at that time")
         return self.get(ArtifactId(str(row[0])))
 
+    def get_operational_inputs(
+        self, scope_id: ArtifactId
+    ) -> tuple[OperationalUniverseArtifact, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT universe_id, universe_hash, payload_json
+                FROM runtime_scope_operational_input
+                WHERE scope_id = %s ORDER BY ordinal
+                """,
+                (str(scope_id),),
+            ).fetchall()
+        if not rows:
+            raise KeyError("Runtime Scope Operational Universe inputs are missing")
+        result: list[OperationalUniverseArtifact] = []
+        for row in rows:
+            if not isinstance(row[2], dict):
+                raise ValueError("Runtime Scope Operational Universe payload is invalid")
+            universe = OperationalUniverseArtifact.from_canonical_dict(row[2])
+            if (str(row[0]), str(row[1])) != (
+                str(universe.universe_id),
+                universe.content_hash,
+            ):
+                raise ValueError("Operational Universe projection diverged")
+            result.append(universe)
+        return tuple(result)
+
     @staticmethod
     def _insert_policy(connection: Any, policy: ResearchUniversePolicy) -> None:
         connection.execute(
@@ -272,6 +349,35 @@ class PostgresRuntimeScopeRepository:
             raise ValueError("Runtime Scope input reference set is incomplete")
         if member_count is None or int(member_count[0]) != len(receipt.records):
             raise ValueError("Runtime Scope member set is incomplete")
+
+    @staticmethod
+    def _verify_operational_inputs(
+        connection: Any,
+        receipt: RuntimeScopeReceipt,
+        operational_universes: tuple[OperationalUniverseArtifact, ...],
+    ) -> None:
+        rows = connection.execute(
+            """
+            SELECT universe_id, universe_hash, payload_json
+            FROM runtime_scope_operational_input
+            WHERE scope_id = %s ORDER BY ordinal
+            """,
+            (str(receipt.scope_id),),
+        ).fetchall()
+        expected = tuple(
+            (
+                str(item.universe_id),
+                item.content_hash,
+                item.to_canonical_dict(),
+            )
+            for item in sorted(
+                operational_universes,
+                key=lambda item: str(item.universe_id),
+            )
+        )
+        actual = tuple((str(row[0]), str(row[1]), row[2]) for row in rows)
+        if actual != expected:
+            raise ValueError("Operational Universe projection diverged")
 
 
 __all__ = ["PostgresRuntimeScopeRepository"]

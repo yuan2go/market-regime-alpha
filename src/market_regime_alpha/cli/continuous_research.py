@@ -72,6 +72,23 @@ from market_regime_alpha.application.governance.access_control import (
     PostgresAccessGovernance,
     SecurityPermission,
 )
+from market_regime_alpha.application.historical_research.contracts import (
+    HistoricalResearchCommand,
+)
+from market_regime_alpha.application.historical_research.postgres_journal import (
+    DEFAULT_HISTORICAL_STAGE_LEASE,
+    HistoricalRunSnapshot,
+    PostgresHistoricalResearchJournal,
+)
+from market_regime_alpha.application.historical_research.postgres_session_owner import (
+    PostgresHistoricalSessionOwner,
+)
+from market_regime_alpha.application.historical_research.runner import (
+    HistoricalResearchRunner,
+)
+from market_regime_alpha.application.research_session.kernel import (
+    ResearchDecisionSessionKernel,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -178,6 +195,12 @@ from market_regime_alpha.application.strategy_shadow.operator import (
 from market_regime_alpha.application.strategy_shadow.observation_builder import (
     ShadowObservationPolicy,
 )
+from market_regime_alpha.application.strategy_shadow.performance import (
+    PerformancePolicy,
+)
+from market_regime_alpha.application.strategy_shadow.performance_operator import (
+    PortfolioPerformanceOperator,
+)
 from market_regime_alpha.application.strategy_shadow.contracts import (
     StrategyShadowPolicy,
     restore_strategy_shadow_artifact,
@@ -229,6 +252,11 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from market_regime_alpha.universe.operational import OperationalUniverseArtifact
+from market_regime_alpha.universe.runtime_scope import ResearchUniversePolicy
+from market_regime_alpha.universe.runtime_scope_operator import (
+    PostgresRuntimeScopeOperator,
+)
 from zoneinfo import ZoneInfo
 
 
@@ -258,6 +286,12 @@ _READ_OPERATIONS = {
     "report-day",
     "replay-day",
     "research-universe-replay",
+    "runtime-scope-report",
+    "runtime-scope-replay",
+    "historical-report",
+    "historical-replay",
+    "performance-report",
+    "performance-replay",
     "strategy-replay",
     "portfolio-shadow-replay",
     "model-report",
@@ -403,6 +437,36 @@ def build_parser() -> argparse.ArgumentParser:
     universe_replay = subparsers.add_parser("research-universe-replay")
     universe_replay.add_argument("--snapshot-id", required=True)
     universe_replay.add_argument("--artifact-root", type=Path, required=True)
+    runtime_scope_build = subparsers.add_parser(
+        "runtime-scope-build",
+        help="Build one immutable Full-A Runtime Scope from owned Free Data inputs.",
+    )
+    runtime_scope_build.add_argument("--input", type=Path, required=True)
+    runtime_scope_report = subparsers.add_parser("runtime-scope-report")
+    runtime_scope_report.add_argument("--scope-id", required=True)
+    runtime_scope_replay = subparsers.add_parser("runtime-scope-replay")
+    runtime_scope_replay.add_argument("--scope-id", required=True)
+    historical_run = subparsers.add_parser(
+        "historical-run",
+        help="Run a frozen Historical Research range through the shared session kernel.",
+    )
+    historical_run.add_argument("--input", type=Path, required=True)
+    historical_resume = subparsers.add_parser("historical-resume")
+    historical_resume.add_argument("--run-id", required=True)
+    historical_resume.add_argument("--max-stage-commits", type=int)
+    historical_report = subparsers.add_parser("historical-report")
+    historical_report.add_argument("--run-id", required=True)
+    historical_replay = subparsers.add_parser("historical-replay")
+    historical_replay.add_argument("--run-id", required=True)
+    performance_build = subparsers.add_parser(
+        "performance-build",
+        help="Build immutable multi-period Performance/Attribution from Portfolio Shadow.",
+    )
+    performance_build.add_argument("--input", type=Path, required=True)
+    performance_report = subparsers.add_parser("performance-report")
+    performance_report.add_argument("--report-id", required=True)
+    performance_replay = subparsers.add_parser("performance-replay")
+    performance_replay.add_argument("--report-id", required=True)
     report_day = subparsers.add_parser("report-day")
     report_day.add_argument("--trading-date", required=True)
     report_day.add_argument("--at", required=True)
@@ -611,6 +675,148 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "runtime-scope-build":
+        payload = _load_json_object(args.input)
+        expected = {
+            "policy",
+            "as_of",
+            "built_at",
+            "security_master_snapshot_id",
+            "operational_universes",
+            "code_revision",
+        }
+        if set(payload) != expected:
+            raise ValueError("runtime-scope-build requires exact owner-bound inputs")
+        runtime_scope_receipt = PostgresRuntimeScopeOperator(
+            factory,
+            apply_migrations=False,
+        ).build(
+            policy=ResearchUniversePolicy.from_canonical_dict(
+                _object_value(payload["policy"], "policy")
+            ),
+            as_of=_instant(str(payload["as_of"])),
+            built_at=_instant(str(payload["built_at"])),
+            security_master_snapshot_id=ArtifactId(
+                str(payload["security_master_snapshot_id"])
+            ),
+            operational_universes=tuple(
+                OperationalUniverseArtifact.from_canonical_dict(
+                    _object_value(item, "operational_universe")
+                )
+                for item in _array_value(
+                    payload["operational_universes"],
+                    "operational_universes",
+                )
+            ),
+            code_revision=str(payload["code_revision"]),
+        )
+        return {
+            "operation": "RUNTIME_SCOPE_BUILD",
+            **runtime_scope_receipt.to_canonical_dict(),
+        }
+    if args.operation in {"runtime-scope-report", "runtime-scope-replay"}:
+        scope_operator = PostgresRuntimeScopeOperator(
+            factory,
+            apply_migrations=False,
+        )
+        runtime_scope_receipt = (
+            scope_operator.report(ArtifactId(args.scope_id))
+            if args.operation == "runtime-scope-report"
+            else scope_operator.replay(ArtifactId(args.scope_id))
+        )
+        return {
+            "operation": args.operation.replace("-", "_").upper(),
+            **runtime_scope_receipt.to_canonical_dict(),
+        }
+    if args.operation in {
+        "historical-run",
+        "historical-resume",
+        "historical-report",
+        "historical-replay",
+    }:
+        historical_journal = PostgresHistoricalResearchJournal(
+            factory,
+            clock=_operational_now,
+            lease_duration=DEFAULT_HISTORICAL_STAGE_LEASE,
+            apply_migrations=False,
+        )
+        historical_runner = HistoricalResearchRunner(
+            journal=historical_journal,
+            kernel=ResearchDecisionSessionKernel(
+                PostgresHistoricalSessionOwner(factory)
+            ),
+        )
+        if args.operation == "historical-run":
+            payload = _load_json_object(args.input)
+            if set(payload) != {"command", "max_stage_commits"}:
+                raise ValueError(
+                    "historical-run requires command and max_stage_commits"
+                )
+            command = HistoricalResearchCommand.from_canonical_dict(
+                _object_value(payload["command"], "command")
+            )
+            raw_limit = payload["max_stage_commits"]
+            historical_snapshot = historical_runner.run(
+                command=command,
+                max_stage_commits=(
+                    None if raw_limit is None else int(raw_limit)
+                ),
+            )
+            return _historical_snapshot_payload(
+                "HISTORICAL_RUN", historical_snapshot
+            )
+        run_id = ArtifactId(args.run_id)
+        if args.operation == "historical-resume":
+            return _historical_snapshot_payload(
+                "HISTORICAL_RESUME",
+                historical_runner.resume(
+                    run_id=run_id,
+                    max_stage_commits=args.max_stage_commits,
+                ),
+            )
+        if args.operation == "historical-report":
+            return _historical_snapshot_payload(
+                "HISTORICAL_REPORT",
+                historical_journal.get_run(run_id),
+            )
+        return {
+            "operation": "HISTORICAL_REPLAY",
+            **historical_runner.replay(run_id=run_id).to_canonical_dict(),
+        }
+    if args.operation == "performance-build":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"portfolio_id", "policy", "generated_at"}:
+            raise ValueError(
+                "performance-build requires portfolio_id, policy and generated_at"
+            )
+        performance_report = PortfolioPerformanceOperator(
+            factory,
+            apply_migrations=False,
+        ).build(
+            portfolio_id=ArtifactId(str(payload["portfolio_id"])),
+            policy=PerformancePolicy.from_canonical_dict(
+                _object_value(payload["policy"], "policy")
+            ),
+            generated_at=_instant(str(payload["generated_at"])),
+        )
+        return {
+            "operation": "PERFORMANCE_BUILD",
+            **performance_report.to_canonical_dict(),
+        }
+    if args.operation in {"performance-report", "performance-replay"}:
+        performance = PortfolioPerformanceOperator(
+            factory,
+            apply_migrations=False,
+        )
+        performance_report = (
+            performance.report(ArtifactId(args.report_id))
+            if args.operation == "performance-report"
+            else performance.replay(ArtifactId(args.report_id))
+        )
+        return {
+            "operation": args.operation.replace("-", "_").upper(),
+            **performance_report.to_canonical_dict(),
+        }
     if args.operation == "model-train":
         payload = _load_json_object(args.input)
         if set(payload) != {"request", "trained_at"}:
@@ -1935,7 +2141,11 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
     operation = str(args.operation)
     if operation in _READ_OPERATIONS:
         return SecurityPermission.READ_RESEARCH
-    if operation == "research-universe-sync":
+    if operation in {
+        "research-universe-sync",
+        "runtime-scope-build",
+        "historical-run",
+    }:
         return SecurityPermission.RUN_RESEARCH
     if operation == "model-train":
         return SecurityPermission.RUN_RESEARCH
@@ -1952,7 +2162,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "formal-execution-assess",
     }:
         return SecurityPermission.RECORD_RESEARCH_EVIDENCE
-    if operation == "resume":
+    if operation in {"resume", "historical-resume"}:
         return SecurityPermission.RECOVER_RUNTIME
     if operation in {"prepare", "schedule", "reserve-due-tick", "run-due", "run-day"}:
         run_command = ContinuousResearchCommand.from_canonical_dict(
@@ -2025,6 +2235,40 @@ def _canonical_operator_argument(value: object) -> object:
     raise TypeError(
         f"Unsupported Continuous operator argument type: {type(value).__name__}"
     )
+
+
+def _historical_snapshot_payload(
+    operation: str,
+    snapshot: HistoricalRunSnapshot,
+) -> dict[str, Any]:
+    return {
+        "operation": operation,
+        "run_id": str(snapshot.command.run_id),
+        "command_hash": snapshot.command.command_hash,
+        "status": snapshot.status.value,
+        "version": snapshot.version,
+        "session_count": len(snapshot.sessions),
+        "completed_sessions": snapshot.completed_sessions,
+        "sessions": [
+            {
+                "session_id": str(item.request.session_id),
+                "session_hash": item.request.session_hash,
+                "trading_date": item.request.trading_date.isoformat(),
+                "ordinal": item.ordinal,
+                "status": item.status.value,
+                "next_stage": item.next_stage.value,
+                "version": item.version,
+                "fencing_token": item.fencing_token,
+                "receipts": [receipt.to_canonical_dict() for receipt in item.receipts],
+            }
+            for item in snapshot.sessions
+        ],
+        "evidence_qualification": snapshot.command.evidence_qualification.value,
+        "limitations": list(snapshot.command.limitations),
+        "formal_oos": False,
+        "calibrated": False,
+        **_authority_ceiling(),
+    }
 
 
 def _emit(payload: Mapping[str, Any]) -> None:

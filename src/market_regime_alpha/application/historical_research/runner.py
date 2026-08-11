@@ -66,6 +66,13 @@ class HistoricalReplayReport:
             "mismatches": [item.to_canonical_dict() for item in self.mismatches],
         }
 
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "report_id": str(self.report_id),
+            "report_hash": self.report_hash,
+            **self.identity_payload(),
+        }
+
 
 class HistoricalResearchRunner:
     """Apply business stages serially; journal each owner receipt transactionally."""

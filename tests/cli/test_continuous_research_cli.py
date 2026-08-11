@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
@@ -41,6 +41,15 @@ from tests.application.research_validation.test_research_model import (
 from tests.application.research_validation.test_formal_execution import (
     _request as _formal_execution_request,
 )
+from market_regime_alpha.universe.postgres_research import (
+    PostgresFreeResearchUniverseRepository,
+)
+from tests.application.historical_research.test_contracts import (
+    _command as _historical_command,
+)
+from tests.persistence.postgres.test_runtime_scope import _operational_universe
+from tests.persistence.postgres.test_shadow_performance import _persisted_inputs
+from tests.universe.test_runtime_scope import AS_OF, KNOWN_AT, _policy, _snapshot
 
 
 def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
@@ -176,6 +185,42 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "research-universe-1",
             "--artifact-root",
             "runtime-output",
+        ]
+    )
+    runtime_scope_build = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "runtime-scope-build",
+            "--input",
+            "runtime-scope.json",
+        ]
+    )
+    historical_run = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-run",
+            "--input",
+            "historical-run.json",
+        ]
+    )
+    historical_resume = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-resume",
+            "--run-id",
+            "historical-run-1",
+        ]
+    )
+    performance_build = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "performance-build",
+            "--input",
+            "performance.json",
         ]
     )
     portfolio_day = build_parser().parse_args(
@@ -381,6 +426,10 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert replay_day.operation == "replay-day"
     assert universe_sync.operation == "research-universe-sync"
     assert universe_replay.operation == "research-universe-replay"
+    assert runtime_scope_build.operation == "runtime-scope-build"
+    assert historical_run.operation == "historical-run"
+    assert historical_resume.operation == "historical-resume"
+    assert performance_build.operation == "performance-build"
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_auto.auto.name == "auto-portfolio.json"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
@@ -534,6 +583,99 @@ def test_cli_persists_and_replays_current_free_data_formal_block(
     ) == SUCCESS
     replayed = json.loads(capsys.readouterr().out)
     assert replayed["assessment_hash"] == assessed["assessment_hash"]
+
+
+def test_cli_builds_scope_runs_historical_and_replays_performance(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path,
+    capsys,
+) -> None:
+    authority = _authority_args(postgres_factory)
+    snapshot = PostgresFreeResearchUniverseRepository(
+        postgres_factory,
+        apply_migrations=False,
+    ).publish(_snapshot())
+    scope_input = tmp_path / "runtime-scope.json"
+    scope_input.write_text(
+        json.dumps(
+            {
+                "policy": _policy().to_canonical_dict(),
+                "as_of": AS_OF.isoformat(),
+                "built_at": KNOWN_AT.isoformat(),
+                "security_master_snapshot_id": str(snapshot.snapshot_id),
+                "operational_universes": [
+                    _operational_universe().to_canonical_dict()
+                ],
+                "code_revision": "phase-d-runtime-scope",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main([*authority, "runtime-scope-build", "--input", str(scope_input)]) == SUCCESS
+    scope = json.loads(capsys.readouterr().out)
+    assert scope["formal_pit"] is False
+    assert scope["records"][0]["decision"] == "INCLUDED"
+    assert main(
+        [*authority, "runtime-scope-replay", "--scope-id", scope["scope_id"]]
+    ) == SUCCESS
+    replayed_scope = json.loads(capsys.readouterr().out)
+    assert replayed_scope["scope_hash"] == scope["scope_hash"]
+
+    historical_input = tmp_path / "historical-run.json"
+    command = _historical_command(sessions=(date(2020, 1, 2),))
+    historical_input.write_text(
+        json.dumps(
+            {
+                "command": command.to_canonical_dict(),
+                "max_stage_commits": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main(
+        [*authority, "historical-run", "--input", str(historical_input)]
+    ) == SUCCESS
+    historical = json.loads(capsys.readouterr().out)
+    assert historical["status"] == "COMPLETE_WITH_BLOCKS"
+    assert historical["sessions"][0]["receipts"][-1]["reason_codes"] == [
+        "HISTORICAL_DECISION_OWNER_MISSING"
+    ]
+    assert main(
+        [*authority, "historical-replay", "--run-id", historical["run_id"]]
+    ) == SUCCESS
+    historical_replay = json.loads(capsys.readouterr().out)
+    assert historical_replay["matched"] is True
+
+    performance_policy, expected_report = _persisted_inputs(postgres_factory)
+    performance_input = tmp_path / "performance.json"
+    performance_input.write_text(
+        json.dumps(
+            {
+                "portfolio_id": str(
+                    expected_report.portfolio_reference.artifact_id
+                ),
+                "policy": performance_policy.to_canonical_dict(),
+                "generated_at": expected_report.generated_at.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main(
+        [*authority, "performance-build", "--input", str(performance_input)]
+    ) == SUCCESS
+    performance = json.loads(capsys.readouterr().out)
+    assert performance["report_hash"] == expected_report.report_hash
+    assert main(
+        [
+            *authority,
+            "performance-replay",
+            "--report-id",
+            performance["report_id"],
+        ]
+    ) == SUCCESS
+    replayed_performance = json.loads(capsys.readouterr().out)
+    assert replayed_performance["report_hash"] == performance["report_hash"]
 
 
 def test_cli_prepare_admit_report_and_replay_are_structured(

@@ -11,6 +11,9 @@ from market_regime_alpha.application.strategy_shadow.performance import (
 from market_regime_alpha.application.strategy_shadow.postgres_performance import (
     PostgresPortfolioPerformanceRepository,
 )
+from market_regime_alpha.application.strategy_shadow.performance_operator import (
+    PortfolioPerformanceOperator,
+)
 from market_regime_alpha.application.strategy_shadow.postgres_portfolio import (
     PostgresShadowPortfolioRepository,
 )
@@ -75,3 +78,20 @@ def test_performance_report_and_projections_are_append_only(postgres_factory) ->
             "WHERE report_id = %s",
             (str(report.report_id),),
         )
+
+
+def test_performance_operator_builds_reports_and_replays_from_portfolio_owner(
+    postgres_factory,
+) -> None:
+    policy, expected = _persisted_inputs(postgres_factory)
+    operator = PortfolioPerformanceOperator(postgres_factory)
+
+    report = operator.build(
+        portfolio_id=expected.portfolio_reference.artifact_id,
+        policy=policy,
+        generated_at=expected.generated_at,
+    )
+
+    assert report == expected
+    assert operator.report(report.report_id) == expected
+    assert operator.replay(report.report_id) == expected

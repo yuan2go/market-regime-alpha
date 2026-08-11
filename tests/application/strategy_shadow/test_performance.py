@@ -101,6 +101,7 @@ def test_performance_report_computes_requested_metrics_without_hiding_losses() -
     ) / portfolio.initial_cash
     assert report.metric("mfe").status is EstimationStatus.NOT_ESTIMABLE
     assert report.metric("mae").status is EstimationStatus.NOT_ESTIMABLE
+    assert report.metric("average_holding_period").unit == "SESSIONS"
     assert report.monthly_returns
     assert report.yearly_returns
     assert report.reconciliation_difference.copy_abs() <= Decimal("0.000001")

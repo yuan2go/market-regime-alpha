@@ -214,6 +214,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "runtime_scope_receipt",
         "runtime_scope_input_reference",
         "runtime_scope_member",
+        "runtime_scope_operational_input",
         "historical_research_run",
         "historical_research_session",
         "historical_research_stage_receipt",
@@ -414,6 +415,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "runtime_scope_member",
             "runtime_scope_member_no_update",
+        ),
+        (
+            "runtime_scope_operational_input",
+            "runtime_scope_operational_input_no_update",
         ),
         (
             "historical_research_run",
