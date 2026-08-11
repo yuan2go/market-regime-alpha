@@ -21,6 +21,9 @@ from market_regime_alpha.application.research_evaluation.targeted_outcome import
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
+from market_regime_alpha.application.research_validation.formal_hypothesis_family import (
+    FamilyEvaluationObservationBindings,
+)
 from market_regime_alpha.application.research_validation.postgres_qualification import (
     PostgresResearchQualificationAuthority,
     ResearchQualificationConflict,
@@ -31,6 +34,7 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
     PostgresResearchValidationRepository,
 )
 from market_regime_alpha.application.research_validation.qualification import (
+    FormalEvaluationObservationBinding,
     QualificationOutcome,
 )
 from market_regime_alpha.application.research_validation.samples import (
@@ -53,6 +57,7 @@ from market_regime_alpha.strategies.entry.contracts import (
     EntryPathReasonCode,
 )
 from tests.persistence.postgres.phase_c_owner_fixture import (
+    freeze_phase_c_protocol,
     record_phase_c_protocol_owners,
 )
 
@@ -146,6 +151,81 @@ def test_historical_sample_owner_persists_missing_formal_evidence_as_blocked(
             reason="different command",
             idempotency_key="blocked-historical-sample",
         )
+
+
+def test_family_evaluation_rejects_c3_before_reading_or_unlocking_locked_oos(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    fixture = record_phase_c_protocol_owners(postgres_factory)
+    protocol = freeze_phase_c_protocol(
+        postgres_factory,
+        fixture,
+        idempotency_key="pre-oos-c3-gate-protocol",
+    )
+    authority = PostgresResearchQualificationAuthority(postgres_factory)
+    blocked = authority.qualify_historical_sample(
+        dataset_id=protocol.historical_sample_dataset_references[0].artifact_id,
+        formal_protocol_id=None,
+        formal_pit_evidence_id=None,
+        actor="phase-c-test",
+        reason="prove C3 gate precedes Locked OOS",
+        idempotency_key="pre-oos-blocked-c3",
+    )
+    groups = tuple(
+        FamilyEvaluationObservationBindings(
+            target_reference=target,
+            panel_reference=_reference(
+                "RESEARCH_PANEL_V2", f"unread-panel:{target.artifact_id}"
+            ),
+            observation_bindings=(
+                FormalEvaluationObservationBinding.create(
+                    forecast_reference=_reference(
+                        "OUTCOME_TARGET_BOUND_FORECAST",
+                        f"unread-forecast:{target.artifact_id}",
+                    ),
+                    label_reference=_reference(
+                        "TARGET_OUTCOME_LABEL",
+                        f"unread-locked-label:{target.artifact_id}",
+                    ),
+                    panel_slice_reference=_reference(
+                        "RESEARCH_PANEL_SLICE_V2",
+                        f"unread-slice:{target.artifact_id}",
+                    ),
+                    panel_row_reference=_reference(
+                        "RESEARCH_PANEL_ROW_V2",
+                        f"unread-row:{target.artifact_id}",
+                    ),
+                ),
+            ),
+        )
+        for target in protocol.target_references
+    )
+
+    with pytest.raises(
+        ResearchQualificationConflict,
+        match="C3_QUALIFIED_HISTORICAL_SAMPLE_REQUIRED_BEFORE_LOCKED_OOS",
+    ):
+        authority.record_family_evaluation_candidate(
+            formal_protocol_id=protocol.protocol_id,
+            observation_groups=groups,
+            historical_sample_decision_ids=(blocked.decision_id,),
+            formal_pit_evidence_id=ArtifactId("unread-formal-pit"),
+            actor="phase-c-test",
+            reason="must stop before any Locked OOS owner read",
+            idempotency_key="pre-oos-c3-gate-evaluation",
+        )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        counts = tuple(
+            connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in (
+                "formal_evaluation_observation_set",
+                "locked_oos_raw_evidence_unlock",
+                "locked_oos_target_observation_consumption",
+                "formal_hypothesis_family_evaluation",
+            )
+        )
+    assert counts == (0, 0, 0, 0)
 
 
 def test_historical_label_lineage_rejects_unrelated_market_dataset(

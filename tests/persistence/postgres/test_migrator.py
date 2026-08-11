@@ -707,7 +707,10 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
                        to_regclass('formal_forecast_computation_receipt'),
                        to_regclass('locked_oos_raw_evidence_unlock'),
                        to_regclass('locked_oos_target_observation_consumption'),
-                       to_regclass('formal_hypothesis_family_evaluation')
+                       to_regclass('formal_hypothesis_family_evaluation'),
+                       to_regclass(
+                         'formal_hypothesis_family_evaluation_historical_decision'
+                       )
                 """
             ).fetchone()
         )
@@ -731,6 +734,7 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         "locked_oos_raw_evidence_unlock",
         "locked_oos_target_observation_consumption",
         "formal_hypothesis_family_evaluation",
+        "formal_hypothesis_family_evaluation_historical_decision",
     )
     assert old_migration is not None
     assert old_consumption == ("locked_oos_evidence_consumption",)

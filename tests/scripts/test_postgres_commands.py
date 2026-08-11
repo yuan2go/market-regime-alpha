@@ -102,4 +102,4 @@ def test_apply_migrations_honors_explicit_application_schema(
 
     assert output["postgres_schema"] == postgres_factory.application_schema
     assert output["latest_migration"] == 57
-    assert output["authority_table_count"] == 200
+    assert output["authority_table_count"] == 201

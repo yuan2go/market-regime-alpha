@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from psycopg.types.json import Jsonb
 
@@ -30,7 +32,9 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.platform.contracts import ModelLifecycleStatus
 from market_regime_alpha.platform.durable_governance import PersistentModelRegistry
 from market_regime_alpha.platform.postgres_runtime_governance import (
+    ModelGovernanceIntegrityError,
     PostgresModelGovernanceRepository,
+    resolve_formal_research_model_lineage,
 )
 from tests.persistence.postgres.phase_c_owner_fixture import (
     NOW,
@@ -96,6 +100,45 @@ def test_formal_protocol_model_owner_freezes_current_governance_and_fails_termin
             reason="terminal model cannot be frozen again",
             idempotency_key="terminal-model-formal-freeze",
         )
+
+
+def test_formal_model_owner_replays_transition_ledger_not_mutable_projection(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    fixture = record_phase_c_protocol_owners(postgres_factory)
+    governance = PostgresModelGovernanceRepository(postgres_factory)
+    current = PersistentModelRegistry(governance).get(fixture.model_lineage.model_id)
+    PersistentModelRegistry(governance).transition(
+        fixture.model_lineage.model_id,
+        expected_version=current.version,
+        idempotency_key="research-model-before-projection-corruption",
+        to_status=ModelLifecycleStatus.RESEARCH,
+        changed_at=NOW,
+        reason="immutable lifecycle reason",
+    )
+    with postgres_factory.connection() as connection:
+        row = connection.execute(
+            "SELECT registration_json FROM model_registrations WHERE model_id = %s",
+            (str(fixture.model_lineage.model_id),),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(str(row[0]))
+        payload["transitions"][0]["reason"] = "forged mutable projection reason"
+        connection.execute(
+            "UPDATE model_registrations SET registration_json = %s WHERE model_id = %s",
+            (json.dumps(payload, sort_keys=True), str(fixture.model_lineage.model_id)),
+        )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        with pytest.raises(
+            ModelGovernanceIntegrityError,
+            match="projection diverges from append-only history",
+        ):
+            resolve_formal_research_model_lineage(
+                connection,
+                lineage_id=fixture.model_lineage.lineage_id,
+                lineage_hash=fixture.model_lineage.lineage_hash,
+            )
 
 
 def test_pre_057_protocol_is_replayable_but_cannot_enter_new_formal_research(

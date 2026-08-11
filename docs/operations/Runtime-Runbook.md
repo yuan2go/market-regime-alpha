@@ -48,7 +48,7 @@ uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
 Expected head: migration 057, `formal_research_runtime_closure`. Expected schema
-catalog: 200 tables. Migrations 052–057 add Formal Protocol bindings and
+catalog: 201 tables. Migrations 052–057 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -185,11 +185,13 @@ Code/Feature/Factor/Threshold/Dataset/Universe/Target lineage, invokes only its
 installed executor catalog and assigns materialization time from its own clock.
 Caller prediction values and backdated materialization times are not accepted;
 unsupported exact executors persist `NOT_ESTIMABLE` receipts.
-`qualification-evaluation-record` accepts only immutable Forecast, Target
-Outcome Label and Panel slice/row bindings; PostgreSQL reconstructs score,
-return, label interval and slices, freezes the complete result-affecting
-lineage across the complete pre-registered Target family and all referenced PIT
-requests. A raw subject/decision-session/outcome-session path is unlocked once;
+`qualification-evaluation-record` accepts only immutable C3 qualification,
+Forecast, Target Outcome Label and Panel slice/row bindings. Before reading any
+Locked-OOS Label, PostgreSQL owner-resolves one SATISFIED C3 decision per frozen
+Target, proves the exact PIT set is consumed and runs the frozen Train/Validation
+metric floor over the complete family. Only then does it reconstruct Locked-OOS
+returns, label intervals and slices and freeze the complete result-affecting
+lineage. A raw subject/decision-session/outcome-session path is unlocked once;
 only that already-frozen family may then consume its Target-specific labels.
 The family ledger is bridged to the migration-056 legacy ledger, so neither path
 can make previously read evidence pristine again. It never accepts caller-supplied

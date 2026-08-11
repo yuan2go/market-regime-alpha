@@ -23,9 +23,16 @@ from market_regime_alpha.platform.postgres_governance import (
 from market_regime_alpha.platform.governance_serialization import (
     model_registration_from_dict,
     model_registration_to_dict,
+    model_transition_from_dict,
 )
-from market_regime_alpha.platform.contracts import ModelLifecycleStatus
-from market_regime_alpha.platform.model_registry import ModelRegistration
+from market_regime_alpha.platform.contracts import (
+    EvidenceLevel,
+    ModelLifecycleStatus,
+)
+from market_regime_alpha.platform.model_registry import (
+    ModelRegistration,
+    ModelRegistry,
+)
 from market_regime_alpha.platform.repositories import VersionConflictError
 from market_regime_alpha.platform.runtime_governance import (
     AssignmentLane,
@@ -102,14 +109,10 @@ def resolve_formal_research_model_lineage(
         SELECT lineage.lineage_hash, lineage.payload_json, lineage.created_at,
                lineage.governance_revision, registration.registration_json,
                registration.definition_hash, registration.lifecycle_status,
-               registration.evidence_level, registration.version,
-               lineage_action.action_type, lineage_action.action_hash,
-               lineage_action.created_at
+               registration.evidence_level, registration.version
         FROM model_version_lineage AS lineage
         JOIN model_registrations AS registration
           ON registration.model_id = lineage.model_id
-        JOIN model_governance_action AS lineage_action
-          ON lineage_action.governance_revision = lineage.governance_revision
         WHERE lineage.lineage_id = %s
         """,
         (str(lineage_id),),
@@ -118,10 +121,14 @@ def resolve_formal_research_model_lineage(
         raise ModelGovernanceIntegrityError("Model Version Lineage owner is missing")
     try:
         lineage = ModelVersionLineage.from_canonical_dict(dict(row[1]))
-        registration_payload = json.loads(str(row[4]))
-        if not isinstance(registration_payload, Mapping):
-            raise ValueError("Model Registration payload must be an object")
-        registration = model_registration_from_dict(registration_payload)
+        registration, registry_action = _replay_formal_model_registration(
+            connection,
+            registration_payload_json=str(row[4]),
+            stored_definition_hash=str(row[5]),
+            stored_lifecycle_status=str(row[6]),
+            stored_evidence_level=str(row[7]),
+            stored_version=int(row[8]),
+        )
         lineage.validate_definition(registration.definition)
         lifecycle_status = ModelLifecycleStatus(str(row[6]))
     except (KeyError, TypeError, ValueError) as exc:
@@ -136,7 +143,6 @@ def resolve_formal_research_model_lineage(
         or registration.lifecycle_status is not lifecycle_status
         or registration.evidence_level.value != str(row[7])
         or int(row[8]) != len(registration.transitions)
-        or str(row[9]) != "MODEL_VERSION_LINEAGE"
     ):
         raise ModelGovernanceIntegrityError(
             "Model Version Lineage governance binding mismatch"
@@ -148,25 +154,36 @@ def resolve_formal_research_model_lineage(
         raise ModelGovernanceIntegrityError(
             f"Model Version Lineage lifecycle is terminal: {lifecycle_status.value}"
         )
-    registry_action = connection.execute(
+    lineage_action = connection.execute(
         """
-        SELECT action.governance_revision, action.action_type,
-               action.action_hash, action.created_at, command.result_version
-        FROM model_governance_action AS action
-        JOIN governance_commands AS command
-          ON command.idempotency_key = action.idempotency_key
-        WHERE action.aggregate_id = %s
-          AND action.action_type IN ('MODEL_REGISTER', 'MODEL_LIFECYCLE_TRANSITION')
-        ORDER BY action.governance_revision DESC
-        LIMIT 1
+        SELECT governance_revision, action_type, aggregate_id, action_hash,
+               actor, reason, payload_json, created_at
+        FROM model_governance_action
+        WHERE governance_revision = %s
         """,
-        (str(lineage.model_id),),
+        (int(row[3]),),
     ).fetchone()
-    if registry_action is None or int(registry_action[4]) != int(row[8]):
+    expected_lineage_action = {
+        "lineage": lineage.to_canonical_dict(),
+        "actor": None if lineage_action is None else str(lineage_action[4]),
+        "reason": None if lineage_action is None else str(lineage_action[5]),
+        "created_at": lineage.created_at.isoformat(),
+    }
+    if (
+        lineage_action is None
+        or int(lineage_action[0]) != int(row[3])
+        or str(lineage_action[1]) != "MODEL_VERSION_LINEAGE"
+        or str(lineage_action[2]) != str(lineage.lineage_id)
+        or not isinstance(lineage_action[6], Mapping)
+        or dict(lineage_action[6]) != expected_lineage_action
+        or str(lineage_action[3]) != canonical_hash(expected_lineage_action)
+        or lineage_action[7] != lineage.created_at
+        or row[2] != lineage.created_at
+    ):
         raise ModelGovernanceIntegrityError(
-            "Model Registration current governance action is missing or stale"
+            "Model Version Lineage action replay mismatch"
         )
-    owner_recorded_at = max(row[2], row[11], registry_action[3]).replace(
+    owner_recorded_at = max(row[2], lineage_action[7], registry_action[3]).replace(
         microsecond=0
     )
     values = {
@@ -177,7 +194,7 @@ def resolve_formal_research_model_lineage(
         "registry_action_type": str(registry_action[1]),
         "registry_action_hash": str(registry_action[2]),
         "lineage_governance_revision": int(row[3]),
-        "lineage_action_hash": str(row[10]),
+        "lineage_action_hash": str(lineage_action[3]),
         "owner_recorded_at": owner_recorded_at,
     }
     identity_payload = {
@@ -198,6 +215,180 @@ def resolve_formal_research_model_lineage(
         resolution_hash=digest,
         **values,
     )
+
+
+def _replay_formal_model_registration(
+    connection: Any,
+    *,
+    registration_payload_json: str,
+    stored_definition_hash: str,
+    stored_lifecycle_status: str,
+    stored_evidence_level: str,
+    stored_version: int,
+) -> tuple[ModelRegistration, tuple[Any, ...]]:
+    """Rebuild current Registry state from its append-only transition owner."""
+
+    try:
+        projected_payload = json.loads(registration_payload_json)
+        if not isinstance(projected_payload, Mapping):
+            raise ValueError("Model Registration payload must be an object")
+        projected = model_registration_from_dict(projected_payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ModelGovernanceIntegrityError(
+            "Model Registration projection replay failed"
+        ) from exc
+    model_id = projected.definition.model_id
+    initial = ModelRegistration(
+        definition=projected.definition,
+        lifecycle_status=ModelLifecycleStatus.DRAFT,
+        evidence_level=EvidenceLevel.UNQUALIFIED,
+        transitions=(),
+    )
+    initial_payload = model_registration_to_dict(initial)
+    register_rows = connection.execute(
+        """
+        SELECT action.governance_revision, action.action_type,
+               action.action_hash, action.created_at, action.aggregate_id,
+               action.payload_json, command.aggregate_type,
+               command.aggregate_id, command.payload_hash,
+               command.result_version
+        FROM model_governance_action AS action
+        JOIN governance_commands AS command
+          ON command.idempotency_key = action.idempotency_key
+        WHERE action.aggregate_id = %s
+          AND action.action_type = 'MODEL_REGISTER'
+          AND command.result_version = 0
+        ORDER BY action.governance_revision
+        """,
+        (str(model_id),),
+    ).fetchall()
+    register_action = next(
+        (
+            item
+            for item in register_rows
+            if str(item[2]) == canonical_hash(initial_payload)
+            and str(item[4]) == str(model_id)
+            and isinstance(item[5], Mapping)
+            and dict(item[5]) == initial_payload
+            and str(item[6]) == "MODEL"
+            and str(item[7]) == str(model_id)
+            and str(item[8]) == str(item[2])
+            and int(item[9]) == 0
+        ),
+        None,
+    )
+    if register_action is None:
+        raise ModelGovernanceIntegrityError(
+            "Model Registration create action replay mismatch"
+        )
+    transition_rows = connection.execute(
+        """
+        SELECT transition.sequence, transition.transition_json,
+               action.governance_revision, action.action_type,
+               action.action_hash, action.created_at, action.aggregate_id,
+               action.actor, action.reason, action.payload_json,
+               command.aggregate_type, command.aggregate_id,
+               command.payload_hash, command.result_version
+        FROM model_lifecycle_transitions AS transition
+        JOIN model_governance_action AS action
+          ON action.idempotency_key = transition.idempotency_key
+        JOIN governance_commands AS command
+          ON command.idempotency_key = transition.idempotency_key
+        WHERE transition.model_id = %s
+        ORDER BY transition.sequence
+        """,
+        (str(model_id),),
+    ).fetchall()
+    if [int(item[0]) for item in transition_rows] != list(
+        range(1, stored_version + 1)
+    ):
+        raise ModelGovernanceIntegrityError(
+            "Model Registration transition sequence is incomplete"
+        )
+    transitions = []
+    current_action = register_action
+    for item in transition_rows:
+        try:
+            transition_payload = json.loads(str(item[1]))
+            if not isinstance(transition_payload, Mapping):
+                raise ValueError("transition payload must be an object")
+            transition = model_transition_from_dict(transition_payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ModelGovernanceIntegrityError(
+                "Model Registration transition replay failed"
+            ) from exc
+        sequence = int(item[0])
+        command_base = {
+            "operation": "MODEL_TRANSITION",
+            "model_id": str(model_id),
+            "expected_version": sequence - 1,
+            "to_status": transition.to_status.value,
+            "changed_at": transition.changed_at.isoformat(),
+            "reason": transition.reason,
+            "evidence_refs": list(transition.evidence_refs),
+            "approval_ref": transition.approval_ref,
+        }
+        command_hashes = {
+            canonical_hash({**command_base, "evidence_level": None}),
+            canonical_hash(
+                {
+                    **command_base,
+                    "evidence_level": transition.evidence_level.value,
+                }
+            ),
+        }
+        if (
+            transition.model_id != model_id
+            or str(item[3]) != "MODEL_LIFECYCLE_TRANSITION"
+            or str(item[4]) not in command_hashes
+            or item[5] != transition.changed_at
+            or str(item[6]) != str(model_id)
+            or str(item[7])
+            != (transition.approval_ref or "MODEL_REGISTRY_APPLICATION_SERVICE")
+            or str(item[8]) != transition.reason
+            or not isinstance(item[9], Mapping)
+            or dict(item[9]) != dict(transition_payload)
+            or str(item[10]) != "MODEL"
+            or str(item[11]) != str(model_id)
+            or str(item[12]) != str(item[4])
+            or int(item[13]) != sequence
+        ):
+            raise ModelGovernanceIntegrityError(
+                "Model Registration transition action replay mismatch"
+            )
+        transitions.append(transition)
+        current_action = (item[2], item[3], item[4], item[5])
+    registration = ModelRegistration(
+        definition=projected.definition,
+        lifecycle_status=(
+            ModelLifecycleStatus.DRAFT
+            if not transitions
+            else transitions[-1].to_status
+        ),
+        evidence_level=(
+            EvidenceLevel.UNQUALIFIED
+            if not transitions
+            else transitions[-1].evidence_level
+        ),
+        transitions=tuple(transitions),
+    )
+    try:
+        ModelRegistry().restore(registration)
+    except ValueError as exc:
+        raise ModelGovernanceIntegrityError(
+            "Model Registration transition history is invalid"
+        ) from exc
+    if (
+        registration != projected
+        or registration.definition.definition_hash != stored_definition_hash
+        or registration.lifecycle_status.value != stored_lifecycle_status
+        or registration.evidence_level.value != stored_evidence_level
+        or len(registration.transitions) != stored_version
+    ):
+        raise ModelGovernanceIntegrityError(
+            "Model Registration projection diverges from append-only history"
+        )
+    return registration, current_action
 
 
 class ModelSelectionRejected(RuntimeError):
