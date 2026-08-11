@@ -9,8 +9,6 @@ from market_regime_alpha.application.research_validation.common import (
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
-    OutcomeTargetForecastEstimate,
-    OutcomeTargetForecastStatus,
     build_outcome_target_bound_forecast,
     not_estimable_target_forecast,
 )
