@@ -47,11 +47,12 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 056, `phase_c_correctness_closure`. Expected schema
-catalog: 185 tables. Migrations 052–056 add Formal Protocol bindings and
+Expected head: migration 057, `formal_research_runtime_closure`. Expected schema
+catalog: 194 tables. Migrations 052–057 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
-consumption ledger, reusable Strategy Shadow Policy, C6/C7 stage decisions,
+and frozen-family consumption ledgers, owner-computed Forecast receipts,
+reusable Strategy Shadow Policy, C6/C7 stage decisions,
 persisted blocked Production Admission and Controlled Execution readiness.
 Migration 046 remains unchanged. Missing/unreachable PostgreSQL is a blocked
 operation; there is no alternate persistent backend.

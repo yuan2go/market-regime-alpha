@@ -343,14 +343,14 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Domain / Capability:** Research Validation / ablation, liquidity/capacity, historical sample, calibration, formal evaluation, Entry and Holding/Exit evidence.
 - **Classification:** Research Harness plus narrow owner-resolved qualification Authorities.
 - **Owner:** Research Validation.
-- **Canonical Writer:** `PostgresResearchValidationRepository` for engineering artifacts; Formal Protocol, Historical/OOS, Calibration and Phase C gate repositories own only their respective decisions.
+- **Canonical Writer:** `PostgresResearchValidationRepository` for engineering artifacts; Formal Protocol/Forecast, Historical/family-OOS, Calibration and Phase C gate repositories own only their respective facts and decisions.
 - **Reader:** payload, factor exposure and historical-sample Readers.
 - **Repository:** `PostgresResearchValidationRepository`.
-- **PostgreSQL tables:** the engineering tables plus `formal_research_protocol*`, `formal_evaluation_observation_set`, `formal_evaluation_observation_binding`, Historical/OOS decision tables, Calibration qualification/binding tables and `phase_c_stage_decision`.
-- **Artifact / Receipt:** engineering Validation artifacts, Historical Sample Dataset, Calibration artifact, Evaluation result and Entry/Holding evidence.
+- **PostgreSQL tables:** the engineering tables plus `formal_research_protocol*`, `formal_forecast_computation_*`, `frozen_hypothesis_family*`, `locked_oos_raw_evidence_unlock`, `locked_oos_target_observation_consumption`, `formal_hypothesis_family_evaluation*`, observation bindings, Historical/OOS decision tables, Calibration qualification/binding tables and `phase_c_stage_decision`.
+- **Artifact / Receipt:** engineering Validation artifacts, owner-computed Forecast receipt, Frozen Hypothesis Family, Historical Sample Dataset, family Evaluation result, Calibration artifact and Entry/Holding evidence.
 - **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
 - **Downstream consumer:** human research review, C6/C7 gates and persisted Production Admission floor resolution.
-- **Replay mechanism:** immutable typed Target/Evaluation/component reload, full Frozen Calendar payload/date replay, sample/observation reload, exact Calibration partitions and Entry→Outcome replay. Bare caller references cannot establish a positive decision.
+- **Replay mechanism:** immutable typed Target/Evaluation/component reload, full Frozen Calendar payload/date replay, PIT-only Forecast recomputation, one-time raw OOS unlock, Target-observation and family-multiplicity replay, exact Calibration partitions and Entry→Outcome replay. Bare caller references or submitted Forecast values cannot establish a positive decision.
 - **Evidence ceiling:** migration 046 remains unchanged; later owner writers can only satisfy a gate from exact upstream owner evidence. Current upstream evidence is absent.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
