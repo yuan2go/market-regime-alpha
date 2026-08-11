@@ -56,7 +56,7 @@ The next legitimate implementation is a set of narrow owner-specific writers, ad
 
 ## Phase D Alpha proof foundation decision
 
-> **Decision state:** APPROVED, implementation in progress
+> **Decision state:** IMPLEMENTED engineering boundary; empirical evidence pending
 
 Phase D converges the existing research owners around one semantic spine rather
 than adding another governance plane:
@@ -123,6 +123,24 @@ migrations are not mechanically cherry-picked.
 The implementation order is dependency-bound: Statistics, Protocol/Target,
 Formal Forecast, Alpha/Ablation, Strategy Economics, Portfolio Risk,
 Attribution/Feedback, architecture simplification and full verification.
+
+The implemented boundary now includes deterministic synthetic null/power
+proofs, explicit hypothesis-specific inference, Protocol V2 and Target
+Definition V2, measure-oriented benchmark/linear/raw-logit/regime Forecast
+kernels, PostgreSQL research-model and multi-year Historical journals, Full-A
+Runtime Scope, owner-derived Strategy/Portfolio observations, multi-period
+performance, factor coverage and cumulative ablation, target-bound Strategy
+Economics, constrained Portfolio Risk, and non-causal Attribution/Feedback.
+These are executable research capabilities, not positive Alpha evidence.
+
+Canonical free-data composition now calls `SourceFreezeService`; the retained
+DailyLoop owns historical Daily identities only behind that adapter. Controlled
+package recovery uses the PostgreSQL longitudinal record's explicit
+`artifact-root-v1` locator and verifies immutable content hash. No recovery path
+discovers package or Feature identities by filesystem scan. Canonical Lifecycle
+keeps its journal-compatible stage identities but publishes three actual
+boundaries: Research Decision Support, Manual Account Observation, and
+contract-only Position Review. The last boundary remains fail-closed.
 
 ## Non-claims
 

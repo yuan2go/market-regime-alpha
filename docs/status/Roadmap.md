@@ -35,40 +35,40 @@ Phase D is an approved engineering program on top of the Phase C fail-closed
 qualification boundary. It does not assert Alpha, Formal PIT, Formal OOS,
 calibration, prospective performance or Production qualification.
 
-1. **Statistical validity:** freeze explicit per-hypothesis null, benchmark,
+1. **Statistical validity — engineering complete:** freeze explicit per-hypothesis null, benchmark,
    alternative, inference method and economic threshold. Separate effect,
    sampling interval, hypothesis test and economic assessment. Implement
    date-cluster moving-block confidence intervals, null-centred block tests and
    family-level FWER/FDR semantics. Prove deterministic null size, injected
    signal power, dependency handling and leakage rejection.
-2. **Experiment and target semantics:** extend the existing Formal Protocol with
+2. **Experiment and target semantics — engineering complete:** extend the existing Formal Protocol with
    one immutable Experiment Definition. Introduce Target Definition V2 with
    explicit decision, entry, observation, evaluation, return, excursion,
    barrier-ordering and market-data policies. Preserve V1 replay, but permit no
    silent V1/V2 conversion.
-3. **Forecast computation:** separate deterministic measure kernels from the
+3. **Forecast computation — engineering complete, Formal evidence blocked:** separate deterministic measure kernels from the
    existing Formal qualification gate. Install owner-resolved benchmark linear,
    raw-logit and regime-conditioned executors. Each measure independently
    reports availability; no uncalibrated score is represented as probability.
-4. **Research execution and Alpha decomposition:** port the useful runtime
+4. **Research execution and Alpha decomposition — engineering complete, empirical results pending:** port the useful runtime
    scope, session journal, historical runner, observation and performance
    capabilities from the earlier Phase D inventory onto new migrations based on
    migration 057. Add replayable feature policies, Candidate/Signal ablation,
    ranking benchmarks, regime slices and incremental lift. Preserve negative
    and inconclusive results.
-5. **Strategy economics and Portfolio risk:** bind strategy experiments to the
+5. **Strategy economics and Portfolio risk — engineering complete, empirical calibration pending:** bind strategy experiments to the
    canonical target while keeping Holding/Exit policies distinct. Report gross,
    explicit costs, net, turnover, drawdown and capacity; add basic name,
    exposure, liquidity, ADV, cluster, volatility, cash and drawdown constraints.
    Unqualified PIT membership remains exploratory or fail-closed.
-6. **Attribution and feedback:** persist structured, non-causal diagnostic
+6. **Attribution and feedback — engineering complete:** persist structured, non-causal diagnostic
    attribution from regime through costs/capacity. A diagnosis can propose a
    hypothesis, but only a newly frozen Experiment Protocol may execute it.
-7. **Architecture convergence:** move source freezing behind a dedicated
+7. **Architecture convergence — engineering complete:** move source freezing behind a dedicated
    service, resolve operational packages through the PostgreSQL authoritative
    locator with immutable hash verification, expose real lifecycle boundary
    sets, and remove only code proven to have no consumer.
-8. **Verification and publication:** run the repository quality gates,
+8. **Verification and publication — in progress on the feature branch:** run the repository quality gates,
    PostgreSQL migration/idempotency/concurrency/recovery/replay tests, CLI smoke
    tests and deterministic statistical proof suite. Publish logical commits on
    the feature branch and open a Draft PR.

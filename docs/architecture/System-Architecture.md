@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical implementation architecture
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Code Evidence:** `src/market_regime_alpha/cli/continuous_research.py`, `src/market_regime_alpha/application/continuous_research`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Shape
@@ -29,7 +29,8 @@ The current free-data Research/Shadow composition is:
 
 ```text
 BaoStock/Tencent recorded provider evidence
--> DailyLoop source freeze
+-> SourceFreezeService
+   -> retained DailyLoop identity adapter
 -> Canonical market-data Dataset
 -> Feature materialization
 -> PostgreSQL Model Governance selection
@@ -63,6 +64,12 @@ Target declares `RAW_UNADJUSTED_TRADABLE_PRICE_V1`; adjustment semantics are
 never substituted or promoted.
 
 The runtime denies `PRODUCTION` when the input is free public evidence. A missing or invalid stage is represented by typed blocked evidence; the runtime does not synthesize a missing Canonical Lifecycle receipt.
+
+Multi-year research runs are bounded operator jobs, not a second all-day
+Runtime. `HistoricalResearchRunner` advances a shared Decision Session Kernel
+through a PostgreSQL lease/fence/stage journal and can resume or replay the same
+Runtime Scope, Experiment and Target identities. Research-model and performance
+operators use the same database and remain exploratory.
 
 The post-runtime chain is orchestrated by thin commands on the same runtime and
 the existing PostgreSQL owners; it is not a second scheduler or daily writer:
@@ -122,7 +129,8 @@ were duplicate entry points and were removed from packaging.
 | Package | One responsibility |
 |---|---|
 | `application/continuous_research` | Own the all-day schedule, tick lease/fence, provider attempt and child composition. |
-| `application/free_data_operation` | Freeze and run one bounded public-data decision-window operation. |
+| `application/source_freeze` | Expose the canonical source-only freeze seam over retained Daily identities. |
+| `application/free_data_operation` | Run one bounded public-data decision-window operation. |
 | `application/state_system` | Persist ordered State, StateSeries, Pool and Candidate owner receipts. |
 | `application/controlled_operation` | Coordinate one decision-time acquisition/calculation package. |
 | `application/canonical_lifecycle` | Recover one downstream research-to-manual lifecycle run; never schedule the day. |
@@ -146,3 +154,5 @@ were duplicate entry points and were removed from packaging.
 - Projection, DTO, protocol, policy and reference objects never grant Authority.
 - New writers use `RepositoryFactory` and PostgreSQL. No file or SQLite persistence fallback exists.
 - Legacy may be read or characterized only through explicit compatibility/migration boundaries.
+- Artifact recovery resolves PostgreSQL `artifact-root-v1` locators and receipt
+  locators with hash verification; directory discovery is not an Authority.

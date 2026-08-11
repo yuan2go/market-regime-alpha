@@ -58,6 +58,58 @@ class LifecycleStageName(str, Enum):
 LIFECYCLE_STAGE_ORDER: tuple[LifecycleStageName, ...] = tuple(LifecycleStageName)
 
 
+class LifecycleCapabilityBoundary(str, Enum):
+    """Executable ownership boundary; enum presence does not imply composition."""
+
+    RESEARCH_DECISION_SUPPORT = "RESEARCH_DECISION_SUPPORT"
+    MANUAL_ACCOUNT_OBSERVATION = "MANUAL_ACCOUNT_OBSERVATION"
+    POSITION_REVIEW_CONTRACT_ONLY = "POSITION_REVIEW_CONTRACT_ONLY"
+
+
+RESEARCH_DECISION_SUPPORT_STAGE_ORDER: tuple[LifecycleStageName, ...] = (
+    LifecycleStageName.VERIFY_COMPOSITE_EVIDENCE,
+    LifecycleStageName.PLATFORM_RESEARCH,
+    LifecycleStageName.SIGNAL,
+    LifecycleStageName.PATH_FORECAST,
+    LifecycleStageName.ENTRY_ASSESSMENT,
+    LifecycleStageName.OPPORTUNITY,
+    LifecycleStageName.THESIS,
+    LifecycleStageName.PORTFOLIO_RISK,
+    LifecycleStageName.RISK_REDUCTION,
+)
+
+MANUAL_ACCOUNT_OBSERVATION_STAGE_ORDER: tuple[LifecycleStageName, ...] = (
+    LifecycleStageName.MANUAL_CONFIRMATION,
+    LifecycleStageName.MANUAL_TRADE,
+    LifecycleStageName.FILL_POSITION,
+    LifecycleStageName.THESIS_HEALTH,
+)
+
+POSITION_REVIEW_CONTRACT_ONLY_STAGE_ORDER: tuple[LifecycleStageName, ...] = (
+    LifecycleStageName.HOLDING_ASSESSMENT,
+    LifecycleStageName.EXIT_ASSESSMENT,
+    LifecycleStageName.OUTCOME_REVIEW,
+)
+
+POSTGRES_COMPOSED_STAGE_ORDER: tuple[LifecycleStageName, ...] = (
+    RESEARCH_DECISION_SUPPORT_STAGE_ORDER + MANUAL_ACCOUNT_OBSERVATION_STAGE_ORDER
+)
+
+
+def lifecycle_stage_boundary(
+    stage: LifecycleStageName,
+) -> LifecycleCapabilityBoundary:
+    """Return the real owner/composition boundary for a lifecycle stage."""
+
+    if not isinstance(stage, LifecycleStageName):
+        raise TypeError("stage must be LifecycleStageName")
+    if stage in RESEARCH_DECISION_SUPPORT_STAGE_ORDER:
+        return LifecycleCapabilityBoundary.RESEARCH_DECISION_SUPPORT
+    if stage in MANUAL_ACCOUNT_OBSERVATION_STAGE_ORDER:
+        return LifecycleCapabilityBoundary.MANUAL_ACCOUNT_OBSERVATION
+    return LifecycleCapabilityBoundary.POSITION_REVIEW_CONTRACT_ONLY
+
+
 class LifecycleStageStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"

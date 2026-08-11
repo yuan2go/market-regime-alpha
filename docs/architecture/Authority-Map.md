@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
@@ -28,7 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 200 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 231 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -70,7 +70,8 @@ Every entry separates ownership from storage and consumption. A missing writer o
 
 - **Domain / Capability:** Data / one bounded source-freeze and Dataset run.
 - **Classification:** Business and Evidence Authority.
-- **Owner:** DailyLoop data boundary inside the free-data operation.
+- **Owner:** Source Freeze data boundary inside the free-data operation.
+- **Application seam:** `SourceFreezeService`; the retained `DailyLoopRunner` is an identity-compatible adapter, not Canonical research ownership.
 - **Canonical Writer:** `PostgresDailyRunRepository`.
 - **Reader:** Daily-run and stage-receipt repository methods.
 - **Repository:** `PostgresDailyRunRepository`.
@@ -208,6 +209,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Downstream consumer:** Opportunity/Thesis, Portfolio/Risk and manual workflow projections.
 - **Replay mechanism:** durable lifecycle stage replay.
 - **Evidence ceiling:** human-in-the-loop decision support; no automatic execution.
+- **Executable boundary:** Research Decision Support and Manual Account Observation are PostgreSQL-composed. Holding/Exit/Outcome Position Review identities are contract-only and fail closed.
 - **Legacy replacement:** Legacy lifecycle producers are excluded from the current composition.
 
 ### Research Summary
@@ -346,11 +348,11 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Canonical Writer:** `PostgresResearchValidationRepository` for engineering artifacts; Formal Protocol/Forecast, Historical/family-OOS, Calibration and Phase C gate repositories own only their respective facts and decisions.
 - **Reader:** payload, factor exposure and historical-sample Readers.
 - **Repository:** `PostgresResearchValidationRepository`.
-- **PostgreSQL tables:** the engineering tables plus `formal_research_protocol*`, `formal_forecast_computation_*`, `frozen_hypothesis_family*`, `locked_oos_raw_evidence_unlock`, `locked_oos_target_observation_consumption`, `formal_hypothesis_family_evaluation*`, observation bindings, Historical/OOS decision tables, Calibration qualification/binding tables and `phase_c_stage_decision`.
+- **PostgreSQL tables:** the engineering tables plus `formal_research_protocol*`, `formal_forecast_computation_*`, `research_model_*`, `research_runtime_scope*`, `historical_research_*`, `frozen_hypothesis_family*`, Locked-OOS consumption, observation/performance, Historical/OOS decision, Calibration qualification/binding and `phase_c_stage_decision` tables.
 - **Artifact / Receipt:** engineering Validation artifacts, owner-computed Forecast receipt, Frozen Hypothesis Family, Historical Sample Dataset, family Evaluation result, Calibration artifact and Entry/Holding evidence.
 - **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
 - **Downstream consumer:** human research review, C6/C7 gates and persisted Production Admission floor resolution.
-- **Replay mechanism:** immutable typed Target/Evaluation/component reload, full Frozen Calendar payload/date replay, PIT-only Forecast recomputation, one-time raw OOS unlock, Target-observation and family-multiplicity replay, mandatory Train/Validation readiness before Locked OOS, exact Calibration partitions and Entry→Outcome replay. Pre-057 Protocols remain replay-only. Bare caller references or submitted Forecast values cannot establish a positive decision.
+- **Replay mechanism:** immutable typed Target/Evaluation/component reload, full Frozen Calendar payload/date replay, deterministic measure Forecast recomputation, restartable Historical Session replay, one-time raw OOS unlock, Target-observation and family-multiplicity replay, mandatory Train/Validation readiness before Locked OOS, exact Calibration partitions and Entry→Outcome replay. Pre-057 Protocols remain replay-only. Bare caller references or submitted Forecast values cannot establish a positive decision.
 - **Evidence ceiling:** migration 046 remains unchanged; later owner writers can only satisfy a gate from exact upstream owner evidence. Current upstream evidence is absent.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
