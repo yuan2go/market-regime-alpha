@@ -564,6 +564,18 @@ def _dispatch(
         }
     if args.operation == "qualification-evaluation-record":
         payload = _load_json_object(args.input)
+        expected = {
+            "formal_protocol_id",
+            "panel_reference",
+            "target_reference",
+            "observation_bindings",
+            "formal_pit_evidence_id",
+        }
+        if set(payload) != expected:
+            raise ValueError(
+                "qualification-evaluation-record accepts only immutable owner "
+                "references; result time is assigned by PostgreSQL"
+            )
         evaluation_result = PostgresResearchQualificationAuthority(
             factory,
             apply_migrations=False,
@@ -586,7 +598,6 @@ def _dispatch(
             formal_pit_evidence_id=ArtifactId(
                 str(payload["formal_pit_evidence_id"])
             ),
-            created_at=_instant(str(payload["created_at"])),
         )
         return {
             "operation": "QUALIFICATION_EVALUATION_RECORD",

@@ -28,8 +28,8 @@ component from its PostgreSQL owner; immutable owner-resolution receipts preserv
 the exact owner payload, identity, hash and recorded/resolved time, reject
 backdated freezes and anchor the Calendar payload to the existing PIT Artifact
 Authority. A durable Locked-OOS consumption owner keys semantic
-subject/Target/session/label-interval evidence, so Label revision or changing
-Model, Forecast, Dataset or Protocol identity cannot make consumed evidence new
+subject/session/label-interval evidence, so Target or Label revision, or changing
+Model, Forecast, Dataset or Protocol identity, cannot make consumed evidence new
 again. These writers can
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.

@@ -133,6 +133,9 @@ CREATE TABLE locked_oos_evidence_consumption (
         session_date, label_end_date, partition_kind
     ),
     UNIQUE (
+        subject, session_date, label_end_date, partition_kind
+    ),
+    UNIQUE (
         dataset_id, dataset_hash, universe_id, universe_hash,
         target_protocol_id, target_protocol_hash, target_id, target_hash,
         label_id, label_hash, session_date, label_end_date, partition_kind

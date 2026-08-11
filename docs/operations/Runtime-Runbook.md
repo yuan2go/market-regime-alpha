@@ -179,12 +179,11 @@ exact OutcomeTarget-bound Forecast and reloads its Model Lineage owner.
 `qualification-evaluation-record` accepts only immutable Forecast, Target
 Outcome Label and Panel slice/row bindings; PostgreSQL reconstructs score,
 return, label interval and slices, freezes the complete result-affecting
-lineage, and consumes each underlying Locked-OOS subject/Target/session interval
+lineage, and consumes each underlying Locked-OOS subject/session/label interval
 in a durable ledger whose identity survives Label revision and Model, Forecast,
-Dataset or Protocol substitution. The first exact Label remains immutable
-provenance; it is not the reuse key.
-identity does not depend on Model or Forecast. It never accepts caller-supplied
-observation values. `qualification-historical` and
+Dataset, Target or Protocol substitution. The first exact Target and Label remain
+immutable provenance; neither is the raw-outcome reuse key. It never accepts
+caller-supplied observation values or result timestamps. `qualification-historical` and
 `qualification-oos` persist C3/C4 owner decisions; the latter replays those
 owner-resolved observations, the frozen Calendar and metrics.
 `qualification-calibration` accepts a frozen policy file but re-reads the

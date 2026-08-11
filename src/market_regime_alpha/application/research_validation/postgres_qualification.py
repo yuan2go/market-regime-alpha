@@ -247,7 +247,6 @@ class PostgresResearchQualificationAuthority:
         target_reference: ValidationArtifactReference,
         observation_bindings: tuple[FormalEvaluationObservationBinding, ...],
         formal_pit_evidence_id: ArtifactId,
-        created_at: datetime,
     ) -> FormalEvaluationResult:
         if panel_reference.artifact_kind != "RESEARCH_PANEL_V2":
             raise ResearchQualificationConflict(
@@ -278,10 +277,6 @@ class PostgresResearchQualificationAuthority:
                 raise ResearchQualificationConflict(
                     "Formal Evaluation Target is not frozen in the Formal Research Protocol"
                 )
-            if created_at < owner_protocol.locked_at:
-                raise ResearchQualificationConflict(
-                    "Formal Evaluation result predates the frozen Formal Research Protocol"
-                )
             panel = _load_panel_owner(connection, panel_reference)
             resolved = tuple(
                 _resolve_evaluation_observation(
@@ -294,6 +289,15 @@ class PostgresResearchQualificationAuthority:
                 for binding in ordered_bindings
             )
             observations = tuple(item[0] for item in resolved)
+            created_at = _postgres_now(connection)
+            if created_at < owner_protocol.locked_at:
+                raise ResearchQualificationConflict(
+                    "Formal Evaluation result predates the frozen Formal Research Protocol"
+                )
+            if any(item[2] > created_at for item in resolved):
+                raise ResearchQualificationConflict(
+                    "Formal Evaluation result predates an owner-resolved Target Label"
+                )
             observation_set_payload = _observation_set_payload(
                 formal_protocol=owner_protocol,
                 panel_reference=panel_reference,
@@ -669,6 +673,15 @@ def _assess_historical_sample(
             (str(item.artifact_id), item.content_hash) for item in pit_refs
         } != selected:
             rejected.add("HISTORICAL_SAMPLE_PIT_FACT_LINEAGE_INCOMPLETE")
+        rejected.update(
+            _historical_pit_temporal_reason_codes(
+                connection,
+                protocol=protocol,
+                record=record,
+                pit_request=pit_request,
+                pit=pit,
+            )
+        )
     provider_refs, provider_reasons = _resolve_provider_fact_decisions(
         connection, pit=pit, evaluated_at=evaluated_at
     )
@@ -678,6 +691,68 @@ def _assess_historical_sample(
     if blocked:
         return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), provider_refs
     return QualificationOutcome.SATISFIED, (), provider_refs
+
+
+def _historical_pit_temporal_reason_codes(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    record: HistoricalPathSampleRecord,
+    pit_request: FormalPITValidationRequest,
+    pit: FormalPITEvidenceArtifact,
+) -> tuple[str, ...]:
+    """Rebind one sample to the exact As-Of request and Fact owner rows."""
+
+    reasons: set[str] = set()
+    sample_time = record.sample.sample_decision_time.value
+    if pit_request.decision_time != sample_time:
+        reasons.add("HISTORICAL_SAMPLE_FORMAL_PIT_DECISION_TIME_MISMATCH")
+    required = {
+        (item.logical_key, item.fact_kind.value, item.subject)
+        for item in pit_request.required_facts
+    }
+    selected_keys: set[tuple[str, str, str]] = set()
+    calendar_facts = 0
+    for selected in pit.selected_fact_authorities:
+        row = connection.execute(
+            """
+            SELECT content_hash, logical_key, fact_kind, subject,
+                   event_time, effective_from, effective_to,
+                   available_at, recorded_at, artifact_id, artifact_hash
+            FROM pit_fact_revision
+            WHERE fact_id = %s
+            """,
+            (str(selected.fact_id),),
+        ).fetchone()
+        if row is None or str(row[0]) != selected.fact_hash:
+            reasons.add("HISTORICAL_SAMPLE_PIT_FACT_OWNER_MISMATCH")
+            continue
+        fact_key = (str(row[1]), str(row[2]), str(row[3]))
+        selected_keys.add(fact_key)
+        if fact_key not in required:
+            reasons.add("HISTORICAL_SAMPLE_PIT_FACT_REQUIREMENT_MISMATCH")
+        if (
+            row[4] > sample_time
+            or row[5] > sample_time
+            or (row[6] is not None and sample_time >= row[6])
+            or row[7] > sample_time
+            or row[8] > sample_time
+        ):
+            reasons.add("HISTORICAL_SAMPLE_PIT_FACT_NOT_AS_OF_SAMPLE")
+        if str(row[2]) == "TRADING_CALENDAR":
+            calendar_facts += 1
+            if (
+                str(row[9])
+                != str(protocol.trading_calendar_reference.artifact_id)
+                or str(row[10])
+                != protocol.trading_calendar_reference.content_hash
+            ):
+                reasons.add("FORMAL_PIT_FROZEN_CALENDAR_LINEAGE_MISMATCH")
+    if selected_keys != required:
+        reasons.add("HISTORICAL_SAMPLE_PIT_FACT_REQUIREMENT_MISMATCH")
+    if calendar_facts == 0:
+        reasons.add("FORMAL_PIT_FROZEN_CALENDAR_LINEAGE_MISSING")
+    return tuple(sorted(reasons))
 
 
 def _resolve_provider_fact_decisions(
@@ -1172,7 +1247,7 @@ def _load_evaluation_observations(
     )
     observations: list[EvaluationObservation] = []
     for binding, stored in zip(bindings, rows, strict=True):
-        observation, settlement_id = _resolve_evaluation_observation(
+        observation, settlement_id, _ = _resolve_evaluation_observation(
             connection,
             protocol=protocol,
             panel=panel,
@@ -1253,7 +1328,7 @@ def _resolve_evaluation_observation(
     panel: FrozenResearchPanelV2,
     target_reference: ValidationArtifactReference,
     binding: FormalEvaluationObservationBinding,
-) -> tuple[EvaluationObservation, str]:
+) -> tuple[EvaluationObservation, str, datetime]:
     forecast_row = connection.execute(
         """
         SELECT forecast_hash, payload_json
@@ -1420,7 +1495,7 @@ def _resolve_evaluation_observation(
         market_cap_slice="UNKNOWN",
         theme_slice=theme,
     )
-    return observation, str(label_row[0])
+    return observation, str(label_row[0]), label.outcome_available_at
 
 
 def _state_slice(
@@ -1691,7 +1766,7 @@ def _record_observation_set(
     panel_reference: ValidationArtifactReference,
     target_reference: ValidationArtifactReference,
     bindings: tuple[FormalEvaluationObservationBinding, ...],
-    resolved: tuple[tuple[EvaluationObservation, str], ...],
+    resolved: tuple[tuple[EvaluationObservation, str, datetime], ...],
     created_at: datetime,
 ) -> None:
     connection.execute(
@@ -1716,7 +1791,9 @@ def _record_observation_set(
             created_at,
         ),
     )
-    for binding, (observation, settlement_id) in zip(bindings, resolved, strict=True):
+    for binding, (observation, settlement_id, _) in zip(
+        bindings, resolved, strict=True
+    ):
         connection.execute(
             """
             INSERT INTO formal_evaluation_observation_binding(

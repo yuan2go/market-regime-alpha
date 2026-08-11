@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
+import pytest
 from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.research_validation.common import (
@@ -229,6 +230,22 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
         binding=bindings[1],
         observation=observations[1],
     )
+
+    substituted_target = _reference("OUTCOME_TARGET", "post-hoc-target-b")
+    with pytest.raises(
+        ResearchQualificationConflict, match="already formally consumed"
+    ):
+        postgres_factory.run_transaction(
+            lambda connection: _consume_locked_oos_evidence(
+                connection,
+                formal_protocol=protocol,
+                evaluation_protocol=fixture.evaluation,
+                target_reference=substituted_target,
+                observation_set_id=set_ids[1],
+                bindings=(bindings[1],),
+                observations=(observations[1],),
+            )
+        )
 
     with postgres_factory.connection(read_only=True) as connection:
         row = connection.execute(
