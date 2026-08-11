@@ -225,6 +225,10 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "shadow_performance_metric",
         "shadow_performance_period_return",
         "shadow_performance_attribution",
+        "shadow_observation_policy",
+        "shadow_observation_receipt",
+        "shadow_observation_value",
+        "shadow_observation_source_binding",
     }
 )
 
@@ -446,6 +450,22 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "shadow_performance_attribution",
             "shadow_performance_attribution_no_update",
+        ),
+        (
+            "shadow_observation_policy",
+            "shadow_observation_policy_no_update",
+        ),
+        (
+            "shadow_observation_receipt",
+            "shadow_observation_receipt_no_update",
+        ),
+        (
+            "shadow_observation_value",
+            "shadow_observation_value_no_update",
+        ),
+        (
+            "shadow_observation_source_binding",
+            "shadow_observation_source_binding_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (

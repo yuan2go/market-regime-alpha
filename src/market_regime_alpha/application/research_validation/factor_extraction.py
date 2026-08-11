@@ -408,6 +408,51 @@ def _market_bar_exposures(
             for item in dataset.bars
             if item.symbol == symbol and item.event_end <= decision_time and item.available_at <= decision_time
         ]
+        daily_amount_bars = tuple(
+            sorted(
+                (
+                    item
+                    for item in bars
+                    if item.timeframe is Timeframe.DAILY and item.amount is not None
+                ),
+                key=lambda item: (item.market_date, item.event_end),
+            )[-20:]
+        )
+        if len(daily_amount_bars) == 20:
+            result.append(
+                _numeric_exposure(
+                    symbol,
+                    FactorFamily.LIQUIDITY,
+                    "liquidity.adv20",
+                    sum(
+                        (item.amount for item in daily_amount_bars if item.amount is not None),
+                        Decimal("0"),
+                    )
+                    / Decimal("20"),
+                    reference,
+                    "bars.daily[-20:].amount.mean",
+                    "20_DAILY_SESSIONS",
+                    max(item.available_at for item in daily_amount_bars),
+                )
+            )
+        else:
+            result.append(
+                ResearchFactorExposure(
+                    symbol=symbol,
+                    family=FactorFamily.LIQUIDITY,
+                    factor_id="liquidity.adv20",
+                    timeframe="20_DAILY_SESSIONS",
+                    raw_numeric=None,
+                    raw_text=None,
+                    normalized_exposure=None,
+                    model_contribution=None,
+                    gate_result="MISSING",
+                    missingness=("ADV20_REQUIRES_20_AVAILABLE_DAILY_AMOUNTS",),
+                    available_at=None,
+                    source_reference=reference,
+                    source_value_path="bars.daily[-20:].amount.mean",
+                )
+            )
         latest_by_timeframe: dict[Timeframe, Any] = {}
         for bar in bars:
             current = latest_by_timeframe.get(bar.timeframe)

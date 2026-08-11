@@ -162,6 +162,9 @@ from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyDayObservation,
     StrategyShadowDayOperator,
 )
+from market_regime_alpha.application.strategy_shadow.observation_builder import (
+    ShadowObservationPolicy,
+)
 from market_regime_alpha.application.strategy_shadow.contracts import (
     StrategyShadowPolicy,
     restore_strategy_shadow_artifact,
@@ -324,7 +327,13 @@ def build_parser() -> argparse.ArgumentParser:
         "strategy-day",
         help="Run Entry Research through Strategy Shadow Outcome from PostgreSQL lineage.",
     )
-    strategy_day.add_argument("--observations", type=Path, required=True)
+    strategy_inputs = strategy_day.add_mutually_exclusive_group(required=True)
+    strategy_inputs.add_argument("--observations", type=Path)
+    strategy_inputs.add_argument(
+        "--auto",
+        type=Path,
+        help="Owner-resolved automatic observation request.",
+    )
     settle_day = subparsers.add_parser(
         "settle-day",
         help="Acquire free T+1 evidence, settle Research Shadow and build Panel V2 enrichment.",
@@ -339,7 +348,13 @@ def build_parser() -> argparse.ArgumentParser:
         "portfolio-shadow-day",
         help="Append one PostgreSQL-owned A-share Portfolio Shadow day.",
     )
-    portfolio_day.add_argument("--observations", type=Path, required=True)
+    portfolio_inputs = portfolio_day.add_mutually_exclusive_group(required=True)
+    portfolio_inputs.add_argument("--observations", type=Path)
+    portfolio_inputs.add_argument(
+        "--auto",
+        type=Path,
+        help="Owner-resolved automatic Portfolio observation request.",
+    )
     portfolio_replay = subparsers.add_parser("portfolio-shadow-replay")
     portfolio_replay.add_argument("--portfolio-id", required=True)
     universe_sync = subparsers.add_parser("research-universe-sync")
@@ -557,6 +572,32 @@ def _dispatch(
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
     if args.operation == "strategy-day":
+        if args.auto is not None:
+            payload = _load_json_object(args.auto)
+            expected = {
+                "trading_date",
+                "observed_at",
+                "symbol",
+                "observation_policy",
+            }
+            if set(payload) != expected:
+                raise ValueError(
+                    "strategy-day --auto requires trading_date, observed_at, "
+                    "symbol and observation_policy"
+                )
+            return StrategyShadowDayOperator(factory).run_auto(
+                trading_date=date.fromisoformat(str(payload["trading_date"])),
+                observed_at=_instant(str(payload["observed_at"])),
+                symbol=(
+                    None if payload["symbol"] is None else str(payload["symbol"])
+                ),
+                policy=ShadowObservationPolicy.from_canonical_dict(
+                    _object_value(
+                        payload["observation_policy"],
+                        "observation_policy",
+                    )
+                ),
+            )
         return StrategyShadowDayOperator(factory).run(
             StrategyDayObservation.from_canonical_dict(
                 _load_json_object(args.observations)
@@ -576,6 +617,44 @@ def _dispatch(
             ArtifactId(args.session_id)
         )
     if args.operation == "portfolio-shadow-day":
+        if args.auto is not None:
+            payload = _load_json_object(args.auto)
+            expected = {
+                "research_trading_date",
+                "trading_date",
+                "observed_at",
+                "portfolio_id",
+                "initial_cash",
+                "portfolio_policy",
+                "observation_policy",
+            }
+            if set(payload) != expected:
+                raise ValueError(
+                    "portfolio-shadow-day --auto requires exact owner and Policy inputs"
+                )
+            portfolio_id = payload["portfolio_id"]
+            return PortfolioShadowDayOperator(factory).run_auto(
+                research_trading_date=date.fromisoformat(
+                    str(payload["research_trading_date"])
+                ),
+                trading_date=date.fromisoformat(str(payload["trading_date"])),
+                observed_at=_instant(str(payload["observed_at"])),
+                portfolio_id=(
+                    None
+                    if portfolio_id is None
+                    else ArtifactId(str(portfolio_id))
+                ),
+                initial_cash=Decimal(str(payload["initial_cash"])),
+                policy=ShadowPortfolioPolicy.from_canonical_dict(
+                    _object_value(payload["portfolio_policy"], "portfolio_policy")
+                ),
+                observation_policy=ShadowObservationPolicy.from_canonical_dict(
+                    _object_value(
+                        payload["observation_policy"],
+                        "observation_policy",
+                    )
+                ),
+            )
         return PortfolioShadowDayOperator(factory).run(
             PortfolioShadowDayInput.from_canonical_dict(
                 _load_json_object(args.observations)

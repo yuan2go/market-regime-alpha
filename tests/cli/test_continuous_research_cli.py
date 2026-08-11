@@ -102,6 +102,15 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "observations.json",
         ]
     )
+    strategy_auto = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "strategy-day",
+            "--auto",
+            "auto-strategy.json",
+        ]
+    )
     settle_day = build_parser().parse_args(
         [
             "--database-url",
@@ -166,6 +175,15 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "portfolio-shadow-day",
             "--observations",
             "portfolio-observations.json",
+        ]
+    )
+    portfolio_auto = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "portfolio-shadow-day",
+            "--auto",
+            "auto-portfolio.json",
         ]
     )
     portfolio_replay = build_parser().parse_args(
@@ -302,12 +320,14 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
 
     assert run_day.operation == "run-day"
     assert strategy_day.operation == "strategy-day"
+    assert strategy_auto.auto.name == "auto-strategy.json"
     assert settle_day.operation == "settle-day"
     assert report_day.operation == "report-day"
     assert replay_day.operation == "replay-day"
     assert universe_sync.operation == "research-universe-sync"
     assert universe_replay.operation == "research-universe-replay"
     assert portfolio_day.operation == "portfolio-shadow-day"
+    assert portfolio_auto.auto.name == "auto-portfolio.json"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
     assert recovery_audit.operation == "recovery-audit"
     assert protocol_record.operation == "qualification-protocol-record"

@@ -58,7 +58,17 @@ from market_regime_alpha.data.pit_authority import FormalPITEvidenceArtifact, PI
 from market_regime_alpha.data.pit_contracts import PITArtifactKind, PITArtifactReference, PITValidationOutcome
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
-from market_regime_alpha.market_data import VerifiedMarketDataDataset
+from market_regime_alpha.market_data import (
+    AdjustmentMode,
+    AssetType,
+    CanonicalMarketBar,
+    Exchange,
+    PriceLimitState,
+    Timeframe,
+    TradingStatus,
+    VerifiedMarketDataDataset,
+    VolumeUnit,
+)
 from tests.data.test_pit_authority import HASH_A, HASH_B, lineage
 
 
@@ -113,6 +123,80 @@ def test_factor_extraction_covers_every_family_without_recomputing() -> None:
     assert any(item.factor_id == "state.market_regime.score" and item.raw_numeric == Decimal("0.6") for item in enrichment.exposures)
     assert all(item.normalized_exposure is None and item.model_contribution is None for item in enrichment.exposures)
     assert any("CANONICAL_FACTOR_FAMILY_NOT_AVAILABLE" in item.missingness for item in enrichment.exposures)
+
+
+def test_factor_extraction_records_adv20_from_owner_bars_without_amount_substitution() -> None:
+    dataset_hash = canonical_hash({"dataset": "adv20"})
+    start = date(2026, 7, 21)
+    bars = tuple(
+        CanonicalMarketBar.create(
+            symbol="000001.SZ",
+            exchange=Exchange.SZ,
+            asset_type=AssetType.A_SHARE,
+            timeframe=Timeframe.DAILY,
+            market_date=start + timedelta(days=index),
+            event_start=NOW - timedelta(days=20 - index, hours=6),
+            event_end=NOW - timedelta(days=20 - index, hours=1),
+            available_at=NOW - timedelta(days=20 - index, minutes=30),
+            open=Decimal("10"),
+            high=Decimal("11"),
+            low=Decimal("9"),
+            close=Decimal("10"),
+            previous_close=Decimal("10"),
+            volume=Decimal("100"),
+            volume_unit=VolumeUnit.SHARES,
+            amount=Decimal(index + 1) * Decimal("1000000"),
+            turnover_rate=Decimal("0.01"),
+            adjustment_mode=AdjustmentMode.RAW,
+            adjustment_factor=Decimal("1"),
+            trading_status=TradingStatus.TRADING,
+            price_limit_state=PriceLimitState.NORMAL,
+            source_artifact_id=ArtifactId("adv20-owner-source"),
+            source_content_hash=canonical_hash({"source": "adv20"}),
+        )
+        for index in range(20)
+    )
+    dataset = VerifiedMarketDataDataset(
+        root=Path("."),
+        artifact=SimpleNamespace(
+            dataset_id=ArtifactId("adv20-dataset"), content_hash=dataset_hash
+        ),
+        bars=bars,
+        checksums_hash=canonical_hash({"checksums": "adv20"}),
+    )
+    bundle = VerifiedFeatureBundleV2(
+        root=Path("."),
+        artifact=SimpleNamespace(
+            bundle_id=ArtifactId("adv20-bundle"),
+            content_hash=canonical_hash({"bundle": "adv20"}),
+            dataset_id=ArtifactId("adv20-dataset"),
+            dataset_hash=dataset_hash,
+            decision_time=NOW,
+        ),
+        artifacts=(),
+        checksums_hash=canonical_hash({"checksums": "adv20-bundle"}),
+    )
+
+    enrichment = extract_canonical_factors(
+        panel_reference=_ref("RESEARCH_PANEL_V2", "adv20-panel"),
+        symbols=("000001.SZ",),
+        dataset=dataset,
+        feature_bundle=bundle,
+        dynamic_pool=None,
+        candidate_set=None,
+        signal_run=None,
+        forecasts=(),
+        state_sources=(),
+        decision_time=NOW,
+        extracted_at=NOW,
+    )
+
+    adv20 = next(
+        item for item in enrichment.exposures if item.factor_id == "liquidity.adv20"
+    )
+    assert adv20.raw_numeric == Decimal("10500000")
+    assert adv20.source_reference.artifact_id == ArtifactId("adv20-dataset")
+    assert adv20.available_at == bars[-1].available_at
 
 
 def test_ablation_is_exploratory_and_reports_incremental_lift() -> None:
