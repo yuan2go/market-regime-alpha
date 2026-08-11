@@ -14,7 +14,30 @@ Phase B engineering also includes daily cross-sectional evaluation science, tie-
 
 Actual positions derive only from observed manual fills. The system creates no broker order and does not automatically mutate actual positions.
 
-Migrations 047–051 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners and immutable Path Calibration Hypothesis evidence. They do not alter migration 046, which removes reference-only
+Phase C engineering adds an immutable Formal Research Protocol with exact
+component-payload bindings (including full Frozen Trading Calendar replay), OutcomeTarget-bound forecasts, frozen-calendar
+purge/embargo, Provider-by-Contract-by-Fact qualification decisions,
+owner-resolved Historical Sample and Locked OOS decisions, formal Calibration
+partition replay, Entry/Holding/Exit evidence replay, prospective Strategy
+Shadow qualification, persisted Production Admission floors and Controlled
+Execution readiness. Strategy Shadow policies now have one reusable immutable
+PostgreSQL owner, so a frozen policy can accumulate multiple prospective days;
+historical session-local Policy artifacts remain unchanged. These writers can
+persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
+results. They do not automatically promote or authorize anything.
+
+The 2026-08-11 working-schema evidence resolution applied migrations 001–055
+and evaluated six current free-data scopes. BaoStock Market Data, Trading
+Calendar, ST and Universe, plus Tencent Market Data and Theme Membership, were
+all durably `REJECTED` with
+`FORMAL_PROVIDER_EVIDENCE_CEILING_NOT_MET`: no qualified source or typed formal
+Provider evidence exists. The same schema contains zero PIT Fact Revision,
+Formal PIT Validation, Formal Protocol, Historical Sample qualification,
+Formal OOS, Calibration qualification, Phase C stage or Production Admission
+evidence. This is a negative/absent evidence result, not a Provider-quality or
+Alpha conclusion.
+
+Migrations 047–055 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners, immutable Path Calibration Hypothesis evidence and the fail-closed Phase C owners described above. They do not alter migration 046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -30,12 +53,12 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 584 | broad modular monolith; size alone is not a defect |
-| Python test files | 411 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 593 | broad modular monolith; size alone is not a defect |
+| Python test files | 421 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 51 | contiguous, checksummed, forward-only; 046 remains the qualification ceiling |
-| PostgreSQL Authority-schema tables | 159 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 159 independent business Authorities |
+| PostgreSQL migrations | 55 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 182 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 182 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |
@@ -75,9 +98,11 @@ entry_model_empirically_validated = false
 formal_pit_established = false
 formal_oos_alpha_established = false
 calibrated = false
+entry_qualified = false
 holding_exit_validated = false
 strategy_shadow_proven = false
 production_ready = false
+live_broker_authorized = false
 ```
 
 CI is separate from local verification. If GitHub Actions has not run on the final commit, the only valid statement is `CI_NOT_RUN`.

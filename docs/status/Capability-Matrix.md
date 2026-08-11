@@ -14,6 +14,9 @@
 | ETF/Index/Industry/Theme Reference | Engineering complete | Declared/Derived/Proxy are distinct, versioned and lineage-bound; free mappings remain Proxy |
 | Dataset and Feature materialization | Implemented | canonical content-addressed artifacts |
 | Formal PIT mechanics | Implemented mechanics | real qualified Provider/fact coverage absent |
+| Formal Protocol / Frozen Calendar | Operational engineering complete | full Calendar payload, component payloads, targets and evaluation windows are immutable/content-addressed and typed-replayed; unified CLI records them; no current formal protocol evidence |
+| Provider Fact Qualification V2 | Operational engineering complete | exact Provider×Contract×Fact owner; current BaoStock/Tencent scopes are `REJECTED`, never silently promoted |
+| Historical Sample Qualification | Owner writer implemented | reloads Protocol/PIT/Target/Provider owners; current evidence absent, so no qualified sample exists |
 | Model Registry and Research/Shadow selection | Implemented | PostgreSQL Governance |
 | Production model qualification | Closed | owner resolution incomplete; always not qualified |
 | Market/ETF/Theme/Capital State | Implemented | PostgreSQL State owner; models remain unvalidated |
@@ -27,14 +30,16 @@
 | Prospective attestation | Implemented mechanics | owner-checked, always `prospective_proven=false` |
 | Evaluation Dataset / Panel V2 / Factor Extraction | Implemented | immutable engineering evidence |
 | Factor catalog / de-dup / ablation / liquidity-capacity | Implemented harness | versioned lineage and provenance; exploratory assumptions are not facts or calibration |
-| Calibration | Operational engineering complete | `settle-day` persists 18 target/barrier hypotheses; fitting requires exact Forecast/Outcome Target identity, date partitions and label-aware purge, so the current multi-session Forecast remains `NOT_ESTIMABLE` for T+1 targets; the harness supports Platt/Isotonic/Binning and every result is `calibrated=false` |
-| Formal Evaluation | Engineering complete metric runtime | cross-sectional IC/RankIC, Top-K/spread/hit/MFE/MAE/turnover/drawdown/lift, cluster CI and multiple testing; durable Formal OOS Authority disabled |
-| Entry research | Implemented harness | Shadow decision only; no Canonical `ENTER` |
+| Calibration | Qualification owner implemented, evidence absent | exact Forecast/Label/Target and FIT/VALIDATION/Locked-OOS bindings are replayed from PostgreSQL; no Formal OOS input exists and every current result remains `calibrated=false` |
+| Formal Evaluation / Locked OOS | Owner writer implemented, evidence absent | frozen-calendar cross-sectional IC/RankIC, Top-K/spread/hit/MFE/MAE/turnover/drawdown/lift, moving-block CI and multiple testing are replayed before a decision; no current qualified PIT/sample observations |
+| Entry research / Holding / Exit qualification | Owner writer implemented, evidence absent | replays Locked-OOS Strategy Shadow Entry→Fill→Position→Exit→Outcome, economic/provenance floors and independent approval; no Canonical `ENTER` unlock |
 | Strategy Shadow | Operational loop implemented | Entry/Fill/Position/Holding/Exit/Outcome via Continuous CLI; simulated ledger, no real mutation |
 | Portfolio Strategy Shadow | Operational engineering complete | Top1/3/5 Equal/Score/Risk, Cash/NAV/exposure/turnover/cost/capacity/drawdown/attribution and A-share constraints; no real mutation |
 | Operator surface convergence | Implemented | six installed scripts and six installed CLI module guards; day/settle/strategy/portfolio/report/resume/replay under existing CLIs |
-| Holding/Exit validation | Implemented engineering floors | `holding_exit_validated=false` |
-| Production Admission | Projection only | always `BLOCKED`; no final writer |
+| Holding/Exit validation | Included in owner-resolved C6 gate | current Formal OOS/Calibration/qualified outcomes absent; `holding_exit_validated=false` |
+| Prospective Strategy Shadow qualification | Operational engineering complete | post-policy-lock, `LIVE_TRUSTED`/`LIVE_ACQUISITION` sessions only; exact session/outcome/portfolio replay and Provider failure floors; zero current qualifying sessions |
+| Production Admission | Persisted owner-resolved blocker | every PIT/OOS/economic/calibration/cost/Entry/Holding/Shadow/auth/operator/Broker floor is re-read; current decision can only remain `BLOCKED` and never implies Broker authority |
+| Controlled Execution readiness | Persisted fail-closed gate | checks Broker contract, paper/read-only/reconciliation/preview/risk/kill-switch/human approval/tiny-capital/auth floors; no Order mutation path is enabled |
 | Principal/RBAC/Approval/Audit | Engineering complete | append-only PostgreSQL roles, serialized bootstrap/last-Admin invariants, revocation and separation; CLI resources and allowed/denied invocations are audited, non-Admin Shadow/recovery mutations require exact independent approval, and Production mode is rejected before Journal mutation; external authentication is not bound |
 | Recovery/DR | Operational engineering complete | expired leases use `resume`; due `PENDING`/Provider retries use canonical `run-day`; Shadow settlement/strategy recovery, replay and isolated PostgreSQL/artifact backup-restore verification are explicit; deployment drill evidence pending |
 | Broker integration | Prohibited/currently absent | no live adapter authority |

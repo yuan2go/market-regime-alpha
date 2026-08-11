@@ -119,15 +119,15 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Domain / Capability:** Data governance / source qualification, bitemporal facts and as-of validation.
 - **Classification:** Evidence Authority.
 - **Owner:** PIT Authority.
-- **Canonical Writer:** `PostgresPITAuthority`.
+- **Canonical Writer:** `PostgresPITAuthority` for source/fact/PIT evidence and `PostgresProviderFactQualificationAuthority` for Provider×Contract×Fact decisions.
 - **Reader:** PIT source/fact/snapshot/evidence reload and replay methods.
 - **Repository:** `PostgresPITAuthority`.
-- **PostgreSQL tables:** `pit_authority_action`, `pit_artifact_authority_resolution`, `pit_source_qualification`, `pit_source_qualification_evidence`, `pit_fact_revision`, `pit_fact_temporal_authority_resolution`, `pit_as_of_snapshot`, `formal_pit_validation_evidence`.
+- **PostgreSQL tables:** existing PIT tables plus `provider_fact_qualification_policy`, `provider_fact_qualification_decision` and its idempotency command owner.
 - **Artifact / Receipt:** Source Qualification, PIT Fact Revision, as-of Snapshot and Formal PIT Validation Evidence.
 - **Runtime caller:** `pit-authority` and the Model Governance PIT bridge.
 - **Downstream consumer:** formal research preparation and Model Governance `FORMAL_PIT` evidence.
-- **Replay mechanism:** exact bitemporal snapshot and validation-evidence reload.
-- **Evidence ceiling:** mechanics exist; no qualified real Provider archive is established.
+- **Replay mechanism:** exact Provider decision, typed source evidence, bitemporal snapshot and validation-evidence reload.
+- **Evidence ceiling:** mechanics exist; current free Provider scopes are explicitly `REJECTED`, and no qualified real archive is established.
 - **Legacy replacement:** replaces reference-kind-only PIT claims; exploratory provider adapters remain non-formal.
 
 ### Model Registry and Governance
@@ -341,17 +341,17 @@ Every entry separates ownership from storage and consumption. A missing writer o
 ### Research Validation
 
 - **Domain / Capability:** Research Validation / ablation, liquidity/capacity, historical sample, calibration, formal evaluation, Entry and Holding/Exit evidence.
-- **Classification:** Research Harness and engineering Evidence writer.
+- **Classification:** Research Harness plus narrow owner-resolved qualification Authorities.
 - **Owner:** Research Validation.
-- **Canonical Writer:** `PostgresResearchValidationRepository` for current durable engineering artifacts.
+- **Canonical Writer:** `PostgresResearchValidationRepository` for engineering artifacts; Formal Protocol, Historical/OOS, Calibration and Phase C gate repositories own only their respective decisions.
 - **Reader:** payload, factor exposure and historical-sample Readers.
 - **Repository:** `PostgresResearchValidationRepository`.
-- **PostgreSQL tables:** `research_validation_artifact`, `research_panel_factor_exposure`, `historical_path_sample_record`, `calibration_partition_binding`.
+- **PostgreSQL tables:** the engineering tables plus `formal_research_protocol*`, `formal_evaluation_observation_set`, `formal_evaluation_observation_binding`, Historical/OOS decision tables, Calibration qualification/binding tables and `phase_c_stage_decision`.
 - **Artifact / Receipt:** engineering Validation artifacts, Historical Sample Dataset, Calibration artifact, Evaluation result and Entry/Holding evidence.
 - **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
-- **Downstream consumer:** human research review and future owner-specific qualification writers.
-- **Replay mechanism:** immutable payload/sample reload plus exact calibration hypothesis (including Target/label/Panel/Forecast references, raw score/outcome and negative reasons), protocol, fit, evaluation and partition-binding reload; no qualification replay/writer exists.
-- **Evidence ceiling:** migration 046 enforces engineering/unqualified only.
+- **Downstream consumer:** human research review, C6/C7 gates and persisted Production Admission floor resolution.
+- **Replay mechanism:** immutable typed Target/Evaluation/component reload, full Frozen Calendar payload/date replay, sample/observation reload, exact Calibration partitions and Entry→Outcome replay. Bare caller references cannot establish a positive decision.
+- **Evidence ceiling:** migration 046 remains unchanged; later owner writers can only satisfy a gate from exact upstream owner evidence. Current upstream evidence is absent.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
 ### Strategy Shadow
@@ -362,11 +362,11 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Canonical Writer:** `PostgresStrategyShadowRepository` for single-trade sessions and `PostgresShadowPortfolioRepository` for Portfolio Shadow.
 - **Reader:** session, event, artifact and Portfolio day-state Readers plus deterministic replay.
 - **Repository:** `PostgresStrategyShadowRepository`, `PostgresShadowPortfolioRepository`.
-- **PostgreSQL tables:** `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`, `strategy_shadow_portfolio`, `strategy_shadow_portfolio_day`.
+- **PostgreSQL tables:** `strategy_shadow_policy_authority`, `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`, `strategy_shadow_portfolio`, `strategy_shadow_portfolio_day`, prospective qualification policy and stage decision.
 - **Artifact / Receipt:** Strategy Shadow Session/Event and simulated Entry/Fill/Position/Holding/Exit artifacts; Portfolio Policy and CAS-linked day states.
 - **Runtime caller:** thin subcommands of the installed `continuous-research` CLI; no second Runtime.
 - **Downstream consumer:** Holding/Exit engineering evaluation and Production Admission gap projection.
-- **Replay mechanism:** CAS session/event/artifact replay.
+- **Replay mechanism:** reusable Policy owner plus CAS session/event/artifact and Portfolio replay; prospective proof counts only post-policy-lock live sessions.
 - **Evidence ceiling:** simulated only; no actual Fill, Position or broker mutation.
 - **Legacy replacement:** no legacy trading simulator may write actual Position Authority.
 
@@ -387,16 +387,16 @@ Every entry separates ownership from storage and consumption. A missing writer o
 ### Production Admission
 
 - **Domain / Capability:** Production governance / admission-floor visibility.
-- **Classification:** blocked Projection, not Authority.
-- **Owner:** no final owner exists.
-- **Canonical Writer:** none; `current_engineering_blocked_admission` can only build a blocked projection.
-- **Reader:** immutable in-memory projection consumer only.
-- **Repository:** none.
-- **PostgreSQL tables:** none.
+- **Classification:** persisted fail-closed Admission decision Authority; it is not Broker authority.
+- **Owner:** Phase C Production Admission floor resolver.
+- **Canonical Writer:** `PostgresPhaseCGateAuthority`, which re-reads every owner and can currently persist only `BLOCKED`.
+- **Reader:** immutable PostgreSQL decision replay.
+- **Repository:** `PostgresPhaseCGateAuthority`.
+- **PostgreSQL tables:** `production_admission_decision_authority`, `phase_c_gate_command`.
 - **Artifact / Receipt:** `ProductionAdmissionDecision` with status `BLOCKED`; no authorization receipt.
-- **Runtime caller:** none in Canonical Runtime.
+- **Runtime caller:** `continuous-research qualification-status`; not part of a trading tick.
 - **Downstream consumer:** engineering gap/status reporting only.
-- **Replay mechanism:** deterministic recomputation of missing/rejected floors; no persisted admission replay.
+- **Replay mechanism:** immutable exact-floor payload restoration and revision/supersession chain.
 - **Evidence ceiling:** always blocked; engineering RBAC exists, but authenticated operator, Formal evidence and broker readiness owners do not. Caller-supplied approval references cannot promote a floor.
 - **Legacy replacement:** removes reference-only `ELIGIBLE_FOR_OPERATOR_REVIEW` and `AUTHORIZED` projections.
 
@@ -418,12 +418,12 @@ Current promotion matrix:
 
 | Claimed transition | Current writer behavior |
 |---|---|
-| `PIT_ELIGIBLE` historical sample | No writer. Migration 046 permits `UNQUALIFIED` only. |
-| `OOS_ELIGIBLE` / Formal OOS | The harness computes metrics but cannot emit durable Formal OOS Authority. |
-| `CALIBRATED` | Fit/evaluation artifacts remain `calibrated=false`. |
-| `ENTRY_QUALIFIED` | Entry research can emit Shadow decisions; no qualification writer exists. |
-| `HOLDING_EXIT_VALIDATED` | Engineering floor assessment only; no qualification writer exists. |
-| `STRATEGY_SHADOW_PROVEN` | Engineering floor assessment only; prospective attestations remain unproven. |
+| `PIT_ELIGIBLE` historical sample | Owner writer exists; it reloads Protocol/PIT/Target/Provider evidence. Current evidence is missing, so no transition exists. |
+| `OOS_ELIGIBLE` / Formal OOS | Owner writer replays frozen observations/calendar/metrics. Current qualified sample/PIT evidence is missing. |
+| `CALIBRATED` | Owner writer replays exact partitions and metrics. Current Formal OOS evidence is missing, so `calibrated=false`. |
+| `ENTRY_QUALIFIED` | C6 owner replays formal Entry/Strategy Outcome/economic/provenance/approval evidence. Current upstream evidence is missing. |
+| `HOLDING_EXIT_VALIDATED` | Same C6 owner evaluates independent rule coverage and outcome floors; current state is false. |
+| `STRATEGY_SHADOW_PROVEN` | C7 owner requires live Runtime Authority, acquisition receipt, attestation, complete T+1 factual Outcome, Strategy Outcome and Portfolio day; no qualifying post-lock window has accumulated. |
 | `ELIGIBLE_FOR_OPERATOR_REVIEW` | Not emitted; Production Admission remains blocked. |
 | `PRODUCTION_AUTHORIZED` | PostgreSQL Model Governance adds `PRODUCTION_EVIDENCE_OWNER_RESOLUTION_NOT_IMPLEMENTED`; no assignment can pass. |
 
