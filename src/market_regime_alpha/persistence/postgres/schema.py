@@ -240,6 +240,11 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "research_model_coefficient_head",
         "research_model_inference_receipt",
         "research_model_inference_source_binding",
+        "formal_execution_request",
+        "formal_execution_provider_requirement",
+        "formal_execution_assessment",
+        "formal_execution_stage_assessment",
+        "formal_execution_source_binding",
     }
 )
 
@@ -518,6 +523,23 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "research_model_inference_source_binding",
             "research_model_inference_source_binding_no_update",
+        ),
+        ("formal_execution_request", "formal_execution_request_no_update"),
+        (
+            "formal_execution_provider_requirement",
+            "formal_execution_provider_requirement_no_update",
+        ),
+        (
+            "formal_execution_assessment",
+            "formal_execution_assessment_no_update",
+        ),
+        (
+            "formal_execution_stage_assessment",
+            "formal_execution_stage_assessment_no_update",
+        ),
+        (
+            "formal_execution_source_binding",
+            "formal_execution_source_binding_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (

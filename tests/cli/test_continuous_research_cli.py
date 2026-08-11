@@ -38,6 +38,9 @@ from tests.application.research_validation.test_research_model import (
     NOW as MODEL_NOW,
     _request as _model_request,
 )
+from tests.application.research_validation.test_formal_execution import (
+    _request as _formal_execution_request,
+)
 
 
 def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
@@ -229,6 +232,24 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "model-inference.json",
         ]
     )
+    formal_execution = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "formal-execution-assess",
+            "--input",
+            "formal-execution.json",
+        ]
+    )
+    formal_execution_report = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "formal-execution-report",
+            "--assessment-id",
+            "formal-execution-assessment-1",
+        ]
+    )
     recovery_audit = build_parser().parse_args(
         [
             "--database-url",
@@ -366,6 +387,8 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert model_train.operation == "model-train"
     assert model_report.operation == "model-report"
     assert model_execute.operation == "model-execute"
+    assert formal_execution.operation == "formal-execution-assess"
+    assert formal_execution_report.operation == "formal-execution-report"
     assert recovery_audit.operation == "recovery-audit"
     assert protocol_record.operation == "qualification-protocol-record"
     assert owners_record.operation == "qualification-owners-record"
@@ -476,6 +499,41 @@ def test_cli_trains_replays_and_executes_research_challenger(
     assert executed["result"]["barrier_scores_are_probabilities"] is False
     assert executed["formal_oos"] is False
     assert executed["calibrated"] is False
+
+
+def test_cli_persists_and_replays_current_free_data_formal_block(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path,
+    capsys,
+) -> None:
+    request = _formal_execution_request(None)
+    request_path = tmp_path / "formal-execution.json"
+    request_path.write_text(
+        json.dumps(request.to_canonical_dict()),
+        encoding="utf-8",
+    )
+    authority = _authority_args(postgres_factory)
+
+    assert main(
+        [*authority, "formal-execution-assess", "--input", str(request_path)]
+    ) == SUCCESS
+    assessed = json.loads(capsys.readouterr().out)
+    assessment_id = assessed["assessment_id"]
+    assert assessed["status"] == "BLOCKED"
+    assert assessed["terminal_stage"] == "PROVIDER_FACT_QUALIFICATION"
+    assert assessed["formal_oos_alpha_established"] is False
+    assert assessed["calibrated"] is False
+
+    assert main(
+        [*authority, "formal-execution-report", "--assessment-id", assessment_id]
+    ) == SUCCESS
+    reported = json.loads(capsys.readouterr().out)
+    assert reported["assessment_hash"] == assessed["assessment_hash"]
+    assert main(
+        [*authority, "formal-execution-replay", "--assessment-id", assessment_id]
+    ) == SUCCESS
+    replayed = json.loads(capsys.readouterr().out)
+    assert replayed["assessment_hash"] == assessed["assessment_hash"]
 
 
 def test_cli_prepare_admit_report_and_replay_are_structured(

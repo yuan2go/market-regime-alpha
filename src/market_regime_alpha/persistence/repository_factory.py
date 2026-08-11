@@ -206,6 +206,13 @@ class RepositoryFactory:
 
         return PostgresResearchModelRepository(self._postgres)
 
+    def formal_execution(self):
+        from market_regime_alpha.application.research_validation.postgres_formal_execution import (
+            PostgresFormalExecutionRepository,
+        )
+
+        return PostgresFormalExecutionRepository(self._postgres)
+
     def pit_authority(
         self,
         *,
