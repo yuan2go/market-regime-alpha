@@ -79,6 +79,7 @@ class FormalResearchProtocol:
     strategy_policy_reference: ValidationArtifactReference
     entry_holding_exit_qualification_policy_reference: ValidationArtifactReference
     locked_at: datetime
+    historical_sample_dataset_references: tuple[ValidationArtifactReference, ...] = ()
     locked_oos_reuse_policy: str = "NEVER_REUSE_FOR_SELECTION_OR_TUNING"
     schema_version: str = "formal-research-protocol/v1"
 
@@ -91,6 +92,23 @@ class FormalResearchProtocol:
             raise ValueError("Locked OOS reuse policy cannot be weakened")
         if self.locked_at.tzinfo is None or self.locked_at.utcoffset() is None:
             raise ValueError("Formal Research Protocol lock time must be timezone-aware")
+        if (
+            not self.historical_sample_dataset_references
+            or self.historical_sample_dataset_references
+            != tuple(
+                sorted(
+                    set(self.historical_sample_dataset_references),
+                    key=lambda item: (str(item.artifact_id), item.content_hash),
+                )
+            )
+            or self.historical_sample_dataset_reference
+            != self.historical_sample_dataset_references[0]
+            or any(
+                item.artifact_kind != "HISTORICAL_SAMPLE_DATASET"
+                for item in self.historical_sample_dataset_references
+            )
+        ):
+            raise ValueError("Formal Protocol Historical Datasets must be non-empty, unique and sorted")
         if (
             not self.frozen_trading_dates
             or self.frozen_trading_dates != tuple(sorted(set(self.frozen_trading_dates)))
@@ -141,6 +159,9 @@ class FormalResearchProtocol:
         strategy_policy_reference: ValidationArtifactReference,
         entry_holding_exit_qualification_policy_reference: ValidationArtifactReference,
         locked_at: datetime,
+        historical_sample_dataset_references: tuple[
+            ValidationArtifactReference, ...
+        ] | None = None,
     ) -> FormalResearchProtocol:
         target_protocol_reference = ValidationArtifactReference(
             "OUTCOME_TARGET_PROTOCOL",
@@ -188,6 +209,17 @@ class FormalResearchProtocol:
             evaluation_protocol.protocol_id,
             evaluation_protocol.protocol_hash,
         )
+        historical_references = tuple(
+            sorted(
+                set(
+                    historical_sample_dataset_references
+                    or (historical_sample_dataset_reference,)
+                ),
+                key=lambda item: (str(item.artifact_id), item.content_hash),
+            )
+        )
+        if historical_references[0] != historical_sample_dataset_reference:
+            raise ValueError("Formal Protocol primary Historical Dataset must sort first")
         payload = _formal_protocol_payload(
             protocol_version=protocol_version,
             outcome_target_protocol_reference=target_protocol_reference,
@@ -210,6 +242,7 @@ class FormalResearchProtocol:
                 entry_holding_exit_qualification_policy_reference
             ),
             locked_at=locked_at,
+            historical_sample_dataset_references=historical_references,
         )
         protocol_id, protocol_hash = content_identity(
             "formal-research-protocol", payload
@@ -236,6 +269,7 @@ class FormalResearchProtocol:
             strategy_policy_reference,
             entry_holding_exit_qualification_policy_reference,
             locked_at,
+            historical_references,
         )
 
     def identity_payload(self) -> dict[str, Any]:
@@ -261,6 +295,9 @@ class FormalResearchProtocol:
                 self.entry_holding_exit_qualification_policy_reference
             ),
             locked_at=self.locked_at,
+            historical_sample_dataset_references=(
+                self.historical_sample_dataset_references
+            ),
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -338,6 +375,15 @@ class FormalResearchProtocol:
                 _mapping(value["entry_holding_exit_qualification_policy_reference"])
             ),
             locked_at=datetime.fromisoformat(str(value["locked_at"])),
+            historical_sample_dataset_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in _sequence(
+                    value.get(
+                        "historical_sample_dataset_references",
+                        [value["historical_sample_dataset_reference"]],
+                    )
+                )
+            ),
             locked_oos_reuse_policy=str(value["locked_oos_reuse_policy"]),
             schema_version=str(value["schema_version"]),
         )
@@ -651,8 +697,11 @@ def _formal_protocol_payload(
     strategy_policy_reference: ValidationArtifactReference,
     entry_holding_exit_qualification_policy_reference: ValidationArtifactReference,
     locked_at: datetime,
+    historical_sample_dataset_references: tuple[
+        ValidationArtifactReference, ...
+    ] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": "formal-research-protocol/v1",
         "protocol_version": protocol_version,
         "outcome_target_protocol_reference": outcome_target_protocol_reference.to_canonical_dict(),
@@ -681,6 +730,12 @@ def _formal_protocol_payload(
         "locked_at": timestamp(locked_at),
         "locked_oos_reuse_policy": "NEVER_REUSE_FOR_SELECTION_OR_TUNING",
     }
+    historical_references = historical_sample_dataset_references
+    if historical_references is not None and len(historical_references) > 1:
+        payload["historical_sample_dataset_references"] = [
+            item.to_canonical_dict() for item in historical_references
+        ]
+    return payload
 
 
 def _mapping(value: object) -> dict[str, Any]:

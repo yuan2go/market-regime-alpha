@@ -10,8 +10,9 @@
 
 1. **C0 engineering complete:** freeze Target, Calendar and evaluation partitions;
    reload every result-affecting component from its PostgreSQL owner; durably
-   consume underlying Locked-OOS label/partition evidence across Model, Forecast
-   and Protocol identities.
+   compute Forecasts from owner-resolved PIT/Model inputs; freeze a multi-target
+   Hypothesis Family; unlock each raw OOS path once and correct all registered
+   Target/metric/slice/sensitivity/fold hypotheses as one family.
 2. **C1 engineering complete, evidence rejected:** collect independent
    Provider archive/version/revision/availability evidence by Contract and Fact
    Kind. Current BaoStock/Tencent assessments do not satisfy the floor.

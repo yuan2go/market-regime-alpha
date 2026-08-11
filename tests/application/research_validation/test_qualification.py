@@ -14,6 +14,7 @@ from market_regime_alpha.application.research_validation.qualification import (
     FormalOOSQualificationPolicy,
     QualificationOutcome,
     evaluate_metric_floor_payloads,
+    evaluate_pre_oos_metric_readiness,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
@@ -125,6 +126,48 @@ def test_formal_oos_metric_policy_rejects_any_failing_fold() -> None:
 
     assert outcome is QualificationOutcome.REJECTED
     assert "LOCKED_OOS_MINIMUM_NOT_MET_SPREAD_0.9_FOLD_2" in reasons
+
+
+def test_formal_oos_requires_estimable_train_and_validation_before_unlock() -> None:
+    ready_metrics = tuple(
+        _metric(multiplier, partition=partition)
+        for partition in ("TRAIN", "VALIDATION")
+        for multiplier in ("0.9", "1")
+    )
+    assert evaluate_pre_oos_metric_readiness(
+        policy=_policy(),
+        metrics=ready_metrics,
+        required_partition_folds={"TRAIN": (1,), "VALIDATION": (1,)},
+    ) == (QualificationOutcome.SATISFIED, ())
+
+    outcome, reasons = evaluate_pre_oos_metric_readiness(
+        policy=_policy(),
+        metrics=tuple(
+            {
+                **item,
+                **(
+                    {"status": "NOT_ESTIMABLE", "sample_count": 0}
+                    if item["partition"] == "VALIDATION"
+                    and item["sensitivity_return_multiplier"] == "1"
+                    else {}
+                ),
+            }
+            for item in ready_metrics
+        ),
+        required_partition_folds={"TRAIN": (1,), "VALIDATION": (1,)},
+    )
+    assert outcome is QualificationOutcome.NOT_ESTIMABLE
+    assert "PRE_OOS_METRIC_NOT_ESTIMABLE_VALIDATION_SPREAD_1_FOLD_1" in reasons
+
+    missing_outcome, missing_reasons = evaluate_pre_oos_metric_readiness(
+        policy=_policy(),
+        metrics=tuple(
+            item for item in ready_metrics if item["partition"] == "TRAIN"
+        ),
+        required_partition_folds={"TRAIN": (1,), "VALIDATION": (1,)},
+    )
+    assert missing_outcome is QualificationOutcome.NOT_ESTIMABLE
+    assert any("VALIDATION" in reason for reason in missing_reasons)
 
 
 def test_formal_oos_policy_identity_freezes_metric_floor() -> None:

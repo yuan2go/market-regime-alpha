@@ -59,6 +59,15 @@ class StrategyShadowPolicy:
     participation_rate: Decimal | None
     limitations: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        require_sha256("policy_hash", self.policy_hash)
+        if canonical_hash(strategy_shadow_artifact_payload(self)) != self.policy_hash:
+            raise ValueError("Strategy Shadow Policy hash mismatch")
+        if self.policy_id != ArtifactId(
+            f"strategy-shadow-policy:{self.policy_hash[7:]}"
+        ):
+            raise ValueError("Strategy Shadow Policy identifier mismatch")
+
     @classmethod
     def create(
         cls,

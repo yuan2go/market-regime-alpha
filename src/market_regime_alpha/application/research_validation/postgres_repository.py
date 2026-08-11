@@ -60,6 +60,7 @@ class PostgresResearchValidationRepository:
             "FACTOR_RESEARCH_CATALOG",
             "FEATURE_DEFINITION_SET",
             "FORMAL_EVALUATION_PROTOCOL",
+            "FORMAL_HYPOTHESIS_FAMILY_EVALUATION_RESULT",
             "HISTORICAL_SAMPLE_DATASET",
             "PANEL_ENRICHMENT",
             "THRESHOLD_POLICY",

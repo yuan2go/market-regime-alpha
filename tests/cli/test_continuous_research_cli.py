@@ -195,6 +195,15 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "formal-protocol.json",
         ]
     )
+    owners_record = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-owners-record",
+            "--input",
+            "formal-owner-package.json",
+        ]
+    )
     forecast_record = build_parser().parse_args(
         [
             "--database-url",
@@ -302,6 +311,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert portfolio_replay.operation == "portfolio-shadow-replay"
     assert recovery_audit.operation == "recovery-audit"
     assert protocol_record.operation == "qualification-protocol-record"
+    assert owners_record.operation == "qualification-owners-record"
     assert forecast_record.operation == "qualification-forecast-record"
     assert evaluation_record.operation == "qualification-evaluation-record"
     assert historical_status.operation == "qualification-historical"
@@ -457,6 +467,38 @@ def test_cli_requires_authorized_principal_for_shadow_mutation(
     output = json.loads(capsys.readouterr().out)
     assert output["reason_code"] == "OPERATOR_NOT_AUTHORIZED"
 
+    shadow_operator = governance.create_principal(
+        actor=admin_id,
+        external_subject="test:continuous-cli-shadow-operator",
+        display_name="Continuous CLI Shadow Operator",
+        reason="formal research authorization boundary fixture",
+        occurred_at=datetime(2026, 8, 11, 0, 0, 3, tzinfo=UTC),
+        idempotency_key="continuous-cli-shadow-operator",
+    )
+    governance.change_role(
+        actor=admin_id,
+        principal_id=shadow_operator.principal_id,
+        role=SecurityRole.OPERATOR,
+        event_kind=RoleEventKind.GRANTED,
+        reason="formal research authorization boundary fixture",
+        occurred_at=datetime(2026, 8, 11, 0, 0, 4, tzinfo=UTC),
+        idempotency_key="continuous-cli-grant-shadow-operator",
+    )
+    formal_denied_authority = [
+        *authority[:-1],
+        str(shadow_operator.principal_id),
+    ]
+    assert main(
+        [
+            *formal_denied_authority,
+            "qualification-forecast-record",
+            "--input",
+            "missing-formal-forecast-request.json",
+        ]
+    ) == ARGUMENT_ERROR
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason_code"] == "OPERATOR_NOT_AUTHORIZED"
+
     command_path = tmp_path / "research-run.json"
     command_path.write_text(
         json.dumps(_command().to_canonical_dict()),
@@ -470,6 +512,34 @@ def test_cli_requires_authorized_principal_for_shadow_mutation(
             str(command_path),
         ]
     ) == SUCCESS
+
+
+def test_formal_operator_actor_cannot_impersonate_authorized_principal(
+    postgres_factory: PostgresConnectionFactory,
+    capsys,
+    tmp_path,
+) -> None:
+    authority = _authority_args(postgres_factory)
+    command_path = tmp_path / "forged-formal-operator.json"
+    command_path.write_text(
+        json.dumps({"actor": "different-security-principal"}),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            *authority,
+            "qualification-owners-record",
+            "--input",
+            str(command_path),
+        ]
+    ) == ARGUMENT_ERROR
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason_code"] == "OPERATOR_NOT_AUTHORIZED"
+    with postgres_factory.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM phase_c_formal_operator_command"
+        ).fetchone()[0] == 0
 
 
 def test_cli_rejects_production_mode_before_journal_mutation(

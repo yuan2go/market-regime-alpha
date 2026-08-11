@@ -36,6 +36,39 @@ class MultipleTestingMethod(str, Enum):
     BENJAMINI_HOCHBERG = "BENJAMINI_HOCHBERG"
 
 
+FORMAL_EVALUATION_METRIC_NAMES = (
+    "DRAWDOWN",
+    "HIT_RATE",
+    "IC",
+    "ICIR",
+    "INCREMENTAL_LIFT",
+    "MAE",
+    "MFE",
+    "POSITIVE_IC_RATIO",
+    "RANK_IC",
+    "RETURN",
+    "SPREAD",
+    "TOP_K_RETURN",
+    "TURNOVER",
+)
+FORMAL_EVALUATION_SLICE_KINDS = (
+    "ALL",
+    "LIQUIDITY",
+    "MARKET_CAP",
+    "REGIME",
+    "THEME",
+)
+FORMAL_EVALUATION_IMPLEMENTATION_IDENTITY = "formal-family-evaluation/v1"
+
+
+def adjust_multiple_testing(
+    p_values: tuple[Decimal, ...], method: MultipleTestingMethod
+) -> tuple[Decimal, ...]:
+    """Apply the frozen correction to one complete hypothesis family."""
+
+    return tuple(_adjust_p_values(list(p_values), method))
+
+
 class EvaluationMetricStatus(str, Enum):
     ESTIMATED = "ESTIMATED"
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
@@ -361,6 +394,7 @@ def run_formal_evaluation(
     created_at: datetime,
     panel_source_references: tuple[ValidationArtifactReference, ...] = (),
     frozen_trading_dates: tuple[date, ...] = (),
+    preserve_planned_dimensions: bool = False,
 ) -> FormalEvaluationResult:
     if not observations:
         raise ValueError("Evaluation Runtime requires observations")
@@ -416,6 +450,10 @@ def run_formal_evaluation(
             lambda values: _incremental_lift(values, protocol.top_k),
         ),
     )
+    if tuple(sorted(name for name, _function in metric_specs)) != (
+        FORMAL_EVALUATION_METRIC_NAMES
+    ):
+        raise RuntimeError("Formal Evaluation metric implementation identity drift")
     raw: list[
         tuple[
             int,
@@ -436,7 +474,14 @@ def run_formal_evaluation(
         ]
     ] = []
     fold_partitions = sorted(
-        {(window.fold, window.partition) for _observation, window in admitted},
+        (
+            {(window.fold, window.partition) for window in protocol.windows}
+            if preserve_planned_dimensions
+            else {
+                (window.fold, window.partition)
+                for _observation, window in admitted
+            }
+        ),
         key=lambda item: (item[0], item[1].value),
     )
     for fold, partition in fold_partitions:
@@ -669,6 +714,8 @@ def _slices(values: tuple[EvaluationObservation, ...]) -> dict[str, dict[str, tu
         groups: dict[str, list[EvaluationObservation]] = {}
         for item in values:
             groups.setdefault(getter(item), []).append(item)
+        if name == "ALL" and not groups:
+            groups["ALL"] = []
         result[name] = {key: tuple(group) for key, group in sorted(groups.items())}
     return result
 

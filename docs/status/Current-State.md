@@ -27,15 +27,35 @@ recording accepts only the Protocol reference and reloads every result-affecting
 component from its PostgreSQL owner; immutable owner-resolution receipts preserve
 the exact owner payload, identity, hash and recorded/resolved time, reject
 backdated freezes and anchor the Calendar payload to the existing PIT Artifact
-Authority. A durable Locked-OOS consumption owner keys semantic
-subject/session/label-interval evidence, so Target or Label revision, or changing
-Model, Forecast, Dataset or Protocol identity, cannot make consumed evidence new
-again. These writers can
+Authority. Formal Forecast computation accepts only Protocol/PIT/symbol/
+idempotency scope, derives DecisionTime from Formal PIT, assigns materialization
+time from PostgreSQL and resolves exact Model/Configuration/Code/Feature/Factor/
+Threshold/Dataset/Universe/Target lineage. Unsupported installed executors emit
+`NOT_ESTIMABLE`; older caller-submitted forecasts remain explicitly
+`EXPLORATORY_CALLER_SUBMITTED` and cannot enter a new Formal family evaluation.
+The Model reference is resolved by Model Governance into a content-addressed
+freeze receipt containing the current lifecycle, Registry version and exact
+Registry/Lineage governance actions. `SUSPENDED` or `RETIRED` models fail closed,
+and a later terminal transition invalidates downstream owner replay.
+
+Migration 057 freezes one content-addressed multi-target Hypothesis Family per
+Formal Protocol. One raw subject/decision-session/outcome-session path can be
+unlocked only once across Model, Forecast, Protocol, Dataset, Universe, Target
+and Label revisions, while every pre-registered Target may consume its own
+observation during that first family unlock. Family evaluation corrects all
+Target × metric × observed slice × sensitivity × fold hypotheses together and
+retains every predeclared empty fold as `NOT_ESTIMABLE` in the multiplicity
+denominator. Typed operator commands, PostgreSQL-clock audit, idempotency and
+RBAC expose owner freeze, Protocol freeze, Formal Forecast compute and family
+evaluation without a generic artifact registrar. The command actor must equal
+the authorized RBAC principal. C4 requires estimable Train and Validation floor
+metrics for every Target/fold/sensitivity before evaluating Locked OOS; its C3
+record-set comparison filters exactly the frozen Locked-OOS windows. These writers can
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.
 
 The 2026-08-11 isolated working-schema evidence resolution applied migrations
-001–056 and evaluated ten declared free-data Provider×Contract×Fact scopes:
+001–057 and evaluated ten declared free-data Provider×Contract×Fact scopes:
 BaoStock history Market Data and Adjustment Factor; BaoStock status Trading
 Calendar, Listing Status, ST Status, Trading Status and Trading Eligibility;
 BaoStock stock-basic Universe Membership; and Tencent current/minute Market Data.
@@ -47,7 +67,7 @@ Locked-OOS consumption, Formal OOS, Calibration qualification, Phase C stage or
 Production Admission evidence. This is a negative/absent evidence result, not a
 Provider-quality or Alpha conclusion.
 
-Migrations 047–056 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners, immutable Path Calibration Hypothesis evidence and the fail-closed Phase C owners described above. They do not alter migration 046, which removes reference-only
+Migrations 047–057 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners, immutable Path Calibration Hypothesis evidence and the fail-closed Phase C owners described above. They do not alter migration 046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -63,12 +83,12 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 595 | broad modular monolith; size alone is not a defect |
-| Python test files | 423 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 597 | broad modular monolith; size alone is not a defect |
+| Python test files | 427 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 56 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 185 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 185 independent business Authorities |
+| PostgreSQL migrations | 57 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 200 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 200 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |

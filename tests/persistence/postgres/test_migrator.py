@@ -83,14 +83,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (54, "calibration_qualification_authority"),
     (55, "phase_c_gate_authority"),
     (56, "phase_c_correctness_closure"),
+    (57, "formal_research_runtime_closure"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 57))
-    assert len({item.name for item in migrations}) == 56
+    assert tuple(item.version for item in migrations) == tuple(range(1, 58))
+    assert len({item.name for item in migrations}) == 57
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -112,11 +113,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 57))
+    assert tuple(item.version for item in first) == tuple(range(1, 58))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 56
+    assert len(rows) == 57
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -304,7 +305,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
     ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (56,)
+    assert applied == (57,)
     assert restored == account
 
 
@@ -612,3 +613,131 @@ def test_migration_029_adds_append_only_research_summary_authority(
         "research_summary_stage_no_delete",
         "research_summary_stage_no_update",
     }
+
+
+def test_migration_057_upgrades_056_without_mutating_prior_authorities(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:56]).apply_all(postgres_factory)
+    target_hash = canonical_hash({"target": "legacy-056"})
+    dataset_hash = canonical_hash({"dataset": "legacy-056"})
+    owner_payload = {
+        "schema_version": "historical-sample-dataset/v1",
+        "target_reference": {
+            "artifact_kind": "OUTCOME_TARGET",
+            "artifact_id": "legacy-056-target",
+            "content_hash": target_hash,
+        },
+    }
+    owner_payload_hash = canonical_hash(owner_payload)
+    protocol_hash = canonical_hash({"protocol": "legacy-056"})
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO outcome_target_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                protocol_json, created_at
+            ) VALUES (%s, %s, 'legacy-056', %s, %s)
+            """,
+            (
+                "legacy-056-target-protocol",
+                canonical_hash({"target_protocol": "legacy-056"}),
+                Jsonb({"schema_version": "outcome-target-protocol/v1"}),
+                NOW,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO formal_research_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                outcome_target_protocol_id, evaluation_protocol_id,
+                trading_calendar_id, trading_calendar_hash,
+                payload_json, locked_at, created_at
+            ) VALUES (%s, %s, 'legacy-056', %s, 'legacy-evaluation',
+                      'legacy-calendar', %s, %s, %s, %s)
+            """,
+            (
+                "legacy-056-formal-protocol",
+                protocol_hash,
+                "legacy-056-target-protocol",
+                canonical_hash({"calendar": "legacy-056"}),
+                Jsonb({"schema_version": "formal-research-protocol/v1"}),
+                NOW,
+                NOW,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO formal_research_protocol_component_owner_resolution(
+                protocol_id, component_role, artifact_kind,
+                artifact_id, artifact_hash, owner_kind,
+                owner_artifact_id, owner_artifact_hash,
+                owner_payload_hash, owner_payload_json,
+                owner_recorded_at, resolved_at
+            ) VALUES (
+                'legacy-056-formal-protocol',
+                'historical_sample_dataset_reference',
+                'HISTORICAL_SAMPLE_DATASET', 'legacy-056-dataset', %s,
+                'RESEARCH_VALIDATION_AUTHORITY', 'legacy-056-dataset', %s,
+                %s, %s, %s, %s
+            )
+            """,
+            (
+                dataset_hash,
+                dataset_hash,
+                owner_payload_hash,
+                Jsonb(owner_payload),
+                NOW,
+                NOW,
+            ),
+        )
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (57, "formal_research_runtime_closure"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = tuple(
+            str(value)
+            for value in connection.execute(
+                """
+                SELECT to_regclass('frozen_hypothesis_family'),
+                       to_regclass('formal_forecast_computation_receipt'),
+                       to_regclass('locked_oos_raw_evidence_unlock'),
+                       to_regclass('locked_oos_target_observation_consumption'),
+                       to_regclass('formal_hypothesis_family_evaluation')
+                """
+            ).fetchone()
+        )
+        old_migration = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 46"
+        ).fetchone()
+        old_consumption = connection.execute(
+            "SELECT to_regclass('locked_oos_evidence_consumption')"
+        ).fetchone()
+        legacy_historical = connection.execute(
+            """
+            SELECT target_id, target_hash, dataset_id, dataset_hash,
+                   owner_payload_hash
+            FROM formal_research_protocol_historical_dataset
+            WHERE formal_protocol_id = 'legacy-056-formal-protocol'
+            """
+        ).fetchone()
+    assert tables == (
+        "frozen_hypothesis_family",
+        "formal_forecast_computation_receipt",
+        "locked_oos_raw_evidence_unlock",
+        "locked_oos_target_observation_consumption",
+        "formal_hypothesis_family_evaluation",
+    )
+    assert old_migration is not None
+    assert old_consumption == ("locked_oos_evidence_consumption",)
+    assert legacy_historical == (
+        "legacy-056-target",
+        target_hash,
+        "legacy-056-dataset",
+        dataset_hash,
+        owner_payload_hash,
+    )

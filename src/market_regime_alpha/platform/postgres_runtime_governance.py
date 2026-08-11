@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from typing import Any, Mapping
@@ -20,8 +21,11 @@ from market_regime_alpha.platform.postgres_governance import (
     PostgresModelRegistryRepository,
 )
 from market_regime_alpha.platform.governance_serialization import (
+    model_registration_from_dict,
     model_registration_to_dict,
 )
+from market_regime_alpha.platform.contracts import ModelLifecycleStatus
+from market_regime_alpha.platform.model_registry import ModelRegistration
 from market_regime_alpha.platform.repositories import VersionConflictError
 from market_regime_alpha.platform.runtime_governance import (
     AssignmentLane,
@@ -44,6 +48,156 @@ from market_regime_alpha.platform.runtime_governance import (
 
 class ModelGovernanceIntegrityError(RuntimeError):
     """Stored governance evidence cannot be reconstructed unambiguously."""
+
+
+@dataclass(frozen=True, slots=True)
+class FormalResearchModelLineageResolution:
+    """Freeze-time Model Governance answer for one exact research lineage."""
+
+    resolution_id: ArtifactId
+    resolution_hash: str
+    lineage: ModelVersionLineage
+    registration: ModelRegistration
+    registry_version: int
+    registry_governance_revision: int
+    registry_action_type: str
+    registry_action_hash: str
+    lineage_governance_revision: int
+    lineage_action_hash: str
+    owner_recorded_at: datetime
+    schema_version: str = "formal-research-model-lineage-resolution/v1"
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "lineage": self.lineage.to_canonical_dict(),
+            "registration": model_registration_to_dict(self.registration),
+            "registry_version": self.registry_version,
+            "registry_governance_revision": self.registry_governance_revision,
+            "registry_action_type": self.registry_action_type,
+            "registry_action_hash": self.registry_action_hash,
+            "lineage_governance_revision": self.lineage_governance_revision,
+            "lineage_action_hash": self.lineage_action_hash,
+            "owner_recorded_at": self.owner_recorded_at.isoformat(),
+        }
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "resolution_id": str(self.resolution_id),
+            "resolution_hash": self.resolution_hash,
+            **self.identity_payload(),
+        }
+
+
+def resolve_formal_research_model_lineage(
+    connection: Any,
+    *,
+    lineage_id: ArtifactId,
+    lineage_hash: str,
+) -> FormalResearchModelLineageResolution:
+    """Return the Model Governance-owned current research eligibility receipt."""
+
+    row = connection.execute(
+        """
+        SELECT lineage.lineage_hash, lineage.payload_json, lineage.created_at,
+               lineage.governance_revision, registration.registration_json,
+               registration.definition_hash, registration.lifecycle_status,
+               registration.evidence_level, registration.version,
+               lineage_action.action_type, lineage_action.action_hash,
+               lineage_action.created_at
+        FROM model_version_lineage AS lineage
+        JOIN model_registrations AS registration
+          ON registration.model_id = lineage.model_id
+        JOIN model_governance_action AS lineage_action
+          ON lineage_action.governance_revision = lineage.governance_revision
+        WHERE lineage.lineage_id = %s
+        """,
+        (str(lineage_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise ModelGovernanceIntegrityError("Model Version Lineage owner is missing")
+    try:
+        lineage = ModelVersionLineage.from_canonical_dict(dict(row[1]))
+        registration_payload = json.loads(str(row[4]))
+        if not isinstance(registration_payload, Mapping):
+            raise ValueError("Model Registration payload must be an object")
+        registration = model_registration_from_dict(registration_payload)
+        lineage.validate_definition(registration.definition)
+        lifecycle_status = ModelLifecycleStatus(str(row[6]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ModelGovernanceIntegrityError(
+            "Model Version Lineage governance replay failed"
+        ) from exc
+    if (
+        lineage.lineage_id != lineage_id
+        or lineage.lineage_hash != lineage_hash
+        or str(row[0]) != lineage_hash
+        or str(row[5]) != lineage.definition_hash
+        or registration.lifecycle_status is not lifecycle_status
+        or registration.evidence_level.value != str(row[7])
+        or int(row[8]) != len(registration.transitions)
+        or str(row[9]) != "MODEL_VERSION_LINEAGE"
+    ):
+        raise ModelGovernanceIntegrityError(
+            "Model Version Lineage governance binding mismatch"
+        )
+    if lifecycle_status in {
+        ModelLifecycleStatus.SUSPENDED,
+        ModelLifecycleStatus.RETIRED,
+    }:
+        raise ModelGovernanceIntegrityError(
+            f"Model Version Lineage lifecycle is terminal: {lifecycle_status.value}"
+        )
+    registry_action = connection.execute(
+        """
+        SELECT action.governance_revision, action.action_type,
+               action.action_hash, action.created_at, command.result_version
+        FROM model_governance_action AS action
+        JOIN governance_commands AS command
+          ON command.idempotency_key = action.idempotency_key
+        WHERE action.aggregate_id = %s
+          AND action.action_type IN ('MODEL_REGISTER', 'MODEL_LIFECYCLE_TRANSITION')
+        ORDER BY action.governance_revision DESC
+        LIMIT 1
+        """,
+        (str(lineage.model_id),),
+    ).fetchone()
+    if registry_action is None or int(registry_action[4]) != int(row[8]):
+        raise ModelGovernanceIntegrityError(
+            "Model Registration current governance action is missing or stale"
+        )
+    owner_recorded_at = max(row[2], row[11], registry_action[3]).replace(
+        microsecond=0
+    )
+    values = {
+        "lineage": lineage,
+        "registration": registration,
+        "registry_version": int(row[8]),
+        "registry_governance_revision": int(registry_action[0]),
+        "registry_action_type": str(registry_action[1]),
+        "registry_action_hash": str(registry_action[2]),
+        "lineage_governance_revision": int(row[3]),
+        "lineage_action_hash": str(row[10]),
+        "owner_recorded_at": owner_recorded_at,
+    }
+    identity_payload = {
+        "schema_version": "formal-research-model-lineage-resolution/v1",
+        "lineage": lineage.to_canonical_dict(),
+        "registration": model_registration_to_dict(registration),
+        **{
+            key: value.isoformat() if isinstance(value, datetime) else value
+            for key, value in values.items()
+            if key not in {"lineage", "registration"}
+        },
+    }
+    digest = canonical_hash(identity_payload)
+    return FormalResearchModelLineageResolution(
+        resolution_id=ArtifactId(
+            f"formal-research-model-lineage-resolution:{digest[7:]}"
+        ),
+        resolution_hash=digest,
+        **values,
+    )
 
 
 class ModelSelectionRejected(RuntimeError):

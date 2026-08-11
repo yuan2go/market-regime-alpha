@@ -360,6 +360,7 @@ class HistoricalSampleQualificationDecision:
     dataset_reference: ValidationArtifactReference
     formal_protocol_reference: ValidationArtifactReference | None
     formal_pit_reference: ValidationArtifactReference | None
+    formal_pit_references: tuple[ValidationArtifactReference, ...]
     provider_fact_decision_references: tuple[ValidationArtifactReference, ...]
     outcome: QualificationOutcome
     qualified: bool
@@ -369,6 +370,7 @@ class HistoricalSampleQualificationDecision:
     actor: str
     reason: str
     reason_codes: tuple[str, ...]
+    formal_forecast_receipt_references: tuple[ValidationArtifactReference, ...] = ()
     schema_version: str = "historical-sample-qualification-decision/v1"
 
     def __post_init__(self) -> None:
@@ -393,10 +395,31 @@ class HistoricalSampleQualificationDecision:
             self.formal_pit_reference.artifact_kind != "FORMAL_PIT_EVIDENCE"
         ):
             raise ValueError("Historical Sample decision Formal PIT kind mismatch")
+        if self.formal_pit_references != _ordered_references(
+            self.formal_pit_references
+        ) or any(
+            item.artifact_kind != "FORMAL_PIT_EVIDENCE"
+            for item in self.formal_pit_references
+        ):
+            raise ValueError("Historical Sample decision Formal PIT set mismatch")
+        if self.formal_pit_reference is None:
+            if self.formal_pit_references:
+                raise ValueError("Historical Sample primary PIT projection is missing")
+        elif not self.formal_pit_references or self.formal_pit_reference != self.formal_pit_references[0]:
+            raise ValueError("Historical Sample primary PIT projection mismatch")
         if self.provider_fact_decision_references != _ordered_references(
             self.provider_fact_decision_references
         ):
             raise ValueError("Provider Fact decisions must be unique and sorted")
+        if self.formal_forecast_receipt_references != _ordered_references(
+            self.formal_forecast_receipt_references
+        ) or any(
+            item.artifact_kind != "FORMAL_FORECAST_COMPUTATION_RECEIPT"
+            for item in self.formal_forecast_receipt_references
+        ):
+            raise ValueError("Historical Sample Forecast receipts must be unique and sorted")
+        if self.qualified and not self.formal_forecast_receipt_references:
+            raise ValueError("Qualified Historical Sample requires Formal Forecast receipts")
         if canonical_hash(self.identity_payload()) != self.decision_hash:
             raise ValueError("Historical Sample Qualification hash mismatch")
         if self.decision_id != ArtifactId(
@@ -407,8 +430,15 @@ class HistoricalSampleQualificationDecision:
     @classmethod
     def create(cls, **values: Any) -> HistoricalSampleQualificationDecision:
         normalized = dict(values)
+        primary = values["formal_pit_reference"]
+        normalized["formal_pit_references"] = _ordered_references(
+            tuple(values.get("formal_pit_references") or (() if primary is None else (primary,)))
+        )
         normalized["provider_fact_decision_references"] = _ordered_references(
             tuple(values["provider_fact_decision_references"])
+        )
+        normalized["formal_forecast_receipt_references"] = _ordered_references(
+            tuple(values.get("formal_forecast_receipt_references") or ())
         )
         normalized["reason_codes"] = tuple(sorted(set(values["reason_codes"])))
         payload = _historical_decision_payload(**normalized)
@@ -422,7 +452,11 @@ class HistoricalSampleQualificationDecision:
             dataset_reference=self.dataset_reference,
             formal_protocol_reference=self.formal_protocol_reference,
             formal_pit_reference=self.formal_pit_reference,
+            formal_pit_references=self.formal_pit_references,
             provider_fact_decision_references=self.provider_fact_decision_references,
+            formal_forecast_receipt_references=(
+                self.formal_forecast_receipt_references
+            ),
             outcome=self.outcome,
             qualified=self.qualified,
             revision=self.revision,
@@ -454,6 +488,17 @@ class HistoricalSampleQualificationDecision:
                 value["formal_protocol_reference"]
             ),
             formal_pit_reference=_optional_reference(value["formal_pit_reference"]),
+            formal_pit_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in _sequence(
+                    value.get(
+                        "formal_pit_references",
+                        []
+                        if value["formal_pit_reference"] is None
+                        else [value["formal_pit_reference"]],
+                    )
+                )
+            ),
             provider_fact_decision_references=tuple(
                 ValidationArtifactReference.from_canonical_dict(_mapping(item))
                 for item in _sequence(value["provider_fact_decision_references"])
@@ -466,6 +511,12 @@ class HistoricalSampleQualificationDecision:
             actor=str(value["actor"]),
             reason=str(value["reason"]),
             reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+            formal_forecast_receipt_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in _sequence(
+                    value.get("formal_forecast_receipt_references", ())
+                )
+            ),
             schema_version=str(value["schema_version"]),
         )
 
@@ -478,6 +529,7 @@ class FormalOOSQualificationDecision:
     formal_protocol_reference: ValidationArtifactReference
     evaluation_result_reference: ValidationArtifactReference
     historical_sample_decision_reference: ValidationArtifactReference
+    historical_sample_decision_references: tuple[ValidationArtifactReference, ...]
     formal_pit_reference: ValidationArtifactReference
     outcome: QualificationOutcome
     formal_evaluation_complete: bool
@@ -488,6 +540,7 @@ class FormalOOSQualificationDecision:
     actor: str
     reason: str
     reason_codes: tuple[str, ...]
+    formal_pit_references: tuple[ValidationArtifactReference, ...] = ()
     schema_version: str = "formal-oos-qualification-decision/v1"
 
     def __post_init__(self) -> None:
@@ -508,13 +561,41 @@ class FormalOOSQualificationDecision:
         expected_kinds = {
             "policy_reference": "FORMAL_OOS_QUALIFICATION_POLICY",
             "formal_protocol_reference": "FORMAL_RESEARCH_PROTOCOL",
-            "evaluation_result_reference": "FORMAL_EVALUATION_RESULT",
             "historical_sample_decision_reference": "HISTORICAL_SAMPLE_QUALIFICATION_DECISION",
             "formal_pit_reference": "FORMAL_PIT_EVIDENCE",
         }
         for name, kind in expected_kinds.items():
             if getattr(self, name).artifact_kind != kind:
                 raise ValueError(f"Formal OOS {name} kind mismatch")
+        if not self.formal_pit_references:
+            object.__setattr__(self, "formal_pit_references", (self.formal_pit_reference,))
+        if (
+            self.formal_pit_references
+            != _ordered_references(self.formal_pit_references)
+            or self.formal_pit_reference != self.formal_pit_references[0]
+            or any(
+                item.artifact_kind != "FORMAL_PIT_EVIDENCE"
+                for item in self.formal_pit_references
+            )
+        ):
+            raise ValueError("Formal OOS PIT Evidence family mismatch")
+        if self.historical_sample_decision_references != _ordered_references(
+            self.historical_sample_decision_references
+        ) or (
+            not self.historical_sample_decision_references
+            or self.historical_sample_decision_reference
+            != self.historical_sample_decision_references[0]
+            or any(
+                item.artifact_kind != "HISTORICAL_SAMPLE_QUALIFICATION_DECISION"
+                for item in self.historical_sample_decision_references
+            )
+        ):
+            raise ValueError("Formal OOS Historical decision family mismatch")
+        if self.evaluation_result_reference.artifact_kind not in {
+            "FORMAL_EVALUATION_RESULT",
+            "FORMAL_HYPOTHESIS_FAMILY_EVALUATION_RESULT",
+        }:
+            raise ValueError("Formal OOS evaluation_result_reference kind mismatch")
         if canonical_hash(self.identity_payload()) != self.decision_hash:
             raise ValueError("Formal OOS Qualification hash mismatch")
         if self.decision_id != ArtifactId(
@@ -525,6 +606,14 @@ class FormalOOSQualificationDecision:
     @classmethod
     def create(cls, **values: Any) -> FormalOOSQualificationDecision:
         normalized = dict(values)
+        primary = values["historical_sample_decision_reference"]
+        normalized["historical_sample_decision_references"] = _ordered_references(
+            tuple(values.get("historical_sample_decision_references") or (primary,))
+        )
+        primary_pit = values["formal_pit_reference"]
+        normalized["formal_pit_references"] = _ordered_references(
+            tuple(values.get("formal_pit_references") or (primary_pit,))
+        )
         normalized["reason_codes"] = tuple(sorted(set(values["reason_codes"])))
         payload = _formal_oos_decision_payload(**normalized)
         decision_id, decision_hash = content_identity(
@@ -538,7 +627,11 @@ class FormalOOSQualificationDecision:
             formal_protocol_reference=self.formal_protocol_reference,
             evaluation_result_reference=self.evaluation_result_reference,
             historical_sample_decision_reference=self.historical_sample_decision_reference,
+            historical_sample_decision_references=(
+                self.historical_sample_decision_references
+            ),
             formal_pit_reference=self.formal_pit_reference,
+            formal_pit_references=self.formal_pit_references,
             outcome=self.outcome,
             formal_evaluation_complete=self.formal_evaluation_complete,
             formal_oos_passed=self.formal_oos_passed,
@@ -576,6 +669,15 @@ class FormalOOSQualificationDecision:
             historical_sample_decision_reference=ValidationArtifactReference.from_canonical_dict(
                 _mapping(value["historical_sample_decision_reference"])
             ),
+            historical_sample_decision_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in _sequence(
+                    value.get(
+                        "historical_sample_decision_references",
+                        [value["historical_sample_decision_reference"]],
+                    )
+                )
+            ),
             formal_pit_reference=ValidationArtifactReference.from_canonical_dict(
                 _mapping(value["formal_pit_reference"])
             ),
@@ -588,6 +690,14 @@ class FormalOOSQualificationDecision:
             actor=str(value["actor"]),
             reason=str(value["reason"]),
             reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+            formal_pit_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in _sequence(
+                    value.get(
+                        "formal_pit_references", [value["formal_pit_reference"]]
+                    )
+                )
+            ),
             schema_version=str(value["schema_version"]),
         )
 
@@ -659,6 +769,58 @@ def evaluate_metric_floor_payloads(
     return QualificationOutcome.SATISFIED, ()
 
 
+def evaluate_pre_oos_metric_readiness(
+    *,
+    policy: FormalOOSQualificationPolicy,
+    metrics: tuple[Mapping[str, Any], ...],
+    required_partition_folds: Mapping[str, tuple[int, ...]],
+) -> tuple[QualificationOutcome, tuple[str, ...]]:
+    """Require estimable Train and Validation evidence before Locked OOS."""
+
+    required_partitions = {"TRAIN", "VALIDATION"}
+    if set(required_partition_folds) != required_partitions or any(
+        not folds or len(folds) != len(set(folds))
+        for folds in required_partition_folds.values()
+    ):
+        return QualificationOutcome.NOT_ESTIMABLE, (
+            "PRE_OOS_PARTITION_PROTOCOL_INCOMPLETE",
+        )
+    reasons: set[str] = set()
+    for partition in sorted(required_partitions):
+        for fold in sorted(required_partition_folds[partition]):
+            for floor in policy.metric_floors:
+                for multiplier in policy.required_sensitivity_multipliers:
+                    matches = tuple(
+                        item
+                        for item in metrics
+                        if (
+                            str(item["partition"]) == partition
+                            and str(item["slice_kind"]) == "ALL"
+                            and str(item["slice_value"]) == "ALL"
+                            and str(item["metric_name"]) == floor.metric_name
+                            and int(item["fold"]) == fold
+                            and Decimal(
+                                str(item["sensitivity_return_multiplier"])
+                            )
+                            == multiplier
+                        )
+                    )
+                    suffix = (
+                        f"{partition}_{floor.metric_name}_{multiplier}_FOLD_{fold}"
+                    )
+                    if len(matches) != 1:
+                        reasons.add(f"PRE_OOS_METRIC_MISSING_OR_DUPLICATE_{suffix}")
+                        continue
+                    metric = matches[0]
+                    if str(metric["status"]) != "ESTIMATED":
+                        reasons.add(f"PRE_OOS_METRIC_NOT_ESTIMABLE_{suffix}")
+                    elif int(metric["sample_count"]) < policy.minimum_sample_count:
+                        reasons.add(f"PRE_OOS_SAMPLE_FLOOR_NOT_MET_{suffix}")
+    if reasons:
+        return QualificationOutcome.NOT_ESTIMABLE, tuple(sorted(reasons))
+    return QualificationOutcome.SATISFIED, ()
+
+
 def _validate_decision_common(
     *,
     decision_hash: str,
@@ -725,7 +887,7 @@ def _formal_evaluation_observation_binding_payload(
 
 
 def _historical_decision_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": "historical-sample-qualification-decision/v1",
         "dataset_reference": values["dataset_reference"].to_canonical_dict(),
         "formal_protocol_reference": _reference_payload(
@@ -749,10 +911,21 @@ def _historical_decision_payload(**values: Any) -> dict[str, Any]:
         "reason": values["reason"],
         "reason_codes": list(values["reason_codes"]),
     }
+    pit_references = values.get("formal_pit_references") or ()
+    if len(pit_references) > 1:
+        payload["formal_pit_references"] = [
+            item.to_canonical_dict() for item in pit_references
+        ]
+    forecast_receipts = values.get("formal_forecast_receipt_references") or ()
+    if forecast_receipts:
+        payload["formal_forecast_receipt_references"] = [
+            item.to_canonical_dict() for item in forecast_receipts
+        ]
+    return payload
 
 
 def _formal_oos_decision_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": "formal-oos-qualification-decision/v1",
         "policy_reference": values["policy_reference"].to_canonical_dict(),
         "formal_protocol_reference": values[
@@ -779,6 +952,17 @@ def _formal_oos_decision_payload(**values: Any) -> dict[str, Any]:
         "reason": values["reason"],
         "reason_codes": list(values["reason_codes"]),
     }
+    historical = values.get("historical_sample_decision_references") or ()
+    if len(historical) > 1:
+        payload["historical_sample_decision_references"] = [
+            item.to_canonical_dict() for item in historical
+        ]
+    pits = values.get("formal_pit_references") or ()
+    if len(pits) > 1:
+        payload["formal_pit_references"] = [
+            item.to_canonical_dict() for item in pits
+        ]
+    return payload
 
 
 def _ordered_references(

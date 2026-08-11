@@ -10,6 +10,8 @@ from pathlib import Path
 import time as wall_time
 from typing import Any, Mapping, Sequence
 
+from psycopg.types.json import Jsonb
+
 from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
     RuntimeTickCommand,
@@ -84,9 +86,27 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
 from market_regime_alpha.application.research_validation.calibration_qualification import (
     CalibrationQualificationPolicy,
 )
-from market_regime_alpha.application.research_validation.formal_protocol import (
-    FormalResearchProtocol,
-    OutcomeTargetBoundMultiTargetForecast,
+from market_regime_alpha.application.research_validation.calibration import (
+    CalibrationProtocol,
+)
+from market_regime_alpha.application.research_validation.factor_research import (
+    FactorResearchCatalog,
+)
+from market_regime_alpha.application.research_validation.factor_extraction import (
+    ResearchPanelEnrichment,
+)
+from market_regime_alpha.application.research_validation.formal_evaluation import (
+    FormalEvaluationProtocol,
+)
+from market_regime_alpha.application.research_validation.formal_forecast_computation import (
+    FormalForecastComputationRequest,
+)
+from market_regime_alpha.application.research_validation.formal_hypothesis_family import (
+    FamilyEvaluationObservationBindings,
+)
+from market_regime_alpha.application.research_validation.formal_protocol_components import (
+    FeatureDefinitionSet,
+    ThresholdPolicy,
 )
 from market_regime_alpha.application.research_validation.phase_c_gates import (
     EntryHoldingExitQualificationPolicy,
@@ -96,6 +116,7 @@ from market_regime_alpha.application.research_validation.postgres_calibration_qu
     PostgresCalibrationQualificationAuthority,
 )
 from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    FormalProtocolFreezeScope,
     PostgresFormalProtocolRepository,
 )
 from market_regime_alpha.application.research_validation.postgres_phase_c_gates import (
@@ -107,6 +128,12 @@ from market_regime_alpha.application.research_validation.postgres_qualification 
 from market_regime_alpha.application.research_validation.qualification import (
     FormalEvaluationObservationBinding,
     FormalOOSQualificationPolicy,
+)
+from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
+    PostgresTargetOutcomeRepository,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    OutcomeTargetProtocol,
 )
 from market_regime_alpha.application.runtime_operations.observability import (
     PostgresRuntimeObservability,
@@ -135,6 +162,21 @@ from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyDayObservation,
     StrategyShadowDayOperator,
 )
+from market_regime_alpha.application.strategy_shadow.contracts import (
+    StrategyShadowPolicy,
+    restore_strategy_shadow_artifact,
+    strategy_shadow_artifact_payload,
+)
+from market_regime_alpha.application.strategy_shadow.portfolio import (
+    ShadowPortfolio,
+    ShadowPortfolioPolicy,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_portfolio import (
+    PostgresShadowPortfolioRepository,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_repository import (
+    PostgresStrategyShadowRepository,
+)
 from market_regime_alpha.application.strategy_shadow.portfolio_operator import (
     PortfolioShadowDayInput,
     PortfolioShadowDayOperator,
@@ -153,6 +195,10 @@ from market_regime_alpha.data.providers.public_composite import (
 from market_regime_alpha.data.free_operational_policy import (
     canonical_free_operational_evidence_policy,
 )
+from market_regime_alpha.data.postgres_trading_calendar import (
+    PostgresPITTradingCalendarSnapshotRepository,
+)
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.data_sources.a_share_bars import (
     AShareDataError,
     BaoStockADataProvider,
@@ -316,16 +362,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     protocol_record.add_argument("--input", type=Path, required=True)
+    owners_record = subparsers.add_parser(
+        "qualification-owners-record",
+        help=(
+            "Record the exact typed pre-Protocol owner package; Model Lineage "
+            "and PIT Dataset/Universe remain owned by their existing CLIs."
+        ),
+    )
+    owners_record.add_argument("--input", type=Path, required=True)
     forecast_record = subparsers.add_parser(
         "qualification-forecast-record",
-        help="Record one OutcomeTarget-bound C0 MultiTargetForecast.",
+        help=(
+            "Compute one owner-controlled Formal MultiTargetForecast from "
+            "Formal Protocol and Formal PIT references."
+        ),
     )
     forecast_record.add_argument("--input", type=Path, required=True)
     evaluation_record = subparsers.add_parser(
         "qualification-evaluation-record",
         help=(
-            "Resolve Forecast/Outcome/Panel bindings through PostgreSQL and record "
-            "one C4 Formal Evaluation candidate."
+            "Resolve the complete frozen Target family through PostgreSQL and "
+            "record one family-level C4 Evaluation candidate."
         ),
     )
     evaluation_record.add_argument("--input", type=Path, required=True)
@@ -335,7 +392,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_status.add_argument("--dataset-id", required=True)
     historical_status.add_argument("--formal-protocol-id")
-    historical_status.add_argument("--formal-pit-evidence-id")
+    historical_status.add_argument(
+        "--formal-pit-evidence-id", action="append", dest="formal_pit_evidence_ids"
+    )
     historical_status.add_argument("--reason", required=True)
     historical_status.add_argument("--idempotency-key", required=True)
     oos_status = subparsers.add_parser(
@@ -345,8 +404,18 @@ def build_parser() -> argparse.ArgumentParser:
     oos_status.add_argument("--policy", type=Path, required=True)
     oos_status.add_argument("--formal-protocol-id", required=True)
     oos_status.add_argument("--evaluation-result-id", required=True)
-    oos_status.add_argument("--historical-sample-decision-id", required=True)
-    oos_status.add_argument("--formal-pit-evidence-id", required=True)
+    oos_status.add_argument(
+        "--historical-sample-decision-id",
+        action="append",
+        dest="historical_sample_decision_ids",
+        required=True,
+    )
+    oos_status.add_argument(
+        "--formal-pit-evidence-id",
+        action="append",
+        dest="formal_pit_evidence_ids",
+        required=True,
+    )
     oos_status.add_argument("--reason", required=True)
     oos_status.add_argument("--idempotency-key", required=True)
     calibration_status = subparsers.add_parser(
@@ -530,77 +599,112 @@ def _dispatch(
         return PostgresRecoveryAudit(factory).inspect(
             checked_at=_instant(args.checked_at)
         ).to_canonical_dict()
+    if args.operation == "qualification-owners-record":
+        payload = _load_json_object(args.input)
+        _require_principal_actor(args, payload)
+        return _record_phase_c_owner_package(
+            factory,
+            payload,
+        )
     if args.operation == "qualification-protocol-record":
         payload = _load_json_object(args.input)
-        protocol = FormalResearchProtocol.from_canonical_dict(
-            dict(_object_value(payload["formal_protocol"], "formal_protocol"))
-        )
-        if set(payload) != {"formal_protocol"}:
+        expected = {"freeze_scope", "actor", "reason", "idempotency_key"}
+        if set(payload) != expected:
             raise ValueError(
-                "qualification-protocol-record accepts only formal_protocol; "
-                "all component payloads are reloaded from PostgreSQL owners"
+                "qualification-protocol-record requires a references-only freeze scope plus "
+                "actor, reason and idempotency_key; all component payloads are "
+                "reloaded from PostgreSQL owners"
             )
+        _require_principal_actor(args, payload)
+        actor = str(payload["actor"])
+        reason = str(payload["reason"])
+        idempotency_key = str(payload["idempotency_key"])
+        if not actor.strip() or not reason.strip() or not idempotency_key.strip():
+            raise ValueError("Formal Protocol actor, reason and idempotency key are required")
+        scope = FormalProtocolFreezeScope.from_canonical_dict(
+            dict(_object_value(payload["freeze_scope"], "freeze_scope"))
+        )
         recorded_protocol = PostgresFormalProtocolRepository(
             factory,
             apply_migrations=False,
-        ).record_protocol(
-            protocol=protocol,
+        ).freeze_protocol(
+            scope=scope,
+            actor=actor,
+            reason=reason,
+            idempotency_key=idempotency_key,
         )
         return {
             "operation": "QUALIFICATION_PROTOCOL_RECORD",
             **recorded_protocol.to_canonical_dict(),
         }
     if args.operation == "qualification-forecast-record":
-        forecast = OutcomeTargetBoundMultiTargetForecast.from_canonical_dict(
-            dict(_load_json_object(args.input))
+        payload = _load_json_object(args.input)
+        if set(payload) != {"request", "actor", "reason"}:
+            raise ValueError(
+                "qualification-forecast-record requires request, actor and reason"
+            )
+        _require_principal_actor(args, payload)
+        request = FormalForecastComputationRequest.from_canonical_dict(
+            dict(_object_value(payload["request"], "request"))
         )
-        recorded_forecast = PostgresFormalProtocolRepository(
+        receipt = PostgresFormalProtocolRepository(
             factory,
             apply_migrations=False,
-        ).record_forecast(forecast)
+        ).compute_forecast(
+            request,
+            actor=str(payload["actor"]),
+            reason=str(payload["reason"]),
+        )
         return {
-            "operation": "QUALIFICATION_FORECAST_RECORD",
-            **recorded_forecast.to_canonical_dict(),
+            "operation": "QUALIFICATION_FORECAST_COMPUTE",
+            **receipt.to_canonical_dict(),
         }
     if args.operation == "qualification-evaluation-record":
         payload = _load_json_object(args.input)
-        expected = {
+        common = {
             "formal_protocol_id",
-            "panel_reference",
-            "target_reference",
-            "observation_bindings",
-            "formal_pit_evidence_id",
+            "observation_groups",
+            "actor",
+            "reason",
+            "idempotency_key",
         }
-        if set(payload) != expected:
+        pit_keys = {"formal_pit_evidence_id", "formal_pit_evidence_ids"}
+        if set(payload).difference(common) not in (
+            {"formal_pit_evidence_id"},
+            {"formal_pit_evidence_ids"},
+        ) or not common.issubset(payload):
             raise ValueError(
                 "qualification-evaluation-record accepts only immutable owner "
                 "references; result time is assigned by PostgreSQL"
             )
+        raw_pit_ids = (
+            (payload["formal_pit_evidence_id"],)
+            if "formal_pit_evidence_id" in payload
+            else _array_value(payload["formal_pit_evidence_ids"], "formal_pit_evidence_ids")
+        )
+        if not raw_pit_ids or set(payload).intersection(pit_keys) == pit_keys:
+            raise ValueError("Formal Family Evaluation requires a non-empty PIT owner set")
+        _require_principal_actor(args, payload)
+        pit_ids = tuple(ArtifactId(str(item)) for item in raw_pit_ids)
         evaluation_result = PostgresResearchQualificationAuthority(
             factory,
             apply_migrations=False,
-        ).record_evaluation_candidate(
+        ).record_family_evaluation_candidate(
             formal_protocol_id=ArtifactId(str(payload["formal_protocol_id"])),
-            panel_reference=ValidationArtifactReference.from_canonical_dict(
-                _object_value(payload["panel_reference"], "panel_reference")
-            ),
-            target_reference=ValidationArtifactReference.from_canonical_dict(
-                _object_value(payload["target_reference"], "target_reference")
-            ),
-            observation_bindings=tuple(
-                FormalEvaluationObservationBinding.from_canonical_dict(
-                    _object_value(item, "observation_bindings[]")
-                )
+            observation_groups=tuple(
+                _family_observation_group(item)
                 for item in _array_value(
-                    payload["observation_bindings"], "observation_bindings"
+                    payload["observation_groups"], "observation_groups"
                 )
             ),
-            formal_pit_evidence_id=ArtifactId(
-                str(payload["formal_pit_evidence_id"])
-            ),
+            formal_pit_evidence_id=pit_ids[0],
+            formal_pit_evidence_ids=pit_ids,
+            actor=str(payload["actor"]),
+            reason=str(payload["reason"]),
+            idempotency_key=str(payload["idempotency_key"]),
         )
         return {
-            "operation": "QUALIFICATION_EVALUATION_RECORD",
+            "operation": "QUALIFICATION_FAMILY_EVALUATION_RECORD",
             "result_id": str(evaluation_result.result_id),
             "result_hash": evaluation_result.result_hash,
             **evaluation_result.identity_payload(),
@@ -618,8 +722,11 @@ def _dispatch(
             ),
             formal_pit_evidence_id=(
                 None
-                if args.formal_pit_evidence_id is None
-                else ArtifactId(args.formal_pit_evidence_id)
+                if not args.formal_pit_evidence_ids
+                else ArtifactId(args.formal_pit_evidence_ids[0])
+            ),
+            formal_pit_evidence_ids=tuple(
+                ArtifactId(item) for item in (args.formal_pit_evidence_ids or ())
             ),
             actor=args.principal_id,
             reason=args.reason,
@@ -641,9 +748,15 @@ def _dispatch(
             formal_protocol_id=ArtifactId(args.formal_protocol_id),
             evaluation_result_id=ArtifactId(args.evaluation_result_id),
             historical_sample_decision_id=ArtifactId(
-                args.historical_sample_decision_id
+                args.historical_sample_decision_ids[0]
             ),
-            formal_pit_evidence_id=ArtifactId(args.formal_pit_evidence_id),
+            historical_sample_decision_ids=tuple(
+                ArtifactId(item) for item in args.historical_sample_decision_ids
+            ),
+            formal_pit_evidence_id=ArtifactId(args.formal_pit_evidence_ids[0]),
+            formal_pit_evidence_ids=tuple(
+                ArtifactId(item) for item in args.formal_pit_evidence_ids
+            ),
             actor=args.principal_id,
             reason=args.reason,
             idempotency_key=args.idempotency_key,
@@ -1298,6 +1411,295 @@ def _array_value(value: object, label: str) -> tuple[object, ...]:
     return tuple(value)
 
 
+def _family_observation_group(
+    value: object,
+) -> FamilyEvaluationObservationBindings:
+    group = _object_value(value, "observation_groups[]")
+    if set(group) != {
+        "target_reference",
+        "panel_reference",
+        "observation_bindings",
+    }:
+        raise ValueError(
+            "observation_groups[] accepts only Target, Panel and immutable bindings"
+        )
+    return FamilyEvaluationObservationBindings(
+        target_reference=ValidationArtifactReference.from_canonical_dict(
+            _object_value(
+                group["target_reference"],
+                "observation_groups[].target_reference",
+            )
+        ),
+        panel_reference=ValidationArtifactReference.from_canonical_dict(
+            _object_value(
+                group["panel_reference"],
+                "observation_groups[].panel_reference",
+            )
+        ),
+        observation_bindings=tuple(
+            FormalEvaluationObservationBinding.from_canonical_dict(
+                _object_value(item, "observation_bindings[]")
+            )
+            for item in _array_value(
+                group["observation_bindings"],
+                "observation_groups[].observation_bindings",
+            )
+        ),
+    )
+
+
+def _record_phase_c_owner_package(
+    factory: PostgresConnectionFactory,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected = {
+        "target_protocol",
+        "trading_calendar",
+        "evaluation_protocol",
+        "feature_definition_set",
+        "panel_enrichment",
+        "factor_catalog",
+        "threshold_policy",
+        "formal_oos_policy",
+        "calibration_protocol",
+        "calibration_policy",
+        "strategy_policy",
+        "portfolio_policy",
+        "portfolio",
+        "entry_holding_exit_policy",
+        "actor",
+        "reason",
+        "idempotency_key",
+    }
+    if set(payload) != expected:
+        raise ValueError(
+            "qualification-owners-record requires the exact typed owner package"
+        )
+    actor = str(payload["actor"])
+    reason = str(payload["reason"])
+    idempotency_key = str(payload["idempotency_key"])
+    if not actor.strip() or not reason.strip() or not idempotency_key.strip():
+        raise ValueError("owner package actor, reason and idempotency key are required")
+    target = OutcomeTargetProtocol.from_canonical_dict(
+        _object_value(payload["target_protocol"], "target_protocol")
+    )
+    calendar = TradingCalendarArtifact.from_canonical_dict(
+        _object_value(payload["trading_calendar"], "trading_calendar")
+    )
+    evaluation = FormalEvaluationProtocol.from_canonical_dict(
+        dict(_object_value(payload["evaluation_protocol"], "evaluation_protocol"))
+    )
+    features = FeatureDefinitionSet.from_canonical_dict(
+        _object_value(payload["feature_definition_set"], "feature_definition_set")
+    )
+    enrichment = ResearchPanelEnrichment.from_canonical_dict(
+        _object_value(payload["panel_enrichment"], "panel_enrichment")
+    )
+    factors = FactorResearchCatalog.from_canonical_dict(
+        _object_value(payload["factor_catalog"], "factor_catalog")
+    )
+    threshold = ThresholdPolicy.from_canonical_dict(
+        _object_value(payload["threshold_policy"], "threshold_policy")
+    )
+    oos_policy = FormalOOSQualificationPolicy.from_canonical_dict(
+        _object_value(payload["formal_oos_policy"], "formal_oos_policy")
+    )
+    calibration_protocol = CalibrationProtocol.from_canonical_dict(
+        _object_value(payload["calibration_protocol"], "calibration_protocol")
+    )
+    calibration_policy = CalibrationQualificationPolicy.from_canonical_dict(
+        _object_value(payload["calibration_policy"], "calibration_policy")
+    )
+    strategy_payload = dict(
+        _object_value(payload["strategy_policy"], "strategy_policy")
+    )
+    if set(strategy_payload) != {
+        "policy_id",
+        "policy_hash",
+        "schema",
+        "policy_version",
+        "rule_kinds",
+        "fixed_horizon_sessions",
+        "trailing_drawdown",
+        "protection_return",
+        "participation_rate",
+        "limitations",
+    } or strategy_payload["schema"] != "strategy-shadow-policy/v1":
+        raise ValueError("strategy_policy must use the exact typed contract")
+    strategy_id = ArtifactId(str(strategy_payload.pop("policy_id")))
+    strategy_hash = str(strategy_payload.pop("policy_hash"))
+    strategy = restore_strategy_shadow_artifact(
+        artifact_kind="POLICY",
+        artifact_id=strategy_id,
+        artifact_hash=strategy_hash,
+        payload=strategy_payload,
+    )
+    if not isinstance(strategy, StrategyShadowPolicy):
+        raise ValueError("strategy_policy did not restore a typed Policy")
+    if canonical_hash(strategy_shadow_artifact_payload(strategy)) != strategy_hash:
+        raise ValueError("strategy_policy immutable identity mismatch")
+    portfolio_policy = ShadowPortfolioPolicy.from_canonical_dict(
+        _object_value(payload["portfolio_policy"], "portfolio_policy")
+    )
+    portfolio = ShadowPortfolio.from_canonical_dict(
+        _object_value(payload["portfolio"], "portfolio")
+    )
+    entry_policy = EntryHoldingExitQualificationPolicy.from_canonical_dict(
+        _object_value(
+            payload["entry_holding_exit_policy"],
+            "entry_holding_exit_policy",
+        )
+    )
+
+    target = PostgresTargetOutcomeRepository(
+        factory, apply_migrations=False
+    ).register_protocol(target)
+    calendar = PostgresPITTradingCalendarSnapshotRepository(
+        factory, apply_migrations=False
+    ).record(calendar)
+    validation = PostgresResearchValidationRepository(
+        factory, apply_migrations=False
+    )
+    validation.record_formal_evaluation_protocol(evaluation)
+    validation.record_feature_definition_set(features)
+    validation.record_panel_enrichment(enrichment)
+    validation.record_factor_catalog(factors)
+    validation.record_threshold_policy(threshold)
+    PostgresResearchQualificationAuthority(
+        factory, apply_migrations=False
+    ).record_oos_policy(oos_policy)
+    with factory.connection(read_only=True) as connection:
+        recorded_at_row = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp())"
+        ).fetchone()
+    if recorded_at_row is None or not isinstance(recorded_at_row[0], datetime):
+        raise RuntimeError("PostgreSQL clock did not return an authority timestamp")
+    recorded_at = recorded_at_row[0]
+    validation.record_calibration_protocol(
+        calibration_protocol,
+        recorded_at=recorded_at,
+    )
+    PostgresCalibrationQualificationAuthority(
+        factory, apply_migrations=False
+    ).record_policy(calibration_policy)
+    PostgresStrategyShadowRepository(
+        factory, apply_migrations=False
+    ).save_policy(strategy, created_at=recorded_at)
+    PostgresShadowPortfolioRepository(
+        factory, apply_migrations=False
+    ).save_portfolio(policy=portfolio_policy, portfolio=portfolio)
+    PostgresPhaseCGateAuthority(
+        factory, apply_migrations=False
+    ).record_entry_holding_exit_policy(entry_policy)
+
+    owners = (
+        ("FREEZE_TARGET_PROTOCOL", _reference_for("OUTCOME_TARGET_PROTOCOL", target.protocol_id, target.protocol_hash)),
+        ("FREEZE_TRADING_CALENDAR", _reference_for("TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash)),
+        ("FREEZE_EVALUATION_PROTOCOL", _reference_for("FORMAL_EVALUATION_PROTOCOL", evaluation.protocol_id, evaluation.protocol_hash)),
+        ("FREEZE_FEATURE_DEFINITION_SET", _reference_for("FEATURE_DEFINITION_SET", features.definition_set_id, features.definition_set_hash)),
+        ("FREEZE_FACTOR_CATALOG", _reference_for("FACTOR_CATALOG", factors.catalog_id, factors.catalog_hash)),
+        ("FREEZE_THRESHOLD_POLICY", _reference_for("THRESHOLD_POLICY", threshold.policy_id, threshold.policy_hash)),
+        ("FREEZE_FORMAL_OOS_POLICY", _reference_for("FORMAL_OOS_QUALIFICATION_POLICY", oos_policy.policy_id, oos_policy.policy_hash)),
+        ("FREEZE_CALIBRATION_POLICY", _reference_for("CALIBRATION_POLICY", calibration_policy.policy_id, calibration_policy.policy_hash)),
+        ("FREEZE_STRATEGY_POLICY", _reference_for("STRATEGY_SHADOW_POLICY", strategy.policy_id, strategy.policy_hash)),
+        ("FREEZE_COST_POLICY", _reference_for("SHADOW_PORTFOLIO_POLICY", portfolio_policy.policy_id, portfolio_policy.policy_hash)),
+        ("FREEZE_ENTRY_HOLDING_EXIT_POLICY", _reference_for("ENTRY_HOLDING_EXIT_QUALIFICATION_POLICY", entry_policy.policy_id, entry_policy.policy_hash)),
+    )
+    for action, reference in owners:
+        _record_phase_c_operator_audit(
+            factory,
+            action_kind=action,
+            reference=reference,
+            actor=actor,
+            reason=reason,
+            idempotency_key=f"{idempotency_key}:{action}",
+        )
+    return {
+        "operation": "QUALIFICATION_TYPED_OWNERS_RECORD",
+        "owners": [item.to_canonical_dict() for _action, item in owners],
+        "production_authorized": False,
+    }
+
+
+def _reference_for(
+    kind: str,
+    artifact_id: ArtifactId,
+    content_hash: str,
+) -> ValidationArtifactReference:
+    return ValidationArtifactReference(kind, artifact_id, content_hash)
+
+
+def _record_phase_c_operator_audit(
+    factory: PostgresConnectionFactory,
+    *,
+    action_kind: str,
+    reference: ValidationArtifactReference,
+    actor: str,
+    reason: str,
+    idempotency_key: str,
+) -> None:
+    command = {
+        "schema_version": "phase-c-formal-operator-command/v1",
+        "action_kind": action_kind,
+        "result_reference": reference.to_canonical_dict(),
+        "actor": actor,
+        "reason": reason,
+    }
+    command_hash = canonical_hash(command)
+
+    def operation(connection: Any) -> None:
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"phase-c-formal-operator:{idempotency_key}",),
+        )
+        row = connection.execute(
+            """
+            SELECT command_hash, action_kind, result_artifact_id,
+                   result_artifact_hash, actor, reason, payload_json
+            FROM phase_c_formal_operator_command WHERE idempotency_key = %s
+            """,
+            (idempotency_key,),
+        ).fetchone()
+        expected = (
+            command_hash,
+            action_kind,
+            str(reference.artifact_id),
+            reference.content_hash,
+            actor,
+            reason,
+            command,
+        )
+        if row is not None:
+            if tuple(row) != expected:
+                raise ValueError("Phase C Formal operator idempotency conflict")
+            return
+        created_at = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp())"
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO phase_c_formal_operator_command(
+                idempotency_key, command_hash, action_kind,
+                result_artifact_id, result_artifact_hash,
+                actor, reason, payload_json, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                idempotency_key,
+                command_hash,
+                action_kind,
+                str(reference.artifact_id),
+                reference.content_hash,
+                actor,
+                reason,
+                Jsonb(command),
+                created_at,
+            ),
+        )
+
+    factory.run_transaction(operation)
+
+
 def _instant(value: str) -> datetime:
     instant = datetime.fromisoformat(value)
     if instant.tzinfo is None or instant.utcoffset() is None:
@@ -1305,6 +1707,17 @@ def _instant(value: str) -> datetime:
     if instant.microsecond:
         raise ValueError("--at must use whole-second precision")
     return instant
+
+
+def _require_principal_actor(
+    args: argparse.Namespace,
+    payload: Mapping[str, Any],
+) -> None:
+    actor = payload.get("actor")
+    if not isinstance(actor, str) or actor != args.principal_id:
+        raise PermissionError(
+            "Formal operator actor must equal the authorized RBAC principal"
+        )
 
 
 def _operational_now() -> datetime:
@@ -1327,6 +1740,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         return SecurityPermission.RUN_RESEARCH
     if operation in {
         "qualification-protocol-record",
+        "qualification-owners-record",
         "qualification-forecast-record",
         "qualification-evaluation-record",
         "qualification-historical",
