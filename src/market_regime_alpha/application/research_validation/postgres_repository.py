@@ -61,6 +61,7 @@ class PostgresResearchValidationRepository:
             "FEATURE_DEFINITION_SET",
             "FORMAL_EVALUATION_PROTOCOL",
             "HISTORICAL_SAMPLE_DATASET",
+            "PANEL_ENRICHMENT",
             "THRESHOLD_POLICY",
         }:
             raise ValueError(
@@ -141,7 +142,7 @@ class PostgresResearchValidationRepository:
         def operation(connection: Any) -> None:
             owner = connection.execute(
                 """
-                SELECT artifact_hash, artifact_kind
+                SELECT artifact_hash, artifact_kind, payload_json
                 FROM research_validation_artifact WHERE artifact_id = %s
                 """,
                 (str(catalog.enrichment_reference.artifact_id),),
@@ -149,8 +150,24 @@ class PostgresResearchValidationRepository:
             if owner is None or (
                 str(owner[0]) != catalog.enrichment_reference.content_hash
                 or str(owner[1]) != "PANEL_ENRICHMENT"
+                or not isinstance(owner[2], Mapping)
+                or canonical_hash(dict(owner[2])) != str(owner[0])
             ):
                 raise ValueError("Factor Catalog Panel Enrichment owner mismatch")
+            exposure_rows = connection.execute(
+                """
+                SELECT exposure_json
+                FROM research_panel_factor_exposure
+                WHERE enrichment_id = %s
+                ORDER BY symbol, factor_family, factor_id, timeframe,
+                         exposure_json->>'source_value_path'
+                """,
+                (str(catalog.enrichment_reference.artifact_id),),
+            ).fetchall()
+            if [item[0] for item in exposure_rows] != list(owner[2]["exposures"]):
+                raise ValueError(
+                    "Factor Catalog Panel Enrichment projection mismatch"
+                )
             self._insert_artifact(
                 connection,
                 catalog.catalog_id,

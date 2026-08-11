@@ -16,6 +16,9 @@ from market_regime_alpha.application.research_validation.postgres_formal_protoco
     FormalProtocolConflict,
     PostgresFormalProtocolRepository,
 )
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
@@ -41,6 +44,17 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
     fixture = record_phase_c_protocol_owners(postgres_factory)
     protocol = fixture.protocol
     repository = PostgresFormalProtocolRepository(postgres_factory)
+
+    caller_panel = {"schema_version": "research-panel-enrichment/v1"}
+    with pytest.raises(ValueError, match="typed owner-specific writer"):
+        PostgresResearchValidationRepository(postgres_factory).record(
+            artifact_id=ArtifactId("caller-panel-enrichment"),
+            artifact_hash=canonical_hash(caller_panel),
+            artifact_kind="PANEL_ENRICHMENT",
+            evidence_authority="ENGINEERING_ONLY",
+            payload=caller_panel,
+            created_at=NOW,
+        )
 
     assert repository.record_protocol(protocol=protocol) == protocol
     assert repository.record_protocol(protocol=protocol) == protocol
