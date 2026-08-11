@@ -6,8 +6,10 @@ all inputs, assigns materialization time and persists the immutable receipt.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Mapping, Protocol
 
 from market_regime_alpha.application.research_evaluation.targets import (
@@ -21,10 +23,22 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
     OutcomeTargetForecastEstimate,
-    OutcomeTargetForecastStatus,
+    not_estimable_target_forecast,
+)
+from market_regime_alpha.application.research_validation.forecast_measure_kernel import (
+    compute_regularized_measure_forecast,
+)
+from market_regime_alpha.application.research_validation.research_model import (
+    RESEARCH_MODEL_IMPLEMENTATION,
+    ResearchModelArtifact,
+    ResearchModelTrainingRequest,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.data.pit_authority import FormalPITEvidenceArtifact
+from market_regime_alpha.data.pit_authority import (
+    FormalPITEvidenceArtifact,
+    PITFactKind,
+    PITFactRevision,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
 from market_regime_alpha.platform.runtime_governance import ModelVersionLineage
 
@@ -118,6 +132,8 @@ class ResolvedFormalForecastContext:
     component_owner_payloads: tuple[tuple[str, Mapping[str, Any]], ...]
     selected_fact_references: tuple[ValidationArtifactReference, ...]
     selected_fact_payloads: tuple[Mapping[str, Any], ...]
+    research_model_artifact: ResearchModelArtifact | None
+    research_model_training_request: ResearchModelTrainingRequest | None
     symbol: str
     decision_time: datetime
     materialized_at: datetime
@@ -139,6 +155,10 @@ class ResolvedFormalForecastContext:
             raise ValueError("Formal Forecast component owner payloads must be unique and sorted")
         if len(self.selected_fact_payloads) != len(self.selected_fact_references):
             raise ValueError("Formal Forecast PIT Fact payload/reference cardinality mismatch")
+        if (self.research_model_artifact is None) != (
+            self.research_model_training_request is None
+        ):
+            raise ValueError("Formal Forecast model artifact/request pairing mismatch")
 
 
 class FormalForecastExecutor(Protocol):
@@ -153,18 +173,6 @@ class FormalForecastExecutor(Protocol):
 
     @property
     def implementation_ref(self) -> str: ...
-
-    @property
-    def model_definition_hash(self) -> str: ...
-
-    @property
-    def configuration_hash(self) -> str: ...
-
-    @property
-    def code_revision(self) -> str: ...
-
-    @property
-    def code_hash(self) -> str: ...
 
     def supports(self, context: ResolvedFormalForecastContext) -> bool: ...
 
@@ -211,10 +219,70 @@ class FormalForecastExecutorSet:
         return executor.executor_identity, estimates
 
 
+@dataclass(frozen=True, slots=True)
+class RegularizedFormalForecastExecutor:
+    """Owner-resolved adapter around the qualification-independent math kernel."""
+
+    executor_identity: str = "formal-forecast:deterministic-regularized-linear/v1"
+    implementation_ref: str = RESEARCH_MODEL_IMPLEMENTATION
+
+    def supports(self, context: ResolvedFormalForecastContext) -> bool:
+        artifact = context.research_model_artifact
+        training = context.research_model_training_request
+        experiment = context.protocol.experiment_definition
+        return bool(
+            artifact is not None
+            and training is not None
+            and artifact.model is not None
+            and artifact.model_parameter_hash == context.model_lineage.model_parameter_hash
+            and training.schema_version == "research-model-training-request/v2"
+            and training.experiment_definition is not None
+            and experiment is not None
+            and training.experiment_definition.definition_id == experiment.definition_id
+            and training.experiment_definition.definition_hash == experiment.definition_hash
+            and training.feature_catalog_reference == context.protocol.feature_reference
+            and training.target_protocol_reference.artifact_id
+            == context.target_protocol.protocol_id
+            and training.target_protocol_reference.content_hash
+            == context.target_protocol.protocol_hash
+            and training.model_definition_reference.content_hash
+            == context.model_lineage.definition_hash
+            and training.configuration_reference == context.configuration_reference
+            and training.code_revision == context.model_lineage.code_revision
+            and training.code_hash == context.model_lineage.code_hash
+        )
+
+    def compute(
+        self, context: ResolvedFormalForecastContext
+    ) -> tuple[OutcomeTargetForecastEstimate, ...]:
+        artifact = context.research_model_artifact
+        training = context.research_model_training_request
+        if artifact is None or artifact.model is None or training is None:
+            return not_estimable_estimates(
+                context.target_protocol,
+                reason_codes=("EXECUTABLE_MODEL_PARAMETER_OWNER_MISSING",),
+            )
+        values, reasons = _formal_feature_values(
+            context,
+            expected_names=artifact.model.feature_names,
+        )
+        if reasons:
+            return not_estimable_estimates(
+                context.target_protocol,
+                reason_codes=reasons,
+            )
+        return compute_regularized_measure_forecast(
+            model=artifact.model,
+            bindings=training.measure_bindings,
+            target_protocol=context.target_protocol,
+            feature_values=values,
+        )
+
+
 # Installed executors are code-owned runtime composition, not a request argument.
-# Adding an implementation requires a reviewed code change whose exact Model,
-# Configuration and code lineage is checked again for every computation.
-_INSTALLED_FORMAL_FORECAST_EXECUTORS = FormalForecastExecutorSet(())
+_INSTALLED_FORMAL_FORECAST_EXECUTORS = FormalForecastExecutorSet(
+    (RegularizedFormalForecastExecutor(),)
+)
 
 
 def installed_formal_forecast_executors() -> FormalForecastExecutorSet:
@@ -225,13 +293,63 @@ def _executor_matches_frozen_lineage(
     executor: FormalForecastExecutor,
     context: ResolvedFormalForecastContext,
 ) -> bool:
-    return (
-        executor.implementation_ref == context.model_lineage.implementation_ref
-        and executor.model_definition_hash == context.model_lineage.definition_hash
-        and executor.configuration_hash == context.configuration_reference.content_hash
-        and executor.code_revision == context.model_lineage.code_revision
-        and executor.code_hash == context.model_lineage.code_hash
-    )
+    return executor.implementation_ref == context.model_lineage.implementation_ref
+
+
+def _formal_feature_values(
+    context: ResolvedFormalForecastContext,
+    *,
+    expected_names: tuple[str, ...],
+) -> tuple[dict[str, Decimal | None], tuple[str, ...]]:
+    vectors: list[Mapping[str, Any]] = []
+    reasons: set[str] = set()
+    for payload in context.selected_fact_payloads:
+        try:
+            fact = PITFactRevision.from_canonical_dict(payload)
+        except (KeyError, TypeError, ValueError):
+            reasons.add("PIT_FACT_REPLAY_FAILED")
+            continue
+        if fact.fact_kind is not PITFactKind.FEATURE_MATERIALIZATION:
+            continue
+        try:
+            value = json.loads(fact.value_json)
+        except json.JSONDecodeError:
+            reasons.add("FEATURE_VALUE_JSON_INVALID")
+            continue
+        if not isinstance(value, dict) or set(value) != {
+            "schema_version",
+            "symbol",
+            "decision_time",
+            "features",
+        }:
+            reasons.add("FEATURE_VECTOR_CONTRACT_MISMATCH")
+            continue
+        if (
+            value["schema_version"] != "forecast-feature-vector/v1"
+            or value["symbol"] != context.symbol
+            or value["decision_time"] != context.decision_time.isoformat()
+            or not isinstance(value["features"], dict)
+        ):
+            reasons.add("FEATURE_VECTOR_IDENTITY_MISMATCH")
+            continue
+        vectors.append(value["features"])
+    if len(vectors) != 1:
+        reasons.add("EXACTLY_ONE_FEATURE_VECTOR_REQUIRED")
+    if reasons:
+        return {}, tuple(sorted(reasons))
+    raw = vectors[0]
+    if tuple(sorted(str(name) for name in raw)) != expected_names:
+        return {}, ("FROZEN_FEATURE_SET_MISMATCH",)
+    values: dict[str, Decimal | None] = {}
+    try:
+        for name in expected_names:
+            item = raw[name]
+            values[name] = None if item is None else Decimal(str(item))
+            if values[name] is not None and not values[name].is_finite():
+                raise ValueError("non-finite")
+    except (KeyError, TypeError, ValueError):
+        return {}, ("FEATURE_VALUE_NOT_FINITE_DECIMAL",)
+    return values, ()
 
 
 def not_estimable_estimates(
@@ -243,15 +361,10 @@ def not_estimable_estimates(
     if not reasons:
         raise ValueError("NOT_ESTIMABLE Formal Forecast requires reason codes")
     return tuple(
-        OutcomeTargetForecastEstimate(
+        not_estimable_target_forecast(
             target_id=target.target_id,
             target_hash=target.target_hash,
-            status=OutcomeTargetForecastStatus.NOT_ESTIMABLE,
-            score=None,
-            expected_return=None,
-            expected_mfe=None,
-            expected_mae=None,
-            barrier_scores=(),
+            barrier_ids=tuple(barrier.barrier_id for barrier in target.barriers),
             reason_codes=reasons,
         )
         for target in target_protocol.targets
@@ -421,6 +534,7 @@ __all__ = [
     "FormalForecastExecutor",
     "FormalForecastExecutorSet",
     "ResolvedFormalForecastContext",
+    "RegularizedFormalForecastExecutor",
     "installed_formal_forecast_executors",
     "not_estimable_estimates",
 ]

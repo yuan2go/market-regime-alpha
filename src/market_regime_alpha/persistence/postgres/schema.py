@@ -203,6 +203,17 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "formal_oos_qualification_historical_decision",
         "formal_oos_qualification_pit_evidence",
         "formal_forecast_computation_receipt",
+        "research_model_training_request",
+        "research_model_training_sample",
+        "research_model_training_feature",
+        "research_model_training_target",
+        "research_model_walk_forward_fold",
+        "research_model_training_source_binding",
+        "research_model_artifact",
+        "research_model_candidate_diagnostic",
+        "research_model_coefficient_head",
+        "research_model_inference_receipt",
+        "research_model_inference_source_binding",
         "formal_forecast_computation_command",
         "locked_oos_raw_evidence_unlock",
         "locked_oos_target_observation_consumption",
@@ -215,6 +226,22 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
 
 EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
+        *(
+            (table_name, f"{table_name}_no_update")
+            for table_name in (
+                "research_model_training_request",
+                "research_model_training_sample",
+                "research_model_training_feature",
+                "research_model_training_target",
+                "research_model_walk_forward_fold",
+                "research_model_training_source_binding",
+                "research_model_artifact",
+                "research_model_candidate_diagnostic",
+                "research_model_coefficient_head",
+                "research_model_inference_receipt",
+                "research_model_inference_source_binding",
+            )
+        ),
         ("formal_research_protocol", "formal_research_protocol_no_update"),
         (
             "outcome_target_bound_forecast",

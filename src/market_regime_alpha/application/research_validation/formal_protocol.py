@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
@@ -647,59 +647,232 @@ class OutcomeTargetForecastStatus(str, Enum):
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
 
 
-@dataclass(frozen=True, slots=True)
-class OutcomeTargetForecastEstimate:
-    """One uncalibrated estimate for one exact Outcome Target identity."""
+class ForecastMeasureStatus(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    NOT_ESTIMABLE = "NOT_ESTIMABLE"
 
-    target_id: ArtifactId
-    target_hash: str
-    status: OutcomeTargetForecastStatus
-    score: Decimal | None
-    expected_return: Decimal | None
-    expected_mfe: Decimal | None
-    expected_mae: Decimal | None
-    barrier_scores: tuple[tuple[str, Decimal], ...]
-    reason_codes: tuple[str, ...]
+
+class ForecastMeasureKind(str, Enum):
+    """Semantically distinct forecast measures; raw scores are never probabilities."""
+
+    RANKING_SCORE = "RANKING_SCORE"
+    EXPECTED_RETURN = "EXPECTED_RETURN"
+    EXPECTED_DOWNSIDE = "EXPECTED_DOWNSIDE"
+    RETURN_POSITIVE_RAW_LOGIT = "RETURN_POSITIVE_RAW_LOGIT"
+    RETURN_POSITIVE_PROBABILITY = "RETURN_POSITIVE_PROBABILITY"
+    EXPECTED_MFE = "EXPECTED_MFE"
+    EXPECTED_MAE = "EXPECTED_MAE"
+    UPPER_BEFORE_LOWER_RAW_LOGIT = "UPPER_BEFORE_LOWER_RAW_LOGIT"
+    UPPER_BEFORE_LOWER_PROBABILITY = "UPPER_BEFORE_LOWER_PROBABILITY"
+    BARRIER_RAW_LOGIT = "BARRIER_RAW_LOGIT"
+
+
+_PROBABILITY_MEASURES = {
+    ForecastMeasureKind.RETURN_POSITIVE_PROBABILITY,
+    ForecastMeasureKind.UPPER_BEFORE_LOWER_PROBABILITY,
+}
+_RAW_LOGIT_MEASURES = {
+    ForecastMeasureKind.RETURN_POSITIVE_RAW_LOGIT,
+    ForecastMeasureKind.UPPER_BEFORE_LOWER_RAW_LOGIT,
+    ForecastMeasureKind.BARRIER_RAW_LOGIT,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastMeasureEstimate:
+    """One independently estimable measure for an exact Target identity.
+
+    Logistic heads emit RAW_LOGIT measures.  A probability is valid only when it
+    binds an immutable Calibration Artifact; applying sigmoid is not calibration.
+    """
+
+    kind: ForecastMeasureKind
+    status: ForecastMeasureStatus
+    value: Decimal | None
+    reason_codes: tuple[str, ...] = ()
+    barrier_id: str | None = None
+    calibration_reference: ValidationArtifactReference | None = None
 
     def __post_init__(self) -> None:
-        require_sha256("target_hash", self.target_hash)
-        if self.barrier_scores != tuple(sorted(set(self.barrier_scores))):
-            raise ValueError("Forecast barrier scores must be unique and sorted")
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
-            raise ValueError("Forecast reasons must be unique and sorted")
-        if self.status is OutcomeTargetForecastStatus.NOT_ESTIMABLE:
-            if any(
-                value is not None
-                for value in (
-                    self.score,
-                    self.expected_return,
-                    self.expected_mfe,
-                    self.expected_mae,
-                )
-            ) or self.barrier_scores:
-                raise ValueError("NOT_ESTIMABLE Forecast cannot carry estimates")
+            raise ValueError("Forecast measure reasons must be unique and sorted")
+        if self.kind is ForecastMeasureKind.BARRIER_RAW_LOGIT:
+            if not self.barrier_id or not self.barrier_id.strip():
+                raise ValueError("Barrier raw logit requires barrier_id")
+        elif self.barrier_id is not None:
+            raise ValueError("Only barrier-specific measures may bind barrier_id")
+        if self.status is ForecastMeasureStatus.NOT_ESTIMABLE:
+            if self.value is not None or self.calibration_reference is not None:
+                raise ValueError("NOT_ESTIMABLE measure cannot carry a value or calibration")
             if not self.reason_codes:
-                raise ValueError("NOT_ESTIMABLE Forecast requires reason codes")
-        elif self.score is None:
-            raise ValueError("available Outcome Target Forecast requires a score")
-        if self.expected_mfe is not None and self.expected_mfe < 0:
+                raise ValueError("NOT_ESTIMABLE measure requires reason codes")
+            return
+        if self.value is None or not self.value.is_finite():
+            raise ValueError("AVAILABLE measure requires a finite value")
+        if self.reason_codes:
+            raise ValueError("AVAILABLE measure cannot carry failure reasons")
+        if self.kind in _PROBABILITY_MEASURES:
+            if not Decimal("0") <= self.value <= Decimal("1"):
+                raise ValueError("Forecast probability must be within [0, 1]")
+            if (
+                self.calibration_reference is None
+                or self.calibration_reference.artifact_kind != "CALIBRATION_ARTIFACT"
+            ):
+                raise ValueError("Forecast probability requires Calibration Artifact evidence")
+        elif self.calibration_reference is not None:
+            raise ValueError("Only calibrated probability measures bind Calibration evidence")
+        if self.kind is ForecastMeasureKind.EXPECTED_MFE and self.value < 0:
             raise ValueError("Forecast MFE cannot be negative")
-        if self.expected_mae is not None and self.expected_mae > 0:
-            raise ValueError("Forecast MAE cannot be positive")
+        if self.kind in {
+            ForecastMeasureKind.EXPECTED_MAE,
+            ForecastMeasureKind.EXPECTED_DOWNSIDE,
+        } and self.value > 0:
+            raise ValueError("Forecast downside/MAE must use a non-positive return convention")
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.kind.value, self.barrier_id or ""
+
+    @property
+    def is_raw_score(self) -> bool:
+        return self.kind in _RAW_LOGIT_MEASURES or self.kind is ForecastMeasureKind.RANKING_SCORE
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
+            "kind": self.kind.value,
+            "status": self.status.value,
+            "value": decimal_text(self.value),
+            "reason_codes": list(self.reason_codes),
+            "barrier_id": self.barrier_id,
+            "calibration_reference": (
+                None
+                if self.calibration_reference is None
+                else self.calibration_reference.to_canonical_dict()
+            ),
+        }
+
+    @classmethod
+    def from_canonical_dict(cls, value: Mapping[str, Any]) -> ForecastMeasureEstimate:
+        raw_value = value["value"]
+        raw_calibration = value["calibration_reference"]
+        return cls(
+            kind=ForecastMeasureKind(str(value["kind"])),
+            status=ForecastMeasureStatus(str(value["status"])),
+            value=None if raw_value is None else Decimal(str(raw_value)),
+            reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+            barrier_id=(None if value["barrier_id"] is None else str(value["barrier_id"])),
+            calibration_reference=(
+                None
+                if raw_calibration is None
+                else ValidationArtifactReference.from_canonical_dict(
+                    _mapping(raw_calibration)
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeTargetForecastEstimate:
+    """Measure-oriented estimates for one exact Outcome Target identity."""
+
+    target_id: ArtifactId
+    target_hash: str
+    measures: tuple[ForecastMeasureEstimate, ...]
+    reason_codes: tuple[str, ...]
+    schema_version: str = "outcome-target-forecast-estimate/v2"
+
+    def __post_init__(self) -> None:
+        require_sha256("target_hash", self.target_hash)
+        if self.measures != tuple(sorted(self.measures, key=lambda item: item.key)):
+            raise ValueError("Forecast measures must be sorted")
+        if len({item.key for item in self.measures}) != len(self.measures):
+            raise ValueError("Forecast measures must be unique")
+        if self.reason_codes != tuple(sorted(set(self.reason_codes))):
+            raise ValueError("Forecast reasons must be unique and sorted")
+        if self.schema_version not in {
+            "outcome-target-forecast-estimate/v1",
+            "outcome-target-forecast-estimate/v2",
+        }:
+            raise ValueError("unsupported Forecast estimate schema")
+        if self.schema_version.endswith("/v2") and not self.measures:
+            raise ValueError("V2 Forecast estimate requires an explicit measure plan")
+        if self.status is OutcomeTargetForecastStatus.NOT_ESTIMABLE and not self.reason_codes:
+            raise ValueError("fully NOT_ESTIMABLE Forecast requires target reason codes")
+
+    @property
+    def status(self) -> OutcomeTargetForecastStatus:
+        if any(item.status is ForecastMeasureStatus.AVAILABLE for item in self.measures):
+            return OutcomeTargetForecastStatus.AVAILABLE_FOR_RESEARCH
+        return OutcomeTargetForecastStatus.NOT_ESTIMABLE
+
+    def measure(
+        self, kind: ForecastMeasureKind, *, barrier_id: str | None = None
+    ) -> ForecastMeasureEstimate | None:
+        return next(
+            (
+                item
+                for item in self.measures
+                if item.kind is kind and item.barrier_id == barrier_id
+            ),
+            None,
+        )
+
+    def _available_value(self, kind: ForecastMeasureKind) -> Decimal | None:
+        item = self.measure(kind)
+        return (
+            item.value
+            if item is not None and item.status is ForecastMeasureStatus.AVAILABLE
+            else None
+        )
+
+    @property
+    def score(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.RANKING_SCORE)
+
+    @property
+    def expected_return(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.EXPECTED_RETURN)
+
+    @property
+    def expected_mfe(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.EXPECTED_MFE)
+
+    @property
+    def expected_mae(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.EXPECTED_MAE)
+
+    @property
+    def barrier_scores(self) -> tuple[tuple[str, Decimal], ...]:
+        return tuple(
+            (item.barrier_id or "", item.value)
+            for item in self.measures
+            if item.kind is ForecastMeasureKind.BARRIER_RAW_LOGIT
+            and item.status is ForecastMeasureStatus.AVAILABLE
+            and item.value is not None
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        if self.schema_version.endswith("/v1"):
+            return {
+                "target_id": str(self.target_id),
+                "target_hash": self.target_hash,
+                "status": self.status.value,
+                "score": decimal_text(self.score),
+                "expected_return": decimal_text(self.expected_return),
+                "expected_mfe": decimal_text(self.expected_mfe),
+                "expected_mae": decimal_text(self.expected_mae),
+                "barrier_scores": [
+                    {"barrier_id": barrier_id, "score": str(score)}
+                    for barrier_id, score in self.barrier_scores
+                ],
+                "reason_codes": list(self.reason_codes),
+            }
+        return {
+            "schema_version": self.schema_version,
             "target_id": str(self.target_id),
             "target_hash": self.target_hash,
             "status": self.status.value,
-            "score": decimal_text(self.score),
-            "expected_return": decimal_text(self.expected_return),
-            "expected_mfe": decimal_text(self.expected_mfe),
-            "expected_mae": decimal_text(self.expected_mae),
-            "barrier_scores": [
-                {"barrier_id": barrier_id, "score": str(score)}
-                for barrier_id, score in self.barrier_scores
-            ],
+            "measures": [item.to_canonical_dict() for item in self.measures],
             "reason_codes": list(self.reason_codes),
         }
 
@@ -707,24 +880,98 @@ class OutcomeTargetForecastEstimate:
     def from_canonical_dict(
         cls, value: dict[str, Any]
     ) -> OutcomeTargetForecastEstimate:
+        if "measures" in value:
+            return cls(
+                target_id=ArtifactId(str(value["target_id"])),
+                target_hash=str(value["target_hash"]),
+                measures=tuple(
+                    ForecastMeasureEstimate.from_canonical_dict(_mapping(item))
+                    for item in _sequence(value["measures"])
+                ),
+                reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+                schema_version=str(value["schema_version"]),
+            )
+
         def optional_decimal(name: str) -> Decimal | None:
             raw = value[name]
             return None if raw is None else Decimal(str(raw))
-
+        reasons = tuple(str(item) for item in _sequence(value["reason_codes"]))
+        measures: list[ForecastMeasureEstimate] = []
+        for kind, raw in (
+            (ForecastMeasureKind.RANKING_SCORE, optional_decimal("score")),
+            (ForecastMeasureKind.EXPECTED_RETURN, optional_decimal("expected_return")),
+            (ForecastMeasureKind.EXPECTED_MFE, optional_decimal("expected_mfe")),
+            (ForecastMeasureKind.EXPECTED_MAE, optional_decimal("expected_mae")),
+        ):
+            if raw is not None:
+                measures.append(ForecastMeasureEstimate(kind, ForecastMeasureStatus.AVAILABLE, raw))
+        measures.extend(
+            ForecastMeasureEstimate(
+                ForecastMeasureKind.BARRIER_RAW_LOGIT,
+                ForecastMeasureStatus.AVAILABLE,
+                Decimal(str(_mapping(item)["score"])),
+                barrier_id=str(_mapping(item)["barrier_id"]),
+            )
+            for item in _sequence(value["barrier_scores"])
+        )
         return cls(
             target_id=ArtifactId(str(value["target_id"])),
             target_hash=str(value["target_hash"]),
-            status=OutcomeTargetForecastStatus(str(value["status"])),
-            score=optional_decimal("score"),
-            expected_return=optional_decimal("expected_return"),
-            expected_mfe=optional_decimal("expected_mfe"),
-            expected_mae=optional_decimal("expected_mae"),
-            barrier_scores=tuple(
-                (str(_mapping(item)["barrier_id"]), Decimal(str(_mapping(item)["score"])))
-                for item in _sequence(value["barrier_scores"])
-            ),
-            reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+            measures=tuple(sorted(measures, key=lambda item: item.key)),
+            reason_codes=reasons,
+            schema_version="outcome-target-forecast-estimate/v1",
         )
+
+
+def not_estimable_target_forecast(
+    *,
+    target_id: ArtifactId,
+    target_hash: str,
+    barrier_ids: tuple[str, ...],
+    reason_codes: tuple[str, ...],
+) -> OutcomeTargetForecastEstimate:
+    """Build the canonical independent-measure failure projection."""
+
+    reasons = tuple(sorted(set(reason_codes)))
+    if not reasons:
+        raise ValueError("NOT_ESTIMABLE Forecast requires reason codes")
+    measures = (
+        *(
+            ForecastMeasureEstimate(
+                kind,
+                ForecastMeasureStatus.NOT_ESTIMABLE,
+                None,
+                reasons,
+            )
+            for kind in (
+                ForecastMeasureKind.RANKING_SCORE,
+                ForecastMeasureKind.EXPECTED_RETURN,
+                ForecastMeasureKind.EXPECTED_DOWNSIDE,
+                ForecastMeasureKind.RETURN_POSITIVE_RAW_LOGIT,
+                ForecastMeasureKind.RETURN_POSITIVE_PROBABILITY,
+                ForecastMeasureKind.EXPECTED_MFE,
+                ForecastMeasureKind.EXPECTED_MAE,
+                ForecastMeasureKind.UPPER_BEFORE_LOWER_RAW_LOGIT,
+                ForecastMeasureKind.UPPER_BEFORE_LOWER_PROBABILITY,
+            )
+        ),
+        *(
+            ForecastMeasureEstimate(
+                ForecastMeasureKind.BARRIER_RAW_LOGIT,
+                ForecastMeasureStatus.NOT_ESTIMABLE,
+                None,
+                reasons,
+                barrier_id=barrier_id,
+            )
+            for barrier_id in barrier_ids
+        ),
+    )
+    return OutcomeTargetForecastEstimate(
+        target_id=target_id,
+        target_hash=target_hash,
+        measures=tuple(sorted(measures, key=lambda item: item.key)),
+        reason_codes=reasons,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -866,15 +1113,6 @@ def build_outcome_target_bound_forecast(
         if actual_ids == expected_ids:
             raise ValueError("Forecast and Outcome Target identity/hash mismatch")
         raise ValueError("MultiTargetForecast must bind exactly every Outcome Target")
-    for estimate in estimates:
-        target = expected[(str(estimate.target_id), estimate.target_hash)]
-        barrier_ids = tuple(item.barrier_id for item in target.barriers)
-        estimate_barrier_ids = tuple(item[0] for item in estimate.barrier_scores)
-        if (
-            estimate.status is OutcomeTargetForecastStatus.AVAILABLE_FOR_RESEARCH
-            and estimate_barrier_ids != barrier_ids
-        ):
-            raise ValueError("available Forecast must score every frozen Target barrier")
     target_reference = ValidationArtifactReference(
         "OUTCOME_TARGET_PROTOCOL",
         target_protocol.protocol_id,
@@ -1047,6 +1285,9 @@ def _sequence(value: object) -> tuple[object, ...]:
 
 
 __all__ = [
+    "ForecastMeasureEstimate",
+    "ForecastMeasureKind",
+    "ForecastMeasureStatus",
     "FormalResearchProtocol",
     "HyperparameterDomain",
     "OutcomeTargetBoundMultiTargetForecast",
@@ -1055,4 +1296,5 @@ __all__ = [
     "ResearchExperimentDefinition",
     "SearchBudget",
     "build_outcome_target_bound_forecast",
+    "not_estimable_target_forecast",
 ]

@@ -25,11 +25,11 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
     HyperparameterDomain,
-    OutcomeTargetForecastEstimate,
     OutcomeTargetForecastStatus,
     ResearchExperimentDefinition,
     SearchBudget,
     build_outcome_target_bound_forecast,
+    not_estimable_target_forecast,
 )
 from market_regime_alpha.core.identity import ArtifactId, DatasetId
 from market_regime_alpha.data.trading_calendar import (
@@ -255,15 +255,10 @@ def test_formal_protocol_rejects_calendar_or_target_lineage_mismatch() -> None:
 def test_multi_target_forecast_binds_every_outcome_target_exactly() -> None:
     protocol = engineering_multi_horizon_protocol()
     estimates = tuple(
-        OutcomeTargetForecastEstimate(
+        not_estimable_target_forecast(
             target_id=target.target_id,
             target_hash=target.target_hash,
-            status=OutcomeTargetForecastStatus.NOT_ESTIMABLE,
-            score=None,
-            expected_return=None,
-            expected_mfe=None,
-            expected_mae=None,
-            barrier_scores=(),
+            barrier_ids=tuple(item.barrier_id for item in target.barriers),
             reason_codes=("QUALIFIED_HISTORICAL_SAMPLE_MISSING",),
         )
         for target in protocol.targets
@@ -295,15 +290,10 @@ def test_multi_target_forecast_binds_every_outcome_target_exactly() -> None:
         )
 
     forged = (
-        OutcomeTargetForecastEstimate(
+        not_estimable_target_forecast(
             target_id=estimates[0].target_id,
             target_hash=canonical_hash({"forged": True}),
-            status=OutcomeTargetForecastStatus.NOT_ESTIMABLE,
-            score=None,
-            expected_return=None,
-            expected_mfe=None,
-            expected_mae=None,
-            barrier_scores=(),
+            barrier_ids=tuple(item.barrier_id for item in protocol.targets[0].barriers),
             reason_codes=("QUALIFIED_HISTORICAL_SAMPLE_MISSING",),
         ),
         *estimates[1:],

@@ -1075,7 +1075,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                     "theme_rotation_state",
                 ),
             )
-        assert recovery.migration_head == 58
+        assert recovery.migration_head == 59
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

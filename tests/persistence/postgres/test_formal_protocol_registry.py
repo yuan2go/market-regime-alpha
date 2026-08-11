@@ -12,6 +12,7 @@ from market_regime_alpha.application.research_validation.formal_protocol import 
     OutcomeTargetForecastEstimate,
     OutcomeTargetForecastStatus,
     build_outcome_target_bound_forecast,
+    not_estimable_target_forecast,
 )
 from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
     FormalProtocolFreezeScope,
@@ -348,16 +349,11 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
         symbol="000001.SZ",
         decision_time=NOW,
         estimates=tuple(
-            OutcomeTargetForecastEstimate(
-                target.target_id,
-                target.target_hash,
-                OutcomeTargetForecastStatus.NOT_ESTIMABLE,
-                None,
-                None,
-                None,
-                None,
-                (),
-                ("QUALIFIED_HISTORICAL_SAMPLE_MISSING",),
+            not_estimable_target_forecast(
+                target_id=target.target_id,
+                target_hash=target.target_hash,
+                barrier_ids=tuple(item.barrier_id for item in target.barriers),
+                reason_codes=("QUALIFIED_HISTORICAL_SAMPLE_MISSING",),
             )
             for target in fixture.targets.targets
         ),

@@ -35,6 +35,12 @@ from market_regime_alpha.application.research_validation.formal_forecast_computa
 from market_regime_alpha.application.research_validation.formal_hypothesis_family import (
     FrozenHypothesisFamily,
 )
+from market_regime_alpha.application.research_validation.postgres_research_model import (
+    load_executable_research_model_owner,
+)
+from market_regime_alpha.application.research_validation.research_model import (
+    RESEARCH_MODEL_IMPLEMENTATION,
+)
 from market_regime_alpha.application.research_validation.factor_research import (
     FactorResearchCatalog,
 )
@@ -1035,6 +1041,23 @@ def _resolve_formal_forecast_context(
         )
         for reference in selected
     )
+    research_model_artifact = None
+    research_model_training_request = None
+    if lineage.implementation_ref == RESEARCH_MODEL_IMPLEMENTATION:
+        try:
+            (
+                research_model_artifact,
+                research_model_training_request,
+            ) = load_executable_research_model_owner(
+                connection,
+                model_parameter_hash=lineage.model_parameter_hash,
+            )
+        except KeyError:
+            pass
+        except ValueError as exc:
+            raise FormalProtocolConflict(
+                "Formal Forecast executable model owner verification failed"
+            ) from exc
     return ResolvedFormalForecastContext(
         protocol=protocol,
         target_protocol=target_protocol,
@@ -1051,6 +1074,8 @@ def _resolve_formal_forecast_context(
         ),
         selected_fact_references=selected,
         selected_fact_payloads=fact_payloads,
+        research_model_artifact=research_model_artifact,
+        research_model_training_request=research_model_training_request,
         symbol=request.symbol,
         decision_time=pit_request.decision_time,
         materialized_at=materialized_at,

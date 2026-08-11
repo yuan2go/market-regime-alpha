@@ -85,14 +85,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (56, "phase_c_correctness_closure"),
     (57, "formal_research_runtime_closure"),
     (58, "research_validity_semantics"),
+    (59, "research_model_execution"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 59))
-    assert len({item.name for item in migrations}) == 58
+    assert tuple(item.version for item in migrations) == tuple(range(1, 60))
+    assert len({item.name for item in migrations}) == 59
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -114,11 +115,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 59))
+    assert tuple(item.version for item in first) == tuple(range(1, 60))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 58
+    assert len(rows) == 59
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -787,6 +788,7 @@ def test_migration_058_preserves_v1_protocols_and_accepts_explicit_inference(
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (58, "research_validity_semantics"),
+        (59, "research_model_execution"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(

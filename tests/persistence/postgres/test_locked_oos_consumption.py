@@ -21,6 +21,7 @@ from market_regime_alpha.application.research_validation.formal_protocol import 
     OutcomeTargetForecastEstimate,
     OutcomeTargetForecastStatus,
     build_outcome_target_bound_forecast,
+    not_estimable_target_forecast,
 )
 from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
     PostgresFormalProtocolRepository,
@@ -68,16 +69,11 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
             symbol="000001.SZ",
             decision_time=NOW,
             estimates=tuple(
-                OutcomeTargetForecastEstimate(
-                    target.target_id,
-                    target.target_hash,
-                    OutcomeTargetForecastStatus.NOT_ESTIMABLE,
-                    None,
-                    None,
-                    None,
-                    None,
-                    (),
-                    ("TEST_NO_ESTIMATE",),
+                not_estimable_target_forecast(
+                    target_id=target.target_id,
+                    target_hash=target.target_hash,
+                    barrier_ids=tuple(item.barrier_id for item in target.barriers),
+                    reason_codes=("TEST_NO_ESTIMATE",),
                 )
                 for target in fixture.targets.targets
             ),
@@ -315,16 +311,11 @@ def test_frozen_family_unlocks_one_raw_path_for_all_preregistered_targets(
         symbol="000001.SZ",
         decision_time=NOW,
         estimates=tuple(
-            OutcomeTargetForecastEstimate(
-                target.target_id,
-                target.target_hash,
-                OutcomeTargetForecastStatus.NOT_ESTIMABLE,
-                None,
-                None,
-                None,
-                None,
-                (),
-                ("TEST_NO_ESTIMATE",),
+            not_estimable_target_forecast(
+                target_id=target.target_id,
+                target_hash=target.target_hash,
+                barrier_ids=tuple(item.barrier_id for item in target.barriers),
+                reason_codes=("TEST_NO_ESTIMATE",),
             )
             for target in fixture.targets.targets
         ),
