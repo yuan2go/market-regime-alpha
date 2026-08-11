@@ -117,21 +117,24 @@ class PostgresResearchQualificationAuthority:
         dataset_id: ArtifactId,
         formal_protocol_id: ArtifactId | None,
         formal_pit_evidence_id: ArtifactId | None,
+        formal_pit_evidence_ids: tuple[ArtifactId, ...] = (),
         actor: str,
         reason: str,
         idempotency_key: str,
     ) -> HistoricalSampleQualificationDecision:
+        pit_ids = tuple(sorted(set(formal_pit_evidence_ids), key=str))
+        if formal_pit_evidence_id is not None:
+            if pit_ids and formal_pit_evidence_id not in pit_ids:
+                raise ValueError("Historical qualification primary PIT is outside PIT set")
+            if not pit_ids:
+                pit_ids = (formal_pit_evidence_id,)
         command = {
             "action": "QUALIFY_HISTORICAL_SAMPLE",
             "dataset_id": str(dataset_id),
             "formal_protocol_id": (
                 None if formal_protocol_id is None else str(formal_protocol_id)
             ),
-            "formal_pit_evidence_id": (
-                None
-                if formal_pit_evidence_id is None
-                else str(formal_pit_evidence_id)
-            ),
+            "formal_pit_evidence_ids": [str(item) for item in pit_ids],
             "actor": actor,
             "reason": reason,
         }
@@ -158,17 +161,15 @@ class PostgresResearchQualificationAuthority:
                 if formal_protocol_id is None
                 else _load_formal_protocol(connection, formal_protocol_id)
             )
-            pit = (
-                None
-                if formal_pit_evidence_id is None
-                else _load_formal_pit(connection, formal_pit_evidence_id)
-            )
-            outcome, reasons, provider_decisions = _assess_historical_sample(
-                connection,
-                dataset=dataset,
-                protocol=protocol,
-                pit=pit,
-                evaluated_at=now,
+            pits = tuple(_load_formal_pit(connection, item) for item in pit_ids)
+            outcome, reasons, provider_decisions, forecast_receipts = (
+                _assess_historical_sample(
+                    connection,
+                    dataset=dataset,
+                    protocol=protocol,
+                    pits=pits,
+                    evaluated_at=now,
+                )
             )
             latest = connection.execute(
                 """
@@ -199,14 +200,21 @@ class PostgresResearchQualificationAuthority:
                 ),
                 formal_pit_reference=(
                     None
-                    if pit is None
+                    if not pits
                     else ValidationArtifactReference(
                         "FORMAL_PIT_EVIDENCE",
-                        pit.evidence_id,
-                        pit.evidence_hash,
+                        pits[0].evidence_id,
+                        pits[0].evidence_hash,
                     )
                 ),
+                formal_pit_references=tuple(
+                    ValidationArtifactReference(
+                        "FORMAL_PIT_EVIDENCE", item.evidence_id, item.evidence_hash
+                    )
+                    for item in pits
+                ),
                 provider_fact_decision_references=provider_decisions,
+                formal_forecast_receipt_references=forecast_receipts,
                 outcome=outcome,
                 qualified=outcome is QualificationOutcome.SATISFIED,
                 revision=revision,
@@ -230,7 +238,7 @@ class PostgresResearchQualificationAuthority:
                     decision.decision_hash,
                     str(dataset.dataset_id),
                     None if protocol is None else str(protocol.protocol_id),
-                    None if pit is None else str(pit.evidence_id),
+                    None if not pits else str(pits[0].evidence_id),
                     outcome.value,
                     decision.qualified,
                     revision,
@@ -239,6 +247,35 @@ class PostgresResearchQualificationAuthority:
                     now,
                 ),
             )
+            for ordinal, pit in enumerate(pits, start=1):
+                connection.execute(
+                    """
+                    INSERT INTO historical_sample_qualification_pit_evidence(
+                        decision_id, ordinal, formal_pit_evidence_id,
+                        formal_pit_evidence_hash
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        str(decision.decision_id),
+                        ordinal,
+                        str(pit.evidence_id),
+                        pit.evidence_hash,
+                    ),
+                )
+            for ordinal, receipt in enumerate(forecast_receipts, start=1):
+                connection.execute(
+                    """
+                    INSERT INTO historical_sample_qualification_forecast_receipt(
+                        decision_id, ordinal, receipt_id, receipt_hash
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        str(decision.decision_id),
+                        ordinal,
+                        str(receipt.artifact_id),
+                        receipt.content_hash,
+                    ),
+                )
             _record_command(
                 connection,
                 idempotency_key=idempotency_key,
@@ -407,6 +444,7 @@ class PostgresResearchQualificationAuthority:
         actor: str,
         reason: str,
         idempotency_key: str,
+        formal_pit_evidence_ids: tuple[ArtifactId, ...] = (),
     ) -> FormalHypothesisFamilyEvaluationResult:
         """Resolve and evaluate the complete pre-registered Target family."""
 
@@ -415,6 +453,11 @@ class PostgresResearchQualificationAuthority:
                 "Formal Family Evaluation actor, reason and idempotency key are required"
             )
 
+        pit_ids = tuple(sorted(set(formal_pit_evidence_ids), key=str))
+        if pit_ids and formal_pit_evidence_id not in pit_ids:
+            raise ValueError("Family Evaluation primary PIT is outside PIT set")
+        if not pit_ids:
+            pit_ids = (formal_pit_evidence_id,)
         ordered_groups = tuple(
             sorted(
                 observation_groups,
@@ -428,7 +471,7 @@ class PostgresResearchQualificationAuthority:
         command_payload = {
             "schema_version": "formal-family-evaluation-command/v1",
             "formal_protocol_id": str(formal_protocol_id),
-            "formal_pit_evidence_id": str(formal_pit_evidence_id),
+            "formal_pit_evidence_ids": [str(item) for item in pit_ids],
             "observation_groups": [
                 {
                     "target_reference": item.target_reference.to_canonical_dict(),
@@ -475,7 +518,7 @@ class PostgresResearchQualificationAuthority:
                 connection,
                 protocol.evaluation_protocol_reference.artifact_id,
             )
-            pit = _load_formal_pit(connection, formal_pit_evidence_id)
+            pits = tuple(_load_formal_pit(connection, item) for item in pit_ids)
             family = load_frozen_hypothesis_family_owner(
                 connection,
                 formal_protocol_id=formal_protocol_id,
@@ -488,6 +531,7 @@ class PostgresResearchQualificationAuthority:
                 )
             created_at = _postgres_now(connection)
             inputs: list[FamilyEvaluationInput] = []
+            used_pit_ids: set[ArtifactId] = set()
             observation_sets: list[
                 tuple[
                     ValidationArtifactReference,
@@ -505,11 +549,14 @@ class PostgresResearchQualificationAuthority:
                         target_reference=group.target_reference,
                         binding=binding,
                         require_formal_forecast=True,
-                        formal_pit_evidence_id=formal_pit_evidence_id,
+                        formal_pit_evidence_ids=pit_ids,
                     )
                     for binding in group.observation_bindings
                 )
                 observations = tuple(item[0] for item in resolved)
+                used_pit_ids.update(
+                    item[3] for item in resolved if item[3] is not None
+                )
                 if any(item[2] > created_at for item in resolved):
                     raise ResearchQualificationConflict(
                         "Family Evaluation predates an owner-resolved Target Label"
@@ -558,6 +605,10 @@ class PostgresResearchQualificationAuthority:
                 observation_sets.append(
                     (set_reference, group, observations)
                 )
+            if used_pit_ids != set(pit_ids):
+                raise ResearchQualificationConflict(
+                    "Formal Family Evaluation PIT lineage is not exactly consumed"
+                )
             _consume_family_locked_oos(
                 connection,
                 protocol=protocol,
@@ -570,7 +621,8 @@ class PostgresResearchQualificationAuthority:
                 family=family,
                 protocol=evaluation,
                 inputs=tuple(inputs),
-                formal_pit_evidence=pit,
+                formal_pit_evidence=pits[0],
+                formal_pit_evidences=pits,
                 created_at=created_at,
                 frozen_trading_dates=protocol.frozen_trading_dates,
             )
@@ -578,7 +630,7 @@ class PostgresResearchQualificationAuthority:
                 connection,
                 result=result,
                 protocol=protocol,
-                pit=pit,
+                pits=pits,
                 observation_sets=tuple(observation_sets),
             )
             connection.execute(
@@ -626,18 +678,30 @@ class PostgresResearchQualificationAuthority:
         formal_protocol_id: ArtifactId,
         evaluation_result_id: ArtifactId,
         historical_sample_decision_id: ArtifactId,
+        historical_sample_decision_ids: tuple[ArtifactId, ...] = (),
         formal_pit_evidence_id: ArtifactId,
         actor: str,
         reason: str,
         idempotency_key: str,
+        formal_pit_evidence_ids: tuple[ArtifactId, ...] = (),
     ) -> FormalOOSQualificationDecision:
+        sample_ids = tuple(sorted(set(historical_sample_decision_ids), key=str))
+        if sample_ids and historical_sample_decision_id not in sample_ids:
+            raise ValueError("Formal OOS primary Historical decision is outside family")
+        if not sample_ids:
+            sample_ids = (historical_sample_decision_id,)
+        pit_ids = tuple(sorted(set(formal_pit_evidence_ids), key=str))
+        if pit_ids and formal_pit_evidence_id not in pit_ids:
+            raise ValueError("Formal OOS primary PIT is outside PIT set")
+        if not pit_ids:
+            pit_ids = (formal_pit_evidence_id,)
         command = {
             "action": "QUALIFY_FORMAL_OOS",
             "policy_id": str(policy.policy_id),
             "formal_protocol_id": str(formal_protocol_id),
             "evaluation_result_id": str(evaluation_result_id),
-            "historical_sample_decision_id": str(historical_sample_decision_id),
-            "formal_pit_evidence_id": str(formal_pit_evidence_id),
+            "historical_sample_decision_ids": [str(item) for item in sample_ids],
+            "formal_pit_evidence_ids": [str(item) for item in pit_ids],
             "actor": actor,
             "reason": reason,
         }
@@ -661,21 +725,35 @@ class PostgresResearchQualificationAuthority:
             now = _postgres_now(connection)
             _record_oos_policy(connection, policy=policy, created_at=now)
             protocol = _load_formal_protocol(connection, formal_protocol_id)
-            pit = _load_formal_pit(connection, formal_pit_evidence_id)
-            sample = _load_historical_decision(
-                connection, historical_sample_decision_id
+            samples = tuple(
+                _load_historical_decision(connection, item) for item in sample_ids
             )
             stored_result = _load_validation_artifact(
                 connection,
                 evaluation_result_id,
                 expected_kind="FORMAL_HYPOTHESIS_FAMILY_EVALUATION_RESULT",
             )
+            result = FormalHypothesisFamilyEvaluationResult.from_canonical_dict(
+                {
+                    "result_id": str(evaluation_result_id),
+                    "result_hash": str(stored_result[0]),
+                    **dict(_mapping(stored_result[1])),
+                }
+            )
+            expected_pit_ids = tuple(
+                item.artifact_id for item in result.pit_evidence_references
+            )
+            if pit_ids != expected_pit_ids:
+                raise ResearchQualificationConflict(
+                    "Formal OOS PIT scope differs from Family Evaluation owner lineage"
+                )
+            pits = tuple(_load_formal_pit(connection, item) for item in pit_ids)
             outcome, reasons = _assess_formal_oos_family(
                 connection,
                 policy=policy,
                 protocol=protocol,
-                pit=pit,
-                sample=sample,
+                pits=pits,
+                samples=samples,
                 result_id=evaluation_result_id,
                 result_hash=str(stored_result[0]),
                 result_payload=_mapping(stored_result[1]),
@@ -710,11 +788,25 @@ class PostgresResearchQualificationAuthority:
                 ),
                 historical_sample_decision_reference=ValidationArtifactReference(
                     "HISTORICAL_SAMPLE_QUALIFICATION_DECISION",
-                    sample.decision_id,
-                    sample.decision_hash,
+                    samples[0].decision_id,
+                    samples[0].decision_hash,
+                ),
+                historical_sample_decision_references=tuple(
+                    ValidationArtifactReference(
+                        "HISTORICAL_SAMPLE_QUALIFICATION_DECISION",
+                        sample.decision_id,
+                        sample.decision_hash,
+                    )
+                    for sample in samples
                 ),
                 formal_pit_reference=ValidationArtifactReference(
-                    "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
+                    "FORMAL_PIT_EVIDENCE", pits[0].evidence_id, pits[0].evidence_hash
+                ),
+                formal_pit_references=tuple(
+                    ValidationArtifactReference(
+                        "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
+                    )
+                    for pit in pits
                 ),
                 outcome=outcome,
                 formal_evaluation_complete=outcome is not QualificationOutcome.BLOCKED,
@@ -744,8 +836,8 @@ class PostgresResearchQualificationAuthority:
                     str(policy.policy_id),
                     str(protocol.protocol_id),
                     str(evaluation_result_id),
-                    str(sample.decision_id),
-                    str(pit.evidence_id),
+                    str(samples[0].decision_id),
+                    str(pits[0].evidence_id),
                     outcome.value,
                     decision.formal_evaluation_complete,
                     decision.formal_oos_passed,
@@ -755,6 +847,36 @@ class PostgresResearchQualificationAuthority:
                     now,
                 ),
             )
+            for ordinal, sample in enumerate(samples, start=1):
+                connection.execute(
+                    """
+                    INSERT INTO formal_oos_qualification_historical_decision(
+                        formal_oos_decision_id, ordinal,
+                        historical_decision_id, historical_decision_hash
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        str(decision.decision_id),
+                        ordinal,
+                        str(sample.decision_id),
+                        sample.decision_hash,
+                    ),
+                )
+            for ordinal, pit in enumerate(pits, start=1):
+                connection.execute(
+                    """
+                    INSERT INTO formal_oos_qualification_pit_evidence(
+                        formal_oos_decision_id, ordinal,
+                        formal_pit_evidence_id, formal_pit_evidence_hash
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        str(decision.decision_id),
+                        ordinal,
+                        str(pit.evidence_id),
+                        pit.evidence_hash,
+                    ),
+                )
             _record_command(
                 connection,
                 idempotency_key=idempotency_key,
@@ -780,6 +902,22 @@ class PostgresResearchQualificationAuthority:
                 """,
                 (str(decision_id),),
             ).fetchone()
+            pit_rows = connection.execute(
+                """
+                SELECT formal_pit_evidence_id, formal_pit_evidence_hash
+                FROM historical_sample_qualification_pit_evidence
+                WHERE decision_id = %s ORDER BY ordinal
+                """,
+                (str(decision_id),),
+            ).fetchall()
+            receipt_rows = connection.execute(
+                """
+                SELECT receipt_id, receipt_hash
+                FROM historical_sample_qualification_forecast_receipt
+                WHERE decision_id = %s ORDER BY ordinal
+                """,
+                (str(decision_id),),
+            ).fetchall()
         if row is None:
             raise KeyError(str(decision_id))
         decision = HistoricalSampleQualificationDecision.from_canonical_dict(
@@ -788,6 +926,24 @@ class PostgresResearchQualificationAuthority:
         if decision.decision_hash != str(row[1]):
             raise ResearchQualificationConflict(
                 "Historical Sample decision storage hash mismatch"
+            )
+        expected_pits = tuple(
+            (str(item.artifact_id), item.content_hash)
+            for item in decision.formal_pit_references
+        )
+        if tuple((str(item[0]), str(item[1])) for item in pit_rows) != expected_pits:
+            raise ResearchQualificationConflict(
+                "Historical Sample decision PIT binding storage mismatch"
+            )
+        expected_receipts = tuple(
+            (str(item.artifact_id), item.content_hash)
+            for item in decision.formal_forecast_receipt_references
+        )
+        if tuple(
+            (str(item[0]), str(item[1])) for item in receipt_rows
+        ) != expected_receipts:
+            raise ResearchQualificationConflict(
+                "Historical Sample decision Forecast receipt binding storage mismatch"
             )
         return decision
 
@@ -803,6 +959,22 @@ class PostgresResearchQualificationAuthority:
                 """,
                 (str(decision_id),),
             ).fetchone()
+            historical_rows = connection.execute(
+                """
+                SELECT historical_decision_id, historical_decision_hash
+                FROM formal_oos_qualification_historical_decision
+                WHERE formal_oos_decision_id = %s ORDER BY ordinal
+                """,
+                (str(decision_id),),
+            ).fetchall()
+            pit_rows = connection.execute(
+                """
+                SELECT formal_pit_evidence_id, formal_pit_evidence_hash
+                FROM formal_oos_qualification_pit_evidence
+                WHERE formal_oos_decision_id = %s ORDER BY ordinal
+                """,
+                (str(decision_id),),
+            ).fetchall()
         if row is None:
             raise KeyError(str(decision_id))
         decision = FormalOOSQualificationDecision.from_canonical_dict(
@@ -810,6 +982,22 @@ class PostgresResearchQualificationAuthority:
         )
         if decision.decision_hash != str(row[1]):
             raise ResearchQualificationConflict("Formal OOS storage hash mismatch")
+        expected_historical = tuple(
+            (str(item.artifact_id), item.content_hash)
+            for item in decision.historical_sample_decision_references
+        )
+        if tuple((str(item[0]), str(item[1])) for item in historical_rows) != expected_historical:
+            raise ResearchQualificationConflict(
+                "Formal OOS Historical decision binding storage mismatch"
+            )
+        expected_pits = tuple(
+            (str(item.artifact_id), item.content_hash)
+            for item in decision.formal_pit_references
+        )
+        if tuple((str(item[0]), str(item[1])) for item in pit_rows) != expected_pits:
+            raise ResearchQualificationConflict(
+                "Formal OOS PIT Evidence binding storage mismatch"
+            )
         return decision
 
 
@@ -818,55 +1006,70 @@ def _assess_historical_sample(
     *,
     dataset: HistoricalSampleDataset,
     protocol: FormalResearchProtocol | None,
-    pit: FormalPITEvidenceArtifact | None,
+    pits: tuple[FormalPITEvidenceArtifact, ...],
     evaluated_at: datetime,
 ) -> tuple[
     QualificationOutcome,
     tuple[str, ...],
+    tuple[ValidationArtifactReference, ...],
     tuple[ValidationArtifactReference, ...],
 ]:
     blocked: set[str] = set()
     rejected: set[str] = set()
     if protocol is None:
         blocked.add("FORMAL_RESEARCH_PROTOCOL_MISSING")
-    if pit is None:
+    if not pits:
         blocked.add("FORMAL_PIT_EVIDENCE_MISSING")
     if blocked:
-        return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), ()
-    assert protocol is not None and pit is not None
-    pit_request = _load_formal_pit_request(connection, pit)
-    if pit.outcome is not PITValidationOutcome.SATISFIED:
+        return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), (), ()
+    assert protocol is not None and pits
+    pit_requests = tuple(_load_formal_pit_request(connection, pit) for pit in pits)
+    if any(pit.outcome is not PITValidationOutcome.SATISFIED for pit in pits):
         blocked.add("FORMAL_PIT_NOT_SATISFIED")
-    if pit.available_at > evaluated_at or pit.recorded_at > evaluated_at:
+    if any(pit.available_at > evaluated_at or pit.recorded_at > evaluated_at for pit in pits):
         rejected.add("FORMAL_PIT_NOT_AVAILABLE_AT_QUALIFICATION")
-    if (
+    if any(
         protocol.dataset_reference.artifact_id != pit.lineage.dataset.artifact_id
         or protocol.dataset_reference.content_hash != pit.lineage.dataset.content_hash
+        for pit in pits
     ):
         rejected.add("FORMAL_PROTOCOL_DATASET_PIT_LINEAGE_MISMATCH")
     if (
-        protocol.historical_sample_dataset_reference.artifact_id
-        != dataset.dataset_id
-        or protocol.historical_sample_dataset_reference.content_hash
-        != dataset.dataset_hash
+        ValidationArtifactReference(
+            "HISTORICAL_SAMPLE_DATASET", dataset.dataset_id, dataset.dataset_hash
+        ) not in protocol.historical_sample_dataset_references
     ):
         rejected.add("FORMAL_PROTOCOL_HISTORICAL_SAMPLE_DATASET_MISMATCH")
-    if (
+    if any(
         protocol.universe_reference.artifact_id != pit.lineage.universe.artifact_id
         or protocol.universe_reference.content_hash != pit.lineage.universe.content_hash
+        for pit in pits
     ):
         rejected.add("FORMAL_PROTOCOL_UNIVERSE_PIT_LINEAGE_MISMATCH")
-    if (
+    if any(
         protocol.model_reference.artifact_id != pit.lineage.model_lineage_id
         or protocol.model_reference.content_hash != pit.lineage.model_lineage_hash
+        for pit in pits
     ):
         rejected.add("FORMAL_PROTOCOL_MODEL_PIT_LINEAGE_MISMATCH")
     if dataset.target_reference not in protocol.target_references:
         rejected.add("HISTORICAL_SAMPLE_OUTCOME_TARGET_IDENTITY_MISMATCH")
-    selected = {
-        (str(item.fact_id), item.fact_hash) for item in pit.selected_fact_authorities
-    }
+    forecast_receipts: set[ValidationArtifactReference] = set()
     for record in dataset.records:
+        matching = tuple(
+            (pit, request)
+            for pit, request in zip(pits, pit_requests, strict=True)
+            if request.decision_time == record.sample.sample_decision_time.value
+            and record.sample.symbol in request.symbols
+        )
+        if len(matching) != 1:
+            rejected.add("HISTORICAL_SAMPLE_FORMAL_PIT_BINDING_NOT_EXACT")
+            continue
+        pit, pit_request = matching[0]
+        selected = {
+            (str(item.fact_id), item.fact_hash)
+            for item in pit.selected_fact_authorities
+        }
         if record.sample.symbol not in pit_request.symbols:
             rejected.add("HISTORICAL_SAMPLE_SYMBOL_OUTSIDE_FORMAL_PIT_SCOPE")
         if record.sample.available_at.value > evaluated_at:
@@ -916,15 +1119,43 @@ def _assess_historical_sample(
                 pit=pit,
             )
         )
-    provider_refs, provider_reasons = _resolve_provider_fact_decisions(
-        connection, pit=pit, evaluated_at=evaluated_at
+        receipt_reasons, receipt_reference = _historical_forecast_receipt_resolution(
+            connection,
+            protocol=protocol,
+            record=record,
+            pit=pit,
+        )
+        rejected.update(receipt_reasons)
+        if receipt_reference is not None:
+            forecast_receipts.add(receipt_reference)
+    provider_references: set[ValidationArtifactReference] = set()
+    for pit in pits:
+        provider_refs, provider_reasons = _resolve_provider_fact_decisions(
+            connection, pit=pit, evaluated_at=evaluated_at
+        )
+        provider_references.update(provider_refs)
+        blocked.update(provider_reasons)
+    provider_refs = tuple(
+        sorted(
+            provider_references,
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
     )
-    blocked.update(provider_reasons)
+    receipt_refs = _ordered_references(tuple(forecast_receipts))
     if rejected:
-        return QualificationOutcome.REJECTED, tuple(sorted(rejected | blocked)), provider_refs
+        return (
+            QualificationOutcome.REJECTED,
+            tuple(sorted(rejected | blocked)),
+            provider_refs,
+            receipt_refs,
+        )
     if blocked:
-        return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), provider_refs
-    return QualificationOutcome.SATISFIED, (), provider_refs
+        return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), provider_refs, receipt_refs
+    return QualificationOutcome.SATISFIED, (), provider_refs, receipt_refs
 
 
 def _historical_pit_temporal_reason_codes(
@@ -987,6 +1218,69 @@ def _historical_pit_temporal_reason_codes(
     if calendar_facts == 0:
         reasons.add("FORMAL_PIT_FROZEN_CALENDAR_LINEAGE_MISSING")
     return tuple(sorted(reasons))
+
+
+def _historical_forecast_receipt_resolution(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    record: HistoricalPathSampleRecord,
+    pit: FormalPITEvidenceArtifact,
+) -> tuple[tuple[str, ...], ValidationArtifactReference | None]:
+    rows = connection.execute(
+        """
+        SELECT receipt.receipt_id, receipt.receipt_hash,
+               receipt.formal_protocol_id, receipt.formal_pit_evidence_id,
+               receipt.forecast_id, receipt.decision_time,
+               receipt.materialized_at, receipt.payload_json,
+               forecast.forecast_hash, forecast.forecast_authority
+        FROM formal_forecast_computation_receipt AS receipt
+        JOIN outcome_target_bound_forecast AS forecast
+          ON forecast.forecast_id = receipt.forecast_id
+        WHERE receipt.formal_protocol_id = %s
+          AND receipt.formal_pit_evidence_id = %s
+          AND receipt.decision_time = %s
+          AND forecast.symbol = %s
+        """,
+        (
+            str(protocol.protocol_id),
+            str(pit.evidence_id),
+            record.sample.sample_decision_time.value,
+            record.sample.symbol,
+        ),
+    ).fetchall()
+    if len(rows) != 1 or not isinstance(rows[0][7], Mapping):
+        return (
+            ("HISTORICAL_SAMPLE_FORMAL_FORECAST_RECEIPT_BINDING_NOT_EXACT",),
+            None,
+        )
+    row = rows[0]
+    try:
+        receipt = FormalForecastComputationReceipt.from_canonical_dict(
+            dict(row[7])
+        )
+    except (KeyError, TypeError, ValueError):
+        return (("HISTORICAL_SAMPLE_FORMAL_FORECAST_RECEIPT_REPLAY_FAILED",), None)
+    reference = ValidationArtifactReference(
+        "FORMAL_FORECAST_COMPUTATION_RECEIPT",
+        ArtifactId(str(row[0])),
+        str(row[1]),
+    )
+    if (
+        receipt.receipt_id != reference.artifact_id
+        or receipt.receipt_hash != reference.content_hash
+        or str(row[2]) != str(protocol.protocol_id)
+        or str(row[3]) != str(pit.evidence_id)
+        or str(row[4]) != str(receipt.forecast_reference.artifact_id)
+        or row[5] != record.sample.sample_decision_time.value
+        or row[6] != receipt.materialized_at
+        or str(row[8]) != receipt.forecast_reference.content_hash
+        or str(row[9]) != "FORMAL_OWNER_COMPUTED"
+        or receipt.request.symbol != record.sample.symbol
+        or receipt.decision_time != record.sample.sample_decision_time.value
+    ):
+        return (("HISTORICAL_SAMPLE_FORMAL_FORECAST_RECEIPT_LINEAGE_MISMATCH",), None)
+    return (), reference
 
 
 def _resolve_provider_fact_decisions(
@@ -1071,8 +1365,9 @@ def _assess_formal_oos(
         rejected.add("FORMAL_OOS_POLICY_NOT_FROZEN_IN_RESEARCH_PROTOCOL")
     if not sample.qualified:
         blocked.add("QUALIFIED_HISTORICAL_SAMPLE_REQUIRED")
-    if sample.formal_protocol_reference is None or (
-        sample.formal_protocol_reference.artifact_id != protocol.protocol_id
+    if (
+        sample.formal_protocol_reference is None
+        or sample.formal_protocol_reference.artifact_id != protocol.protocol_id
         or sample.formal_protocol_reference.content_hash != protocol.protocol_hash
     ):
         rejected.add("HISTORICAL_SAMPLE_FORMAL_PROTOCOL_LINEAGE_MISMATCH")
@@ -1080,7 +1375,7 @@ def _assess_formal_oos(
         sample.formal_pit_reference.artifact_id != pit.evidence_id
         or sample.formal_pit_reference.content_hash != pit.evidence_hash
     ):
-        rejected.add("HISTORICAL_SAMPLE_FORMAL_PIT_LINEAGE_MISMATCH")
+        rejected.add("HISTORICAL_SAMPLE_FORMAL_PIT_LINEAGE_MISSING")
     protocol_ref = ValidationArtifactReference.from_canonical_dict(
         _mapping(result_payload["protocol_reference"])
     )
@@ -1161,8 +1456,8 @@ def _assess_formal_oos_family(
     *,
     policy: FormalOOSQualificationPolicy,
     protocol: FormalResearchProtocol,
-    pit: FormalPITEvidenceArtifact,
-    sample: HistoricalSampleQualificationDecision,
+    pits: tuple[FormalPITEvidenceArtifact, ...],
+    samples: tuple[HistoricalSampleQualificationDecision, ...],
     result_id: ArtifactId,
     result_hash: str,
     result_payload: Mapping[str, Any],
@@ -1177,17 +1472,16 @@ def _assess_formal_oos_family(
         )
     ):
         rejected.add("FORMAL_OOS_POLICY_NOT_FROZEN_IN_RESEARCH_PROTOCOL")
-    if not sample.qualified:
+    if not samples or any(not sample.qualified for sample in samples):
         blocked.add("QUALIFIED_HISTORICAL_SAMPLE_REQUIRED")
-    if sample.formal_protocol_reference is None or (
-        sample.formal_protocol_reference.artifact_id != protocol.protocol_id
+    if any(
+        sample.formal_protocol_reference is None
+        or sample.formal_protocol_reference.artifact_id != protocol.protocol_id
         or sample.formal_protocol_reference.content_hash != protocol.protocol_hash
+        for sample in samples
     ):
         rejected.add("HISTORICAL_SAMPLE_FORMAL_PROTOCOL_LINEAGE_MISMATCH")
-    if sample.formal_pit_reference is None or (
-        sample.formal_pit_reference.artifact_id != pit.evidence_id
-        or sample.formal_pit_reference.content_hash != pit.evidence_hash
-    ):
+    if any(not sample.formal_pit_references for sample in samples):
         rejected.add("HISTORICAL_SAMPLE_FORMAL_PIT_LINEAGE_MISMATCH")
     try:
         result = FormalHypothesisFamilyEvaluationResult.from_canonical_dict(
@@ -1208,11 +1502,55 @@ def _assess_formal_oos_family(
         rejected.add("FORMAL_HYPOTHESIS_FAMILY_LINEAGE_MISMATCH")
     if result.evaluation_protocol_reference != protocol.evaluation_protocol_reference:
         rejected.add("FORMAL_EVALUATION_PROTOCOL_LINEAGE_MISMATCH")
-    if result.pit_evidence_reference is None or (
-        result.pit_evidence_reference.artifact_id != pit.evidence_id
-        or result.pit_evidence_reference.content_hash != pit.evidence_hash
-    ):
+    expected_pit_references = _ordered_references(
+        tuple(
+            ValidationArtifactReference(
+                "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
+            )
+            for pit in pits
+        )
+    )
+    if result.pit_evidence_references != expected_pit_references:
         rejected.add("FORMAL_EVALUATION_PIT_LINEAGE_MISMATCH")
+    historical_pit_references = _ordered_references(
+        tuple(
+            reference
+            for sample in samples
+            for reference in sample.formal_pit_references
+        )
+    )
+    if historical_pit_references != expected_pit_references:
+        rejected.add("HISTORICAL_SAMPLE_FORMAL_PIT_LINEAGE_MISMATCH")
+    historical_targets: dict[str, HistoricalSampleQualificationDecision] = {}
+    for sample in samples:
+        dataset = _load_historical_dataset(
+            connection, sample.dataset_reference.artifact_id
+        )
+        if (
+            dataset.dataset_hash != sample.dataset_reference.content_hash
+            or str(dataset.target_reference.artifact_id) in historical_targets
+        ):
+            rejected.add("HISTORICAL_SAMPLE_FAMILY_DATASET_IDENTITY_MISMATCH")
+            continue
+        historical_targets[str(dataset.target_reference.artifact_id)] = sample
+    if set(historical_targets) != {
+        str(item.artifact_id) for item in family.target_references
+    }:
+        blocked.add("HISTORICAL_SAMPLE_FAMILY_TARGET_COVERAGE_INCOMPLETE")
+    if any(
+        sample.dataset_reference not in protocol.historical_sample_dataset_references
+        for sample in samples
+    ):
+        rejected.add("FORMAL_EVALUATION_SAMPLE_DATASET_LINEAGE_MISSING")
+    if not blocked:
+        rejected.update(
+            _historical_family_observation_coverage_reasons(
+                connection,
+                result_id=result_id,
+                family=family,
+                historical_targets=historical_targets,
+            )
+        )
     replayed = _replay_family_evaluation_result(connection, result_id)
     if replayed != result:
         rejected.add("FORMAL_FAMILY_EVALUATION_REPLAY_MISMATCH")
@@ -1259,6 +1597,137 @@ def _assess_formal_oos_family(
         policy=policy,
         metrics=all_metric_payloads,
     )
+
+
+def _historical_family_observation_coverage_reasons(
+    connection: Any,
+    *,
+    result_id: ArtifactId,
+    family: FrozenHypothesisFamily,
+    historical_targets: Mapping[str, HistoricalSampleQualificationDecision],
+) -> tuple[str, ...]:
+    """Reject target/date cherry-picking between qualified C3 and Locked OOS C4."""
+
+    reasons: set[str] = set()
+    result_rows = connection.execute(
+        """
+        SELECT target_id, target_hash, observation_set_id
+        FROM formal_hypothesis_family_evaluation_target
+        WHERE result_id = %s ORDER BY target_id
+        """,
+        (str(result_id),),
+    ).fetchall()
+    result_sets = {
+        str(row[0]): (str(row[1]), ArtifactId(str(row[2]))) for row in result_rows
+    }
+    locked_windows = tuple(
+        item
+        for item in family.windows
+        if item.partition is EvaluationPartition.LOCKED_OOS
+    )
+    for target in family.target_references:
+        target_id = str(target.artifact_id)
+        decision = historical_targets[target_id]
+        dataset = _load_historical_dataset(
+            connection, decision.dataset_reference.artifact_id
+        )
+        receipt_by_scope: dict[
+            tuple[str, datetime],
+            tuple[ValidationArtifactReference, FormalForecastComputationReceipt],
+        ] = {}
+        for receipt_ref in decision.formal_forecast_receipt_references:
+            row = connection.execute(
+                """
+                SELECT receipt_hash, forecast_id, decision_time, payload_json
+                FROM formal_forecast_computation_receipt WHERE receipt_id = %s
+                """,
+                (str(receipt_ref.artifact_id),),
+            ).fetchone()
+            if (
+                row is None
+                or str(row[0]) != receipt_ref.content_hash
+                or not isinstance(row[3], Mapping)
+            ):
+                reasons.add(
+                    f"HISTORICAL_LOCKED_OOS_FORECAST_RECEIPT_MISMATCH:{target_id}"
+                )
+                continue
+            try:
+                receipt = FormalForecastComputationReceipt.from_canonical_dict(
+                    dict(row[3])
+                )
+            except (KeyError, TypeError, ValueError):
+                reasons.add(
+                    f"HISTORICAL_LOCKED_OOS_FORECAST_RECEIPT_MISMATCH:{target_id}"
+                )
+                continue
+            scope = (receipt.request.symbol, receipt.decision_time)
+            if (
+                receipt.receipt_id != receipt_ref.artifact_id
+                or receipt.receipt_hash != receipt_ref.content_hash
+                or str(receipt.forecast_reference.artifact_id) != str(row[1])
+                or receipt.decision_time != row[2]
+                or scope in receipt_by_scope
+            ):
+                reasons.add(
+                    f"HISTORICAL_LOCKED_OOS_FORECAST_RECEIPT_MISMATCH:{target_id}"
+                )
+                continue
+            receipt_by_scope[scope] = (receipt_ref, receipt)
+        record_scopes = {
+            (record.sample.symbol, record.sample.sample_decision_time.value)
+            for record in dataset.records
+        }
+        if set(receipt_by_scope) != record_scopes:
+            reasons.add(
+                f"HISTORICAL_FORECAST_RECEIPT_RECORD_COVERAGE_MISMATCH:{target_id}"
+            )
+        expected: set[tuple[str, str, str, str]] = set()
+        for record in dataset.records:
+            session_date = record.sample.sample_decision_time.value.date()
+            if not any(
+                window.start_date <= session_date <= window.end_date
+                for window in locked_windows
+            ):
+                continue
+            resolved_receipt = receipt_by_scope.get(
+                (record.sample.symbol, record.sample.sample_decision_time.value)
+            )
+            if resolved_receipt is None or (
+                record.outcome_reference.artifact_kind != "TARGET_OUTCOME_LABEL"
+            ):
+                reasons.add(
+                    f"HISTORICAL_LOCKED_OOS_BINDING_NOT_EXACT:{target_id}"
+                )
+                continue
+            receipt_ref, receipt = resolved_receipt
+            expected.add(
+                (
+                    str(receipt.forecast_reference.artifact_id),
+                    receipt.forecast_reference.content_hash,
+                    str(record.outcome_reference.artifact_id),
+                    record.outcome_reference.content_hash,
+                )
+            )
+        result_owner = result_sets.get(target_id)
+        if result_owner is None or result_owner[0] != target.content_hash:
+            reasons.add(f"FORMAL_FAMILY_TARGET_OBSERVATION_SET_MISSING:{target_id}")
+            continue
+        observed_rows = connection.execute(
+            """
+            SELECT forecast_id, forecast_hash, label_id, label_hash
+            FROM formal_evaluation_observation_binding
+            WHERE observation_set_id = %s
+            """,
+            (str(result_owner[1]),),
+        ).fetchall()
+        observed = {
+            (str(row[0]), str(row[1]), str(row[2]), str(row[3]))
+            for row in observed_rows
+        }
+        if observed != expected:
+            reasons.add(f"HISTORICAL_LOCKED_OOS_RECORD_SET_MISMATCH:{target_id}")
+    return tuple(sorted(reasons))
 
 
 def _load_historical_dataset(
@@ -1668,8 +2137,8 @@ def _resolve_evaluation_observation(
     target_reference: ValidationArtifactReference,
     binding: FormalEvaluationObservationBinding,
     require_formal_forecast: bool = False,
-    formal_pit_evidence_id: ArtifactId | None = None,
-) -> tuple[EvaluationObservation, str, datetime]:
+    formal_pit_evidence_ids: tuple[ArtifactId, ...] = (),
+) -> tuple[EvaluationObservation, str, datetime, ArtifactId | None]:
     forecast_row = connection.execute(
         """
         SELECT forecast_hash, payload_json, forecast_authority
@@ -1716,14 +2185,15 @@ def _resolve_evaluation_observation(
                 )
             except (KeyError, TypeError, ValueError):
                 restored_receipt = None
+        receipt_pit_id = None if receipt is None else ArtifactId(str(receipt[2]))
         if (
             str(forecast_row[2]) != "FORMAL_OWNER_COMPUTED"
-            or formal_pit_evidence_id is None
+            or not formal_pit_evidence_ids
             or receipt is None
             or restored_receipt is None
             or restored_receipt.receipt_hash != str(receipt[0])
             or str(receipt[1]) != str(protocol.protocol_id)
-            or str(receipt[2]) != str(formal_pit_evidence_id)
+            or receipt_pit_id not in formal_pit_evidence_ids
             or str(receipt[3]) != str(protocol.model_reference.artifact_id)
             or str(receipt[4]) != protocol.model_reference.content_hash
             or receipt[5] != forecast.decision_time
@@ -1736,6 +2206,8 @@ def _resolve_evaluation_observation(
             raise ResearchQualificationConflict(
                 "Formal Family Evaluation requires owner-computed Forecast receipt"
             )
+    else:
+        receipt_pit_id = None
     required_forecast_sources = {
         protocol.universe_reference,
         protocol.dataset_reference,
@@ -1819,6 +2291,10 @@ def _resolve_evaluation_observation(
     if len(matching_slices) != 1:
         raise ResearchQualificationConflict("Research Panel slice owner mismatch")
     panel_slice = matching_slices[0]
+    if panel_slice.trading_date != forecast.decision_time.date():
+        raise ResearchQualificationConflict(
+            "Research Panel trading date does not equal Forecast DecisionTime date"
+        )
     matching_rows = tuple(
         item
         for item in panel_slice.rows
@@ -1885,7 +2361,7 @@ def _resolve_evaluation_observation(
         market_cap_slice="UNKNOWN",
         theme_slice=theme,
     )
-    return observation, str(label_row[0]), label.outcome_available_at
+    return observation, str(label_row[0]), label.outcome_available_at, receipt_pit_id
 
 
 def _state_slice(
@@ -1952,6 +2428,20 @@ def _consume_family_locked_oos(
                 namespace="locked-oos-raw-evidence-unlock",
                 identity=raw.identity_hash,
             )
+            legacy = connection.execute(
+                """
+                SELECT evidence_identity_hash
+                FROM locked_oos_evidence_consumption
+                WHERE subject = %s AND session_date = %s
+                  AND label_end_date = %s AND partition_kind = 'LOCKED_OOS'
+                LIMIT 1
+                """,
+                (raw.subject, raw.decision_session_date, raw.outcome_session_date),
+            ).fetchone()
+            if legacy is not None:
+                raise ResearchQualificationConflict(
+                    "Raw Locked OOS Evidence was already unlocked by legacy Formal Evaluation"
+                )
             raw_payload = _raw_oos_unlock_payload(
                 raw=raw,
                 family=family,
@@ -2141,7 +2631,7 @@ def _record_family_evaluation_result(
     *,
     result: FormalHypothesisFamilyEvaluationResult,
     protocol: FormalResearchProtocol,
-    pit: FormalPITEvidenceArtifact,
+    pits: tuple[FormalPITEvidenceArtifact, ...],
     observation_sets: tuple[
         tuple[
             ValidationArtifactReference,
@@ -2184,12 +2674,28 @@ def _record_family_evaluation_result(
             str(result.family_reference.artifact_id),
             result.family_reference.content_hash,
             str(protocol.protocol_id),
-            str(pit.evidence_id),
+            str(pits[0].evidence_id),
             len(observation_sets),
             Jsonb(payload),
             result.created_at,
         ),
     )
+    for ordinal, pit in enumerate(pits, start=1):
+        connection.execute(
+            """
+            INSERT INTO formal_hypothesis_family_evaluation_pit_evidence(
+                result_id, ordinal, formal_pit_evidence_id,
+                formal_pit_evidence_hash
+            ) VALUES (%s, %s, %s, %s)
+            ON CONFLICT (result_id, formal_pit_evidence_id) DO NOTHING
+            """,
+            (
+                str(result.result_id),
+                ordinal,
+                str(pit.evidence_id),
+                pit.evidence_hash,
+            ),
+        )
     for set_reference, group, _observations in observation_sets:
         connection.execute(
             """
@@ -2248,6 +2754,14 @@ def _load_family_evaluation_result(
         """,
         (str(result_id),),
     ).fetchall()
+    pit_rows = connection.execute(
+        """
+        SELECT formal_pit_evidence_id, formal_pit_evidence_hash
+        FROM formal_hypothesis_family_evaluation_pit_evidence
+        WHERE result_id = %s ORDER BY ordinal
+        """,
+        (str(result_id),),
+    ).fetchall()
     metric_targets = {
         (str(item.target_reference.artifact_id), item.target_reference.content_hash)
         for item in result.metrics
@@ -2257,6 +2771,11 @@ def _load_family_evaluation_result(
         or result.family_reference.content_hash != str(row[2])
         or result.pit_evidence_reference is None
         or result.pit_evidence_reference.artifact_id != ArtifactId(str(row[4]))
+        or tuple((str(item[0]), str(item[1])) for item in pit_rows)
+        != tuple(
+            (str(item.artifact_id), item.content_hash)
+            for item in result.pit_evidence_references
+        )
         or len(targets) != int(row[5])
         or {
             (str(item[0]), str(item[1])) for item in targets
@@ -2289,7 +2808,19 @@ def _replay_family_evaluation_result(
     if owner is None:
         raise ResearchQualificationConflict("Formal Family owner is missing")
     protocol = _load_formal_protocol(connection, ArtifactId(str(owner[0])))
-    pit = _load_formal_pit(connection, ArtifactId(str(owner[1])))
+    pit_rows = connection.execute(
+        """
+        SELECT formal_pit_evidence_id
+        FROM formal_hypothesis_family_evaluation_pit_evidence
+        WHERE result_id = %s ORDER BY ordinal
+        """,
+        (str(result_id),),
+    ).fetchall()
+    if not pit_rows or str(pit_rows[0][0]) != str(owner[1]):
+        raise ResearchQualificationConflict("Formal Family PIT owner set is missing")
+    pits = tuple(
+        _load_formal_pit(connection, ArtifactId(str(item[0]))) for item in pit_rows
+    )
     family = load_frozen_hypothesis_family_owner(
         connection, formal_protocol_id=protocol.protocol_id
     )
@@ -2309,7 +2840,7 @@ def _replay_family_evaluation_result(
             connection,
             protocol=protocol,
             family=family,
-            formal_pit_evidence_id=pit.evidence_id,
+            formal_pit_evidence_ids=tuple(item.evidence_id for item in pits),
             target_reference=ValidationArtifactReference(
                 "OUTCOME_TARGET", ArtifactId(str(row[0])), str(row[1])
             ),
@@ -2322,7 +2853,8 @@ def _replay_family_evaluation_result(
         family=family,
         protocol=evaluation,
         inputs=inputs,
-        formal_pit_evidence=pit,
+        formal_pit_evidence=pits[0],
+        formal_pit_evidences=pits,
         created_at=original.created_at,
         frozen_trading_dates=protocol.frozen_trading_dates,
     )
@@ -2338,7 +2870,7 @@ def _load_family_observation_input(
     *,
     protocol: FormalResearchProtocol,
     family: FrozenHypothesisFamily,
-    formal_pit_evidence_id: ArtifactId,
+    formal_pit_evidence_ids: tuple[ArtifactId, ...],
     target_reference: ValidationArtifactReference,
     observation_set_id: ArtifactId,
     result_created_at: datetime,
@@ -2405,7 +2937,7 @@ def _load_family_observation_input(
             target_reference=target_reference,
             binding=binding,
             require_formal_forecast=True,
-            formal_pit_evidence_id=formal_pit_evidence_id,
+            formal_pit_evidence_ids=formal_pit_evidence_ids,
         )[0]
         for binding in bindings
     )
@@ -2494,6 +3026,28 @@ def _consume_locked_oos_evidence(
         if consumption is None:
             raise AssertionError("Locked OOS window consumption was not constructed")
         identity_hash, payload = consumption
+        raw = RawOOSEvidenceIdentity(
+            subject=observation.symbol,
+            decision_session_date=observation.session_date,
+            outcome_session_date=observation.label_end_date,
+        )
+        acquire_scope_lock(
+            connection,
+            namespace="locked-oos-raw-evidence-unlock",
+            identity=raw.identity_hash,
+        )
+        family_unlock = connection.execute(
+            """
+            SELECT first_family_id
+            FROM locked_oos_raw_evidence_unlock
+            WHERE raw_evidence_identity_hash = %s
+            """,
+            (raw.identity_hash,),
+        ).fetchone()
+        if family_unlock is not None:
+            raise ResearchQualificationConflict(
+                "Locked OOS evidence was already formally consumed by a frozen family"
+            )
         acquire_scope_lock(
             connection,
             namespace="locked-oos-evidence-consumption",
@@ -2675,6 +3229,7 @@ def _formal_evaluation_sources(
             target_reference,
             protocol.evaluation_protocol_reference,
             *tuple(protocol.component_references().values()),
+            *protocol.historical_sample_dataset_references,
             observation_set_reference,
         )
     )
@@ -2714,7 +3269,9 @@ def _record_observation_set(
     panel_reference: ValidationArtifactReference,
     target_reference: ValidationArtifactReference,
     bindings: tuple[FormalEvaluationObservationBinding, ...],
-    resolved: tuple[tuple[EvaluationObservation, str, datetime], ...],
+    resolved: tuple[
+        tuple[EvaluationObservation, str, datetime, ArtifactId | None], ...
+    ],
     created_at: datetime,
 ) -> None:
     connection.execute(
@@ -2739,7 +3296,7 @@ def _record_observation_set(
             created_at,
         ),
     )
-    for binding, (observation, settlement_id, _) in zip(
+    for binding, (observation, settlement_id, _, _pit_id) in zip(
         bindings, resolved, strict=True
     ):
         connection.execute(

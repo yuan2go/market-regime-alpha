@@ -98,9 +98,6 @@ from market_regime_alpha.application.research_validation.factor_extraction impor
 from market_regime_alpha.application.research_validation.formal_evaluation import (
     FormalEvaluationProtocol,
 )
-from market_regime_alpha.application.research_validation.formal_protocol import (
-    FormalResearchProtocol,
-)
 from market_regime_alpha.application.research_validation.formal_forecast_computation import (
     FormalForecastComputationRequest,
 )
@@ -119,6 +116,7 @@ from market_regime_alpha.application.research_validation.postgres_calibration_qu
     PostgresCalibrationQualificationAuthority,
 )
 from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    FormalProtocolFreezeScope,
     PostgresFormalProtocolRepository,
 )
 from market_regime_alpha.application.research_validation.postgres_phase_c_gates import (
@@ -394,7 +392,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_status.add_argument("--dataset-id", required=True)
     historical_status.add_argument("--formal-protocol-id")
-    historical_status.add_argument("--formal-pit-evidence-id")
+    historical_status.add_argument(
+        "--formal-pit-evidence-id", action="append", dest="formal_pit_evidence_ids"
+    )
     historical_status.add_argument("--reason", required=True)
     historical_status.add_argument("--idempotency-key", required=True)
     oos_status = subparsers.add_parser(
@@ -404,8 +404,18 @@ def build_parser() -> argparse.ArgumentParser:
     oos_status.add_argument("--policy", type=Path, required=True)
     oos_status.add_argument("--formal-protocol-id", required=True)
     oos_status.add_argument("--evaluation-result-id", required=True)
-    oos_status.add_argument("--historical-sample-decision-id", required=True)
-    oos_status.add_argument("--formal-pit-evidence-id", required=True)
+    oos_status.add_argument(
+        "--historical-sample-decision-id",
+        action="append",
+        dest="historical_sample_decision_ids",
+        required=True,
+    )
+    oos_status.add_argument(
+        "--formal-pit-evidence-id",
+        action="append",
+        dest="formal_pit_evidence_ids",
+        required=True,
+    )
     oos_status.add_argument("--reason", required=True)
     oos_status.add_argument("--idempotency-key", required=True)
     calibration_status = subparsers.add_parser(
@@ -596,10 +606,10 @@ def _dispatch(
         )
     if args.operation == "qualification-protocol-record":
         payload = _load_json_object(args.input)
-        expected = {"formal_protocol", "actor", "reason", "idempotency_key"}
+        expected = {"freeze_scope", "actor", "reason", "idempotency_key"}
         if set(payload) != expected:
             raise ValueError(
-                "qualification-protocol-record requires Formal Protocol plus "
+                "qualification-protocol-record requires a references-only freeze scope plus "
                 "actor, reason and idempotency_key; all component payloads are "
                 "reloaded from PostgreSQL owners"
             )
@@ -608,23 +618,14 @@ def _dispatch(
         idempotency_key = str(payload["idempotency_key"])
         if not actor.strip() or not reason.strip() or not idempotency_key.strip():
             raise ValueError("Formal Protocol actor, reason and idempotency key are required")
-        protocol = FormalResearchProtocol.from_canonical_dict(
-            dict(_object_value(payload["formal_protocol"], "formal_protocol"))
+        scope = FormalProtocolFreezeScope.from_canonical_dict(
+            dict(_object_value(payload["freeze_scope"], "freeze_scope"))
         )
         recorded_protocol = PostgresFormalProtocolRepository(
             factory,
             apply_migrations=False,
-        ).record_protocol(
-            protocol=protocol,
-        )
-        _record_phase_c_operator_audit(
-            factory,
-            action_kind="FREEZE_FORMAL_PROTOCOL",
-            reference=_reference_for(
-                "FORMAL_RESEARCH_PROTOCOL",
-                recorded_protocol.protocol_id,
-                recorded_protocol.protocol_hash,
-            ),
+        ).freeze_protocol(
+            scope=scope,
             actor=actor,
             reason=reason,
             idempotency_key=idempotency_key,
@@ -634,32 +635,52 @@ def _dispatch(
             **recorded_protocol.to_canonical_dict(),
         }
     if args.operation == "qualification-forecast-record":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"request", "actor", "reason"}:
+            raise ValueError(
+                "qualification-forecast-record requires request, actor and reason"
+            )
         request = FormalForecastComputationRequest.from_canonical_dict(
-            dict(_load_json_object(args.input))
+            dict(_object_value(payload["request"], "request"))
         )
         receipt = PostgresFormalProtocolRepository(
             factory,
             apply_migrations=False,
-        ).compute_forecast(request)
+        ).compute_forecast(
+            request,
+            actor=str(payload["actor"]),
+            reason=str(payload["reason"]),
+        )
         return {
             "operation": "QUALIFICATION_FORECAST_COMPUTE",
             **receipt.to_canonical_dict(),
         }
     if args.operation == "qualification-evaluation-record":
         payload = _load_json_object(args.input)
-        expected = {
+        common = {
             "formal_protocol_id",
-            "formal_pit_evidence_id",
             "observation_groups",
             "actor",
             "reason",
             "idempotency_key",
         }
-        if set(payload) != expected:
+        pit_keys = {"formal_pit_evidence_id", "formal_pit_evidence_ids"}
+        if set(payload).difference(common) not in (
+            {"formal_pit_evidence_id"},
+            {"formal_pit_evidence_ids"},
+        ) or not common.issubset(payload):
             raise ValueError(
                 "qualification-evaluation-record accepts only immutable owner "
                 "references; result time is assigned by PostgreSQL"
             )
+        raw_pit_ids = (
+            (payload["formal_pit_evidence_id"],)
+            if "formal_pit_evidence_id" in payload
+            else _array_value(payload["formal_pit_evidence_ids"], "formal_pit_evidence_ids")
+        )
+        if not raw_pit_ids or set(payload).intersection(pit_keys) == pit_keys:
+            raise ValueError("Formal Family Evaluation requires a non-empty PIT owner set")
+        pit_ids = tuple(ArtifactId(str(item)) for item in raw_pit_ids)
         evaluation_result = PostgresResearchQualificationAuthority(
             factory,
             apply_migrations=False,
@@ -671,9 +692,8 @@ def _dispatch(
                     payload["observation_groups"], "observation_groups"
                 )
             ),
-            formal_pit_evidence_id=ArtifactId(
-                str(payload["formal_pit_evidence_id"])
-            ),
+            formal_pit_evidence_id=pit_ids[0],
+            formal_pit_evidence_ids=pit_ids,
             actor=str(payload["actor"]),
             reason=str(payload["reason"]),
             idempotency_key=str(payload["idempotency_key"]),
@@ -697,8 +717,11 @@ def _dispatch(
             ),
             formal_pit_evidence_id=(
                 None
-                if args.formal_pit_evidence_id is None
-                else ArtifactId(args.formal_pit_evidence_id)
+                if not args.formal_pit_evidence_ids
+                else ArtifactId(args.formal_pit_evidence_ids[0])
+            ),
+            formal_pit_evidence_ids=tuple(
+                ArtifactId(item) for item in (args.formal_pit_evidence_ids or ())
             ),
             actor=args.principal_id,
             reason=args.reason,
@@ -720,9 +743,15 @@ def _dispatch(
             formal_protocol_id=ArtifactId(args.formal_protocol_id),
             evaluation_result_id=ArtifactId(args.evaluation_result_id),
             historical_sample_decision_id=ArtifactId(
-                args.historical_sample_decision_id
+                args.historical_sample_decision_ids[0]
             ),
-            formal_pit_evidence_id=ArtifactId(args.formal_pit_evidence_id),
+            historical_sample_decision_ids=tuple(
+                ArtifactId(item) for item in args.historical_sample_decision_ids
+            ),
+            formal_pit_evidence_id=ArtifactId(args.formal_pit_evidence_ids[0]),
+            formal_pit_evidence_ids=tuple(
+                ArtifactId(item) for item in args.formal_pit_evidence_ids
+            ),
             actor=args.principal_id,
             reason=args.reason,
             idempotency_key=args.idempotency_key,

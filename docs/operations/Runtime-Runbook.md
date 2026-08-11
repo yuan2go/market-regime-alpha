@@ -48,7 +48,7 @@ uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
 Expected head: migration 057, `formal_research_runtime_closure`. Expected schema
-catalog: 194 tables. Migrations 052–057 add Formal Protocol bindings and
+catalog: 200 tables. Migrations 052–057 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -175,18 +175,26 @@ Threshold, OOS, Cost, Calibration, Strategy and Entry/Holding/Exit owners, then
 stores an immutable owner-resolution receipt for every binding. The Calendar
 payload snapshot is accepted only when it is anchored to the existing PIT
 Artifact Authority resolution; it is not a second Calendar owner. Caller-supplied
-component payloads are rejected. `qualification-forecast-record` requires an
-exact OutcomeTarget-bound Forecast and reloads its Model Lineage owner.
+component payloads are rejected. `qualification-forecast-record` accepts only
+Formal Protocol, Formal PIT, symbol/scope and idempotency references. PostgreSQL
+derives DecisionTime from the PIT request, resolves exact Model/Configuration/
+Code/Feature/Factor/Threshold/Dataset/Universe/Target lineage, invokes only its
+installed executor catalog and assigns materialization time from its own clock.
+Caller prediction values and backdated materialization times are not accepted;
+unsupported exact executors persist `NOT_ESTIMABLE` receipts.
 `qualification-evaluation-record` accepts only immutable Forecast, Target
 Outcome Label and Panel slice/row bindings; PostgreSQL reconstructs score,
 return, label interval and slices, freezes the complete result-affecting
-lineage, and consumes each underlying Locked-OOS subject/session/label interval
-in a durable ledger whose identity survives Label revision and Model, Forecast,
-Dataset, Target or Protocol substitution. The first exact Target and Label remain
-immutable provenance; neither is the raw-outcome reuse key. It never accepts
-caller-supplied observation values or result timestamps. `qualification-historical` and
-`qualification-oos` persist C3/C4 owner decisions; the latter replays those
-owner-resolved observations, the frozen Calendar and metrics.
+lineage across the complete pre-registered Target family and all referenced PIT
+requests. A raw subject/decision-session/outcome-session path is unlocked once;
+only that already-frozen family may then consume its Target-specific labels.
+The family ledger is bridged to the migration-056 legacy ledger, so neither path
+can make previously read evidence pristine again. It never accepts caller-supplied
+observation values or result timestamps. `qualification-historical` binds each
+sample record to its exact DecisionTime PIT and owner-computed Forecast receipt.
+`qualification-oos` requires the Locked-OOS record set to equal the qualified C3
+record set for every frozen Target, then replays the observations, Calendar and
+family-level multiplicity before persisting C4.
 `qualification-calibration` accepts a frozen policy file but re-reads the
 Formal Protocol, target/label/Forecast pair, calibration artifact, partition
 bindings and Formal OOS decision. `qualification-shadow` counts only sessions

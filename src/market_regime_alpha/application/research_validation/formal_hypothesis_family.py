@@ -23,10 +23,12 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationObservation,
     EvaluationPartition,
     EvaluationWindow,
+    FormalEvaluationResult,
     FormalEvaluationProtocol,
     MultipleTestingMethod,
     adjust_multiple_testing,
     run_formal_evaluation,
+    _result_payload as _formal_result_payload,
 )
 from market_regime_alpha.application.research_validation.qualification import (
     FormalEvaluationObservationBinding,
@@ -241,8 +243,6 @@ class FamilyEvaluationInput:
     def __post_init__(self) -> None:
         if self.target_reference.artifact_kind != "OUTCOME_TARGET":
             raise ValueError("Family Evaluation input requires Outcome Target")
-        if not self.observations:
-            raise ValueError("Family Evaluation input requires observations")
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,12 +262,11 @@ class FamilyEvaluationObservationBindings:
             sorted(self.observation_bindings, key=lambda item: item.observation_id)
         )
         if (
-            not ordered
-            or self.observation_bindings != ordered
+            self.observation_bindings != ordered
             or len({item.observation_id for item in ordered}) != len(ordered)
         ):
             raise ValueError(
-                "Family observation bindings must be non-empty, unique and sorted"
+                "Family observation bindings must be unique and sorted"
             )
 
 
@@ -398,6 +397,7 @@ class FormalHypothesisFamilyEvaluationResult:
     reason_codes: tuple[str, ...]
     created_at: datetime
     limitations: tuple[str, ...]
+    pit_evidence_references: tuple[ValidationArtifactReference, ...] = ()
     schema_version: str = "formal-hypothesis-family-evaluation-result/v1"
 
     def __post_init__(self) -> None:
@@ -406,6 +406,18 @@ class FormalHypothesisFamilyEvaluationResult:
             raise ValueError("Family Evaluation result family kind mismatch")
         if self.formal_oos or self.authority is not ResearchEvidenceAuthority.ENGINEERING_ONLY:
             raise ValueError("Family Evaluation candidate cannot self-grant Formal OOS")
+        if self.pit_evidence_references:
+            if self.pit_evidence_references != tuple(
+                sorted(set(self.pit_evidence_references), key=_reference_key)
+            ):
+                raise ValueError("Family Evaluation PIT lineage must be unique and sorted")
+            if any(
+                item.artifact_kind != "FORMAL_PIT_EVIDENCE"
+                for item in self.pit_evidence_references
+            ):
+                raise ValueError("Family Evaluation PIT owner kind mismatch")
+            if self.pit_evidence_reference != self.pit_evidence_references[0]:
+                raise ValueError("Family Evaluation primary PIT must lead PIT lineage")
         if canonical_hash(self.identity_payload()) != self.result_hash:
             raise ValueError("Family Evaluation result hash mismatch")
 
@@ -421,6 +433,7 @@ class FormalHypothesisFamilyEvaluationResult:
             reason_codes=self.reason_codes,
             created_at=self.created_at,
             limitations=self.limitations,
+            pit_evidence_references=self.pit_evidence_references,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -435,6 +448,17 @@ class FormalHypothesisFamilyEvaluationResult:
         cls, value: Mapping[str, Any]
     ) -> FormalHypothesisFamilyEvaluationResult:
         pit_value = value["pit_evidence_reference"]
+        primary_pit = (
+            None
+            if pit_value is None
+            else ValidationArtifactReference.from_canonical_dict(_mapping(pit_value))
+        )
+        pit_references = tuple(
+            ValidationArtifactReference.from_canonical_dict(_mapping(item))
+            for item in _sequence(value.get("pit_evidence_references", ()))
+        )
+        if not pit_references and primary_pit is not None:
+            pit_references = (primary_pit,)
         return cls(
             result_id=ArtifactId(str(value["result_id"])),
             result_hash=str(value["result_hash"]),
@@ -446,13 +470,7 @@ class FormalHypothesisFamilyEvaluationResult:
                     _mapping(value["evaluation_protocol_reference"])
                 )
             ),
-            pit_evidence_reference=(
-                None
-                if pit_value is None
-                else ValidationArtifactReference.from_canonical_dict(
-                    _mapping(pit_value)
-                )
-            ),
+            pit_evidence_reference=primary_pit,
             metrics=tuple(
                 FamilyEvaluationMetric(
                     ValidationArtifactReference.from_canonical_dict(
@@ -470,6 +488,7 @@ class FormalHypothesisFamilyEvaluationResult:
             reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
             created_at=datetime.fromisoformat(str(value["created_at"])),
             limitations=tuple(str(item) for item in _sequence(value["limitations"])),
+            pit_evidence_references=pit_references,
             schema_version=str(value["schema_version"]),
         )
 
@@ -480,6 +499,7 @@ def run_formal_hypothesis_family_evaluation(
     protocol: FormalEvaluationProtocol,
     inputs: tuple[FamilyEvaluationInput, ...],
     formal_pit_evidence: FormalPITEvidenceArtifact | None,
+    formal_pit_evidences: tuple[FormalPITEvidenceArtifact, ...] = (),
     created_at: datetime,
     frozen_trading_dates: tuple[date, ...] = (),
 ) -> FormalHypothesisFamilyEvaluationResult:
@@ -491,25 +511,45 @@ def run_formal_hypothesis_family_evaluation(
     actual_targets = tuple(item.target_reference for item in ordered_inputs)
     if actual_targets != family.target_references:
         raise ValueError("Family Evaluation requires the exact frozen Target family")
-    results = tuple(
-        (
-            item.target_reference,
-            run_formal_evaluation(
+    ordered_pits = tuple(
+        sorted(
+            set(formal_pit_evidences),
+            key=lambda item: (str(item.evidence_id), item.evidence_hash),
+        )
+    )
+    if formal_pit_evidence is not None:
+        if ordered_pits and formal_pit_evidence not in ordered_pits:
+            raise ValueError("Family Evaluation primary PIT is outside PIT lineage")
+        if not ordered_pits:
+            ordered_pits = (formal_pit_evidence,)
+    primary_pit = None if not ordered_pits else ordered_pits[0]
+    results: list[tuple[ValidationArtifactReference, FormalEvaluationResult]] = []
+    for item in ordered_inputs:
+        if item.observations:
+            result = run_formal_evaluation(
                 protocol=protocol,
                 panel_reference=item.panel_reference,
                 observations=item.observations,
-                formal_pit_evidence=formal_pit_evidence,
+                formal_pit_evidence=primary_pit,
                 created_at=created_at,
                 panel_source_references=item.panel_source_references,
                 frozen_trading_dates=frozen_trading_dates,
                 preserve_planned_dimensions=True,
-            ),
-        )
-        for item in ordered_inputs
-    )
+            )
+        else:
+            result = _empty_target_evaluation_result(
+                family=family,
+                protocol=protocol,
+                target_reference=item.target_reference,
+                panel_reference=item.panel_reference,
+                panel_source_references=item.panel_source_references,
+                pit_evidence=primary_pit,
+                created_at=created_at,
+            )
+        results.append((item.target_reference, result))
     flattened = [
         FamilyEvaluationMetric(target, metric)
-        for target, result in results
+        for target, result in tuple(results)
         for metric in result.metrics
     ]
     _verify_planned_family_dimensions(family=family, metrics=tuple(flattened))
@@ -539,7 +579,7 @@ def run_formal_hypothesis_family_evaluation(
     excluded = tuple(
         sorted(
             f"{target.artifact_id}:{item}"
-            for target, result in results
+            for target, result in tuple(results)
             for item in result.excluded_observation_ids
         )
     )
@@ -548,21 +588,23 @@ def run_formal_hypothesis_family_evaluation(
             {
                 "FORMAL_OOS_BLOCKED",
                 "FORMAL_OOS_FAMILY_OWNER_QUALIFICATION_REQUIRED",
-                *(reason for _target, result in results for reason in result.reason_codes),
+                *(reason for _target, result in tuple(results) for reason in result.reason_codes),
             }
         )
     )
     limitations = tuple(
         sorted({*ENGINEERING_LIMITATIONS, "FORMAL_OOS_FALSE", "FAMILY_LEVEL_MULTIPLICITY"})
     )
+    pit_references = tuple(
+        ValidationArtifactReference(
+            "FORMAL_PIT_EVIDENCE", item.evidence_id, item.evidence_hash
+        )
+        for item in ordered_pits
+    )
     pit_reference = (
         None
-        if formal_pit_evidence is None
-        else ValidationArtifactReference(
-            "FORMAL_PIT_EVIDENCE",
-            formal_pit_evidence.evidence_id,
-            formal_pit_evidence.evidence_hash,
-        )
+        if not pit_references
+        else pit_references[0]
     )
     values = {
         "family_reference": family.reference,
@@ -575,6 +617,7 @@ def run_formal_hypothesis_family_evaluation(
         "reason_codes": reasons,
         "created_at": created_at,
         "limitations": limitations,
+        "pit_evidence_references": pit_references,
     }
     payload = _family_result_payload(**values)
     result_id, digest = content_identity("formal-family-evaluation-result", payload)
@@ -586,6 +629,89 @@ def run_formal_hypothesis_family_evaluation(
         pit_evidence_reference=pit_reference,
         metrics=metrics,
         excluded_observation_ids=excluded,
+        authority=ResearchEvidenceAuthority.ENGINEERING_ONLY,
+        formal_oos=False,
+        reason_codes=reasons,
+        created_at=created_at,
+        limitations=limitations,
+        pit_evidence_references=pit_references,
+    )
+
+
+def _empty_target_evaluation_result(
+    *,
+    family: FrozenHypothesisFamily,
+    protocol: FormalEvaluationProtocol,
+    target_reference: ValidationArtifactReference,
+    panel_reference: ValidationArtifactReference,
+    panel_source_references: tuple[ValidationArtifactReference, ...],
+    pit_evidence: FormalPITEvidenceArtifact | None,
+    created_at: datetime,
+) -> FormalEvaluationResult:
+    """Materialize every frozen ALL-slice hypothesis when a Target has no data."""
+
+    metrics = tuple(
+        EvaluationMetric(
+            fold=window.fold,
+            partition=window.partition,
+            sensitivity_return_multiplier=sensitivity,
+            metric_name=metric_name,
+            slice_kind="ALL",
+            slice_value="ALL",
+            sample_count=0,
+            status=EvaluationMetricStatus.NOT_ESTIMABLE,
+            estimate=None,
+            confidence_low=None,
+            confidence_high=None,
+            raw_p_value=None,
+            adjusted_p_value=None,
+            hypothesis_family_id=family.hypothesis_family_key,
+            reason_codes=("NO_TARGET_OBSERVATIONS",),
+        )
+        for window in family.windows
+        for sensitivity in family.sensitivity_return_multipliers
+        for metric_name in family.metric_names
+    )
+    pit_reference = (
+        None
+        if pit_evidence is None
+        else ValidationArtifactReference(
+            "FORMAL_PIT_EVIDENCE", pit_evidence.evidence_id, pit_evidence.evidence_hash
+        )
+    )
+    ordered_sources = tuple(sorted(set(panel_source_references), key=_reference_key))
+    protocol_reference = ValidationArtifactReference(
+            "FORMAL_EVALUATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash
+        )
+    reasons = (
+        "FORMAL_OOS_BLOCKED",
+        "NO_TARGET_OBSERVATIONS",
+        "OWNER_QUALIFICATION_REQUIRED",
+    )
+    limitations = tuple(sorted({*ENGINEERING_LIMITATIONS, "FORMAL_OOS_FALSE"}))
+    payload = _formal_result_payload(
+        protocol_reference,
+        pit_reference,
+        panel_reference,
+        ordered_sources,
+        metrics,
+        (),
+        ResearchEvidenceAuthority.ENGINEERING_ONLY,
+        False,
+        reasons,
+        created_at,
+        limitations,
+    )
+    result_id, digest = content_identity("formal-evaluation-result", payload)
+    return FormalEvaluationResult(
+        result_id=result_id,
+        result_hash=digest,
+        protocol_reference=protocol_reference,
+        pit_evidence_reference=pit_reference,
+        panel_reference=panel_reference,
+        panel_source_references=ordered_sources,
+        metrics=metrics,
+        excluded_observation_ids=(),
         authority=ResearchEvidenceAuthority.ENGINEERING_ONLY,
         formal_oos=False,
         reason_codes=reasons,
@@ -675,7 +801,7 @@ def _family_payload(**values: Any) -> dict[str, Any]:
 
 
 def _family_result_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": "formal-hypothesis-family-evaluation-result/v1",
         "family_reference": values["family_reference"].to_canonical_dict(),
         "evaluation_protocol_reference": values["evaluation_protocol_reference"].to_canonical_dict(),
@@ -692,6 +818,12 @@ def _family_result_payload(**values: Any) -> dict[str, Any]:
         "created_at": timestamp(values["created_at"]),
         "limitations": list(values["limitations"]),
     }
+    pit_references = tuple(values.get("pit_evidence_references", ()))
+    if len(pit_references) > 1:
+        payload["pit_evidence_references"] = [
+            item.to_canonical_dict() for item in pit_references
+        ]
+    return payload
 
 
 def _target_consumption_payload(**values: Any) -> dict[str, Any]:

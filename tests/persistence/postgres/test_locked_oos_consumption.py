@@ -41,6 +41,7 @@ from market_regime_alpha.persistence.postgres.connection import (
 )
 from tests.persistence.postgres.phase_c_owner_fixture import (
     NOW,
+    freeze_phase_c_protocol,
     record_phase_c_protocol_owners,
 )
 
@@ -57,9 +58,10 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     fixture = record_phase_c_protocol_owners(postgres_factory)
-    protocol = fixture.protocol
     repository = PostgresFormalProtocolRepository(postgres_factory)
-    repository.record_protocol(protocol=protocol)
+    protocol = freeze_phase_c_protocol(
+        postgres_factory, fixture, idempotency_key="locked-oos-protocol-legacy"
+    )
     forecasts = tuple(
         build_outcome_target_bound_forecast(
             target_protocol=fixture.targets,
@@ -264,14 +266,48 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
     assert row[2] in {str(item.artifact_id) for item in labels}
     assert row[3] == "LOCKED_OOS"
 
+    family = repository.get_hypothesis_family(protocol.protocol_id)
+    family_group = FamilyEvaluationObservationBindings(
+        target_reference=target,
+        panel_reference=_reference("RESEARCH_PANEL_V2", "locked-oos-panel"),
+        observation_bindings=(bindings[0],),
+    )
+    with pytest.raises(ResearchQualificationConflict, match="legacy Formal Evaluation"):
+        postgres_factory.run_transaction(
+            lambda connection: _consume_family_locked_oos(
+                connection,
+                protocol=protocol,
+                evaluation_protocol=fixture.evaluation,
+                family=family,
+                observation_sets=(
+                    (
+                        ValidationArtifactReference(
+                            "FORMAL_EVALUATION_OBSERVATION_SET",
+                            set_ids[0],
+                            canonical_hash(
+                                {
+                                    "schema_version": "formal-evaluation-observation-set/v1",
+                                    "set_id": str(set_ids[0]),
+                                }
+                            ),
+                        ),
+                        family_group,
+                        (observations[0],),
+                    ),
+                ),
+                consumed_at=NOW,
+            )
+        )
+
 
 def test_frozen_family_unlocks_one_raw_path_for_all_preregistered_targets(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     fixture = record_phase_c_protocol_owners(postgres_factory)
-    protocol = fixture.protocol
     repository = PostgresFormalProtocolRepository(postgres_factory)
-    repository.record_protocol(protocol=protocol)
+    protocol = freeze_phase_c_protocol(
+        postgres_factory, fixture, idempotency_key="locked-oos-protocol-family"
+    )
     family = repository.get_hypothesis_family(protocol.protocol_id)
     targets = protocol.target_references[:2]
     forecast = build_outcome_target_bound_forecast(
@@ -615,3 +651,16 @@ def test_frozen_family_unlocks_one_raw_path_for_all_preregistered_targets(
         assert connection.execute(
             "SELECT count(*) FROM locked_oos_target_observation_consumption"
         ).fetchone()[0] == 2
+
+    with pytest.raises(ResearchQualificationConflict, match="frozen family"):
+        postgres_factory.run_transaction(
+            lambda connection: _consume_locked_oos_evidence(
+                connection,
+                formal_protocol=protocol,
+                evaluation_protocol=fixture.evaluation,
+                target_reference=targets[0],
+                observation_set_id=set_references[0].artifact_id,
+                bindings=groups[0].observation_bindings,
+                observations=observations[0],
+            )
+        )

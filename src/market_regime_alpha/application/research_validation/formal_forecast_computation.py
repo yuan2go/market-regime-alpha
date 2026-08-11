@@ -115,7 +115,9 @@ class ResolvedFormalForecastContext:
     model_lineage: ModelVersionLineage
     model_definition_payload: Mapping[str, Any]
     configuration_reference: ValidationArtifactReference
+    component_owner_payloads: tuple[tuple[str, Mapping[str, Any]], ...]
     selected_fact_references: tuple[ValidationArtifactReference, ...]
+    selected_fact_payloads: tuple[Mapping[str, Any], ...]
     symbol: str
     decision_time: datetime
     materialized_at: datetime
@@ -131,17 +133,38 @@ class ResolvedFormalForecastContext:
             sorted(set(self.selected_fact_references), key=_reference_key)
         ):
             raise ValueError("Formal Forecast selected Facts must be unique and sorted")
+        if tuple(role for role, _payload in self.component_owner_payloads) != tuple(
+            sorted({role for role, _payload in self.component_owner_payloads})
+        ):
+            raise ValueError("Formal Forecast component owner payloads must be unique and sorted")
+        if len(self.selected_fact_payloads) != len(self.selected_fact_references):
+            raise ValueError("Formal Forecast PIT Fact payload/reference cardinality mismatch")
 
 
 class FormalForecastExecutor(Protocol):
     """One installed, versioned computation implementation.
 
-    Implementations are supplied explicitly by runtime composition. There is no
-    dynamic import or caller-selected plugin name.
+    Implementations belong to reviewed application composition. There is no
+    per-request injection, dynamic import or caller-selected plugin name.
     """
 
     @property
     def executor_identity(self) -> str: ...
+
+    @property
+    def implementation_ref(self) -> str: ...
+
+    @property
+    def model_definition_hash(self) -> str: ...
+
+    @property
+    def configuration_hash(self) -> str: ...
+
+    @property
+    def code_revision(self) -> str: ...
+
+    @property
+    def code_hash(self) -> str: ...
 
     def supports(self, context: ResolvedFormalForecastContext) -> bool: ...
 
@@ -162,7 +185,11 @@ class FormalForecastExecutorSet:
     def compute(
         self, context: ResolvedFormalForecastContext
     ) -> tuple[str, tuple[OutcomeTargetForecastEstimate, ...]]:
-        supported = tuple(item for item in self.executors if item.supports(context))
+        supported = tuple(
+            item
+            for item in self.executors
+            if _executor_matches_frozen_lineage(item, context) and item.supports(context)
+        )
         if len(supported) > 1:
             raise ValueError("Formal Forecast executor selection is ambiguous")
         if not supported:
@@ -175,7 +202,36 @@ class FormalForecastExecutorSet:
             )
         executor = supported[0]
         estimates = executor.compute(context)
+        expected = tuple(
+            (item.target_id, item.target_hash) for item in context.target_protocol.targets
+        )
+        actual = tuple((item.target_id, item.target_hash) for item in estimates)
+        if actual != expected:
+            raise ValueError("Formal Forecast executor returned a non-frozen Target set")
         return executor.executor_identity, estimates
+
+
+# Installed executors are code-owned runtime composition, not a request argument.
+# Adding an implementation requires a reviewed code change whose exact Model,
+# Configuration and code lineage is checked again for every computation.
+_INSTALLED_FORMAL_FORECAST_EXECUTORS = FormalForecastExecutorSet(())
+
+
+def installed_formal_forecast_executors() -> FormalForecastExecutorSet:
+    return _INSTALLED_FORMAL_FORECAST_EXECUTORS
+
+
+def _executor_matches_frozen_lineage(
+    executor: FormalForecastExecutor,
+    context: ResolvedFormalForecastContext,
+) -> bool:
+    return (
+        executor.implementation_ref == context.model_lineage.implementation_ref
+        and executor.model_definition_hash == context.model_lineage.definition_hash
+        and executor.configuration_hash == context.configuration_reference.content_hash
+        and executor.code_revision == context.model_lineage.code_revision
+        and executor.code_hash == context.model_lineage.code_hash
+    )
 
 
 def not_estimable_estimates(
@@ -365,5 +421,6 @@ __all__ = [
     "FormalForecastExecutor",
     "FormalForecastExecutorSet",
     "ResolvedFormalForecastContext",
+    "installed_formal_forecast_executors",
     "not_estimable_estimates",
 ]

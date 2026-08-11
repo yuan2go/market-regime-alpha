@@ -13,6 +13,7 @@ from market_regime_alpha.application.research_validation.formal_protocol import 
     build_outcome_target_bound_forecast,
 )
 from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    FormalProtocolFreezeScope,
     FormalProtocolConflict,
     PostgresFormalProtocolRepository,
 )
@@ -66,45 +67,50 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
             created_at=NOW,
         )
 
-    assert repository.record_protocol(protocol=protocol) == protocol
-    assert repository.record_protocol(protocol=protocol) == protocol
+    scope = FormalProtocolFreezeScope.from_protocol_references(protocol)
+    frozen = repository.freeze_protocol(
+        scope=scope,
+        actor="phase-c-test",
+        reason="freeze formal protocol",
+        idempotency_key="formal-protocol-freeze",
+    )
+    assert repository.freeze_protocol(
+        scope=scope,
+        actor="phase-c-test",
+        reason="freeze formal protocol",
+        idempotency_key="formal-protocol-freeze",
+    ) == frozen
+    protocol = frozen
     family = repository.get_hypothesis_family(protocol.protocol_id)
     assert family.formal_protocol_reference.artifact_id == protocol.protocol_id
     assert family.target_references == protocol.target_references
     assert family.hypothesis_family_key == fixture.evaluation.hypothesis_family_id
 
-    forged_payload = protocol.identity_payload()
-    forged_payload["frozen_trading_dates"] = [
-        item
-        for item in forged_payload["frozen_trading_dates"]
-        if item != "2026-01-15"
-    ]
-    forged_hash = canonical_hash(forged_payload)
-    forged_calendar_projection = FormalResearchProtocol.from_canonical_dict(
-        {
-            "protocol_id": f"formal-research-protocol:{forged_hash[7:]}",
-            "protocol_hash": forged_hash,
-            **forged_payload,
-        }
-    )
-    with pytest.raises(FormalProtocolConflict, match="Protocol dates diverge"):
-        repository.record_protocol(protocol=forged_calendar_projection)
+    forged_scope = scope.to_canonical_dict()
+    forged_scope["locked_at"] = timestamp(NOW)
+    with pytest.raises(ValueError, match="fields mismatch"):
+        FormalProtocolFreezeScope.from_canonical_dict(forged_scope)
 
     missing_threshold = _reference("THRESHOLD_POLICY", "caller-only-threshold")
-    missing_payload = protocol.identity_payload()
-    missing_payload["threshold_policy_reference"] = (
-        missing_threshold.to_canonical_dict()
-    )
-    missing_hash = canonical_hash(missing_payload)
-    caller_only_protocol = FormalResearchProtocol.from_canonical_dict(
-        {
-            "protocol_id": f"formal-research-protocol:{missing_hash[7:]}",
-            "protocol_hash": missing_hash,
-            **missing_payload,
-        }
+    missing_components = dict(scope.component_references)
+    missing_components["threshold_policy_reference"] = missing_threshold
+    caller_only_scope = FormalProtocolFreezeScope(
+        protocol_version=scope.protocol_version,
+        outcome_target_protocol_reference=scope.outcome_target_protocol_reference,
+        trading_calendar_reference=scope.trading_calendar_reference,
+        evaluation_protocol_reference=scope.evaluation_protocol_reference,
+        historical_sample_dataset_references=(
+            scope.historical_sample_dataset_references
+        ),
+        component_references=tuple(sorted(missing_components.items())),
     )
     with pytest.raises(FormalProtocolConflict, match="THRESHOLD_POLICY owner is missing"):
-        repository.record_protocol(protocol=caller_only_protocol)
+        repository.freeze_protocol(
+            scope=caller_only_scope,
+            actor="phase-c-test",
+            reason="reject missing owner",
+            idempotency_key="missing-threshold-protocol",
+        )
 
     backdated_payload = protocol.identity_payload()
     backdated_payload["locked_at"] = timestamp(NOW)
@@ -116,7 +122,7 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
             **backdated_payload,
         }
     )
-    with pytest.raises(FormalProtocolConflict, match="recorded after protocol lock"):
+    with pytest.raises(FormalProtocolConflict, match="caller-materialized"):
         repository.record_protocol(protocol=backdated_protocol)
 
     forecast = build_outcome_target_bound_forecast(

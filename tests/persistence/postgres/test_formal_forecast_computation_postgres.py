@@ -34,6 +34,7 @@ from market_regime_alpha.persistence.postgres.connection import (
 )
 from tests.persistence.postgres.phase_c_owner_fixture import (
     StablePhaseCPITResolver,
+    freeze_phase_c_protocol,
     record_phase_c_protocol_owners,
 )
 from tests.persistence.postgres.pit_fixture import (
@@ -70,18 +71,24 @@ def test_owner_computed_forecast_is_idempotent_and_deterministically_replayable(
 ) -> None:
     fixture = record_phase_c_protocol_owners(postgres_factory)
     repository = PostgresFormalProtocolRepository(postgres_factory)
-    repository.record_protocol(protocol=fixture.protocol)
+    protocol = freeze_phase_c_protocol(
+        postgres_factory, fixture, idempotency_key="formal-forecast-protocol"
+    )
     evidence = _record_formal_pit(postgres_factory, fixture)
     assert evidence.outcome is PITValidationOutcome.SATISFIED
     request = FormalForecastComputationRequest.create(
-        formal_protocol_id=fixture.protocol.protocol_id,
+        formal_protocol_id=protocol.protocol_id,
         formal_pit_evidence_id=evidence.evidence_id,
         symbol=SYMBOL,
         idempotency_key="phase-c-owner-forecast-compute",
     )
 
-    first = repository.compute_forecast(request)
-    second = repository.compute_forecast(request)
+    first = repository.compute_forecast(
+        request, actor="phase-c-test", reason="compute formal forecast"
+    )
+    second = repository.compute_forecast(
+        request, actor="phase-c-test", reason="compute formal forecast"
+    )
 
     assert first == second
     assert repository.replay_forecast_computation(first.receipt_id) == first
@@ -107,13 +114,15 @@ def test_owner_computed_forecast_is_idempotent_and_deterministically_replayable(
         ).fetchone()[0] == 1
 
     conflicting = FormalForecastComputationRequest.create(
-        formal_protocol_id=fixture.protocol.protocol_id,
+        formal_protocol_id=protocol.protocol_id,
         formal_pit_evidence_id=evidence.evidence_id,
         symbol="000001.SZ",
         idempotency_key=request.idempotency_key,
     )
     with pytest.raises(FormalProtocolConflict, match="idempotency key conflict"):
-        repository.compute_forecast(conflicting)
+        repository.compute_forecast(
+            conflicting, actor="phase-c-test", reason="conflicting request"
+        )
 
 
 def _record_formal_pit(postgres_factory, fixture):

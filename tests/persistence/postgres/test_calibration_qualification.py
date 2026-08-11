@@ -6,9 +6,6 @@ from market_regime_alpha.application.research_validation.phase_c_gates import (
 from market_regime_alpha.application.research_validation.postgres_calibration_qualification import (
     PostgresCalibrationQualificationAuthority,
 )
-from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
-    PostgresFormalProtocolRepository,
-)
 from market_regime_alpha.application.research_validation.postgres_phase_c_gates import (
     PostgresPhaseCGateAuthority,
 )
@@ -19,6 +16,7 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from tests.persistence.postgres.phase_c_owner_fixture import (
+    freeze_phase_c_protocol,
     record_phase_c_protocol_owners,
 )
 
@@ -27,12 +25,11 @@ def test_calibration_owner_records_real_missing_oos_as_blocked(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     fixture = record_phase_c_protocol_owners(postgres_factory)
-    protocol = fixture.protocol
+    protocol = freeze_phase_c_protocol(
+        postgres_factory, fixture, idempotency_key="calibration-protocol"
+    )
     policy = fixture.calibration_policy
     entry_policy = fixture.entry_policy
-    PostgresFormalProtocolRepository(postgres_factory).record_protocol(
-        protocol=protocol
-    )
     authority = PostgresCalibrationQualificationAuthority(postgres_factory)
 
     decision = authority.qualify(

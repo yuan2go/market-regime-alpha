@@ -194,3 +194,50 @@ def test_family_evaluation_corrects_across_every_frozen_target() -> None:
             formal_pit_evidence=None,
             created_at=NOW,
         )
+
+
+def test_family_evaluation_keeps_empty_preregistered_target_in_denominator() -> None:
+    family = _family()
+    inputs = (
+        FamilyEvaluationInput(
+            target_reference=family.target_references[0],
+            panel_reference=_reference("RESEARCH_PANEL_V2", "panel-populated"),
+            observations=_observations("populated"),
+        ),
+        FamilyEvaluationInput(
+            target_reference=family.target_references[1],
+            panel_reference=_reference("RESEARCH_PANEL_V2", "panel-empty"),
+            observations=(),
+        ),
+    )
+
+    result = run_formal_hypothesis_family_evaluation(
+        family=family,
+        protocol=_evaluation(),
+        inputs=inputs,
+        formal_pit_evidence=None,
+        created_at=NOW,
+    )
+
+    empty_metrics = tuple(
+        item
+        for item in result.metrics
+        if item.target_reference == family.target_references[1]
+    )
+    assert empty_metrics
+    assert all(
+        item.metric.status is EvaluationMetricStatus.NOT_ESTIMABLE
+        and item.metric.reason_codes == ("NO_TARGET_OBSERVATIONS",)
+        for item in empty_metrics
+    )
+    estimated = tuple(
+        item
+        for item in result.metrics
+        if item.metric.status is EvaluationMetricStatus.ESTIMATED
+    )
+    assert estimated
+    for item in estimated:
+        assert item.metric.raw_p_value is not None
+        assert item.metric.adjusted_p_value == min(
+            item.metric.raw_p_value * Decimal(len(result.metrics)), Decimal("1")
+        )

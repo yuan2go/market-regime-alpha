@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import inspect
 
 import pytest
 
 from market_regime_alpha.application.research_validation.formal_forecast_computation import (
     FormalForecastComputationRequest,
+)
+from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    PostgresFormalProtocolRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 
@@ -46,3 +50,13 @@ def test_formal_forecast_request_identity_rejects_caller_backdating() -> None:
 
     with pytest.raises(ValueError, match="fields mismatch"):
         FormalForecastComputationRequest.from_canonical_dict(forged)
+
+
+def test_formal_forecast_repository_has_no_per_call_executor_injection() -> None:
+    parameters = inspect.signature(
+        PostgresFormalProtocolRepository.compute_forecast
+    ).parameters
+
+    assert "executor" not in parameters
+    assert "executors" not in parameters
+    assert "executor_set" not in parameters

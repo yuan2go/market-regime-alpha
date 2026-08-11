@@ -4,16 +4,11 @@ from typing import Any
 
 import pytest
 
-from market_regime_alpha.application.research_validation.common import (
-    ValidationArtifactReference,
-)
 from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    FormalProtocolFreezeScope,
     PostgresFormalProtocolRepository,
 )
-from market_regime_alpha.cli.continuous_research import (
-    _record_phase_c_operator_audit,
-    _record_phase_c_owner_package,
-)
+from market_regime_alpha.cli.continuous_research import _record_phase_c_owner_package
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -36,30 +31,18 @@ def test_typed_owner_and_protocol_operator_workflow_is_idempotent_and_audited(
     assert first["production_authorized"] is False
     assert len(first["owners"]) == 11
 
-    protocol = PostgresFormalProtocolRepository(postgres_factory).record_protocol(
-        protocol=fixture.protocol
-    )
-    protocol_reference = ValidationArtifactReference(
-        "FORMAL_RESEARCH_PROTOCOL",
-        protocol.protocol_id,
-        protocol.protocol_hash,
-    )
-    _record_phase_c_operator_audit(
-        postgres_factory,
-        action_kind="FREEZE_FORMAL_PROTOCOL",
-        reference=protocol_reference,
+    protocol = PostgresFormalProtocolRepository(postgres_factory).freeze_protocol(
+        scope=FormalProtocolFreezeScope.from_protocol_references(fixture.protocol),
         actor="phase-c-operator-test",
         reason="freeze owner-resolved Formal Protocol",
         idempotency_key="phase-c-operator-protocol",
     )
-    _record_phase_c_operator_audit(
-        postgres_factory,
-        action_kind="FREEZE_FORMAL_PROTOCOL",
-        reference=protocol_reference,
+    assert PostgresFormalProtocolRepository(postgres_factory).freeze_protocol(
+        scope=FormalProtocolFreezeScope.from_protocol_references(fixture.protocol),
         actor="phase-c-operator-test",
         reason="freeze owner-resolved Formal Protocol",
         idempotency_key="phase-c-operator-protocol",
-    )
+    ) == protocol
 
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute(

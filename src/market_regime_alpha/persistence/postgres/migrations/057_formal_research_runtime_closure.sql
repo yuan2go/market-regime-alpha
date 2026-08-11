@@ -62,6 +62,80 @@ ON frozen_hypothesis_family(target_protocol_id);
 CREATE INDEX frozen_hypothesis_family_target_owner_idx
 ON frozen_hypothesis_family_target(target_protocol_id, target_id);
 
+CREATE TABLE formal_research_protocol_historical_dataset (
+    formal_protocol_id text NOT NULL
+        REFERENCES formal_research_protocol(protocol_id) ON DELETE RESTRICT,
+    target_id text NOT NULL,
+    target_hash text NOT NULL CHECK (target_hash ~ '^sha256:[0-9a-f]{64}$'),
+    dataset_id text NOT NULL,
+    dataset_hash text NOT NULL CHECK (dataset_hash ~ '^sha256:[0-9a-f]{64}$'),
+    owner_payload_hash text NOT NULL CHECK (
+        owner_payload_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    owner_payload_json jsonb NOT NULL CHECK (
+        jsonb_typeof(owner_payload_json) = 'object'
+    ),
+    owner_recorded_at timestamptz NOT NULL,
+    resolved_at timestamptz NOT NULL,
+    PRIMARY KEY (formal_protocol_id, target_id),
+    UNIQUE (formal_protocol_id, dataset_id, dataset_hash)
+);
+
+CREATE INDEX formal_protocol_historical_dataset_owner_idx
+ON formal_research_protocol_historical_dataset(dataset_id, dataset_hash);
+
+CREATE TABLE historical_sample_qualification_pit_evidence (
+    decision_id text NOT NULL
+        REFERENCES historical_sample_qualification_decision(decision_id)
+        ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    formal_pit_evidence_id text NOT NULL
+        REFERENCES formal_pit_validation_evidence(evidence_id) ON DELETE RESTRICT,
+    formal_pit_evidence_hash text NOT NULL CHECK (
+        formal_pit_evidence_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    PRIMARY KEY (decision_id, ordinal),
+    UNIQUE (decision_id, formal_pit_evidence_id)
+);
+
+CREATE INDEX historical_sample_qualification_pit_owner_idx
+ON historical_sample_qualification_pit_evidence(formal_pit_evidence_id);
+
+CREATE TABLE formal_oos_qualification_historical_decision (
+    formal_oos_decision_id text NOT NULL
+        REFERENCES formal_oos_qualification_decision(decision_id)
+        ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    historical_decision_id text NOT NULL
+        REFERENCES historical_sample_qualification_decision(decision_id)
+        ON DELETE RESTRICT,
+    historical_decision_hash text NOT NULL CHECK (
+        historical_decision_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    PRIMARY KEY (formal_oos_decision_id, ordinal),
+    UNIQUE (formal_oos_decision_id, historical_decision_id)
+);
+
+CREATE INDEX formal_oos_qualification_historical_owner_idx
+ON formal_oos_qualification_historical_decision(historical_decision_id);
+
+CREATE TABLE formal_oos_qualification_pit_evidence (
+    formal_oos_decision_id text NOT NULL
+        REFERENCES formal_oos_qualification_decision(decision_id)
+        ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    formal_pit_evidence_id text NOT NULL
+        REFERENCES formal_pit_validation_evidence(evidence_id) ON DELETE RESTRICT,
+    formal_pit_evidence_hash text NOT NULL CHECK (
+        formal_pit_evidence_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    PRIMARY KEY (formal_oos_decision_id, ordinal),
+    UNIQUE (formal_oos_decision_id, formal_pit_evidence_id)
+);
+
+CREATE INDEX formal_oos_qualification_pit_owner_idx
+ON formal_oos_qualification_pit_evidence(formal_pit_evidence_id);
+
 CREATE TABLE formal_forecast_computation_receipt (
     receipt_id text PRIMARY KEY,
     receipt_hash text NOT NULL UNIQUE CHECK (
@@ -109,6 +183,21 @@ ON formal_forecast_computation_receipt(formal_pit_evidence_id);
 
 CREATE INDEX formal_forecast_computation_command_receipt_idx
 ON formal_forecast_computation_command(receipt_id);
+
+CREATE TABLE historical_sample_qualification_forecast_receipt (
+    decision_id text NOT NULL
+        REFERENCES historical_sample_qualification_decision(decision_id)
+        ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    receipt_id text NOT NULL
+        REFERENCES formal_forecast_computation_receipt(receipt_id) ON DELETE RESTRICT,
+    receipt_hash text NOT NULL CHECK (receipt_hash ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (decision_id, ordinal),
+    UNIQUE (decision_id, receipt_id)
+);
+
+CREATE INDEX historical_sample_qualification_forecast_owner_idx
+ON historical_sample_qualification_forecast_receipt(receipt_id);
 
 CREATE TABLE locked_oos_raw_evidence_unlock (
     raw_evidence_identity_hash text PRIMARY KEY CHECK (
@@ -233,6 +322,20 @@ CREATE TABLE formal_hypothesis_family_evaluation_target (
     PRIMARY KEY (result_id, target_id)
 );
 
+CREATE TABLE formal_hypothesis_family_evaluation_pit_evidence (
+    result_id text NOT NULL
+        REFERENCES formal_hypothesis_family_evaluation(result_id)
+        ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    formal_pit_evidence_id text NOT NULL
+        REFERENCES formal_pit_validation_evidence(evidence_id) ON DELETE RESTRICT,
+    formal_pit_evidence_hash text NOT NULL CHECK (
+        formal_pit_evidence_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    PRIMARY KEY (result_id, ordinal),
+    UNIQUE (result_id, formal_pit_evidence_id)
+);
+
 CREATE INDEX formal_family_evaluation_protocol_idx
 ON formal_hypothesis_family_evaluation(formal_protocol_id);
 
@@ -241,6 +344,9 @@ ON formal_hypothesis_family_evaluation(formal_pit_evidence_id);
 
 CREATE INDEX formal_family_evaluation_target_family_idx
 ON formal_hypothesis_family_evaluation_target(family_id);
+
+CREATE INDEX formal_family_evaluation_pit_owner_idx
+ON formal_hypothesis_family_evaluation_pit_evidence(formal_pit_evidence_id);
 
 CREATE TABLE phase_c_formal_operator_command (
     idempotency_key text PRIMARY KEY,
@@ -300,6 +406,26 @@ CREATE TRIGGER frozen_hypothesis_family_target_no_update
 BEFORE UPDATE OR DELETE ON frozen_hypothesis_family_target
 FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
+CREATE TRIGGER formal_research_protocol_historical_dataset_no_update
+BEFORE UPDATE OR DELETE ON formal_research_protocol_historical_dataset
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER historical_sample_qualification_pit_evidence_no_update
+BEFORE UPDATE OR DELETE ON historical_sample_qualification_pit_evidence
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER historical_sample_qualification_forecast_receipt_no_update
+BEFORE UPDATE OR DELETE ON historical_sample_qualification_forecast_receipt
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER formal_oos_qualification_historical_decision_no_update
+BEFORE UPDATE OR DELETE ON formal_oos_qualification_historical_decision
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER formal_oos_qualification_pit_evidence_no_update
+BEFORE UPDATE OR DELETE ON formal_oos_qualification_pit_evidence
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
 CREATE TRIGGER formal_forecast_computation_receipt_no_update
 BEFORE UPDATE OR DELETE ON formal_forecast_computation_receipt
 FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
@@ -322,6 +448,10 @@ FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 CREATE TRIGGER formal_hypothesis_family_evaluation_target_no_update
 BEFORE UPDATE OR DELETE ON formal_hypothesis_family_evaluation_target
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER formal_hypothesis_family_evaluation_pit_evidence_no_update
+BEFORE UPDATE OR DELETE ON formal_hypothesis_family_evaluation_pit_evidence
 FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 CREATE TRIGGER phase_c_formal_operator_command_no_update

@@ -59,6 +59,10 @@ from market_regime_alpha.application.research_validation.postgres_calibration_qu
 from market_regime_alpha.application.research_validation.postgres_phase_c_gates import (
     PostgresPhaseCGateAuthority,
 )
+from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    FormalProtocolFreezeScope,
+    PostgresFormalProtocolRepository,
+)
 from market_regime_alpha.application.research_validation.postgres_qualification import (
     PostgresResearchQualificationAuthority,
 )
@@ -223,8 +227,29 @@ def record_phase_c_protocol_owners(
         )
     PostgresPITTradingCalendarSnapshotRepository(factory).record(calendar)
 
-    historical = _historical_dataset(target_reference)
-    validation.record_sample_dataset(historical)
+    historical_datasets = tuple(
+        _historical_dataset(
+            ValidationArtifactReference(
+                "OUTCOME_TARGET", item.target_id, item.target_hash
+            )
+        )
+        for item in targets.targets
+    )
+    for historical in historical_datasets:
+        validation.record_sample_dataset(historical)
+    historical_references = tuple(
+        sorted(
+            (
+                ValidationArtifactReference(
+                    "HISTORICAL_SAMPLE_DATASET",
+                    item.dataset_id,
+                    item.dataset_hash,
+                )
+                for item in historical_datasets
+            ),
+            key=lambda item: (str(item.artifact_id), item.content_hash),
+        )
+    )
     feature_set = FeatureDefinitionSet.create(
         definition_set_version="phase-c-owner-v1",
         definitions=(_feature_definition(str(definition.feature_ids[0])),),
@@ -415,9 +440,8 @@ def record_phase_c_protocol_owners(
         evaluation_protocol=evaluation,
         universe_reference=universe_reference,
         dataset_reference=dataset_reference,
-        historical_sample_dataset_reference=ValidationArtifactReference(
-            "HISTORICAL_SAMPLE_DATASET", historical.dataset_id, historical.dataset_hash
-        ),
+        historical_sample_dataset_reference=historical_references[0],
+        historical_sample_dataset_references=historical_references,
         feature_reference=ValidationArtifactReference(
             "FEATURE_DEFINITION_SET",
             feature_set.definition_set_id,
@@ -521,10 +545,11 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
 def _historical_dataset(
     target_reference: ValidationArtifactReference,
 ) -> HistoricalSampleDataset:
+    suffix = str(target_reference.artifact_id)
     sample = PathForecastSample(
-        sample_id=ArtifactId("phase-c-owner-sample"),
-        source_artifact_id=ArtifactId("phase-c-owner-outcome"),
-        source_content_hash=canonical_hash({"outcome": "phase-c-owner"}),
+        sample_id=ArtifactId(f"phase-c-owner-sample:{suffix}"),
+        source_artifact_id=ArtifactId(f"phase-c-owner-outcome:{suffix}"),
+        source_content_hash=canonical_hash({"outcome": "phase-c-owner", "target": suffix}),
         symbol="000001.SZ",
         target_id=TargetId(str(target_reference.artifact_id)),
         sample_decision_time=DecisionTime(NOW - timedelta(days=5)),
@@ -539,7 +564,7 @@ def _historical_dataset(
     record = HistoricalPathSampleRecord.register_unqualified(
         sample=sample,
         target_reference=target_reference,
-        outcome_reference=_reference("FACTUAL_OUTCOME", "phase-c-owner-outcome"),
+        outcome_reference=_reference("FACTUAL_OUTCOME", f"phase-c-owner-outcome:{suffix}"),
         pit_lineage=(),
         registered_at=NOW - timedelta(days=1),
     )
@@ -619,4 +644,23 @@ def _portfolio_policy() -> ShadowPortfolioPolicy:
     )
 
 
-__all__ = ["NOW", "PhaseCOwnerFixture", "record_phase_c_protocol_owners"]
+def freeze_phase_c_protocol(
+    factory: PostgresConnectionFactory,
+    fixture: PhaseCOwnerFixture,
+    *,
+    idempotency_key: str,
+) -> FormalResearchProtocol:
+    return PostgresFormalProtocolRepository(factory).freeze_protocol(
+        scope=FormalProtocolFreezeScope.from_protocol_references(fixture.protocol),
+        actor="phase-c-owner-test",
+        reason="freeze PostgreSQL-owned Phase C test Protocol",
+        idempotency_key=idempotency_key,
+    )
+
+
+__all__ = [
+    "NOW",
+    "PhaseCOwnerFixture",
+    "freeze_phase_c_protocol",
+    "record_phase_c_protocol_owners",
+]
