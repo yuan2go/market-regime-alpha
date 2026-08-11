@@ -117,7 +117,9 @@ class PostgresTargetOutcomeRepository:
                 (str(outcome.shadow_decision.artifact_id),),
             ).fetchone()
             factual = connection.execute(
-                "SELECT settlement_hash, shadow_decision_id FROM prospective_outcome_settlement WHERE settlement_id = %s",
+                "SELECT settlement_hash, shadow_decision_id, "
+                "source_dataset_id, source_dataset_hash "
+                "FROM prospective_outcome_settlement WHERE settlement_id = %s",
                 (str(outcome.factual_outcome_v1.artifact_id),),
             ).fetchone()
             protocol = connection.execute(
@@ -127,7 +129,10 @@ class PostgresTargetOutcomeRepository:
             if decision is None or str(decision[0]) != outcome.shadow_decision.content_hash:
                 raise TargetOutcomeConflict("Targeted Outcome Decision lineage mismatch")
             if factual is None or (
-                str(factual[0]) != outcome.factual_outcome_v1.content_hash or str(factual[1]) != str(outcome.shadow_decision.artifact_id)
+                str(factual[0]) != outcome.factual_outcome_v1.content_hash
+                or str(factual[1]) != str(outcome.shadow_decision.artifact_id)
+                or str(factual[2]) != str(outcome.source_dataset.artifact_id)
+                or str(factual[3]) != outcome.source_dataset.content_hash
             ):
                 raise TargetOutcomeConflict("Targeted Outcome V1 lineage mismatch")
             if protocol is None or str(protocol[0]) != outcome.target_protocol_hash:

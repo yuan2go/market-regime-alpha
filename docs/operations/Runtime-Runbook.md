@@ -47,8 +47,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 058, `locked_oos_roster_authority`. Expected schema
-catalog: 203 tables. Migrations 052–058 add Formal Protocol bindings and
+Expected head: migration 059, `pit_universe_oos_scope_authority`. Expected schema
+catalog: 206 tables. Migrations 052–059 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -193,9 +193,13 @@ Locked-OOS Label, PostgreSQL owner-resolves one SATISFIED C3 decision per frozen
 Target from metadata-only Dataset lineage, proves the exact PIT set is consumed
 and runs the frozen Train/Validation metric floor over the complete family.
 Formal C3 Datasets for new Protocols are Train/Validation-only; their realized
-payload is not loaded by the pre-OOS barrier. Migration 058 derives a complete,
-label-value-blind Locked roster from the frozen windows, Formal PIT requests,
-owner-computed Forecast receipts and Target Label metadata. The roster must
+payload is not loaded by the pre-OOS barrier. Migrations 058–059 derive a complete,
+label-value-blind Locked roster from the frozen windows, the strict PIT Universe
+Reader's immutable full-member projection, Formal PIT requests, owner-computed
+Forecast receipts and Target Label metadata. Each PIT request must equal the
+complete frozen included-member set; caller-selected subject subsets are rejected.
+Targeted outcomes, factual settlements and Panel slices must bind the Protocol
+Dataset ID and hash before Label values are read. The roster must
 exactly equal the submitted Locked bindings; it and every raw/Target consumption
 claim commit in an independent transaction before any Locked `label_json` read.
 A later evaluation failure therefore cannot restore pristine OOS status. Label
@@ -215,6 +219,10 @@ requires estimable Train and Validation floor metrics for every required
 Target/fold/sensitivity, then replays Locked-OOS observations, Calendar and
 family-level multiplicity before persisting C4. For every Formal operator JSON
 command, `actor` must exactly equal the already-authorized `--principal-id`.
+The public legacy single-Target evaluation writer remains available only for
+Train/Validation engineering compatibility and replay. It rejects a Locked-OOS
+Forecast from metadata-only Forecast/partition preflight before resolving any
+Target Label; only the complete family workflow may open new Locked evidence.
 `qualification-calibration` accepts a frozen policy file but re-reads the
 Formal Protocol, target/label/Forecast pair, calibration artifact, partition
 bindings and Formal OOS decision. `qualification-shadow` counts only sessions

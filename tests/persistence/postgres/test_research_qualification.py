@@ -26,12 +26,21 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.research_validation.formal_hypothesis_family import (
     FamilyEvaluationObservationBindings,
 )
+from market_regime_alpha.application.research_validation.formal_protocol import (
+    OutcomeTargetForecastEstimate,
+    OutcomeTargetForecastStatus,
+    build_outcome_target_bound_forecast,
+)
 from market_regime_alpha.application.research_validation.postgres_qualification import (
     PostgresResearchQualificationAuthority,
     ResearchQualificationConflict,
     _historical_pit_temporal_reason_codes,
     _historical_target_label_reason_codes,
     _load_evaluation_label_metadata,
+    _require_locked_oos_pit_universe_scope,
+)
+from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    PostgresFormalProtocolRepository,
 )
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
@@ -46,7 +55,10 @@ from market_regime_alpha.application.research_validation.samples import (
 )
 from market_regime_alpha.core.identity import ArtifactId, TargetId
 from market_regime_alpha.core.time import AvailabilityTime, DecisionTime
-from market_regime_alpha.data.pit_authority import PITFactKind
+from market_regime_alpha.data.pit_authority import (
+    PITArtifactReference,
+    PITFactKind,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.forecasting.path import (
     PATH_FORECAST_SAMPLE_SCHEMA,
@@ -337,6 +349,119 @@ def test_family_evaluation_commits_roster_claim_before_full_resolution(
     ]
 
 
+def test_legacy_single_target_writer_rejects_locked_oos_before_owner_reads(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    fixture = record_phase_c_protocol_owners(postgres_factory)
+    protocol = freeze_phase_c_protocol(
+        postgres_factory,
+        fixture,
+        idempotency_key="legacy-writer-locked-replay-only-protocol",
+    )
+    decision_time = datetime(2026, 1, 22, 6, 45, tzinfo=UTC)
+    forecast = build_outcome_target_bound_forecast(
+        target_protocol=fixture.targets,
+        symbol="600000.SH",
+        decision_time=decision_time,
+        estimates=tuple(
+            OutcomeTargetForecastEstimate(
+                target.target_id,
+                target.target_hash,
+                OutcomeTargetForecastStatus.AVAILABLE_FOR_RESEARCH,
+                Decimal("0.5"),
+                    None,
+                    None,
+                    None,
+                    tuple(
+                        (barrier.barrier_id, Decimal("0.5"))
+                        for barrier in target.barriers
+                    ),
+                    (),
+            )
+            for target in fixture.targets.targets
+        ),
+        source_references=(
+            protocol.universe_reference,
+            protocol.dataset_reference,
+            protocol.feature_reference,
+            protocol.factor_reference,
+            protocol.threshold_policy_reference,
+        ),
+        model_reference=protocol.model_reference,
+        created_at=decision_time,
+    )
+    PostgresFormalProtocolRepository(postgres_factory).record_forecast(forecast)
+    target = protocol.target_references[0]
+    binding = FormalEvaluationObservationBinding.create(
+        forecast_reference=ValidationArtifactReference(
+            "OUTCOME_TARGET_BOUND_FORECAST",
+            forecast.forecast_id,
+            forecast.forecast_hash,
+        ),
+        label_reference=_reference("TARGET_OUTCOME_LABEL", "must-not-read-label"),
+        panel_slice_reference=_reference(
+            "RESEARCH_PANEL_SLICE_V2", "must-not-read-slice"
+        ),
+        panel_row_reference=_reference(
+            "RESEARCH_PANEL_ROW_V2", "must-not-read-row"
+        ),
+    )
+
+    with pytest.raises(
+        ResearchQualificationConflict,
+        match="LEGACY_SINGLE_TARGET_LOCKED_OOS_REPLAY_ONLY_USE_FAMILY_AUTHORITY",
+    ):
+        PostgresResearchQualificationAuthority(
+            postgres_factory
+        ).record_evaluation_candidate(
+            formal_protocol_id=protocol.protocol_id,
+            panel_reference=_reference(
+                "RESEARCH_PANEL_V2", "must-not-read-panel"
+            ),
+            target_reference=target,
+            observation_bindings=(binding,),
+            formal_pit_evidence_id=ArtifactId("must-not-read-formal-pit"),
+        )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM formal_locked_oos_roster"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT count(*) FROM locked_oos_evidence_consumption"
+        ).fetchone()[0] == 0
+
+
+def test_locked_oos_pit_scope_cannot_cherry_pick_frozen_universe_members() -> None:
+    universe_reference = _reference("UNIVERSE", "complete-universe")
+    universe = PITArtifactReference(
+        universe_reference.artifact_kind,
+        universe_reference.artifact_id,
+        universe_reference.content_hash,
+    )
+    decision_time = datetime(2026, 1, 22, 6, 45, tzinfo=UTC)
+    projection = SimpleNamespace(
+        universe_reference=universe,
+        included_symbols=("000001.SZ", "000002.SZ"),
+        effective_at=decision_time - timedelta(days=1),
+        available_at=decision_time - timedelta(minutes=1),
+    )
+    request = SimpleNamespace(
+        lineage=SimpleNamespace(universe=universe),
+        symbols=("000001.SZ",),
+        decision_time=decision_time,
+    )
+
+    with pytest.raises(
+        ResearchQualificationConflict,
+        match="LOCKED_OOS_PIT_SCOPE_DOES_NOT_EQUAL_CANONICAL_UNIVERSE",
+    ):
+        _require_locked_oos_pit_universe_scope(
+            request=request,  # type: ignore[arg-type]
+            projection=projection,  # type: ignore[arg-type]
+        )
+
+
 def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
     target_protocol = _reference("OUTCOME_TARGET_PROTOCOL", "metadata-protocol")
     target = _reference("OUTCOME_TARGET", "metadata-target")
@@ -370,6 +495,8 @@ def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
                     target.content_hash,
                     target_protocol.content_hash,
                     "metadata-dataset",
+                    "metadata-dataset",
+                    canonical_hash({"dataset": "metadata"}),
                 )
             ]
 
@@ -394,7 +521,8 @@ def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
             protocol=SimpleNamespace(
                 outcome_target_protocol_reference=target_protocol,
                 dataset_reference=SimpleNamespace(
-                    artifact_id=ArtifactId("metadata-dataset")
+                    artifact_id=ArtifactId("metadata-dataset"),
+                    content_hash=canonical_hash({"dataset": "metadata"}),
                 ),
             ),  # type: ignore[arg-type]
             target_reference=target,
@@ -402,6 +530,71 @@ def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
             forecast=SimpleNamespace(symbol="000001.SZ", decision_time=forecast_time),  # type: ignore[arg-type]
         )
     assert len(connection.queries) == 1
+
+
+def test_locked_label_metadata_rejects_same_dataset_id_with_wrong_hash() -> None:
+    target_protocol = _reference("OUTCOME_TARGET_PROTOCOL", "hash-protocol")
+    target = _reference("OUTCOME_TARGET", "hash-target")
+    label = _reference("TARGET_OUTCOME_LABEL", "wrong-dataset-hash-label")
+    decision_time = NOW - timedelta(days=1)
+    dataset_hash = canonical_hash({"dataset": "canonical"})
+    binding = FormalEvaluationObservationBinding.create(
+        forecast_reference=_reference(
+            "OUTCOME_TARGET_BOUND_FORECAST", "hash-forecast"
+        ),
+        label_reference=label,
+        panel_slice_reference=_reference("RESEARCH_PANEL_SLICE_V2", "hash-slice"),
+        panel_row_reference=_reference("RESEARCH_PANEL_ROW_V2", "hash-row"),
+    )
+
+    class MetadataResult:
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            return [
+                (
+                    "hash-settlement",
+                    label.content_hash,
+                    str(target_protocol.artifact_id),
+                    str(target.artifact_id),
+                    "000001.SZ",
+                    decision_time,
+                    decision_time + timedelta(days=1),
+                    OutcomeAvailabilityStatus.COMPLETE.value,
+                    canonical_hash({"settlement": "hash"}),
+                    "hash-decision",
+                    canonical_hash({"decision": "hash"}),
+                    target.content_hash,
+                    target_protocol.content_hash,
+                    "dataset-a",
+                    "dataset-a",
+                    canonical_hash({"dataset": "substituted"}),
+                )
+            ]
+
+    class MetadataConnection:
+        def execute(self, query: str, _parameters: object) -> MetadataResult:
+            assert "label_json" not in query
+            assert "prospective_outcome_settlement" in query
+            return MetadataResult()
+
+    with pytest.raises(
+        ResearchQualificationConflict,
+        match="Target Outcome Label owner mismatch",
+    ):
+        _load_evaluation_label_metadata(
+            MetadataConnection(),  # type: ignore[arg-type]
+            protocol=SimpleNamespace(
+                outcome_target_protocol_reference=target_protocol,
+                dataset_reference=SimpleNamespace(
+                    artifact_id=ArtifactId("dataset-a"),
+                    content_hash=dataset_hash,
+                ),
+            ),  # type: ignore[arg-type]
+            target_reference=target,
+            binding=binding,
+            forecast=SimpleNamespace(
+                symbol="000001.SZ", decision_time=decision_time
+            ),  # type: ignore[arg-type]
+        )
 
 
 def test_historical_label_lineage_rejects_unrelated_market_dataset(

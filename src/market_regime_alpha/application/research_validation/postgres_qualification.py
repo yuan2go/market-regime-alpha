@@ -73,6 +73,9 @@ from market_regime_alpha.data.pit_authority import (
     FormalPITValidationRequest,
     PITValidationOutcome,
 )
+from market_regime_alpha.data.pit_artifact_authority import (
+    PITUniverseMembershipAuthorityProjection,
+)
 from market_regime_alpha.data.postgres_provider_qualification import (
     ProviderFactQualificationDecision,
     ProviderFactQualificationStatus,
@@ -330,12 +333,38 @@ class PostgresResearchQualificationAuthority:
                 connection,
                 owner_protocol.evaluation_protocol_reference.artifact_id,
             )
-            owner_pit = _load_formal_pit(connection, formal_pit_evidence_id)
             if target_reference not in owner_protocol.target_references:
                 raise ResearchQualificationConflict(
                     "Formal Evaluation Target is not frozen in the Formal Research Protocol"
                 )
-            panel = _load_panel_owner(connection, panel_reference)
+            preflight_forecasts = tuple(
+                _resolve_forecast_evaluation_input(
+                    connection,
+                    protocol=owner_protocol,
+                    target_reference=target_reference,
+                    binding=binding,
+                    require_formal_forecast=False,
+                    formal_pit_evidence_ids=(),
+                )[0]
+                for binding in ordered_bindings
+            )
+            if any(
+                window.partition is EvaluationPartition.LOCKED_OOS
+                and window.start_date
+                <= forecast.decision_time.date()
+                <= window.end_date
+                for forecast in preflight_forecasts
+                for window in owner_evaluation.windows
+            ):
+                raise ResearchQualificationConflict(
+                    "LEGACY_SINGLE_TARGET_LOCKED_OOS_REPLAY_ONLY_USE_FAMILY_AUTHORITY"
+                )
+            owner_pit = _load_formal_pit(connection, formal_pit_evidence_id)
+            panel = _load_panel_owner(
+                connection,
+                panel_reference,
+                protocol=owner_protocol,
+            )
             resolved = tuple(
                 _resolve_evaluation_observation(
                     connection,
@@ -602,7 +631,11 @@ class PostgresResearchQualificationAuthority:
                 ]
             ] = []
             for group in ordered_groups:
-                panel = _load_panel_owner(connection, group.panel_reference)
+                panel = _load_panel_owner(
+                    connection,
+                    group.panel_reference,
+                    protocol=protocol,
+                )
                 resolved = tuple(
                     _resolve_evaluation_observation(
                         connection,
@@ -2175,7 +2208,7 @@ def _load_evaluation_observations(
         raise ResearchQualificationConflict(
             "Formal Evaluation observation bindings diverge from set identity"
         )
-    panel = _load_panel_owner(connection, panel_reference)
+    panel = _load_panel_owner(connection, panel_reference, protocol=protocol)
     evaluation_protocol = _load_evaluation_protocol(
         connection, protocol.evaluation_protocol_reference.artifact_id
     )
@@ -2232,6 +2265,8 @@ def _load_evaluation_observations(
 def _load_panel_owner(
     connection: Any,
     reference: ValidationArtifactReference,
+    *,
+    protocol: FormalResearchProtocol,
 ) -> FrozenResearchPanelV2:
     row = connection.execute(
         """
@@ -2256,6 +2291,14 @@ def _load_panel_owner(
         or str(row[0]) != panel.panel_hash
     ):
         raise ResearchQualificationConflict("Research Panel owner identity mismatch")
+    if any(
+        item.dataset.artifact_id != protocol.dataset_reference.artifact_id
+        or item.dataset.content_hash != protocol.dataset_reference.content_hash
+        for item in panel.slices
+    ):
+        raise ResearchQualificationConflict(
+            "RESEARCH_PANEL_DATASET_OWNER_LINEAGE_MISMATCH"
+        )
     return panel
 
 
@@ -2423,12 +2466,15 @@ def _load_evaluation_label_metadata(
                l.label_interval_end, l.availability_status,
                o.settlement_hash, o.shadow_decision_id, d.decision_hash,
                definition.target_hash, target_protocol.protocol_hash,
-               o.source_dataset_id
+               o.source_dataset_id, factual.source_dataset_id,
+               factual.source_dataset_hash
         FROM targeted_shadow_outcome_label AS l
         JOIN targeted_shadow_outcome AS o
           ON o.settlement_id = l.settlement_id
         JOIN shadow_research_decision AS d
           ON d.decision_id = o.shadow_decision_id
+        JOIN prospective_outcome_settlement AS factual
+          ON factual.settlement_id = o.factual_outcome_v1_id
         JOIN outcome_target_definition AS definition
           ON definition.protocol_id = l.target_protocol_id
          AND definition.target_id = l.target_id
@@ -2449,6 +2495,8 @@ def _load_evaluation_label_metadata(
         and str(item[12])
         == protocol.outcome_target_protocol_reference.content_hash
         and str(item[13]) == str(protocol.dataset_reference.artifact_id)
+        and str(item[14]) == str(protocol.dataset_reference.artifact_id)
+        and str(item[15]) == protocol.dataset_reference.content_hash
     )
     if len(exact_label_rows) != 1:
         raise ResearchQualificationConflict("Target Outcome Label owner mismatch")
@@ -2787,6 +2835,114 @@ def _existing_family_operator_result(
     return _load_family_evaluation_result(connection, ArtifactId(str(row[2])))
 
 
+def _load_protocol_universe_membership_projection(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+) -> PITUniverseMembershipAuthorityProjection:
+    row = connection.execute(
+        """
+        SELECT projection.projection_id, projection.projection_hash,
+               projection.artifact_resolution_id,
+               projection.artifact_resolution_hash,
+               projection.universe_id, projection.universe_hash,
+               projection.decision_date, projection.effective_at,
+               projection.available_at, projection.member_count,
+               projection.included_member_count, projection.members_hash,
+               projection.payload_json, projection.resolved_at,
+               owner.owner_kind, owner.owner_artifact_id,
+               owner.owner_artifact_hash, owner.artifact_id,
+               owner.artifact_hash, owner.owner_recorded_at
+        FROM formal_research_protocol_component_owner_resolution AS owner
+        JOIN pit_universe_membership_projection AS projection
+          ON projection.artifact_resolution_id = owner.owner_artifact_id
+         AND projection.artifact_resolution_hash = owner.owner_artifact_hash
+        WHERE owner.protocol_id = %s
+          AND owner.component_role = 'universe_reference'
+        """,
+        (str(protocol.protocol_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[12], Mapping):
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_CANONICAL_UNIVERSE_MEMBERSHIP_PROJECTION_MISSING"
+        )
+    try:
+        projection = PITUniverseMembershipAuthorityProjection.from_canonical_dict(
+            _mapping(row[12])
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_CANONICAL_UNIVERSE_MEMBERSHIP_PROJECTION_REPLAY_FAILED"
+        ) from exc
+    expected_storage = (
+        str(projection.projection_id),
+        projection.projection_hash,
+        str(projection.artifact_resolution_id),
+        projection.artifact_resolution_hash,
+        str(projection.universe_reference.artifact_id),
+        projection.universe_reference.content_hash,
+        projection.decision_date,
+        projection.effective_at,
+        projection.available_at,
+        len(projection.members),
+        len(projection.included_symbols),
+        projection.members_hash,
+        projection.resolved_at,
+    )
+    actual_storage = tuple(row[:12]) + (row[13],)
+    if (
+        actual_storage != expected_storage
+        or str(row[14]) != "PIT_ARTIFACT_AUTHORITY"
+        or str(row[15]) != str(projection.artifact_resolution_id)
+        or str(row[16]) != projection.artifact_resolution_hash
+        or str(row[17]) != str(protocol.universe_reference.artifact_id)
+        or str(row[18]) != protocol.universe_reference.content_hash
+        or projection.universe_reference.reference_kind
+        != protocol.universe_reference.artifact_kind
+        or projection.universe_reference.artifact_id
+        != protocol.universe_reference.artifact_id
+        or projection.universe_reference.content_hash
+        != protocol.universe_reference.content_hash
+        or row[19] != projection.resolved_at
+        or projection.resolved_at > protocol.locked_at
+        or not projection.included_symbols
+    ):
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_CANONICAL_UNIVERSE_MEMBERSHIP_PROJECTION_MISMATCH"
+        )
+    member_rows = connection.execute(
+        """
+        SELECT symbol, included, record_hash, payload_json
+        FROM pit_universe_membership_projection_member
+        WHERE projection_id = %s ORDER BY symbol
+        """,
+        (str(projection.projection_id),),
+    ).fetchall()
+    expected_members = tuple(
+        (
+            member.symbol,
+            member.included,
+            member.record_hash,
+            member.to_canonical_dict(),
+        )
+        for member in projection.members
+    )
+    actual_members = tuple(
+        (
+            str(item[0]),
+            bool(item[1]),
+            str(item[2]),
+            dict(_mapping(item[3])),
+        )
+        for item in member_rows
+    )
+    if actual_members != expected_members:
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_CANONICAL_UNIVERSE_MEMBER_SET_MISMATCH"
+        )
+    return projection
+
+
 def _prepare_locked_oos_roster(
     connection: Any,
     *,
@@ -2925,6 +3081,10 @@ def _prepare_locked_oos_roster(
         )
         for group in groups
     }
+    universe_projection = _load_protocol_universe_membership_projection(
+        connection,
+        protocol=protocol,
+    )
     members = _resolve_locked_oos_roster_members(
         connection,
         protocol=protocol,
@@ -2933,6 +3093,7 @@ def _prepare_locked_oos_roster(
         groups=groups,
         pits=pits,
         set_references=set_references,
+        universe_projection=universe_projection,
         frozen_at=frozen_at,
     )
     locked_dates = tuple(
@@ -2953,6 +3114,12 @@ def _prepare_locked_oos_roster(
             ).to_canonical_dict()
             for pit in pits
         ],
+        "universe_membership_projection_reference": (
+            _universe_membership_projection_reference(
+                universe_projection
+            ).to_canonical_dict()
+        ),
+        "universe_members_hash": universe_projection.members_hash,
         "command_hash": command_hash,
         "idempotency_key": idempotency_key,
         "locked_dates": list(locked_dates),
@@ -3015,6 +3182,11 @@ def _prepare_locked_oos_roster(
             Jsonb(roster_payload),
             frozen_at,
         ),
+    )
+    _insert_locked_oos_roster_universe_binding(
+        connection,
+        preparation=preparation,
+        projection=universe_projection,
     )
     for member in members:
         _insert_locked_oos_roster_member(
@@ -3093,6 +3265,118 @@ def _locked_oos_dates_from_family(
     )
 
 
+def _universe_membership_projection_reference(
+    projection: PITUniverseMembershipAuthorityProjection,
+) -> ValidationArtifactReference:
+    return ValidationArtifactReference(
+        "PIT_UNIVERSE_MEMBERSHIP_PROJECTION",
+        projection.projection_id,
+        projection.projection_hash,
+    )
+
+
+def _insert_locked_oos_roster_universe_binding(
+    connection: Any,
+    *,
+    preparation: _LockedOOSRosterPreparation,
+    projection: PITUniverseMembershipAuthorityProjection,
+) -> None:
+    payload = {
+        "schema_version": "formal-locked-oos-roster-universe-binding-v1",
+        "roster_reference": ValidationArtifactReference(
+            "FORMAL_LOCKED_OOS_ROSTER",
+            preparation.roster_id,
+            preparation.roster_hash,
+        ).to_canonical_dict(),
+        "universe_membership_projection_reference": (
+            _universe_membership_projection_reference(projection).to_canonical_dict()
+        ),
+        "universe_reference": ValidationArtifactReference(
+            projection.universe_reference.reference_kind,
+            projection.universe_reference.artifact_id,
+            projection.universe_reference.content_hash,
+        ).to_canonical_dict(),
+        "members_hash": projection.members_hash,
+        "included_symbols": list(projection.included_symbols),
+        "bound_at": timestamp(preparation.frozen_at),
+    }
+    connection.execute(
+        """
+        INSERT INTO formal_locked_oos_roster_universe_binding(
+            roster_id, projection_id, projection_hash,
+            universe_id, universe_hash, members_hash,
+            included_member_count, payload_json, bound_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            str(preparation.roster_id),
+            str(projection.projection_id),
+            projection.projection_hash,
+            str(projection.universe_reference.artifact_id),
+            projection.universe_reference.content_hash,
+            projection.members_hash,
+            len(projection.included_symbols),
+            Jsonb(payload),
+            preparation.frozen_at,
+        ),
+    )
+
+
+def _require_locked_oos_roster_universe_binding(
+    connection: Any,
+    *,
+    preparation: _LockedOOSRosterPreparation,
+    projection: PITUniverseMembershipAuthorityProjection,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT roster_id, projection_id, projection_hash,
+               universe_id, universe_hash, members_hash,
+               included_member_count, payload_json, bound_at
+        FROM formal_locked_oos_roster_universe_binding
+        WHERE roster_id = %s
+        """,
+        (str(preparation.roster_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[7], Mapping):
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_ROSTER_UNIVERSE_BINDING_MISSING"
+        )
+    expected_payload = {
+        "schema_version": "formal-locked-oos-roster-universe-binding-v1",
+        "roster_reference": ValidationArtifactReference(
+            "FORMAL_LOCKED_OOS_ROSTER",
+            preparation.roster_id,
+            preparation.roster_hash,
+        ).to_canonical_dict(),
+        "universe_membership_projection_reference": (
+            _universe_membership_projection_reference(projection).to_canonical_dict()
+        ),
+        "universe_reference": ValidationArtifactReference(
+            projection.universe_reference.reference_kind,
+            projection.universe_reference.artifact_id,
+            projection.universe_reference.content_hash,
+        ).to_canonical_dict(),
+        "members_hash": projection.members_hash,
+        "included_symbols": list(projection.included_symbols),
+        "bound_at": timestamp(preparation.frozen_at),
+    }
+    if tuple(row[:7]) + (dict(row[7]), row[8]) != (
+        str(preparation.roster_id),
+        str(projection.projection_id),
+        projection.projection_hash,
+        str(projection.universe_reference.artifact_id),
+        projection.universe_reference.content_hash,
+        projection.members_hash,
+        len(projection.included_symbols),
+        expected_payload,
+        preparation.frozen_at,
+    ):
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_ROSTER_UNIVERSE_BINDING_MISMATCH"
+        )
+
+
 def _resolve_locked_oos_roster_members(
     connection: Any,
     *,
@@ -3102,6 +3386,7 @@ def _resolve_locked_oos_roster_members(
     groups: tuple[FamilyEvaluationObservationBindings, ...],
     pits: tuple[FormalPITEvidenceArtifact, ...],
     set_references: Mapping[str, ValidationArtifactReference],
+    universe_projection: PITUniverseMembershipAuthorityProjection,
     frozen_at: datetime,
 ) -> tuple[dict[str, Any], ...]:
     """Build an expected roster from PIT request/Forecast/Label metadata only."""
@@ -3112,11 +3397,20 @@ def _resolve_locked_oos_roster_members(
     expected: list[dict[str, Any]] = []
     covered_dates: set[date] = set()
     covered_scopes: set[tuple[date, str]] = set()
+    member_record_hashes = {
+        member.symbol: member.record_hash
+        for member in universe_projection.members
+        if member.included
+    }
     for pit in pits:
         request = _load_formal_pit_request(connection, pit)
         decision_date = request.decision_time.date()
         if decision_date not in locked_dates:
             continue
+        _require_locked_oos_pit_universe_scope(
+            request=request,
+            projection=universe_projection,
+        )
         covered_dates.add(decision_date)
         duplicate_scopes = {
             (decision_date, symbol) for symbol in request.symbols
@@ -3190,10 +3484,14 @@ def _resolve_locked_oos_roster_members(
                            label.label_interval_end, label.availability_status,
                            definition.target_hash, target_protocol.protocol_hash,
                            outcome.source_dataset_id,
+                           factual.source_dataset_id,
+                           factual.source_dataset_hash,
                            outcome.outcome_available_at, outcome.created_at
                     FROM targeted_shadow_outcome_label AS label
                     JOIN targeted_shadow_outcome AS outcome
                       ON outcome.settlement_id = label.settlement_id
+                    JOIN prospective_outcome_settlement AS factual
+                      ON factual.settlement_id = outcome.factual_outcome_v1_id
                     JOIN outcome_target_definition AS definition
                       ON definition.protocol_id = label.target_protocol_id
                      AND definition.target_id = label.target_id
@@ -3220,11 +3518,15 @@ def _resolve_locked_oos_roster_members(
                     != protocol.outcome_target_protocol_reference.content_hash
                     or str(label_rows[0][8])
                     != str(protocol.dataset_reference.artifact_id)
+                    or str(label_rows[0][9])
+                    != str(protocol.dataset_reference.artifact_id)
+                    or str(label_rows[0][10])
+                    != protocol.dataset_reference.content_hash
                     or label_rows[0][3] != request.decision_time
                     or label_rows[0][4] <= label_rows[0][3]
-                    or label_rows[0][4] > label_rows[0][9]
-                    or label_rows[0][9] > frozen_at
-                    or label_rows[0][10] > frozen_at
+                    or label_rows[0][4] > label_rows[0][11]
+                    or label_rows[0][11] > frozen_at
+                    or label_rows[0][12] > frozen_at
                 ):
                     raise ResearchQualificationConflict(
                         "LOCKED_OOS_LABEL_METADATA_SCOPE_INCOMPLETE"
@@ -3247,6 +3549,12 @@ def _resolve_locked_oos_roster_members(
                     "formal_pit_evidence_reference": ValidationArtifactReference(
                         "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
                     ).to_canonical_dict(),
+                    "universe_membership_projection_reference": (
+                        _universe_membership_projection_reference(
+                            universe_projection
+                        ).to_canonical_dict()
+                    ),
+                    "universe_member_record_hash": member_record_hashes[symbol],
                     "forecast_reference": receipt.forecast_reference.to_canonical_dict(),
                     "settlement_id": str(label_row[0]),
                     "label_reference": ValidationArtifactReference(
@@ -3310,6 +3618,27 @@ def _resolve_locked_oos_roster_members(
     return ordered
 
 
+def _require_locked_oos_pit_universe_scope(
+    *,
+    request: FormalPITValidationRequest,
+    projection: PITUniverseMembershipAuthorityProjection,
+) -> None:
+    if (
+        request.lineage.universe.reference_kind
+        != projection.universe_reference.reference_kind
+        or request.lineage.universe.artifact_id
+        != projection.universe_reference.artifact_id
+        or request.lineage.universe.content_hash
+        != projection.universe_reference.content_hash
+        or tuple(request.symbols) != projection.included_symbols
+        or projection.effective_at > request.decision_time
+        or projection.available_at > request.decision_time
+    ):
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_PIT_SCOPE_DOES_NOT_EQUAL_CANONICAL_UNIVERSE"
+        )
+
+
 def _locked_oos_member_binding_key(
     member: Mapping[str, Any],
 ) -> tuple[str, ...]:
@@ -3340,6 +3669,9 @@ def _locked_oos_member_storage_projection(
     pit = ValidationArtifactReference.from_canonical_dict(
         _mapping(member["formal_pit_evidence_reference"])
     )
+    universe_projection = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["universe_membership_projection_reference"])
+    )
     forecast = ValidationArtifactReference.from_canonical_dict(
         _mapping(member["forecast_reference"])
     )
@@ -3360,6 +3692,10 @@ def _locked_oos_member_storage_projection(
         target_protocol.artifact_kind != "OUTCOME_TARGET_PROTOCOL"
         or target.artifact_kind != "OUTCOME_TARGET"
         or pit.artifact_kind != "FORMAL_PIT_EVIDENCE"
+        or universe_projection.artifact_kind
+        != "PIT_UNIVERSE_MEMBERSHIP_PROJECTION"
+        or not isinstance(member.get("universe_member_record_hash"), str)
+        or not str(member["universe_member_record_hash"]).startswith("sha256:")
         or forecast.artifact_kind != "OUTCOME_TARGET_BOUND_FORECAST"
         or label.artifact_kind != "TARGET_OUTCOME_LABEL"
         or observation_set.artifact_kind != "FORMAL_EVALUATION_OBSERVATION_SET"
@@ -3470,6 +3806,11 @@ def _require_locked_oos_roster(
         payload_protocol = ValidationArtifactReference.from_canonical_dict(
             _mapping(payload.get("formal_protocol_reference"))
         )
+        payload_universe_projection = (
+            ValidationArtifactReference.from_canonical_dict(
+                _mapping(payload.get("universe_membership_projection_reference"))
+            )
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise ResearchQualificationConflict(
             "LOCKED_OOS_ROSTER_PAYLOAD_REPLAY_FAILED"
@@ -3482,6 +3823,23 @@ def _require_locked_oos_roster(
     )
     members = tuple(
         dict(_mapping(item)) for item in _sequence(payload.get("members", ()))
+    )
+    universe_projection = _load_protocol_universe_membership_projection(
+        connection,
+        protocol=protocol,
+    )
+    expected_universe_projection = _universe_membership_projection_reference(
+        universe_projection
+    )
+    universe_member_hashes = {
+        item.symbol: item.record_hash
+        for item in universe_projection.members
+        if item.included
+    }
+    _require_locked_oos_roster_universe_binding(
+        connection,
+        preparation=preparation,
+        projection=universe_projection,
     )
     expected_sets = {
         group.target_reference: _observation_set_reference(
@@ -3506,6 +3864,11 @@ def _require_locked_oos_roster(
                 ValidationArtifactReference.from_canonical_dict(
                     _mapping(member["observation_set_reference"])
                 ),
+                ValidationArtifactReference.from_canonical_dict(
+                    _mapping(member["universe_membership_projection_reference"])
+                ),
+                str(member["universe_member_record_hash"]),
+                str(member["subject"]),
                 _parse_timestamp(str(member["decision_time"])),
             )
             for member in members
@@ -3554,12 +3917,17 @@ def _require_locked_oos_roster(
         or target not in family.target_references
         or pit not in expected_pit_set
         or expected_sets.get(target) != observation_set
+        or member_universe_projection != expected_universe_projection
+        or universe_member_hashes.get(subject) != member_record_hash
         or decision_time.date() not in locked_date_set
         for (
             target_protocol,
             target,
             pit,
             observation_set,
+            member_universe_projection,
+            member_record_hash,
+            subject,
             decision_time,
         ) in member_lineage
     ):
@@ -3583,6 +3951,8 @@ def _require_locked_oos_roster(
         != ValidationArtifactReference(
             "FORMAL_RESEARCH_PROTOCOL", protocol.protocol_id, protocol.protocol_hash
         )
+        or payload_universe_projection != expected_universe_projection
+        or payload.get("universe_members_hash") != universe_projection.members_hash
         or tuple(str(item) for item in _sequence(payload.get("locked_dates", ())))
         != locked_dates
         or payload.get("command_hash") != command_hash
@@ -3741,7 +4111,11 @@ def _resolve_pre_oos_family_inputs(
     ] = []
     used_pit_ids: set[ArtifactId] = set()
     for group in groups:
-        panel = _load_panel_owner(connection, group.panel_reference)
+        panel = _load_panel_owner(
+            connection,
+            group.panel_reference,
+            protocol=protocol,
+        )
         safe_bindings: list[FormalEvaluationObservationBinding] = []
         for binding in group.observation_bindings:
             forecast, _score, receipt_pit_id = _resolve_forecast_evaluation_input(
@@ -4512,7 +4886,7 @@ def _load_family_observation_input(
         raise ResearchQualificationConflict(
             "Family Evaluation observation-set binding identity mismatch"
         )
-    panel = _load_panel_owner(connection, panel_reference)
+    panel = _load_panel_owner(connection, panel_reference, protocol=protocol)
     observations = tuple(
         _resolve_evaluation_observation(
             connection,
