@@ -214,6 +214,11 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "runtime_scope_receipt",
         "runtime_scope_input_reference",
         "runtime_scope_member",
+        "historical_research_run",
+        "historical_research_session",
+        "historical_research_stage_receipt",
+        "historical_research_attempt",
+        "historical_research_event",
     }
 )
 
@@ -383,6 +388,34 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "runtime_scope_member",
             "runtime_scope_member_no_update",
+        ),
+        (
+            "historical_research_run",
+            "historical_research_run_identity_immutable",
+        ),
+        (
+            "historical_research_run",
+            "historical_research_run_no_delete",
+        ),
+        (
+            "historical_research_session",
+            "historical_research_session_identity_immutable",
+        ),
+        (
+            "historical_research_session",
+            "historical_research_session_no_delete",
+        ),
+        (
+            "historical_research_stage_receipt",
+            "historical_research_stage_receipt_no_update",
+        ),
+        (
+            "historical_research_attempt",
+            "historical_research_attempt_no_delete",
+        ),
+        (
+            "historical_research_event",
+            "historical_research_event_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (

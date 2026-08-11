@@ -263,6 +263,22 @@ class RepositoryFactory:
             lease_duration=lease_duration,
         )
 
+    def historical_research(
+        self,
+        *,
+        clock: Clock,
+        lease_duration: timedelta,
+    ):
+        from market_regime_alpha.application.historical_research.postgres_journal import (
+            PostgresHistoricalResearchJournal,
+        )
+
+        return PostgresHistoricalResearchJournal(
+            self._postgres,
+            clock=clock,
+            lease_duration=lease_duration,
+        )
+
     def longitudinal(self, *, clock: Clock) -> LongitudinalOperationalIndex:
         return PostgresLongitudinalOperationalIndex(
             self._postgres,
