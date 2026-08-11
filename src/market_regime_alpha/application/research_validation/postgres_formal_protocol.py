@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
@@ -80,8 +79,9 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.persistence.postgres.native_repository import acquire_scope_lock
 from market_regime_alpha.platform.runtime_governance import ModelVersionLineage
-from market_regime_alpha.platform.governance_serialization import (
-    model_registration_from_dict,
+from market_regime_alpha.platform.postgres_runtime_governance import (
+    ModelGovernanceIntegrityError,
+    resolve_formal_research_model_lineage,
 )
 
 
@@ -882,7 +882,11 @@ class PostgresFormalProtocolRepository:
 
     def get_protocol(self, protocol_id: ArtifactId) -> FormalResearchProtocol:
         with self._factory.connection(read_only=True) as connection:
-            return load_formal_protocol_owner(connection, protocol_id)
+            return load_formal_protocol_owner(
+                connection,
+                protocol_id,
+                allow_legacy_replay=True,
+            )
 
     def get_forecast(
         self, forecast_id: ArtifactId
@@ -1759,6 +1763,7 @@ def _resolve_historical_dataset_owners(
     connection: Any,
     *,
     protocol: FormalResearchProtocol,
+    require_complete_target_family: bool = True,
 ) -> tuple[
     tuple[
         ValidationArtifactReference,
@@ -1784,7 +1789,9 @@ def _resolve_historical_dataset_owners(
         dataset = HistoricalSampleDataset.from_canonical_dict(owner.owner_payload)
         resolved.append((dataset.target_reference, dataset_reference, owner))
     ordered = tuple(sorted(resolved, key=lambda item: str(item[0].artifact_id)))
-    if tuple(item[0] for item in ordered) != protocol.target_references:
+    if require_complete_target_family and (
+        tuple(item[0] for item in ordered) != protocol.target_references
+    ):
         raise FormalProtocolConflict(
             "Formal Protocol requires one Historical Sample Dataset per frozen Target"
         )
@@ -2035,35 +2042,15 @@ def _model_lineage_owner(
     connection: Any,
     reference: ValidationArtifactReference,
 ) -> _ComponentOwnerResolution:
-    row = connection.execute(
-        """
-        SELECT lineage.lineage_hash, lineage.payload_json, lineage.created_at,
-               registration.registration_json, registration.definition_hash
-        FROM model_version_lineage AS lineage
-        JOIN model_registrations AS registration
-          ON registration.model_id = lineage.model_id
-        WHERE lineage.lineage_id = %s
-        """,
-        (str(reference.artifact_id),),
-    ).fetchone()
-    if row is None or not isinstance(row[1], Mapping):
-        raise FormalProtocolConflict("Model Version Lineage owner is missing")
     try:
-        lineage = ModelVersionLineage.from_canonical_dict(dict(row[1]))
-        registration_payload = json.loads(str(row[3]))
-        if not isinstance(registration_payload, Mapping):
-            raise ValueError("Model Registration payload must be an object")
-        registration = model_registration_from_dict(registration_payload)
-        lineage.validate_definition(registration.definition)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise FormalProtocolConflict("Model Version Lineage replay failed") from exc
-    if (
-        lineage.lineage_id != reference.artifact_id
-        or lineage.lineage_hash != reference.content_hash
-        or str(row[0]) != reference.content_hash
-        or str(row[4]) != lineage.definition_hash
-    ):
-        raise FormalProtocolConflict("Model Version Lineage binding mismatch")
+        governance = resolve_formal_research_model_lineage(
+            connection,
+            lineage_id=reference.artifact_id,
+            lineage_hash=reference.content_hash,
+        )
+    except ModelGovernanceIntegrityError as exc:
+        raise FormalProtocolConflict(str(exc)) from exc
+    lineage = governance.lineage
     configuration_row = connection.execute(
         """
         SELECT resolution_id, resolution_hash, payload_json, resolved_at
@@ -2095,15 +2082,16 @@ def _model_lineage_owner(
     owner_payload = {
         "schema_version": "formal-model-owner-resolution/v1",
         "lineage": lineage.to_canonical_dict(),
-        "model_definition": registration.definition.canonical_payload(),
+        "model_definition": governance.registration.definition.canonical_payload(),
+        "model_governance_resolution": governance.to_canonical_dict(),
         "configuration_authority_resolution": configuration.to_canonical_dict(),
     }
     return _ComponentOwnerResolution(
         "MODEL_GOVERNANCE_AUTHORITY",
-        lineage.lineage_id,
-        lineage.lineage_hash,
+        governance.resolution_id,
+        governance.resolution_hash,
         owner_payload,
-        max(row[2], configuration_row[3]),
+        max(governance.owner_recorded_at, configuration_row[3]),
     )
 
 
@@ -2285,6 +2273,7 @@ def _verify_stored_owner_resolutions(
     *,
     protocol: FormalResearchProtocol,
     owners: Mapping[str, _ComponentOwnerResolution],
+    allow_legacy_model_resolution: bool = False,
 ) -> None:
     rows = connection.execute(
         """
@@ -2316,7 +2305,38 @@ def _verify_stored_owner_resolutions(
         )
         for role, reference in references.items()
     }
-    if actual != expected:
+    model_role = "model_reference"
+    non_model_actual = {
+        role: value for role, value in actual.items() if role != model_role
+    }
+    non_model_expected = {
+        role: value for role, value in expected.items() if role != model_role
+    }
+    model_matches = actual.get(model_role) == expected.get(model_role)
+    if allow_legacy_model_resolution and not model_matches:
+        model = actual.get(model_role)
+        reference = protocol.model_reference
+        current_payload = owners[model_role].owner_payload
+        model_matches = bool(
+            model is not None
+            and model[:4]
+            == (
+                reference.artifact_kind,
+                str(reference.artifact_id),
+                reference.content_hash,
+                "MODEL_GOVERNANCE_AUTHORITY",
+            )
+            and model[4:6]
+            == (str(reference.artifact_id), reference.content_hash)
+            and isinstance(model[7], Mapping)
+            and str(model[6]) == canonical_hash(dict(model[7]))
+            and _legacy_model_owner_payload_matches(
+                stored=model[7],
+                current=current_payload,
+            )
+            and model[8] <= protocol.locked_at
+        )
+    if non_model_actual != non_model_expected or not model_matches:
         raise FormalProtocolConflict("Formal Protocol owner resolution drift")
     resolved_times = {row[10] for row in rows}
     if len(resolved_times) != 1:
@@ -2326,6 +2346,18 @@ def _verify_stored_owner_resolutions(
         owners=owners,
         resolved_at=next(iter(resolved_times)),
     )
+
+
+def _legacy_model_owner_payload_matches(
+    *,
+    stored: Mapping[str, Any],
+    current: Mapping[str, Any],
+) -> bool:
+    if dict(stored) == dict(current):
+        return True
+    legacy_current = dict(current)
+    legacy_current.pop("model_governance_resolution", None)
+    return dict(stored) == legacy_current
 
 
 def _postgres_now(connection: Any) -> datetime:
@@ -2475,6 +2507,8 @@ def load_frozen_hypothesis_family_owner(
 def load_formal_protocol_owner(
     connection: Any,
     protocol_id: ArtifactId,
+    *,
+    allow_legacy_replay: bool = False,
 ) -> FormalResearchProtocol:
     """Replay every typed C0 owner needed by downstream qualification writers."""
 
@@ -2493,6 +2527,15 @@ def load_formal_protocol_owner(
         raise FormalProtocolConflict("Formal Protocol canonical replay failed") from exc
     if protocol.protocol_hash != str(row[1]):
         raise FormalProtocolConflict("Formal Protocol storage hash mismatch")
+    family_row = connection.execute(
+        "SELECT family_id FROM frozen_hypothesis_family WHERE formal_protocol_id = %s",
+        (str(protocol_id),),
+    ).fetchone()
+    legacy_replay = family_row is None
+    if legacy_replay and not allow_legacy_replay:
+        raise FormalProtocolConflict(
+            "Pre-057 Formal Protocol is replay-only and cannot enter new Formal research"
+        )
 
     component_rows = connection.execute(
         """
@@ -2532,7 +2575,15 @@ def load_formal_protocol_owner(
         protocol=protocol,
     )
     if any(
-        dict(stored[role][3]) != dict(owners[role].owner_payload)
+        (
+            not legacy_replay
+            or role != "model_reference"
+            or not _legacy_model_owner_payload_matches(
+                stored=stored[role][3],
+                current=owners[role].owner_payload,
+            )
+        )
+        and dict(stored[role][3]) != dict(owners[role].owner_payload)
         for role in expected
     ):
         raise FormalProtocolConflict(
@@ -2542,9 +2593,12 @@ def load_formal_protocol_owner(
         connection,
         protocol=protocol,
         owners=owners,
+        allow_legacy_model_resolution=legacy_replay,
     )
     historical_owners = _resolve_historical_dataset_owners(
-        connection, protocol=protocol
+        connection,
+        protocol=protocol,
+        require_complete_target_family=not legacy_replay,
     )
     _verify_historical_dataset_owner_rows(
         connection,

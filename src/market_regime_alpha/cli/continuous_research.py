@@ -600,9 +600,11 @@ def _dispatch(
             checked_at=_instant(args.checked_at)
         ).to_canonical_dict()
     if args.operation == "qualification-owners-record":
+        payload = _load_json_object(args.input)
+        _require_principal_actor(args, payload)
         return _record_phase_c_owner_package(
             factory,
-            _load_json_object(args.input),
+            payload,
         )
     if args.operation == "qualification-protocol-record":
         payload = _load_json_object(args.input)
@@ -613,6 +615,7 @@ def _dispatch(
                 "actor, reason and idempotency_key; all component payloads are "
                 "reloaded from PostgreSQL owners"
             )
+        _require_principal_actor(args, payload)
         actor = str(payload["actor"])
         reason = str(payload["reason"])
         idempotency_key = str(payload["idempotency_key"])
@@ -640,6 +643,7 @@ def _dispatch(
             raise ValueError(
                 "qualification-forecast-record requires request, actor and reason"
             )
+        _require_principal_actor(args, payload)
         request = FormalForecastComputationRequest.from_canonical_dict(
             dict(_object_value(payload["request"], "request"))
         )
@@ -680,6 +684,7 @@ def _dispatch(
         )
         if not raw_pit_ids or set(payload).intersection(pit_keys) == pit_keys:
             raise ValueError("Formal Family Evaluation requires a non-empty PIT owner set")
+        _require_principal_actor(args, payload)
         pit_ids = tuple(ArtifactId(str(item)) for item in raw_pit_ids)
         evaluation_result = PostgresResearchQualificationAuthority(
             factory,
@@ -1702,6 +1707,17 @@ def _instant(value: str) -> datetime:
     if instant.microsecond:
         raise ValueError("--at must use whole-second precision")
     return instant
+
+
+def _require_principal_actor(
+    args: argparse.Namespace,
+    payload: Mapping[str, Any],
+) -> None:
+    actor = payload.get("actor")
+    if not isinstance(actor, str) or actor != args.principal_id:
+        raise PermissionError(
+            "Formal operator actor must equal the authorized RBAC principal"
+        )
 
 
 def _operational_now() -> datetime:

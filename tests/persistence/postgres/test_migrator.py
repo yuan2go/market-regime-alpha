@@ -620,6 +620,78 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
 ) -> None:
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:56]).apply_all(postgres_factory)
+    target_hash = canonical_hash({"target": "legacy-056"})
+    dataset_hash = canonical_hash({"dataset": "legacy-056"})
+    owner_payload = {
+        "schema_version": "historical-sample-dataset/v1",
+        "target_reference": {
+            "artifact_kind": "OUTCOME_TARGET",
+            "artifact_id": "legacy-056-target",
+            "content_hash": target_hash,
+        },
+    }
+    owner_payload_hash = canonical_hash(owner_payload)
+    protocol_hash = canonical_hash({"protocol": "legacy-056"})
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO outcome_target_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                protocol_json, created_at
+            ) VALUES (%s, %s, 'legacy-056', %s, %s)
+            """,
+            (
+                "legacy-056-target-protocol",
+                canonical_hash({"target_protocol": "legacy-056"}),
+                Jsonb({"schema_version": "outcome-target-protocol/v1"}),
+                NOW,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO formal_research_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                outcome_target_protocol_id, evaluation_protocol_id,
+                trading_calendar_id, trading_calendar_hash,
+                payload_json, locked_at, created_at
+            ) VALUES (%s, %s, 'legacy-056', %s, 'legacy-evaluation',
+                      'legacy-calendar', %s, %s, %s, %s)
+            """,
+            (
+                "legacy-056-formal-protocol",
+                protocol_hash,
+                "legacy-056-target-protocol",
+                canonical_hash({"calendar": "legacy-056"}),
+                Jsonb({"schema_version": "formal-research-protocol/v1"}),
+                NOW,
+                NOW,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO formal_research_protocol_component_owner_resolution(
+                protocol_id, component_role, artifact_kind,
+                artifact_id, artifact_hash, owner_kind,
+                owner_artifact_id, owner_artifact_hash,
+                owner_payload_hash, owner_payload_json,
+                owner_recorded_at, resolved_at
+            ) VALUES (
+                'legacy-056-formal-protocol',
+                'historical_sample_dataset_reference',
+                'HISTORICAL_SAMPLE_DATASET', 'legacy-056-dataset', %s,
+                'RESEARCH_VALIDATION_AUTHORITY', 'legacy-056-dataset', %s,
+                %s, %s, %s, %s
+            )
+            """,
+            (
+                dataset_hash,
+                dataset_hash,
+                owner_payload_hash,
+                Jsonb(owner_payload),
+                NOW,
+                NOW,
+            ),
+        )
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
@@ -645,6 +717,14 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         old_consumption = connection.execute(
             "SELECT to_regclass('locked_oos_evidence_consumption')"
         ).fetchone()
+        legacy_historical = connection.execute(
+            """
+            SELECT target_id, target_hash, dataset_id, dataset_hash,
+                   owner_payload_hash
+            FROM formal_research_protocol_historical_dataset
+            WHERE formal_protocol_id = 'legacy-056-formal-protocol'
+            """
+        ).fetchone()
     assert tables == (
         "frozen_hypothesis_family",
         "formal_forecast_computation_receipt",
@@ -654,3 +734,10 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
     )
     assert old_migration is not None
     assert old_consumption == ("locked_oos_evidence_consumption",)
+    assert legacy_historical == (
+        "legacy-056-target",
+        target_hash,
+        "legacy-056-dataset",
+        dataset_hash,
+        owner_payload_hash,
+    )

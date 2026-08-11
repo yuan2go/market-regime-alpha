@@ -33,6 +33,10 @@ time from PostgreSQL and resolves exact Model/Configuration/Code/Feature/Factor/
 Threshold/Dataset/Universe/Target lineage. Unsupported installed executors emit
 `NOT_ESTIMABLE`; older caller-submitted forecasts remain explicitly
 `EXPLORATORY_CALLER_SUBMITTED` and cannot enter a new Formal family evaluation.
+The Model reference is resolved by Model Governance into a content-addressed
+freeze receipt containing the current lifecycle, Registry version and exact
+Registry/Lineage governance actions. `SUSPENDED` or `RETIRED` models fail closed,
+and a later terminal transition invalidates downstream owner replay.
 
 Migration 057 freezes one content-addressed multi-target Hypothesis Family per
 Formal Protocol. One raw subject/decision-session/outcome-session path can be
@@ -43,12 +47,15 @@ Target × metric × observed slice × sensitivity × fold hypotheses together an
 retains every predeclared empty fold as `NOT_ESTIMABLE` in the multiplicity
 denominator. Typed operator commands, PostgreSQL-clock audit, idempotency and
 RBAC expose owner freeze, Protocol freeze, Formal Forecast compute and family
-evaluation without a generic artifact registrar. These writers can
+evaluation without a generic artifact registrar. The command actor must equal
+the authorized RBAC principal. C4 requires estimable Train and Validation floor
+metrics for every Target/fold/sensitivity before evaluating Locked OOS; its C3
+record-set comparison filters exactly the frozen Locked-OOS windows. These writers can
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.
 
 The 2026-08-11 isolated working-schema evidence resolution applied migrations
-001–056 and evaluated ten declared free-data Provider×Contract×Fact scopes:
+001–057 and evaluated ten declared free-data Provider×Contract×Fact scopes:
 BaoStock history Market Data and Adjustment Factor; BaoStock status Trading
 Calendar, Listing Status, ST Status, Trading Status and Trading Eligibility;
 BaoStock stock-basic Universe Membership; and Tencent current/minute Market Data.

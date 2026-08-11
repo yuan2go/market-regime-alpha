@@ -136,13 +136,13 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Classification:** Business Authority and Policy owner.
 - **Owner:** Model Governance; Registry history is subordinate in the same PostgreSQL boundary.
 - **Canonical Writer:** `PostgresModelGovernanceRepository`.
-- **Reader:** model inspection, qualification, assignment and selection-receipt replay/export methods.
+- **Reader:** model inspection, qualification, assignment and selection-receipt replay/export methods, plus the typed Formal Research lineage resolver that freezes lifecycle, Registry version and Registry/Lineage governance actions.
 - **Repository:** `PostgresModelGovernanceRepository`.
 - **PostgreSQL tables:** `governance_commands`, `model_registrations`, `model_lifecycle_transitions`, `model_governance_action`, `model_version_lineage`, `model_qualification_evidence`, `model_governance_policy`, `model_qualification_decision`, `model_runtime_lineage`, `model_runtime_assignment`, `model_selection_receipt`.
-- **Artifact / Receipt:** Model Version Lineage, Qualification Decision, Runtime Assignment and Model Selection Receipt.
+- **Artifact / Receipt:** Model Version Lineage, Formal Research Model Lineage Resolution, Qualification Decision, Runtime Assignment and Model Selection Receipt.
 - **Runtime caller:** State/Signal/Forecast selectors and Decision System.
 - **Downstream consumer:** State, Candidate, Signal, Forecast, Decision stages and audit/replay Readers.
-- **Replay mechanism:** governance-revision-bound receipt replay/export.
+- **Replay mechanism:** governance-revision-bound receipt replay/export; terminal lifecycle state fails Formal Protocol freeze and later owner replay.
 - **Evidence ceiling:** Research/Backtest/Shadow qualification is runtime eligibility only; Production qualification is forced closed.
 - **Legacy replacement:** one PostgreSQL owner replaces registry/selector decisions assembled from caller DTOs.
 
@@ -350,7 +350,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Artifact / Receipt:** engineering Validation artifacts, owner-computed Forecast receipt, Frozen Hypothesis Family, Historical Sample Dataset, family Evaluation result, Calibration artifact and Entry/Holding evidence.
 - **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
 - **Downstream consumer:** human research review, C6/C7 gates and persisted Production Admission floor resolution.
-- **Replay mechanism:** immutable typed Target/Evaluation/component reload, full Frozen Calendar payload/date replay, PIT-only Forecast recomputation, one-time raw OOS unlock, Target-observation and family-multiplicity replay, exact Calibration partitions and Entry→Outcome replay. Bare caller references or submitted Forecast values cannot establish a positive decision.
+- **Replay mechanism:** immutable typed Target/Evaluation/component reload, full Frozen Calendar payload/date replay, PIT-only Forecast recomputation, one-time raw OOS unlock, Target-observation and family-multiplicity replay, mandatory Train/Validation readiness before Locked OOS, exact Calibration partitions and Entry→Outcome replay. Pre-057 Protocols remain replay-only. Bare caller references or submitted Forecast values cannot establish a positive decision.
 - **Evidence ceiling:** migration 046 remains unchanged; later owner writers can only satisfy a gate from exact upstream owner evidence. Current upstream evidence is absent.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
@@ -380,7 +380,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Repository:** `PostgresAccessGovernance`.
 - **PostgreSQL tables:** `security_principal`, `security_principal_status_event`, `security_role_event`, `security_approval`, `security_approval_decision`, `security_audit_event`, `security_governance_command`.
 - **Artifact / Receipt:** content-addressed Principal, Role event, Approval and Approval Decision.
-- **Runtime caller:** `model-governance access-*` manages facts; every `continuous-research` command requires an active `--principal-id`, binds an exact operation resource and writes an allowed/denied audit event. Non-Admin Shadow/recovery mutation also consumes an exact approved `--approval-decision-id`.
+- **Runtime caller:** `model-governance access-*` manages facts; every `continuous-research` command requires an active `--principal-id`, binds an exact operation resource and writes an allowed/denied audit event. Formal command `actor` must equal that principal. Non-Admin Shadow/recovery mutation also consumes an exact approved `--approval-decision-id`.
 - **Replay mechanism:** append-only status/role chains and idempotent command receipts.
 - **Evidence ceiling:** the caller-supplied Principal ID is role-authorized but not externally authenticated; there is no Production Admission permission, Broker permission or trading authority.
 

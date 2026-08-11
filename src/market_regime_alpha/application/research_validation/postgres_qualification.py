@@ -59,6 +59,7 @@ from market_regime_alpha.application.research_validation.qualification import (
     LockedOOSEvidenceIdentity,
     QualificationOutcome,
     evaluate_metric_floor_payloads,
+    evaluate_pre_oos_metric_readiness,
 )
 from market_regime_alpha.application.research_validation.samples import (
     HistoricalPathSampleRecord,
@@ -1557,10 +1558,17 @@ def _assess_formal_oos_family(
     evaluation_protocol = _load_evaluation_protocol(
         connection, protocol.evaluation_protocol_reference.artifact_id
     )
-    expected_folds = {
-        item.fold
-        for item in evaluation_protocol.windows
-        if item.partition is EvaluationPartition.LOCKED_OOS
+    expected_folds_by_partition = {
+        partition.value: tuple(
+            sorted(
+                {
+                    item.fold
+                    for item in evaluation_protocol.windows
+                    if item.partition is partition
+                }
+            )
+        )
+        for partition in EvaluationPartition
     }
     metrics_by_target: dict[str, list[Mapping[str, Any]]] = {
         str(item.artifact_id): [] for item in family.target_references
@@ -1577,17 +1585,36 @@ def _assess_formal_oos_family(
             _mapping(family_metric["metric"])
         )
     for target_id, target_metrics in metrics_by_target.items():
-        observed_folds = {
-            int(item["fold"])
-            for item in target_metrics
-            if str(item["partition"]) == "LOCKED_OOS"
-        }
-        if observed_folds != expected_folds:
-            blocked.add(f"LOCKED_OOS_FOLD_COVERAGE_INCOMPLETE:{target_id}")
+        for partition, expected_folds in expected_folds_by_partition.items():
+            observed_folds = {
+                int(item["fold"])
+                for item in target_metrics
+                if str(item["partition"]) == partition
+            }
+            if observed_folds != set(expected_folds):
+                blocked.add(
+                    f"{partition}_FOLD_COVERAGE_INCOMPLETE:{target_id}"
+                )
     if rejected:
         return QualificationOutcome.REJECTED, tuple(sorted(rejected | blocked))
     if blocked:
         return QualificationOutcome.BLOCKED, tuple(sorted(blocked))
+    pre_oos_reasons: set[str] = set()
+    for target_id, target_metrics in metrics_by_target.items():
+        pre_oos_outcome, target_reasons = evaluate_pre_oos_metric_readiness(
+            policy=policy,
+            metrics=tuple(target_metrics),
+            required_partition_folds={
+                partition: expected_folds_by_partition[partition]
+                for partition in ("TRAIN", "VALIDATION")
+            },
+        )
+        if pre_oos_outcome is not QualificationOutcome.SATISFIED:
+            pre_oos_reasons.update(
+                f"{reason}:{target_id}" for reason in target_reasons
+            )
+    if pre_oos_reasons:
+        return QualificationOutcome.NOT_ESTIMABLE, tuple(sorted(pre_oos_reasons))
     all_metric_payloads = tuple(
         item
         for target_metrics in metrics_by_target.values()
@@ -1715,7 +1742,8 @@ def _historical_family_observation_coverage_reasons(
             continue
         observed_rows = connection.execute(
             """
-            SELECT forecast_id, forecast_hash, label_id, label_hash
+            SELECT forecast_id, forecast_hash, label_id, label_hash,
+                   session_date
             FROM formal_evaluation_observation_binding
             WHERE observation_set_id = %s
             """,
@@ -1724,6 +1752,10 @@ def _historical_family_observation_coverage_reasons(
         observed = {
             (str(row[0]), str(row[1]), str(row[2]), str(row[3]))
             for row in observed_rows
+            if any(
+                window.start_date <= row[4] <= window.end_date
+                for window in locked_windows
+            )
         }
         if observed != expected:
             reasons.add(f"HISTORICAL_LOCKED_OOS_RECORD_SET_MISMATCH:{target_id}")

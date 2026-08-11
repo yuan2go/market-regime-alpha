@@ -84,6 +84,28 @@ CREATE TABLE formal_research_protocol_historical_dataset (
 CREATE INDEX formal_protocol_historical_dataset_owner_idx
 ON formal_research_protocol_historical_dataset(dataset_id, dataset_hash);
 
+-- Migration 056 protocols froze exactly one Historical Dataset component. Keep
+-- those immutable protocols replayable without granting them the new complete
+-- multi-target family semantics. New writers populate one row per Target.
+INSERT INTO formal_research_protocol_historical_dataset(
+    formal_protocol_id, target_id, target_hash,
+    dataset_id, dataset_hash, owner_payload_hash,
+    owner_payload_json, owner_recorded_at, resolved_at
+)
+SELECT resolution.protocol_id,
+       resolution.owner_payload_json->'target_reference'->>'artifact_id',
+       resolution.owner_payload_json->'target_reference'->>'content_hash',
+       resolution.artifact_id,
+       resolution.artifact_hash,
+       resolution.owner_payload_hash,
+       resolution.owner_payload_json,
+       resolution.owner_recorded_at,
+       resolution.resolved_at
+FROM formal_research_protocol_component_owner_resolution AS resolution
+WHERE resolution.component_role = 'historical_sample_dataset_reference'
+  AND resolution.owner_payload_json->>'schema_version' =
+      'historical-sample-dataset/v1';
+
 CREATE TABLE historical_sample_qualification_pit_evidence (
     decision_id text NOT NULL
         REFERENCES historical_sample_qualification_decision(decision_id)

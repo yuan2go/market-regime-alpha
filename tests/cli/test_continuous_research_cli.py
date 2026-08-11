@@ -514,6 +514,34 @@ def test_cli_requires_authorized_principal_for_shadow_mutation(
     ) == SUCCESS
 
 
+def test_formal_operator_actor_cannot_impersonate_authorized_principal(
+    postgres_factory: PostgresConnectionFactory,
+    capsys,
+    tmp_path,
+) -> None:
+    authority = _authority_args(postgres_factory)
+    command_path = tmp_path / "forged-formal-operator.json"
+    command_path.write_text(
+        json.dumps({"actor": "different-security-principal"}),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            *authority,
+            "qualification-owners-record",
+            "--input",
+            str(command_path),
+        ]
+    ) == ARGUMENT_ERROR
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason_code"] == "OPERATOR_NOT_AUTHORIZED"
+    with postgres_factory.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM phase_c_formal_operator_command"
+        ).fetchone()[0] == 0
+
+
 def test_cli_rejects_production_mode_before_journal_mutation(
     postgres_factory: PostgresConnectionFactory,
     capsys,

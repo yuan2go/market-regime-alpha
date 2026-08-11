@@ -769,6 +769,58 @@ def evaluate_metric_floor_payloads(
     return QualificationOutcome.SATISFIED, ()
 
 
+def evaluate_pre_oos_metric_readiness(
+    *,
+    policy: FormalOOSQualificationPolicy,
+    metrics: tuple[Mapping[str, Any], ...],
+    required_partition_folds: Mapping[str, tuple[int, ...]],
+) -> tuple[QualificationOutcome, tuple[str, ...]]:
+    """Require estimable Train and Validation evidence before Locked OOS."""
+
+    required_partitions = {"TRAIN", "VALIDATION"}
+    if set(required_partition_folds) != required_partitions or any(
+        not folds or len(folds) != len(set(folds))
+        for folds in required_partition_folds.values()
+    ):
+        return QualificationOutcome.NOT_ESTIMABLE, (
+            "PRE_OOS_PARTITION_PROTOCOL_INCOMPLETE",
+        )
+    reasons: set[str] = set()
+    for partition in sorted(required_partitions):
+        for fold in sorted(required_partition_folds[partition]):
+            for floor in policy.metric_floors:
+                for multiplier in policy.required_sensitivity_multipliers:
+                    matches = tuple(
+                        item
+                        for item in metrics
+                        if (
+                            str(item["partition"]) == partition
+                            and str(item["slice_kind"]) == "ALL"
+                            and str(item["slice_value"]) == "ALL"
+                            and str(item["metric_name"]) == floor.metric_name
+                            and int(item["fold"]) == fold
+                            and Decimal(
+                                str(item["sensitivity_return_multiplier"])
+                            )
+                            == multiplier
+                        )
+                    )
+                    suffix = (
+                        f"{partition}_{floor.metric_name}_{multiplier}_FOLD_{fold}"
+                    )
+                    if len(matches) != 1:
+                        reasons.add(f"PRE_OOS_METRIC_MISSING_OR_DUPLICATE_{suffix}")
+                        continue
+                    metric = matches[0]
+                    if str(metric["status"]) != "ESTIMATED":
+                        reasons.add(f"PRE_OOS_METRIC_NOT_ESTIMABLE_{suffix}")
+                    elif int(metric["sample_count"]) < policy.minimum_sample_count:
+                        reasons.add(f"PRE_OOS_SAMPLE_FLOOR_NOT_MET_{suffix}")
+    if reasons:
+        return QualificationOutcome.NOT_ESTIMABLE, tuple(sorted(reasons))
+    return QualificationOutcome.SATISFIED, ()
+
+
 def _validate_decision_common(
     *,
     decision_hash: str,

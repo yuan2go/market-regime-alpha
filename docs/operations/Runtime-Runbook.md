@@ -175,7 +175,10 @@ Threshold, OOS, Cost, Calibration, Strategy and Entry/Holding/Exit owners, then
 stores an immutable owner-resolution receipt for every binding. The Calendar
 payload snapshot is accepted only when it is anchored to the existing PIT
 Artifact Authority resolution; it is not a second Calendar owner. Caller-supplied
-component payloads are rejected. `qualification-forecast-record` accepts only
+component payloads are rejected. Model Governance also freezes current lifecycle,
+Registry version and exact governance action revisions; terminal models are
+rejected. Pre-057 Protocols are replay-compatible after migration backfill but
+cannot enter a new Formal research path. `qualification-forecast-record` accepts only
 Formal Protocol, Formal PIT, symbol/scope and idempotency references. PostgreSQL
 derives DecisionTime from the PIT request, resolves exact Model/Configuration/
 Code/Feature/Factor/Threshold/Dataset/Universe/Target lineage, invokes only its
@@ -193,8 +196,11 @@ can make previously read evidence pristine again. It never accepts caller-suppli
 observation values or result timestamps. `qualification-historical` binds each
 sample record to its exact DecisionTime PIT and owner-computed Forecast receipt.
 `qualification-oos` requires the Locked-OOS record set to equal the qualified C3
-record set for every frozen Target, then replays the observations, Calendar and
-family-level multiplicity before persisting C4.
+record set inside the exact Locked-OOS windows for every frozen Target. It first
+requires estimable Train and Validation floor metrics for every required
+Target/fold/sensitivity, then replays Locked-OOS observations, Calendar and
+family-level multiplicity before persisting C4. For every Formal operator JSON
+command, `actor` must exactly equal the already-authorized `--principal-id`.
 `qualification-calibration` accepts a frozen policy file but re-reads the
 Formal Protocol, target/label/Forecast pair, calibration artifact, partition
 bindings and Formal OOS decision. `qualification-shadow` counts only sessions
