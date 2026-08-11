@@ -1,5 +1,9 @@
-CREATE TABLE trading_calendar_authority (
-    calendar_id text PRIMARY KEY,
+CREATE TABLE pit_trading_calendar_canonical_snapshot (
+    resolution_id text PRIMARY KEY,
+    resolution_hash text NOT NULL CHECK (
+        resolution_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    calendar_id text NOT NULL UNIQUE,
     calendar_hash text NOT NULL UNIQUE CHECK (
         calendar_hash ~ '^sha256:[0-9a-f]{64}$'
     ),
@@ -8,8 +12,15 @@ CREATE TABLE trading_calendar_authority (
         jsonb_typeof(payload_json) = 'object'
         AND payload_json->>'schema_version' = 'trading-calendar-artifact-v1'
     ),
-    recorded_at timestamptz NOT NULL
+    snapshotted_at timestamptz NOT NULL,
+    FOREIGN KEY (resolution_id, resolution_hash)
+        REFERENCES pit_artifact_authority_resolution(
+            resolution_id, resolution_hash
+        ) ON DELETE RESTRICT
 );
+
+CREATE UNIQUE INDEX pit_trading_calendar_snapshot_resolution_idx
+ON pit_trading_calendar_canonical_snapshot(resolution_id, resolution_hash);
 
 CREATE TABLE formal_research_protocol_component_owner_resolution (
     protocol_id text NOT NULL
@@ -34,7 +45,6 @@ CREATE TABLE formal_research_protocol_component_owner_resolution (
     ),
     owner_kind text NOT NULL CHECK (owner_kind IN (
         'OUTCOME_TARGET_AUTHORITY',
-        'TRADING_CALENDAR_AUTHORITY',
         'PIT_ARTIFACT_AUTHORITY',
         'RESEARCH_VALIDATION_AUTHORITY',
         'MODEL_GOVERNANCE_AUTHORITY',
@@ -90,6 +100,7 @@ CREATE TABLE locked_oos_evidence_consumption (
     label_hash text NOT NULL CHECK (
         label_hash ~ '^sha256:[0-9a-f]{64}$'
     ),
+    subject text NOT NULL CHECK (btrim(subject) <> ''),
     session_date date NOT NULL,
     label_end_date date NOT NULL CHECK (label_end_date >= session_date),
     partition_kind text NOT NULL CHECK (partition_kind = 'LOCKED_OOS'),
@@ -117,6 +128,10 @@ CREATE TABLE locked_oos_evidence_consumption (
     ),
     consumed_at timestamptz NOT NULL,
     UNIQUE (label_id, partition_kind),
+    UNIQUE (
+        target_protocol_id, target_id, subject,
+        session_date, label_end_date, partition_kind
+    ),
     UNIQUE (
         dataset_id, dataset_hash, universe_id, universe_hash,
         target_protocol_id, target_protocol_hash, target_id, target_hash,
@@ -166,8 +181,8 @@ COMMENT ON CONSTRAINT research_validation_artifact_artifact_kind_check
 ON research_validation_artifact IS
 'Migration 056 adds only typed C0 Feature/Threshold owner artifacts; Migration 046 qualification and Production constraints remain authoritative.';
 
-CREATE TRIGGER trading_calendar_authority_no_update
-BEFORE UPDATE OR DELETE ON trading_calendar_authority
+CREATE TRIGGER pit_trading_calendar_canonical_snapshot_no_update
+BEFORE UPDATE OR DELETE ON pit_trading_calendar_canonical_snapshot
 FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 CREATE TRIGGER formal_research_protocol_component_owner_resolution_no_update

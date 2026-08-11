@@ -567,8 +567,9 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
         "pit_source_qualification_evidence",
         "pit_fact_revision",
         "pit_fact_temporal_authority_resolution",
-        "pit_as_of_snapshot",
-    }
+            "pit_as_of_snapshot",
+            "pit_trading_calendar_canonical_snapshot",
+        }
     assert evidence_table == ("formal_pit_validation_evidence",)
     assert guards == {
         "pit_source_qualification_no_update",

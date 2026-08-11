@@ -93,7 +93,7 @@ from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId, Ta
 from market_regime_alpha.core.time import AvailabilityTime, DecisionTime
 from market_regime_alpha.data.pit_authority import PITArtifactReference
 from market_regime_alpha.data.postgres_trading_calendar import (
-    PostgresTradingCalendarAuthority,
+    PostgresPITTradingCalendarSnapshotRepository,
 )
 from market_regime_alpha.data.trading_calendar import (
     TradingCalendarArtifact,
@@ -130,7 +130,7 @@ from tests.platform.test_platform_kernel import _model_definition
 from tests.platform.test_runtime_governance import _lineage
 
 
-NOW = datetime(2026, 8, 11, 8, tzinfo=UTC)
+NOW = datetime(2026, 8, 1, 8, tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,15 +155,19 @@ def record_phase_c_protocol_owners(
     )
 
     calendar = _calendar()
-    PostgresTradingCalendarAuthority(factory).record(calendar)
     evaluation = _evaluation(targets)
     validation = PostgresResearchValidationRepository(factory)
     validation.record_formal_evaluation_protocol(evaluation)
 
     universe_reference = _reference("UNIVERSE", "phase-c-owner-universe")
-    dataset_reference = _reference("DATASET", "phase-c-owner-dataset")
+    dataset_reference = _reference(
+        "MARKET_DATA_DATASET", "phase-c-owner-dataset"
+    )
     pit = pit_authority(factory, clock=MutableClock(NOW))
-    for reference in (universe_reference, dataset_reference):
+    calendar_reference = ValidationArtifactReference(
+        "TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash
+    )
+    for reference in (calendar_reference, universe_reference, dataset_reference):
         pit.resolve_artifact(
             PITArtifactReference(
                 reference.artifact_kind,
@@ -174,6 +178,7 @@ def record_phase_c_protocol_owners(
             reason="resolve immutable fixture owner",
             idempotency_key=f"resolve-{reference.artifact_kind.lower()}",
         )
+    PostgresPITTradingCalendarSnapshotRepository(factory).record(calendar)
 
     historical = _historical_dataset(target_reference)
     validation.record_sample_dataset(historical)
@@ -320,6 +325,10 @@ def record_phase_c_protocol_owners(
         entry_policy
     )
 
+    with factory.connection(read_only=True) as connection:
+        protocol_locked_at = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp())"
+        ).fetchone()[0]
     protocol = FormalResearchProtocol.create(
         protocol_version="phase-c-owner-v1",
         target_protocol=targets,
@@ -363,7 +372,7 @@ def record_phase_c_protocol_owners(
             entry_policy.policy_id,
             entry_policy.policy_hash,
         ),
-        locked_at=NOW,
+        locked_at=protocol_locked_at,
     )
     return PhaseCOwnerFixture(
         protocol,

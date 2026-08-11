@@ -4,6 +4,7 @@ import pytest
 
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
+    timestamp,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
@@ -76,6 +77,19 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
     )
     with pytest.raises(FormalProtocolConflict, match="THRESHOLD_POLICY owner is missing"):
         repository.record_protocol(protocol=caller_only_protocol)
+
+    backdated_payload = protocol.identity_payload()
+    backdated_payload["locked_at"] = timestamp(NOW)
+    backdated_hash = canonical_hash(backdated_payload)
+    backdated_protocol = FormalResearchProtocol.from_canonical_dict(
+        {
+            "protocol_id": f"formal-research-protocol:{backdated_hash[7:]}",
+            "protocol_hash": backdated_hash,
+            **backdated_payload,
+        }
+    )
+    with pytest.raises(FormalProtocolConflict, match="recorded after protocol lock"):
+        repository.record_protocol(protocol=backdated_protocol)
 
     forecast = build_outcome_target_bound_forecast(
         target_protocol=fixture.targets,

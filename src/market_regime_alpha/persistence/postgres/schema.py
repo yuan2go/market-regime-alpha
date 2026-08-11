@@ -192,7 +192,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "phase_c_stage_decision",
         "production_admission_decision_authority",
         "phase_c_gate_command",
-        "trading_calendar_authority",
+        "pit_trading_calendar_canonical_snapshot",
         "formal_research_protocol_component_owner_resolution",
         "locked_oos_evidence_consumption",
     }
@@ -278,8 +278,8 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
             "phase_c_gate_command_no_update",
         ),
         (
-            "trading_calendar_authority",
-            "trading_calendar_authority_no_update",
+            "pit_trading_calendar_canonical_snapshot",
+            "pit_trading_calendar_canonical_snapshot_no_update",
         ),
         (
             "formal_research_protocol_component_owner_resolution",

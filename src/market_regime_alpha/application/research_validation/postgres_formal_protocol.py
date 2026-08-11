@@ -102,10 +102,15 @@ class PostgresFormalProtocolRepository:
             evaluation_protocol = _load_evaluation_protocol_owner(
                 connection, protocol
             )
-            resolved_at = _postgres_now(connection)
             owners = _resolve_component_owners(
                 connection,
                 protocol=protocol,
+            )
+            resolved_at = _postgres_now(connection)
+            _verify_owner_times(
+                protocol=protocol,
+                owners=owners,
+                resolved_at=resolved_at,
             )
             references = protocol.component_references()
             owner_references = _formal_owner_references(protocol)
@@ -670,23 +675,51 @@ def _calendar_owner(
     reference = protocol.trading_calendar_reference
     row = connection.execute(
         """
-        SELECT calendar_hash, payload_json, recorded_at
-        FROM trading_calendar_authority WHERE calendar_id = %s
+        SELECT resolution.resolution_id, resolution.resolution_hash,
+               resolution.payload_json, resolution.resolved_at,
+               snapshot.calendar_hash, snapshot.payload_json
+        FROM pit_artifact_authority_resolution AS resolution
+        JOIN pit_trading_calendar_canonical_snapshot AS snapshot
+          ON snapshot.resolution_id = resolution.resolution_id
+         AND snapshot.resolution_hash = resolution.resolution_hash
+        WHERE resolution.reference_kind = 'TRADING_CALENDAR'
+          AND resolution.artifact_id = %s
+          AND resolution.artifact_hash = %s
         """,
-        (str(reference.artifact_id),),
+        (str(reference.artifact_id), reference.content_hash),
     ).fetchone()
-    if row is None or not isinstance(row[1], Mapping):
+    if (
+        row is None
+        or not isinstance(row[2], Mapping)
+        or not isinstance(row[5], Mapping)
+    ):
         raise FormalProtocolConflict("Trading Calendar owner is missing")
-    payload = dict(row[1])
-    _verify_calendar_component(protocol, payload)
-    if str(row[0]) != reference.content_hash:
+    try:
+        resolution = PITArtifactAuthorityResolution.from_canonical_dict(dict(row[2]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Trading Calendar PIT owner replay failed") from exc
+    calendar_payload = dict(row[5])
+    _verify_calendar_component(protocol, calendar_payload)
+    if (
+        resolution.resolution_id != ArtifactId(str(row[0]))
+        or resolution.resolution_hash != str(row[1])
+        or resolution.reference.reference_kind != "TRADING_CALENDAR"
+        or resolution.reference.artifact_id != reference.artifact_id
+        or resolution.reference.content_hash != reference.content_hash
+        or str(row[4]) != reference.content_hash
+    ):
         raise FormalProtocolConflict("Trading Calendar owner binding mismatch")
+    owner_payload = {
+        "schema_version": "formal-pit-trading-calendar-owner/v1",
+        "authority_resolution": resolution.to_canonical_dict(),
+        "calendar": calendar_payload,
+    }
     return _ComponentOwnerResolution(
-        "TRADING_CALENDAR_AUTHORITY",
-        reference.artifact_id,
-        reference.content_hash,
-        payload,
-        row[2],
+        "PIT_ARTIFACT_AUTHORITY",
+        resolution.resolution_id,
+        resolution.resolution_hash,
+        owner_payload,
+        row[3],
     )
 
 
@@ -925,6 +958,30 @@ def _verify_component_semantics(
         raise FormalProtocolConflict("Formal Protocol component semantics diverge")
 
 
+def _verify_owner_times(
+    *,
+    protocol: FormalResearchProtocol,
+    owners: Mapping[str, _ComponentOwnerResolution],
+    resolved_at: datetime,
+) -> None:
+    if protocol.locked_at > resolved_at:
+        raise FormalProtocolConflict(
+            "Formal Protocol lock time cannot follow PostgreSQL owner resolution"
+        )
+    late_roles = tuple(
+        sorted(
+            role
+            for role, owner in owners.items()
+            if owner.owner_recorded_at > protocol.locked_at
+        )
+    )
+    if late_roles:
+        raise FormalProtocolConflict(
+            "Formal Protocol component owner was recorded after protocol lock: "
+            + ",".join(late_roles)
+        )
+
+
 def _verify_stored_owner_resolutions(
     connection: Any,
     *,
@@ -935,7 +992,8 @@ def _verify_stored_owner_resolutions(
         """
         SELECT component_role, artifact_kind, artifact_id, artifact_hash,
                owner_kind, owner_artifact_id, owner_artifact_hash,
-               owner_payload_hash, owner_payload_json, owner_recorded_at
+               owner_payload_hash, owner_payload_json, owner_recorded_at,
+               resolved_at
         FROM formal_research_protocol_component_owner_resolution
         WHERE protocol_id = %s ORDER BY component_role
         """,
@@ -962,6 +1020,14 @@ def _verify_stored_owner_resolutions(
     }
     if actual != expected:
         raise FormalProtocolConflict("Formal Protocol owner resolution drift")
+    resolved_times = {row[10] for row in rows}
+    if len(resolved_times) != 1:
+        raise FormalProtocolConflict("Formal Protocol owner resolution time drift")
+    _verify_owner_times(
+        protocol=protocol,
+        owners=owners,
+        resolved_at=next(iter(resolved_times)),
+    )
 
 
 def _postgres_now(connection: Any) -> datetime:

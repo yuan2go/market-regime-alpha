@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
-import pytest
 from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.research_validation.common import (
@@ -57,7 +57,7 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
     forecasts = tuple(
         build_outcome_target_bound_forecast(
             target_protocol=fixture.targets,
-            symbol=symbol,
+            symbol="000001.SZ",
             decision_time=NOW,
             estimates=tuple(
                 OutcomeTargetForecastEstimate(
@@ -73,17 +73,22 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
                 )
                 for target in fixture.targets.targets
             ),
-            source_references=(_reference("FROZEN_DECISION", f"decision-{symbol}"),),
+            source_references=(
+                _reference("FROZEN_DECISION", f"decision-{index}"),
+            ),
             model_reference=protocol.model_reference,
             created_at=NOW,
         )
-        for symbol in ("000001.SZ", "000002.SZ")
+        for index in (1, 2)
     )
     for forecast in forecasts:
         repository.record_forecast(forecast)
 
     target = protocol.target_references[0]
-    label = _reference("TARGET_OUTCOME_LABEL", "underlying-oos-label-x")
+    labels = (
+        _reference("TARGET_OUTCOME_LABEL", "underlying-oos-label-x-revision-1"),
+        _reference("TARGET_OUTCOME_LABEL", "underlying-oos-label-x-revision-2"),
+    )
     bindings = tuple(
         FormalEvaluationObservationBinding.create(
             forecast_reference=ValidationArtifactReference(
@@ -91,7 +96,7 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
                 forecast.forecast_id,
                 forecast.forecast_hash,
             ),
-            label_reference=label,
+            label_reference=labels[index - 1],
             panel_slice_reference=_reference("RESEARCH_PANEL_SLICE_V2", "slice"),
             panel_row_reference=_reference(
                 "RESEARCH_PANEL_ROW_V2", f"row-{index}"
@@ -167,32 +172,28 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
             )
 
     postgres_factory.run_transaction(seed_parents)
-    postgres_factory.run_transaction(
-        lambda connection: _consume_locked_oos_evidence(
-            connection,
-            formal_protocol=protocol,
-            evaluation_protocol=fixture.evaluation,
-            target_reference=target,
-            observation_set_id=set_ids[0],
-            bindings=(bindings[0],),
-            observations=(observations[0],),
-        )
-    )
-    with pytest.raises(
-        ResearchQualificationConflict,
-        match="already formally consumed",
-    ):
-        postgres_factory.run_transaction(
-            lambda connection: _consume_locked_oos_evidence(
-                connection,
-                formal_protocol=protocol,
-                evaluation_protocol=fixture.evaluation,
-                target_reference=target,
-                observation_set_id=set_ids[1],
-                bindings=(bindings[1],),
-                observations=(observations[1],),
+
+    def consume(index: int) -> str:
+        try:
+            postgres_factory.run_transaction(
+                lambda connection: _consume_locked_oos_evidence(
+                    connection,
+                    formal_protocol=protocol,
+                    evaluation_protocol=fixture.evaluation,
+                    target_reference=target,
+                    observation_set_id=set_ids[index],
+                    bindings=(bindings[index],),
+                    observations=(observations[index],),
+                )
             )
-        )
+        except ResearchQualificationConflict as exc:
+            assert "already formally consumed" in str(exc)
+            return "REJECTED"
+        return "CONSUMED"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(consume, (0, 1)))
+    assert sorted(results) == ["CONSUMED", "REJECTED"]
 
     changed_payload = protocol.identity_payload()
     changed_payload["model_reference"] = _reference(
@@ -217,6 +218,17 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
         binding=bindings[0],
         observation=observations[0],
     )
+    assert _locked_oos_evidence_identity_payload(
+        formal_protocol=protocol,
+        target_reference=target,
+        binding=bindings[0],
+        observation=observations[0],
+    ) == _locked_oos_evidence_identity_payload(
+        formal_protocol=protocol,
+        target_reference=target,
+        binding=bindings[1],
+        observation=observations[1],
+    )
 
     with postgres_factory.connection(read_only=True) as connection:
         row = connection.execute(
@@ -225,9 +237,7 @@ def test_locked_oos_consumption_is_label_evidence_not_forecast_identity(
             FROM locked_oos_evidence_consumption
             """
         ).fetchone()
-    assert row == (
-        str(forecasts[0].forecast_id),
-        str(protocol.model_reference.artifact_id),
-        str(label.artifact_id),
-        "LOCKED_OOS",
-    )
+    assert row[0] in {str(item.forecast_id) for item in forecasts}
+    assert row[1] == str(protocol.model_reference.artifact_id)
+    assert row[2] in {str(item.artifact_id) for item in labels}
+    assert row[3] == "LOCKED_OOS"

@@ -25,10 +25,12 @@ PostgreSQL owner, so a frozen policy can accumulate multiple prospective days;
 historical session-local Policy artifacts remain unchanged. Formal Protocol
 recording accepts only the Protocol reference and reloads every result-affecting
 component from its PostgreSQL owner; immutable owner-resolution receipts preserve
-the exact owner payload, identity, hash and recorded/resolved time. A separate
-durable Locked-OOS consumption owner keys the underlying label/partition evidence,
-so changing Model, Forecast or Protocol identity cannot make consumed evidence
-new again. These writers can
+the exact owner payload, identity, hash and recorded/resolved time, reject
+backdated freezes and anchor the Calendar payload to the existing PIT Artifact
+Authority. A durable Locked-OOS consumption owner keys semantic
+subject/Target/session/label-interval evidence, so Label revision or changing
+Model, Forecast, Dataset or Protocol identity cannot make consumed evidence new
+again. These writers can
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.
 
@@ -72,7 +74,7 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |
 | Policy class names | 38 | time, risk, provider, state and research rules |
 | Protocol/Port class names | 16 | external/composition seams |
-| Qualification-named class types | 14 | contracts and statuses; only Model Governance is a current qualification writer |
+| Qualification-named class types | 14 | contracts and statuses; Phase C owner writers persist fail-closed decisions, while current real Formal qualification evidence remains absent |
 | Current canonical docs | 11 | index, four architecture, four status, one runbook and one research registry |
 | Normative Constitution docs | 10 | unchanged `00` through `09` |
 | Current research registries | 1 | negative/inconclusive results |

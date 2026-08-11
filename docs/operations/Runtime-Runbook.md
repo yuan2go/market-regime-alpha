@@ -171,13 +171,18 @@ ordinary reassessment cannot silently reinstate that scope.
 graph. PostgreSQL reloads the Target Protocol and Targets, Evaluation Protocol,
 Trading Calendar, Universe, Dataset, Historical Sample, Feature, Factor, Model,
 Threshold, OOS, Cost, Calibration, Strategy and Entry/Holding/Exit owners, then
-stores an immutable owner-resolution receipt for every binding. Caller-supplied
+stores an immutable owner-resolution receipt for every binding. The Calendar
+payload snapshot is accepted only when it is anchored to the existing PIT
+Artifact Authority resolution; it is not a second Calendar owner. Caller-supplied
 component payloads are rejected. `qualification-forecast-record` requires an
 exact OutcomeTarget-bound Forecast and reloads its Model Lineage owner.
 `qualification-evaluation-record` accepts only immutable Forecast, Target
 Outcome Label and Panel slice/row bindings; PostgreSQL reconstructs score,
 return, label interval and slices, freezes the complete result-affecting
-lineage, and consumes each underlying Locked-OOS label in a durable ledger whose
+lineage, and consumes each underlying Locked-OOS subject/Target/session interval
+in a durable ledger whose identity survives Label revision and Model, Forecast,
+Dataset or Protocol substitution. The first exact Label remains immutable
+provenance; it is not the reuse key.
 identity does not depend on Model or Forecast. It never accepts caller-supplied
 observation values. `qualification-historical` and
 `qualification-oos` persist C3/C4 owner decisions; the latter replays those

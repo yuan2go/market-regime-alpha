@@ -38,7 +38,7 @@ from market_regime_alpha.evidence.canonical import (
 _REFERENCE_KINDS = {
     "trading_calendar_reference": "TRADING_CALENDAR",
     "universe_reference": "UNIVERSE",
-    "dataset_reference": "DATASET",
+    "dataset_reference": "MARKET_DATA_DATASET",
     "historical_sample_dataset_reference": "HISTORICAL_SAMPLE_DATASET",
     "feature_reference": "FEATURE_DEFINITION_SET",
     "factor_reference": "FACTOR_CATALOG",

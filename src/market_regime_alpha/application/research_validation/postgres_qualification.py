@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
@@ -23,6 +24,7 @@ from market_regime_alpha.application.research_evaluation.panel_v2 import (
 )
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
     TargetOutcomeLabel,
+    TargetedShadowOutcome,
 )
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     OutcomeAvailabilityStatus,
@@ -41,15 +43,18 @@ from market_regime_alpha.application.research_validation.qualification import (
     FormalOOSQualificationDecision,
     FormalOOSQualificationPolicy,
     HistoricalSampleQualificationDecision,
+    LockedOOSEvidenceIdentity,
     QualificationOutcome,
     evaluate_metric_floor_payloads,
 )
 from market_regime_alpha.application.research_validation.samples import (
+    HistoricalPathSampleRecord,
     HistoricalSampleDataset,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.pit_authority import (
     FormalPITEvidenceArtifact,
+    FormalPITValidationRequest,
     PITValidationOutcome,
 )
 from market_regime_alpha.data.postgres_provider_qualification import (
@@ -591,6 +596,7 @@ def _assess_historical_sample(
     if blocked:
         return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), ()
     assert protocol is not None and pit is not None
+    pit_request = _load_formal_pit_request(connection, pit)
     if pit.outcome is not PITValidationOutcome.SATISFIED:
         blocked.add("FORMAL_PIT_NOT_SATISFIED")
     if pit.available_at > evaluated_at or pit.recorded_at > evaluated_at:
@@ -623,27 +629,30 @@ def _assess_historical_sample(
         (str(item.fact_id), item.fact_hash) for item in pit.selected_fact_authorities
     }
     for record in dataset.records:
+        if record.sample.symbol not in pit_request.symbols:
+            rejected.add("HISTORICAL_SAMPLE_SYMBOL_OUTSIDE_FORMAL_PIT_SCOPE")
         if record.sample.available_at.value > evaluated_at:
             rejected.add("HISTORICAL_SAMPLE_NOT_AVAILABLE_AT_QUALIFICATION")
         if record.outcome_reference.artifact_kind != "TARGET_OUTCOME_LABEL":
             rejected.add("FORMAL_TARGET_OUTCOME_LABEL_REQUIRED")
         else:
-            rows = connection.execute(
-                """
-                SELECT label_hash, target_id
-                FROM targeted_shadow_outcome_label
-                WHERE label_id = %s
-                """,
-                (str(record.outcome_reference.artifact_id),),
-            ).fetchall()
-            exact = tuple(
-                row
-                for row in rows
-                if str(row[0]) == record.outcome_reference.content_hash
-                and str(row[1]) == str(record.target_reference.artifact_id)
-            )
-            if len(exact) != 1:
+            try:
+                outcome, label = _load_target_label_owner(
+                    connection,
+                    reference=record.outcome_reference,
+                    target_reference=record.target_reference,
+                )
+            except ResearchQualificationConflict:
                 rejected.add("TARGET_OUTCOME_LABEL_OWNER_MISMATCH")
+            else:
+                rejected.update(
+                    _historical_target_label_reason_codes(
+                        protocol=protocol,
+                        record=record,
+                        outcome=outcome,
+                        label=label,
+                    )
+                )
         pit_refs = tuple(
             item
             for item in record.pit_lineage
@@ -656,6 +665,10 @@ def _assess_historical_sample(
             for item in pit_refs
         ):
             rejected.add("HISTORICAL_SAMPLE_PIT_FACT_LINEAGE_MISMATCH")
+        elif {
+            (str(item.artifact_id), item.content_hash) for item in pit_refs
+        } != selected:
+            rejected.add("HISTORICAL_SAMPLE_PIT_FACT_LINEAGE_INCOMPLETE")
     provider_refs, provider_reasons = _resolve_provider_fact_decisions(
         connection, pit=pit, evaluated_at=evaluated_at
     )
@@ -877,6 +890,113 @@ def _load_formal_pit(
     if evidence.evidence_hash != str(row[1]):
         raise ResearchQualificationConflict("Formal PIT owner hash mismatch")
     return evidence
+
+
+def _load_formal_pit_request(
+    connection: Any,
+    evidence: FormalPITEvidenceArtifact,
+) -> FormalPITValidationRequest:
+    row = connection.execute(
+        """
+        SELECT request_json
+        FROM formal_pit_validation_evidence
+        WHERE evidence_id = %s
+        """,
+        (str(evidence.evidence_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[0], Mapping):
+        raise ResearchQualificationConflict("Formal PIT request owner is missing")
+    try:
+        request = FormalPITValidationRequest.from_canonical_dict(_mapping(row[0]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ResearchQualificationConflict("Formal PIT request replay failed") from exc
+    if request.request_hash != evidence.request_hash:
+        raise ResearchQualificationConflict("Formal PIT request identity mismatch")
+    return request
+
+
+def _load_target_label_owner(
+    connection: Any,
+    *,
+    reference: ValidationArtifactReference,
+    target_reference: ValidationArtifactReference,
+) -> tuple[TargetedShadowOutcome, TargetOutcomeLabel]:
+    rows = connection.execute(
+        """
+        SELECT outcome.settlement_hash, outcome.payload_json,
+               label.label_hash, label.label_json
+        FROM targeted_shadow_outcome_label AS label
+        JOIN targeted_shadow_outcome AS outcome
+          ON outcome.settlement_id = label.settlement_id
+        WHERE label.label_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchall()
+    exact: list[tuple[TargetedShadowOutcome, TargetOutcomeLabel]] = []
+    for row in rows:
+        if (
+            str(row[2]) != reference.content_hash
+            or not isinstance(row[1], Mapping)
+            or not isinstance(row[3], Mapping)
+        ):
+            continue
+        try:
+            outcome = TargetedShadowOutcome.from_canonical_dict(_mapping(row[1]))
+            label = TargetOutcomeLabel.from_canonical_dict(_mapping(row[3]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if (
+            outcome.settlement_hash == str(row[0])
+            and label.label_id == reference.artifact_id
+            and label.label_hash == reference.content_hash
+            and label.target.artifact_id == target_reference.artifact_id
+            and label.target.content_hash == target_reference.content_hash
+            and label in outcome.labels
+        ):
+            exact.append((outcome, label))
+    if len(exact) != 1:
+        raise ResearchQualificationConflict("Target Outcome Label owner mismatch")
+    return exact[0]
+
+
+def _decimal_from_float(value: float | None) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
+
+
+def _historical_target_label_reason_codes(
+    *,
+    protocol: FormalResearchProtocol,
+    record: HistoricalPathSampleRecord,
+    outcome: TargetedShadowOutcome,
+    label: TargetOutcomeLabel,
+) -> tuple[str, ...]:
+    reasons: set[str] = set()
+    sample = record.sample
+    if (
+        outcome.source_dataset.artifact_id
+        != protocol.dataset_reference.artifact_id
+        or outcome.source_dataset.content_hash
+        != protocol.dataset_reference.content_hash
+        or outcome.target_protocol_id
+        != protocol.outcome_target_protocol_reference.artifact_id
+        or outcome.target_protocol_hash
+        != protocol.outcome_target_protocol_reference.content_hash
+    ):
+        reasons.add("TARGET_OUTCOME_DATASET_OR_PROTOCOL_LINEAGE_MISMATCH")
+    if (
+        label.symbol != sample.symbol
+        or label.target.artifact_id != record.target_reference.artifact_id
+        or label.target.content_hash != record.target_reference.content_hash
+        or label.label_interval_start != sample.sample_decision_time.value
+        or label.outcome_available_at > sample.available_at.value
+        or sample.source_artifact_id != outcome.settlement_id
+        or sample.source_content_hash != outcome.settlement_hash
+        or _decimal_from_float(sample.realized_return) != label.checkpoint_return
+        or _decimal_from_float(sample.realized_mfe) != label.mfe
+        or _decimal_from_float(sample.realized_mae) != label.mae
+    ):
+        reasons.add("HISTORICAL_SAMPLE_TARGET_LABEL_LINEAGE_MISMATCH")
+    return tuple(sorted(reasons))
 
 
 def _load_historical_decision(
@@ -1383,14 +1503,14 @@ def _consume_locked_oos_evidence(
                 universe_id, universe_hash,
                 target_protocol_id, target_protocol_hash,
                 target_id, target_hash, label_id, label_hash,
-                session_date, label_end_date, partition_kind,
+                subject, session_date, label_end_date, partition_kind,
                 first_formal_protocol_id, first_formal_protocol_hash,
                 first_model_id, first_model_hash,
                 first_forecast_id, first_forecast_hash,
                 observation_set_id, payload_json, consumed_at
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, 'LOCKED_OOS', %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, 'LOCKED_OOS', %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT DO NOTHING
             """,
@@ -1406,6 +1526,7 @@ def _consume_locked_oos_evidence(
                 target_reference.content_hash,
                 str(binding.label_reference.artifact_id),
                 binding.label_reference.content_hash,
+                observation.symbol,
                 observation.session_date,
                 observation.label_end_date,
                 str(formal_protocol.protocol_id),
@@ -1434,19 +1555,18 @@ def _locked_oos_evidence_identity_payload(
     binding: FormalEvaluationObservationBinding,
     observation: EvaluationObservation,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": "locked-oos-evidence-identity/v1",
-        "dataset_reference": formal_protocol.dataset_reference.to_canonical_dict(),
-        "universe_reference": formal_protocol.universe_reference.to_canonical_dict(),
-        "target_protocol_reference": (
-            formal_protocol.outcome_target_protocol_reference.to_canonical_dict()
+    del binding
+    return LockedOOSEvidenceIdentity(
+        dataset_reference=formal_protocol.dataset_reference,
+        universe_reference=formal_protocol.universe_reference,
+        target_protocol_reference=(
+            formal_protocol.outcome_target_protocol_reference
         ),
-        "target_reference": target_reference.to_canonical_dict(),
-        "label_reference": binding.label_reference.to_canonical_dict(),
-        "session_date": observation.session_date.isoformat(),
-        "label_end_date": observation.label_end_date.isoformat(),
-        "partition_kind": "LOCKED_OOS",
-    }
+        target_reference=target_reference,
+        subject=observation.symbol,
+        session_date=observation.session_date,
+        label_end_date=observation.label_end_date,
+    ).to_canonical_dict()
 
 
 def _locked_oos_consumption_payload(
@@ -1472,7 +1592,8 @@ def _locked_oos_consumption_payload(
         binding=binding,
         observation=observation,
     )
-    identity_hash = canonical_hash(identity_payload)
+    identity = LockedOOSEvidenceIdentity.from_canonical_dict(identity_payload)
+    identity_hash = identity.identity_hash
     return identity_hash, {
         "schema_version": "locked-oos-evidence-consumption/v1",
         "evidence_identity": identity_payload,
@@ -1484,6 +1605,7 @@ def _locked_oos_consumption_payload(
             ).to_canonical_dict(),
             "model_reference": formal_protocol.model_reference.to_canonical_dict(),
             "forecast_reference": binding.forecast_reference.to_canonical_dict(),
+            "label_reference": binding.label_reference.to_canonical_dict(),
             "observation_set_id": str(observation_set_id),
             "evaluation_window_ids": [item.window_id for item in locked_windows],
         },
