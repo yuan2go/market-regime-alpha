@@ -15,6 +15,7 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
     OutcomeMarketCondition,
 )
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    BarrierOrderingOutcome,
     TargetOutcomeLabel,
     TargetedShadowOutcome,
 )
@@ -167,6 +168,7 @@ def test_historical_label_lineage_rejects_unrelated_market_dataset(
         mfe=Decimal("0.04"),
         mae=Decimal("-0.02"),
         barrier_passages=(),
+        barrier_ordering=BarrierOrderingOutcome.NO_TOUCH,
         market_conditions=(OutcomeMarketCondition.TRADING,),
         availability_status=OutcomeAvailabilityStatus.COMPLETE,
         outcome_available_at=available_at,

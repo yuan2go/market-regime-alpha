@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -23,8 +24,11 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
+    HyperparameterDomain,
     OutcomeTargetForecastEstimate,
     OutcomeTargetForecastStatus,
+    ResearchExperimentDefinition,
+    SearchBudget,
     build_outcome_target_bound_forecast,
 )
 from market_regime_alpha.core.identity import ArtifactId, DatasetId
@@ -86,24 +90,54 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
 
 def _formal_protocol(*, cost_name: str = "cost-v1") -> FormalResearchProtocol:
     targets = engineering_multi_horizon_protocol()
+    evaluation = _evaluation(targets)
+    feature = _reference("FEATURE_DEFINITION_SET", "features-v1")
+    cost = _reference("SHADOW_PORTFOLIO_POLICY", cost_name)
+    experiment = ResearchExperimentDefinition.create(
+        research_question="Do frozen price/volume features add T+1 ranking information?",
+        hypothesis="The primary RankIC and spread effects exceed their frozen nulls.",
+        decision_time_policy="FROZEN_DECISION_TIME",
+        target_references=tuple(
+            ValidationArtifactReference("OUTCOME_TARGET", item.target_id, item.target_hash)
+            for item in targets.targets
+        ),
+        feature_reference=feature,
+        feature_version="price-volume-baseline-v1",
+        allowed_model_families=("REGULARIZED_LINEAR",),
+        hyperparameter_space=(
+            HyperparameterDomain("l2_penalty", ("0", "0.1", "1")),
+        ),
+        search_budget=SearchBudget(max_model_fits=3, max_wall_clock_seconds=300),
+        primary_hypothesis_ids=("BASELINE:RANK_IC:V1", "BASELINE:SPREAD:V1"),
+        secondary_hypothesis_ids=("BASELINE:IC:V1",),
+        multiple_testing_family_id=evaluation.hypothesis_family_id,
+        stopping_rule="EXHAUST_FROZEN_SEARCH_BUDGET",
+        train_validation_policy="PURGED_WALK_FORWARD_NO_LOCKED_OOS",
+        purge_embargo_policy="EVALUATION_PROTOCOL_DERIVED",
+        oos_unlock_policy="ONE_TIME_AFTER_MODEL_SELECTION_FREEZE",
+        randomness_algorithm="SHA256_DERIVED_PCG64",
+        random_seeds=(20260812,),
+        cost_policy_reference=cost,
+    )
     return FormalResearchProtocol.create(
         protocol_version="phase-c0-v1",
         target_protocol=targets,
         trading_calendar=_calendar(),
-        evaluation_protocol=_evaluation(targets),
+        evaluation_protocol=evaluation,
+        experiment_definition=experiment,
         universe_reference=_reference("UNIVERSE", "universe-v1"),
         dataset_reference=_reference("MARKET_DATA_DATASET", "dataset-v1"),
         historical_sample_dataset_reference=_reference(
             "HISTORICAL_SAMPLE_DATASET", "sample-dataset-v1"
         ),
-        feature_reference=_reference("FEATURE_DEFINITION_SET", "features-v1"),
+        feature_reference=feature,
         factor_reference=_reference("FACTOR_CATALOG", "factors-v1"),
         model_reference=_reference("MODEL_VERSION_LINEAGE", "model-v1"),
         threshold_policy_reference=_reference("THRESHOLD_POLICY", "threshold-v1"),
         formal_oos_qualification_policy_reference=_reference(
             "FORMAL_OOS_QUALIFICATION_POLICY", "formal-oos-v1"
         ),
-        cost_policy_reference=_reference("SHADOW_PORTFOLIO_POLICY", cost_name),
+        cost_policy_reference=cost,
         calibration_policy_reference=_reference("CALIBRATION_POLICY", "calibration-v1"),
         strategy_policy_reference=_reference("STRATEGY_SHADOW_POLICY", "strategy-v1"),
         entry_holding_exit_qualification_policy_reference=_reference(
@@ -123,6 +157,22 @@ def test_formal_protocol_freezes_every_result_affecting_component() -> None:
     assert protocol.frozen_trading_dates[-1] == date(2026, 1, 30)
     assert len(protocol.target_references) == len(engineering_multi_horizon_protocol().targets)
     assert protocol.locked_oos_reuse_policy == "NEVER_REUSE_FOR_SELECTION_OR_TUNING"
+    assert protocol.experiment_definition is not None
+    assert str(protocol.experiment_definition.definition_id).startswith(
+        "research-experiment-definition:"
+    )
+    assert protocol.experiment_definition.search_budget.max_model_fits == 3
+    assert FormalResearchProtocol.from_canonical_dict(
+        protocol.to_canonical_dict()
+    ) == protocol
+
+
+def test_experiment_definition_rejects_after_the_fact_mutation() -> None:
+    definition = _formal_protocol().experiment_definition
+    assert definition is not None
+
+    with pytest.raises(ValueError, match="hash"):
+        replace(definition, stopping_rule="STOP_AFTER_FAVOURABLE_OOS")
 
 
 def test_formal_protocol_rejects_calendar_or_target_lineage_mismatch() -> None:
@@ -137,6 +187,7 @@ def test_formal_protocol_rejects_calendar_or_target_lineage_mismatch() -> None:
     )
     values = dict(
         protocol_version="phase-c0-v1",
+        experiment_definition=_formal_protocol().experiment_definition,
         trading_calendar=_calendar(),
         evaluation_protocol=evaluation,
         universe_reference=_reference("UNIVERSE", "universe-v1"),

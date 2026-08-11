@@ -55,6 +55,213 @@ _REFERENCE_KINDS = {
 
 
 @dataclass(frozen=True, slots=True)
+class HyperparameterDomain:
+    parameter_name: str
+    allowed_values: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        require_text("parameter_name", self.parameter_name)
+        if (
+            not self.allowed_values
+            or self.allowed_values != tuple(sorted(set(self.allowed_values)))
+            or any(not value.strip() for value in self.allowed_values)
+        ):
+            raise ValueError("Hyperparameter domain values must be non-empty and sorted")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "parameter_name": self.parameter_name,
+            "allowed_values": list(self.allowed_values),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SearchBudget:
+    max_model_fits: int
+    max_wall_clock_seconds: int
+
+    def __post_init__(self) -> None:
+        if self.max_model_fits <= 0 or self.max_wall_clock_seconds <= 0:
+            raise ValueError("Search budget limits must be positive")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "max_model_fits": self.max_model_fits,
+            "max_wall_clock_seconds": self.max_wall_clock_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchExperimentDefinition:
+    """Immutable value object that freezes researcher degrees of freedom."""
+
+    definition_id: ArtifactId
+    definition_hash: str
+    research_question: str
+    hypothesis: str
+    decision_time_policy: str
+    target_references: tuple[ValidationArtifactReference, ...]
+    feature_reference: ValidationArtifactReference
+    feature_version: str
+    allowed_model_families: tuple[str, ...]
+    hyperparameter_space: tuple[HyperparameterDomain, ...]
+    search_budget: SearchBudget
+    primary_hypothesis_ids: tuple[str, ...]
+    secondary_hypothesis_ids: tuple[str, ...]
+    multiple_testing_family_id: str
+    stopping_rule: str
+    train_validation_policy: str
+    purge_embargo_policy: str
+    oos_unlock_policy: str
+    randomness_algorithm: str
+    random_seeds: tuple[int, ...]
+    cost_policy_reference: ValidationArtifactReference
+    schema_version: str = "research-experiment-definition/v1"
+
+    def __post_init__(self) -> None:
+        require_sha256("definition_hash", self.definition_hash)
+        for name in (
+            "research_question",
+            "hypothesis",
+            "decision_time_policy",
+            "feature_version",
+            "multiple_testing_family_id",
+            "stopping_rule",
+            "train_validation_policy",
+            "purge_embargo_policy",
+            "oos_unlock_policy",
+            "randomness_algorithm",
+        ):
+            require_text(name, str(getattr(self, name)))
+        if self.schema_version != "research-experiment-definition/v1":
+            raise ValueError("unsupported Research Experiment Definition schema")
+        if self.feature_reference.artifact_kind != "FEATURE_DEFINITION_SET":
+            raise ValueError("Experiment feature reference kind mismatch")
+        if self.cost_policy_reference.artifact_kind != "SHADOW_PORTFOLIO_POLICY":
+            raise ValueError("Experiment cost policy reference kind mismatch")
+        if (
+            not self.target_references
+            or self.target_references
+            != tuple(
+                sorted(set(self.target_references), key=lambda item: str(item.artifact_id))
+            )
+            or any(item.artifact_kind != "OUTCOME_TARGET" for item in self.target_references)
+        ):
+            raise ValueError("Experiment Target references must be non-empty and sorted")
+        if (
+            not self.allowed_model_families
+            or self.allowed_model_families
+            != tuple(sorted(set(self.allowed_model_families)))
+        ):
+            raise ValueError("Experiment model families must be non-empty and sorted")
+        domain_names = tuple(item.parameter_name for item in self.hyperparameter_space)
+        if domain_names != tuple(sorted(set(domain_names))):
+            raise ValueError("Experiment hyperparameter domains must be unique and sorted")
+        if (
+            not self.primary_hypothesis_ids
+            or self.primary_hypothesis_ids
+            != tuple(sorted(set(self.primary_hypothesis_ids)))
+            or self.secondary_hypothesis_ids
+            != tuple(sorted(set(self.secondary_hypothesis_ids)))
+            or set(self.primary_hypothesis_ids) & set(self.secondary_hypothesis_ids)
+        ):
+            raise ValueError("Experiment metric hypotheses must be disjoint and sorted")
+        if (
+            not self.random_seeds
+            or self.random_seeds != tuple(sorted(set(self.random_seeds)))
+            or any(value < 0 for value in self.random_seeds)
+        ):
+            raise ValueError("Experiment random seeds must be non-negative and sorted")
+        if canonical_hash(self.identity_payload()) != self.definition_hash:
+            raise ValueError("Research Experiment Definition hash mismatch")
+        if self.definition_id != ArtifactId(
+            f"research-experiment-definition:{self.definition_hash[7:]}"
+        ):
+            raise ValueError("Research Experiment Definition identity mismatch")
+
+    @classmethod
+    def create(cls, **values: Any) -> ResearchExperimentDefinition:
+        normalized = dict(values)
+        for name in (
+            "target_references",
+            "allowed_model_families",
+            "hyperparameter_space",
+            "primary_hypothesis_ids",
+            "secondary_hypothesis_ids",
+            "random_seeds",
+        ):
+            normalized[name] = tuple(sorted(set(normalized[name]), key=_experiment_sort_key))
+        payload = _experiment_payload(**normalized)
+        definition_id, definition_hash = content_identity(
+            "research-experiment-definition", payload
+        )
+        return cls(definition_id, definition_hash, **normalized)
+
+    def identity_payload(self) -> dict[str, Any]:
+        return _experiment_payload(
+            **{
+                name: getattr(self, name)
+                for name in self.__dataclass_fields__
+                if name not in {"definition_id", "definition_hash", "schema_version"}
+            }
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "definition_id": str(self.definition_id),
+            "definition_hash": self.definition_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: dict[str, Any]
+    ) -> ResearchExperimentDefinition:
+        budget = _mapping(value["search_budget"])
+        return cls(
+            definition_id=ArtifactId(str(value["definition_id"])),
+            definition_hash=str(value["definition_hash"]),
+            research_question=str(value["research_question"]),
+            hypothesis=str(value["hypothesis"]),
+            decision_time_policy=str(value["decision_time_policy"]),
+            target_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in _sequence(value["target_references"])
+            ),
+            feature_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["feature_reference"])
+            ),
+            feature_version=str(value["feature_version"]),
+            allowed_model_families=tuple(str(item) for item in _sequence(value["allowed_model_families"])),
+            hyperparameter_space=tuple(
+                HyperparameterDomain(
+                    str(_mapping(item)["parameter_name"]),
+                    tuple(str(entry) for entry in _sequence(_mapping(item)["allowed_values"])),
+                )
+                for item in _sequence(value["hyperparameter_space"])
+            ),
+            search_budget=SearchBudget(
+                int(budget["max_model_fits"]), int(budget["max_wall_clock_seconds"])
+            ),
+            primary_hypothesis_ids=tuple(str(item) for item in _sequence(value["primary_hypothesis_ids"])),
+            secondary_hypothesis_ids=tuple(str(item) for item in _sequence(value["secondary_hypothesis_ids"])),
+            multiple_testing_family_id=str(value["multiple_testing_family_id"]),
+            stopping_rule=str(value["stopping_rule"]),
+            train_validation_policy=str(value["train_validation_policy"]),
+            purge_embargo_policy=str(value["purge_embargo_policy"]),
+            oos_unlock_policy=str(value["oos_unlock_policy"]),
+            randomness_algorithm=str(value["randomness_algorithm"]),
+            random_seeds=tuple(
+                int(str(item)) for item in _sequence(value["random_seeds"])
+            ),
+            cost_policy_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["cost_policy_reference"])
+            ),
+            schema_version=str(value["schema_version"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FormalResearchProtocol:
     """Content-addressed freeze of all Phase C result-affecting choices."""
 
@@ -78,16 +285,24 @@ class FormalResearchProtocol:
     calibration_policy_reference: ValidationArtifactReference
     strategy_policy_reference: ValidationArtifactReference
     entry_holding_exit_qualification_policy_reference: ValidationArtifactReference
+    experiment_definition: ResearchExperimentDefinition | None
     locked_at: datetime
     historical_sample_dataset_references: tuple[ValidationArtifactReference, ...] = ()
     locked_oos_reuse_policy: str = "NEVER_REUSE_FOR_SELECTION_OR_TUNING"
-    schema_version: str = "formal-research-protocol/v1"
+    schema_version: str = "formal-research-protocol/v2"
 
     def __post_init__(self) -> None:
         require_sha256("protocol_hash", self.protocol_hash)
         require_text("protocol_version", self.protocol_version)
-        if self.schema_version != "formal-research-protocol/v1":
+        if self.schema_version not in {
+            "formal-research-protocol/v1",
+            "formal-research-protocol/v2",
+        }:
             raise ValueError("unsupported Formal Research Protocol schema")
+        if (self.experiment_definition is None) != (
+            self.schema_version == "formal-research-protocol/v1"
+        ):
+            raise ValueError("Formal Protocol V2 requires one Experiment Definition")
         if self.locked_oos_reuse_policy != "NEVER_REUSE_FOR_SELECTION_OR_TUNING":
             raise ValueError("Locked OOS reuse policy cannot be weakened")
         if self.locked_at.tzinfo is None or self.locked_at.utcoffset() is None:
@@ -125,6 +340,14 @@ class FormalResearchProtocol:
             reference = getattr(self, field_name)
             if reference.artifact_kind != expected_kind:
                 raise ValueError(f"{field_name} must reference {expected_kind}")
+        if self.experiment_definition is not None:
+            experiment = self.experiment_definition
+            if (
+                experiment.target_references != self.target_references
+                or experiment.feature_reference != self.feature_reference
+                or experiment.cost_policy_reference != self.cost_policy_reference
+            ):
+                raise ValueError("Experiment Definition component identity mismatch")
         if self.outcome_target_protocol_reference.artifact_kind != "OUTCOME_TARGET_PROTOCOL":
             raise ValueError("Formal protocol requires Outcome Target Protocol authority")
         if self.trading_calendar_reference.artifact_kind != "TRADING_CALENDAR":
@@ -146,6 +369,7 @@ class FormalResearchProtocol:
         target_protocol: OutcomeTargetProtocol,
         trading_calendar: TradingCalendarArtifact,
         evaluation_protocol: FormalEvaluationProtocol,
+        experiment_definition: ResearchExperimentDefinition,
         universe_reference: ValidationArtifactReference,
         dataset_reference: ValidationArtifactReference,
         historical_sample_dataset_reference: ValidationArtifactReference,
@@ -199,6 +423,22 @@ class FormalResearchProtocol:
                 key=lambda item: str(item.artifact_id),
             )
         )
+        registered_hypotheses = {
+            item.hypothesis_id for item in evaluation_protocol.hypothesis_specs
+        }
+        selected_hypotheses = {
+            *experiment_definition.primary_hypothesis_ids,
+            *experiment_definition.secondary_hypothesis_ids,
+        }
+        if (
+            experiment_definition.target_references != target_references
+            or experiment_definition.feature_reference != feature_reference
+            or experiment_definition.cost_policy_reference != cost_policy_reference
+            or experiment_definition.multiple_testing_family_id
+            != evaluation_protocol.hypothesis_family_id
+            or not selected_hypotheses.issubset(registered_hypotheses)
+        ):
+            raise ValueError("Experiment Definition does not match frozen Protocol components")
         calendar_reference = ValidationArtifactReference(
             "TRADING_CALENDAR",
             trading_calendar.artifact_id,
@@ -241,35 +481,39 @@ class FormalResearchProtocol:
             entry_holding_exit_qualification_policy_reference=(
                 entry_holding_exit_qualification_policy_reference
             ),
+            experiment_definition=experiment_definition,
             locked_at=locked_at,
             historical_sample_dataset_references=historical_references,
+            schema_version="formal-research-protocol/v2",
         )
         protocol_id, protocol_hash = content_identity(
             "formal-research-protocol", payload
         )
         return cls(
-            protocol_id,
-            protocol_hash,
-            protocol_version,
-            target_protocol_reference,
-            target_references,
-            calendar_reference,
-            calendar_dates,
-            evaluation_reference,
-            universe_reference,
-            dataset_reference,
-            historical_sample_dataset_reference,
-            feature_reference,
-            factor_reference,
-            model_reference,
-            threshold_policy_reference,
-            formal_oos_qualification_policy_reference,
-            cost_policy_reference,
-            calibration_policy_reference,
-            strategy_policy_reference,
-            entry_holding_exit_qualification_policy_reference,
-            locked_at,
-            historical_references,
+            protocol_id=protocol_id,
+            protocol_hash=protocol_hash,
+            protocol_version=protocol_version,
+            outcome_target_protocol_reference=target_protocol_reference,
+            target_references=target_references,
+            trading_calendar_reference=calendar_reference,
+            frozen_trading_dates=calendar_dates,
+            evaluation_protocol_reference=evaluation_reference,
+            universe_reference=universe_reference,
+            dataset_reference=dataset_reference,
+            historical_sample_dataset_reference=historical_sample_dataset_reference,
+            feature_reference=feature_reference,
+            factor_reference=factor_reference,
+            model_reference=model_reference,
+            threshold_policy_reference=threshold_policy_reference,
+            formal_oos_qualification_policy_reference=formal_oos_qualification_policy_reference,
+            cost_policy_reference=cost_policy_reference,
+            calibration_policy_reference=calibration_policy_reference,
+            strategy_policy_reference=strategy_policy_reference,
+            entry_holding_exit_qualification_policy_reference=entry_holding_exit_qualification_policy_reference,
+            experiment_definition=experiment_definition,
+            locked_at=locked_at,
+            historical_sample_dataset_references=historical_references,
+            schema_version="formal-research-protocol/v2",
         )
 
     def identity_payload(self) -> dict[str, Any]:
@@ -294,10 +538,12 @@ class FormalResearchProtocol:
             entry_holding_exit_qualification_policy_reference=(
                 self.entry_holding_exit_qualification_policy_reference
             ),
+            experiment_definition=self.experiment_definition,
             locked_at=self.locked_at,
             historical_sample_dataset_references=(
                 self.historical_sample_dataset_references
             ),
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -373,6 +619,13 @@ class FormalResearchProtocol:
             ),
             entry_holding_exit_qualification_policy_reference=ValidationArtifactReference.from_canonical_dict(
                 _mapping(value["entry_holding_exit_qualification_policy_reference"])
+            ),
+            experiment_definition=(
+                None
+                if value.get("experiment_definition") is None
+                else ResearchExperimentDefinition.from_canonical_dict(
+                    _mapping(value["experiment_definition"])
+                )
             ),
             locked_at=datetime.fromisoformat(str(value["locked_at"])),
             historical_sample_dataset_references=tuple(
@@ -696,13 +949,15 @@ def _formal_protocol_payload(
     calibration_policy_reference: ValidationArtifactReference,
     strategy_policy_reference: ValidationArtifactReference,
     entry_holding_exit_qualification_policy_reference: ValidationArtifactReference,
+    experiment_definition: ResearchExperimentDefinition | None,
     locked_at: datetime,
     historical_sample_dataset_references: tuple[
         ValidationArtifactReference, ...
     ] | None = None,
+    schema_version: str = "formal-research-protocol/v2",
 ) -> dict[str, Any]:
     payload = {
-        "schema_version": "formal-research-protocol/v1",
+        "schema_version": schema_version,
         "protocol_version": protocol_version,
         "outcome_target_protocol_reference": outcome_target_protocol_reference.to_canonical_dict(),
         "target_references": [item.to_canonical_dict() for item in target_references],
@@ -730,12 +985,53 @@ def _formal_protocol_payload(
         "locked_at": timestamp(locked_at),
         "locked_oos_reuse_policy": "NEVER_REUSE_FOR_SELECTION_OR_TUNING",
     }
+    if schema_version == "formal-research-protocol/v2":
+        if experiment_definition is None:
+            raise ValueError("Formal Protocol V2 requires an Experiment Definition")
+        payload["experiment_definition"] = experiment_definition.to_canonical_dict()
     historical_references = historical_sample_dataset_references
     if historical_references is not None and len(historical_references) > 1:
         payload["historical_sample_dataset_references"] = [
             item.to_canonical_dict() for item in historical_references
         ]
     return payload
+
+
+def _experiment_payload(**values: Any) -> dict[str, Any]:
+    return {
+        "schema_version": "research-experiment-definition/v1",
+        "research_question": values["research_question"],
+        "hypothesis": values["hypothesis"],
+        "decision_time_policy": values["decision_time_policy"],
+        "target_references": [
+            item.to_canonical_dict() for item in values["target_references"]
+        ],
+        "feature_reference": values["feature_reference"].to_canonical_dict(),
+        "feature_version": values["feature_version"],
+        "allowed_model_families": list(values["allowed_model_families"]),
+        "hyperparameter_space": [
+            item.to_canonical_dict() for item in values["hyperparameter_space"]
+        ],
+        "search_budget": values["search_budget"].to_canonical_dict(),
+        "primary_hypothesis_ids": list(values["primary_hypothesis_ids"]),
+        "secondary_hypothesis_ids": list(values["secondary_hypothesis_ids"]),
+        "multiple_testing_family_id": values["multiple_testing_family_id"],
+        "stopping_rule": values["stopping_rule"],
+        "train_validation_policy": values["train_validation_policy"],
+        "purge_embargo_policy": values["purge_embargo_policy"],
+        "oos_unlock_policy": values["oos_unlock_policy"],
+        "randomness_algorithm": values["randomness_algorithm"],
+        "random_seeds": list(values["random_seeds"]),
+        "cost_policy_reference": values["cost_policy_reference"].to_canonical_dict(),
+    }
+
+
+def _experiment_sort_key(value: Any) -> Any:
+    if isinstance(value, ValidationArtifactReference):
+        return str(value.artifact_id), value.content_hash
+    if isinstance(value, HyperparameterDomain):
+        return value.parameter_name
+    return value
 
 
 def _mapping(value: object) -> dict[str, Any]:
@@ -752,8 +1048,11 @@ def _sequence(value: object) -> tuple[object, ...]:
 
 __all__ = [
     "FormalResearchProtocol",
+    "HyperparameterDomain",
     "OutcomeTargetBoundMultiTargetForecast",
     "OutcomeTargetForecastEstimate",
     "OutcomeTargetForecastStatus",
+    "ResearchExperimentDefinition",
+    "SearchBudget",
     "build_outcome_target_bound_forecast",
 ]

@@ -108,11 +108,13 @@ def test_pre_057_protocol_is_replayable_but_cannot_enter_new_formal_research(
         idempotency_key="current-protocol-for-legacy-replay",
     )
     source = fixture.protocol
+    assert source.experiment_definition is not None
     legacy = FormalResearchProtocol.create(
         protocol_version="legacy-056-replay",
         target_protocol=fixture.targets,
         trading_calendar=fixture.calendar,
         evaluation_protocol=fixture.evaluation,
+        experiment_definition=source.experiment_definition,
         universe_reference=source.universe_reference,
         dataset_reference=source.dataset_reference,
         historical_sample_dataset_reference=(
@@ -318,6 +320,7 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
             scope.historical_sample_dataset_references
         ),
         component_references=tuple(sorted(missing_components.items())),
+        experiment_definition=scope.experiment_definition,
     )
     with pytest.raises(FormalProtocolConflict, match="THRESHOLD_POLICY owner is missing"):
         repository.freeze_protocol(

@@ -6,11 +6,20 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any, Mapping
+from enum import Enum
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
+
+
+class BarrierOrderingOutcome(str, Enum):
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    NO_TOUCH = "NO_TOUCH"
+    UP_FIRST = "UP_FIRST"
+    DOWN_FIRST = "DOWN_FIRST"
+    AMBIGUOUS_NOT_OBSERVABLE = "AMBIGUOUS_NOT_OBSERVABLE"
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     OutcomeAvailabilityStatus,
     OutcomeMarketCondition,
@@ -21,6 +30,7 @@ from market_regime_alpha.application.research_evaluation.targets import (
     CorporateActionPolicy,
     OutcomeCheckpoint,
     OutcomeTargetProtocol,
+    SuspensionPolicy,
     TargetDefinition,
 )
 from market_regime_alpha.application.shadow_research.contracts import ShadowDecision
@@ -57,14 +67,18 @@ class TargetOutcomeLabel:
     mfe: Decimal | None
     mae: Decimal | None
     barrier_passages: tuple[tuple[str, datetime | None], ...]
+    barrier_ordering: BarrierOrderingOutcome
     market_conditions: tuple[OutcomeMarketCondition, ...]
     availability_status: OutcomeAvailabilityStatus
     outcome_available_at: datetime
     reason_codes: tuple[str, ...]
-    schema_version: str = "target-outcome-label/v1"
+    schema_version: str = "target-outcome-label/v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "target-outcome-label/v1":
+        if self.schema_version not in {
+            "target-outcome-label/v1",
+            "target-outcome-label/v2",
+        }:
             raise ValueError("unsupported Target Outcome label schema")
         require_sha256("label_hash", self.label_hash)
         require_text("symbol", self.symbol)
@@ -83,6 +97,12 @@ class TargetOutcomeLabel:
             raise ValueError("Target checkpoint return does not match price")
         if self.barrier_passages != tuple(sorted(self.barrier_passages, key=lambda item: item[0])):
             raise ValueError("Target barrier passages must be sorted")
+        if (
+            self.barrier_ordering
+            is BarrierOrderingOutcome.AMBIGUOUS_NOT_OBSERVABLE
+            and "BARRIER_ORDERING_NOT_OBSERVABLE" not in self.reason_codes
+        ):
+            raise ValueError("ambiguous barrier ordering requires an explicit reason")
         if self.market_conditions != tuple(sorted(set(self.market_conditions), key=lambda item: item.value)):
             raise ValueError("Target market conditions must be unique and sorted")
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
@@ -95,6 +115,7 @@ class TargetOutcomeLabel:
     @classmethod
     def create(cls, **values: Any) -> TargetOutcomeLabel:
         normalized = dict(values)
+        normalized.setdefault("schema_version", "target-outcome-label/v2")
         normalized["barrier_passages"] = tuple(sorted(values["barrier_passages"], key=lambda item: item[0]))
         normalized["market_conditions"] = tuple(sorted(set(values["market_conditions"]), key=lambda item: item.value))
         normalized["reason_codes"] = tuple(sorted(set(values["reason_codes"])))
@@ -136,6 +157,9 @@ class TargetOutcomeLabel:
             mae=_optional_decimal(payload["mae"]),
             barrier_passages=tuple(
                 (str(item["barrier_id"]), _optional_instant(item["first_passage_at"])) for item in _objects(payload["barrier_passages"])
+            ),
+            barrier_ordering=BarrierOrderingOutcome(
+                str(payload.get("barrier_ordering", "NOT_APPLICABLE"))
             ),
             market_conditions=tuple(OutcomeMarketCondition(str(item)) for item in _array(payload["market_conditions"])),
             availability_status=OutcomeAvailabilityStatus(str(payload["availability_status"])),
@@ -339,11 +363,11 @@ def _build_label(
             key=lambda item: item.event_start,
         )
     )
-    minutes = tuple(item for item in selected if item.timeframe is Timeframe.MINUTE_1)
+    intraday = tuple(item for item in selected if item.timeframe.duration is not None)
     daily = tuple(item for item in selected if item.timeframe is Timeframe.DAILY)
     checkpoint_price = _checkpoint_price(
         target.checkpoint,
-        minutes=minutes,
+        minutes=intraday,
         daily=daily,
         zone=zone,
         fallback_open=symbol_observation.next_open,
@@ -354,8 +378,10 @@ def _build_label(
         data_kind
         for data_kind in target.required_market_data
         if (
-            (data_kind == "MINUTE_1" and not minutes)
-            or (data_kind == "DAILY" and not daily)
+            (
+                data_kind in {item.value for item in Timeframe}
+                and not any(item.timeframe.value == data_kind for item in selected)
+            )
             or (
                 data_kind == "FACTUAL_OUTCOME_V1"
                 and symbol_observation.next_open is None
@@ -365,8 +391,23 @@ def _build_label(
     if missing_required:
         checkpoint_price = None
         reasons.update(f"REQUIRED_MARKET_DATA_MISSING_{item}" for item in missing_required)
-    if any(item.trading_status is TradingStatus.SUSPENDED for item in selected):
+    suspended = any(
+        item.trading_status is TradingStatus.SUSPENDED for item in selected
+    )
+    unknown_status = any(
+        item.trading_status is TradingStatus.UNKNOWN for item in selected
+    )
+    if suspended:
         conditions.add(OutcomeMarketCondition.SUSPENDED)
+    if (
+        suspended or unknown_status
+    ) and target.canonical_horizon.suspension_policy is SuspensionPolicy.NOT_ESTIMABLE_AND_ANNOTATE:
+        checkpoint_price = None
+        reasons.add(
+            "TARGET_SUSPENDED_NOT_ESTIMABLE"
+            if suspended
+            else "TARGET_TRADING_STATUS_UNKNOWN"
+        )
     if any(item.price_limit_state is PriceLimitState.LIMIT_UP for item in selected):
         conditions.add(OutcomeMarketCondition.LIMIT_UP)
     if any(item.price_limit_state is PriceLimitState.LIMIT_DOWN for item in selected):
@@ -380,7 +421,7 @@ def _build_label(
     if checkpoint_price is None:
         conditions.add(OutcomeMarketCondition.MISSING_QUOTE)
         reasons.add("TARGET_CHECKPOINT_UNAVAILABLE")
-    relevant = tuple(item for item in minutes if item.event_end <= interval_end)
+    relevant = tuple(item for item in intraday if item.event_end <= interval_end)
     mfe = (
         None
         if not target.compute_mfe_mae or not relevant
@@ -404,6 +445,15 @@ def _build_label(
         if not selected
         else OutcomeAvailabilityStatus.PARTIAL
     )
+    barrier_ordering = _barrier_ordering(
+        relevant,
+        symbol_observation.decision_reference_price,
+        target.barriers,
+    )
+    if barrier_ordering is BarrierOrderingOutcome.AMBIGUOUS_NOT_OBSERVABLE:
+        reasons.add("BARRIER_ORDERING_NOT_OBSERVABLE")
+        if status is OutcomeAvailabilityStatus.COMPLETE:
+            status = OutcomeAvailabilityStatus.PARTIAL
     reasons.add(f"TARGET_{status.value}")
     return TargetOutcomeLabel.create(
         symbol=symbol_observation.symbol,
@@ -418,6 +468,7 @@ def _build_label(
             (barrier.barrier_id, _first_passage(relevant, symbol_observation.decision_reference_price, barrier))
             for barrier in target.barriers
         ),
+        barrier_ordering=barrier_ordering,
         market_conditions=tuple(conditions),
         availability_status=status,
         outcome_available_at=available,
@@ -462,13 +513,61 @@ def _complete_checkpoint(bars: tuple[CanonicalMarketBar, ...], zone: ZoneInfo, c
 
 
 def _first_passage(bars: tuple[CanonicalMarketBar, ...], reference: Decimal, barrier: BarrierDefinition) -> datetime | None:
+    passage = _first_passage_bar(bars, reference, barrier)
+    return None if passage is None else passage.event_end
+
+
+def _first_passage_bar(
+    bars: tuple[CanonicalMarketBar, ...],
+    reference: Decimal,
+    barrier: BarrierDefinition,
+) -> CanonicalMarketBar | None:
     boundary = reference * (
         Decimal("1") + barrier.return_threshold if barrier.direction == "UP" else Decimal("1") - barrier.return_threshold
     )
     for item in bars:
         if (barrier.direction == "UP" and item.high >= boundary) or (barrier.direction == "DOWN" and item.low <= boundary):
-            return item.event_end
+            return item
     return None
+
+
+def _barrier_ordering(
+    bars: tuple[CanonicalMarketBar, ...],
+    reference: Decimal,
+    barriers: tuple[BarrierDefinition, ...],
+) -> BarrierOrderingOutcome:
+    up = tuple(item for item in barriers if item.direction == "UP")
+    down = tuple(item for item in barriers if item.direction == "DOWN")
+    if not up or not down:
+        return BarrierOrderingOutcome.NOT_APPLICABLE
+    up_bars = tuple(
+        item
+        for barrier in up
+        if (item := _first_passage_bar(bars, reference, barrier)) is not None
+    )
+    down_bars = tuple(
+        item
+        for barrier in down
+        if (item := _first_passage_bar(bars, reference, barrier)) is not None
+    )
+    first_up = min(up_bars, key=lambda item: item.event_end, default=None)
+    first_down = min(down_bars, key=lambda item: item.event_end, default=None)
+    if first_up is None and first_down is None:
+        return BarrierOrderingOutcome.NO_TOUCH
+    if first_down is None:
+        return BarrierOrderingOutcome.UP_FIRST
+    if first_up is None:
+        return BarrierOrderingOutcome.DOWN_FIRST
+    if (
+        first_up.event_start == first_down.event_start
+        and first_up.event_end == first_down.event_end
+    ):
+        return BarrierOrderingOutcome.AMBIGUOUS_NOT_OBSERVABLE
+    return (
+        BarrierOrderingOutcome.UP_FIRST
+        if first_up.event_end < first_down.event_end
+        else BarrierOrderingOutcome.DOWN_FIRST
+    )
 
 
 def _checkpoint_time(value: OutcomeCheckpoint) -> time:
@@ -494,16 +593,18 @@ def _label_value_names() -> tuple[str, ...]:
         "mfe",
         "mae",
         "barrier_passages",
+        "barrier_ordering",
         "market_conditions",
         "availability_status",
         "outcome_available_at",
         "reason_codes",
+        "schema_version",
     )
 
 
 def _label_payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "target-outcome-label/v1",
+    payload = {
+        "schema_version": values["schema_version"],
         "symbol": values["symbol"],
         "target": values["target"].to_canonical_dict(),
         "label_interval_start": canonical_datetime(values["label_interval_start"]),
@@ -525,6 +626,9 @@ def _label_payload(**values: Any) -> dict[str, Any]:
         "outcome_available_at": canonical_datetime(values["outcome_available_at"]),
         "reason_codes": list(values["reason_codes"]),
     }
+    if values["schema_version"] == "target-outcome-label/v2":
+        payload["barrier_ordering"] = values["barrier_ordering"].value
+    return payload
 
 
 def _settlement_value_names() -> tuple[str, ...]:
@@ -609,6 +713,7 @@ def _decimal_value(value: Decimal | None) -> str | None:
 
 
 __all__ = [
+    "BarrierOrderingOutcome",
     "TargetOutcomeLabel",
     "TargetedShadowOutcome",
     "build_targeted_shadow_outcome",

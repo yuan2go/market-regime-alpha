@@ -84,14 +84,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (55, "phase_c_gate_authority"),
     (56, "phase_c_correctness_closure"),
     (57, "formal_research_runtime_closure"),
+    (58, "research_validity_semantics"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 58))
-    assert len({item.name for item in migrations}) == 57
+    assert tuple(item.version for item in migrations) == tuple(range(1, 59))
+    assert len({item.name for item in migrations}) == 58
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -113,11 +114,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 58))
+    assert tuple(item.version for item in first) == tuple(range(1, 59))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 57
+    assert len(rows) == 58
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -693,7 +694,9 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
             ),
         )
 
-    upgraded = PostgresMigrator().apply_all(postgres_factory)
+    upgraded = PostgresMigrator(migrations=migrations[:57]).apply_all(
+        postgres_factory
+    )
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (57, "formal_research_runtime_closure"),
@@ -741,3 +744,70 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         dataset_hash,
         owner_payload_hash,
     )
+
+
+def test_migration_058_preserves_v1_protocols_and_accepts_explicit_inference(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:57]).apply_all(postgres_factory)
+    before = canonical_hash({"protocol": "immutable-v1"})
+    target_hash = canonical_hash({"target": "immutable-v1"})
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO outcome_target_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                protocol_json, created_at
+            ) VALUES ('immutable-v1-targets', %s, 'v1', %s, %s)
+            """,
+            (target_hash, Jsonb({"schema_version": "outcome-target-protocol/v1"}), NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO formal_research_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                outcome_target_protocol_id, evaluation_protocol_id,
+                trading_calendar_id, trading_calendar_hash,
+                payload_json, locked_at, created_at
+            ) VALUES ('immutable-v1-protocol', %s, 'v1',
+                      'immutable-v1-targets', 'evaluation-v1', 'calendar-v1',
+                      %s, %s, %s, %s)
+            """,
+            (
+                before,
+                canonical_hash({"calendar": "immutable-v1"}),
+                Jsonb({"schema_version": "formal-research-protocol/v1"}),
+                NOW,
+                NOW,
+            ),
+        )
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (58, "research_validity_semantics"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        stored = connection.execute(
+            "SELECT protocol_hash, payload_json FROM formal_research_protocol "
+            "WHERE protocol_id = 'immutable-v1-protocol'"
+        ).fetchone()
+        constraints = " ".join(
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid IN (
+                    'formal_research_protocol'::regclass,
+                    'frozen_hypothesis_family'::regclass
+                )
+                ORDER BY conname
+                """
+            ).fetchall()
+        )
+    assert stored == (before, {"schema_version": "formal-research-protocol/v1"})
+    assert "formal-research-protocol/v2" in constraints
+    assert "research-experiment-definition/v1" in constraints
+    assert "HOLM_BONFERRONI" in constraints

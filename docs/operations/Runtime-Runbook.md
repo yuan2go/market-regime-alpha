@@ -47,8 +47,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 057, `formal_research_runtime_closure`. Expected schema
-catalog: 200 tables. Migrations 052–057 add Formal Protocol bindings and
+Expected head: migration 058, `research_validity_semantics`. Expected schema
+catalog: 200 tables. Migrations 052–058 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,

@@ -15,6 +15,7 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
     OutcomeMarketCondition,
 )
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    BarrierOrderingOutcome,
     TargetOutcomeLabel,
     _build_label,
 )
@@ -22,6 +23,8 @@ from market_regime_alpha.application.research_evaluation.targets import (
     CorporateActionPolicy,
     OutcomeCheckpoint,
     OutcomeTargetProtocol,
+    TargetDefinition,
+    canonical_target_horizon,
     engineering_multi_horizon_protocol,
 )
 from market_regime_alpha.core.identity import ArtifactId
@@ -45,6 +48,8 @@ def _minute_bar(
     start: datetime,
     close: Decimal,
     high: Decimal,
+    low: Decimal = Decimal("9.9"),
+    timeframe: Timeframe = Timeframe.MINUTE_1,
     adjustment_mode: AdjustmentMode = AdjustmentMode.RAW,
 ) -> CanonicalMarketBar:
     adjusted = adjustment_mode is not AdjustmentMode.RAW
@@ -52,14 +57,14 @@ def _minute_bar(
         symbol="600000.SH",
         exchange=Exchange.SH,
         asset_type=AssetType.A_SHARE,
-        timeframe=Timeframe.MINUTE_1,
+        timeframe=timeframe,
         market_date=date(2026, 8, 11),
         event_start=start,
-        event_end=start + timedelta(minutes=1),
-        available_at=start + timedelta(minutes=1),
+        event_end=start + (timeframe.duration or timedelta(days=1)),
+        available_at=start + (timeframe.duration or timedelta(days=1)),
         open=Decimal("10"),
         high=high,
-        low=Decimal("9.9"),
+        low=low,
         close=close,
         previous_close=Decimal("10"),
         volume=Decimal("100"),
@@ -82,6 +87,12 @@ def test_multi_horizon_protocol_is_content_addressed_and_round_trips() -> None:
 
     assert {item.checkpoint for item in protocol.targets} == set(OutcomeCheckpoint)
     assert all(item.label_start == "FROZEN_DECISION_TIME" for item in protocol.targets)
+    assert all(item.schema_version == "outcome_target_definition/v2" for item in protocol.targets)
+    assert all(
+        item.canonical_horizon.observation_window.end
+        == item.canonical_horizon.evaluation_timestamp
+        for item in protocol.targets
+    )
     assert all(
         item.corporate_action_policy is CorporateActionPolicy.RAW_ONLY_FAIL_CLOSED
         for item in protocol.targets
@@ -107,6 +118,7 @@ def test_target_label_exposes_interval_for_purging_and_embargo() -> None:
         mfe=Decimal("0.03"),
         mae=Decimal("-0.01"),
         barrier_passages=(("UP_1_PERCENT", datetime(2026, 8, 11, 2, 0, tzinfo=UTC)),),
+        barrier_ordering=BarrierOrderingOutcome.UP_FIRST,
         market_conditions=(OutcomeMarketCondition.TRADING,),
         availability_status=OutcomeAvailabilityStatus.COMPLETE,
         outcome_available_at=datetime(2026, 8, 11, 2, 31, tzinfo=UTC),
@@ -130,6 +142,7 @@ def test_missing_checkpoint_is_unavailable_not_zero() -> None:
         mfe=None,
         mae=None,
         barrier_passages=(),
+        barrier_ordering=BarrierOrderingOutcome.NO_TOUCH,
         market_conditions=(OutcomeMarketCondition.MISSING_QUOTE,),
         availability_status=OutcomeAvailabilityStatus.UNAVAILABLE,
         outcome_available_at=datetime(2026, 8, 11, 2, 31, tzinfo=UTC),
@@ -146,7 +159,9 @@ def test_missing_checkpoint_is_unavailable_not_zero() -> None:
 def test_target_reader_rejects_boolean_coercion_and_future_availability() -> None:
     protocol = engineering_multi_horizon_protocol()
     payload = protocol.to_canonical_dict()
-    payload["targets"][0]["compute_mfe_mae"] = "false"
+    payload["targets"][0]["canonical_horizon"]["entry_window"]["start"][
+        "frozen_decision_time"
+    ] = "false"
     with pytest.raises(ValueError, match="boolean"):
         OutcomeTargetProtocol.from_canonical_dict(payload)
 
@@ -166,6 +181,7 @@ def test_target_reader_rejects_boolean_coercion_and_future_availability() -> Non
             mfe=Decimal("0.01"),
             mae=Decimal("0"),
             barrier_passages=(),
+            barrier_ordering=BarrierOrderingOutcome.NO_TOUCH,
             market_conditions=(OutcomeMarketCondition.TRADING,),
             availability_status=OutcomeAvailabilityStatus.COMPLETE,
             outcome_available_at=datetime(2026, 8, 11, 1, 29, tzinfo=UTC),
@@ -255,3 +271,60 @@ def test_target_builder_fails_closed_on_corporate_action_adjustment() -> None:
     assert label.availability_status is OutcomeAvailabilityStatus.PARTIAL
     assert OutcomeMarketCondition.CORPORATE_ACTION in label.market_conditions
     assert "CORPORATE_ACTION_POLICY_FAILED_CLOSED" in label.reason_codes
+
+
+def test_same_five_minute_barrier_touches_are_not_ordered() -> None:
+    protocol = engineering_multi_horizon_protocol()
+    base = next(
+        item
+        for item in protocol.targets
+        if item.checkpoint is OutcomeCheckpoint.TIME_1000
+    )
+    target = TargetDefinition.create(
+        target_version="five-minute-ordering-v2",
+        canonical_horizon=canonical_target_horizon(
+            checkpoint=OutcomeCheckpoint.TIME_1000,
+            barriers=base.barriers,
+            compute_mfe_mae=True,
+        ),
+        required_market_data=("MINUTE_5",),
+    )
+    five_minute_protocol = OutcomeTargetProtocol.create(
+        protocol_version="five-minute-ordering-v2",
+        timezone_name="Asia/Shanghai",
+        session_offset=1,
+        targets=(target,),
+        limitations=("RESEARCH_LABELS_ONLY",),
+    )
+
+    label = _build_label(
+        decision=cast(
+            Any,
+            SimpleNamespace(
+                decision_frozen_at=datetime(2026, 8, 10, 6, 55, tzinfo=UTC)
+            ),
+        ),
+        target=target,
+        protocol=five_minute_protocol,
+        symbol_observation=SimpleNamespace(
+            symbol="600000.SH",
+            decision_reference_price=Decimal("10"),
+            next_open=Decimal("10"),
+            market_conditions=(OutcomeMarketCondition.TRADING,),
+        ),
+        bars=(
+            _minute_bar(
+                start=datetime(2026, 8, 11, 1, 55, tzinfo=UTC),
+                close=Decimal("10"),
+                high=Decimal("10.2"),
+                low=Decimal("9.85"),
+                timeframe=Timeframe.MINUTE_5,
+            ),
+        ),
+        fallback_available_at=datetime(2026, 8, 11, 2, 0, tzinfo=UTC),
+        next_session_date=date(2026, 8, 11),
+    )
+
+    assert label.barrier_ordering is BarrierOrderingOutcome.AMBIGUOUS_NOT_OBSERVABLE
+    assert label.availability_status is OutcomeAvailabilityStatus.PARTIAL
+    assert "BARRIER_ORDERING_NOT_OBSERVABLE" in label.reason_codes
