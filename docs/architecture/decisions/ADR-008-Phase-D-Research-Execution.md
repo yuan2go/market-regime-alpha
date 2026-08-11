@@ -13,6 +13,10 @@ evidence remain authoritative. On completion, durable facts from this document
 must be folded into the canonical architecture, status, capability and runbook
 documents; the work package must not become a parallel documentation hierarchy.
 
+The temporary [implementation plan](Phase-D-Implementation-Plan.md) defines the
+test-first execution order. It carries no fact or evidence authority and will be
+removed after documentation convergence.
+
 ## Approved outcome and boundaries
 
 Phase D adds a replayable research loop around the existing business owners:
