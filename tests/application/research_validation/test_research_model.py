@@ -206,6 +206,64 @@ def test_executor_requires_exact_lineage_and_emits_raw_logits_not_probabilities(
     assert "MODEL_CONFIGURATION_HASH_MISMATCH" in mismatched.reason_codes
 
 
+def test_injected_barrier_signal_is_discriminated_by_raw_logit() -> None:
+    original = _request()
+    samples = tuple(
+        ResearchTrainingSample.create(
+            symbol=sample.symbol,
+            trading_date=sample.trading_date,
+            decision_time=sample.decision_time,
+            features=sample.features,
+            targets=tuple(
+                replace(
+                    target,
+                    value=(sample.trading_date.day >= 2),
+                )
+                if target.name == "up_barrier"
+                else target
+                for target in sample.targets
+            ),
+        )
+        for sample in original.samples
+    )
+    by_day = {item.trading_date.day: item.sample_id for item in samples}
+    folds = (
+        WalkForwardFold(
+            "fold-01",
+            tuple(sorted((by_day[1], by_day[2]), key=str)),
+            tuple(sorted((by_day[4], by_day[5]), key=str)),
+            1,
+            2,
+        ),
+        WalkForwardFold(
+            "fold-02",
+            tuple(
+                sorted(
+                    (by_day[1], by_day[2], by_day[4], by_day[5]),
+                    key=str,
+                )
+            ),
+            (by_day[7],),
+            1,
+            2,
+        ),
+    )
+    artifact = train_research_model(
+        _request(samples=samples, folds=folds),
+        trained_at=NOW,
+    )
+
+    assert artifact.model is not None
+    lower = artifact.model.predict(
+        {"momentum": Decimal("-2"), "value": Decimal("1")}
+    ).raw_barrier_logits["up_barrier"]
+    upper = artifact.model.predict(
+        {"momentum": Decimal("4"), "value": Decimal("7")}
+    ).raw_barrier_logits["up_barrier"]
+    assert lower < Decimal("0") < upper
+    assert upper > lower
+
+
 def test_degenerate_targets_produce_a_preserved_terminal_negative_artifact() -> None:
     original = _request()
     samples = tuple(

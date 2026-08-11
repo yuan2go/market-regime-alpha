@@ -195,6 +195,48 @@ def test_known_signal_recovers_rank_ic_and_top_bottom_spread() -> None:
     assert spread.raw_p_value is not None and spread.raw_p_value <= Decimal("0.04")
 
 
+def test_known_signal_has_deterministic_power_across_seed_cohort() -> None:
+    metrics = tuple(
+        _all_metric(_panel(seed=100 + seed, signal=0.018), "RANK_IC")
+        for seed in range(6)
+    )
+
+    assert all(
+        item.estimate is not None and item.estimate > Decimal("0.6")
+        for item in metrics
+    )
+    assert sum(
+        item.raw_p_value is not None
+        and item.raw_p_value <= Decimal("0.05")
+        for item in metrics
+    ) == 6
+
+
+def test_signal_detection_improves_with_more_sessions_in_fixed_cohort() -> None:
+    def detections(session_count: int) -> int:
+        detected = 0
+        for seed in range(10, 18):
+            panel = _panel(seed=seed, signal=0.003)
+            dates = tuple(
+                sorted({item.session_date for item in panel})[:session_count]
+            )
+            metric = _all_metric(
+                tuple(item for item in panel if item.session_date in dates),
+                "RANK_IC",
+            )
+            if (
+                metric.raw_p_value is not None
+                and metric.raw_p_value <= Decimal("0.05")
+            ):
+                detected += 1
+        return detected
+
+    # Cohort-level sensitivity is the stable invariant. Individual short
+    # samples may still be significant by chance and are deliberately retained.
+    assert detections(12) == 4
+    assert detections(28) == 5
+
+
 def test_holm_correction_controls_a_frozen_fwer_family() -> None:
     adjusted = adjust_multiple_testing(
         (Decimal("0.01"), Decimal("0.03"), Decimal("0.04"), Decimal("0.20")),
