@@ -64,7 +64,6 @@ from tests.persistence.postgres.test_continuous_research_journal import (
     MutableClock,
 )
 
-
 FREE_RUNTIME_MIGRATIONS = (
     (30, "research_summary_v2"),
     (31, "state_system_owned_stages"),
@@ -102,7 +101,10 @@ def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
 
     assert tuple(item.version for item in migrations) == tuple(range(1, 58))
     assert len({item.name for item in migrations}) == 57
-    assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
+    assert all(
+        item.checksum == sha256(item.sql.encode("utf-8")).hexdigest()
+        for item in migrations
+    )
 
 
 def test_missing_migration_version_is_rejected() -> None:
@@ -126,7 +128,9 @@ def test_apply_all_is_idempotent(
     assert tuple(item.version for item in first) == tuple(range(1, 58))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
-        rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
+        rows = connection.execute(
+            "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
+        ).fetchall()
     assert len(rows) == 57
 
 
@@ -145,14 +149,18 @@ def test_failed_migration_does_not_record_version(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = (
-        PostgresMigration.create(1, "one", "CREATE TABLE durable_one(id bigint PRIMARY KEY);"),
+        PostgresMigration.create(
+            1, "one", "CREATE TABLE durable_one(id bigint PRIMARY KEY);"
+        ),
         PostgresMigration.create(2, "broken", "CREATE TABL invalid syntax;"),
     )
 
     with pytest.raises(Exception):
         PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
     with postgres_factory.connection(read_only=True) as connection:
-        rows = connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
+        rows = connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall()
         durable = connection.execute("SELECT to_regclass('durable_one')").fetchone()
     assert rows == [(1,)]
     assert durable == ("durable_one",)
@@ -171,7 +179,9 @@ def test_concurrent_migrators_are_serialized(
     migrator = PostgresMigrator(migrations=migrations)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = tuple(executor.map(lambda _: migrator.apply_all(postgres_factory), range(2)))
+        results = tuple(
+            executor.map(lambda _: migrator.apply_all(postgres_factory), range(2))
+        )
 
     assert sorted(len(result) for result in results) == [0, 1]
 
@@ -269,8 +279,12 @@ def test_migrations_024_through_028_upgrade_existing_023_authority(
         + FREE_RUNTIME_MIGRATIONS
     )
     with postgres_factory.connection(read_only=True) as connection:
-        latest = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-        decision_table = connection.execute("SELECT to_regclass('daily_decision_summary')").fetchone()
+        latest = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1"
+        ).fetchone()
+        decision_table = connection.execute(
+            "SELECT to_regclass('daily_decision_summary')"
+        ).fetchone()
     assert latest == FREE_RUNTIME_MIGRATIONS[-1]
     assert decision_table == ("daily_decision_summary",)
 
@@ -319,8 +333,12 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
-        applied = connection.execute("SELECT max(version) FROM schema_migrations").fetchone()
-    restored = PostgresDecisionSystemRepository(postgres_factory).get_manual_observation(account.observation_id)
+        applied = connection.execute(
+            "SELECT max(version) FROM schema_migrations"
+        ).fetchone()
+    restored = PostgresDecisionSystemRepository(
+        postgres_factory
+    ).get_manual_observation(account.observation_id)
     assert (
         tuple((item.version, item.name) for item in upgraded)
         == (
@@ -424,7 +442,9 @@ def test_migration_027_backfills_existing_registry_history_and_guards_it(
         ("MODEL_LIFECYCLE_TRANSITION", str(definition.model_id)),
     ]
     assert stored_version == (1,)
-    lineage = PostgresModelGovernanceRepository(postgres_factory).record_version_lineage(
+    lineage = PostgresModelGovernanceRepository(
+        postgres_factory
+    ).record_version_lineage(
         ModelVersionLineage.create(
             model_id=definition.model_id,
             model_version=definition.version,
@@ -507,20 +527,27 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
         run_id=request.run_id,
         tick_id=request.tick_id,
         as_of_time=request.as_of_time,
-        stages=tuple((item.stage.value, item.artifact_id, item.artifact_hash, item.available_at) for item in legacy_stages),
+        stages=tuple(
+            (item.stage.value, item.artifact_id, item.artifact_hash, item.available_at)
+            for item in legacy_stages
+        ),
     )
     receipt_payload = {
         "schema": "state_system_runtime_receipt/v1",
         "request_idempotency_key": request.idempotency_key,
         "pipeline_artifact_id": str(pipeline_id),
         "pipeline_artifact_hash": pipeline_hash,
-        "stage_references": [item.to_reference().to_canonical_dict() for item in legacy_stages],
+        "stage_references": [
+            item.to_reference().to_canonical_dict() for item in legacy_stages
+        ],
         "reason_codes": list(pipeline_result.reason_codes),
     }
     receipt_hash = canonical_hash(receipt_payload)
     result = ChildExecutionResult(
         child_kind=ContinuousChildKind.STATE_SYSTEM,
-        child_run_id=ArtifactId(f"state-system-run:{request.idempotency_key.removeprefix('continuous-children-')}"),
+        child_run_id=ArtifactId(
+            f"state-system-run:{request.idempotency_key.removeprefix('continuous-children-')}"
+        ),
         child_receipt_id=ArtifactId(f"state-system-receipt:{receipt_hash[7:]}"),
         child_receipt_hash=receipt_hash,
         child_artifact_id=pipeline_id,
@@ -536,8 +563,12 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
         "child_receipt_hash": result.child_receipt_hash,
         "child_artifact_id": str(result.child_artifact_id),
         "child_artifact_hash": result.child_artifact_hash,
-        "input_references": [item.to_canonical_dict() for item in result.input_references],
-        "configuration_references": [item.to_canonical_dict() for item in result.configuration_references],
+        "input_references": [
+            item.to_canonical_dict() for item in result.input_references
+        ],
+        "configuration_references": [
+            item.to_canonical_dict() for item in result.configuration_references
+        ],
         "receipt_payload": receipt_payload,
     }
     with postgres_factory.connection() as connection:
@@ -579,9 +610,13 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
 
     PostgresMigrator().apply_all(postgres_factory)
 
-    restored = PostgresStateSystemRepository(postgres_factory, clock=clock).lookup_runtime_child(request)
+    restored = PostgresStateSystemRepository(
+        postgres_factory, clock=clock
+    ).lookup_runtime_child(request)
     with postgres_factory.connection(read_only=True) as connection:
-        eligibilities = connection.execute("SELECT DISTINCT data_eligibility FROM state_research_stage_authority").fetchall()
+        eligibilities = connection.execute(
+            "SELECT DISTINCT data_eligibility FROM state_research_stage_authority"
+        ).fetchall()
     assert restored == result
     assert eligibilities == [(None,)]
 
@@ -609,7 +644,9 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
                 "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'pit_%'"
             ).fetchall()
         }
-        evidence_table = connection.execute("SELECT to_regclass('formal_pit_validation_evidence')").fetchone()
+        evidence_table = connection.execute(
+            "SELECT to_regclass('formal_pit_validation_evidence')"
+        ).fetchone()
         guards = {
             row[0]
             for row in connection.execute(
@@ -643,7 +680,10 @@ def test_migration_029_adds_append_only_research_summary_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == ((29, "research_runtime_summary"),) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == ((29, "research_runtime_summary"),) + FREE_RUNTIME_MIGRATIONS
+    )
     with postgres_factory.connection(read_only=True) as connection:
         tables = tuple(
             str(value)
@@ -749,7 +789,9 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == ((57, "formal_research_runtime_closure"),)
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (57, "formal_research_runtime_closure"),
+    )
     with postgres_factory.connection(read_only=True) as connection:
         tables = tuple(
             str(value)
@@ -766,8 +808,12 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
                 """
             ).fetchone()
         )
-        old_migration = connection.execute("SELECT checksum FROM schema_migrations WHERE version = 46").fetchone()
-        old_consumption = connection.execute("SELECT to_regclass('locked_oos_evidence_consumption')").fetchone()
+        old_migration = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 46"
+        ).fetchone()
+        old_consumption = connection.execute(
+            "SELECT to_regclass('locked_oos_evidence_consumption')"
+        ).fetchone()
         legacy_historical = connection.execute(
             """
             SELECT target_id, target_hash, dataset_id, dataset_hash,

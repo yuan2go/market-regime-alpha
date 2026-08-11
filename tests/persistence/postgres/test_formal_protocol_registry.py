@@ -92,7 +92,9 @@ def test_formal_protocol_model_owner_freezes_current_governance_and_fails_termin
     )
 
     with pytest.raises(FormalProtocolConflict, match="lifecycle is terminal"):
-        PostgresFormalProtocolRepository(postgres_factory).get_protocol(protocol.protocol_id)
+        PostgresFormalProtocolRepository(postgres_factory).get_protocol(
+            protocol.protocol_id
+        )
     with pytest.raises(FormalProtocolConflict, match="lifecycle is terminal"):
         PostgresFormalProtocolRepository(postgres_factory).freeze_protocol(
             scope=FormalProtocolFreezeScope.from_protocol_references(fixture.protocol),
@@ -152,7 +154,9 @@ def test_protocol_freeze_rejects_historical_dataset_with_locked_oos_values(
         identity_suffix=":locked-oos",
     )
     PostgresResearchValidationRepository(postgres_factory).record_sample_dataset(locked)
-    locked_reference = ValidationArtifactReference("HISTORICAL_SAMPLE_DATASET", locked.dataset_id, locked.dataset_hash)
+    locked_reference = ValidationArtifactReference(
+        "HISTORICAL_SAMPLE_DATASET", locked.dataset_id, locked.dataset_hash
+    )
     datasets = tuple(
         sorted(
             (
@@ -162,11 +166,17 @@ def test_protocol_freeze_rejects_historical_dataset_with_locked_oos_values(
             key=lambda item: (str(item.artifact_id), item.content_hash),
         )
     )
-    components = dict(FormalProtocolFreezeScope.from_protocol_references(fixture.protocol).component_references)
+    components = dict(
+        FormalProtocolFreezeScope.from_protocol_references(
+            fixture.protocol
+        ).component_references
+    )
     components["historical_sample_dataset_reference"] = datasets[0]
     scope = FormalProtocolFreezeScope(
         protocol_version="reject-locked-c3-dataset-v1",
-        outcome_target_protocol_reference=(fixture.protocol.outcome_target_protocol_reference),
+        outcome_target_protocol_reference=(
+            fixture.protocol.outcome_target_protocol_reference
+        ),
         trading_calendar_reference=fixture.protocol.trading_calendar_reference,
         evaluation_protocol_reference=fixture.protocol.evaluation_protocol_reference,
         historical_sample_dataset_references=datasets,
@@ -199,16 +209,22 @@ def test_pre_057_protocol_is_replayable_but_cannot_enter_new_formal_research(
         evaluation_protocol=fixture.evaluation,
         universe_reference=source.universe_reference,
         dataset_reference=source.dataset_reference,
-        historical_sample_dataset_reference=(source.historical_sample_dataset_reference),
+        historical_sample_dataset_reference=(
+            source.historical_sample_dataset_reference
+        ),
         feature_reference=source.feature_reference,
         factor_reference=source.factor_reference,
         model_reference=source.model_reference,
         threshold_policy_reference=source.threshold_policy_reference,
-        formal_oos_qualification_policy_reference=(source.formal_oos_qualification_policy_reference),
+        formal_oos_qualification_policy_reference=(
+            source.formal_oos_qualification_policy_reference
+        ),
         cost_policy_reference=source.cost_policy_reference,
         calibration_policy_reference=source.calibration_policy_reference,
         strategy_policy_reference=source.strategy_policy_reference,
-        entry_holding_exit_qualification_policy_reference=(source.entry_holding_exit_qualification_policy_reference),
+        entry_holding_exit_qualification_policy_reference=(
+            source.entry_holding_exit_qualification_policy_reference
+        ),
         locked_at=current.locked_at,
     )
     with postgres_factory.connection() as connection:
@@ -324,7 +340,12 @@ def test_pre_057_protocol_is_replayable_but_cannot_enter_new_formal_research(
             ),
         )
 
-    assert PostgresFormalProtocolRepository(postgres_factory).get_protocol(legacy.protocol_id) == legacy
+    assert (
+        PostgresFormalProtocolRepository(postgres_factory).get_protocol(
+            legacy.protocol_id
+        )
+        == legacy
+    )
     with postgres_factory.connection(read_only=True) as connection:
         with pytest.raises(FormalProtocolConflict, match="replay-only"):
             load_formal_protocol_owner(connection, legacy.protocol_id)
@@ -393,10 +414,14 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
         outcome_target_protocol_reference=scope.outcome_target_protocol_reference,
         trading_calendar_reference=scope.trading_calendar_reference,
         evaluation_protocol_reference=scope.evaluation_protocol_reference,
-        historical_sample_dataset_references=(scope.historical_sample_dataset_references),
+        historical_sample_dataset_references=(
+            scope.historical_sample_dataset_references
+        ),
         component_references=tuple(sorted(missing_components.items())),
     )
-    with pytest.raises(FormalProtocolConflict, match="THRESHOLD_POLICY owner is missing"):
+    with pytest.raises(
+        FormalProtocolConflict, match="THRESHOLD_POLICY owner is missing"
+    ):
         repository.freeze_protocol(
             scope=caller_only_scope,
             actor="phase-c-test",
@@ -455,10 +480,15 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
         repository.record_forecast(caller_model_forecast)
 
     with postgres_factory.connection(read_only=True) as connection:
-        assert connection.execute("SELECT count(*) FROM formal_research_protocol").fetchone()[0] == 1
-        assert connection.execute("SELECT count(*) FROM formal_research_protocol_component").fetchone()[0] == len(
-            protocol.component_references()
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM formal_research_protocol"
+            ).fetchone()[0]
+            == 1
         )
+        assert connection.execute(
+            "SELECT count(*) FROM formal_research_protocol_component"
+        ).fetchone()[0] == len(protocol.component_references())
         assert (
             connection.execute(
                 """
@@ -468,12 +498,24 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
             ).fetchone()[0]
             == len(protocol.component_references()) + 2
         )
-        assert connection.execute("SELECT count(*) FROM outcome_target_bound_forecast").fetchone()[0] == 1
-        assert connection.execute("SELECT forecast_authority FROM outcome_target_bound_forecast").fetchone() == (
-            "EXPLORATORY_CALLER_SUBMITTED",
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM outcome_target_bound_forecast"
+            ).fetchone()[0]
+            == 1
         )
-        assert connection.execute("SELECT count(*) FROM outcome_target_bound_forecast_estimate").fetchone()[0] == len(
-            fixture.targets.targets
+        assert connection.execute(
+            "SELECT forecast_authority FROM outcome_target_bound_forecast"
+        ).fetchone() == ("EXPLORATORY_CALLER_SUBMITTED",)
+        assert connection.execute(
+            "SELECT count(*) FROM outcome_target_bound_forecast_estimate"
+        ).fetchone()[0] == len(fixture.targets.targets)
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM frozen_hypothesis_family"
+            ).fetchone()[0]
+            == 1
         )
-        assert connection.execute("SELECT count(*) FROM frozen_hypothesis_family").fetchone()[0] == 1
-        assert connection.execute("SELECT count(*) FROM frozen_hypothesis_family_target").fetchone()[0] == len(fixture.targets.targets)
+        assert connection.execute(
+            "SELECT count(*) FROM frozen_hypothesis_family_target"
+        ).fetchone()[0] == len(fixture.targets.targets)
