@@ -32,6 +32,13 @@ from market_regime_alpha.application.strategy_shadow.portfolio import (
     build_shadow_portfolio,
     run_shadow_portfolio_day,
 )
+from market_regime_alpha.application.strategy_shadow.observation_builder import (
+    ObservationBuildStatus,
+    ShadowObservationPolicy,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_observations import (
+    PostgresOwnerResolvedShadowObservationBuilder,
+)
 from market_regime_alpha.application.strategy_shadow.postgres_portfolio import (
     PostgresShadowPortfolioRepository,
 )
@@ -324,6 +331,78 @@ class PortfolioShadowDayOperator:
             status="RECOVERED_IDEMPOTENT" if latest == stored else "RECORDED",
             reason_codes=("PORTFOLIO_SHADOW_DAY_RECORDED",),
         )
+
+    def run_auto(
+        self,
+        *,
+        research_trading_date: date,
+        trading_date: date,
+        observed_at: datetime,
+        portfolio_id: ArtifactId | None,
+        initial_cash: Decimal,
+        policy: ShadowPortfolioPolicy,
+        observation_policy: ShadowObservationPolicy,
+    ) -> dict[str, Any]:
+        """Resolve market inputs from owners before using the same ledger."""
+
+        required_symbols: tuple[str, ...] = ()
+        if portfolio_id is not None:
+            previous = self._portfolio.latest_state(portfolio_id)
+            if previous is not None:
+                required_symbols = tuple(sorted(item.symbol for item in previous.positions))
+        receipt = PostgresOwnerResolvedShadowObservationBuilder(
+            self._factory,
+            apply_migrations=False,
+        ).build_portfolio(
+            research_trading_date=research_trading_date,
+            trading_date=trading_date,
+            observed_at=observed_at,
+            policy=observation_policy,
+            required_symbols=required_symbols,
+        )
+        receipt_fields = {
+            "observation_mode": "OWNER_RESOLVED_AUTO",
+            "observation_receipt_id": str(receipt.receipt_id),
+            "observation_receipt_hash": receipt.receipt_hash,
+        }
+        if (
+            receipt.status is not ObservationBuildStatus.READY
+            or receipt.observation_payload is None
+        ):
+            return {
+                "operation": "PORTFOLIO_SHADOW_DAY",
+                "status": "DATA_INSUFFICIENT",
+                "trading_date": trading_date.isoformat(),
+                "portfolio_id": None if portfolio_id is None else str(portfolio_id),
+                "state_id": None,
+                "reason_codes": list(receipt.reason_codes),
+                "shadow_fill_is_real_fill": False,
+                "shadow_position_is_real_position": False,
+                **receipt_fields,
+                **_authority_ceiling(),
+            }
+        market_values = receipt.observation_payload.get("market_observations")
+        if not isinstance(market_values, list):
+            raise ValueError("Automatic Portfolio observation payload is invalid")
+        request = PortfolioShadowDayInput(
+            research_trading_date=research_trading_date,
+            trading_date=trading_date,
+            observed_at=observed_at,
+            portfolio_id=portfolio_id,
+            initial_cash=initial_cash,
+            policy=policy,
+            market_inputs=tuple(
+                sorted(
+                    (
+                        PortfolioMarketInput.from_canonical_dict(_mapping(item))
+                        for item in market_values
+                    ),
+                    key=lambda item: item.symbol,
+                )
+            ),
+        )
+        output = self.run(request)
+        return {**output, **receipt_fields}
 
     def replay(self, portfolio_id: ArtifactId) -> dict[str, Any]:
         states = self._portfolio.replay(portfolio_id)

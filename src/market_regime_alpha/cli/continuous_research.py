@@ -72,6 +72,23 @@ from market_regime_alpha.application.governance.access_control import (
     PostgresAccessGovernance,
     SecurityPermission,
 )
+from market_regime_alpha.application.historical_research.contracts import (
+    HistoricalResearchCommand,
+)
+from market_regime_alpha.application.historical_research.postgres_journal import (
+    DEFAULT_HISTORICAL_STAGE_LEASE,
+    HistoricalRunSnapshot,
+    PostgresHistoricalResearchJournal,
+)
+from market_regime_alpha.application.historical_research.postgres_session_owner import (
+    PostgresHistoricalSessionOwner,
+)
+from market_regime_alpha.application.historical_research.runner import (
+    HistoricalResearchRunner,
+)
+from market_regime_alpha.application.research_session.kernel import (
+    ResearchDecisionSessionKernel,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -125,6 +142,13 @@ from market_regime_alpha.application.research_validation.postgres_phase_c_gates 
 from market_regime_alpha.application.research_validation.postgres_qualification import (
     PostgresResearchQualificationAuthority,
 )
+from market_regime_alpha.application.research_validation.postgres_research_model import (
+    PostgresResearchModelRepository,
+)
+from market_regime_alpha.application.research_validation.research_model import (
+    ResearchInferenceRequest,
+    ResearchModelTrainingRequest,
+)
 from market_regime_alpha.application.research_validation.qualification import (
     FormalEvaluationObservationBinding,
     FormalOOSQualificationPolicy,
@@ -161,6 +185,15 @@ from market_regime_alpha.application.shadow_research.free_data_settlement import
 from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyDayObservation,
     StrategyShadowDayOperator,
+)
+from market_regime_alpha.application.strategy_shadow.observation_builder import (
+    ShadowObservationPolicy,
+)
+from market_regime_alpha.application.strategy_shadow.performance import (
+    PerformancePolicy,
+)
+from market_regime_alpha.application.strategy_shadow.performance_operator import (
+    PortfolioPerformanceOperator,
 )
 from market_regime_alpha.application.strategy_shadow.contracts import (
     StrategyShadowPolicy,
@@ -213,6 +246,11 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from market_regime_alpha.universe.operational import OperationalUniverseArtifact
+from market_regime_alpha.universe.runtime_scope import ResearchUniversePolicy
+from market_regime_alpha.universe.runtime_scope_operator import (
+    PostgresRuntimeScopeOperator,
+)
 from zoneinfo import ZoneInfo
 
 
@@ -242,8 +280,16 @@ _READ_OPERATIONS = {
     "report-day",
     "replay-day",
     "research-universe-replay",
+    "runtime-scope-report",
+    "runtime-scope-replay",
+    "historical-report",
+    "historical-replay",
+    "performance-report",
+    "performance-replay",
     "strategy-replay",
     "portfolio-shadow-replay",
+    "model-report",
+    "model-replay",
     "recovery-audit",
     *_INSPECT_OPERATIONS,
 }
@@ -324,7 +370,13 @@ def build_parser() -> argparse.ArgumentParser:
         "strategy-day",
         help="Run Entry Research through Strategy Shadow Outcome from PostgreSQL lineage.",
     )
-    strategy_day.add_argument("--observations", type=Path, required=True)
+    strategy_inputs = strategy_day.add_mutually_exclusive_group(required=True)
+    strategy_inputs.add_argument("--observations", type=Path)
+    strategy_inputs.add_argument(
+        "--auto",
+        type=Path,
+        help="Owner-resolved automatic observation request.",
+    )
     settle_day = subparsers.add_parser(
         "settle-day",
         help="Acquire free T+1 evidence, settle Research Shadow and build Panel V2 enrichment.",
@@ -339,15 +391,65 @@ def build_parser() -> argparse.ArgumentParser:
         "portfolio-shadow-day",
         help="Append one PostgreSQL-owned A-share Portfolio Shadow day.",
     )
-    portfolio_day.add_argument("--observations", type=Path, required=True)
+    portfolio_inputs = portfolio_day.add_mutually_exclusive_group(required=True)
+    portfolio_inputs.add_argument("--observations", type=Path)
+    portfolio_inputs.add_argument(
+        "--auto",
+        type=Path,
+        help="Owner-resolved automatic Portfolio observation request.",
+    )
     portfolio_replay = subparsers.add_parser("portfolio-shadow-replay")
     portfolio_replay.add_argument("--portfolio-id", required=True)
+    model_train = subparsers.add_parser(
+        "model-train",
+        help="Train one owner-bound exploratory Research Challenger model.",
+    )
+    model_train.add_argument("--input", type=Path, required=True)
+    model_report = subparsers.add_parser("model-report")
+    model_report.add_argument("--artifact-id", required=True)
+    model_replay = subparsers.add_parser("model-replay")
+    model_replay.add_argument("--artifact-id", required=True)
+    model_execute = subparsers.add_parser(
+        "model-execute",
+        help="Record one exact-lineage exploratory Shadow inference.",
+    )
+    model_execute.add_argument("--input", type=Path, required=True)
     universe_sync = subparsers.add_parser("research-universe-sync")
     universe_sync.add_argument("--as-of-date", required=True)
     universe_sync.add_argument("--artifact-root", type=Path, required=True)
     universe_replay = subparsers.add_parser("research-universe-replay")
     universe_replay.add_argument("--snapshot-id", required=True)
     universe_replay.add_argument("--artifact-root", type=Path, required=True)
+    runtime_scope_build = subparsers.add_parser(
+        "runtime-scope-build",
+        help="Build one immutable Full-A Runtime Scope from owned Free Data inputs.",
+    )
+    runtime_scope_build.add_argument("--input", type=Path, required=True)
+    runtime_scope_report = subparsers.add_parser("runtime-scope-report")
+    runtime_scope_report.add_argument("--scope-id", required=True)
+    runtime_scope_replay = subparsers.add_parser("runtime-scope-replay")
+    runtime_scope_replay.add_argument("--scope-id", required=True)
+    historical_run = subparsers.add_parser(
+        "historical-run",
+        help="Run a frozen Historical Research range through the shared session kernel.",
+    )
+    historical_run.add_argument("--input", type=Path, required=True)
+    historical_resume = subparsers.add_parser("historical-resume")
+    historical_resume.add_argument("--run-id", required=True)
+    historical_resume.add_argument("--max-stage-commits", type=int)
+    historical_report = subparsers.add_parser("historical-report")
+    historical_report.add_argument("--run-id", required=True)
+    historical_replay = subparsers.add_parser("historical-replay")
+    historical_replay.add_argument("--run-id", required=True)
+    performance_build = subparsers.add_parser(
+        "performance-build",
+        help="Build immutable multi-period Performance/Attribution from Portfolio Shadow.",
+    )
+    performance_build.add_argument("--input", type=Path, required=True)
+    performance_report = subparsers.add_parser("performance-report")
+    performance_report.add_argument("--report-id", required=True)
+    performance_replay = subparsers.add_parser("performance-replay")
+    performance_replay.add_argument("--report-id", required=True)
     report_day = subparsers.add_parser("report-day")
     report_day.add_argument("--trading-date", required=True)
     report_day.add_argument("--at", required=True)
@@ -556,7 +658,225 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "runtime-scope-build":
+        payload = _load_json_object(args.input)
+        expected = {
+            "policy",
+            "as_of",
+            "built_at",
+            "security_master_snapshot_id",
+            "operational_universes",
+            "code_revision",
+        }
+        if set(payload) != expected:
+            raise ValueError("runtime-scope-build requires exact owner-bound inputs")
+        runtime_scope_receipt = PostgresRuntimeScopeOperator(
+            factory,
+            apply_migrations=False,
+        ).build(
+            policy=ResearchUniversePolicy.from_canonical_dict(
+                _object_value(payload["policy"], "policy")
+            ),
+            as_of=_instant(str(payload["as_of"])),
+            built_at=_instant(str(payload["built_at"])),
+            security_master_snapshot_id=ArtifactId(
+                str(payload["security_master_snapshot_id"])
+            ),
+            operational_universes=tuple(
+                OperationalUniverseArtifact.from_canonical_dict(
+                    _object_value(item, "operational_universe")
+                )
+                for item in _array_value(
+                    payload["operational_universes"],
+                    "operational_universes",
+                )
+            ),
+            code_revision=str(payload["code_revision"]),
+        )
+        return {
+            "operation": "RUNTIME_SCOPE_BUILD",
+            **runtime_scope_receipt.to_canonical_dict(),
+        }
+    if args.operation in {"runtime-scope-report", "runtime-scope-replay"}:
+        scope_operator = PostgresRuntimeScopeOperator(
+            factory,
+            apply_migrations=False,
+        )
+        runtime_scope_receipt = (
+            scope_operator.report(ArtifactId(args.scope_id))
+            if args.operation == "runtime-scope-report"
+            else scope_operator.replay(ArtifactId(args.scope_id))
+        )
+        return {
+            "operation": args.operation.replace("-", "_").upper(),
+            **runtime_scope_receipt.to_canonical_dict(),
+        }
+    if args.operation in {
+        "historical-run",
+        "historical-resume",
+        "historical-report",
+        "historical-replay",
+    }:
+        historical_journal = PostgresHistoricalResearchJournal(
+            factory,
+            clock=_operational_now,
+            lease_duration=DEFAULT_HISTORICAL_STAGE_LEASE,
+            apply_migrations=False,
+        )
+        historical_runner = HistoricalResearchRunner(
+            journal=historical_journal,
+            kernel=ResearchDecisionSessionKernel(
+                PostgresHistoricalSessionOwner(factory)
+            ),
+        )
+        if args.operation == "historical-run":
+            payload = _load_json_object(args.input)
+            if set(payload) != {"command", "max_stage_commits"}:
+                raise ValueError(
+                    "historical-run requires command and max_stage_commits"
+                )
+            command = HistoricalResearchCommand.from_canonical_dict(
+                _object_value(payload["command"], "command")
+            )
+            raw_limit = payload["max_stage_commits"]
+            historical_snapshot = historical_runner.run(
+                command=command,
+                max_stage_commits=(
+                    None if raw_limit is None else int(raw_limit)
+                ),
+            )
+            return _historical_snapshot_payload(
+                "HISTORICAL_RUN", historical_snapshot
+            )
+        run_id = ArtifactId(args.run_id)
+        if args.operation == "historical-resume":
+            return _historical_snapshot_payload(
+                "HISTORICAL_RESUME",
+                historical_runner.resume(
+                    run_id=run_id,
+                    max_stage_commits=args.max_stage_commits,
+                ),
+            )
+        if args.operation == "historical-report":
+            return _historical_snapshot_payload(
+                "HISTORICAL_REPORT",
+                historical_journal.get_run(run_id),
+            )
+        return {
+            "operation": "HISTORICAL_REPLAY",
+            **historical_runner.replay(run_id=run_id).to_canonical_dict(),
+        }
+    if args.operation == "performance-build":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"portfolio_id", "policy", "generated_at"}:
+            raise ValueError(
+                "performance-build requires portfolio_id, policy and generated_at"
+            )
+        performance_report = PortfolioPerformanceOperator(
+            factory,
+            apply_migrations=False,
+        ).build(
+            portfolio_id=ArtifactId(str(payload["portfolio_id"])),
+            policy=PerformancePolicy.from_canonical_dict(
+                _object_value(payload["policy"], "policy")
+            ),
+            generated_at=_instant(str(payload["generated_at"])),
+        )
+        return {
+            "operation": "PERFORMANCE_BUILD",
+            **performance_report.to_canonical_dict(),
+        }
+    if args.operation in {"performance-report", "performance-replay"}:
+        performance = PortfolioPerformanceOperator(
+            factory,
+            apply_migrations=False,
+        )
+        performance_report = (
+            performance.report(ArtifactId(args.report_id))
+            if args.operation == "performance-report"
+            else performance.replay(ArtifactId(args.report_id))
+        )
+        return {
+            "operation": args.operation.replace("-", "_").upper(),
+            **performance_report.to_canonical_dict(),
+        }
+    if args.operation == "model-train":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"request", "trained_at"}:
+            raise ValueError("model-train requires request and trained_at")
+        research_training_request = ResearchModelTrainingRequest.from_canonical_dict(
+            _object_value(payload["request"], "request")
+        )
+        research_artifact = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).train(
+            research_training_request,
+            trained_at=_instant(str(payload["trained_at"])),
+        )
+        return {
+            "operation": "MODEL_TRAIN",
+            **research_artifact.to_canonical_dict(),
+        }
+    if args.operation == "model-report":
+        artifact = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).get_artifact(ArtifactId(args.artifact_id))
+        return {"operation": "MODEL_REPORT", **artifact.to_canonical_dict()}
+    if args.operation == "model-replay":
+        artifact = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).replay(ArtifactId(args.artifact_id))
+        return {"operation": "MODEL_REPLAY", **artifact.to_canonical_dict()}
+    if args.operation == "model-execute":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"artifact_id", "request", "executed_at"}:
+            raise ValueError(
+                "model-execute requires artifact_id, request and executed_at"
+            )
+        research_inference_receipt = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).execute(
+            artifact_id=ArtifactId(str(payload["artifact_id"])),
+            request=ResearchInferenceRequest.from_canonical_dict(
+                _object_value(payload["request"], "request")
+            ),
+            executed_at=_instant(str(payload["executed_at"])),
+        )
+        return {
+            "operation": "MODEL_EXECUTE",
+            **research_inference_receipt.to_canonical_dict(),
+        }
     if args.operation == "strategy-day":
+        if args.auto is not None:
+            payload = _load_json_object(args.auto)
+            expected = {
+                "trading_date",
+                "observed_at",
+                "symbol",
+                "observation_policy",
+            }
+            if set(payload) != expected:
+                raise ValueError(
+                    "strategy-day --auto requires trading_date, observed_at, "
+                    "symbol and observation_policy"
+                )
+            return StrategyShadowDayOperator(factory).run_auto(
+                trading_date=date.fromisoformat(str(payload["trading_date"])),
+                observed_at=_instant(str(payload["observed_at"])),
+                symbol=(
+                    None if payload["symbol"] is None else str(payload["symbol"])
+                ),
+                policy=ShadowObservationPolicy.from_canonical_dict(
+                    _object_value(
+                        payload["observation_policy"],
+                        "observation_policy",
+                    )
+                ),
+            )
         return StrategyShadowDayOperator(factory).run(
             StrategyDayObservation.from_canonical_dict(
                 _load_json_object(args.observations)
@@ -576,6 +896,44 @@ def _dispatch(
             ArtifactId(args.session_id)
         )
     if args.operation == "portfolio-shadow-day":
+        if args.auto is not None:
+            payload = _load_json_object(args.auto)
+            expected = {
+                "research_trading_date",
+                "trading_date",
+                "observed_at",
+                "portfolio_id",
+                "initial_cash",
+                "portfolio_policy",
+                "observation_policy",
+            }
+            if set(payload) != expected:
+                raise ValueError(
+                    "portfolio-shadow-day --auto requires exact owner and Policy inputs"
+                )
+            portfolio_id = payload["portfolio_id"]
+            return PortfolioShadowDayOperator(factory).run_auto(
+                research_trading_date=date.fromisoformat(
+                    str(payload["research_trading_date"])
+                ),
+                trading_date=date.fromisoformat(str(payload["trading_date"])),
+                observed_at=_instant(str(payload["observed_at"])),
+                portfolio_id=(
+                    None
+                    if portfolio_id is None
+                    else ArtifactId(str(portfolio_id))
+                ),
+                initial_cash=Decimal(str(payload["initial_cash"])),
+                policy=ShadowPortfolioPolicy.from_canonical_dict(
+                    _object_value(payload["portfolio_policy"], "portfolio_policy")
+                ),
+                observation_policy=ShadowObservationPolicy.from_canonical_dict(
+                    _object_value(
+                        payload["observation_policy"],
+                        "observation_policy",
+                    )
+                ),
+            )
         return PortfolioShadowDayOperator(factory).run(
             PortfolioShadowDayInput.from_canonical_dict(
                 _load_json_object(args.observations)
@@ -1736,7 +2094,13 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
     operation = str(args.operation)
     if operation in _READ_OPERATIONS:
         return SecurityPermission.READ_RESEARCH
-    if operation == "research-universe-sync":
+    if operation in {
+        "research-universe-sync",
+        "runtime-scope-build",
+        "historical-run",
+    }:
+        return SecurityPermission.RUN_RESEARCH
+    if operation == "model-train":
         return SecurityPermission.RUN_RESEARCH
     if operation in {
         "qualification-protocol-record",
@@ -1750,7 +2114,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "qualification-status",
     }:
         return SecurityPermission.RECORD_RESEARCH_EVIDENCE
-    if operation == "resume":
+    if operation in {"resume", "historical-resume"}:
         return SecurityPermission.RECOVER_RUNTIME
     if operation in {"prepare", "schedule", "reserve-due-tick", "run-due", "run-day"}:
         run_command = ContinuousResearchCommand.from_canonical_dict(
@@ -1823,6 +2187,40 @@ def _canonical_operator_argument(value: object) -> object:
     raise TypeError(
         f"Unsupported Continuous operator argument type: {type(value).__name__}"
     )
+
+
+def _historical_snapshot_payload(
+    operation: str,
+    snapshot: HistoricalRunSnapshot,
+) -> dict[str, Any]:
+    return {
+        "operation": operation,
+        "run_id": str(snapshot.command.run_id),
+        "command_hash": snapshot.command.command_hash,
+        "status": snapshot.status.value,
+        "version": snapshot.version,
+        "session_count": len(snapshot.sessions),
+        "completed_sessions": snapshot.completed_sessions,
+        "sessions": [
+            {
+                "session_id": str(item.request.session_id),
+                "session_hash": item.request.session_hash,
+                "trading_date": item.request.trading_date.isoformat(),
+                "ordinal": item.ordinal,
+                "status": item.status.value,
+                "next_stage": item.next_stage.value,
+                "version": item.version,
+                "fencing_token": item.fencing_token,
+                "receipts": [receipt.to_canonical_dict() for receipt in item.receipts],
+            }
+            for item in snapshot.sessions
+        ],
+        "evidence_qualification": snapshot.command.evidence_qualification.value,
+        "limitations": list(snapshot.command.limitations),
+        "formal_oos": False,
+        "calibrated": False,
+        **_authority_ceiling(),
+    }
 
 
 def _emit(payload: Mapping[str, Any]) -> None:

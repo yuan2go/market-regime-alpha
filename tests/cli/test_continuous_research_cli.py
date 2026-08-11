@@ -177,6 +177,69 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "portfolio-1",
         ]
     )
+    runtime_scope = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "runtime-scope-build",
+            "--input",
+            "runtime-scope.json",
+        ]
+    )
+    historical_run = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-run",
+            "--input",
+            "historical-run.json",
+        ]
+    )
+    performance_build = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "performance-build",
+            "--input",
+            "performance-build.json",
+        ]
+    )
+    model_train = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "model-train",
+            "--input",
+            "model-train.json",
+        ]
+    )
+    model_execute = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "model-execute",
+            "--input",
+            "model-execute.json",
+        ]
+    )
+    strategy_auto = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "strategy-day",
+            "--auto",
+            "strategy-auto.json",
+        ]
+    )
+    portfolio_auto = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "portfolio-shadow-day",
+            "--auto",
+            "portfolio-auto.json",
+        ]
+    )
     recovery_audit = build_parser().parse_args(
         [
             "--database-url",
@@ -309,6 +372,13 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert universe_replay.operation == "research-universe-replay"
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
+    assert runtime_scope.operation == "runtime-scope-build"
+    assert historical_run.operation == "historical-run"
+    assert performance_build.operation == "performance-build"
+    assert model_train.operation == "model-train"
+    assert model_execute.operation == "model-execute"
+    assert strategy_auto.auto.name == "strategy-auto.json"
+    assert portfolio_auto.auto.name == "portfolio-auto.json"
     assert recovery_audit.operation == "recovery-audit"
     assert protocol_record.operation == "qualification-protocol-record"
     assert owners_record.operation == "qualification-owners-record"

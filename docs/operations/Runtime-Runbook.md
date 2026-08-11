@@ -47,8 +47,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 059, `research_model_execution`. Expected schema
-catalog: 211 tables. Migrations 052–059 add Formal Protocol bindings and
+Expected head: migration 062, `shadow_performance_authority`. Expected schema
+catalog: 231 tables. Migrations 052–062 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -57,6 +57,9 @@ persisted blocked Production Admission and Controlled Execution readiness.
 Migration 059 adds only the immutable exploratory training/model-parameter
 journal consumed by the owner-resolved Forecast executor; all Formal/OOS,
 Calibration and Production flags remain database-enforced false.
+Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
+Session journal, owner-resolved Shadow observations and multi-period Shadow
+performance evidence. They grant no trading or Formal research authority.
 Migration 046 remains unchanged. Missing/unreachable PostgreSQL is a blocked
 operation; there is no alternate persistent backend.
 
