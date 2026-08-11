@@ -178,6 +178,13 @@ class RepositoryFactory:
     def model_governance(self):
         return PostgresModelGovernanceRepository(self._postgres)
 
+    def runtime_scope(self):
+        from market_regime_alpha.universe.postgres_runtime_scope import (
+            PostgresRuntimeScopeRepository,
+        )
+
+        return PostgresRuntimeScopeRepository(self._postgres)
+
     def pit_authority(
         self,
         *,

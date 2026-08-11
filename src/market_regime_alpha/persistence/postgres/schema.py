@@ -210,6 +210,10 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "formal_hypothesis_family_evaluation_target",
         "formal_hypothesis_family_evaluation_pit_evidence",
         "phase_c_formal_operator_command",
+        "research_universe_policy",
+        "runtime_scope_receipt",
+        "runtime_scope_input_reference",
+        "runtime_scope_member",
     }
 )
 
@@ -363,6 +367,22 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "phase_c_formal_operator_command",
             "phase_c_formal_operator_command_no_update",
+        ),
+        (
+            "research_universe_policy",
+            "research_universe_policy_no_update",
+        ),
+        (
+            "runtime_scope_receipt",
+            "runtime_scope_receipt_no_update",
+        ),
+        (
+            "runtime_scope_input_reference",
+            "runtime_scope_input_reference_no_update",
+        ),
+        (
+            "runtime_scope_member",
+            "runtime_scope_member_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (
