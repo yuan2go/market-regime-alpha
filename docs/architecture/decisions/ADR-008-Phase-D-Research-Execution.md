@@ -1,21 +1,37 @@
-# Phase D Research Execution Work Package
+# ADR-008: Phase D Research Execution
 
 > **Status:** CURRENT_ARCHITECTURE
-> **Authority:** Approved implementation design and execution checklist; not implementation or evidence authority
+> **Authority:** Accepted architecture decision; not implementation or evidence authority
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Baseline:** `d27bc35585220eb20d0c3aabca7c93c8592ec294`
+> **Implemented Through:** `5b0d2a8`
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
-This is the sole current Phase D work package. It records the approved design
-while implementation is in progress. Current code, schema and reproducible
-evidence remain authoritative. On completion, durable facts from this document
-must be folded into the canonical architecture, status, capability and runbook
-documents; the work package must not become a parallel documentation hierarchy.
+This record preserves the accepted Shared Decision Session Kernel, PostgreSQL
+Historical Journal and Free-Data-First decision. Current code, schema and
+reproducible evidence remain authoritative. The temporary implementation plan
+was removed after the durable facts were folded into the canonical architecture,
+status, capability and runbook documents.
 
-The temporary [implementation plan](Phase-D-Implementation-Plan.md) defines the
-test-first execution order. It carries no fact or evidence authority and will be
-removed after documentation convergence.
+## Implementation status
+
+Migrations 058–064 implement the decision through one PostgreSQL authority:
+
+- immutable Runtime Scope Policy/receipt and captured Operational Universe inputs;
+- shared Decision Session contracts/kernel plus lease/fence Historical Journal;
+- Portfolio Performance/Attribution and owner-resolved Shadow Observations;
+- deterministic exploratory model training, walk-forward diagnostics and inference;
+- ordered Formal Execution assessment that persists `BLOCKED` before any absent
+  qualified predecessor can be consumed;
+- bounded `continuous-research` build/report/replay/resume operator commands.
+
+The PostgreSQL Historical owner reloads the exact Runtime Scope and existing
+Continuous/Shadow/Strategy/Portfolio/Outcome/Performance owners. Decision reuse
+requires the same trading date, symbol scope, calendar, decision policy and code
+revision. Multiple free Operational Universe artifacts may overlap by symbol;
+their provenance is retained and their eligibility facts are combined
+conservatively. No Provider-specific dependency leaks into downstream Runtime.
 
 ## Approved outcome and boundaries
 

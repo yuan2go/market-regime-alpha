@@ -3,7 +3,7 @@
 > **Status:** ROADMAP
 > **Authority:** Current forward engineering order
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 ## Phase C current order
@@ -29,14 +29,25 @@
 Phase C must not add model parameters, Alpha claims or trading permissions to
 make a gate pass.
 
-## Phase D current work package
+## Phase D engineering complete, evidence bounded
 
-[Phase D Research Execution](../architecture/decisions/ADR-008-Phase-D-Research-Execution.md) records the approved
-Shared Decision Session Kernel, PostgreSQL Historical Journal and free-data-first
-implementation boundary. It is an in-progress work package, not executable or
-evidence authority. Phase D may establish exploratory Historical Research,
-model and Shadow capabilities while Formal PIT, Formal OOS, calibration and
-Production qualification remain independently fail-closed.
+[ADR-008](../architecture/decisions/ADR-008-Phase-D-Research-Execution.md)
+records the implemented Shared Decision Session Kernel, PostgreSQL Historical
+Journal and Free-Data-First boundary. Migrations 058–064 and the existing
+`continuous-research` surface now provide Full-A Runtime Scope, owner-resolved
+Shadow Observations, multi-period Performance/Attribution, deterministic
+exploratory Model training/inference and ordered fail-closed Formal assessment.
+This is executable engineering, not Provider, PIT, OOS Alpha, calibration or
+Production evidence.
+
+The next Phase D work is operational evidence, not another framework:
+
+1. freeze representative real multi-year free-data corpora and record
+   coverage/missingness without inventing availability;
+2. exercise interruption/resume/replay across long ranges and daily Shadow;
+3. compare research challengers and preserve negative/inconclusive results;
+4. keep Formal execution blocked until independently qualified Provider Fact
+   and Formal PIT owners exist.
 
 ## P1 Operational evidence completion
 
