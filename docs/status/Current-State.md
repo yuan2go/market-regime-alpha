@@ -52,12 +52,16 @@ the authorized RBAC principal. C4 requires estimable Train and Validation floor
 metrics for every Target/fold/sensitivity before evaluating Locked OOS; its C3
 record-set comparison covers only the frozen Train/Validation windows. New Formal
 C3 Dataset owners may not bundle Locked-OOS records; their metadata is verified
-without loading realized values before the pre-OOS readiness barrier. These writers can
+without loading realized values before the pre-OOS readiness barrier. Migration
+058 then freezes the complete Locked roster from Formal PIT scope, owner-computed
+Forecast receipts and Target Label metadata, requires exact submitted-set equality,
+and commits raw/Target consumption before reading any Locked outcome payload.
+Evaluation failure cannot roll that consumption back. These writers can
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.
 
 The 2026-08-11 isolated working-schema evidence resolution applied migrations
-001–057 and evaluated ten declared free-data Provider×Contract×Fact scopes:
+001–058 and evaluated ten declared free-data Provider×Contract×Fact scopes:
 BaoStock history Market Data and Adjustment Factor; BaoStock status Trading
 Calendar, Listing Status, ST Status, Trading Status and Trading Eligibility;
 BaoStock stock-basic Universe Membership; and Tencent current/minute Market Data.
@@ -69,7 +73,7 @@ Locked-OOS consumption, Formal OOS, Calibration qualification, Phase C stage or
 Production Admission evidence. This is a negative/absent evidence result, not a
 Provider-quality or Alpha conclusion.
 
-Migrations 047–057 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners, immutable Path Calibration Hypothesis evidence and the fail-closed Phase C owners described above. They do not alter migration 046, which removes reference-only
+Migrations 047–058 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners, immutable Path Calibration Hypothesis evidence and the fail-closed Phase C owners described above. They do not alter migration 046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -89,8 +93,8 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Python test files | 427 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 57 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 201 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 201 independent business Authorities |
+| PostgreSQL migrations | 58 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 203 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 203 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |

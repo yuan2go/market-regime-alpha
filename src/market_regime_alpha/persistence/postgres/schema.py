@@ -211,6 +211,8 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "formal_hypothesis_family_evaluation_pit_evidence",
         "formal_hypothesis_family_evaluation_historical_decision",
         "phase_c_formal_operator_command",
+        "formal_locked_oos_roster",
+        "formal_locked_oos_roster_member",
     }
 )
 
@@ -368,6 +370,11 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "phase_c_formal_operator_command",
             "phase_c_formal_operator_command_no_update",
+        ),
+        ("formal_locked_oos_roster", "formal_locked_oos_roster_no_update"),
+        (
+            "formal_locked_oos_roster_member",
+            "formal_locked_oos_roster_member_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Mapping
 
@@ -88,6 +89,13 @@ from market_regime_alpha.persistence.postgres.native_repository import (
 
 class ResearchQualificationConflict(ValueError):
     """A qualification owner, identity, or idempotency invariant failed."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LockedOOSRosterPreparation:
+    roster_id: ArtifactId
+    roster_hash: str
+    frozen_at: datetime
 
 
 class PostgresResearchQualificationAuthority:
@@ -492,6 +500,25 @@ class PostgresResearchQualificationAuthority:
             "reason": reason,
         }
         command_hash = canonical_hash(command_payload)
+        with self._factory.connection(read_only=True) as connection:
+            existing_result = _existing_family_operator_result(
+                connection,
+                idempotency_key=idempotency_key,
+                command_hash=command_hash,
+            )
+        if existing_result is not None:
+            return existing_result
+        prepared = self._factory.run_transaction(
+            lambda connection: _prepare_locked_oos_roster(
+                connection,
+                formal_protocol_id=formal_protocol_id,
+                groups=ordered_groups,
+                sample_ids=sample_ids,
+                pit_ids=pit_ids,
+                idempotency_key=idempotency_key,
+                command_hash=command_hash,
+            )
+        )
 
         def operation(connection: Any) -> FormalHypothesisFamilyEvaluationResult:
             acquire_scope_lock(
@@ -518,7 +545,7 @@ class PostgresResearchQualificationAuthority:
                 return _load_family_evaluation_result(
                     connection, ArtifactId(str(duplicate[2]))
                 )
-            protocol = _load_formal_protocol_pre_oos(connection, formal_protocol_id)
+            protocol = _load_formal_protocol(connection, formal_protocol_id)
             evaluation = _load_evaluation_protocol(
                 connection,
                 protocol.evaluation_protocol_reference.artifact_id,
@@ -533,7 +560,7 @@ class PostgresResearchQualificationAuthority:
                 raise ResearchQualificationConflict(
                     "Formal Family Evaluation requires every frozen Target exactly once"
                 )
-            created_at = _postgres_now(connection)
+            created_at = prepared.frozen_at
             samples = tuple(
                 _load_historical_decision(connection, item) for item in sample_ids
             )
@@ -555,40 +582,16 @@ class PostgresResearchQualificationAuthority:
                 samples=samples,
                 evaluated_at=created_at,
             )
-            oos_policy = _load_oos_policy(
+            _require_locked_oos_roster(
                 connection,
-                protocol.formal_oos_qualification_policy_reference,
-            )
-            pre_oos_inputs = _resolve_pre_oos_family_inputs(
-                connection,
+                preparation=prepared,
                 protocol=protocol,
-                evaluation=evaluation,
                 family=family,
                 groups=ordered_groups,
                 pits=pits,
-                created_at=created_at,
+                idempotency_key=idempotency_key,
+                command_hash=command_hash,
             )
-            pre_oos = run_formal_hypothesis_family_evaluation(
-                family=family,
-                protocol=evaluation,
-                inputs=pre_oos_inputs,
-                formal_pit_evidence=pits[0],
-                formal_pit_evidences=pits,
-                created_at=created_at,
-                frozen_trading_dates=protocol.frozen_trading_dates,
-            )
-            _require_pre_oos_readiness(
-                policy=oos_policy,
-                evaluation=evaluation,
-                family=family,
-                result=pre_oos,
-            )
-            replayed_protocol = _load_formal_protocol(connection, formal_protocol_id)
-            if replayed_protocol != protocol:
-                raise ResearchQualificationConflict(
-                    "Formal Protocol changed across the pre-OOS readiness barrier"
-                )
-            protocol = replayed_protocol
             inputs: list[FamilyEvaluationInput] = []
             used_pit_ids: set[ArtifactId] = set()
             observation_sets: list[
@@ -2418,12 +2421,19 @@ def _load_evaluation_label_metadata(
         SELECT l.settlement_id, l.label_hash, l.target_protocol_id,
                l.target_id, l.symbol, l.label_interval_start,
                l.label_interval_end, l.availability_status,
-               o.settlement_hash, o.shadow_decision_id, d.decision_hash
+               o.settlement_hash, o.shadow_decision_id, d.decision_hash,
+               definition.target_hash, target_protocol.protocol_hash,
+               o.source_dataset_id
         FROM targeted_shadow_outcome_label AS l
         JOIN targeted_shadow_outcome AS o
           ON o.settlement_id = l.settlement_id
         JOIN shadow_research_decision AS d
           ON d.decision_id = o.shadow_decision_id
+        JOIN outcome_target_definition AS definition
+          ON definition.protocol_id = l.target_protocol_id
+         AND definition.target_id = l.target_id
+        JOIN outcome_target_protocol AS target_protocol
+          ON target_protocol.protocol_id = l.target_protocol_id
         WHERE l.label_id = %s
         """,
         (str(binding.label_reference.artifact_id),),
@@ -2435,6 +2445,10 @@ def _load_evaluation_label_metadata(
         and str(item[2]) == str(protocol.outcome_target_protocol_reference.artifact_id)
         and str(item[3]) == str(target_reference.artifact_id)
         and str(item[4]) == forecast.symbol
+        and str(item[11]) == target_reference.content_hash
+        and str(item[12])
+        == protocol.outcome_target_protocol_reference.content_hash
+        and str(item[13]) == str(protocol.dataset_reference.artifact_id)
     )
     if len(exact_label_rows) != 1:
         raise ResearchQualificationConflict("Target Outcome Label owner mismatch")
@@ -2491,7 +2505,8 @@ def _resolve_forecast_evaluation_input(
     if require_formal_forecast:
         receipt = connection.execute(
             """
-            SELECT receipt_hash, formal_protocol_id, formal_pit_evidence_id,
+            SELECT receipt_id, receipt_hash, formal_protocol_id,
+                   formal_pit_evidence_id,
                    model_id, model_hash, decision_time, materialized_at,
                    payload_json
             FROM formal_forecast_computation_receipt
@@ -2500,29 +2515,47 @@ def _resolve_forecast_evaluation_input(
             (str(forecast.forecast_id),),
         ).fetchone()
         restored_receipt: FormalForecastComputationReceipt | None = None
-        if receipt is not None and isinstance(receipt[7], Mapping):
+        if receipt is not None and isinstance(receipt[8], Mapping):
             try:
                 restored_receipt = FormalForecastComputationReceipt.from_canonical_dict(
-                    dict(receipt[7])
+                    dict(receipt[8])
                 )
             except (KeyError, TypeError, ValueError):
                 restored_receipt = None
-        receipt_pit_id = None if receipt is None else ArtifactId(str(receipt[2]))
+        receipt_pit_id = None if receipt is None else ArtifactId(str(receipt[3]))
         if (
             str(forecast_row[2]) != "FORMAL_OWNER_COMPUTED"
             or not formal_pit_evidence_ids
             or receipt is None
             or restored_receipt is None
-            or restored_receipt.receipt_hash != str(receipt[0])
-            or str(receipt[1]) != str(protocol.protocol_id)
+            or restored_receipt.receipt_id != ArtifactId(str(receipt[0]))
+            or restored_receipt.receipt_hash != str(receipt[1])
+            or str(receipt[2]) != str(protocol.protocol_id)
             or receipt_pit_id not in formal_pit_evidence_ids
-            or str(receipt[3]) != str(protocol.model_reference.artifact_id)
-            or str(receipt[4]) != protocol.model_reference.content_hash
-            or receipt[5] != forecast.decision_time
-            or receipt[6] != forecast.created_at
-            or restored_receipt.forecast_reference.artifact_id != forecast.forecast_id
-            or restored_receipt.forecast_reference.content_hash
-            != forecast.forecast_hash
+            or str(receipt[4]) != str(protocol.model_reference.artifact_id)
+            or str(receipt[5]) != protocol.model_reference.content_hash
+            or receipt[6] != forecast.decision_time
+            or receipt[7] != forecast.created_at
+            or restored_receipt.formal_protocol_reference
+            != ValidationArtifactReference(
+                "FORMAL_RESEARCH_PROTOCOL",
+                protocol.protocol_id,
+                protocol.protocol_hash,
+            )
+            or restored_receipt.formal_pit_evidence_reference.artifact_id
+            != receipt_pit_id
+            or restored_receipt.model_reference != protocol.model_reference
+            or restored_receipt.request.formal_protocol_id != protocol.protocol_id
+            or restored_receipt.request.formal_pit_evidence_id != receipt_pit_id
+            or restored_receipt.request.symbol != forecast.symbol
+            or restored_receipt.decision_time != forecast.decision_time
+            or restored_receipt.materialized_at != forecast.created_at
+            or restored_receipt.forecast_reference
+            != ValidationArtifactReference(
+                "OUTCOME_TARGET_BOUND_FORECAST",
+                forecast.forecast_id,
+                forecast.forecast_hash,
+            )
         ):
             raise ResearchQualificationConflict(
                 "Formal Family Evaluation requires owner-computed Forecast receipt"
@@ -2728,6 +2761,964 @@ def _verify_historical_decision_side_bindings(
         )
 
 
+def _existing_family_operator_result(
+    connection: Any,
+    *,
+    idempotency_key: str,
+    command_hash: str,
+) -> FormalHypothesisFamilyEvaluationResult | None:
+    row = connection.execute(
+        """
+        SELECT command_hash, action_kind, result_artifact_id
+        FROM phase_c_formal_operator_command
+        WHERE idempotency_key = %s
+        """,
+        (idempotency_key,),
+    ).fetchone()
+    if row is None:
+        return None
+    if (
+        str(row[0]) != command_hash
+        or str(row[1]) != "EVALUATE_FORMAL_FAMILY"
+    ):
+        raise ResearchQualificationConflict(
+            "Formal Family Evaluation idempotency conflict"
+        )
+    return _load_family_evaluation_result(connection, ArtifactId(str(row[2])))
+
+
+def _prepare_locked_oos_roster(
+    connection: Any,
+    *,
+    formal_protocol_id: ArtifactId,
+    groups: tuple[FamilyEvaluationObservationBindings, ...],
+    sample_ids: tuple[ArtifactId, ...],
+    pit_ids: tuple[ArtifactId, ...],
+    idempotency_key: str,
+    command_hash: str,
+) -> _LockedOOSRosterPreparation:
+    """Durably claim the complete label-blind Locked scope before value reads."""
+
+    acquire_scope_lock(
+        connection,
+        namespace="formal-family-evaluation-idempotency",
+        identity=idempotency_key,
+    )
+    existing_operator = connection.execute(
+        """
+        SELECT command_hash, action_kind
+        FROM phase_c_formal_operator_command
+        WHERE idempotency_key = %s
+        """,
+        (idempotency_key,),
+    ).fetchone()
+    if existing_operator is not None and (
+        str(existing_operator[0]) != command_hash
+        or str(existing_operator[1]) != "EVALUATE_FORMAL_FAMILY"
+    ):
+        raise ResearchQualificationConflict(
+            "Formal Family Evaluation idempotency conflict"
+        )
+    acquire_scope_lock(
+        connection,
+        namespace="formal-locked-oos-roster",
+        identity=formal_protocol_id,
+    )
+    existing_rows = connection.execute(
+        """
+        SELECT roster_id, roster_hash, frozen_at, formal_protocol_id,
+               idempotency_key, command_hash
+        FROM formal_locked_oos_roster
+        WHERE formal_protocol_id = %s OR idempotency_key = %s
+        """,
+        (str(formal_protocol_id), idempotency_key),
+    ).fetchall()
+    if len(existing_rows) > 1:
+        raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_SCOPE_CONFLICT")
+    existing = None if not existing_rows else existing_rows[0]
+    protocol = _load_formal_protocol_pre_oos(connection, formal_protocol_id)
+    family = load_frozen_hypothesis_family_owner(
+        connection,
+        formal_protocol_id=formal_protocol_id,
+    )
+    if existing is not None:
+        if (
+            str(existing[3]) != str(formal_protocol_id)
+            or str(existing[4]) != idempotency_key
+            or str(existing[5]) != command_hash
+        ):
+            raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_SCOPE_CONFLICT")
+        pits = tuple(_load_formal_pit(connection, item) for item in pit_ids)
+        preparation = _LockedOOSRosterPreparation(
+            ArtifactId(str(existing[0])), str(existing[1]), existing[2]
+        )
+        _require_locked_oos_roster(
+            connection,
+            preparation=preparation,
+            protocol=protocol,
+            family=family,
+            groups=groups,
+            pits=pits,
+            idempotency_key=idempotency_key,
+            command_hash=command_hash,
+        )
+        return preparation
+    if tuple(item.target_reference for item in groups) != family.target_references:
+        raise ResearchQualificationConflict(
+            "Formal Family Evaluation requires every frozen Target exactly once"
+        )
+    frozen_at = _postgres_now(connection)
+    samples = tuple(_load_historical_decision(connection, item) for item in sample_ids)
+    if any(
+        not sample.qualified
+        or sample.outcome is not QualificationOutcome.SATISFIED
+        or sample.evaluated_at > frozen_at
+        for sample in samples
+    ):
+        raise ResearchQualificationConflict(
+            "C3_QUALIFIED_HISTORICAL_SAMPLE_REQUIRED_BEFORE_LOCKED_OOS"
+        )
+    pits = tuple(_load_formal_pit(connection, item) for item in pit_ids)
+    _require_family_historical_prerequisites(
+        connection,
+        protocol=protocol,
+        family=family,
+        pits=pits,
+        samples=samples,
+        evaluated_at=frozen_at,
+    )
+    evaluation = _load_evaluation_protocol(
+        connection,
+        protocol.evaluation_protocol_reference.artifact_id,
+    )
+    pre_oos = run_formal_hypothesis_family_evaluation(
+        family=family,
+        protocol=evaluation,
+        inputs=_resolve_pre_oos_family_inputs(
+            connection,
+            protocol=protocol,
+            evaluation=evaluation,
+            family=family,
+            groups=groups,
+            pits=pits,
+            created_at=frozen_at,
+        ),
+        formal_pit_evidence=pits[0],
+        formal_pit_evidences=pits,
+        created_at=frozen_at,
+        frozen_trading_dates=protocol.frozen_trading_dates,
+    )
+    _require_pre_oos_readiness(
+        policy=_load_oos_policy(
+            connection,
+            protocol.formal_oos_qualification_policy_reference,
+        ),
+        evaluation=evaluation,
+        family=family,
+        result=pre_oos,
+    )
+    set_references = {
+        str(group.target_reference.artifact_id): _observation_set_reference(
+            protocol=protocol,
+            group=group,
+            created_at=frozen_at,
+        )
+        for group in groups
+    }
+    members = _resolve_locked_oos_roster_members(
+        connection,
+        protocol=protocol,
+        evaluation=evaluation,
+        family=family,
+        groups=groups,
+        pits=pits,
+        set_references=set_references,
+        frozen_at=frozen_at,
+    )
+    locked_dates = tuple(
+        item.isoformat()
+        for item in _locked_oos_dates_from_family(protocol, family)
+    )
+    roster_payload = {
+        "schema_version": "formal-locked-oos-roster/v1",
+        "family_reference": family.reference.to_canonical_dict(),
+        "formal_protocol_reference": ValidationArtifactReference(
+            "FORMAL_RESEARCH_PROTOCOL",
+            protocol.protocol_id,
+            protocol.protocol_hash,
+        ).to_canonical_dict(),
+        "formal_pit_evidence_references": [
+            ValidationArtifactReference(
+                "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
+            ).to_canonical_dict()
+            for pit in pits
+        ],
+        "command_hash": command_hash,
+        "idempotency_key": idempotency_key,
+        "locked_dates": list(locked_dates),
+        "members": list(members),
+        "frozen_at": timestamp(frozen_at),
+        "outcome_values_read": False,
+    }
+    roster_hash = canonical_hash(roster_payload)
+    preparation = _LockedOOSRosterPreparation(
+        ArtifactId(f"formal-locked-oos-roster:{roster_hash[7:]}"),
+        roster_hash,
+        frozen_at,
+    )
+    for group in groups:
+        set_reference = set_references[str(group.target_reference.artifact_id)]
+        _record_observation_set_header(
+            connection,
+            set_reference=set_reference,
+            payload=_observation_set_payload(
+                formal_protocol=protocol,
+                panel_reference=group.panel_reference,
+                target_reference=group.target_reference,
+                bindings=group.observation_bindings,
+                created_at=frozen_at,
+            ),
+            formal_protocol=protocol,
+            group=group,
+            created_at=frozen_at,
+        )
+    connection.execute(
+        """
+        INSERT INTO formal_locked_oos_roster(
+            roster_id, roster_hash, family_id, family_hash,
+            formal_protocol_id, formal_protocol_hash, idempotency_key,
+            command_hash,
+            locked_date_count, subject_date_count, target_observation_count,
+            payload_json, frozen_at
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s
+        )
+        """,
+        (
+            str(preparation.roster_id),
+            preparation.roster_hash,
+            str(family.family_id),
+            family.family_hash,
+            str(protocol.protocol_id),
+            protocol.protocol_hash,
+            idempotency_key,
+            command_hash,
+            len(locked_dates),
+            len(
+                {
+                    (str(item["subject"]), str(item["decision_time"]))
+                    for item in members
+                }
+            ),
+            len(members),
+            Jsonb(roster_payload),
+            frozen_at,
+        ),
+    )
+    for member in members:
+        _insert_locked_oos_roster_member(
+            connection,
+            preparation=preparation,
+            member=member,
+        )
+        _claim_locked_oos_roster_member(
+            connection,
+            protocol=protocol,
+            family=family,
+            member=member,
+            consumed_at=frozen_at,
+        )
+    _require_locked_oos_roster(
+        connection,
+        preparation=preparation,
+        protocol=protocol,
+        family=family,
+        groups=groups,
+        pits=pits,
+        idempotency_key=idempotency_key,
+        command_hash=command_hash,
+    )
+    return preparation
+
+
+def _observation_set_reference(
+    *,
+    protocol: FormalResearchProtocol,
+    group: FamilyEvaluationObservationBindings,
+    created_at: datetime,
+) -> ValidationArtifactReference:
+    payload = _observation_set_payload(
+        formal_protocol=protocol,
+        panel_reference=group.panel_reference,
+        target_reference=group.target_reference,
+        bindings=group.observation_bindings,
+        created_at=created_at,
+    )
+    digest = canonical_hash(payload)
+    return ValidationArtifactReference(
+        "FORMAL_EVALUATION_OBSERVATION_SET",
+        ArtifactId(f"formal-evaluation-observation-set:{digest[7:]}"),
+        digest,
+    )
+
+
+def _locked_oos_dates(
+    protocol: FormalResearchProtocol,
+    evaluation: FormalEvaluationProtocol,
+) -> tuple[date, ...]:
+    return tuple(
+        item
+        for item in protocol.frozen_trading_dates
+        if any(
+            window.partition is EvaluationPartition.LOCKED_OOS
+            and window.start_date <= item <= window.end_date
+            for window in evaluation.windows
+        )
+    )
+
+
+def _locked_oos_dates_from_family(
+    protocol: FormalResearchProtocol,
+    family: FrozenHypothesisFamily,
+) -> tuple[date, ...]:
+    return tuple(
+        item
+        for item in protocol.frozen_trading_dates
+        if any(
+            window.partition is EvaluationPartition.LOCKED_OOS
+            and window.start_date <= item <= window.end_date
+            for window in family.windows
+        )
+    )
+
+
+def _resolve_locked_oos_roster_members(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    evaluation: FormalEvaluationProtocol,
+    family: FrozenHypothesisFamily,
+    groups: tuple[FamilyEvaluationObservationBindings, ...],
+    pits: tuple[FormalPITEvidenceArtifact, ...],
+    set_references: Mapping[str, ValidationArtifactReference],
+    frozen_at: datetime,
+) -> tuple[dict[str, Any], ...]:
+    """Build an expected roster from PIT request/Forecast/Label metadata only."""
+
+    locked_dates = set(_locked_oos_dates(protocol, evaluation))
+    if not locked_dates:
+        raise ResearchQualificationConflict("LOCKED_OOS_FROZEN_DATE_ROSTER_EMPTY")
+    expected: list[dict[str, Any]] = []
+    covered_dates: set[date] = set()
+    covered_scopes: set[tuple[date, str]] = set()
+    for pit in pits:
+        request = _load_formal_pit_request(connection, pit)
+        decision_date = request.decision_time.date()
+        if decision_date not in locked_dates:
+            continue
+        covered_dates.add(decision_date)
+        duplicate_scopes = {
+            (decision_date, symbol) for symbol in request.symbols
+        } & covered_scopes
+        if duplicate_scopes:
+            raise ResearchQualificationConflict(
+                "LOCKED_OOS_PIT_SUBJECT_SCOPE_OVERLAPS"
+            )
+        covered_scopes.update((decision_date, symbol) for symbol in request.symbols)
+        receipt_rows = connection.execute(
+            """
+            SELECT receipt_id, receipt_hash, forecast_id,
+                   decision_time, materialized_at, payload_json
+            FROM formal_forecast_computation_receipt
+            WHERE formal_protocol_id = %s AND formal_pit_evidence_id = %s
+            ORDER BY receipt_id
+            """,
+            (str(protocol.protocol_id), str(pit.evidence_id)),
+        ).fetchall()
+        receipts: dict[str, FormalForecastComputationReceipt] = {}
+        for row in receipt_rows:
+            if not isinstance(row[5], Mapping):
+                raise ResearchQualificationConflict(
+                    "LOCKED_OOS_FORECAST_RECEIPT_OWNER_MISSING"
+                )
+            try:
+                receipt = FormalForecastComputationReceipt.from_canonical_dict(
+                    dict(row[5])
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ResearchQualificationConflict(
+                    "LOCKED_OOS_FORECAST_RECEIPT_REPLAY_FAILED"
+                ) from exc
+            if (
+                receipt.receipt_id != ArtifactId(str(row[0]))
+                or receipt.receipt_hash != str(row[1])
+                or receipt.forecast_reference.artifact_id != ArtifactId(str(row[2]))
+                or receipt.decision_time != row[3]
+                or receipt.materialized_at != row[4]
+                or receipt.request.symbol in receipts
+                or receipt.request.formal_protocol_id != protocol.protocol_id
+                or receipt.request.formal_pit_evidence_id != pit.evidence_id
+                or receipt.formal_protocol_reference
+                != ValidationArtifactReference(
+                    "FORMAL_RESEARCH_PROTOCOL",
+                    protocol.protocol_id,
+                    protocol.protocol_hash,
+                )
+                or receipt.formal_pit_evidence_reference
+                != ValidationArtifactReference(
+                    "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
+                )
+                or receipt.decision_time != request.decision_time
+                or receipt.materialized_at > frozen_at
+            ):
+                raise ResearchQualificationConflict(
+                    "LOCKED_OOS_FORECAST_RECEIPT_LINEAGE_MISMATCH"
+                )
+            receipts[receipt.request.symbol] = receipt
+        if set(receipts) != set(request.symbols):
+            raise ResearchQualificationConflict(
+                "LOCKED_OOS_FORECAST_RECEIPT_SCOPE_INCOMPLETE"
+            )
+        for symbol in request.symbols:
+            receipt = receipts[symbol]
+            for target in family.target_references:
+                label_rows = connection.execute(
+                    """
+                    SELECT label.settlement_id, label.label_id,
+                           label.label_hash, label.label_interval_start,
+                           label.label_interval_end, label.availability_status,
+                           definition.target_hash, target_protocol.protocol_hash,
+                           outcome.source_dataset_id,
+                           outcome.outcome_available_at, outcome.created_at
+                    FROM targeted_shadow_outcome_label AS label
+                    JOIN targeted_shadow_outcome AS outcome
+                      ON outcome.settlement_id = label.settlement_id
+                    JOIN outcome_target_definition AS definition
+                      ON definition.protocol_id = label.target_protocol_id
+                     AND definition.target_id = label.target_id
+                    JOIN outcome_target_protocol AS target_protocol
+                      ON target_protocol.protocol_id = label.target_protocol_id
+                    WHERE label.target_protocol_id = %s
+                      AND label.target_id = %s AND label.symbol = %s
+                      AND label.label_interval_start = %s
+                    ORDER BY label.settlement_id, label.label_id
+                    """,
+                    (
+                        str(protocol.outcome_target_protocol_reference.artifact_id),
+                        str(target.artifact_id),
+                        symbol,
+                        request.decision_time,
+                    ),
+                ).fetchall()
+                if (
+                    len(label_rows) != 1
+                    or str(label_rows[0][5])
+                    != OutcomeAvailabilityStatus.COMPLETE.value
+                    or str(label_rows[0][6]) != target.content_hash
+                    or str(label_rows[0][7])
+                    != protocol.outcome_target_protocol_reference.content_hash
+                    or str(label_rows[0][8])
+                    != str(protocol.dataset_reference.artifact_id)
+                    or label_rows[0][3] != request.decision_time
+                    or label_rows[0][4] <= label_rows[0][3]
+                    or label_rows[0][4] > label_rows[0][9]
+                    or label_rows[0][9] > frozen_at
+                    or label_rows[0][10] > frozen_at
+                ):
+                    raise ResearchQualificationConflict(
+                        "LOCKED_OOS_LABEL_METADATA_SCOPE_INCOMPLETE"
+                    )
+                label_row = label_rows[0]
+                raw = RawOOSEvidenceIdentity(
+                    subject=symbol,
+                    decision_session_date=decision_date,
+                    outcome_session_date=label_row[4].date(),
+                )
+                member = {
+                    "schema_version": "formal-locked-oos-roster-member/v1",
+                    "target_protocol_reference": (
+                        protocol.outcome_target_protocol_reference.to_canonical_dict()
+                    ),
+                    "target_reference": target.to_canonical_dict(),
+                    "subject": symbol,
+                    "decision_time": timestamp(request.decision_time),
+                    "outcome_time": timestamp(label_row[4]),
+                    "formal_pit_evidence_reference": ValidationArtifactReference(
+                        "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
+                    ).to_canonical_dict(),
+                    "forecast_reference": receipt.forecast_reference.to_canonical_dict(),
+                    "settlement_id": str(label_row[0]),
+                    "label_reference": ValidationArtifactReference(
+                        "TARGET_OUTCOME_LABEL",
+                        ArtifactId(str(label_row[1])),
+                        str(label_row[2]),
+                    ).to_canonical_dict(),
+                    "observation_set_reference": set_references[
+                        str(target.artifact_id)
+                    ].to_canonical_dict(),
+                    "raw_evidence_identity_hash": raw.identity_hash,
+                }
+                expected.append(member)
+    if covered_dates != locked_dates:
+        raise ResearchQualificationConflict("LOCKED_OOS_PIT_DATE_ROSTER_INCOMPLETE")
+    ordered = tuple(
+        sorted(
+            expected,
+            key=lambda item: (
+                str(item["decision_time"]),
+                str(item["subject"]),
+                str(_mapping(item["target_reference"])["artifact_id"]),
+            ),
+        )
+    )
+    expected_keys = {_locked_oos_member_binding_key(item) for item in ordered}
+    actual_keys: set[tuple[str, ...]] = set()
+    actual_locked_count = 0
+    pit_ids = tuple(pit.evidence_id for pit in pits)
+    for group in groups:
+        for binding in group.observation_bindings:
+            forecast, _score, _pit_id = _resolve_forecast_evaluation_input(
+                connection,
+                protocol=protocol,
+                target_reference=group.target_reference,
+                binding=binding,
+                require_formal_forecast=True,
+                formal_pit_evidence_ids=pit_ids,
+            )
+            if forecast.decision_time.date() not in locked_dates:
+                continue
+            actual_locked_count += 1
+            actual_keys.add(
+                (
+                    str(group.target_reference.artifact_id),
+                    group.target_reference.content_hash,
+                    str(binding.forecast_reference.artifact_id),
+                    binding.forecast_reference.content_hash,
+                    str(binding.label_reference.artifact_id),
+                    binding.label_reference.content_hash,
+                )
+            )
+    if (
+        actual_keys != expected_keys
+        or len(actual_keys) != len(ordered)
+        or actual_locked_count != len(ordered)
+    ):
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_SUBMITTED_BINDINGS_DO_NOT_EQUAL_FROZEN_ROSTER"
+        )
+    return ordered
+
+
+def _locked_oos_member_binding_key(
+    member: Mapping[str, Any],
+) -> tuple[str, ...]:
+    target = _mapping(member["target_reference"])
+    forecast = _mapping(member["forecast_reference"])
+    label = _mapping(member["label_reference"])
+    return (
+        str(target["artifact_id"]),
+        str(target["content_hash"]),
+        str(forecast["artifact_id"]),
+        str(forecast["content_hash"]),
+        str(label["artifact_id"]),
+        str(label["content_hash"]),
+    )
+
+
+def _locked_oos_member_storage_projection(
+    member: Mapping[str, Any],
+) -> tuple[object, ...]:
+    if member.get("schema_version") != "formal-locked-oos-roster-member/v1":
+        raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_MEMBER_SCHEMA_DRIFT")
+    target_protocol = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["target_protocol_reference"])
+    )
+    target = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["target_reference"])
+    )
+    pit = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["formal_pit_evidence_reference"])
+    )
+    forecast = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["forecast_reference"])
+    )
+    label = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["label_reference"])
+    )
+    observation_set = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["observation_set_reference"])
+    )
+    decision_time = _parse_timestamp(str(member["decision_time"]))
+    outcome_time = _parse_timestamp(str(member["outcome_time"]))
+    raw = RawOOSEvidenceIdentity(
+        subject=str(member["subject"]),
+        decision_session_date=decision_time.date(),
+        outcome_session_date=outcome_time.date(),
+    )
+    if (
+        target_protocol.artifact_kind != "OUTCOME_TARGET_PROTOCOL"
+        or target.artifact_kind != "OUTCOME_TARGET"
+        or pit.artifact_kind != "FORMAL_PIT_EVIDENCE"
+        or forecast.artifact_kind != "OUTCOME_TARGET_BOUND_FORECAST"
+        or label.artifact_kind != "TARGET_OUTCOME_LABEL"
+        or observation_set.artifact_kind != "FORMAL_EVALUATION_OBSERVATION_SET"
+        or member.get("raw_evidence_identity_hash") != raw.identity_hash
+    ):
+        raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_MEMBER_LINEAGE_DRIFT")
+    return (
+        canonical_hash(dict(member)),
+        str(target_protocol.artifact_id),
+        target_protocol.content_hash,
+        str(target.artifact_id),
+        target.content_hash,
+        str(member["subject"]),
+        decision_time,
+        outcome_time,
+        str(pit.artifact_id),
+        pit.content_hash,
+        str(forecast.artifact_id),
+        forecast.content_hash,
+        str(member["settlement_id"]),
+        str(label.artifact_id),
+        label.content_hash,
+        str(observation_set.artifact_id),
+    )
+
+
+def _insert_locked_oos_roster_member(
+    connection: Any,
+    *,
+    preparation: _LockedOOSRosterPreparation,
+    member: Mapping[str, Any],
+) -> None:
+    target_protocol = _mapping(member["target_protocol_reference"])
+    target = _mapping(member["target_reference"])
+    pit = _mapping(member["formal_pit_evidence_reference"])
+    forecast = _mapping(member["forecast_reference"])
+    label = _mapping(member["label_reference"])
+    observation_set = _mapping(member["observation_set_reference"])
+    connection.execute(
+        """
+        INSERT INTO formal_locked_oos_roster_member(
+            roster_id, member_hash, target_protocol_id, target_protocol_hash,
+            target_id, target_hash, subject,
+            decision_time, outcome_time, formal_pit_evidence_id,
+            formal_pit_evidence_hash, forecast_id, forecast_hash,
+            settlement_id, label_id, label_hash, observation_set_id,
+            payload_json
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        """,
+        (
+            str(preparation.roster_id),
+            canonical_hash(dict(member)),
+            str(target_protocol["artifact_id"]),
+            str(target_protocol["content_hash"]),
+            str(target["artifact_id"]),
+            str(target["content_hash"]),
+            str(member["subject"]),
+            _parse_timestamp(str(member["decision_time"])),
+            _parse_timestamp(str(member["outcome_time"])),
+            str(pit["artifact_id"]),
+            str(pit["content_hash"]),
+            str(forecast["artifact_id"]),
+            str(forecast["content_hash"]),
+            str(member["settlement_id"]),
+            str(label["artifact_id"]),
+            str(label["content_hash"]),
+            str(observation_set["artifact_id"]),
+            Jsonb(dict(member)),
+        ),
+    )
+
+
+def _require_locked_oos_roster(
+    connection: Any,
+    *,
+    preparation: _LockedOOSRosterPreparation,
+    protocol: FormalResearchProtocol,
+    family: FrozenHypothesisFamily,
+    groups: tuple[FamilyEvaluationObservationBindings, ...],
+    pits: tuple[FormalPITEvidenceArtifact, ...],
+    idempotency_key: str,
+    command_hash: str,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT roster_hash, family_id, family_hash, formal_protocol_id,
+               formal_protocol_hash, idempotency_key, command_hash,
+               locked_date_count, subject_date_count,
+               target_observation_count, payload_json, frozen_at
+        FROM formal_locked_oos_roster WHERE roster_id = %s
+        """,
+        (str(preparation.roster_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[10], Mapping):
+        raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_OWNER_MISSING")
+    payload = dict(row[10])
+    try:
+        pit_references = tuple(
+            ValidationArtifactReference.from_canonical_dict(_mapping(item))
+            for item in _sequence(payload.get("formal_pit_evidence_references", ()))
+        )
+        payload_family = ValidationArtifactReference.from_canonical_dict(
+            _mapping(payload.get("family_reference"))
+        )
+        payload_protocol = ValidationArtifactReference.from_canonical_dict(
+            _mapping(payload.get("formal_protocol_reference"))
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_ROSTER_PAYLOAD_REPLAY_FAILED"
+        ) from exc
+    expected_pits = tuple(
+        ValidationArtifactReference(
+            "FORMAL_PIT_EVIDENCE", pit.evidence_id, pit.evidence_hash
+        )
+        for pit in pits
+    )
+    members = tuple(
+        dict(_mapping(item)) for item in _sequence(payload.get("members", ()))
+    )
+    expected_sets = {
+        group.target_reference: _observation_set_reference(
+            protocol=protocol,
+            group=group,
+            created_at=preparation.frozen_at,
+        )
+        for group in groups
+    }
+    try:
+        member_lineage = tuple(
+            (
+                ValidationArtifactReference.from_canonical_dict(
+                    _mapping(member["target_protocol_reference"])
+                ),
+                ValidationArtifactReference.from_canonical_dict(
+                    _mapping(member["target_reference"])
+                ),
+                ValidationArtifactReference.from_canonical_dict(
+                    _mapping(member["formal_pit_evidence_reference"])
+                ),
+                ValidationArtifactReference.from_canonical_dict(
+                    _mapping(member["observation_set_reference"])
+                ),
+                _parse_timestamp(str(member["decision_time"])),
+            )
+            for member in members
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ResearchQualificationConflict(
+            "LOCKED_OOS_ROSTER_MEMBER_REPLAY_FAILED"
+        ) from exc
+    actual_group_keys = {
+        (
+            str(group.target_reference.artifact_id),
+            group.target_reference.content_hash,
+            str(binding.forecast_reference.artifact_id),
+            binding.forecast_reference.content_hash,
+            str(binding.label_reference.artifact_id),
+            binding.label_reference.content_hash,
+        )
+        for group in groups
+        for binding in group.observation_bindings
+        if any(
+            key[:4]
+            == (
+                str(group.target_reference.artifact_id),
+                group.target_reference.content_hash,
+                str(binding.forecast_reference.artifact_id),
+                binding.forecast_reference.content_hash,
+            )
+            for key in (_locked_oos_member_binding_key(item) for item in members)
+        )
+    }
+    member_keys = {_locked_oos_member_binding_key(item) for item in members}
+    locked_dates = tuple(
+        item.isoformat()
+        for item in _locked_oos_dates_from_family(protocol, family)
+    )
+    subject_date_count = len(
+        {
+            (str(item.get("subject")), str(item.get("decision_time")))
+            for item in members
+        }
+    )
+    expected_pit_set = set(expected_pits)
+    locked_date_set = {date.fromisoformat(item) for item in locked_dates}
+    if any(
+        target_protocol != protocol.outcome_target_protocol_reference
+        or target not in family.target_references
+        or pit not in expected_pit_set
+        or expected_sets.get(target) != observation_set
+        or decision_time.date() not in locked_date_set
+        for (
+            target_protocol,
+            target,
+            pit,
+            observation_set,
+            decision_time,
+        ) in member_lineage
+    ):
+        raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_MEMBER_LINEAGE_DRIFT")
+    if (
+        str(row[0]) != preparation.roster_hash
+        or str(row[1]) != str(family.family_id)
+        or str(row[2]) != family.family_hash
+        or str(row[3]) != str(protocol.protocol_id)
+        or str(row[4]) != protocol.protocol_hash
+        or str(row[5]) != idempotency_key
+        or str(row[6]) != command_hash
+        or int(row[7]) != len(locked_dates)
+        or int(row[8]) != subject_date_count
+        or int(row[9]) != len(members)
+        or row[11] != preparation.frozen_at
+        or canonical_hash(payload) != preparation.roster_hash
+        or payload.get("schema_version") != "formal-locked-oos-roster/v1"
+        or payload_family != family.reference
+        or payload_protocol
+        != ValidationArtifactReference(
+            "FORMAL_RESEARCH_PROTOCOL", protocol.protocol_id, protocol.protocol_hash
+        )
+        or tuple(str(item) for item in _sequence(payload.get("locked_dates", ())))
+        != locked_dates
+        or payload.get("command_hash") != command_hash
+        or payload.get("idempotency_key") != idempotency_key
+        or payload.get("frozen_at") != timestamp(preparation.frozen_at)
+        or payload.get("outcome_values_read") is not False
+        or pit_references != expected_pits
+        or actual_group_keys != member_keys
+    ):
+        raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_IDENTITY_CONFLICT")
+    stored_members = connection.execute(
+        """
+        SELECT member_hash, target_protocol_id, target_protocol_hash,
+               target_id, target_hash, subject, decision_time, outcome_time,
+               formal_pit_evidence_id, formal_pit_evidence_hash,
+               forecast_id, forecast_hash, settlement_id, label_id,
+               label_hash, observation_set_id, payload_json
+        FROM formal_locked_oos_roster_member
+        WHERE roster_id = %s
+        ORDER BY decision_time, subject, target_id
+        """,
+        (str(preparation.roster_id),),
+    ).fetchall()
+    if (
+        len(stored_members) != len(members)
+        or any(
+            not isinstance(row_value[16], Mapping)
+            or _locked_oos_member_storage_projection(dict(row_value[16]))
+            != tuple(row_value[:16])
+            for row_value in stored_members
+        )
+        or tuple(dict(item[16]) for item in stored_members) != members
+    ):
+        raise ResearchQualificationConflict("LOCKED_OOS_ROSTER_MEMBER_DRIFT")
+    for member in members:
+        _require_locked_oos_member_claim(
+            connection,
+            protocol=protocol,
+            family=family,
+            member=member,
+            consumed_at=preparation.frozen_at,
+        )
+
+
+def _claim_locked_oos_roster_member(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    family: FrozenHypothesisFamily,
+    member: Mapping[str, Any],
+    consumed_at: datetime,
+) -> None:
+    target = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["target_reference"])
+    )
+    forecast = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["forecast_reference"])
+    )
+    label = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["label_reference"])
+    )
+    observation_set = ValidationArtifactReference.from_canonical_dict(
+        _mapping(member["observation_set_reference"])
+    )
+    raw = RawOOSEvidenceIdentity(
+        subject=str(member["subject"]),
+        decision_session_date=_parse_timestamp(
+            str(member["decision_time"])
+        ).date(),
+        outcome_session_date=_parse_timestamp(str(member["outcome_time"])).date(),
+    )
+    _claim_raw_oos_unlock(
+        connection,
+        protocol=protocol,
+        family=family,
+        raw=raw,
+        unlocked_at=consumed_at,
+    )
+    consumption = LockedOOSTargetObservationConsumption.create(
+        raw_evidence_identity_hash=raw.identity_hash,
+        family_reference=family.reference,
+        target_reference=target,
+        forecast_reference=forecast,
+        label_reference=label,
+        observation_set_reference=observation_set,
+        consumed_at=consumed_at,
+    )
+    _insert_target_oos_consumption(connection, consumption)
+
+
+def _require_locked_oos_member_claim(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    family: FrozenHypothesisFamily,
+    member: Mapping[str, Any],
+    consumed_at: datetime,
+) -> None:
+    raw = RawOOSEvidenceIdentity(
+        subject=str(member["subject"]),
+        decision_session_date=_parse_timestamp(
+            str(member["decision_time"])
+        ).date(),
+        outcome_session_date=_parse_timestamp(str(member["outcome_time"])).date(),
+    )
+    _require_raw_oos_unlock(
+        connection,
+        raw=raw,
+        family=family,
+        protocol=protocol,
+        payload=_raw_oos_unlock_payload(raw=raw, family=family, protocol=protocol),
+    )
+    _require_target_oos_consumption(
+        connection,
+        LockedOOSTargetObservationConsumption.create(
+            raw_evidence_identity_hash=raw.identity_hash,
+            family_reference=family.reference,
+            target_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(member["target_reference"])
+            ),
+            forecast_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(member["forecast_reference"])
+            ),
+            label_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(member["label_reference"])
+            ),
+            observation_set_reference=(
+                ValidationArtifactReference.from_canonical_dict(
+                    _mapping(member["observation_set_reference"])
+                )
+            ),
+            consumed_at=consumed_at,
+        ),
+    )
+
+
 def _resolve_pre_oos_family_inputs(
     connection: Any,
     *,
@@ -2899,6 +3890,115 @@ def _state_slice(
     return str(row[1])
 
 
+def _claim_raw_oos_unlock(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    family: FrozenHypothesisFamily,
+    raw: RawOOSEvidenceIdentity,
+    unlocked_at: datetime,
+) -> None:
+    acquire_scope_lock(
+        connection,
+        namespace="locked-oos-raw-evidence-unlock",
+        identity=raw.identity_hash,
+    )
+    legacy = connection.execute(
+        """
+        SELECT evidence_identity_hash
+        FROM locked_oos_evidence_consumption
+        WHERE subject = %s AND session_date = %s
+          AND label_end_date = %s AND partition_kind = 'LOCKED_OOS'
+        LIMIT 1
+        """,
+        (raw.subject, raw.decision_session_date, raw.outcome_session_date),
+    ).fetchone()
+    if legacy is not None:
+        raise ResearchQualificationConflict(
+            "Raw Locked OOS Evidence was already unlocked by legacy Formal Evaluation"
+        )
+    payload = _raw_oos_unlock_payload(raw=raw, family=family, protocol=protocol)
+    connection.execute(
+        """
+        INSERT INTO locked_oos_raw_evidence_unlock(
+            raw_evidence_identity_hash, subject,
+            decision_session_date, outcome_session_date,
+            partition_kind, first_family_id, first_family_hash,
+            first_formal_protocol_id, first_formal_protocol_hash,
+            first_dataset_id, first_dataset_hash,
+            first_universe_id, first_universe_hash,
+            first_model_id, first_model_hash,
+            payload_json, unlocked_at
+        ) VALUES (
+            %s, %s, %s, %s, 'LOCKED_OOS', %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s
+        ) ON CONFLICT DO NOTHING
+        """,
+        (
+            raw.identity_hash,
+            raw.subject,
+            raw.decision_session_date,
+            raw.outcome_session_date,
+            str(family.family_id),
+            family.family_hash,
+            str(protocol.protocol_id),
+            protocol.protocol_hash,
+            str(protocol.dataset_reference.artifact_id),
+            protocol.dataset_reference.content_hash,
+            str(protocol.universe_reference.artifact_id),
+            protocol.universe_reference.content_hash,
+            str(protocol.model_reference.artifact_id),
+            protocol.model_reference.content_hash,
+            Jsonb(payload),
+            unlocked_at,
+        ),
+    )
+    _require_raw_oos_unlock(
+        connection,
+        raw=raw,
+        family=family,
+        protocol=protocol,
+        payload=payload,
+    )
+
+
+def _insert_target_oos_consumption(
+    connection: Any,
+    consumption: LockedOOSTargetObservationConsumption,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO locked_oos_target_observation_consumption(
+            consumption_id, consumption_hash,
+            raw_evidence_identity_hash, family_id, family_hash,
+            target_id, target_hash, forecast_id, forecast_hash,
+            label_id, label_hash, observation_set_id,
+            payload_json, consumed_at
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s
+        ) ON CONFLICT DO NOTHING
+        """,
+        (
+            str(consumption.consumption_id),
+            consumption.consumption_hash,
+            consumption.raw_evidence_identity_hash,
+            str(consumption.family_reference.artifact_id),
+            consumption.family_reference.content_hash,
+            str(consumption.target_reference.artifact_id),
+            consumption.target_reference.content_hash,
+            str(consumption.forecast_reference.artifact_id),
+            consumption.forecast_reference.content_hash,
+            str(consumption.label_reference.artifact_id),
+            consumption.label_reference.content_hash,
+            str(consumption.observation_set_reference.artifact_id),
+            Jsonb(consumption.to_canonical_dict()),
+            consumption.consumed_at,
+        ),
+    )
+    _require_target_oos_consumption(connection, consumption)
+
+
 def _consume_family_locked_oos(
     connection: Any,
     *,
@@ -2940,71 +4040,12 @@ def _consume_family_locked_oos(
                 decision_session_date=observation.session_date,
                 outcome_session_date=observation.label_end_date,
             )
-            acquire_scope_lock(
+            _claim_raw_oos_unlock(
                 connection,
-                namespace="locked-oos-raw-evidence-unlock",
-                identity=raw.identity_hash,
-            )
-            legacy = connection.execute(
-                """
-                SELECT evidence_identity_hash
-                FROM locked_oos_evidence_consumption
-                WHERE subject = %s AND session_date = %s
-                  AND label_end_date = %s AND partition_kind = 'LOCKED_OOS'
-                LIMIT 1
-                """,
-                (raw.subject, raw.decision_session_date, raw.outcome_session_date),
-            ).fetchone()
-            if legacy is not None:
-                raise ResearchQualificationConflict(
-                    "Raw Locked OOS Evidence was already unlocked by legacy Formal Evaluation"
-                )
-            raw_payload = _raw_oos_unlock_payload(
-                raw=raw,
-                family=family,
                 protocol=protocol,
-            )
-            connection.execute(
-                """
-                INSERT INTO locked_oos_raw_evidence_unlock(
-                    raw_evidence_identity_hash, subject,
-                    decision_session_date, outcome_session_date,
-                    partition_kind, first_family_id, first_family_hash,
-                    first_formal_protocol_id, first_formal_protocol_hash,
-                    first_dataset_id, first_dataset_hash,
-                    first_universe_id, first_universe_hash,
-                    first_model_id, first_model_hash,
-                    payload_json, unlocked_at
-                ) VALUES (
-                    %s, %s, %s, %s, 'LOCKED_OOS', %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s
-                ) ON CONFLICT DO NOTHING
-                """,
-                (
-                    raw.identity_hash,
-                    raw.subject,
-                    raw.decision_session_date,
-                    raw.outcome_session_date,
-                    str(family.family_id),
-                    family.family_hash,
-                    str(protocol.protocol_id),
-                    protocol.protocol_hash,
-                    str(protocol.dataset_reference.artifact_id),
-                    protocol.dataset_reference.content_hash,
-                    str(protocol.universe_reference.artifact_id),
-                    protocol.universe_reference.content_hash,
-                    str(protocol.model_reference.artifact_id),
-                    protocol.model_reference.content_hash,
-                    Jsonb(raw_payload),
-                    consumed_at,
-                ),
-            )
-            _require_raw_oos_unlock(
-                connection,
-                raw=raw,
                 family=family,
-                protocol=protocol,
-                payload=raw_payload,
+                raw=raw,
+                unlocked_at=consumed_at,
             )
             consumption = LockedOOSTargetObservationConsumption.create(
                 raw_evidence_identity_hash=raw.identity_hash,
@@ -3015,37 +4056,7 @@ def _consume_family_locked_oos(
                 observation_set_reference=set_reference,
                 consumed_at=consumed_at,
             )
-            connection.execute(
-                """
-                INSERT INTO locked_oos_target_observation_consumption(
-                    consumption_id, consumption_hash,
-                    raw_evidence_identity_hash, family_id, family_hash,
-                    target_id, target_hash, forecast_id, forecast_hash,
-                    label_id, label_hash, observation_set_id,
-                    payload_json, consumed_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s
-                ) ON CONFLICT DO NOTHING
-                """,
-                (
-                    str(consumption.consumption_id),
-                    consumption.consumption_hash,
-                    consumption.raw_evidence_identity_hash,
-                    str(family.family_id),
-                    family.family_hash,
-                    str(group.target_reference.artifact_id),
-                    group.target_reference.content_hash,
-                    str(binding.forecast_reference.artifact_id),
-                    binding.forecast_reference.content_hash,
-                    str(binding.label_reference.artifact_id),
-                    binding.label_reference.content_hash,
-                    str(set_reference.artifact_id),
-                    Jsonb(consumption.to_canonical_dict()),
-                    consumed_at,
-                ),
-            )
-            _require_target_oos_consumption(connection, consumption)
+            _insert_target_oos_consumption(connection, consumption)
 
 
 def _raw_oos_unlock_payload(
@@ -3830,6 +4841,64 @@ def _observation_set_payload(
     }
 
 
+def _record_observation_set_header(
+    connection: Any,
+    *,
+    set_reference: ValidationArtifactReference,
+    payload: Mapping[str, Any],
+    formal_protocol: FormalResearchProtocol,
+    group: FamilyEvaluationObservationBindings,
+    created_at: datetime,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO formal_evaluation_observation_set(
+            observation_set_id, observation_set_hash, formal_protocol_id,
+            panel_id, target_protocol_id, target_id, target_hash,
+            observation_count, payload_json, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (observation_set_id) DO NOTHING
+        """,
+        (
+            str(set_reference.artifact_id),
+            set_reference.content_hash,
+            str(formal_protocol.protocol_id),
+            str(group.panel_reference.artifact_id),
+            str(formal_protocol.outcome_target_protocol_reference.artifact_id),
+            str(group.target_reference.artifact_id),
+            group.target_reference.content_hash,
+            len(group.observation_bindings),
+            Jsonb(dict(payload)),
+            created_at,
+        ),
+    )
+    stored = connection.execute(
+        """
+        SELECT observation_set_hash, formal_protocol_id, panel_id,
+               target_protocol_id, target_id, target_hash,
+               observation_count, payload_json, created_at
+        FROM formal_evaluation_observation_set
+        WHERE observation_set_id = %s
+        """,
+        (str(set_reference.artifact_id),),
+    ).fetchone()
+    expected = (
+        set_reference.content_hash,
+        str(formal_protocol.protocol_id),
+        str(group.panel_reference.artifact_id),
+        str(formal_protocol.outcome_target_protocol_reference.artifact_id),
+        str(group.target_reference.artifact_id),
+        group.target_reference.content_hash,
+        len(group.observation_bindings),
+        dict(payload),
+        created_at,
+    )
+    if stored is None or tuple(stored) != expected:
+        raise ResearchQualificationConflict(
+            "Formal Evaluation observation-set header identity conflict"
+        )
+
+
 def _record_observation_set(
     connection: Any,
     *,
@@ -3845,27 +4914,21 @@ def _record_observation_set(
     ],
     created_at: datetime,
 ) -> None:
-    connection.execute(
-        """
-        INSERT INTO formal_evaluation_observation_set(
-            observation_set_id, observation_set_hash, formal_protocol_id,
-            panel_id, target_protocol_id, target_id, target_hash,
-            observation_count, payload_json, created_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (observation_set_id) DO NOTHING
-        """,
-        (
-            str(observation_set_id),
+    _record_observation_set_header(
+        connection,
+        set_reference=ValidationArtifactReference(
+            "FORMAL_EVALUATION_OBSERVATION_SET",
+            observation_set_id,
             observation_set_hash,
-            str(formal_protocol.protocol_id),
-            str(panel_reference.artifact_id),
-            str(formal_protocol.outcome_target_protocol_reference.artifact_id),
-            str(target_reference.artifact_id),
-            target_reference.content_hash,
-            len(bindings),
-            Jsonb(dict(observation_set_payload)),
-            created_at,
         ),
+        payload=observation_set_payload,
+        formal_protocol=formal_protocol,
+        group=FamilyEvaluationObservationBindings(
+            target_reference=target_reference,
+            panel_reference=panel_reference,
+            observation_bindings=bindings,
+        ),
+        created_at=created_at,
     )
     for binding, (observation, settlement_id, _, _pit_id) in zip(
         bindings, resolved, strict=True
@@ -4072,6 +5135,20 @@ def _sequence(value: object) -> tuple[object, ...]:
             "Qualification owner payload is not an array"
         )
     return tuple(value)
+
+
+def _parse_timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ResearchQualificationConflict(
+            "Qualification owner timestamp is invalid"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ResearchQualificationConflict(
+            "Qualification owner timestamp must be timezone-aware"
+        )
+    return parsed
 
 
 __all__ = [

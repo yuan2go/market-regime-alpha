@@ -93,14 +93,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (55, "phase_c_gate_authority"),
     (56, "phase_c_correctness_closure"),
     (57, "formal_research_runtime_closure"),
+    (58, "locked_oos_roster_authority"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 58))
-    assert len({item.name for item in migrations}) == 57
+    assert tuple(item.version for item in migrations) == tuple(range(1, 59))
+    assert len({item.name for item in migrations}) == 58
     assert all(
         item.checksum == sha256(item.sql.encode("utf-8")).hexdigest()
         for item in migrations
@@ -125,13 +126,13 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 58))
+    assert tuple(item.version for item in first) == tuple(range(1, 59))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute(
             "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert len(rows) == 57
+    assert len(rows) == 58
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -349,7 +350,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (57,)
+    assert applied == (58,)
     assert restored == account
 
 
@@ -787,7 +788,9 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
             ),
         )
 
-    upgraded = PostgresMigrator().apply_all(postgres_factory)
+    upgraded = PostgresMigrator(migrations=migrations[:57]).apply_all(
+        postgres_factory
+    )
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (57, "formal_research_runtime_closure"),
@@ -839,3 +842,69 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         dataset_hash,
         owner_payload_hash,
     )
+
+
+def test_migration_058_adds_label_blind_locked_oos_roster_forward_only(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:57]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (58, "locked_oos_roster_authority"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = tuple(
+            str(value)
+            for value in connection.execute(
+                """
+                SELECT to_regclass('formal_locked_oos_roster'),
+                       to_regclass('formal_locked_oos_roster_member')
+                """
+            ).fetchone()
+        )
+        guards = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT event_object_table, trigger_name
+                FROM information_schema.triggers
+                WHERE trigger_schema = current_schema()
+                  AND event_object_table IN (
+                    'formal_locked_oos_roster',
+                    'formal_locked_oos_roster_member'
+                  )
+                """
+            ).fetchall()
+        }
+        member_columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'formal_locked_oos_roster_member'
+                """
+            ).fetchall()
+        }
+    assert tables == (
+        "formal_locked_oos_roster",
+        "formal_locked_oos_roster_member",
+    )
+    assert guards == {
+        ("formal_locked_oos_roster", "formal_locked_oos_roster_no_update"),
+        (
+            "formal_locked_oos_roster_member",
+            "formal_locked_oos_roster_member_no_update",
+        ),
+    }
+    assert {
+        "target_protocol_id",
+        "target_protocol_hash",
+        "formal_pit_evidence_id",
+        "forecast_id",
+        "label_id",
+        "observation_set_id",
+    }.issubset(member_columns)

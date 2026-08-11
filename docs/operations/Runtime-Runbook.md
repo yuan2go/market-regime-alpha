@@ -47,8 +47,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 057, `formal_research_runtime_closure`. Expected schema
-catalog: 201 tables. Migrations 052–057 add Formal Protocol bindings and
+Expected head: migration 058, `locked_oos_roster_authority`. Expected schema
+catalog: 203 tables. Migrations 052–058 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -193,8 +193,14 @@ Locked-OOS Label, PostgreSQL owner-resolves one SATISFIED C3 decision per frozen
 Target from metadata-only Dataset lineage, proves the exact PIT set is consumed
 and runs the frozen Train/Validation metric floor over the complete family.
 Formal C3 Datasets for new Protocols are Train/Validation-only; their realized
-payload is not loaded by the pre-OOS barrier. Label identity, Target, symbol and
-interval metadata are checked before any label value payload. Only then does it
+payload is not loaded by the pre-OOS barrier. Migration 058 derives a complete,
+label-value-blind Locked roster from the frozen windows, Formal PIT requests,
+owner-computed Forecast receipts and Target Label metadata. The roster must
+exactly equal the submitted Locked bindings; it and every raw/Target consumption
+claim commit in an independent transaction before any Locked `label_json` read.
+A later evaluation failure therefore cannot restore pristine OOS status. Label
+identity, Target revision, symbol and interval metadata are checked before any
+label value payload. Only then does it
 reconstruct Locked-OOS
 returns, label intervals and slices and freeze the complete result-affecting
 lineage. A raw subject/decision-session/outcome-session path is unlocked once;

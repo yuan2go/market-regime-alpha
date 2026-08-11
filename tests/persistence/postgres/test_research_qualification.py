@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+import market_regime_alpha.application.research_validation.postgres_qualification as qualification_module
+
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
@@ -222,12 +224,117 @@ def test_family_evaluation_rejects_c3_before_reading_or_unlocking_locked_oos(
             connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             for table in (
                 "formal_evaluation_observation_set",
+                "formal_locked_oos_roster",
+                "formal_locked_oos_roster_member",
                 "locked_oos_raw_evidence_unlock",
                 "locked_oos_target_observation_consumption",
                 "formal_hypothesis_family_evaluation",
             )
         )
-    assert counts == (0, 0, 0, 0)
+    assert counts == (0, 0, 0, 0, 0, 0)
+
+
+def test_family_evaluation_commits_roster_claim_before_full_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Cursor:
+        def fetchone(self) -> None:
+            return None
+
+    class Connection:
+        def execute(self, _query: str, _parameters: object) -> Cursor:
+            return Cursor()
+
+    class TwoPhaseFactory:
+        transactions = 0
+        roster_committed = False
+
+        def run_transaction(self, operation: Any) -> Any:
+            self.transactions += 1
+            phase = self.transactions
+            events.append(f"transaction-{phase}-begin")
+            result = operation(Connection())
+            if phase == 1:
+                self.roster_committed = True
+                events.append("roster-claim-committed")
+            return result
+
+        class ReadOnlyConnection:
+            def __enter__(self) -> Connection:
+                return Connection()
+
+            def __exit__(self, *_values: object) -> None:
+                return None
+
+        def connection(self, *, read_only: bool = False) -> ReadOnlyConnection:
+            assert read_only
+            return self.ReadOnlyConnection()
+
+    factory = TwoPhaseFactory()
+    frozen_at = NOW
+
+    def prepare(_connection: object, **_values: object) -> object:
+        events.append("roster-claim-written")
+        return qualification_module._LockedOOSRosterPreparation(
+            ArtifactId("formal-locked-oos-roster:test"),
+            canonical_hash({"roster": "test"}),
+            frozen_at,
+        )
+
+    def fail_full_resolution(_connection: object, _protocol_id: ArtifactId) -> object:
+        assert factory.roster_committed
+        events.append("full-resolution-after-commit")
+        raise ResearchQualificationConflict("SIMULATED_LOCKED_LABEL_PHASE_FAILURE")
+
+    monkeypatch.setattr(qualification_module, "_prepare_locked_oos_roster", prepare)
+    monkeypatch.setattr(qualification_module, "_load_formal_protocol", fail_full_resolution)
+    authority = object.__new__(PostgresResearchQualificationAuthority)
+    authority._factory = factory  # type: ignore[assignment]
+    group = FamilyEvaluationObservationBindings(
+        target_reference=_reference("OUTCOME_TARGET", "two-phase-target"),
+        panel_reference=_reference("RESEARCH_PANEL_V2", "two-phase-panel"),
+        observation_bindings=(
+            FormalEvaluationObservationBinding.create(
+                forecast_reference=_reference(
+                    "OUTCOME_TARGET_BOUND_FORECAST", "two-phase-forecast"
+                ),
+                label_reference=_reference(
+                    "TARGET_OUTCOME_LABEL", "two-phase-label"
+                ),
+                panel_slice_reference=_reference(
+                    "RESEARCH_PANEL_SLICE_V2", "two-phase-slice"
+                ),
+                panel_row_reference=_reference(
+                    "RESEARCH_PANEL_ROW_V2", "two-phase-row"
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ResearchQualificationConflict,
+        match="SIMULATED_LOCKED_LABEL_PHASE_FAILURE",
+    ):
+        authority.record_family_evaluation_candidate(
+            formal_protocol_id=ArtifactId("two-phase-protocol"),
+            observation_groups=(group,),
+            historical_sample_decision_ids=(ArtifactId("two-phase-c3"),),
+            formal_pit_evidence_id=ArtifactId("two-phase-pit"),
+            actor="phase-c-test",
+            reason="prove durable claim boundary",
+            idempotency_key="two-phase-evaluation",
+        )
+
+    assert factory.transactions == 2
+    assert events == [
+        "transaction-1-begin",
+        "roster-claim-written",
+        "roster-claim-committed",
+        "transaction-2-begin",
+        "full-resolution-after-commit",
+    ]
 
 
 def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
@@ -260,6 +367,9 @@ def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
                     canonical_hash({"settlement": "locked"}),
                     "locked-decision",
                     canonical_hash({"decision": "locked"}),
+                    target.content_hash,
+                    target_protocol.content_hash,
+                    "metadata-dataset",
                 )
             ]
 
@@ -281,7 +391,12 @@ def test_train_forecast_cannot_read_substituted_locked_label_payload() -> None:
     ):
         _load_evaluation_label_metadata(
             connection,
-            protocol=SimpleNamespace(outcome_target_protocol_reference=target_protocol),  # type: ignore[arg-type]
+            protocol=SimpleNamespace(
+                outcome_target_protocol_reference=target_protocol,
+                dataset_reference=SimpleNamespace(
+                    artifact_id=ArtifactId("metadata-dataset")
+                ),
+            ),  # type: ignore[arg-type]
             target_reference=target,
             binding=binding,
             forecast=SimpleNamespace(symbol="000001.SZ", decision_time=forecast_time),  # type: ignore[arg-type]

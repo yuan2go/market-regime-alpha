@@ -28,7 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 201 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 203 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -346,11 +346,11 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Canonical Writer:** `PostgresResearchValidationRepository` for engineering artifacts; Formal Protocol/Forecast, Historical/family-OOS, Calibration and Phase C gate repositories own only their respective facts and decisions.
 - **Reader:** payload, factor exposure and historical-sample Readers.
 - **Repository:** `PostgresResearchValidationRepository`.
-- **PostgreSQL tables:** the engineering tables plus `formal_research_protocol*`, `formal_forecast_computation_*`, `frozen_hypothesis_family*`, `locked_oos_raw_evidence_unlock`, `locked_oos_target_observation_consumption`, `formal_hypothesis_family_evaluation*`, observation bindings, Historical/OOS decision tables, Calibration qualification/binding tables and `phase_c_stage_decision`.
+- **PostgreSQL tables:** the engineering tables plus `formal_research_protocol*`, `formal_forecast_computation_*`, `frozen_hypothesis_family*`, `formal_locked_oos_roster*`, `locked_oos_raw_evidence_unlock`, `locked_oos_target_observation_consumption`, `formal_hypothesis_family_evaluation*`, observation bindings, Historical/OOS decision tables, Calibration qualification/binding tables and `phase_c_stage_decision`.
 - **Artifact / Receipt:** engineering Validation artifacts, owner-computed Forecast receipt, Frozen Hypothesis Family, Historical Sample Dataset, family Evaluation result, Calibration artifact and Entry/Holding evidence.
 - **Runtime caller:** `continuous-research settle-day` automatically invokes the PostgreSQL PathForecast calibration bridge after Panel enrichment; offline harnesses remain available for method-level research.
 - **Downstream consumer:** human research review, C6/C7 gates and persisted Production Admission floor resolution.
-- **Replay mechanism:** immutable typed Target/Evaluation/component reload, metadata-only C3 pre-OOS resolution, full Frozen Calendar payload/date replay, PIT-only Forecast recomputation, one-time raw OOS unlock, Target-observation and family-multiplicity replay, mandatory Train/Validation readiness before any Locked label payload, exact Calibration partitions and Entry→Outcome replay. Pre-057 Protocols and migration-027 Registry action envelopes remain replay-only. Bare caller references or submitted Forecast values cannot establish a positive decision.
+- **Replay mechanism:** immutable typed Target/Evaluation/component reload, metadata-only C3 pre-OOS resolution, full Frozen Calendar payload/date replay, PIT-only Forecast recomputation, label-value-blind complete Locked roster freeze, durable pre-read raw/Target consumption, Target-observation and family-multiplicity replay, mandatory Train/Validation readiness before any Locked label payload, exact Calibration partitions and Entry→Outcome replay. Pre-057 Protocols and migration-027 Registry action envelopes remain replay-only. Bare caller references or submitted Forecast values cannot establish a positive decision.
 - **Evidence ceiling:** migration 046 remains unchanged; later owner writers can only satisfy a gate from exact upstream owner evidence. Current upstream evidence is absent.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
