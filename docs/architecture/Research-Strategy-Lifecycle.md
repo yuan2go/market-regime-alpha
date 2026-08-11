@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical research/strategy responsibility split
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Code Evidence:** `src/market_regime_alpha/application/research_evaluation`, `src/market_regime_alpha/application/research_validation`, `src/market_regime_alpha/application/shadow_research`, `src/market_regime_alpha/application/strategy_shadow`
 
 ## Lifecycle
@@ -53,6 +53,76 @@ function that converts those exploratory artifacts into qualified evidence.
 Migration 046 enforces that choice at the database layer.
 
 The next legitimate implementation is a set of narrow owner-specific writers, added only after real inputs exist. A universal evidence resolver or a caller-supplied “resolved” DTO would recreate the same false-Authority problem.
+
+## Phase D Alpha proof foundation decision
+
+> **Decision state:** APPROVED, implementation in progress
+
+Phase D converges the existing research owners around one semantic spine rather
+than adding another governance plane:
+
+```text
+Frozen Experiment Definition
+-> Canonical Target/Horizon
+-> deterministic measure-oriented Forecast computation
+-> Outcome settlement
+-> metric-specific Evaluation and Calibration
+-> target-bound Strategy/Portfolio research
+-> diagnostic Attribution
+-> frozen follow-up Experiment
+```
+
+The following decisions are normative for the implementation:
+
+- Confidence intervals describe sampling uncertainty. Hypothesis tests use a
+  separately frozen null, benchmark, alternative and inference method. Effect
+  size and economic significance remain separate results. Metrics without a
+  defensible frozen null do not manufacture a p-value.
+- `FormalResearchProtocol` remains the experiment Authority. Its immutable,
+  content-addressed Experiment Definition freezes the research question,
+  hypothesis, decision time, target, feature and model search space, budget,
+  metrics, multiplicity family, stopping rule, train/validation and
+  purge/embargo policies, OOS policy, randomness and cost assumptions before
+  execution. A mutation creates a different Protocol identity and cannot reuse
+  consumed Locked OOS evidence.
+- `TargetDefinition` is the canonical semantic identity shared by Forecast,
+  Outcome, Evaluation and Calibration. Strategy policies bind that identity but
+  retain independent Holding and Exit responsibilities. A bar that touches both
+  barriers without adequate path resolution is `AMBIGUOUS`/`NOT_OBSERVABLE`;
+  the system never invents an intrabar path.
+- Forecast estimators are deterministic mathematical kernels independent of PIT
+  qualification. Exploratory Research may execute them over explicitly
+  unqualified data. Only the existing owner-resolving Formal gate may persist a
+  Formal Forecast, and only from qualified PIT inputs.
+- Forecast output is measure-oriented. Expected return, downside, direction,
+  barriers, MFE and MAE each report `AVAILABLE` or `NOT_ESTIMABLE`. An
+  uncalibrated classifier emits a raw score or logit, never a probability.
+- Free public data remains `EXPLORATORY`/`PIT_INCOMPLETE`/`UNQUALIFIED` unless
+  its real Provider evidence satisfies the existing contract. Phase D neither
+  weakens the floor nor makes a paid Provider a dependency.
+
+The approved public seams are:
+
+```text
+FormalResearchProtocol.create(..., experiment_definition=...)
+FormalEvaluationProtocol.create(..., hypothesis_specs=...)
+TargetDefinition.create(..., canonical_horizon=...)
+FormalForecastExecutor.compute(resolved_owner_context)
+ResearchDecisionSessionKernel.run_next(...)
+HistoricalResearchRunner.run/resume/replay(...)
+run_shadow_portfolio_day(..., target_identity, policy_v2)
+FreeDataSettlementOperator.settle_day(...)
+```
+
+Earlier Phase D work is an implementation inventory, not a merge unit. Each
+capability is classified against the current `main` schema and this decision as
+`REUSE`, `PORT`, `REWRITE` or `DROP`. New migrations start after the current
+migration head and express only the accepted current semantics; historical
+migrations are not mechanically cherry-picked.
+
+The implementation order is dependency-bound: Statistics, Protocol/Target,
+Formal Forecast, Alpha/Ablation, Strategy Economics, Portfolio Risk,
+Attribution/Feedback, architecture simplification and full verification.
 
 ## Non-claims
 
