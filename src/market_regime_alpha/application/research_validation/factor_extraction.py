@@ -30,6 +30,9 @@ from market_regime_alpha.market_data import Timeframe, VerifiedMarketDataDataset
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
 from market_regime_alpha.signals.v3 import SignalRunArtifactV3
+from market_regime_alpha.signals.research_semantics import (
+    project_signal_research_measures,
+)
 
 
 class FactorFamily(str, Enum):
@@ -644,9 +647,10 @@ def _signal_exposures(symbols: tuple[str, ...], signal: SignalRunArtifactV3 | No
     for snapshot in signal.snapshots:
         if snapshot.symbol not in symbols:
             continue
+        measures = project_signal_research_measures(snapshot)
         for name, value in (
-            ("signal_score", snapshot.signal_score),
-            ("confidence", snapshot.confidence),
+            ("signal_strength", measures.signal_strength),
+            ("data_completeness", measures.data_completeness),
             ("confirmation_count", snapshot.confirmation_count),
         ):
             numeric, text = _split_scalar(value)
@@ -664,7 +668,11 @@ def _signal_exposures(symbols: tuple[str, ...], signal: SignalRunArtifactV3 | No
                     (),
                     None,
                     reference,
-                    f"snapshots.{snapshot.artifact_id}.{name}",
+                    (
+                        f"snapshots.{snapshot.artifact_id}.confidence"
+                        if name == "data_completeness"
+                        else f"snapshots.{snapshot.artifact_id}.{name}"
+                    ),
                 )
             )
     return result
