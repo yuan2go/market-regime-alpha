@@ -195,6 +195,15 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "pit_trading_calendar_canonical_snapshot",
         "formal_research_protocol_component_owner_resolution",
         "locked_oos_evidence_consumption",
+        "frozen_hypothesis_family",
+        "frozen_hypothesis_family_target",
+        "formal_forecast_computation_receipt",
+        "formal_forecast_computation_command",
+        "locked_oos_raw_evidence_unlock",
+        "locked_oos_target_observation_consumption",
+        "formal_hypothesis_family_evaluation",
+        "formal_hypothesis_family_evaluation_target",
+        "phase_c_formal_operator_command",
     }
 )
 
@@ -288,6 +297,42 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "locked_oos_evidence_consumption",
             "locked_oos_evidence_consumption_no_update",
+        ),
+        (
+            "frozen_hypothesis_family",
+            "frozen_hypothesis_family_no_update",
+        ),
+        (
+            "frozen_hypothesis_family_target",
+            "frozen_hypothesis_family_target_no_update",
+        ),
+        (
+            "formal_forecast_computation_receipt",
+            "formal_forecast_computation_receipt_no_update",
+        ),
+        (
+            "formal_forecast_computation_command",
+            "formal_forecast_computation_command_no_update",
+        ),
+        (
+            "locked_oos_raw_evidence_unlock",
+            "locked_oos_raw_evidence_unlock_no_update",
+        ),
+        (
+            "locked_oos_target_observation_consumption",
+            "locked_oos_target_observation_consumption_no_update",
+        ),
+        (
+            "formal_hypothesis_family_evaluation",
+            "formal_hypothesis_family_evaluation_no_update",
+        ),
+        (
+            "formal_hypothesis_family_evaluation_target",
+            "formal_hypothesis_family_evaluation_target_no_update",
+        ),
+        (
+            "phase_c_formal_operator_command",
+            "phase_c_formal_operator_command_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -89,9 +89,20 @@ from market_regime_alpha.application.strategy_shadow.postgres_portfolio import (
 from market_regime_alpha.application.strategy_shadow.postgres_repository import (
     PostgresStrategyShadowRepository,
 )
-from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId, TargetId
+from market_regime_alpha.core.identity import (
+    ArtifactId,
+    DatasetId,
+    FeatureDefinitionId,
+    ModelId,
+    TargetId,
+    UniverseId,
+)
 from market_regime_alpha.core.time import AvailabilityTime, DecisionTime
 from market_regime_alpha.data.pit_authority import PITArtifactReference
+from market_regime_alpha.data.pit_artifact_authority import (
+    PITArtifactAuthorityResolution,
+)
+from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.data.postgres_trading_calendar import (
     PostgresPITTradingCalendarSnapshotRepository,
 )
@@ -120,17 +131,36 @@ from market_regime_alpha.platform.durable_governance import PersistentModelRegis
 from market_regime_alpha.platform.postgres_runtime_governance import (
     PostgresModelGovernanceRepository,
 )
-from market_regime_alpha.platform.runtime_governance import ModelVersionLineage
+from market_regime_alpha.platform.runtime_governance import (
+    ArtifactLineageReference,
+    ModelVersionLineage,
+)
 from market_regime_alpha.strategies.entry.contracts import (
     EntryPathObservationStatus,
     EntryPathReasonCode,
 )
-from tests.persistence.postgres.pit_fixture import MutableClock, pit_authority
+from tests.persistence.postgres.pit_fixture import (
+    HASH_A,
+    FixturePITArtifactAuthorityResolver,
+    MutableClock,
+    fixture_provider_policy,
+)
 from tests.platform.test_platform_kernel import _model_definition
-from tests.platform.test_runtime_governance import _lineage
 
 
 NOW = datetime(2026, 8, 1, 8, tzinfo=UTC)
+
+
+class StablePhaseCPITResolver(FixturePITArtifactAuthorityResolver):
+    """Keep owner-resolution identity stable across Phase C fixture writers."""
+
+    def resolve(
+        self,
+        reference: PITArtifactReference,
+        *,
+        resolved_at: datetime,
+    ) -> PITArtifactAuthorityResolution:
+        return super().resolve(reference, resolved_at=NOW)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +180,12 @@ def record_phase_c_protocol_owners(
     targets = engineering_multi_horizon_protocol()
     PostgresTargetOutcomeRepository(factory).register_protocol(targets)
     target = targets.targets[0]
+    definition = replace(
+        _model_definition(),
+        target_id=TargetId(str(target.target_id)),
+        universe_id=UniverseId("universe-a"),
+        feature_ids=(FeatureDefinitionId("feature-a"),),
+    )
     target_reference = ValidationArtifactReference(
         "OUTCOME_TARGET", target.target_id, target.target_hash
     )
@@ -159,11 +195,18 @@ def record_phase_c_protocol_owners(
     validation = PostgresResearchValidationRepository(factory)
     validation.record_formal_evaluation_protocol(evaluation)
 
-    universe_reference = _reference("UNIVERSE", "phase-c-owner-universe")
-    dataset_reference = _reference(
-        "MARKET_DATA_DATASET", "phase-c-owner-dataset"
+    universe_reference = ValidationArtifactReference(
+        "UNIVERSE", ArtifactId(str(definition.universe_id)), HASH_A
     )
-    pit = pit_authority(factory, clock=MutableClock(NOW))
+    dataset_reference = ValidationArtifactReference(
+        "MARKET_DATA_DATASET", ArtifactId("dataset-a"), HASH_A
+    )
+    pit = PostgresPITAuthority(
+        factory,
+        clock=MutableClock(NOW),
+        artifact_resolver=StablePhaseCPITResolver(),
+        provider_policy=fixture_provider_policy(),
+    )
     calendar_reference = ValidationArtifactReference(
         "TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash
     )
@@ -184,7 +227,7 @@ def record_phase_c_protocol_owners(
     validation.record_sample_dataset(historical)
     feature_set = FeatureDefinitionSet.create(
         definition_set_version="phase-c-owner-v1",
-        definitions=(_feature_definition(),),
+        definitions=(_feature_definition(str(definition.feature_ids[0])),),
         locked_at=NOW,
     )
     validation.record_feature_definition_set(feature_set)
@@ -196,15 +239,51 @@ def record_phase_c_protocol_owners(
     validation.record_factor_catalog(factor_catalog)
 
     governance = PostgresModelGovernanceRepository(factory)
-    definition = _model_definition()
     PersistentModelRegistry(governance).register(
         definition, idempotency_key="phase-c-owner-model-register"
     )
     model_lineage = governance.record_version_lineage(
-        _lineage(definition),
+        ModelVersionLineage.create(
+            model_id=definition.model_id,
+            model_version=definition.version,
+            definition_hash=definition.definition_hash,
+            target_id=definition.target_id,
+            universe_contract_id=definition.universe_id,
+            feature_definition_ids=definition.feature_ids,
+            model_parameter_hash=definition.parameter_hash,
+            configuration=ArtifactLineageReference(
+                reference_kind="MODEL_CONFIGURATION",
+                artifact_id=ArtifactId("configuration-a"),
+                content_hash=HASH_A,
+            ),
+            implementation_ref=definition.implementation_ref,
+            code_revision="80bd8e85daf6115bbf147fcd3bfbe60ce781e02c",
+            code_hash=canonical_hash(
+                {"code_revision": "phase-c-owner-model-code-v1"}
+            ),
+            validation_protocol_refs=(
+                ArtifactLineageReference(
+                    reference_kind="VALIDATION_PROTOCOL",
+                    artifact_id=evaluation.protocol_id,
+                    content_hash=evaluation.protocol_hash,
+                ),
+            ),
+            supported_data_eligibilities=definition.supported_data_eligibilities,
+            created_at=NOW,
+        ),
         actor="phase-c-owner-test",
         reason="freeze exact model lineage",
         idempotency_key="phase-c-owner-model-lineage",
+    )
+    pit.resolve_artifact(
+        PITArtifactReference(
+            "CONFIGURATION",
+            model_lineage.configuration.artifact_id,
+            model_lineage.configuration.content_hash,
+        ),
+        actor="phase-c-owner-test",
+        reason="resolve exact Model Configuration owner",
+        idempotency_key="resolve-model-configuration",
     )
     threshold = ThresholdPolicy.create(
         policy_version="phase-c-owner-v1",
@@ -472,9 +551,9 @@ def _historical_dataset(
     )
 
 
-def _feature_definition() -> FeatureDefinitionV2:
+def _feature_definition(feature_id: str) -> FeatureDefinitionV2:
     return FeatureDefinitionV2.create(
-        feature_id="phase_c.owner_feature.v1",
+        feature_id=feature_id,
         feature_version="1.0.0",
         model_id=ModelId("phase-c-owner-feature-model"),
         model_version="1.0.0",
@@ -500,7 +579,7 @@ def _factor_enrichment(
     exposure = ResearchFactorExposure(
         symbol="000001.SZ",
         family=FactorFamily.PRICE,
-        factor_id="phase_c.owner_feature.v1",
+        factor_id=definition.feature_id,
         timeframe="DAILY",
         raw_numeric=Decimal("1"),
         raw_text=None,

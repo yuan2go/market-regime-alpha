@@ -508,13 +508,17 @@ class FormalOOSQualificationDecision:
         expected_kinds = {
             "policy_reference": "FORMAL_OOS_QUALIFICATION_POLICY",
             "formal_protocol_reference": "FORMAL_RESEARCH_PROTOCOL",
-            "evaluation_result_reference": "FORMAL_EVALUATION_RESULT",
             "historical_sample_decision_reference": "HISTORICAL_SAMPLE_QUALIFICATION_DECISION",
             "formal_pit_reference": "FORMAL_PIT_EVIDENCE",
         }
         for name, kind in expected_kinds.items():
             if getattr(self, name).artifact_kind != kind:
                 raise ValueError(f"Formal OOS {name} kind mismatch")
+        if self.evaluation_result_reference.artifact_kind not in {
+            "FORMAL_EVALUATION_RESULT",
+            "FORMAL_HYPOTHESIS_FAMILY_EVALUATION_RESULT",
+        }:
+            raise ValueError("Formal OOS evaluation_result_reference kind mismatch")
         if canonical_hash(self.identity_payload()) != self.decision_hash:
             raise ValueError("Formal OOS Qualification hash mismatch")
         if self.decision_id != ArtifactId(

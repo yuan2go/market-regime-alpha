@@ -118,6 +118,59 @@ class ResearchFactorExposure:
             "source_value_path": self.source_value_path,
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> ResearchFactorExposure:
+        expected = {
+            "symbol",
+            "family",
+            "factor_id",
+            "timeframe",
+            "raw_numeric",
+            "raw_text",
+            "normalized_exposure",
+            "model_contribution",
+            "gate_result",
+            "missingness",
+            "available_at",
+            "source_reference",
+            "source_value_path",
+        }
+        if set(value) != expected or not isinstance(value["missingness"], list):
+            raise ValueError("Research Factor Exposure fields mismatch")
+
+        def optional_decimal(name: str) -> Decimal | None:
+            raw = value[name]
+            return None if raw is None else Decimal(str(raw))
+
+        available = value["available_at"]
+        return cls(
+            symbol=str(value["symbol"]),
+            family=FactorFamily(str(value["family"])),
+            factor_id=str(value["factor_id"]),
+            timeframe=(
+                None if value["timeframe"] is None else str(value["timeframe"])
+            ),
+            raw_numeric=optional_decimal("raw_numeric"),
+            raw_text=(
+                None if value["raw_text"] is None else str(value["raw_text"])
+            ),
+            normalized_exposure=optional_decimal("normalized_exposure"),
+            model_contribution=optional_decimal("model_contribution"),
+            gate_result=(
+                None if value["gate_result"] is None else str(value["gate_result"])
+            ),
+            missingness=tuple(str(item) for item in value["missingness"]),
+            available_at=(
+                None if available is None else datetime.fromisoformat(str(available))
+            ),
+            source_reference=ValidationArtifactReference.from_canonical_dict(
+                value["source_reference"]
+            ),
+            source_value_path=str(value["source_value_path"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ResearchPanelEnrichment:
@@ -182,6 +235,40 @@ class ResearchPanelEnrichment:
             "enrichment_hash": self.enrichment_hash,
             **self.identity_payload(),
         }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> ResearchPanelEnrichment:
+        expected = {
+            "enrichment_id",
+            "enrichment_hash",
+            "panel_reference",
+            "exposures",
+            "extracted_at",
+            "limitations",
+            "schema_version",
+        }
+        if set(value) != expected:
+            raise ValueError("Panel Enrichment fields mismatch")
+        exposures = value["exposures"]
+        limitations = value["limitations"]
+        if not isinstance(exposures, list) or not isinstance(limitations, list):
+            raise ValueError("Panel Enrichment arrays are invalid")
+        return cls(
+            enrichment_id=ArtifactId(str(value["enrichment_id"])),
+            enrichment_hash=str(value["enrichment_hash"]),
+            panel_reference=ValidationArtifactReference.from_canonical_dict(
+                value["panel_reference"]
+            ),
+            exposures=tuple(
+                ResearchFactorExposure.from_canonical_dict(item)
+                for item in exposures
+            ),
+            extracted_at=datetime.fromisoformat(str(value["extracted_at"])),
+            limitations=tuple(str(item) for item in limitations),
+            schema_version=str(value["schema_version"]),
+        )
 
 
 def extract_canonical_factors(

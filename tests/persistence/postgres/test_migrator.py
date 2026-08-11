@@ -83,14 +83,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (54, "calibration_qualification_authority"),
     (55, "phase_c_gate_authority"),
     (56, "phase_c_correctness_closure"),
+    (57, "formal_research_runtime_closure"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 57))
-    assert len({item.name for item in migrations}) == 56
+    assert tuple(item.version for item in migrations) == tuple(range(1, 58))
+    assert len({item.name for item in migrations}) == 57
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -112,11 +113,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 57))
+    assert tuple(item.version for item in first) == tuple(range(1, 58))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 56
+    assert len(rows) == 57
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -304,7 +305,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
     ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (56,)
+    assert applied == (57,)
     assert restored == account
 
 
@@ -612,3 +613,44 @@ def test_migration_029_adds_append_only_research_summary_authority(
         "research_summary_stage_no_delete",
         "research_summary_stage_no_update",
     }
+
+
+def test_migration_057_upgrades_056_without_mutating_prior_authorities(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:56]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (57, "formal_research_runtime_closure"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = tuple(
+            str(value)
+            for value in connection.execute(
+                """
+                SELECT to_regclass('frozen_hypothesis_family'),
+                       to_regclass('formal_forecast_computation_receipt'),
+                       to_regclass('locked_oos_raw_evidence_unlock'),
+                       to_regclass('locked_oos_target_observation_consumption'),
+                       to_regclass('formal_hypothesis_family_evaluation')
+                """
+            ).fetchone()
+        )
+        old_migration = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 46"
+        ).fetchone()
+        old_consumption = connection.execute(
+            "SELECT to_regclass('locked_oos_evidence_consumption')"
+        ).fetchone()
+    assert tables == (
+        "frozen_hypothesis_family",
+        "formal_forecast_computation_receipt",
+        "locked_oos_raw_evidence_unlock",
+        "locked_oos_target_observation_consumption",
+        "formal_hypothesis_family_evaluation",
+    )
+    assert old_migration is not None
+    assert old_consumption == ("locked_oos_evidence_consumption",)

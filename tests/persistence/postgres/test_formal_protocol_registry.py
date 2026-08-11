@@ -55,9 +55,23 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
             payload=caller_panel,
             created_at=NOW,
         )
+    forged_family = {"schema_version": "formal-hypothesis-family-evaluation-result/v1"}
+    with pytest.raises(ValueError, match="typed owner-specific writer"):
+        PostgresResearchValidationRepository(postgres_factory).record(
+            artifact_id=ArtifactId("caller-family-evaluation"),
+            artifact_hash=canonical_hash(forged_family),
+            artifact_kind="FORMAL_HYPOTHESIS_FAMILY_EVALUATION_RESULT",
+            evidence_authority="ENGINEERING_ONLY",
+            payload=forged_family,
+            created_at=NOW,
+        )
 
     assert repository.record_protocol(protocol=protocol) == protocol
     assert repository.record_protocol(protocol=protocol) == protocol
+    family = repository.get_hypothesis_family(protocol.protocol_id)
+    assert family.formal_protocol_reference.artifact_id == protocol.protocol_id
+    assert family.target_references == protocol.target_references
+    assert family.hypothesis_family_key == fixture.evaluation.hypothesis_family_id
 
     forged_payload = protocol.identity_payload()
     forged_payload["frozen_trading_dates"] = [
@@ -159,5 +173,14 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
             "SELECT count(*) FROM outcome_target_bound_forecast"
         ).fetchone()[0] == 1
         assert connection.execute(
+            "SELECT forecast_authority FROM outcome_target_bound_forecast"
+        ).fetchone() == ("EXPLORATORY_CALLER_SUBMITTED",)
+        assert connection.execute(
             "SELECT count(*) FROM outcome_target_bound_forecast_estimate"
+        ).fetchone()[0] == len(fixture.targets.targets)
+        assert connection.execute(
+            "SELECT count(*) FROM frozen_hypothesis_family"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM frozen_hypothesis_family_target"
         ).fetchone()[0] == len(fixture.targets.targets)

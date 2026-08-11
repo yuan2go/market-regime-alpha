@@ -8,7 +8,7 @@ from decimal import Decimal
 from enum import Enum
 from math import exp, log
 from statistics import fmean
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
@@ -104,6 +104,39 @@ class CalibrationProtocol:
             "maximum_iterations": self.maximum_iterations,
             "learning_rate": str(self.learning_rate),
         }
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_id": str(self.protocol_id),
+            "protocol_hash": self.protocol_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(cls, value: Mapping[str, Any]) -> CalibrationProtocol:
+        expected = {
+            "protocol_id",
+            "protocol_hash",
+            "schema",
+            "protocol_version",
+            "method",
+            "bin_count",
+            "minimum_fit_samples",
+            "maximum_iterations",
+            "learning_rate",
+        }
+        if set(value) != expected or value["schema"] != "calibration-protocol/v1":
+            raise ValueError("Calibration Protocol fields mismatch")
+        return cls(
+            protocol_id=ArtifactId(str(value["protocol_id"])),
+            protocol_hash=str(value["protocol_hash"]),
+            protocol_version=str(value["protocol_version"]),
+            method=CalibrationMethod(str(value["method"])),
+            bin_count=int(value["bin_count"]),
+            minimum_fit_samples=int(value["minimum_fit_samples"]),
+            maximum_iterations=int(value["maximum_iterations"]),
+            learning_rate=Decimal(str(value["learning_rate"])),
+        )
 
 
 @dataclass(frozen=True, slots=True)
