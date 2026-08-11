@@ -45,6 +45,40 @@ class EntryResearchModel:
     required_inputs: tuple[str, ...]
     limitations: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        require_sha256("model_hash", self.model_hash)
+        expected_inputs = {
+            EntryResearchVariant.SELECTED_CANDIDATE_PASS_THROUGH: (
+                "candidate_score",
+            ),
+            EntryResearchVariant.CANDIDATE_ONLY: ("candidate_score",),
+            EntryResearchVariant.CANDIDATE_SIGNAL: (
+                "candidate_score",
+                "signal_score",
+            ),
+            EntryResearchVariant.CANDIDATE_FORECAST: (
+                "candidate_score",
+                "forecast_score",
+            ),
+            EntryResearchVariant.CANDIDATE_INTRADAY: (
+                "candidate_score",
+                "intraday_score",
+            ),
+        }[self.variant]
+        if self.required_inputs != expected_inputs:
+            raise ValueError("Entry Research Model required input drift")
+        if self.variant is EntryResearchVariant.SELECTED_CANDIDATE_PASS_THROUGH:
+            if self.score_threshold is not None:
+                raise ValueError("Selected-Candidate pass-through cannot add a threshold")
+        elif self.score_threshold is None or not Decimal("0") <= self.score_threshold <= Decimal("1"):
+            raise ValueError("Entry research threshold must be within [0, 1]")
+        if self.limitations != tuple(sorted(set(self.limitations))):
+            raise ValueError("Entry Research Model limitations must be sorted and unique")
+        if canonical_hash(self.identity_payload()) != self.model_hash:
+            raise ValueError("Entry Research Model hash mismatch")
+        if str(self.model_id) != f"entry-research-model:{self.model_hash[7:]}":
+            raise ValueError("Entry Research Model identity mismatch")
+
     @classmethod
     def create(
         cls,
@@ -91,6 +125,28 @@ class EntryResearchModel:
             "limitations": list(self.limitations),
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        *,
+        model_id: ModelId,
+        model_hash: str,
+        value: dict[str, Any],
+    ) -> EntryResearchModel:
+        return cls(
+            model_id=model_id,
+            model_hash=model_hash,
+            model_version=str(value["model_version"]),
+            variant=EntryResearchVariant(str(value["variant"])),
+            score_threshold=(
+                None
+                if value["score_threshold"] is None
+                else Decimal(str(value["score_threshold"]))
+            ),
+            required_inputs=tuple(str(item) for item in value["required_inputs"]),
+            limitations=tuple(str(item) for item in value["limitations"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class EntryResearchAssessment:
@@ -123,6 +179,39 @@ class EntryResearchAssessment:
             self.decision,
             self.reason_codes,
             self.source_references,
+        )
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        *,
+        assessment_id: ArtifactId,
+        assessment_hash: str,
+        value: dict[str, Any],
+    ) -> EntryResearchAssessment:
+        return cls(
+            assessment_id=assessment_id,
+            assessment_hash=assessment_hash,
+            model_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["model_reference"])
+            ),
+            symbol=str(value["symbol"]),
+            decision_time=datetime.fromisoformat(str(value["decision_time"])),
+            inputs=tuple(
+                (str(item[0]), None if item[1] is None else Decimal(str(item[1])))
+                for item in value["inputs"]
+            ),
+            aggregate_score=(
+                None
+                if value["aggregate_score"] is None
+                else Decimal(str(value["aggregate_score"]))
+            ),
+            decision=EntryResearchDecision(str(value["decision"])),
+            reason_codes=tuple(str(item) for item in value["reason_codes"]),
+            source_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in value["source_references"]
+            ),
         )
 
 
@@ -372,6 +461,12 @@ def build_unqualified_entry_evidence(
 
 def _mean(values: list[Decimal]) -> Decimal | None:
     return None if not values else sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _mapping(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Entry Research payload is not an object")
+    return value
 
 
 def _assessment_payload(

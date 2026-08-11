@@ -32,6 +32,7 @@ from market_regime_alpha.data.pit_authority import (
     PITValidationOutcome,
     RecordedPITFactRevision,
     ProviderQualificationPolicy,
+    ProviderQualificationPolicyV2,
     formal_pit_request_rejection_codes,
     require_unique_required_fact_keys,
 )
@@ -64,7 +65,7 @@ class PostgresPITAuthority(NativePostgresRepository):
         *,
         clock: Clock | None = None,
         artifact_resolver: PITArtifactAuthorityResolver | None = None,
-        provider_policy: ProviderQualificationPolicy | None = None,
+        provider_policy: ProviderQualificationPolicy | ProviderQualificationPolicyV2 | None = None,
     ) -> None:
         super().__init__(factory)
         self._clock = clock
@@ -213,7 +214,10 @@ class PostgresPITAuthority(NativePostgresRepository):
             )
         try:
             self._provider_policy.require_level(
-                qualification.provider_id, qualification.evidence_level
+                qualification.provider_id,
+                qualification.evidence_level,
+                provider_contract=qualification.provider_contract,
+                fact_kinds=qualification.qualified_fact_kinds,
             )
             if (
                 qualification.status is PITSourceAuthorityStatus.QUALIFIED

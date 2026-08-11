@@ -261,10 +261,7 @@ class StrategyShadowDayOperator:
             )
 
         policy = StrategyShadowPolicy.create(
-            # The Strategy Shadow schema binds a Policy Artifact to one session.
-            # Include the frozen decision identity so identical rules on another
-            # day cannot collide with that session-local immutable Artifact.
-            policy_version=f"free-data-t-plus-one-shadow-v1:{decision.decision_id}",
+            policy_version="free-data-t-plus-one-shadow-v1",
             rule_kinds=(HoldingRuleKind.FIXED_TIME,),
             fixed_horizon_sessions=1,
             trailing_drawdown=None,
@@ -302,15 +299,9 @@ class StrategyShadowDayOperator:
             ),
             created_at=decision.decision_frozen_at,
         )
-        self._strategy_repository.save_artifact(
-            _artifact_record(
-                session=session,
-                kind=StrategyShadowArtifactKind.POLICY,
-                value=policy,
-                artifact_id=policy.policy_id,
-                artifact_hash=policy.policy_hash,
-                created_at=decision.decision_frozen_at,
-            )
+        self._strategy_repository.save_policy(
+            policy,
+            created_at=decision.decision_frozen_at,
         )
         if session.status is StrategyShadowSessionStatus.SETTLED:
             outcome = self._require_restored_artifact(

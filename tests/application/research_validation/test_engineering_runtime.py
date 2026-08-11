@@ -261,7 +261,7 @@ def test_formal_evaluation_runs_but_cannot_emit_oos_without_formal_pit() -> None
     assert result.formal_oos is False
     assert result.authority is ResearchEvidenceAuthority.ENGINEERING_ONLY
     assert "REAL_FORMAL_PIT_REQUIRED" in result.reason_codes
-    assert "FORMAL_OOS_OWNER_RESOLUTION_NOT_IMPLEMENTED" in result.reason_codes
+    assert "FORMAL_OOS_OWNER_QUALIFICATION_REQUIRED" in result.reason_codes
     assert {item.partition for item in result.metrics} == {EvaluationPartition.VALIDATION}
     assert {item.sensitivity_return_multiplier for item in result.metrics} == {
         Decimal("0.9"),
@@ -352,4 +352,9 @@ def test_entry_and_production_admission_remain_blocked() -> None:
     assert admission.status is ProductionAdmissionStatus.BLOCKED
     assert admission.production_authorized is False
     assert set(admission.blocked_floors) == set(AdmissionFloor)
-    assert {item.value for item in AdmissionFloorStatus} == {"MISSING", "REJECTED"}
+    assert {item.value for item in AdmissionFloorStatus} == {
+        "BLOCKED",
+        "MISSING",
+        "REJECTED",
+        "SATISFIED",
+    }

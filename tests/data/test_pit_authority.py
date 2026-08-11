@@ -21,12 +21,14 @@ from market_regime_alpha.data.pit_authority import (
     PITProviderEvidence,
     PITProviderEvidenceKind,
     PITProviderEvidenceUse,
+    ProviderFactCeiling,
     PITRequiredFact,
     PITSelectedFactAuthority,
     PITValidationLineage,
     PITValidationOutcome,
     PITSourceEvidenceLevel,
     ProviderQualificationPolicy,
+    ProviderQualificationPolicyV2,
     formal_pit_request_rejection_codes,
 )
 
@@ -179,6 +181,53 @@ def test_default_provider_policy_prevents_authority_inflation() -> None:
                 provider_id,
                 PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER,
             )
+
+
+def test_provider_policy_v2_is_scoped_by_contract_and_fact_kind() -> None:
+    policy = ProviderQualificationPolicyV2.default()
+
+    assert policy.maximum_level(
+        "provider-baostock-public",
+        provider_contract="baostock-public-history-v1",
+        fact_kind=PITFactKind.MARKET_DATA,
+    ) is PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY
+    assert policy.maximum_level(
+        "provider-baostock-public",
+        provider_contract="baostock-public-history-v1",
+        fact_kind=PITFactKind.ST_STATUS,
+    ) is PITSourceEvidenceLevel.PIT_INCOMPLETE
+    with pytest.raises(PITContractError, match="MARKET_DATA"):
+        policy.require_level(
+            "provider-baostock-public",
+            PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER,
+            provider_contract="baostock-public-history-v1",
+            fact_kinds=(PITFactKind.MARKET_DATA,),
+        )
+
+    candidate = ProviderQualificationPolicyV2.create(
+        scope_ceilings=(
+            ProviderFactCeiling(
+                "qualified-provider",
+                "qualified-contract-v1",
+                PITFactKind.MARKET_DATA,
+                PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER,
+            ),
+        ),
+        default_ceiling=PITSourceEvidenceLevel.PIT_INCOMPLETE,
+    )
+    candidate.require_level(
+        "qualified-provider",
+        PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER,
+        provider_contract="qualified-contract-v1",
+        fact_kinds=(PITFactKind.MARKET_DATA,),
+    )
+    with pytest.raises(PITContractError, match="ST_STATUS"):
+        candidate.require_level(
+            "qualified-provider",
+            PITSourceEvidenceLevel.FORMAL_PIT_PROVIDER,
+            provider_contract="qualified-contract-v1",
+            fact_kinds=(PITFactKind.ST_STATUS,),
+        )
 
 
 def test_historical_provider_mode_requires_typed_revision_archive_evidence() -> None:

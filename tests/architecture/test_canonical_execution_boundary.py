@@ -121,7 +121,12 @@ def test_reference_only_research_helpers_cannot_grant_qualification() -> None:
             )
 
     assert prohibited.isdisjoint(definitions)
-    assert {item.value for item in AdmissionFloorStatus} == {"MISSING", "REJECTED"}
+    assert {item.value for item in AdmissionFloorStatus} == {
+        "SATISFIED",
+        "MISSING",
+        "REJECTED",
+        "BLOCKED",
+    }
     assert {item.value for item in ProductionAdmissionStatus} == {"BLOCKED"}
 
 

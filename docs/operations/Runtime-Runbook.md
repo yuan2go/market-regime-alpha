@@ -16,6 +16,14 @@ uv run continuous-research settle-day --help
 uv run continuous-research strategy-day --help
 uv run continuous-research portfolio-shadow-day --help
 uv run continuous-research recovery-audit --help
+uv run continuous-research qualification-protocol-record --help
+uv run continuous-research qualification-forecast-record --help
+uv run continuous-research qualification-evaluation-record --help
+uv run continuous-research qualification-historical --help
+uv run continuous-research qualification-oos --help
+uv run continuous-research qualification-calibration --help
+uv run continuous-research qualification-shadow --help
+uv run continuous-research qualification-status --help
 uv run model-governance --help
 uv run pit-authority --help
 ```
@@ -39,7 +47,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 051, `path_calibration_hypothesis`. Expected schema catalog: 159 tables. Migrations 047–051 add retrospective free evidence, Research Universe, Portfolio Shadow, engineering access-governance owners and immutable calibration-hypothesis evidence; migration 046's qualification and Production constraints remain unchanged and fail-closed. Missing/unreachable PostgreSQL is a blocked operation; there is no alternate persistent backend.
+Expected head: migration 055, `phase_c_gate_authority`. Expected schema catalog: 182 tables. Migrations 052–055 add Formal Protocol component bindings, Provider×Contract×Fact decisions, Historical/Locked-OOS/Calibration owners, reusable Strategy Shadow Policy, C6/C7 stage decisions, persisted blocked Production Admission and Controlled Execution readiness. Migration 046 remains unchanged. Missing/unreachable PostgreSQL is a blocked operation; there is no alternate persistent backend.
 
 Migration 046 intentionally stops if an existing database contains reference-only qualified Validation or Historical Sample rows. Do not update or delete those append-only rows in place. Preserve/export the database, audit the owning evidence, and use a separately reviewed forward-repair migration before retrying 046.
 
@@ -141,6 +149,38 @@ Panel V2, partial Strategy Shadow and failed Portfolio replay. It reports the
 owner command to use; it does not mutate or bypass a fence.
 
 Free data may run only in `RESEARCH` or `SHADOW`. A Production request must fail with `FREE_DATA_PRODUCTION_AUTHORITY_DENIED`. Do not edit status rows, receipts or hashes to recover a run; resume through the owning journal.
+
+## Phase C evidence resolution
+
+Use `pit-authority assess-provider-fact` separately for every exact Provider,
+Contract and Fact Kind. It reloads typed source qualifications/evidence and may
+return `QUALIFIED`, `INCOMPLETE`, `REJECTED`, `SUSPENDED` or `REVOKED`; never
+copy one Fact Kind's status to another. Current BaoStock/Tencent scopes resolve
+`REJECTED` until independently validated formal evidence exists.
+`pit-authority revoke-provider-fact` appends an explicit terminal revocation;
+ordinary reassessment cannot silently reinstate that scope.
+
+`qualification-protocol-record` requires the Formal Protocol, Target Protocol,
+Evaluation Protocol and exact payload for every component, including the full
+Frozen Trading Calendar semantic payload. `qualification-forecast-record`
+requires an exact OutcomeTarget-bound Forecast.
+`qualification-evaluation-record` accepts only immutable Forecast, Target
+Outcome Label and Panel slice/row bindings; PostgreSQL reconstructs score,
+return, label interval and slices, freezes the complete result-affecting
+lineage, and rejects Locked OOS reuse across Formal Protocols. It never accepts
+caller-supplied observation values. `qualification-historical` and
+`qualification-oos` persist C3/C4 owner decisions; the latter replays those
+owner-resolved observations, the frozen Calendar and metrics.
+`qualification-calibration` accepts a frozen policy file but re-reads the
+Formal Protocol, target/label/Forecast pair, calibration artifact, partition
+bindings and Formal OOS decision. `qualification-shadow` counts only sessions
+created and scheduled after its policy lock with `LIVE_TRUSTED` clock and
+`LIVE_ACQUISITION` origin; it replays session events, SourceManifest,
+attestation, complete T+1 factual Outcome, Strategy Outcome and Portfolio day. `qualification-status`
+persists C6, C8 and C9 state. An optional `--entry-policy` records the exact C6
+policy and owner bindings. These commands can persist negative, blocked,
+not-estimable or accumulating results. They do not invoke a Broker, unlock
+Canonical `ENTER`, or automatically promote a model.
 
 ## Authority administration
 

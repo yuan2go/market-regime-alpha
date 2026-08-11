@@ -6,21 +6,32 @@
 > **Last Updated:** 2026-08-11
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
-## P0 Architecture and Authority correctness
+## Phase C current order
 
-1. Preserve the single Continuous Runtime and PostgreSQL-only composition.
-2. Keep migration 046 fail-closed while designing owner-specific Historical Sample and Formal OOS writers.
-3. Preserve the converged six installed-script/six installed-CLI-module-guard operator boundary.
-4. Continue Legacy consumer measurement; delete only after Reader/replay/migration demand reaches zero.
+1. **C0 engineering complete:** freeze Target, Calendar, evaluation partitions and
+   every result-affecting component payload; never reuse Locked OOS for tuning.
+2. **C1 engineering complete, evidence rejected:** collect independent
+   Provider archive/version/revision/availability evidence by Contract and Fact
+   Kind. Current BaoStock/Tencent assessments do not satisfy the floor.
+3. **C2–C6 engineering ready, evidence blocked:** do not create Formal PIT,
+   Historical qualification, Locked OOS, Calibration or strategy qualification
+   until the immediately preceding owner has satisfied evidence.
+4. **C7 engineering ready, evidence accumulating:** operate the one Continuous
+   Runtime prospectively under a pre-frozen policy; Replay/Fixture/history never
+   count as sessions.
+5. **C8–C9 engineering fail-closed:** keep Production Admission and Controlled
+   Execution blocked until all Formal, authentication, approval and external
+   Broker floors independently exist.
 
-P0 must not add model parameters, Alpha claims or trading permissions.
+Phase C must not add model parameters, Alpha claims or trading permissions to
+make a gate pass.
 
 ## P1 Operational evidence completion
 
 1. Run exact-window free-data Research/Shadow operations and recovery drills.
 2. Accumulate real prospective outcome/attestation evidence under trusted clock/origin rules.
 3. Bind external authentication and execute repeated backup/restore, recovery-audit and observability drills; the RBAC/Approval owners already exist.
-4. Implement narrow qualification writers only when their owner evidence exists.
+4. Resolve the existing narrow qualification writers only when their owner evidence exists.
 
 ## P2 Free-data operational research
 

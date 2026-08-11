@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import re
 import subprocess
+
+from scripts.apply_postgres_migrations import main as apply_migrations_main
+from market_regime_alpha.persistence.postgres.connection import (
+    PostgresConnectionFactory,
+)
+from tests.persistence.postgres.conftest import (
+    TEST_DATABASE_URL_ENV,
+    postgres_factory as postgres_factory,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +81,25 @@ def test_status_and_runbook_keep_authority_ceiling_explicit() -> None:
         "production_ready = false",
     ):
         assert declaration in status
-    assert "Expected head: migration 051" in runbook
+    assert "Expected head: migration 055" in runbook
     assert "Production qualification is currently forced closed" in runbook
     assert "no alternate persistent backend" in runbook
+
+
+def test_apply_migrations_honors_explicit_application_schema(
+    postgres_factory: PostgresConnectionFactory,
+    capsys,
+) -> None:
+    assert apply_migrations_main(
+        [
+            "--database-url",
+            os.environ[TEST_DATABASE_URL_ENV],
+            "--database-schema",
+            postgres_factory.application_schema,
+        ]
+    ) == 0
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["postgres_schema"] == postgres_factory.application_schema
+    assert output["latest_migration"] == 55
+    assert output["authority_table_count"] == 182

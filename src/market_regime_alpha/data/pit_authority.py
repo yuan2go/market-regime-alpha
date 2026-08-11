@@ -23,10 +23,12 @@ from market_regime_alpha.data.pit_contracts import (
     PITProviderEvidence,
     PITProviderEvidenceKind,
     PITProviderEvidenceUse,
+    ProviderFactCeiling,
     PITSourceAuthorityStatus,
     PITSourceEvidenceLevel,
     PITValidationOutcome,
     ProviderQualificationPolicy,
+    ProviderQualificationPolicyV2,
 )
 from market_regime_alpha.data.pit_source_authority import (
     PITFactTemporalAuthority,
@@ -1124,6 +1126,7 @@ __all__ = [
     "PITProviderEvidence",
     "PITProviderEvidenceKind",
     "PITProviderEvidenceUse",
+    "ProviderFactCeiling",
     "PITRequiredFact",
     "PITSelectedFactAuthority",
     "PITSourceAuthorityStatus",
@@ -1133,6 +1136,7 @@ __all__ = [
     "PITValidationOutcome",
     "RecordedPITFactRevision",
     "ProviderQualificationPolicy",
+    "ProviderQualificationPolicyV2",
     "formal_pit_request_rejection_codes",
     "require_unique_required_fact_keys",
 ]

@@ -73,6 +73,18 @@ class FormalEvaluationProtocol:
     sensitivity_return_multipliers: tuple[Decimal, ...]
     locked_at: datetime
 
+    def __post_init__(self) -> None:
+        require_sha256("protocol_hash", self.protocol_hash)
+        require_text("protocol_version", self.protocol_version)
+        if self.protocol_id != ArtifactId(
+            f"formal-evaluation-protocol:{self.protocol_hash[7:]}"
+        ):
+            raise ValueError("Formal Evaluation Protocol identity mismatch")
+        if self.locked_at.tzinfo is None or self.locked_at.utcoffset() is None:
+            raise ValueError("Formal Evaluation Protocol lock time must be timezone-aware")
+        if canonical_hash(self.identity_payload()) != self.protocol_hash:
+            raise ValueError("Formal Evaluation Protocol hash mismatch")
+
     @classmethod
     def create(
         cls,
@@ -143,6 +155,83 @@ class FormalEvaluationProtocol:
             sensitivity,
             locked_at,
         )
+
+    def identity_payload(self) -> dict[str, Any]:
+        return _protocol_payload(
+            self.protocol_version,
+            self.target_protocol_reference,
+            self.windows,
+            self.embargo_sessions,
+            self.bootstrap_iterations,
+            self.bootstrap_block_sessions,
+            self.confidence_level,
+            self.multiple_testing_method,
+            self.hypothesis_family_id,
+            self.top_k,
+            self.sensitivity_return_multipliers,
+            self.locked_at,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_id": str(self.protocol_id),
+            "protocol_hash": self.protocol_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: dict[str, Any]
+    ) -> FormalEvaluationProtocol:
+        windows_value = value["windows"]
+        sensitivity_value = value["sensitivity_return_multipliers"]
+        if not isinstance(windows_value, list) or not isinstance(
+            sensitivity_value, list
+        ):
+            raise ValueError("Formal Evaluation Protocol payload arrays are invalid")
+        protocol = cls(
+            protocol_id=ArtifactId(str(value["protocol_id"])),
+            protocol_hash=str(value["protocol_hash"]),
+            protocol_version=str(value["protocol_version"]),
+            target_protocol_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping_value(value["target_protocol_reference"])
+            ),
+            windows=tuple(
+                EvaluationWindow(
+                    window_id=str(_mapping_value(item)["window_id"]),
+                    partition=EvaluationPartition(
+                        str(_mapping_value(item)["partition"])
+                    ),
+                    start_date=date.fromisoformat(
+                        str(_mapping_value(item)["start_date"])
+                    ),
+                    end_date=date.fromisoformat(
+                        str(_mapping_value(item)["end_date"])
+                    ),
+                    fold=int(_mapping_value(item)["fold"]),
+                )
+                for item in windows_value
+            ),
+            embargo_sessions=int(value["embargo_sessions"]),
+            purge_overlapping_labels=bool(value["purge_overlapping_labels"]),
+            bootstrap_iterations=int(value["bootstrap_iterations"]),
+            bootstrap_block_sessions=int(value["bootstrap_block_sessions"]),
+            confidence_level=Decimal(str(value["confidence_level"])),
+            multiple_testing_method=MultipleTestingMethod(
+                str(value["multiple_testing_method"])
+            ),
+            hypothesis_family_id=str(value["hypothesis_family_id"]),
+            top_k=int(value["top_k"]),
+            sensitivity_return_multipliers=tuple(
+                Decimal(str(item)) for item in sensitivity_value
+            ),
+            locked_at=datetime.fromisoformat(str(value["locked_at"])),
+        )
+        if value.get("schema") != "formal-evaluation-protocol/v2":
+            raise ValueError("unsupported Formal Evaluation Protocol schema")
+        if value.get("bootstrap_method") != "TRADING_DATE_MOVING_BLOCK":
+            raise ValueError("Formal Evaluation bootstrap method drift")
+        return protocol
 
 
 def derive_embargo_sessions(target_protocol: OutcomeTargetProtocol) -> int:
@@ -271,13 +360,18 @@ def run_formal_evaluation(
     formal_pit_evidence: FormalPITEvidenceArtifact | None,
     created_at: datetime,
     panel_source_references: tuple[ValidationArtifactReference, ...] = (),
+    frozen_trading_dates: tuple[date, ...] = (),
 ) -> FormalEvaluationResult:
     if not observations:
         raise ValueError("Evaluation Runtime requires observations")
     ids = tuple(item.observation_id for item in observations)
     if len(ids) != len(set(ids)):
         raise ValueError("Evaluation observations must be unique")
-    admitted, excluded = _admit_observations(protocol, observations)
+    admitted, excluded = _admit_observations(
+        protocol,
+        observations,
+        frozen_trading_dates=frozen_trading_dates,
+    )
     if not admitted:
         raise ValueError("purging and Embargo removed every Evaluation observation")
     formal_pit_rejections = _formal_pit_rejections(
@@ -288,10 +382,9 @@ def run_formal_evaluation(
     )
     real_formal_pit_candidate = not formal_pit_rejections
     locked_oos_present = any(window.partition is EvaluationPartition.LOCKED_OOS for _item, window in admitted)
-    # This pure research harness cannot reload the PIT owner or persist a
-    # qualified Formal OOS artifact.  Migration 046 enforces the same ceiling
-    # in PostgreSQL.  A future owner-resolving writer must perform that
-    # transition; typed caller input is deliberately insufficient.
+    # This pure research harness cannot reload PostgreSQL owners or issue a
+    # Formal OOS qualification decision.  Migration 046 enforces the same
+    # artifact ceiling; the separate owner-resolving writer performs the gate.
     formal = False
     authority = ResearchEvidenceAuthority.ENGINEERING_ONLY
     pit_ref = (
@@ -419,7 +512,7 @@ def run_formal_evaluation(
     limitations: tuple[str, ...]
     reason_set = {
         "FORMAL_OOS_BLOCKED",
-        "FORMAL_OOS_OWNER_RESOLUTION_NOT_IMPLEMENTED",
+        "FORMAL_OOS_OWNER_QUALIFICATION_REQUIRED",
     }
     if not real_formal_pit_candidate:
         reason_set.update(formal_pit_rejections)
@@ -460,8 +553,26 @@ def run_formal_evaluation(
 
 
 def _admit_observations(
-    protocol: FormalEvaluationProtocol, observations: tuple[EvaluationObservation, ...]
+    protocol: FormalEvaluationProtocol,
+    observations: tuple[EvaluationObservation, ...],
+    *,
+    frozen_trading_dates: tuple[date, ...] = (),
 ) -> tuple[tuple[tuple[EvaluationObservation, EvaluationWindow], ...], set[str]]:
+    if frozen_trading_dates and frozen_trading_dates != tuple(
+        sorted(set(frozen_trading_dates))
+    ):
+        raise ValueError("Frozen Trading Calendar dates must be unique and sorted")
+    frozen_set = set(frozen_trading_dates)
+    if frozen_trading_dates and any(
+        window.start_date not in frozen_set or window.end_date not in frozen_set
+        for window in protocol.windows
+    ):
+        raise ValueError("Evaluation windows are outside the Frozen Trading Calendar")
+    if frozen_trading_dates and any(
+        item.session_date not in frozen_set or item.label_end_date not in frozen_set
+        for item in observations
+    ):
+        raise ValueError("Evaluation label interval is outside the Frozen Trading Calendar")
     admitted: list[tuple[EvaluationObservation, EvaluationWindow]] = []
     excluded: set[str] = set()
     for observation in observations:
@@ -484,12 +595,20 @@ def _admit_observations(
             ]
             boundary = min((item.start_date for item in future_windows), default=None)
             if boundary is not None:
-                partition_dates = sorted(
-                    {
-                        item.session_date
-                        for item in observations
-                        if window.start_date <= item.session_date <= window.end_date
-                    }
+                partition_dates = (
+                    [
+                        item
+                        for item in frozen_trading_dates
+                        if window.start_date <= item <= window.end_date
+                    ]
+                    if frozen_trading_dates
+                    else sorted(
+                        {
+                            item.session_date
+                            for item in observations
+                            if window.start_date <= item.session_date <= window.end_date
+                        }
+                    )
                 )
                 embargo_dates = set(partition_dates[-protocol.embargo_sessions :])
                 if observation.label_end_date >= boundary or observation.session_date in embargo_dates:
@@ -838,6 +957,12 @@ def _not_estimable_reason(metric_name: str) -> str:
     if metric_name == "TURNOVER":
         return "INSUFFICIENT_ORDERED_TRADING_DATES"
     return "INSUFFICIENT_METRIC_OBSERVATIONS"
+
+
+def _mapping_value(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Formal Evaluation payload is not an object")
+    return value
 
 
 def _validate_fold_windows(windows: tuple[EvaluationWindow, ...]) -> None:

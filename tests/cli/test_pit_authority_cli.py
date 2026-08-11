@@ -131,3 +131,57 @@ def test_cli_resolves_canonical_artifact_and_persists_reader_receipt(
 
     assert resolved["reference"] == reference.to_canonical_dict()
     assert resolved["reader_contract"] == "controlled-source-manifest-package-v1"
+
+
+def test_cli_assesses_provider_contract_fact_scope_without_promotion(
+    postgres_factory: PostgresConnectionFactory,
+    capsys,
+) -> None:
+    assert main(
+        [
+            *_authority(postgres_factory),
+            "assess-provider-fact",
+            "--provider-id",
+            "provider-baostock-public",
+            "--provider-contract",
+            "baostock-public-history-v1",
+            "--fact-kind",
+            "MARKET_DATA",
+            "--actor",
+            "phase-c-operator",
+            "--reason",
+            "assess current free-data formal evidence ceiling",
+            "--idempotency-key",
+            "cli-baostock-market-data-c1",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["status"] == "REJECTED"
+    assert result["fact_kind"] == "MARKET_DATA"
+    assert result["reason_codes"] == [
+        "FORMAL_PROVIDER_EVIDENCE_CEILING_NOT_MET"
+    ]
+
+    assert main(
+        [
+            *_authority(postgres_factory),
+            "revoke-provider-fact",
+            "--provider-id",
+            "provider-baostock-public",
+            "--provider-contract",
+            "baostock-public-history-v1",
+            "--fact-kind",
+            "MARKET_DATA",
+            "--actor",
+            "phase-c-operator",
+            "--reason",
+            "explicit operator revocation",
+            "--idempotency-key",
+            "cli-baostock-market-data-revoke",
+        ]
+    ) == 0
+    revoked = json.loads(capsys.readouterr().out)
+
+    assert revoked["status"] == "REVOKED"
+    assert revoked["supersedes_decision_id"] == result["decision_id"]

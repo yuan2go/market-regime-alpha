@@ -186,6 +186,110 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "2026-08-11T08:00:00+08:00",
         ]
     )
+    protocol_record = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-protocol-record",
+            "--input",
+            "formal-protocol.json",
+        ]
+    )
+    forecast_record = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-forecast-record",
+            "--input",
+            "target-bound-forecast.json",
+        ]
+    )
+    evaluation_record = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-evaluation-record",
+            "--input",
+            "formal-evaluation-bindings.json",
+        ]
+    )
+    historical_status = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-historical",
+            "--dataset-id",
+            "historical-dataset-1",
+            "--reason",
+            "resolve evidence",
+            "--idempotency-key",
+            "historical-status-1",
+        ]
+    )
+    oos_status = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-oos",
+            "--policy",
+            "formal-oos-policy.json",
+            "--formal-protocol-id",
+            "formal-protocol-1",
+            "--evaluation-result-id",
+            "formal-evaluation-1",
+            "--historical-sample-decision-id",
+            "historical-decision-1",
+            "--formal-pit-evidence-id",
+            "formal-pit-1",
+            "--reason",
+            "resolve evidence",
+            "--idempotency-key",
+            "formal-oos-status-1",
+        ]
+    )
+    calibration_status = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-calibration",
+            "--policy",
+            "calibration-policy.json",
+            "--formal-protocol-id",
+            "formal-protocol-1",
+            "--reason",
+            "resolve evidence",
+            "--idempotency-key",
+            "calibration-status-1",
+        ]
+    )
+    shadow_status = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-shadow",
+            "--policy",
+            "shadow-policy.json",
+            "--reason",
+            "resolve evidence",
+            "--idempotency-key",
+            "shadow-status-1",
+        ]
+    )
+    qualification_status = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "qualification-status",
+            "--formal-protocol-id",
+            "formal-protocol-1",
+            "--governance-version",
+            "phase-c8-v1",
+            "--reason",
+            "resolve evidence",
+            "--idempotency-prefix",
+            "phase-status-1",
+        ]
+    )
 
     assert run_day.operation == "run-day"
     assert strategy_day.operation == "strategy-day"
@@ -197,6 +301,14 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
     assert recovery_audit.operation == "recovery-audit"
+    assert protocol_record.operation == "qualification-protocol-record"
+    assert forecast_record.operation == "qualification-forecast-record"
+    assert evaluation_record.operation == "qualification-evaluation-record"
+    assert historical_status.operation == "qualification-historical"
+    assert oos_status.operation == "qualification-oos"
+    assert calibration_status.operation == "qualification-calibration"
+    assert shadow_status.operation == "qualification-shadow"
+    assert qualification_status.operation == "qualification-status"
 
 
 def test_cli_exposes_read_only_preflight_and_canonical_inspection() -> None:
