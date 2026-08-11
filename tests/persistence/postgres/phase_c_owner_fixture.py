@@ -39,7 +39,9 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationPartition,
     EvaluationWindow,
     FormalEvaluationProtocol,
+    MultipleTestingErrorRate,
     MultipleTestingMethod,
+    benchmark_evaluation_hypotheses,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
@@ -538,6 +540,8 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
         bootstrap_iterations=100,
         confidence_level=Decimal("0.95"),
         multiple_testing_method=MultipleTestingMethod.BONFERRONI,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FWER,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         locked_at=NOW,
     )
 

@@ -18,6 +18,8 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     FORMAL_EVALUATION_IMPLEMENTATION_IDENTITY,
     FORMAL_EVALUATION_METRIC_NAMES,
     FORMAL_EVALUATION_SLICE_KINDS,
+    AlternativeHypothesis,
+    ConfidenceIntervalMethod,
     EvaluationMetric,
     EvaluationMetricStatus,
     EvaluationObservation,
@@ -25,6 +27,8 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationWindow,
     FormalEvaluationResult,
     FormalEvaluationProtocol,
+    HypothesisTestMethod,
+    MetricRole,
     MultipleTestingMethod,
     adjust_multiple_testing,
     run_formal_evaluation,
@@ -556,6 +560,14 @@ def run_formal_hypothesis_family_evaluation(
     # Every planned family member stays in the multiplicity denominator.
     # Treating unavailable hypotheses as absent would make the correction
     # data-dependent and reward missing folds/slices/Targets.
+    test_methods = {
+        item.metric_name: item.test_method for item in protocol.hypothesis_specs
+    }
+    tested_indexes = [
+        index
+        for index, item in enumerate(flattened)
+        if test_methods[item.metric.metric_name] is not HypothesisTestMethod.NONE
+    ]
     adjusted = adjust_multiple_testing(
         tuple(
             (
@@ -563,17 +575,17 @@ def run_formal_hypothesis_family_evaluation(
                 if item.metric.status is EvaluationMetricStatus.ESTIMATED
                 else Decimal("1")
             )
-            for item in flattened
+            for item in (flattened[index] for index in tested_indexes)
         ),
         family.multiple_testing_method,
     )
-    for index, adjusted_value in enumerate(adjusted):
-        item = flattened[index]
-        if item.metric.status is not EvaluationMetricStatus.ESTIMATED:
+    for index, adjusted_value in zip(tested_indexes, adjusted, strict=True):
+        family_metric = flattened[index]
+        if family_metric.metric.status is not EvaluationMetricStatus.ESTIMATED:
             continue
         flattened[index] = FamilyEvaluationMetric(
-            item.target_reference,
-            replace(item.metric, adjusted_p_value=adjusted_value),
+            family_metric.target_reference,
+            replace(family_metric.metric, adjusted_p_value=adjusted_value),
         )
     metrics = tuple(flattened)
     excluded = tuple(
@@ -650,6 +662,7 @@ def _empty_target_evaluation_result(
 ) -> FormalEvaluationResult:
     """Materialize every frozen ALL-slice hypothesis when a Target has no data."""
 
+    specs = {item.metric_name: item for item in protocol.hypothesis_specs}
     metrics = tuple(
         EvaluationMetric(
             fold=window.fold,
@@ -661,10 +674,20 @@ def _empty_target_evaluation_result(
             sample_count=0,
             status=EvaluationMetricStatus.NOT_ESTIMABLE,
             estimate=None,
+            effect_size=None,
+            hypothesis_id=specs[metric_name].hypothesis_id,
+            metric_role=specs[metric_name].role,
+            benchmark=specs[metric_name].benchmark,
+            interval_method=specs[metric_name].interval_method,
             confidence_low=None,
             confidence_high=None,
+            test_method=specs[metric_name].test_method,
+            null_value=specs[metric_name].null_value,
+            alternative=specs[metric_name].alternative,
             raw_p_value=None,
             adjusted_p_value=None,
+            economic_threshold=specs[metric_name].economic_threshold,
+            economically_significant=None,
             hypothesis_family_id=family.hypothesis_family_key,
             reason_codes=("NO_TARGET_OBSERVATIONS",),
         )
@@ -852,10 +875,20 @@ def _metric_payload(item: EvaluationMetric) -> dict[str, Any]:
         "sample_count": item.sample_count,
         "status": item.status.value,
         "estimate": None if item.estimate is None else str(item.estimate),
+        "effect_size": None if item.effect_size is None else str(item.effect_size),
+        "hypothesis_id": item.hypothesis_id,
+        "metric_role": item.metric_role.value,
+        "benchmark": item.benchmark,
+        "interval_method": item.interval_method.value,
         "confidence_low": None if item.confidence_low is None else str(item.confidence_low),
         "confidence_high": None if item.confidence_high is None else str(item.confidence_high),
+        "test_method": item.test_method.value,
+        "null_value": None if item.null_value is None else str(item.null_value),
+        "alternative": item.alternative.value,
         "raw_p_value": None if item.raw_p_value is None else str(item.raw_p_value),
         "adjusted_p_value": None if item.adjusted_p_value is None else str(item.adjusted_p_value),
+        "economic_threshold": None if item.economic_threshold is None else str(item.economic_threshold),
+        "economically_significant": item.economically_significant,
         "hypothesis_family_id": item.hypothesis_family_id,
         "reason_codes": list(item.reason_codes),
     }
@@ -878,10 +911,24 @@ def _metric_from_payload(value: Mapping[str, Any]) -> EvaluationMetric:
         sample_count=int(value["sample_count"]),
         status=EvaluationMetricStatus(str(value["status"])),
         estimate=optional_decimal("estimate"),
+        effect_size=optional_decimal("effect_size"),
+        hypothesis_id=str(value["hypothesis_id"]),
+        metric_role=MetricRole(str(value["metric_role"])),
+        benchmark=str(value["benchmark"]),
+        interval_method=ConfidenceIntervalMethod(str(value["interval_method"])),
         confidence_low=optional_decimal("confidence_low"),
         confidence_high=optional_decimal("confidence_high"),
+        test_method=HypothesisTestMethod(str(value["test_method"])),
+        null_value=optional_decimal("null_value"),
+        alternative=AlternativeHypothesis(str(value["alternative"])),
         raw_p_value=optional_decimal("raw_p_value"),
         adjusted_p_value=optional_decimal("adjusted_p_value"),
+        economic_threshold=optional_decimal("economic_threshold"),
+        economically_significant=(
+            None
+            if value["economically_significant"] is None
+            else bool(value["economically_significant"])
+        ),
         hypothesis_family_id=str(value["hypothesis_family_id"]),
         reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
     )

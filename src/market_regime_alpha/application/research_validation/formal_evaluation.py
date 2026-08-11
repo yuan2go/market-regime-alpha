@@ -9,7 +9,7 @@ from enum import Enum
 from math import sqrt
 from random import Random
 from statistics import fmean, pstdev
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 from market_regime_alpha.application.research_evaluation.targets import OutcomeTargetProtocol
 from market_regime_alpha.application.research_validation.common import (
@@ -33,7 +33,102 @@ class EvaluationPartition(str, Enum):
 
 class MultipleTestingMethod(str, Enum):
     BONFERRONI = "BONFERRONI"
+    HOLM_BONFERRONI = "HOLM_BONFERRONI"
     BENJAMINI_HOCHBERG = "BENJAMINI_HOCHBERG"
+
+
+class MultipleTestingErrorRate(str, Enum):
+    FWER = "FWER"
+    FDR = "FDR"
+
+
+class MetricRole(str, Enum):
+    PRIMARY = "PRIMARY"
+    SECONDARY = "SECONDARY"
+    DIAGNOSTIC = "DIAGNOSTIC"
+
+
+class ConfidenceIntervalMethod(str, Enum):
+    NONE = "NONE"
+    MOVING_BLOCK_PERCENTILE = "MOVING_BLOCK_PERCENTILE"
+
+
+class HypothesisTestMethod(str, Enum):
+    NONE = "NONE"
+    NULL_CENTERED_MOVING_BLOCK = "NULL_CENTERED_MOVING_BLOCK"
+
+
+class AlternativeHypothesis(str, Enum):
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    TWO_SIDED = "TWO_SIDED"
+    GREATER = "GREATER"
+    LESS = "LESS"
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationHypothesisSpec:
+    """Frozen inference semantics for one metric in an experiment family."""
+
+    hypothesis_id: str
+    metric_name: str
+    role: MetricRole
+    benchmark: str
+    interval_method: ConfidenceIntervalMethod
+    test_method: HypothesisTestMethod
+    null_value: Decimal | None
+    alternative: AlternativeHypothesis
+    economic_threshold: Decimal | None
+
+    def __post_init__(self) -> None:
+        require_text("hypothesis_id", self.hypothesis_id)
+        require_text("metric_name", self.metric_name)
+        require_text("benchmark", self.benchmark)
+        if self.metric_name not in FORMAL_EVALUATION_METRIC_NAMES:
+            raise ValueError("unknown Formal Evaluation metric")
+        tested = self.test_method is not HypothesisTestMethod.NONE
+        if tested and self.null_value is None:
+            raise ValueError("hypothesis test requires an explicit null value")
+        if tested != (self.alternative is not AlternativeHypothesis.NOT_APPLICABLE):
+            raise ValueError("hypothesis test and alternative semantics disagree")
+        if not tested and self.null_value is not None:
+            raise ValueError("descriptive metric cannot carry a hypothesis-test null")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "hypothesis_id": self.hypothesis_id,
+            "metric_name": self.metric_name,
+            "role": self.role.value,
+            "benchmark": self.benchmark,
+            "interval_method": self.interval_method.value,
+            "test_method": self.test_method.value,
+            "null_value": None if self.null_value is None else str(self.null_value),
+            "alternative": self.alternative.value,
+            "economic_threshold": (
+                None
+                if self.economic_threshold is None
+                else str(self.economic_threshold)
+            ),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: dict[str, Any]
+    ) -> EvaluationHypothesisSpec:
+        null = value.get("null_value")
+        threshold = value.get("economic_threshold")
+        return cls(
+            hypothesis_id=str(value["hypothesis_id"]),
+            metric_name=str(value["metric_name"]),
+            role=MetricRole(str(value["role"])),
+            benchmark=str(value["benchmark"]),
+            interval_method=ConfidenceIntervalMethod(str(value["interval_method"])),
+            test_method=HypothesisTestMethod(str(value["test_method"])),
+            null_value=None if null is None else Decimal(str(null)),
+            alternative=AlternativeHypothesis(str(value["alternative"])),
+            economic_threshold=(
+                None if threshold is None else Decimal(str(threshold))
+            ),
+        )
 
 
 FORMAL_EVALUATION_METRIC_NAMES = (
@@ -58,7 +153,90 @@ FORMAL_EVALUATION_SLICE_KINDS = (
     "REGIME",
     "THEME",
 )
-FORMAL_EVALUATION_IMPLEMENTATION_IDENTITY = "formal-family-evaluation/v1"
+FORMAL_EVALUATION_IMPLEMENTATION_IDENTITY = "formal-family-evaluation/v2"
+
+
+def benchmark_evaluation_hypotheses() -> tuple[EvaluationHypothesisSpec, ...]:
+    """Return the explicit benchmark family used by the maintained baseline.
+
+    Callers must pass this family to ``FormalEvaluationProtocol.create``.  The
+    function is convenience, not hidden inference: every returned field becomes
+    immutable Protocol identity material.
+    """
+
+    tested: dict[str, tuple[str, Decimal, AlternativeHypothesis, MetricRole]] = {
+        "IC": (
+            "NO_LINEAR_CROSS_SECTIONAL_ASSOCIATION",
+            Decimal("0"), AlternativeHypothesis.TWO_SIDED, MetricRole.SECONDARY,
+        ),
+        "RANK_IC": (
+            "NO_CROSS_SECTIONAL_ASSOCIATION",
+            Decimal("0"), AlternativeHypothesis.TWO_SIDED, MetricRole.PRIMARY,
+        ),
+        "POSITIVE_IC_RATIO": (
+            "CHANCE_POSITIVE_DAILY_IC_RATE",
+            Decimal("0.5"), AlternativeHypothesis.TWO_SIDED, MetricRole.SECONDARY,
+        ),
+        "TOP_K_RETURN": (
+            "ZERO_TOP_K_RETURN",
+            Decimal("0"), AlternativeHypothesis.TWO_SIDED, MetricRole.SECONDARY,
+        ),
+        "SPREAD": (
+            "ZERO_TOP_BOTTOM_SPREAD",
+            Decimal("0"), AlternativeHypothesis.TWO_SIDED, MetricRole.PRIMARY,
+        ),
+        "HIT_RATE": (
+            "CHANCE_POSITIVE_RETURN_RATE",
+            Decimal("0.5"), AlternativeHypothesis.TWO_SIDED, MetricRole.SECONDARY,
+        ),
+        "RETURN": (
+            "ZERO_UNCONDITIONAL_RETURN",
+            Decimal("0"), AlternativeHypothesis.TWO_SIDED, MetricRole.SECONDARY,
+        ),
+        "INCREMENTAL_LIFT": (
+            "ZERO_INCREMENTAL_LIFT",
+            Decimal("0"), AlternativeHypothesis.TWO_SIDED, MetricRole.PRIMARY,
+        ),
+    }
+    descriptive = {
+        "ICIR": "DESCRIPTIVE_STABILITY",
+        "MFE": "DESCRIPTIVE_FAVOURABLE_EXCURSION",
+        "MAE": "DESCRIPTIVE_ADVERSE_EXCURSION",
+        "TURNOVER": "DESCRIPTIVE_TURNOVER",
+        "DRAWDOWN": "DESCRIPTIVE_DRAWDOWN",
+    }
+    specs: list[EvaluationHypothesisSpec] = []
+    for metric_name in FORMAL_EVALUATION_METRIC_NAMES:
+        if metric_name in tested:
+            benchmark, null, alternative, role = tested[metric_name]
+            specs.append(
+                EvaluationHypothesisSpec(
+                    hypothesis_id=f"BASELINE:{metric_name}:V1",
+                    metric_name=metric_name,
+                    role=role,
+                    benchmark=benchmark,
+                    interval_method=ConfidenceIntervalMethod.MOVING_BLOCK_PERCENTILE,
+                    test_method=HypothesisTestMethod.NULL_CENTERED_MOVING_BLOCK,
+                    null_value=null,
+                    alternative=alternative,
+                    economic_threshold=None,
+                )
+            )
+        else:
+            specs.append(
+                EvaluationHypothesisSpec(
+                    hypothesis_id=f"BASELINE:{metric_name}:DESCRIPTIVE:V1",
+                    metric_name=metric_name,
+                    role=MetricRole.DIAGNOSTIC,
+                    benchmark=descriptive[metric_name],
+                    interval_method=ConfidenceIntervalMethod.MOVING_BLOCK_PERCENTILE,
+                    test_method=HypothesisTestMethod.NONE,
+                    null_value=None,
+                    alternative=AlternativeHypothesis.NOT_APPLICABLE,
+                    economic_threshold=None,
+                )
+            )
+    return tuple(specs)
 
 
 def adjust_multiple_testing(
@@ -101,10 +279,13 @@ class FormalEvaluationProtocol:
     bootstrap_block_sessions: int
     confidence_level: Decimal
     multiple_testing_method: MultipleTestingMethod
+    multiple_testing_error_rate: MultipleTestingErrorRate
     hypothesis_family_id: str
+    hypothesis_specs: tuple[EvaluationHypothesisSpec, ...]
     top_k: int
     sensitivity_return_multipliers: tuple[Decimal, ...]
     locked_at: datetime
+    schema_version: str
 
     def __post_init__(self) -> None:
         require_sha256("protocol_hash", self.protocol_hash)
@@ -117,6 +298,23 @@ class FormalEvaluationProtocol:
             raise ValueError("Formal Evaluation Protocol lock time must be timezone-aware")
         if canonical_hash(self.identity_payload()) != self.protocol_hash:
             raise ValueError("Formal Evaluation Protocol hash mismatch")
+        if self.schema_version not in {
+            "formal-evaluation-protocol/v2",
+            "formal-evaluation-protocol/v3",
+        }:
+            raise ValueError("unsupported Formal Evaluation Protocol schema")
+        names = tuple(item.metric_name for item in self.hypothesis_specs)
+        if tuple(sorted(names)) != FORMAL_EVALUATION_METRIC_NAMES or len(names) != len(
+            set(names)
+        ):
+            raise ValueError("Formal Evaluation requires one explicit spec per metric")
+        if (
+            self.multiple_testing_method
+            is MultipleTestingMethod.BENJAMINI_HOCHBERG
+        ) != (
+            self.multiple_testing_error_rate is MultipleTestingErrorRate.FDR
+        ):
+            raise ValueError("multiple-testing method and error-rate semantics disagree")
 
     @classmethod
     def create(
@@ -129,6 +327,8 @@ class FormalEvaluationProtocol:
         bootstrap_block_sessions: int = 1,
         confidence_level: Decimal,
         multiple_testing_method: MultipleTestingMethod,
+        multiple_testing_error_rate: MultipleTestingErrorRate,
+        hypothesis_specs: tuple[EvaluationHypothesisSpec, ...],
         hypothesis_family_id: str | None = None,
         top_k: int = 5,
         locked_at: datetime,
@@ -148,6 +348,14 @@ class FormalEvaluationProtocol:
             or top_k <= 0
         ):
             raise ValueError("Formal Evaluation statistics configuration is invalid")
+        ordered_specs = tuple(sorted(hypothesis_specs, key=lambda item: item.metric_name))
+        names = tuple(item.metric_name for item in ordered_specs)
+        if names != FORMAL_EVALUATION_METRIC_NAMES or len(names) != len(set(names)):
+            raise ValueError("Formal Evaluation requires one explicit spec per metric")
+        if (
+            multiple_testing_method is MultipleTestingMethod.BENJAMINI_HOCHBERG
+        ) != (multiple_testing_error_rate is MultipleTestingErrorRate.FDR):
+            raise ValueError("multiple-testing method and error-rate semantics disagree")
         family_id = hypothesis_family_id or f"ENGINEERING:{protocol_version}"
         require_text("hypothesis_family_id", family_id)
         sensitivity = tuple(sorted(set(sensitivity_return_multipliers)))
@@ -165,7 +373,9 @@ class FormalEvaluationProtocol:
             bootstrap_block_sessions,
             confidence_level,
             multiple_testing_method,
+            multiple_testing_error_rate,
             family_id,
+            ordered_specs,
             top_k,
             sensitivity,
             locked_at,
@@ -183,13 +393,31 @@ class FormalEvaluationProtocol:
             bootstrap_block_sessions,
             confidence_level,
             multiple_testing_method,
+            multiple_testing_error_rate,
             family_id,
+            ordered_specs,
             top_k,
             sensitivity,
             locked_at,
+            "formal-evaluation-protocol/v3",
         )
 
     def identity_payload(self) -> dict[str, Any]:
+        if self.schema_version == "formal-evaluation-protocol/v2":
+            return _legacy_protocol_payload(
+                self.protocol_version,
+                self.target_protocol_reference,
+                self.windows,
+                self.embargo_sessions,
+                self.bootstrap_iterations,
+                self.bootstrap_block_sessions,
+                self.confidence_level,
+                self.multiple_testing_method,
+                self.hypothesis_family_id,
+                self.top_k,
+                self.sensitivity_return_multipliers,
+                self.locked_at,
+            )
         return _protocol_payload(
             self.protocol_version,
             self.target_protocol_reference,
@@ -199,7 +427,9 @@ class FormalEvaluationProtocol:
             self.bootstrap_block_sessions,
             self.confidence_level,
             self.multiple_testing_method,
+            self.multiple_testing_error_rate,
             self.hypothesis_family_id,
+            self.hypothesis_specs,
             self.top_k,
             self.sensitivity_return_multipliers,
             self.locked_at,
@@ -222,6 +452,18 @@ class FormalEvaluationProtocol:
             sensitivity_value, list
         ):
             raise ValueError("Formal Evaluation Protocol payload arrays are invalid")
+        schema = str(value.get("schema"))
+        if schema not in {
+            "formal-evaluation-protocol/v2",
+            "formal-evaluation-protocol/v3",
+        }:
+            raise ValueError("unsupported Formal Evaluation Protocol schema")
+        spec_values = value.get("hypothesis_specs")
+        if schema == "formal-evaluation-protocol/v3" and not isinstance(
+            spec_values, list
+        ):
+            raise ValueError("Formal Evaluation hypothesis specs are invalid")
+        method = MultipleTestingMethod(str(value["multiple_testing_method"]))
         protocol = cls(
             protocol_id=ArtifactId(str(value["protocol_id"])),
             protocol_hash=str(value["protocol_hash"]),
@@ -250,18 +492,34 @@ class FormalEvaluationProtocol:
             bootstrap_iterations=int(value["bootstrap_iterations"]),
             bootstrap_block_sessions=int(value["bootstrap_block_sessions"]),
             confidence_level=Decimal(str(value["confidence_level"])),
-            multiple_testing_method=MultipleTestingMethod(
-                str(value["multiple_testing_method"])
+            multiple_testing_method=method,
+            multiple_testing_error_rate=(
+                MultipleTestingErrorRate(str(value["multiple_testing_error_rate"]))
+                if schema == "formal-evaluation-protocol/v3"
+                else (
+                    MultipleTestingErrorRate.FDR
+                    if method is MultipleTestingMethod.BENJAMINI_HOCHBERG
+                    else MultipleTestingErrorRate.FWER
+                )
             ),
             hypothesis_family_id=str(value["hypothesis_family_id"]),
+            hypothesis_specs=(
+                tuple(
+                    EvaluationHypothesisSpec.from_canonical_dict(
+                        _mapping_value(item)
+                    )
+                    for item in spec_values
+                )
+                if isinstance(spec_values, list)
+                else benchmark_evaluation_hypotheses()
+            ),
             top_k=int(value["top_k"]),
             sensitivity_return_multipliers=tuple(
                 Decimal(str(item)) for item in sensitivity_value
             ),
             locked_at=datetime.fromisoformat(str(value["locked_at"])),
+            schema_version=schema,
         )
-        if value.get("schema") != "formal-evaluation-protocol/v2":
-            raise ValueError("unsupported Formal Evaluation Protocol schema")
         if value.get("bootstrap_method") != "TRADING_DATE_MOVING_BLOCK":
             raise ValueError("Formal Evaluation bootstrap method drift")
         return protocol
@@ -309,27 +567,67 @@ class EvaluationMetric:
     sample_count: int
     status: EvaluationMetricStatus
     estimate: Decimal | None
+    effect_size: Decimal | None
+    hypothesis_id: str
+    metric_role: MetricRole
+    benchmark: str
+    interval_method: ConfidenceIntervalMethod
     confidence_low: Decimal | None
     confidence_high: Decimal | None
+    test_method: HypothesisTestMethod
+    null_value: Decimal | None
+    alternative: AlternativeHypothesis
     raw_p_value: Decimal | None
     adjusted_p_value: Decimal | None
+    economic_threshold: Decimal | None
+    economically_significant: bool | None
     hypothesis_family_id: str
     reason_codes: tuple[str, ...]
 
     def __post_init__(self) -> None:
         require_text("metric_name", self.metric_name)
+        require_text("hypothesis_id", self.hypothesis_id)
+        require_text("benchmark", self.benchmark)
         require_text("hypothesis_family_id", self.hypothesis_family_id)
         values = (
             self.estimate,
-            self.confidence_low,
-            self.confidence_high,
-            self.raw_p_value,
-            self.adjusted_p_value,
+            self.effect_size,
         )
         if self.status is EvaluationMetricStatus.ESTIMATED:
             if any(value is None for value in values) or self.reason_codes:
-                raise ValueError("estimated Evaluation metric requires complete statistics")
-        elif any(value is not None for value in values) or not self.reason_codes:
+                raise ValueError("estimated Evaluation metric requires an estimate and effect")
+            interval_present = (
+                self.confidence_low is not None
+                and self.confidence_high is not None
+            )
+            if interval_present != (
+                self.interval_method is not ConfidenceIntervalMethod.NONE
+            ):
+                raise ValueError("confidence interval semantics disagree")
+            tested = self.test_method is not HypothesisTestMethod.NONE
+            if tested != (
+                self.null_value is not None
+                and self.alternative is not AlternativeHypothesis.NOT_APPLICABLE
+                and self.raw_p_value is not None
+            ):
+                raise ValueError("hypothesis-test result semantics disagree")
+            if not tested and self.adjusted_p_value is not None:
+                raise ValueError("descriptive metric cannot have an adjusted p-value")
+            if (self.economic_threshold is None) != (
+                self.economically_significant is None
+            ):
+                raise ValueError("economic significance semantics disagree")
+        elif any(
+            value is not None
+            for value in (
+                *values,
+                self.confidence_low,
+                self.confidence_high,
+                self.raw_p_value,
+                self.adjusted_p_value,
+                self.economically_significant,
+            )
+        ) or not self.reason_codes:
             raise ValueError("NOT_ESTIMABLE metric requires reasons and no statistics")
 
 
@@ -348,7 +646,7 @@ class FormalEvaluationResult:
     reason_codes: tuple[str, ...]
     created_at: datetime
     limitations: tuple[str, ...]
-    schema_version: str = "formal-evaluation-result/v2"
+    schema_version: str = "formal-evaluation-result/v3"
 
     def __post_init__(self) -> None:
         require_sha256("result_hash", self.result_hash)
@@ -356,6 +654,13 @@ class FormalEvaluationResult:
             raise ValueError("Formal OOS flag and evidence authority mismatch")
         if self.formal_oos and self.pit_evidence_reference is None:
             raise ValueError("Formal OOS result requires Formal PIT evidence")
+        if any(
+            item.status is EvaluationMetricStatus.ESTIMATED
+            and item.test_method is not HypothesisTestMethod.NONE
+            and item.adjusted_p_value is None
+            for item in self.metrics
+        ):
+            raise ValueError("tested Evaluation metric requires family-adjusted p-value")
         if self.panel_source_references != tuple(
             sorted(
                 set(self.panel_source_references),
@@ -454,25 +759,8 @@ def run_formal_evaluation(
         FORMAL_EVALUATION_METRIC_NAMES
     ):
         raise RuntimeError("Formal Evaluation metric implementation identity drift")
-    raw: list[
-        tuple[
-            int,
-            EvaluationPartition,
-            Decimal,
-            str,
-            str,
-            str,
-            int,
-            EvaluationMetricStatus,
-            Decimal | None,
-            Decimal | None,
-            Decimal | None,
-            Decimal | None,
-            Decimal | None,
-            str,
-            tuple[str, ...],
-        ]
-    ] = []
+    specs = {item.metric_name: item for item in protocol.hypothesis_specs}
+    raw: list[EvaluationMetric] = []
     fold_partitions = sorted(
         (
             {(window.fold, window.partition) for window in protocol.windows}
@@ -490,69 +778,132 @@ def run_formal_evaluation(
             sensitivity_values = tuple(_apply_return_sensitivity(item, multiplier) for item in partition_values)
             for slice_kind, groups in _slices(sensitivity_values).items():
                 for slice_value, values in groups.items():
+                    draws_by_metric = (
+                        _moving_block_bootstrap_metric_estimates(
+                            metric_specs,
+                            values,
+                            protocol.bootstrap_iterations,
+                            block_sessions=protocol.bootstrap_block_sessions,
+                            seed=f"{fold}:{partition.value}:{multiplier}:{slice_kind}:{slice_value}",
+                        )
+                        if values
+                        else {}
+                    )
                     for metric_name, function in metric_specs:
+                        spec = specs[metric_name]
                         available = _metric_available(metric_name, values)
                         estimate = function(available)
                         if estimate is None:
                             raw.append(
-                                (
-                                    fold,
-                                    partition,
-                                    multiplier,
-                                    metric_name,
-                                    slice_kind,
-                                    slice_value,
-                                    len(available),
-                                    EvaluationMetricStatus.NOT_ESTIMABLE,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    protocol.hypothesis_family_id,
-                                    (_not_estimable_reason(metric_name),),
+                                EvaluationMetric(
+                                    fold=fold,
+                                    partition=partition,
+                                    sensitivity_return_multiplier=multiplier,
+                                    metric_name=metric_name,
+                                    slice_kind=slice_kind,
+                                    slice_value=slice_value,
+                                    sample_count=len(available),
+                                    status=EvaluationMetricStatus.NOT_ESTIMABLE,
+                                    estimate=None,
+                                    effect_size=None,
+                                    hypothesis_id=spec.hypothesis_id,
+                                    metric_role=spec.role,
+                                    benchmark=spec.benchmark,
+                                    interval_method=spec.interval_method,
+                                    confidence_low=None,
+                                    confidence_high=None,
+                                    test_method=spec.test_method,
+                                    null_value=spec.null_value,
+                                    alternative=spec.alternative,
+                                    raw_p_value=None,
+                                    adjusted_p_value=None,
+                                    economic_threshold=spec.economic_threshold,
+                                    economically_significant=None,
+                                    hypothesis_family_id=protocol.hypothesis_family_id,
+                                    reason_codes=(_not_estimable_reason(metric_name),),
                                 )
                             )
                             continue
-                        low, high, p_value = _bootstrap(
-                            function,
-                            available,
-                            protocol.bootstrap_iterations,
-                            protocol.confidence_level,
-                            block_sessions=protocol.bootstrap_block_sessions,
-                            seed=f"{fold}:{partition.value}:{multiplier}:{slice_kind}:{slice_value}:{metric_name}",
+                        draws = draws_by_metric.get(metric_name, ())
+                        if not draws:
+                            raise ValueError(
+                                "cluster bootstrap produced no estimable draws"
+                            )
+                        low: Decimal | None = None
+                        high: Decimal | None = None
+                        if (
+                            spec.interval_method
+                            is ConfidenceIntervalMethod.MOVING_BLOCK_PERCENTILE
+                        ):
+                            low, high = _percentile_interval(
+                                draws, protocol.confidence_level
+                            )
+                        p_value: Decimal | None = None
+                        if (
+                            spec.test_method
+                            is HypothesisTestMethod.NULL_CENTERED_MOVING_BLOCK
+                        ):
+                            if spec.null_value is None:
+                                raise RuntimeError("validated hypothesis lost its null")
+                            p_value = _null_centered_p_value(
+                                estimate=estimate,
+                                bootstrap_estimates=draws,
+                                null_value=spec.null_value,
+                                alternative=spec.alternative,
+                            )
+                        effect = (
+                            estimate
+                            if spec.null_value is None
+                            else estimate - spec.null_value
                         )
                         raw.append(
-                            (
-                                fold,
-                                partition,
-                                multiplier,
-                                metric_name,
-                                slice_kind,
-                                slice_value,
-                                len(available),
-                                EvaluationMetricStatus.ESTIMATED,
-                                estimate,
-                                low,
-                                high,
-                                p_value,
-                                None,
-                                protocol.hypothesis_family_id,
-                                (),
+                            EvaluationMetric(
+                                fold=fold,
+                                partition=partition,
+                                sensitivity_return_multiplier=multiplier,
+                                metric_name=metric_name,
+                                slice_kind=slice_kind,
+                                slice_value=slice_value,
+                                sample_count=len(available),
+                                status=EvaluationMetricStatus.ESTIMATED,
+                                estimate=estimate,
+                                effect_size=effect,
+                                hypothesis_id=spec.hypothesis_id,
+                                metric_role=spec.role,
+                                benchmark=spec.benchmark,
+                                interval_method=spec.interval_method,
+                                confidence_low=low,
+                                confidence_high=high,
+                                test_method=spec.test_method,
+                                null_value=spec.null_value,
+                                alternative=spec.alternative,
+                                raw_p_value=p_value,
+                                adjusted_p_value=None,
+                                economic_threshold=spec.economic_threshold,
+                                economically_significant=(
+                                    None
+                                    if spec.economic_threshold is None
+                                    else abs(effect) >= abs(spec.economic_threshold)
+                                ),
+                                hypothesis_family_id=protocol.hypothesis_family_id,
+                                reason_codes=(),
                             )
                         )
     estimable_indices = [
         index
         for index, item in enumerate(raw)
-        if item[7] is EvaluationMetricStatus.ESTIMATED
+        if item.raw_p_value is not None
     ]
-    adjusted = _adjust_p_values(
-        [cast(Decimal, raw[index][11]) for index in estimable_indices],
-        protocol.multiple_testing_method,
-    )
+    p_values: list[Decimal] = []
+    for index in estimable_indices:
+        raw_p_value = raw[index].raw_p_value
+        if raw_p_value is None:
+            raise RuntimeError("tested metric lost its raw p-value")
+        p_values.append(raw_p_value)
+    adjusted = _adjust_p_values(p_values, protocol.multiple_testing_method)
     for index, adjusted_value in zip(estimable_indices, adjusted, strict=True):
-        raw[index] = (*raw[index][:12], adjusted_value, *raw[index][13:])
-    metrics = tuple(EvaluationMetric(*item) for item in raw)
+        raw[index] = replace(raw[index], adjusted_p_value=adjusted_value)
+    metrics = tuple(raw)
     reasons: tuple[str, ...]
     limitations: tuple[str, ...]
     reason_set = {
@@ -865,20 +1216,19 @@ def _incremental_lift(
     return None if baseline is None else top - baseline
 
 
-def _bootstrap(
-    function: MetricFunction,
+def _moving_block_bootstrap_metric_estimates(
+    functions: tuple[tuple[str, MetricFunction], ...],
     values: tuple[EvaluationObservation, ...],
     iterations: int,
-    confidence: Decimal,
     *,
     block_sessions: int,
     seed: str,
-) -> tuple[Decimal, Decimal, Decimal]:
+) -> dict[str, tuple[Decimal, ...]]:
     sessions = _group_by_session(values)
     if not sessions:
         raise ValueError("cluster bootstrap requires trading-date observations")
     random = Random(seed)
-    estimates: list[Decimal] = []
+    estimates: dict[str, list[Decimal]] = {name: [] for name, _ in functions}
     session_dates = tuple(sorted(sessions))
     for _iteration in range(iterations):
         sampled: list[EvaluationObservation] = []
@@ -895,24 +1245,59 @@ def _bootstrap(
                     for item in sessions[source_date]
                 )
                 sample_slot += 1
-        estimate = function(tuple(sampled))
-        if estimate is not None:
-            estimates.append(estimate)
-    if not estimates:
-        raise ValueError("cluster bootstrap produced no estimable draws")
-    estimates.sort()
+        sample = tuple(sampled)
+        for name, function in functions:
+            estimate = function(_metric_available(name, sample))
+            if estimate is not None:
+                estimates[name].append(estimate)
+    return {name: tuple(draws) for name, draws in estimates.items()}
+
+
+def _percentile_interval(
+    estimates: tuple[Decimal, ...], confidence: Decimal
+) -> tuple[Decimal, Decimal]:
+    ordered = tuple(sorted(estimates))
     alpha = (Decimal("1") - confidence) / Decimal("2")
-    low = estimates[min(len(estimates) - 1, int(alpha * len(estimates)))]
-    high = estimates[min(len(estimates) - 1, int((Decimal("1") - alpha) * len(estimates)))]
-    non_positive = sum(item <= 0 for item in estimates)
-    non_negative = sum(item >= 0 for item in estimates)
-    p_value = Decimal("2") * Decimal(min(non_positive, non_negative)) / Decimal(len(estimates))
-    return low, high, min(Decimal("1"), p_value)
+    low = ordered[min(len(ordered) - 1, int(alpha * len(ordered)))]
+    high = ordered[
+        min(len(ordered) - 1, int((Decimal("1") - alpha) * len(ordered)))
+    ]
+    return low, high
+
+
+def _null_centered_p_value(
+    *,
+    estimate: Decimal,
+    bootstrap_estimates: tuple[Decimal, ...],
+    null_value: Decimal,
+    alternative: AlternativeHypothesis,
+) -> Decimal:
+    """Evaluate a frozen null using centred moving-block bootstrap draws."""
+
+    observed = estimate - null_value
+    null_draws = tuple(item - estimate for item in bootstrap_estimates)
+    if alternative is AlternativeHypothesis.TWO_SIDED:
+        extreme = sum(abs(item) >= abs(observed) for item in null_draws)
+    elif alternative is AlternativeHypothesis.GREATER:
+        extreme = sum(item >= observed for item in null_draws)
+    elif alternative is AlternativeHypothesis.LESS:
+        extreme = sum(item <= observed for item in null_draws)
+    else:
+        raise ValueError("hypothesis test requires a directional alternative")
+    return Decimal(extreme + 1) / Decimal(len(null_draws) + 1)
 
 
 def _adjust_p_values(values: list[Decimal], method: MultipleTestingMethod) -> list[Decimal]:
     if method is MultipleTestingMethod.BONFERRONI:
         return [min(Decimal("1"), value * len(values)) for value in values]
+    if method is MultipleTestingMethod.HOLM_BONFERRONI:
+        ordered = sorted(enumerate(values), key=lambda item: item[1])
+        adjusted = [Decimal("1")] * len(values)
+        running = Decimal("0")
+        for rank, (index, value) in enumerate(ordered):
+            running = max(running, value * Decimal(len(values) - rank))
+            adjusted[index] = min(Decimal("1"), running)
+        return adjusted
     ordered = sorted(enumerate(values), key=lambda item: item[1])
     adjusted = [Decimal("1")] * len(values)
     running = Decimal("1")
@@ -1033,6 +1418,52 @@ def _protocol_payload(
     block_sessions: int,
     confidence: Decimal,
     method: MultipleTestingMethod,
+    error_rate: MultipleTestingErrorRate,
+    hypothesis_family_id: str,
+    hypothesis_specs: tuple[EvaluationHypothesisSpec, ...],
+    top_k: int,
+    sensitivity: tuple[Decimal, ...],
+    locked_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "schema": "formal-evaluation-protocol/v3",
+        "protocol_version": version,
+        "target_protocol_reference": target.to_canonical_dict(),
+        "windows": [
+            {
+                "window_id": item.window_id,
+                "partition": item.partition.value,
+                "start_date": item.start_date.isoformat(),
+                "end_date": item.end_date.isoformat(),
+                "fold": item.fold,
+            }
+            for item in windows
+        ],
+        "embargo_sessions": embargo,
+        "purge_overlapping_labels": True,
+        "bootstrap_iterations": iterations,
+        "bootstrap_method": "TRADING_DATE_MOVING_BLOCK",
+        "bootstrap_block_sessions": block_sessions,
+        "confidence_level": str(confidence),
+        "multiple_testing_method": method.value,
+        "multiple_testing_error_rate": error_rate.value,
+        "hypothesis_family_id": hypothesis_family_id,
+        "hypothesis_specs": [item.to_canonical_dict() for item in hypothesis_specs],
+        "top_k": top_k,
+        "sensitivity_return_multipliers": [str(item) for item in sensitivity],
+        "locked_at": timestamp(locked_at),
+    }
+
+
+def _legacy_protocol_payload(
+    version: str,
+    target: ValidationArtifactReference,
+    windows: tuple[EvaluationWindow, ...],
+    embargo: int,
+    iterations: int,
+    block_sessions: int,
+    confidence: Decimal,
+    method: MultipleTestingMethod,
     hypothesis_family_id: str,
     top_k: int,
     sensitivity: tuple[Decimal, ...],
@@ -1080,7 +1511,7 @@ def _result_payload(
     limitations: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
-        "schema_version": "formal-evaluation-result/v2",
+        "schema_version": "formal-evaluation-result/v3",
         "protocol_reference": protocol.to_canonical_dict(),
         "pit_evidence_reference": None if pit is None else pit.to_canonical_dict(),
         "panel_reference": panel.to_canonical_dict(),
@@ -1096,10 +1527,20 @@ def _result_payload(
                 "sample_count": item.sample_count,
                 "status": item.status.value,
                 "estimate": None if item.estimate is None else str(item.estimate),
+                "effect_size": None if item.effect_size is None else str(item.effect_size),
+                "hypothesis_id": item.hypothesis_id,
+                "metric_role": item.metric_role.value,
+                "benchmark": item.benchmark,
+                "interval_method": item.interval_method.value,
                 "confidence_low": None if item.confidence_low is None else str(item.confidence_low),
                 "confidence_high": None if item.confidence_high is None else str(item.confidence_high),
+                "test_method": item.test_method.value,
+                "null_value": None if item.null_value is None else str(item.null_value),
+                "alternative": item.alternative.value,
                 "raw_p_value": None if item.raw_p_value is None else str(item.raw_p_value),
                 "adjusted_p_value": None if item.adjusted_p_value is None else str(item.adjusted_p_value),
+                "economic_threshold": None if item.economic_threshold is None else str(item.economic_threshold),
+                "economically_significant": item.economically_significant,
                 "hypothesis_family_id": item.hypothesis_family_id,
                 "reason_codes": list(item.reason_codes),
             }

@@ -18,7 +18,10 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationPartition,
     EvaluationWindow,
     FormalEvaluationProtocol,
+    HypothesisTestMethod,
+    MultipleTestingErrorRate,
     MultipleTestingMethod,
+    benchmark_evaluation_hypotheses,
 )
 from market_regime_alpha.application.research_validation.formal_hypothesis_family import (
     FamilyEvaluationInput,
@@ -62,6 +65,8 @@ def _evaluation() -> FormalEvaluationProtocol:
         bootstrap_iterations=20,
         confidence_level=Decimal("0.90"),
         multiple_testing_method=MultipleTestingMethod.BONFERRONI,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FWER,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         hypothesis_family_id="FROZEN-MULTI-TARGET-V1",
         top_k=1,
         locked_at=NOW,
@@ -162,11 +167,19 @@ def test_family_evaluation_corrects_across_every_frozen_target() -> None:
     assert {item.target_reference for item in estimated} == set(
         family.target_references
     )
+    tested_count = sum(
+        item.metric.test_method is not HypothesisTestMethod.NONE
+        for item in result.metrics
+    )
     for item in estimated:
-        assert item.metric.raw_p_value is not None
-        assert item.metric.adjusted_p_value == min(
-            item.metric.raw_p_value * Decimal(len(result.metrics)), Decimal("1")
-        )
+        if item.metric.test_method is HypothesisTestMethod.NONE:
+            assert item.metric.raw_p_value is None
+            assert item.metric.adjusted_p_value is None
+        else:
+            assert item.metric.raw_p_value is not None
+            assert item.metric.adjusted_p_value == min(
+                item.metric.raw_p_value * Decimal(tested_count), Decimal("1")
+            )
     all_slice = tuple(
         item
         for item in result.metrics
@@ -236,8 +249,16 @@ def test_family_evaluation_keeps_empty_preregistered_target_in_denominator() -> 
         if item.metric.status is EvaluationMetricStatus.ESTIMATED
     )
     assert estimated
+    tested_count = sum(
+        item.metric.test_method is not HypothesisTestMethod.NONE
+        for item in result.metrics
+    )
     for item in estimated:
-        assert item.metric.raw_p_value is not None
-        assert item.metric.adjusted_p_value == min(
-            item.metric.raw_p_value * Decimal(len(result.metrics)), Decimal("1")
-        )
+        if item.metric.test_method is HypothesisTestMethod.NONE:
+            assert item.metric.raw_p_value is None
+            assert item.metric.adjusted_p_value is None
+        else:
+            assert item.metric.raw_p_value is not None
+            assert item.metric.adjusted_p_value == min(
+                item.metric.raw_p_value * Decimal(tested_count), Decimal("1")
+            )

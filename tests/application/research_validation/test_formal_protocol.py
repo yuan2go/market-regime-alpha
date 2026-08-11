@@ -17,7 +17,9 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationPartition,
     EvaluationWindow,
     FormalEvaluationProtocol,
+    MultipleTestingErrorRate,
     MultipleTestingMethod,
+    benchmark_evaluation_hypotheses,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
@@ -74,6 +76,8 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
         bootstrap_block_sessions=2,
         confidence_level=Decimal("0.95"),
         multiple_testing_method=MultipleTestingMethod.BENJAMINI_HOCHBERG,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FDR,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         hypothesis_family_id="C0-FROZEN-FAMILY-V1",
         top_k=5,
         locked_at=NOW,
@@ -169,6 +173,8 @@ def test_formal_protocol_rejects_calendar_or_target_lineage_mismatch() -> None:
         bootstrap_iterations=100,
         confidence_level=Decimal("0.95"),
         multiple_testing_method=MultipleTestingMethod.BONFERRONI,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FWER,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         locked_at=NOW,
     )
     with pytest.raises(ValueError, match="Frozen Trading Calendar"):
@@ -184,6 +190,8 @@ def test_formal_protocol_rejects_calendar_or_target_lineage_mismatch() -> None:
         bootstrap_iterations=100,
         confidence_level=Decimal("0.95"),
         multiple_testing_method=MultipleTestingMethod.BONFERRONI,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FWER,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         locked_at=NOW + timedelta(seconds=1),
     )
     with pytest.raises(ValueError, match="locked before"):
