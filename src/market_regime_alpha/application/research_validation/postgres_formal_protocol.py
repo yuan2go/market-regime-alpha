@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+import json
 from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
@@ -12,6 +15,9 @@ from market_regime_alpha.application.research_evaluation.targets import (
 from market_regime_alpha.application.research_validation.formal_evaluation import (
     FormalEvaluationProtocol,
 )
+from market_regime_alpha.application.research_validation.calibration_qualification import (
+    CalibrationQualificationPolicy,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -19,17 +25,60 @@ from market_regime_alpha.application.research_validation.formal_protocol import 
     FormalResearchProtocol,
     OutcomeTargetBoundMultiTargetForecast,
 )
+from market_regime_alpha.application.research_validation.factor_research import (
+    FactorResearchCatalog,
+)
+from market_regime_alpha.application.research_validation.formal_protocol_components import (
+    FeatureDefinitionSet,
+    ThresholdPolicy,
+)
+from market_regime_alpha.application.research_validation.phase_c_gates import (
+    EntryHoldingExitQualificationPolicy,
+)
+from market_regime_alpha.application.research_validation.qualification import (
+    FormalOOSQualificationPolicy,
+)
+from market_regime_alpha.application.research_validation.samples import (
+    HistoricalSampleDataset,
+)
+from market_regime_alpha.application.strategy_shadow.contracts import (
+    StrategyShadowPolicy,
+    restore_strategy_shadow_artifact,
+)
+from market_regime_alpha.application.strategy_shadow.portfolio import (
+    ShadowPortfolioPolicy,
+)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.pit_artifact_authority import (
+    PITArtifactAuthorityResolution,
+)
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
+from market_regime_alpha.platform.runtime_governance import ModelVersionLineage
+from market_regime_alpha.platform.governance_serialization import (
+    model_registration_from_dict,
+)
 
 
 class FormalProtocolConflict(ValueError):
     """A frozen owner identity or Target lineage conflicted."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ComponentOwnerResolution:
+    owner_kind: str
+    owner_artifact_id: ArtifactId
+    owner_artifact_hash: str
+    owner_payload: Mapping[str, Any]
+    owner_recorded_at: datetime
+
+    @property
+    def owner_payload_hash(self) -> str:
+        return canonical_hash(dict(self.owner_payload))
 
 
 class PostgresFormalProtocolRepository:
@@ -47,76 +96,19 @@ class PostgresFormalProtocolRepository:
         self,
         *,
         protocol: FormalResearchProtocol,
-        target_protocol: OutcomeTargetProtocol,
-        evaluation_protocol: FormalEvaluationProtocol,
-        component_payloads: Mapping[str, Mapping[str, Any]],
     ) -> FormalResearchProtocol:
-        expected_target_ref = protocol.outcome_target_protocol_reference
-        if (
-            expected_target_ref.artifact_id != target_protocol.protocol_id
-            or expected_target_ref.content_hash != target_protocol.protocol_hash
-            or protocol.evaluation_protocol_reference.artifact_id
-            != evaluation_protocol.protocol_id
-            or protocol.evaluation_protocol_reference.content_hash
-            != evaluation_protocol.protocol_hash
-        ):
-            raise FormalProtocolConflict("Formal Protocol typed lineage mismatch")
-        references = protocol.component_references()
-        if set(component_payloads) != set(references):
-            raise FormalProtocolConflict(
-                "Formal Protocol requires an exact payload for every component role"
-            )
-        normalized_components = {
-            role: dict(component_payloads[role]) for role in sorted(references)
-        }
-        for role, reference in references.items():
-            if canonical_hash(normalized_components[role]) != reference.content_hash:
-                raise FormalProtocolConflict(
-                    f"Formal Protocol component payload hash mismatch: {role}"
-                )
-        _verify_calendar_component(
-            protocol,
-            normalized_components["trading_calendar_reference"],
-        )
-
         def operation(connection: Any) -> None:
-            self._require_target_owner(connection, target_protocol)
-            connection.execute(
-                """
-                INSERT INTO research_validation_artifact(
-                    artifact_id, artifact_hash, artifact_kind,
-                    evidence_authority, qualified, production_authorized,
-                    payload_json, created_at
-                ) VALUES (%s, %s, 'FORMAL_EVALUATION_PROTOCOL',
-                          'ENGINEERING_ONLY', false, false, %s, %s)
-                ON CONFLICT (artifact_id) DO NOTHING
-                """,
-                (
-                    str(evaluation_protocol.protocol_id),
-                    evaluation_protocol.protocol_hash,
-                    Jsonb(evaluation_protocol.identity_payload()),
-                    evaluation_protocol.locked_at,
-                ),
+            target_protocol = _load_target_protocol_owner(connection, protocol)
+            evaluation_protocol = _load_evaluation_protocol_owner(
+                connection, protocol
             )
-            evaluation = connection.execute(
-                """
-                SELECT artifact_hash, artifact_kind, evidence_authority,
-                       qualified, production_authorized
-                FROM research_validation_artifact
-                WHERE artifact_id = %s
-                """,
-                (str(evaluation_protocol.protocol_id),),
-            ).fetchone()
-            if evaluation is None or (
-                str(evaluation[0]) != evaluation_protocol.protocol_hash
-                or str(evaluation[1]) != "FORMAL_EVALUATION_PROTOCOL"
-                or str(evaluation[2]) != "ENGINEERING_ONLY"
-                or bool(evaluation[3])
-                or bool(evaluation[4])
-            ):
-                raise FormalProtocolConflict(
-                    "Formal Evaluation Protocol owner mismatch"
-                )
+            resolved_at = _postgres_now(connection)
+            owners = _resolve_component_owners(
+                connection,
+                protocol=protocol,
+            )
+            references = protocol.component_references()
+            owner_references = _formal_owner_references(protocol)
             connection.execute(
                 """
                 INSERT INTO formal_research_protocol(
@@ -151,6 +143,7 @@ class PostgresFormalProtocolRepository:
             if stored is None or str(stored[0]) != protocol.protocol_hash:
                 raise FormalProtocolConflict("Formal Research Protocol identity conflict")
             for role, reference in sorted(references.items()):
+                owner = owners[role]
                 connection.execute(
                     """
                     INSERT INTO formal_research_protocol_component(
@@ -165,7 +158,37 @@ class PostgresFormalProtocolRepository:
                         reference.artifact_kind,
                         str(reference.artifact_id),
                         reference.content_hash,
-                        Jsonb(normalized_components[role]),
+                        Jsonb(dict(owner.owner_payload)),
+                    ),
+                )
+            for role, reference in sorted(owner_references.items()):
+                owner = owners[role]
+                connection.execute(
+                    """
+                    INSERT INTO formal_research_protocol_component_owner_resolution(
+                        protocol_id, component_role, artifact_kind,
+                        artifact_id, artifact_hash, owner_kind,
+                        owner_artifact_id, owner_artifact_hash,
+                        owner_payload_hash, owner_payload_json,
+                        owner_recorded_at, resolved_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (protocol_id, component_role) DO NOTHING
+                    """,
+                    (
+                        str(protocol.protocol_id),
+                        role,
+                        reference.artifact_kind,
+                        str(reference.artifact_id),
+                        reference.content_hash,
+                        owner.owner_kind,
+                        str(owner.owner_artifact_id),
+                        owner.owner_artifact_hash,
+                        owner.owner_payload_hash,
+                        Jsonb(dict(owner.owner_payload)),
+                        owner.owner_recorded_at,
+                        resolved_at,
                     ),
                 )
             component_rows = connection.execute(
@@ -191,7 +214,7 @@ class PostgresFormalProtocolRepository:
                     reference.artifact_kind,
                     str(reference.artifact_id),
                     reference.content_hash,
-                    normalized_components[role],
+                    dict(owners[role].owner_payload),
                 )
                 for role, reference in references.items()
             }
@@ -199,6 +222,11 @@ class PostgresFormalProtocolRepository:
                 raise FormalProtocolConflict(
                     "Formal Protocol component owner binding mismatch"
                 )
+            _verify_stored_owner_resolutions(
+                connection,
+                protocol=protocol,
+                owners=owners,
+            )
 
         self._factory.run_transaction(operation)
         return self.get_protocol(protocol.protocol_id)
@@ -208,6 +236,7 @@ class PostgresFormalProtocolRepository:
         forecast: OutcomeTargetBoundMultiTargetForecast,
     ) -> OutcomeTargetBoundMultiTargetForecast:
         def operation(connection: Any) -> None:
+            _model_lineage_owner(connection, forecast.model_reference)
             owner = connection.execute(
                 """
                 SELECT protocol_hash
@@ -330,47 +359,627 @@ class PostgresFormalProtocolRepository:
             raise FormalProtocolConflict("Target-bound Forecast storage drift")
         return forecast
 
-    @staticmethod
-    def _require_target_owner(
-        connection: Any, target_protocol: OutcomeTargetProtocol
-    ) -> None:
-        row = connection.execute(
-            """
-            SELECT protocol_hash
-            FROM outcome_target_protocol
-            WHERE protocol_id = %s
-            """,
-            (str(target_protocol.protocol_id),),
-        ).fetchone()
-        targets = connection.execute(
-            """
-            SELECT target_id, target_hash
-            FROM outcome_target_definition
-            WHERE protocol_id = %s
-            ORDER BY target_id
-            """,
-            (str(target_protocol.protocol_id),),
-        ).fetchall()
-        expected = tuple(
-            (str(item.target_id), item.target_hash) for item in target_protocol.targets
-        )
-        if row is None or (
-            str(row[0]) != target_protocol.protocol_hash
-            or tuple((str(item[0]), str(item[1])) for item in targets) != expected
-        ):
-            raise FormalProtocolConflict("Outcome Target Protocol owner mismatch")
 
+def _formal_owner_references(
+    protocol: FormalResearchProtocol,
+) -> dict[str, ValidationArtifactReference]:
+    return {
+        "outcome_target_protocol_reference": (
+            protocol.outcome_target_protocol_reference
+        ),
+        "evaluation_protocol_reference": protocol.evaluation_protocol_reference,
+        **protocol.component_references(),
+    }
+
+
+def _load_target_protocol_owner(
+    connection: Any,
+    protocol: FormalResearchProtocol,
+) -> OutcomeTargetProtocol:
+    reference = protocol.outcome_target_protocol_reference
+    row = connection.execute(
+        """
+        SELECT protocol_hash, protocol_json
+        FROM outcome_target_protocol WHERE protocol_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise FormalProtocolConflict("Outcome Target Protocol owner is missing")
+    try:
+        target_protocol = OutcomeTargetProtocol.from_canonical_dict(dict(row[1]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Outcome Target Protocol replay failed") from exc
+    target_rows = connection.execute(
+        """
+        SELECT target_id, target_hash, target_json
+        FROM outcome_target_definition WHERE protocol_id = %s
+        ORDER BY target_id
+        """,
+        (str(target_protocol.protocol_id),),
+    ).fetchall()
+    expected_targets = tuple(
+        (
+            str(item.target_id),
+            item.target_hash,
+            item.to_canonical_dict(),
+        )
+        for item in target_protocol.targets
+    )
+    frozen_targets = tuple(
+        ValidationArtifactReference("OUTCOME_TARGET", item.target_id, item.target_hash)
+        for item in target_protocol.targets
+    )
+    if (
+        target_protocol.protocol_hash != str(row[0])
+        or reference.artifact_id != target_protocol.protocol_id
+        or reference.content_hash != target_protocol.protocol_hash
+        or protocol.target_references != frozen_targets
+        or tuple((str(item[0]), str(item[1]), item[2]) for item in target_rows)
+        != expected_targets
+    ):
+        raise FormalProtocolConflict("Outcome Target owner binding mismatch")
+    return target_protocol
+
+
+def _load_evaluation_protocol_owner(
+    connection: Any,
+    protocol: FormalResearchProtocol,
+) -> FormalEvaluationProtocol:
+    reference = protocol.evaluation_protocol_reference
+    row = _research_artifact_row(connection, reference.artifact_id)
+    if row is None:
+        raise FormalProtocolConflict("Formal Evaluation Protocol owner is missing")
+    artifact_hash, artifact_kind, qualified, production_authorized, payload, _ = row
+    try:
+        evaluation = FormalEvaluationProtocol.from_canonical_dict(
+            {
+                "protocol_id": str(reference.artifact_id),
+                "protocol_hash": artifact_hash,
+                **payload,
+            }
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Formal Evaluation Protocol replay failed") from exc
+    if (
+        artifact_kind != "FORMAL_EVALUATION_PROTOCOL"
+        or qualified
+        or production_authorized
+        or evaluation.protocol_id != reference.artifact_id
+        or evaluation.protocol_hash != reference.content_hash
+        or evaluation.target_protocol_reference
+        != protocol.outcome_target_protocol_reference
+        or evaluation.locked_at > protocol.locked_at
+    ):
+        raise FormalProtocolConflict("Formal Evaluation owner binding mismatch")
+    return evaluation
+
+
+def _resolve_component_owners(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+) -> dict[str, _ComponentOwnerResolution]:
+    target_protocol = _load_target_protocol_owner(connection, protocol)
+    evaluation = _load_evaluation_protocol_owner(connection, protocol)
+    target_row = connection.execute(
+        "SELECT created_at FROM outcome_target_protocol WHERE protocol_id = %s",
+        (str(target_protocol.protocol_id),),
+    ).fetchone()
+    evaluation_row = _research_artifact_row(
+        connection, evaluation.protocol_id
+    )
+    if target_row is None or evaluation_row is None:
+        raise FormalProtocolConflict("Formal Protocol owner timestamp is missing")
+    owners: dict[str, _ComponentOwnerResolution] = {
+        "outcome_target_protocol_reference": _ComponentOwnerResolution(
+            "OUTCOME_TARGET_AUTHORITY",
+            target_protocol.protocol_id,
+            target_protocol.protocol_hash,
+            target_protocol.to_canonical_dict(),
+            target_row[0],
+        ),
+        "evaluation_protocol_reference": _ComponentOwnerResolution(
+            "RESEARCH_VALIDATION_AUTHORITY",
+            evaluation.protocol_id,
+            evaluation.protocol_hash,
+            evaluation.to_canonical_dict(),
+            evaluation_row[5],
+        ),
+    }
+    owners["trading_calendar_reference"] = _calendar_owner(
+        connection, protocol
+    )
+    owners["universe_reference"] = _pit_owner(
+        connection, protocol.universe_reference
+    )
+    owners["dataset_reference"] = _pit_owner(
+        connection, protocol.dataset_reference
+    )
+    owners["historical_sample_dataset_reference"] = _research_owner(
+        connection,
+        protocol.historical_sample_dataset_reference,
+        expected_kind="HISTORICAL_SAMPLE_DATASET",
+        restore=HistoricalSampleDataset.from_canonical_dict,
+    )
+    owners["feature_reference"] = _research_owner(
+        connection,
+        protocol.feature_reference,
+        expected_kind="FEATURE_DEFINITION_SET",
+        restore=FeatureDefinitionSet.from_canonical_dict,
+    )
+    owners["factor_reference"] = _research_owner(
+        connection,
+        protocol.factor_reference,
+        expected_kind="FACTOR_RESEARCH_CATALOG",
+        restore=FactorResearchCatalog.from_canonical_dict,
+    )
+    owners["threshold_policy_reference"] = _research_owner(
+        connection,
+        protocol.threshold_policy_reference,
+        expected_kind="THRESHOLD_POLICY",
+        restore=ThresholdPolicy.from_canonical_dict,
+    )
+    owners["model_reference"] = _model_lineage_owner(
+        connection, protocol.model_reference
+    )
+    owners["formal_oos_qualification_policy_reference"] = _policy_owner(
+        connection,
+        protocol.formal_oos_qualification_policy_reference,
+        table="formal_oos_qualification_policy",
+        payload_column="payload_json",
+        restore=FormalOOSQualificationPolicy.from_canonical_dict,
+        owner_kind="FORMAL_OOS_POLICY_AUTHORITY",
+    )
+    owners["cost_policy_reference"] = _portfolio_policy_owner(
+        connection, protocol.cost_policy_reference
+    )
+    owners["calibration_policy_reference"] = _policy_owner(
+        connection,
+        protocol.calibration_policy_reference,
+        table="calibration_qualification_policy",
+        payload_column="payload_json",
+        restore=CalibrationQualificationPolicy.from_canonical_dict,
+        owner_kind="CALIBRATION_POLICY_AUTHORITY",
+    )
+    owners["strategy_policy_reference"] = _strategy_policy_owner(
+        connection, protocol.strategy_policy_reference
+    )
+    owners[
+        "entry_holding_exit_qualification_policy_reference"
+    ] = _policy_owner(
+        connection,
+        protocol.entry_holding_exit_qualification_policy_reference,
+        table="entry_holding_exit_qualification_policy",
+        payload_column="policy_json",
+        restore=EntryHoldingExitQualificationPolicy.from_canonical_dict,
+        owner_kind="ENTRY_HOLDING_EXIT_POLICY_AUTHORITY",
+    )
+    _verify_component_semantics(protocol, owners)
+    return owners
+
+
+def _research_artifact_row(
+    connection: Any, artifact_id: ArtifactId
+) -> tuple[str, str, bool, bool, dict[str, Any], datetime] | None:
+    row = connection.execute(
+        """
+        SELECT artifact_hash, artifact_kind, qualified,
+               production_authorized, payload_json, created_at
+        FROM research_validation_artifact WHERE artifact_id = %s
+        """,
+        (str(artifact_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[4], Mapping):
+        return None
+    return (
+        str(row[0]),
+        str(row[1]),
+        bool(row[2]),
+        bool(row[3]),
+        dict(row[4]),
+        row[5],
+    )
+
+
+def _research_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+    *,
+    expected_kind: str,
+    restore: Any,
+) -> _ComponentOwnerResolution:
+    row = _research_artifact_row(connection, reference.artifact_id)
+    if row is None:
+        raise FormalProtocolConflict(f"{expected_kind} owner is missing")
+    artifact_hash, artifact_kind, qualified, production_authorized, payload, created = row
+    canonical = _with_research_identity(expected_kind, reference, payload)
+    try:
+        restored = restore(canonical)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict(f"{expected_kind} owner replay failed") from exc
+    if (
+        artifact_kind != expected_kind
+        or artifact_hash != reference.content_hash
+        or qualified
+        or production_authorized
+        or canonical_hash(payload) != artifact_hash
+    ):
+        raise FormalProtocolConflict(f"{expected_kind} owner binding mismatch")
+    _verify_restored_reference(restored, reference, expected_kind)
+    if expected_kind == "FACTOR_RESEARCH_CATALOG":
+        enrichment = restored.enrichment_reference
+        enrichment_row = _research_artifact_row(
+            connection, enrichment.artifact_id
+        )
+        if enrichment_row is None or (
+            enrichment_row[0] != enrichment.content_hash
+            or enrichment_row[1] != "PANEL_ENRICHMENT"
+        ):
+            raise FormalProtocolConflict("Factor Catalog enrichment owner mismatch")
+    return _ComponentOwnerResolution(
+        "RESEARCH_VALIDATION_AUTHORITY",
+        reference.artifact_id,
+        reference.content_hash,
+        canonical,
+        created,
+    )
+
+
+def _with_research_identity(
+    expected_kind: str,
+    reference: ValidationArtifactReference,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    identity_fields = {
+        "HISTORICAL_SAMPLE_DATASET": ("dataset_id", "dataset_hash"),
+        "FEATURE_DEFINITION_SET": ("definition_set_id", "definition_set_hash"),
+        "FACTOR_RESEARCH_CATALOG": ("catalog_id", "catalog_hash"),
+        "THRESHOLD_POLICY": ("policy_id", "policy_hash"),
+    }
+    id_field, hash_field = identity_fields[expected_kind]
+    return {
+        id_field: str(reference.artifact_id),
+        hash_field: reference.content_hash,
+        **dict(payload),
+    }
+
+
+def _verify_restored_reference(
+    restored: Any,
+    reference: ValidationArtifactReference,
+    expected_kind: str,
+) -> None:
+    fields = {
+        "HISTORICAL_SAMPLE_DATASET": ("dataset_id", "dataset_hash"),
+        "FEATURE_DEFINITION_SET": ("definition_set_id", "definition_set_hash"),
+        "FACTOR_RESEARCH_CATALOG": ("catalog_id", "catalog_hash"),
+        "THRESHOLD_POLICY": ("policy_id", "policy_hash"),
+    }
+    id_field, hash_field = fields[expected_kind]
+    if (
+        getattr(restored, id_field) != reference.artifact_id
+        or getattr(restored, hash_field) != reference.content_hash
+    ):
+        raise FormalProtocolConflict(f"{expected_kind} replay identity mismatch")
+
+
+def _calendar_owner(
+    connection: Any, protocol: FormalResearchProtocol
+) -> _ComponentOwnerResolution:
+    reference = protocol.trading_calendar_reference
+    row = connection.execute(
+        """
+        SELECT calendar_hash, payload_json, recorded_at
+        FROM trading_calendar_authority WHERE calendar_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise FormalProtocolConflict("Trading Calendar owner is missing")
+    payload = dict(row[1])
+    _verify_calendar_component(protocol, payload)
+    if str(row[0]) != reference.content_hash:
+        raise FormalProtocolConflict("Trading Calendar owner binding mismatch")
+    return _ComponentOwnerResolution(
+        "TRADING_CALENDAR_AUTHORITY",
+        reference.artifact_id,
+        reference.content_hash,
+        payload,
+        row[2],
+    )
+
+
+def _pit_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+) -> _ComponentOwnerResolution:
+    row = connection.execute(
+        """
+        SELECT resolution_id, resolution_hash, payload_json, resolved_at
+        FROM pit_artifact_authority_resolution
+        WHERE reference_kind = %s AND artifact_id = %s AND artifact_hash = %s
+        """,
+        (reference.artifact_kind, str(reference.artifact_id), reference.content_hash),
+    ).fetchone()
+    if row is None or not isinstance(row[2], Mapping):
+        raise FormalProtocolConflict(
+            f"{reference.artifact_kind} PIT owner resolution is missing"
+        )
+    try:
+        resolution = PITArtifactAuthorityResolution.from_canonical_dict(
+            dict(row[2])
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("PIT owner resolution replay failed") from exc
+    if (
+        resolution.resolution_id != ArtifactId(str(row[0]))
+        or resolution.resolution_hash != str(row[1])
+        or resolution.reference.artifact_id != reference.artifact_id
+        or resolution.reference.content_hash != reference.content_hash
+        or resolution.reference.reference_kind != reference.artifact_kind
+    ):
+        raise FormalProtocolConflict("PIT owner resolution binding mismatch")
+    return _ComponentOwnerResolution(
+        "PIT_ARTIFACT_AUTHORITY",
+        resolution.resolution_id,
+        resolution.resolution_hash,
+        resolution.to_canonical_dict(),
+        row[3],
+    )
+
+
+def _model_lineage_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+) -> _ComponentOwnerResolution:
+    row = connection.execute(
+        """
+        SELECT lineage.lineage_hash, lineage.payload_json, lineage.created_at,
+               registration.registration_json, registration.definition_hash
+        FROM model_version_lineage AS lineage
+        JOIN model_registrations AS registration
+          ON registration.model_id = lineage.model_id
+        WHERE lineage.lineage_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise FormalProtocolConflict("Model Version Lineage owner is missing")
+    try:
+        lineage = ModelVersionLineage.from_canonical_dict(dict(row[1]))
+        registration_payload = json.loads(str(row[3]))
+        if not isinstance(registration_payload, Mapping):
+            raise ValueError("Model Registration payload must be an object")
+        registration = model_registration_from_dict(registration_payload)
+        lineage.validate_definition(registration.definition)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Model Version Lineage replay failed") from exc
+    if (
+        lineage.lineage_id != reference.artifact_id
+        or lineage.lineage_hash != reference.content_hash
+        or str(row[0]) != reference.content_hash
+        or str(row[4]) != lineage.definition_hash
+    ):
+        raise FormalProtocolConflict("Model Version Lineage binding mismatch")
+    owner_payload = {
+        "schema_version": "formal-model-owner-resolution/v1",
+        "lineage": lineage.to_canonical_dict(),
+        "model_definition": registration.definition.canonical_payload(),
+    }
+    return _ComponentOwnerResolution(
+        "MODEL_GOVERNANCE_AUTHORITY",
+        lineage.lineage_id,
+        lineage.lineage_hash,
+        owner_payload,
+        row[2],
+    )
+
+
+def _policy_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+    *,
+    table: str,
+    payload_column: str,
+    restore: Any,
+    owner_kind: str,
+) -> _ComponentOwnerResolution:
+    allowed = {
+        ("formal_oos_qualification_policy", "payload_json"),
+        ("calibration_qualification_policy", "payload_json"),
+        ("entry_holding_exit_qualification_policy", "policy_json"),
+    }
+    if (table, payload_column) not in allowed:
+        raise AssertionError("unapproved Formal Protocol policy owner")
+    row = connection.execute(
+        f"SELECT policy_hash, {payload_column}, created_at FROM {table} "
+        "WHERE policy_id = %s",
+        (str(reference.artifact_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise FormalProtocolConflict(f"{reference.artifact_kind} owner is missing")
+    payload = dict(row[1])
+    try:
+        policy = restore(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict(
+            f"{reference.artifact_kind} owner replay failed"
+        ) from exc
+    if (
+        policy.policy_id != reference.artifact_id
+        or policy.policy_hash != reference.content_hash
+        or str(row[0]) != reference.content_hash
+    ):
+        raise FormalProtocolConflict(
+            f"{reference.artifact_kind} owner binding mismatch"
+        )
+    return _ComponentOwnerResolution(
+        owner_kind,
+        policy.policy_id,
+        policy.policy_hash,
+        payload,
+        row[2],
+    )
+
+
+def _portfolio_policy_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+) -> _ComponentOwnerResolution:
+    row = connection.execute(
+        """
+        SELECT policy_hash, policy_json, created_at
+        FROM strategy_shadow_portfolio WHERE policy_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise FormalProtocolConflict("Shadow Portfolio Policy owner is missing")
+    try:
+        policy = ShadowPortfolioPolicy.from_canonical_dict(dict(row[1]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Shadow Portfolio Policy replay failed") from exc
+    if (
+        policy.policy_id != reference.artifact_id
+        or policy.policy_hash != reference.content_hash
+        or str(row[0]) != reference.content_hash
+    ):
+        raise FormalProtocolConflict("Shadow Portfolio Policy binding mismatch")
+    return _ComponentOwnerResolution(
+        "SHADOW_PORTFOLIO_POLICY_AUTHORITY",
+        policy.policy_id,
+        policy.policy_hash,
+        policy.to_canonical_dict(),
+        row[2],
+    )
+
+
+def _strategy_policy_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+) -> _ComponentOwnerResolution:
+    row = connection.execute(
+        """
+        SELECT policy_hash, policy_json, created_at
+        FROM strategy_shadow_policy_authority WHERE policy_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise FormalProtocolConflict("Strategy Shadow Policy owner is missing")
+    payload = dict(row[1])
+    try:
+        policy = restore_strategy_shadow_artifact(
+            artifact_kind="POLICY",
+            artifact_id=reference.artifact_id,
+            artifact_hash=str(row[0]),
+            payload=payload,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Strategy Shadow Policy replay failed") from exc
+    if not isinstance(policy, StrategyShadowPolicy) or (
+        policy.policy_id != reference.artifact_id
+        or policy.policy_hash != reference.content_hash
+    ):
+        raise FormalProtocolConflict("Strategy Shadow Policy binding mismatch")
+    return _ComponentOwnerResolution(
+        "STRATEGY_SHADOW_POLICY_AUTHORITY",
+        policy.policy_id,
+        policy.policy_hash,
+        payload,
+        row[2],
+    )
+
+
+def _verify_component_semantics(
+    protocol: FormalResearchProtocol,
+    owners: Mapping[str, _ComponentOwnerResolution],
+) -> None:
+    historical = HistoricalSampleDataset.from_canonical_dict(
+        owners["historical_sample_dataset_reference"].owner_payload
+    )
+    if historical.target_reference not in protocol.target_references:
+        raise FormalProtocolConflict("Historical Sample Target is not frozen")
+    oos = FormalOOSQualificationPolicy.from_canonical_dict(
+        owners["formal_oos_qualification_policy_reference"].owner_payload
+    )
+    calibration = CalibrationQualificationPolicy.from_canonical_dict(
+        owners["calibration_policy_reference"].owner_payload
+    )
+    entry = EntryHoldingExitQualificationPolicy.from_canonical_dict(
+        owners[
+            "entry_holding_exit_qualification_policy_reference"
+        ].owner_payload
+    )
+    if (
+        oos.locked_at > protocol.locked_at
+        or calibration.locked_at > protocol.locked_at
+        or entry.locked_at > protocol.locked_at
+        or calibration.target_protocol_reference
+        != protocol.outcome_target_protocol_reference
+        or calibration.target_reference not in protocol.target_references
+        or entry.strategy_policy_reference != protocol.strategy_policy_reference
+        or entry.portfolio_policy_reference != protocol.cost_policy_reference
+    ):
+        raise FormalProtocolConflict("Formal Protocol component semantics diverge")
+
+
+def _verify_stored_owner_resolutions(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    owners: Mapping[str, _ComponentOwnerResolution],
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT component_role, artifact_kind, artifact_id, artifact_hash,
+               owner_kind, owner_artifact_id, owner_artifact_hash,
+               owner_payload_hash, owner_payload_json, owner_recorded_at
+        FROM formal_research_protocol_component_owner_resolution
+        WHERE protocol_id = %s ORDER BY component_role
+        """,
+        (str(protocol.protocol_id),),
+    ).fetchall()
+    references = _formal_owner_references(protocol)
+    actual = {
+        str(row[0]): tuple(row[1:8]) + (row[8], row[9])
+        for row in rows
+    }
+    expected = {
+        role: (
+            reference.artifact_kind,
+            str(reference.artifact_id),
+            reference.content_hash,
+            owners[role].owner_kind,
+            str(owners[role].owner_artifact_id),
+            owners[role].owner_artifact_hash,
+            owners[role].owner_payload_hash,
+            dict(owners[role].owner_payload),
+            owners[role].owner_recorded_at,
+        )
+        for role, reference in references.items()
+    }
+    if actual != expected:
+        raise FormalProtocolConflict("Formal Protocol owner resolution drift")
+
+
+def _postgres_now(connection: Any) -> datetime:
+    return connection.execute(
+        "SELECT date_trunc('second', clock_timestamp())"
+    ).fetchone()[0]
 
 def _verify_calendar_component(
     protocol: FormalResearchProtocol,
     payload: Mapping[str, Any],
 ) -> None:
     try:
+        canonical = dict(payload)
+        canonical.setdefault(
+            "artifact_id", str(protocol.trading_calendar_reference.artifact_id)
+        )
         calendar = TradingCalendarArtifact.from_canonical_dict(
-            {
-                "artifact_id": str(protocol.trading_calendar_reference.artifact_id),
-                **dict(payload),
-            }
+            canonical
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise FormalProtocolConflict(
@@ -437,13 +1046,25 @@ def load_formal_protocol_owner(
     if set(stored) != set(expected) or any(
         stored[role][:3] != expected[role]
         or not isinstance(stored[role][3], Mapping)
-        or canonical_hash(dict(stored[role][3])) != expected[role][2]
         for role in expected
     ):
         raise FormalProtocolConflict("Formal Protocol component replay mismatch")
-    calendar_payload = stored["trading_calendar_reference"][3]
-    assert isinstance(calendar_payload, Mapping)
-    _verify_calendar_component(protocol, calendar_payload)
+    owners = _resolve_component_owners(
+        connection,
+        protocol=protocol,
+    )
+    if any(
+        dict(stored[role][3]) != dict(owners[role].owner_payload)
+        for role in expected
+    ):
+        raise FormalProtocolConflict(
+            "Formal Protocol component snapshot diverges from Canonical owner"
+        )
+    _verify_stored_owner_resolutions(
+        connection,
+        protocol=protocol,
+        owners=owners,
+    )
 
     target_row = connection.execute(
         """

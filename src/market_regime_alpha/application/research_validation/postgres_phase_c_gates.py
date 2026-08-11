@@ -119,6 +119,18 @@ class PostgresPhaseCGateAuthority:
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
 
+    def record_entry_holding_exit_policy(
+        self, policy: EntryHoldingExitQualificationPolicy
+    ) -> EntryHoldingExitQualificationPolicy:
+        self._factory.run_transaction(
+            lambda connection: _record_entry_holding_exit_policy(
+                connection,
+                formal_protocol_id=None,
+                policy=policy,
+            )
+        )
+        return policy
+
     def resolve_entry_holding_exit(
         self,
         *,
@@ -934,30 +946,31 @@ def _assess_prospective_shadow(
 def _record_entry_holding_exit_policy(
     connection: Any,
     *,
-    formal_protocol_id: ArtifactId,
+    formal_protocol_id: ArtifactId | None,
     policy: EntryHoldingExitQualificationPolicy,
 ) -> None:
-    formal = _load_formal_protocol(connection, formal_protocol_id)
-    expected = ValidationArtifactReference(
-        "ENTRY_HOLDING_EXIT_QUALIFICATION_POLICY",
-        policy.policy_id,
-        policy.policy_hash,
-    )
-    if formal.entry_holding_exit_qualification_policy_reference != expected:
-        raise PhaseCGateConflict(
-            "Formal Protocol Entry/Holding/Exit Policy identity mismatch"
+    if formal_protocol_id is not None:
+        formal = _load_formal_protocol(connection, formal_protocol_id)
+        expected = ValidationArtifactReference(
+            "ENTRY_HOLDING_EXIT_QUALIFICATION_POLICY",
+            policy.policy_id,
+            policy.policy_hash,
         )
-    if policy.locked_at > formal.locked_at:
-        raise PhaseCGateConflict(
-            "Entry/Holding/Exit Policy was not locked before the Formal Protocol"
-        )
-    if (
-        formal.strategy_policy_reference != policy.strategy_policy_reference
-        or formal.cost_policy_reference != policy.portfolio_policy_reference
-    ):
-        raise PhaseCGateConflict(
-            "Formal Protocol strategy/cost policy lineage mismatch"
-        )
+        if formal.entry_holding_exit_qualification_policy_reference != expected:
+            raise PhaseCGateConflict(
+                "Formal Protocol Entry/Holding/Exit Policy identity mismatch"
+            )
+        if policy.locked_at > formal.locked_at:
+            raise PhaseCGateConflict(
+                "Entry/Holding/Exit Policy was not locked before the Formal Protocol"
+            )
+        if (
+            formal.strategy_policy_reference != policy.strategy_policy_reference
+            or formal.cost_policy_reference != policy.portfolio_policy_reference
+        ):
+            raise PhaseCGateConflict(
+                "Formal Protocol strategy/cost policy lineage mismatch"
+            )
     model_rows = connection.execute(
         """
         SELECT artifact_hash, artifact_kind, payload_json

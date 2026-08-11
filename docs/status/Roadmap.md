@@ -8,8 +8,10 @@
 
 ## Phase C current order
 
-1. **C0 engineering complete:** freeze Target, Calendar, evaluation partitions and
-   every result-affecting component payload; never reuse Locked OOS for tuning.
+1. **C0 engineering complete:** freeze Target, Calendar and evaluation partitions;
+   reload every result-affecting component from its PostgreSQL owner; durably
+   consume underlying Locked-OOS label/partition evidence across Model, Forecast
+   and Protocol identities.
 2. **C1 engineering complete, evidence rejected:** collect independent
    Provider archive/version/revision/availability evidence by Contract and Fact
    Kind. Current BaoStock/Tencent assessments do not satisfy the floor.
