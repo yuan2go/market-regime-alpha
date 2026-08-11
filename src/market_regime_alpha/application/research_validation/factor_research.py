@@ -13,7 +13,7 @@ from decimal import Decimal
 from enum import Enum
 from math import sqrt
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.canonical_lifecycle._immutable_io import (
     publish_immutable_text,
@@ -110,6 +110,36 @@ class ResearchFactorDefinition:
             ),
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> ResearchFactorDefinition:
+        raw_paths = value["input_value_paths"]
+        raw_sources = value["source_references"]
+        raw_families = value["source_information_families"]
+        if not isinstance(raw_paths, list) or not isinstance(raw_sources, list):
+            raise ValueError("Factor Definition paths and sources must be arrays")
+        if not isinstance(raw_families, list):
+            raise ValueError("Factor Definition information families must be an array")
+        return cls(
+            factor_key=str(value["factor_key"]),
+            factor_id=str(value["factor_id"]),
+            definition_version=str(value["definition_version"]),
+            family=FactorFamily(str(value["family"])),
+            timeframe=None if value["timeframe"] is None else str(value["timeframe"]),
+            definition=str(value["definition"]),
+            input_value_paths=tuple(str(item) for item in raw_paths),
+            source_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in raw_sources
+            ),
+            availability_policy=str(value["availability_policy"]),
+            missing_policy=str(value["missing_policy"]),
+            normalization_policy=str(value["normalization_policy"]),
+            scoring_role=FactorScoringRole(str(value["scoring_role"])),
+            source_information_families=tuple(str(item) for item in raw_families),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class FactorResearchCatalog:
@@ -142,6 +172,36 @@ class FactorResearchCatalog:
             "created_at": timestamp(self.created_at),
             "limitations": list(self.limitations),
         }
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "catalog_id": str(self.catalog_id),
+            "catalog_hash": self.catalog_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> FactorResearchCatalog:
+        raw_definitions = value["definitions"]
+        raw_limitations = value["limitations"]
+        if not isinstance(raw_definitions, list) or not isinstance(raw_limitations, list):
+            raise ValueError("Factor Catalog definitions and limitations must be arrays")
+        return cls(
+            catalog_id=ArtifactId(str(value["catalog_id"])),
+            catalog_hash=str(value["catalog_hash"]),
+            enrichment_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["enrichment_reference"])
+            ),
+            definitions=tuple(
+                ResearchFactorDefinition.from_canonical_dict(_mapping(item))
+                for item in raw_definitions
+            ),
+            created_at=datetime.fromisoformat(str(value["created_at"])),
+            limitations=tuple(str(item) for item in raw_limitations),
+            schema_version=str(value["schema_version"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,6 +484,12 @@ def _correlation(
     if left_sum == 0 or right_sum == 0:
         return None
     return numerator / Decimal(str(sqrt(float(left_sum * right_sum))))
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("expected object payload")
+    return value
 
 
 __all__ = [

@@ -10,9 +10,9 @@
 
 | Gap | Current fact | Exit condition |
 |---|---|---|
-| Qualified Provider evidence | Provider×Contract×Fact writer exists; six current BaoStock/Tencent scopes resolve `REJECTED` because source qualification/evidence is absent | independently validated archive/version/revision/availability evidence satisfies the frozen V2 floor for each required Fact Kind |
+| Qualified Provider evidence | Provider×Contract×Fact writer exists; ten declared BaoStock/Tencent scopes resolve `REJECTED` because source qualification/evidence is absent | independently validated archive/version/revision/availability evidence satisfies the frozen V2 floor for each required Fact Kind |
 | Formal PIT evidence | PIT owner/as-of/validation mechanics exist, but the working Phase C schema has zero qualified source/fact/evidence rows | qualified Provider decisions and complete historical facts produce satisfied Formal PIT evidence without inventing `available_at` |
-| Qualified Historical Sample / Locked OOS | owner writers and replay exist; upstream Formal PIT/protocol observations are absent | exact qualified sample bindings and untouched Locked OOS folds meet frozen statistical/economic floors |
+| Qualified Historical Sample / Locked OOS | owner writers, protocol component resolution and durable underlying-evidence consumption replay exist; upstream Formal PIT/protocol observations are absent | exact qualified sample bindings and untouched Locked OOS folds meet frozen statistical/economic floors |
 | Calibration / Entry / Holding / Exit evidence | owner writers replay exact partitions and Strategy outcomes; upstream OOS and qualified cost/provenance evidence are absent | frozen calibration and strategy protocols pass without OOS method selection or assumption-as-fact |
 | Production evidence floor resolution | persisted owner re-reads all current floors; authentication, Formal evidence, sustained Shadow, cost/capacity and Broker owners remain missing | every floor is independently satisfied and explicitly approved; no automatic promotion |
 | Controlled execution evidence | readiness gate exists and is persistently blocked | Broker contract, paper/read-only reconciliation, preview/risk/kill switch, authenticated human approval and separately authorized tiny-capital program exist |

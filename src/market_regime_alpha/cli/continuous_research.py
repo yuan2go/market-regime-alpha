@@ -84,9 +84,6 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
 from market_regime_alpha.application.research_validation.calibration_qualification import (
     CalibrationQualificationPolicy,
 )
-from market_regime_alpha.application.research_validation.formal_evaluation import (
-    FormalEvaluationProtocol,
-)
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
     OutcomeTargetBoundMultiTargetForecast,
@@ -110,9 +107,6 @@ from market_regime_alpha.application.research_validation.postgres_qualification 
 from market_regime_alpha.application.research_validation.qualification import (
     FormalEvaluationObservationBinding,
     FormalOOSQualificationPolicy,
-)
-from market_regime_alpha.application.research_evaluation.targets import (
-    OutcomeTargetProtocol,
 )
 from market_regime_alpha.application.runtime_operations.observability import (
     PostgresRuntimeObservability,
@@ -317,7 +311,9 @@ def build_parser() -> argparse.ArgumentParser:
     recovery_audit.add_argument("--checked-at", required=True)
     protocol_record = subparsers.add_parser(
         "qualification-protocol-record",
-        help="Record the C0 frozen Protocol and every exact component payload.",
+        help=(
+            "Record C0 only after PostgreSQL reloads every exact component owner."
+        ),
     )
     protocol_record.add_argument("--input", type=Path, required=True)
     forecast_record = subparsers.add_parser(
@@ -539,27 +535,16 @@ def _dispatch(
         protocol = FormalResearchProtocol.from_canonical_dict(
             dict(_object_value(payload["formal_protocol"], "formal_protocol"))
         )
-        target_protocol = OutcomeTargetProtocol.from_canonical_dict(
-            _object_value(payload["target_protocol"], "target_protocol")
-        )
-        evaluation_protocol = FormalEvaluationProtocol.from_canonical_dict(
-            dict(_object_value(payload["evaluation_protocol"], "evaluation_protocol"))
-        )
-        raw_components = _object_value(
-            payload["component_payloads"], "component_payloads"
-        )
-        component_payloads = {
-            str(role): _object_value(value, f"component_payloads.{role}")
-            for role, value in raw_components.items()
-        }
+        if set(payload) != {"formal_protocol"}:
+            raise ValueError(
+                "qualification-protocol-record accepts only formal_protocol; "
+                "all component payloads are reloaded from PostgreSQL owners"
+            )
         recorded_protocol = PostgresFormalProtocolRepository(
             factory,
             apply_migrations=False,
         ).record_protocol(
             protocol=protocol,
-            target_protocol=target_protocol,
-            evaluation_protocol=evaluation_protocol,
-            component_payloads=component_payloads,
         )
         return {
             "operation": "QUALIFICATION_PROTOCOL_RECORD",
@@ -579,6 +564,18 @@ def _dispatch(
         }
     if args.operation == "qualification-evaluation-record":
         payload = _load_json_object(args.input)
+        expected = {
+            "formal_protocol_id",
+            "panel_reference",
+            "target_reference",
+            "observation_bindings",
+            "formal_pit_evidence_id",
+        }
+        if set(payload) != expected:
+            raise ValueError(
+                "qualification-evaluation-record accepts only immutable owner "
+                "references; result time is assigned by PostgreSQL"
+            )
         evaluation_result = PostgresResearchQualificationAuthority(
             factory,
             apply_migrations=False,
@@ -601,7 +598,6 @@ def _dispatch(
             formal_pit_evidence_id=ArtifactId(
                 str(payload["formal_pit_evidence_id"])
             ),
-            created_at=_instant(str(payload["created_at"])),
         )
         return {
             "operation": "QUALIFICATION_EVALUATION_RECORD",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Mapping
@@ -15,7 +15,11 @@ from market_regime_alpha.application.research_validation.common import (
     timestamp,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
+from market_regime_alpha.evidence.canonical import (
+    canonical_hash,
+    require_sha256,
+    require_text,
+)
 
 
 class QualificationOutcome(str, Enum):
@@ -110,6 +114,81 @@ class FormalEvaluationObservationBinding:
             panel_row_reference=ValidationArtifactReference.from_canonical_dict(
                 _mapping(value["panel_row_reference"])
             ),
+            schema_version=str(value["schema_version"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LockedOOSEvidenceIdentity:
+    """Semantic OOS identity that survives regenerated label/model artifacts."""
+
+    dataset_reference: ValidationArtifactReference
+    universe_reference: ValidationArtifactReference
+    target_protocol_reference: ValidationArtifactReference
+    target_reference: ValidationArtifactReference
+    subject: str
+    session_date: date
+    label_end_date: date
+    partition_kind: str = "LOCKED_OOS"
+    schema_version: str = "locked-oos-evidence-identity/v2"
+
+    def __post_init__(self) -> None:
+        expected_kinds = (
+            (self.dataset_reference, "MARKET_DATA_DATASET"),
+            (self.universe_reference, "UNIVERSE"),
+            (self.target_protocol_reference, "OUTCOME_TARGET_PROTOCOL"),
+            (self.target_reference, "OUTCOME_TARGET"),
+        )
+        if any(item.artifact_kind != kind for item, kind in expected_kinds):
+            raise ValueError("Locked OOS evidence owner kind mismatch")
+        require_text("Locked OOS evidence subject", self.subject)
+        if self.label_end_date < self.session_date:
+            raise ValueError("Locked OOS evidence label ends before its session")
+        if self.partition_kind != "LOCKED_OOS":
+            raise ValueError("Locked OOS evidence partition cannot be weakened")
+        if self.schema_version != "locked-oos-evidence-identity/v2":
+            raise ValueError("unsupported Locked OOS evidence identity schema")
+
+    @property
+    def identity_hash(self) -> str:
+        return canonical_hash(self.to_canonical_dict())
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "dataset_reference": self.dataset_reference.to_canonical_dict(),
+            "universe_reference": self.universe_reference.to_canonical_dict(),
+            "target_protocol_reference": (
+                self.target_protocol_reference.to_canonical_dict()
+            ),
+            "target_reference": self.target_reference.to_canonical_dict(),
+            "subject": self.subject,
+            "session_date": self.session_date.isoformat(),
+            "label_end_date": self.label_end_date.isoformat(),
+            "partition_kind": self.partition_kind,
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> LockedOOSEvidenceIdentity:
+        return cls(
+            dataset_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["dataset_reference"])
+            ),
+            universe_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["universe_reference"])
+            ),
+            target_protocol_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["target_protocol_reference"])
+            ),
+            target_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["target_reference"])
+            ),
+            subject=str(value["subject"]),
+            session_date=date.fromisoformat(str(value["session_date"])),
+            label_end_date=date.fromisoformat(str(value["label_end_date"])),
+            partition_kind=str(value["partition_kind"]),
             schema_version=str(value["schema_version"]),
         )
 
@@ -756,6 +835,7 @@ __all__ = [
     "FormalOOSQualificationDecision",
     "FormalOOSQualificationPolicy",
     "HistoricalSampleQualificationDecision",
+    "LockedOOSEvidenceIdentity",
     "QualificationOutcome",
     "evaluate_metric_floor_payloads",
 ]

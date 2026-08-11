@@ -42,14 +42,14 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 050 and checksummed.
+- Packaged migrations are contiguous from 001 through 056 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 159 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–051 add only exploratory sample, Research Universe, Portfolio Shadow, engineering access-governance owners and Path Calibration Hypothesis evidence and do not weaken migration 046.
+The schema catalog currently contains 185 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–055 add exploratory sample, Research Universe, Portfolio Shadow, engineering access-governance owners, Path Calibration Hypothesis evidence and fail-closed Phase C gates. Migration 056 adds a Calendar payload snapshot anchored to the existing PIT Artifact Authority, Formal Protocol owner-resolution receipts and durable semantic Locked-OOS evidence consumption. None weakens migration 046 or creates a second Calendar/PIT owner.
 
 ## Replay
 

@@ -527,14 +527,7 @@ class FreeDataSettlementOperator:
             root=factor_root,
             artifact=deduplication,
         )
-        self._validation.record(
-            artifact_id=catalog.catalog_id,
-            artifact_hash=catalog.catalog_hash,
-            artifact_kind="FACTOR_RESEARCH_CATALOG",
-            evidence_authority="EXPLORATORY",
-            payload=catalog.identity_payload(),
-            created_at=catalog.created_at,
-        )
+        self._validation.record_factor_catalog(catalog)
         self._validation.record(
             artifact_id=deduplication.report_id,
             artifact_hash=deduplication.report_hash,

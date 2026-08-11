@@ -14,6 +14,14 @@ from market_regime_alpha.application.research_validation.calibration import (
     CalibrationProtocol,
 )
 from market_regime_alpha.application.research_validation.factor_extraction import ResearchPanelEnrichment
+from market_regime_alpha.application.research_validation.factor_research import FactorResearchCatalog
+from market_regime_alpha.application.research_validation.formal_evaluation import (
+    FormalEvaluationProtocol,
+)
+from market_regime_alpha.application.research_validation.formal_protocol_components import (
+    FeatureDefinitionSet,
+    ThresholdPolicy,
+)
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleDataset
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleQualification
 from market_regime_alpha.core.identity import ArtifactId, TargetId
@@ -48,6 +56,17 @@ class PostgresResearchValidationRepository:
         qualified: bool = False,
         production_authorized: bool = False,
     ) -> None:
+        if artifact_kind in {
+            "FACTOR_RESEARCH_CATALOG",
+            "FEATURE_DEFINITION_SET",
+            "FORMAL_EVALUATION_PROTOCOL",
+            "HISTORICAL_SAMPLE_DATASET",
+            "PANEL_ENRICHMENT",
+            "THRESHOLD_POLICY",
+        }:
+            raise ValueError(
+                f"{artifact_kind} requires its typed owner-specific writer"
+            )
         _reject_unresolved_authority_claims(payload)
         if (
             qualified
@@ -90,6 +109,91 @@ class PostgresResearchValidationRepository:
                 raise ValueError("Research Validation artifact identity conflict")
 
         self._factory.run_transaction(operation)
+
+    def record_feature_definition_set(
+        self, definition_set: FeatureDefinitionSet
+    ) -> None:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                definition_set.definition_set_id,
+                definition_set.definition_set_hash,
+                "FEATURE_DEFINITION_SET",
+                "ENGINEERING_ONLY",
+                definition_set.identity_payload(),
+                definition_set.locked_at,
+            )
+        )
+
+    def record_threshold_policy(self, policy: ThresholdPolicy) -> None:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                policy.policy_id,
+                policy.policy_hash,
+                "THRESHOLD_POLICY",
+                "ENGINEERING_ONLY",
+                policy.identity_payload(),
+                policy.locked_at,
+            )
+        )
+
+    def record_factor_catalog(self, catalog: FactorResearchCatalog) -> None:
+        def operation(connection: Any) -> None:
+            owner = connection.execute(
+                """
+                SELECT artifact_hash, artifact_kind, payload_json
+                FROM research_validation_artifact WHERE artifact_id = %s
+                """,
+                (str(catalog.enrichment_reference.artifact_id),),
+            ).fetchone()
+            if owner is None or (
+                str(owner[0]) != catalog.enrichment_reference.content_hash
+                or str(owner[1]) != "PANEL_ENRICHMENT"
+                or not isinstance(owner[2], Mapping)
+                or canonical_hash(dict(owner[2])) != str(owner[0])
+            ):
+                raise ValueError("Factor Catalog Panel Enrichment owner mismatch")
+            exposure_rows = connection.execute(
+                """
+                SELECT exposure_json
+                FROM research_panel_factor_exposure
+                WHERE enrichment_id = %s
+                ORDER BY symbol, factor_family, factor_id, timeframe,
+                         exposure_json->>'source_value_path'
+                """,
+                (str(catalog.enrichment_reference.artifact_id),),
+            ).fetchall()
+            if [item[0] for item in exposure_rows] != list(owner[2]["exposures"]):
+                raise ValueError(
+                    "Factor Catalog Panel Enrichment projection mismatch"
+                )
+            self._insert_artifact(
+                connection,
+                catalog.catalog_id,
+                catalog.catalog_hash,
+                "FACTOR_RESEARCH_CATALOG",
+                "EXPLORATORY",
+                catalog.identity_payload(),
+                catalog.created_at,
+            )
+
+        self._factory.run_transaction(operation)
+
+    def record_formal_evaluation_protocol(
+        self, protocol: FormalEvaluationProtocol
+    ) -> None:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                protocol.protocol_id,
+                protocol.protocol_hash,
+                "FORMAL_EVALUATION_PROTOCOL",
+                "ENGINEERING_ONLY",
+                protocol.identity_payload(),
+                protocol.locked_at,
+            )
+        )
 
     def record_panel_enrichment(self, enrichment: ResearchPanelEnrichment) -> None:
         def operation(connection: Any) -> None:

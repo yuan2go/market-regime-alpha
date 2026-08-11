@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
@@ -23,6 +24,7 @@ from market_regime_alpha.application.research_evaluation.panel_v2 import (
 )
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
     TargetOutcomeLabel,
+    TargetedShadowOutcome,
 )
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     OutcomeAvailabilityStatus,
@@ -41,15 +43,18 @@ from market_regime_alpha.application.research_validation.qualification import (
     FormalOOSQualificationDecision,
     FormalOOSQualificationPolicy,
     HistoricalSampleQualificationDecision,
+    LockedOOSEvidenceIdentity,
     QualificationOutcome,
     evaluate_metric_floor_payloads,
 )
 from market_regime_alpha.application.research_validation.samples import (
+    HistoricalPathSampleRecord,
     HistoricalSampleDataset,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.pit_authority import (
     FormalPITEvidenceArtifact,
+    FormalPITValidationRequest,
     PITValidationOutcome,
 )
 from market_regime_alpha.data.postgres_provider_qualification import (
@@ -80,6 +85,18 @@ class PostgresResearchQualificationAuthority:
         self._factory = factory
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
+
+    def record_oos_policy(
+        self, policy: FormalOOSQualificationPolicy
+    ) -> FormalOOSQualificationPolicy:
+        self._factory.run_transaction(
+            lambda connection: _record_oos_policy(
+                connection,
+                policy=policy,
+                created_at=_postgres_now(connection),
+            )
+        )
+        return policy
 
     def qualify_historical_sample(
         self,
@@ -230,7 +247,6 @@ class PostgresResearchQualificationAuthority:
         target_reference: ValidationArtifactReference,
         observation_bindings: tuple[FormalEvaluationObservationBinding, ...],
         formal_pit_evidence_id: ArtifactId,
-        created_at: datetime,
     ) -> FormalEvaluationResult:
         if panel_reference.artifact_kind != "RESEARCH_PANEL_V2":
             raise ResearchQualificationConflict(
@@ -261,10 +277,6 @@ class PostgresResearchQualificationAuthority:
                 raise ResearchQualificationConflict(
                     "Formal Evaluation Target is not frozen in the Formal Research Protocol"
                 )
-            if created_at < owner_protocol.locked_at:
-                raise ResearchQualificationConflict(
-                    "Formal Evaluation result predates the frozen Formal Research Protocol"
-                )
             panel = _load_panel_owner(connection, panel_reference)
             resolved = tuple(
                 _resolve_evaluation_observation(
@@ -276,23 +288,16 @@ class PostgresResearchQualificationAuthority:
                 )
                 for binding in ordered_bindings
             )
-            for binding in ordered_bindings:
-                acquire_scope_lock(
-                    connection,
-                    namespace="formal-evaluation-observation-use",
-                    identity=(
-                        f"{binding.forecast_reference.artifact_id}:"
-                        f"{binding.label_reference.artifact_id}"
-                    ),
-                )
             observations = tuple(item[0] for item in resolved)
-            _reject_locked_oos_reuse(
-                connection,
-                formal_protocol=owner_protocol,
-                evaluation_protocol=owner_evaluation,
-                bindings=ordered_bindings,
-                observations=observations,
-            )
+            created_at = _postgres_now(connection)
+            if created_at < owner_protocol.locked_at:
+                raise ResearchQualificationConflict(
+                    "Formal Evaluation result predates the frozen Formal Research Protocol"
+                )
+            if any(item[2] > created_at for item in resolved):
+                raise ResearchQualificationConflict(
+                    "Formal Evaluation result predates an owner-resolved Target Label"
+                )
             observation_set_payload = _observation_set_payload(
                 formal_protocol=owner_protocol,
                 panel_reference=panel_reference,
@@ -334,6 +339,15 @@ class PostgresResearchQualificationAuthority:
                 bindings=ordered_bindings,
                 resolved=resolved,
                 created_at=created_at,
+            )
+            _consume_locked_oos_evidence(
+                connection,
+                formal_protocol=owner_protocol,
+                evaluation_protocol=owner_evaluation,
+                target_reference=target_reference,
+                observation_set_id=observation_set_id,
+                bindings=ordered_bindings,
+                observations=observations,
             )
             connection.execute(
                 """
@@ -586,6 +600,7 @@ def _assess_historical_sample(
     if blocked:
         return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), ()
     assert protocol is not None and pit is not None
+    pit_request = _load_formal_pit_request(connection, pit)
     if pit.outcome is not PITValidationOutcome.SATISFIED:
         blocked.add("FORMAL_PIT_NOT_SATISFIED")
     if pit.available_at > evaluated_at or pit.recorded_at > evaluated_at:
@@ -618,27 +633,30 @@ def _assess_historical_sample(
         (str(item.fact_id), item.fact_hash) for item in pit.selected_fact_authorities
     }
     for record in dataset.records:
+        if record.sample.symbol not in pit_request.symbols:
+            rejected.add("HISTORICAL_SAMPLE_SYMBOL_OUTSIDE_FORMAL_PIT_SCOPE")
         if record.sample.available_at.value > evaluated_at:
             rejected.add("HISTORICAL_SAMPLE_NOT_AVAILABLE_AT_QUALIFICATION")
         if record.outcome_reference.artifact_kind != "TARGET_OUTCOME_LABEL":
             rejected.add("FORMAL_TARGET_OUTCOME_LABEL_REQUIRED")
         else:
-            rows = connection.execute(
-                """
-                SELECT label_hash, target_id
-                FROM targeted_shadow_outcome_label
-                WHERE label_id = %s
-                """,
-                (str(record.outcome_reference.artifact_id),),
-            ).fetchall()
-            exact = tuple(
-                row
-                for row in rows
-                if str(row[0]) == record.outcome_reference.content_hash
-                and str(row[1]) == str(record.target_reference.artifact_id)
-            )
-            if len(exact) != 1:
+            try:
+                outcome, label = _load_target_label_owner(
+                    connection,
+                    reference=record.outcome_reference,
+                    target_reference=record.target_reference,
+                )
+            except ResearchQualificationConflict:
                 rejected.add("TARGET_OUTCOME_LABEL_OWNER_MISMATCH")
+            else:
+                rejected.update(
+                    _historical_target_label_reason_codes(
+                        protocol=protocol,
+                        record=record,
+                        outcome=outcome,
+                        label=label,
+                    )
+                )
         pit_refs = tuple(
             item
             for item in record.pit_lineage
@@ -651,6 +669,19 @@ def _assess_historical_sample(
             for item in pit_refs
         ):
             rejected.add("HISTORICAL_SAMPLE_PIT_FACT_LINEAGE_MISMATCH")
+        elif {
+            (str(item.artifact_id), item.content_hash) for item in pit_refs
+        } != selected:
+            rejected.add("HISTORICAL_SAMPLE_PIT_FACT_LINEAGE_INCOMPLETE")
+        rejected.update(
+            _historical_pit_temporal_reason_codes(
+                connection,
+                protocol=protocol,
+                record=record,
+                pit_request=pit_request,
+                pit=pit,
+            )
+        )
     provider_refs, provider_reasons = _resolve_provider_fact_decisions(
         connection, pit=pit, evaluated_at=evaluated_at
     )
@@ -660,6 +691,68 @@ def _assess_historical_sample(
     if blocked:
         return QualificationOutcome.BLOCKED, tuple(sorted(blocked)), provider_refs
     return QualificationOutcome.SATISFIED, (), provider_refs
+
+
+def _historical_pit_temporal_reason_codes(
+    connection: Any,
+    *,
+    protocol: FormalResearchProtocol,
+    record: HistoricalPathSampleRecord,
+    pit_request: FormalPITValidationRequest,
+    pit: FormalPITEvidenceArtifact,
+) -> tuple[str, ...]:
+    """Rebind one sample to the exact As-Of request and Fact owner rows."""
+
+    reasons: set[str] = set()
+    sample_time = record.sample.sample_decision_time.value
+    if pit_request.decision_time != sample_time:
+        reasons.add("HISTORICAL_SAMPLE_FORMAL_PIT_DECISION_TIME_MISMATCH")
+    required = {
+        (item.logical_key, item.fact_kind.value, item.subject)
+        for item in pit_request.required_facts
+    }
+    selected_keys: set[tuple[str, str, str]] = set()
+    calendar_facts = 0
+    for selected in pit.selected_fact_authorities:
+        row = connection.execute(
+            """
+            SELECT content_hash, logical_key, fact_kind, subject,
+                   event_time, effective_from, effective_to,
+                   available_at, recorded_at, artifact_id, artifact_hash
+            FROM pit_fact_revision
+            WHERE fact_id = %s
+            """,
+            (str(selected.fact_id),),
+        ).fetchone()
+        if row is None or str(row[0]) != selected.fact_hash:
+            reasons.add("HISTORICAL_SAMPLE_PIT_FACT_OWNER_MISMATCH")
+            continue
+        fact_key = (str(row[1]), str(row[2]), str(row[3]))
+        selected_keys.add(fact_key)
+        if fact_key not in required:
+            reasons.add("HISTORICAL_SAMPLE_PIT_FACT_REQUIREMENT_MISMATCH")
+        if (
+            row[4] > sample_time
+            or row[5] > sample_time
+            or (row[6] is not None and sample_time >= row[6])
+            or row[7] > sample_time
+            or row[8] > sample_time
+        ):
+            reasons.add("HISTORICAL_SAMPLE_PIT_FACT_NOT_AS_OF_SAMPLE")
+        if str(row[2]) == "TRADING_CALENDAR":
+            calendar_facts += 1
+            if (
+                str(row[9])
+                != str(protocol.trading_calendar_reference.artifact_id)
+                or str(row[10])
+                != protocol.trading_calendar_reference.content_hash
+            ):
+                reasons.add("FORMAL_PIT_FROZEN_CALENDAR_LINEAGE_MISMATCH")
+    if selected_keys != required:
+        reasons.add("HISTORICAL_SAMPLE_PIT_FACT_REQUIREMENT_MISMATCH")
+    if calendar_facts == 0:
+        reasons.add("FORMAL_PIT_FROZEN_CALENDAR_LINEAGE_MISSING")
+    return tuple(sorted(reasons))
 
 
 def _resolve_provider_fact_decisions(
@@ -874,6 +967,113 @@ def _load_formal_pit(
     return evidence
 
 
+def _load_formal_pit_request(
+    connection: Any,
+    evidence: FormalPITEvidenceArtifact,
+) -> FormalPITValidationRequest:
+    row = connection.execute(
+        """
+        SELECT request_json
+        FROM formal_pit_validation_evidence
+        WHERE evidence_id = %s
+        """,
+        (str(evidence.evidence_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[0], Mapping):
+        raise ResearchQualificationConflict("Formal PIT request owner is missing")
+    try:
+        request = FormalPITValidationRequest.from_canonical_dict(_mapping(row[0]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ResearchQualificationConflict("Formal PIT request replay failed") from exc
+    if request.request_hash != evidence.request_hash:
+        raise ResearchQualificationConflict("Formal PIT request identity mismatch")
+    return request
+
+
+def _load_target_label_owner(
+    connection: Any,
+    *,
+    reference: ValidationArtifactReference,
+    target_reference: ValidationArtifactReference,
+) -> tuple[TargetedShadowOutcome, TargetOutcomeLabel]:
+    rows = connection.execute(
+        """
+        SELECT outcome.settlement_hash, outcome.payload_json,
+               label.label_hash, label.label_json
+        FROM targeted_shadow_outcome_label AS label
+        JOIN targeted_shadow_outcome AS outcome
+          ON outcome.settlement_id = label.settlement_id
+        WHERE label.label_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchall()
+    exact: list[tuple[TargetedShadowOutcome, TargetOutcomeLabel]] = []
+    for row in rows:
+        if (
+            str(row[2]) != reference.content_hash
+            or not isinstance(row[1], Mapping)
+            or not isinstance(row[3], Mapping)
+        ):
+            continue
+        try:
+            outcome = TargetedShadowOutcome.from_canonical_dict(_mapping(row[1]))
+            label = TargetOutcomeLabel.from_canonical_dict(_mapping(row[3]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if (
+            outcome.settlement_hash == str(row[0])
+            and label.label_id == reference.artifact_id
+            and label.label_hash == reference.content_hash
+            and label.target.artifact_id == target_reference.artifact_id
+            and label.target.content_hash == target_reference.content_hash
+            and label in outcome.labels
+        ):
+            exact.append((outcome, label))
+    if len(exact) != 1:
+        raise ResearchQualificationConflict("Target Outcome Label owner mismatch")
+    return exact[0]
+
+
+def _decimal_from_float(value: float | None) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
+
+
+def _historical_target_label_reason_codes(
+    *,
+    protocol: FormalResearchProtocol,
+    record: HistoricalPathSampleRecord,
+    outcome: TargetedShadowOutcome,
+    label: TargetOutcomeLabel,
+) -> tuple[str, ...]:
+    reasons: set[str] = set()
+    sample = record.sample
+    if (
+        outcome.source_dataset.artifact_id
+        != protocol.dataset_reference.artifact_id
+        or outcome.source_dataset.content_hash
+        != protocol.dataset_reference.content_hash
+        or outcome.target_protocol_id
+        != protocol.outcome_target_protocol_reference.artifact_id
+        or outcome.target_protocol_hash
+        != protocol.outcome_target_protocol_reference.content_hash
+    ):
+        reasons.add("TARGET_OUTCOME_DATASET_OR_PROTOCOL_LINEAGE_MISMATCH")
+    if (
+        label.symbol != sample.symbol
+        or label.target.artifact_id != record.target_reference.artifact_id
+        or label.target.content_hash != record.target_reference.content_hash
+        or label.label_interval_start != sample.sample_decision_time.value
+        or label.outcome_available_at > sample.available_at.value
+        or sample.source_artifact_id != outcome.settlement_id
+        or sample.source_content_hash != outcome.settlement_hash
+        or _decimal_from_float(sample.realized_return) != label.checkpoint_return
+        or _decimal_from_float(sample.realized_mfe) != label.mfe
+        or _decimal_from_float(sample.realized_mae) != label.mae
+    ):
+        reasons.add("HISTORICAL_SAMPLE_TARGET_LABEL_LINEAGE_MISMATCH")
+    return tuple(sorted(reasons))
+
+
 def _load_historical_decision(
     connection: Any, decision_id: ArtifactId
 ) -> HistoricalSampleQualificationDecision:
@@ -1042,9 +1242,12 @@ def _load_evaluation_observations(
             "Formal Evaluation observation bindings diverge from set identity"
         )
     panel = _load_panel_owner(connection, panel_reference)
+    evaluation_protocol = _load_evaluation_protocol(
+        connection, protocol.evaluation_protocol_reference.artifact_id
+    )
     observations: list[EvaluationObservation] = []
     for binding, stored in zip(bindings, rows, strict=True):
-        observation, settlement_id = _resolve_evaluation_observation(
+        observation, settlement_id, _ = _resolve_evaluation_observation(
             connection,
             protocol=protocol,
             panel=panel,
@@ -1069,6 +1272,22 @@ def _load_evaluation_observations(
         if actual_projection != expected_projection:
             raise ResearchQualificationConflict(
                 "Formal Evaluation observation binding projection mismatch"
+            )
+        consumption = _locked_oos_consumption_payload(
+            formal_protocol=protocol,
+            evaluation_protocol=evaluation_protocol,
+            target_reference=target_reference,
+            observation_set_id=set_reference.artifact_id,
+            binding=binding,
+            observation=observation,
+        )
+        if consumption is not None:
+            identity_hash, consumption_payload = consumption
+            _require_locked_oos_consumption(
+                connection,
+                identity_hash=identity_hash,
+                payload=consumption_payload,
+                observation_set_id=set_reference.artifact_id,
             )
         observations.append(observation)
     return tuple(observations)
@@ -1109,7 +1328,7 @@ def _resolve_evaluation_observation(
     panel: FrozenResearchPanelV2,
     target_reference: ValidationArtifactReference,
     binding: FormalEvaluationObservationBinding,
-) -> tuple[EvaluationObservation, str]:
+) -> tuple[EvaluationObservation, str, datetime]:
     forecast_row = connection.execute(
         """
         SELECT forecast_hash, payload_json
@@ -1276,7 +1495,7 @@ def _resolve_evaluation_observation(
         market_cap_slice="UNKNOWN",
         theme_slice=theme,
     )
-    return observation, str(label_row[0])
+    return observation, str(label_row[0]), label.outcome_available_at
 
 
 def _state_slice(
@@ -1297,56 +1516,200 @@ def _state_slice(
     return str(row[1])
 
 
-def _reject_locked_oos_reuse(
+def _consume_locked_oos_evidence(
     connection: Any,
     *,
     formal_protocol: FormalResearchProtocol,
     evaluation_protocol: FormalEvaluationProtocol,
+    target_reference: ValidationArtifactReference,
+    observation_set_id: ArtifactId,
     bindings: tuple[FormalEvaluationObservationBinding, ...],
     observations: tuple[EvaluationObservation, ...],
 ) -> None:
     for binding, observation in zip(bindings, observations, strict=True):
-        current_partitions = {
-            item.partition
+        locked_windows = tuple(
+            item
             for item in evaluation_protocol.windows
-            if item.start_date <= observation.session_date <= item.end_date
-        }
+            if item.partition is EvaluationPartition.LOCKED_OOS
+            and item.start_date <= observation.session_date <= item.end_date
+        )
+        if not locked_windows:
+            continue
+        consumption = _locked_oos_consumption_payload(
+            formal_protocol=formal_protocol,
+            evaluation_protocol=evaluation_protocol,
+            target_reference=target_reference,
+            observation_set_id=observation_set_id,
+            binding=binding,
+            observation=observation,
+        )
+        if consumption is None:
+            raise AssertionError("Locked OOS window consumption was not constructed")
+        identity_hash, payload = consumption
+        acquire_scope_lock(
+            connection,
+            namespace="locked-oos-evidence-consumption",
+            identity=identity_hash,
+        )
         prior_rows = connection.execute(
             """
             SELECT DISTINCT observation_set.formal_protocol_id,
-                            binding.session_date
+                            binding.observation_set_id
             FROM formal_evaluation_observation_binding AS binding
             JOIN formal_evaluation_observation_set AS observation_set
               ON observation_set.observation_set_id = binding.observation_set_id
-            WHERE binding.forecast_id = %s
-              AND binding.label_id = %s
-              AND observation_set.formal_protocol_id <> %s
+            WHERE binding.label_id = %s
+              AND binding.observation_set_id <> %s
             """,
             (
-                str(binding.forecast_reference.artifact_id),
                 str(binding.label_reference.artifact_id),
-                str(formal_protocol.protocol_id),
+                str(observation_set_id),
             ),
         ).fetchall()
-        for prior_protocol_id, prior_session_date in prior_rows:
-            prior_protocol = _load_formal_protocol(
-                connection, ArtifactId(str(prior_protocol_id))
+        if prior_rows:
+            raise ResearchQualificationConflict(
+                "Locked OOS evidence was touched by prior Formal Evaluation"
             )
-            prior_evaluation = _load_evaluation_protocol(
-                connection, prior_protocol.evaluation_protocol_reference.artifact_id
+        consumed_at = _postgres_now(connection)
+        connection.execute(
+            """
+            INSERT INTO locked_oos_evidence_consumption(
+                evidence_identity_hash, dataset_id, dataset_hash,
+                universe_id, universe_hash,
+                target_protocol_id, target_protocol_hash,
+                target_id, target_hash, label_id, label_hash,
+                subject, session_date, label_end_date, partition_kind,
+                first_formal_protocol_id, first_formal_protocol_hash,
+                first_model_id, first_model_hash,
+                first_forecast_id, first_forecast_hash,
+                observation_set_id, payload_json, consumed_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, 'LOCKED_OOS', %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
-            prior_partitions = {
-                item.partition
-                for item in prior_evaluation.windows
-                if item.start_date <= prior_session_date <= item.end_date
-            }
-            if (
-                EvaluationPartition.LOCKED_OOS in current_partitions
-                or EvaluationPartition.LOCKED_OOS in prior_partitions
-            ):
-                raise ResearchQualificationConflict(
-                    "Locked OOS observation was already touched by another Formal Protocol"
-                )
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                identity_hash,
+                str(formal_protocol.dataset_reference.artifact_id),
+                formal_protocol.dataset_reference.content_hash,
+                str(formal_protocol.universe_reference.artifact_id),
+                formal_protocol.universe_reference.content_hash,
+                str(formal_protocol.outcome_target_protocol_reference.artifact_id),
+                formal_protocol.outcome_target_protocol_reference.content_hash,
+                str(target_reference.artifact_id),
+                target_reference.content_hash,
+                str(binding.label_reference.artifact_id),
+                binding.label_reference.content_hash,
+                observation.symbol,
+                observation.session_date,
+                observation.label_end_date,
+                str(formal_protocol.protocol_id),
+                formal_protocol.protocol_hash,
+                str(formal_protocol.model_reference.artifact_id),
+                formal_protocol.model_reference.content_hash,
+                str(binding.forecast_reference.artifact_id),
+                binding.forecast_reference.content_hash,
+                str(observation_set_id),
+                Jsonb(payload),
+                consumed_at,
+            ),
+        )
+        _require_locked_oos_consumption(
+            connection,
+            identity_hash=identity_hash,
+            payload=payload,
+            observation_set_id=observation_set_id,
+        )
+
+
+def _locked_oos_evidence_identity_payload(
+    *,
+    formal_protocol: FormalResearchProtocol,
+    target_reference: ValidationArtifactReference,
+    binding: FormalEvaluationObservationBinding,
+    observation: EvaluationObservation,
+) -> dict[str, Any]:
+    del binding
+    return LockedOOSEvidenceIdentity(
+        dataset_reference=formal_protocol.dataset_reference,
+        universe_reference=formal_protocol.universe_reference,
+        target_protocol_reference=(
+            formal_protocol.outcome_target_protocol_reference
+        ),
+        target_reference=target_reference,
+        subject=observation.symbol,
+        session_date=observation.session_date,
+        label_end_date=observation.label_end_date,
+    ).to_canonical_dict()
+
+
+def _locked_oos_consumption_payload(
+    *,
+    formal_protocol: FormalResearchProtocol,
+    evaluation_protocol: FormalEvaluationProtocol,
+    target_reference: ValidationArtifactReference,
+    observation_set_id: ArtifactId,
+    binding: FormalEvaluationObservationBinding,
+    observation: EvaluationObservation,
+) -> tuple[str, dict[str, Any]] | None:
+    locked_windows = tuple(
+        item
+        for item in evaluation_protocol.windows
+        if item.partition is EvaluationPartition.LOCKED_OOS
+        and item.start_date <= observation.session_date <= item.end_date
+    )
+    if not locked_windows:
+        return None
+    identity_payload = _locked_oos_evidence_identity_payload(
+        formal_protocol=formal_protocol,
+        target_reference=target_reference,
+        binding=binding,
+        observation=observation,
+    )
+    identity = LockedOOSEvidenceIdentity.from_canonical_dict(identity_payload)
+    identity_hash = identity.identity_hash
+    return identity_hash, {
+        "schema_version": "locked-oos-evidence-consumption/v1",
+        "evidence_identity": identity_payload,
+        "first_consumption": {
+            "formal_protocol_reference": ValidationArtifactReference(
+                "FORMAL_RESEARCH_PROTOCOL",
+                formal_protocol.protocol_id,
+                formal_protocol.protocol_hash,
+            ).to_canonical_dict(),
+            "model_reference": formal_protocol.model_reference.to_canonical_dict(),
+            "forecast_reference": binding.forecast_reference.to_canonical_dict(),
+            "label_reference": binding.label_reference.to_canonical_dict(),
+            "observation_set_id": str(observation_set_id),
+            "evaluation_window_ids": [item.window_id for item in locked_windows],
+        },
+    }
+
+
+def _require_locked_oos_consumption(
+    connection: Any,
+    *,
+    identity_hash: str,
+    payload: Mapping[str, Any],
+    observation_set_id: ArtifactId,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT evidence_identity_hash, observation_set_id, payload_json
+        FROM locked_oos_evidence_consumption
+        WHERE evidence_identity_hash = %s
+        """,
+        (identity_hash,),
+    ).fetchone()
+    if row is None or (
+        str(row[0]) != identity_hash
+        or str(row[1]) != str(observation_set_id)
+        or row[2] != dict(payload)
+    ):
+        raise ResearchQualificationConflict(
+            "Locked OOS evidence was already formally consumed"
+        )
 
 
 def _formal_evaluation_sources(
@@ -1403,7 +1766,7 @@ def _record_observation_set(
     panel_reference: ValidationArtifactReference,
     target_reference: ValidationArtifactReference,
     bindings: tuple[FormalEvaluationObservationBinding, ...],
-    resolved: tuple[tuple[EvaluationObservation, str], ...],
+    resolved: tuple[tuple[EvaluationObservation, str, datetime], ...],
     created_at: datetime,
 ) -> None:
     connection.execute(
@@ -1428,7 +1791,9 @@ def _record_observation_set(
             created_at,
         ),
     )
-    for binding, (observation, settlement_id) in zip(bindings, resolved, strict=True):
+    for binding, (observation, settlement_id, _) in zip(
+        bindings, resolved, strict=True
+    ):
         connection.execute(
             """
             INSERT INTO formal_evaluation_observation_binding(
@@ -1508,10 +1873,17 @@ def _record_oos_policy(
         ),
     )
     row = connection.execute(
-        "SELECT policy_hash FROM formal_oos_qualification_policy WHERE policy_id = %s",
+        """
+        SELECT policy_hash, payload_json, locked_at
+        FROM formal_oos_qualification_policy WHERE policy_id = %s
+        """,
         (str(policy.policy_id),),
     ).fetchone()
-    if row is None or str(row[0]) != policy.policy_hash:
+    if row is None or (
+        str(row[0]) != policy.policy_hash
+        or row[1] != policy.to_canonical_dict()
+        or row[2] != policy.locked_at
+    ):
         raise ResearchQualificationConflict("Formal OOS Policy identity conflict")
 
 

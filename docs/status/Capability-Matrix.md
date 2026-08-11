@@ -14,9 +14,9 @@
 | ETF/Index/Industry/Theme Reference | Engineering complete | Declared/Derived/Proxy are distinct, versioned and lineage-bound; free mappings remain Proxy |
 | Dataset and Feature materialization | Implemented | canonical content-addressed artifacts |
 | Formal PIT mechanics | Implemented mechanics | real qualified Provider/fact coverage absent |
-| Formal Protocol / Frozen Calendar | Operational engineering complete | full Calendar payload, component payloads, targets and evaluation windows are immutable/content-addressed and typed-replayed; unified CLI records them; no current formal protocol evidence |
+| Formal Protocol / Frozen Calendar | Operational engineering complete | the CLI accepts only a Formal Protocol reference; Target, Calendar, Dataset, Universe, Historical Sample, Feature, Factor, Model, Threshold, Cost, Calibration, Strategy, Entry/Holding/Exit and Evaluation are reloaded from PostgreSQL owners and preserved in immutable owner-resolution receipts; no current formal protocol evidence |
 | Provider Fact Qualification V2 | Operational engineering complete | exact Provider×Contract×Fact owner; current BaoStock/Tencent scopes are `REJECTED`, never silently promoted |
-| Historical Sample Qualification | Owner writer implemented | reloads Protocol/PIT/Target/Provider owners; current evidence absent, so no qualified sample exists |
+| Historical Sample Qualification | Owner writer implemented | reloads Protocol/PIT request/Target/Provider/Targeted Outcome owners and requires exact Dataset, symbol, label interval/value and complete selected-Fact lineage; current evidence absent, so no qualified sample exists |
 | Model Registry and Research/Shadow selection | Implemented | PostgreSQL Governance |
 | Production model qualification | Closed | owner resolution incomplete; always not qualified |
 | Market/ETF/Theme/Capital State | Implemented | PostgreSQL State owner; models remain unvalidated |
@@ -31,7 +31,7 @@
 | Evaluation Dataset / Panel V2 / Factor Extraction | Implemented | immutable engineering evidence |
 | Factor catalog / de-dup / ablation / liquidity-capacity | Implemented harness | versioned lineage and provenance; exploratory assumptions are not facts or calibration |
 | Calibration | Qualification owner implemented, evidence absent | exact Forecast/Label/Target and FIT/VALIDATION/Locked-OOS bindings are replayed from PostgreSQL; no Formal OOS input exists and every current result remains `calibrated=false` |
-| Formal Evaluation / Locked OOS | Owner writer implemented, evidence absent | frozen-calendar cross-sectional IC/RankIC, Top-K/spread/hit/MFE/MAE/turnover/drawdown/lift, moving-block CI and multiple testing are replayed before a decision; no current qualified PIT/sample observations |
+| Formal Evaluation / Locked OOS | Owner writer and consumption Authority implemented, evidence absent | frozen-calendar cross-sectional IC/RankIC, Top-K/spread/hit/MFE/MAE/turnover/drawdown/lift, moving-block CI and multiple testing are replayed before a decision; semantic subject/session/label-interval evidence is consumed durably across Target/Label revisions and Model/Forecast/Dataset/Protocol changes; no current qualified PIT/sample observations |
 | Entry research / Holding / Exit qualification | Owner writer implemented, evidence absent | replays Locked-OOS Strategy Shadow Entry→Fill→Position→Exit→Outcome, economic/provenance floors and independent approval; no Canonical `ENTER` unlock |
 | Strategy Shadow | Operational loop implemented | Entry/Fill/Position/Holding/Exit/Outcome via Continuous CLI; simulated ledger, no real mutation |
 | Portfolio Strategy Shadow | Operational engineering complete | Top1/3/5 Equal/Score/Risk, Cash/NAV/exposure/turnover/cost/capacity/drawdown/attribution and A-share constraints; no real mutation |
