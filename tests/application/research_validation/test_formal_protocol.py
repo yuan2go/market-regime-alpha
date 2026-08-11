@@ -88,7 +88,7 @@ def _formal_protocol(*, cost_name: str = "cost-v1") -> FormalResearchProtocol:
         trading_calendar=_calendar(),
         evaluation_protocol=_evaluation(targets),
         universe_reference=_reference("UNIVERSE", "universe-v1"),
-        dataset_reference=_reference("DATASET", "dataset-v1"),
+        dataset_reference=_reference("MARKET_DATA_DATASET", "dataset-v1"),
         historical_sample_dataset_reference=_reference(
             "HISTORICAL_SAMPLE_DATASET", "sample-dataset-v1"
         ),
