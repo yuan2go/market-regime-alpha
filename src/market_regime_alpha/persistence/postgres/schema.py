@@ -219,6 +219,12 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "historical_research_stage_receipt",
         "historical_research_attempt",
         "historical_research_event",
+        "shadow_performance_policy",
+        "shadow_performance_report",
+        "shadow_performance_state_binding",
+        "shadow_performance_metric",
+        "shadow_performance_period_return",
+        "shadow_performance_attribution",
     }
 )
 
@@ -416,6 +422,30 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "historical_research_event",
             "historical_research_event_no_update",
+        ),
+        (
+            "shadow_performance_policy",
+            "shadow_performance_policy_no_update",
+        ),
+        (
+            "shadow_performance_report",
+            "shadow_performance_report_no_update",
+        ),
+        (
+            "shadow_performance_state_binding",
+            "shadow_performance_state_binding_no_update",
+        ),
+        (
+            "shadow_performance_metric",
+            "shadow_performance_metric_no_update",
+        ),
+        (
+            "shadow_performance_period_return",
+            "shadow_performance_period_return_no_update",
+        ),
+        (
+            "shadow_performance_attribution",
+            "shadow_performance_attribution_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (

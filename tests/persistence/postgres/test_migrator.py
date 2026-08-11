@@ -86,14 +86,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (57, "formal_research_runtime_closure"),
     (58, "runtime_scope_authority"),
     (59, "historical_research_journal"),
+    (60, "shadow_performance_authority"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 60))
-    assert len({item.name for item in migrations}) == 59
+    assert tuple(item.version for item in migrations) == tuple(range(1, 61))
+    assert len({item.name for item in migrations}) == 60
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -115,11 +116,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 60))
+    assert tuple(item.version for item in first) == tuple(range(1, 61))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 59
+    assert len(rows) == 60
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -307,7 +308,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
     ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (59,)
+    assert applied == (60,)
     assert restored == account
 
 
@@ -701,6 +702,7 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         (57, "formal_research_runtime_closure"),
         (58, "runtime_scope_authority"),
         (59, "historical_research_journal"),
+        (60, "shadow_performance_authority"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         tables = tuple(

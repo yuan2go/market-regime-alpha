@@ -185,6 +185,13 @@ class RepositoryFactory:
 
         return PostgresRuntimeScopeRepository(self._postgres)
 
+    def shadow_performance(self):
+        from market_regime_alpha.application.strategy_shadow.postgres_performance import (
+            PostgresPortfolioPerformanceRepository,
+        )
+
+        return PostgresPortfolioPerformanceRepository(self._postgres)
+
     def pit_authority(
         self,
         *,
