@@ -29,6 +29,15 @@
 Phase C must not add model parameters, Alpha claims or trading permissions to
 make a gate pass.
 
+## Phase D current work package
+
+[Phase D Research Execution](../architecture/decisions/ADR-008-Phase-D-Research-Execution.md) records the approved
+Shared Decision Session Kernel, PostgreSQL Historical Journal and free-data-first
+implementation boundary. It is an in-progress work package, not executable or
+evidence authority. Phase D may establish exploratory Historical Research,
+model and Shadow capabilities while Formal PIT, Formal OOS, calibration and
+Production qualification remain independently fail-closed.
+
 ## P1 Operational evidence completion
 
 1. Run exact-window free-data Research/Shadow operations and recovery drills.
