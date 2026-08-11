@@ -29,7 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = settings_from_namespace(args)
-    with PostgresConnectionFactory(settings) as factory:
+    with PostgresConnectionFactory(
+        settings,
+        application_schema=settings.application_schema,
+    ) as factory:
         applied = () if args.verify_only else PostgresMigrator().apply_all(factory)
         with factory.connection(read_only=True) as connection:
             verify_postgres_authority_schema(connection)
