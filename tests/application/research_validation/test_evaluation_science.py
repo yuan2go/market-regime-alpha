@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
+
 from market_regime_alpha.application.research_evaluation.targets import (
     engineering_multi_horizon_protocol,
 )
@@ -190,3 +192,45 @@ def test_purge_and_embargo_apply_to_validation_to_locked_oos_boundary() -> None:
     assert result.protocol_reference.artifact_id == _protocol(
         bootstrap_block_sessions=2
     ).protocol_id
+
+
+def test_embargo_uses_frozen_calendar_not_observation_presence() -> None:
+    observations = (
+        _observation(
+            "validation-before-calendar-embargo",
+            date(2026, 1, 19),
+            "000001.SZ",
+            "1",
+            "0.01",
+        ),
+        _observation(
+            "locked-oos",
+            date(2026, 1, 23),
+            "000001.SZ",
+            "1",
+            "0.02",
+        ),
+    )
+    frozen_dates = tuple(date(2026, 1, day) for day in range(1, 31))
+
+    result = run_formal_evaluation(
+        protocol=_protocol(),
+        panel_reference=_reference(),
+        observations=observations,
+        formal_pit_evidence=None,
+        created_at=NOW,
+        frozen_trading_dates=frozen_dates,
+    )
+
+    assert "validation-before-calendar-embargo" not in result.excluded_observation_ids
+    assert "locked-oos" not in result.excluded_observation_ids
+
+    with pytest.raises(ValueError, match="Frozen Trading Calendar"):
+        run_formal_evaluation(
+            protocol=_protocol(),
+            panel_reference=_reference(),
+            observations=observations,
+            formal_pit_evidence=None,
+            created_at=NOW,
+            frozen_trading_dates=tuple(reversed(frozen_dates)),
+        )

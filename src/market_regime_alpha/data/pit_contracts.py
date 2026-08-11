@@ -291,7 +291,11 @@ class ProviderQualificationPolicy:
         self,
         provider_id: str,
         requested: PITSourceEvidenceLevel,
+        *,
+        provider_contract: str | None = None,
+        fact_kinds: tuple[PITFactKind, ...] = (),
     ) -> None:
+        del provider_contract, fact_kinds
         require_text("provider_id", provider_id)
         maximum = self.maximum_level(provider_id)
         if _SOURCE_EVIDENCE_RANK[requested] > _SOURCE_EVIDENCE_RANK[maximum]:
@@ -314,6 +318,223 @@ class ProviderQualificationPolicy:
     def semantic_payload(self) -> dict[str, Any]:
         return _provider_policy_payload(
             provider_ceilings=self.provider_ceilings,
+            default_ceiling=self.default_ceiling,
+            formal_required_evidence=self.formal_required_evidence,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "policy_id": str(self.policy_id),
+            "policy_hash": self.policy_hash,
+            **self.semantic_payload(),
+        }
+
+    @property
+    def reference(self) -> PITArtifactReference:
+        return PITArtifactReference(
+            PITArtifactKind.CONFIGURATION.value,
+            self.policy_id,
+            self.policy_hash,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderFactCeiling:
+    """Maximum evidence level for one exact Provider/Contract/Fact scope."""
+
+    provider_id: str
+    provider_contract: str
+    fact_kind: PITFactKind
+    maximum_level: PITSourceEvidenceLevel
+
+    def __post_init__(self) -> None:
+        require_text("provider_id", self.provider_id)
+        require_text("provider_contract", self.provider_contract)
+
+    def to_canonical_dict(self) -> dict[str, str]:
+        return {
+            "provider_id": self.provider_id,
+            "provider_contract": self.provider_contract,
+            "fact_kind": self.fact_kind.value,
+            "maximum_level": self.maximum_level.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderQualificationPolicyV2:
+    """Fact-scoped Provider ceiling; it never promotes a Provider wholesale."""
+
+    policy_id: ArtifactId
+    policy_hash: str
+    scope_ceilings: tuple[ProviderFactCeiling, ...]
+    default_ceiling: PITSourceEvidenceLevel
+    formal_required_evidence: tuple[PITProviderEvidenceKind, ...]
+    schema_version: str = "pit-provider-qualification-policy-v2"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "pit-provider-qualification-policy-v2":
+            raise PITContractError("unsupported Provider Qualification Policy V2 schema")
+        require_sha256("policy_hash", self.policy_hash)
+        ordered = tuple(sorted(self.scope_ceilings, key=_provider_fact_ceiling_key))
+        if not ordered or ordered != self.scope_ceilings:
+            raise PITContractError("Provider fact ceilings must be non-empty and sorted")
+        keys = tuple(_provider_fact_ceiling_key(item) for item in ordered)
+        if len(keys) != len(set(keys)):
+            raise PITContractError("Provider fact ceilings must be unique")
+        if self.formal_required_evidence != tuple(
+            sorted(set(self.formal_required_evidence), key=lambda item: item.value)
+        ):
+            raise PITContractError("formal evidence kinds must be sorted and unique")
+        if canonical_hash(self.semantic_payload()) != self.policy_hash:
+            raise PITContractError("Provider Qualification Policy V2 hash mismatch")
+        if self.policy_id != _content_id("pit-provider-policy-v2", self.policy_hash):
+            raise PITContractError("Provider Qualification Policy V2 identity mismatch")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        scope_ceilings: tuple[ProviderFactCeiling, ...],
+        default_ceiling: PITSourceEvidenceLevel,
+        formal_required_evidence: tuple[
+            PITProviderEvidenceKind, ...
+        ] = FORMAL_PROVIDER_EVIDENCE_KINDS,
+    ) -> ProviderQualificationPolicyV2:
+        normalized = tuple(
+            sorted(
+                (
+                    ProviderFactCeiling(
+                        item.provider_id.casefold(),
+                        item.provider_contract,
+                        item.fact_kind,
+                        item.maximum_level,
+                    )
+                    for item in scope_ceilings
+                ),
+                key=_provider_fact_ceiling_key,
+            )
+        )
+        required = tuple(
+            sorted(set(formal_required_evidence), key=lambda item: item.value)
+        )
+        payload = _provider_policy_v2_payload(
+            scope_ceilings=normalized,
+            default_ceiling=default_ceiling,
+            formal_required_evidence=required,
+        )
+        digest = canonical_hash(payload)
+        return cls(
+            _content_id("pit-provider-policy-v2", digest),
+            digest,
+            normalized,
+            default_ceiling,
+            required,
+        )
+
+    @classmethod
+    def default(cls) -> ProviderQualificationPolicyV2:
+        free_scopes = tuple(
+            ProviderFactCeiling(
+                provider_id,
+                provider_contract,
+                fact_kind,
+                PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY,
+            )
+            for provider_id, provider_contract, fact_kinds in (
+                (
+                    "provider-baostock-public",
+                    "baostock-public-history-v1",
+                    (PITFactKind.ADJUSTMENT_FACTOR, PITFactKind.MARKET_DATA),
+                ),
+                (
+                    "provider-baostock-public",
+                    "baostock-public-status-v1",
+                    (
+                        PITFactKind.LISTING_STATUS,
+                        PITFactKind.ST_STATUS,
+                        PITFactKind.TRADING_CALENDAR,
+                        PITFactKind.TRADING_ELIGIBILITY,
+                        PITFactKind.TRADING_STATUS,
+                    ),
+                ),
+                (
+                    "provider-baostock-public",
+                    "baostock-query-stock-basic-all/v1",
+                    (PITFactKind.UNIVERSE_MEMBERSHIP,),
+                ),
+                (
+                    "provider-tencent-public",
+                    "tencent-public-current-v1",
+                    (PITFactKind.MARKET_DATA,),
+                ),
+                (
+                    "provider-tencent-public",
+                    "tencent-public-minute-v1",
+                    (PITFactKind.MARKET_DATA,),
+                ),
+            )
+            for fact_kind in fact_kinds
+        )
+        return cls.create(
+            scope_ceilings=free_scopes,
+            default_ceiling=PITSourceEvidenceLevel.PIT_INCOMPLETE,
+        )
+
+    def maximum_level(
+        self,
+        provider_id: str,
+        *,
+        provider_contract: str,
+        fact_kind: PITFactKind,
+    ) -> PITSourceEvidenceLevel:
+        key = (provider_id.casefold(), provider_contract, fact_kind.value)
+        values = {
+            _provider_fact_ceiling_key(item): item.maximum_level
+            for item in self.scope_ceilings
+        }
+        return values.get(key, self.default_ceiling)
+
+    def require_level(
+        self,
+        provider_id: str,
+        requested: PITSourceEvidenceLevel,
+        *,
+        provider_contract: str | None = None,
+        fact_kinds: tuple[PITFactKind, ...] = (),
+    ) -> None:
+        require_text("provider_id", provider_id)
+        if provider_contract is None or not fact_kinds:
+            raise PITContractError(
+                "Provider Qualification Policy V2 requires Contract and Fact Kind"
+            )
+        require_text("provider_contract", provider_contract)
+        for fact_kind in fact_kinds:
+            maximum = self.maximum_level(
+                provider_id,
+                provider_contract=provider_contract,
+                fact_kind=fact_kind,
+            )
+            if _SOURCE_EVIDENCE_RANK[requested] > _SOURCE_EVIDENCE_RANK[maximum]:
+                raise PITContractError(
+                    "Provider evidence ceiling rejected "
+                    f"{provider_id}/{provider_contract}/{fact_kind.value}: "
+                    f"{requested.value} exceeds {maximum.value}"
+                )
+
+    def require_formal_evidence(
+        self, evidence: tuple[PITProviderEvidence, ...]
+    ) -> None:
+        kinds = {item.evidence_kind for item in evidence}
+        missing = set(self.formal_required_evidence).difference(kinds)
+        if missing:
+            raise PITContractError(
+                "formal Provider evidence incomplete: "
+                + ",".join(sorted(item.value for item in missing))
+            )
+
+    def semantic_payload(self) -> dict[str, Any]:
+        return _provider_policy_v2_payload(
+            scope_ceilings=self.scope_ceilings,
             default_ceiling=self.default_ceiling,
             formal_required_evidence=self.formal_required_evidence,
         )
@@ -370,6 +591,38 @@ def _provider_policy_payload(
     }
 
 
+def _provider_fact_ceiling_key(
+    item: ProviderFactCeiling,
+) -> tuple[str, str, str]:
+    return (
+        item.provider_id.casefold(),
+        item.provider_contract,
+        item.fact_kind.value,
+    )
+
+
+def _provider_policy_v2_payload(
+    *,
+    scope_ceilings: tuple[ProviderFactCeiling, ...],
+    default_ceiling: PITSourceEvidenceLevel,
+    formal_required_evidence: tuple[PITProviderEvidenceKind, ...],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "pit-provider-qualification-policy-v2",
+        "scope": "PROVIDER_X_CONTRACT_X_FACT_KIND",
+        "scope_ceilings": [item.to_canonical_dict() for item in scope_ceilings],
+        "default_ceiling": default_ceiling.value,
+        "formal_required_evidence": [
+            item.value for item in formal_required_evidence
+        ],
+        "qualification_decision_rule": (
+            "LATEST_NON_SUPERSEDED_SOURCE_QUALIFICATION_AND_ALL_REQUIRED_EVIDENCE"
+        ),
+        "suspension_revocation_rule": "LATEST_SCOPE_DECISION_CONTROLS",
+        "silent_fallback": False,
+    }
+
+
 def _content_id(prefix: str, content_hash: str) -> ArtifactId:
     return ArtifactId(f"{prefix}-{content_hash.split(':', 1)[1][:24]}")
 
@@ -395,9 +648,11 @@ __all__ = [
     "PITProviderEvidence",
     "PITProviderEvidenceKind",
     "PITProviderEvidenceUse",
+    "ProviderFactCeiling",
     "PITSourceAuthorityStatus",
     "PITSourceEvidenceLevel",
     "PITValidationOutcome",
     "ProviderQualificationPolicy",
+    "ProviderQualificationPolicyV2",
     "provider_evidence_key",
 ]

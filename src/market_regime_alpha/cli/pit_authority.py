@@ -18,8 +18,13 @@ from market_regime_alpha.data.pit_authority import (
     PITArtifactKind,
     PITArtifactReference,
     PITFactRevision,
+    PITFactKind,
     PITRequiredFact,
     PITSourceQualification,
+    ProviderQualificationPolicyV2,
+)
+from market_regime_alpha.data.postgres_provider_qualification import (
+    PostgresProviderFactQualificationAuthority,
 )
 from market_regime_alpha.data.pit_governance import (
     record_formal_pit_qualification_evidence,
@@ -72,6 +77,24 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         command = commands.add_parser(name)
         command.add_argument("--input", type=Path, required=True)
+    assessment = commands.add_parser("assess-provider-fact")
+    assessment.add_argument("--provider-id", required=True)
+    assessment.add_argument("--provider-contract", required=True)
+    assessment.add_argument(
+        "--fact-kind", choices=tuple(item.value for item in PITFactKind), required=True
+    )
+    assessment.add_argument("--actor", required=True)
+    assessment.add_argument("--reason", required=True)
+    assessment.add_argument("--idempotency-key", required=True)
+    revocation = commands.add_parser("revoke-provider-fact")
+    revocation.add_argument("--provider-id", required=True)
+    revocation.add_argument("--provider-contract", required=True)
+    revocation.add_argument(
+        "--fact-kind", choices=tuple(item.value for item in PITFactKind), required=True
+    )
+    revocation.add_argument("--actor", required=True)
+    revocation.add_argument("--reason", required=True)
+    revocation.add_argument("--idempotency-key", required=True)
     return parser
 
 
@@ -102,6 +125,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else pit.replay_evidence(evidence_id)
             )
             result = evidence.to_canonical_dict()
+        elif operation == "assess-provider-fact":
+            result = PostgresProviderFactQualificationAuthority(
+                repositories.postgres_factory,
+                apply_migrations=False,
+            ).assess(
+                policy=ProviderQualificationPolicyV2.default(),
+                provider_id=args.provider_id,
+                provider_contract=args.provider_contract,
+                fact_kind=PITFactKind(args.fact_kind),
+                actor=args.actor,
+                reason=args.reason,
+                idempotency_key=args.idempotency_key,
+            ).to_canonical_dict()
+        elif operation == "revoke-provider-fact":
+            result = PostgresProviderFactQualificationAuthority(
+                repositories.postgres_factory,
+                apply_migrations=False,
+            ).revoke(
+                provider_id=args.provider_id,
+                provider_contract=args.provider_contract,
+                fact_kind=PITFactKind(args.fact_kind),
+                actor=args.actor,
+                reason=args.reason,
+                idempotency_key=args.idempotency_key,
+            ).to_canonical_dict()
         else:
             payload = _object(json.loads(args.input.read_text(encoding="utf-8")))
             result = _write(operation, payload, pit, repositories)

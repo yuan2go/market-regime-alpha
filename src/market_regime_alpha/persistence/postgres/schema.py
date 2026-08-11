@@ -157,6 +157,8 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "strategy_shadow_session",
         "strategy_shadow_event",
         "strategy_shadow_artifact",
+        "strategy_shadow_policy_authority",
+        "entry_holding_exit_qualification_policy",
         "strategy_shadow_portfolio",
         "strategy_shadow_portfolio_day",
         "continuous_runtime_authority_evidence",
@@ -169,11 +171,109 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "security_approval_decision",
         "security_audit_event",
         "security_governance_command",
+        "formal_research_protocol",
+        "formal_research_protocol_component",
+        "outcome_target_bound_forecast",
+        "outcome_target_bound_forecast_estimate",
+        "provider_fact_qualification_policy",
+        "provider_fact_qualification_decision",
+        "provider_fact_qualification_command",
+        "formal_oos_qualification_policy",
+        "formal_evaluation_observation_set",
+        "formal_evaluation_observation_binding",
+        "historical_sample_qualification_decision",
+        "formal_oos_qualification_decision",
+        "research_qualification_command",
+        "calibration_qualification_policy",
+        "formal_calibration_observation_binding",
+        "calibration_qualification_decision",
+        "calibration_qualification_command",
+        "prospective_shadow_qualification_policy",
+        "phase_c_stage_decision",
+        "production_admission_decision_authority",
+        "phase_c_gate_command",
     }
 )
 
 EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
+        ("formal_research_protocol", "formal_research_protocol_no_update"),
+        (
+            "outcome_target_bound_forecast",
+            "outcome_target_bound_forecast_no_update",
+        ),
+        (
+            "outcome_target_bound_forecast_estimate",
+            "outcome_target_bound_forecast_estimate_no_update",
+        ),
+        (
+            "provider_fact_qualification_policy",
+            "provider_fact_qualification_policy_no_update",
+        ),
+        (
+            "provider_fact_qualification_decision",
+            "provider_fact_qualification_decision_no_update",
+        ),
+        (
+            "provider_fact_qualification_command",
+            "provider_fact_qualification_command_no_update",
+        ),
+        (
+            "formal_oos_qualification_policy",
+            "formal_oos_qualification_policy_no_update",
+        ),
+        (
+            "formal_evaluation_observation_set",
+            "formal_evaluation_observation_set_no_update",
+        ),
+        (
+            "formal_evaluation_observation_binding",
+            "formal_evaluation_observation_binding_no_update",
+        ),
+        (
+            "historical_sample_qualification_decision",
+            "historical_sample_qualification_decision_no_update",
+        ),
+        (
+            "formal_oos_qualification_decision",
+            "formal_oos_qualification_decision_no_update",
+        ),
+        (
+            "research_qualification_command",
+            "research_qualification_command_no_update",
+        ),
+        (
+            "calibration_qualification_policy",
+            "calibration_qualification_policy_no_update",
+        ),
+        (
+            "formal_calibration_observation_binding",
+            "formal_calibration_observation_binding_no_update",
+        ),
+        (
+            "calibration_qualification_decision",
+            "calibration_qualification_decision_no_update",
+        ),
+        (
+            "calibration_qualification_command",
+            "calibration_qualification_command_no_update",
+        ),
+        (
+            "prospective_shadow_qualification_policy",
+            "prospective_shadow_qualification_policy_no_update",
+        ),
+        (
+            "phase_c_stage_decision",
+            "phase_c_stage_decision_no_update",
+        ),
+        (
+            "production_admission_decision_authority",
+            "production_admission_decision_authority_no_update",
+        ),
+        (
+            "phase_c_gate_command",
+            "phase_c_gate_command_no_update",
+        ),
         ("security_principal", "security_principal_no_update"),
         (
             "security_principal_status_event",
@@ -384,6 +484,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("targeted_shadow_outcome_label", "targeted_shadow_outcome_label_no_delete"),
         ("prospective_evidence_attestation", "prospective_evidence_attestation_no_update"),
         ("prospective_evidence_attestation", "prospective_evidence_attestation_no_delete"),
+        (
+            "formal_research_protocol_component",
+            "formal_research_protocol_component_no_update",
+        ),
         ("research_evaluation_panel_v2", "research_evaluation_panel_v2_no_update"),
         ("research_evaluation_panel_v2", "research_evaluation_panel_v2_no_delete"),
         ("research_evaluation_panel_slice_v2", "research_evaluation_panel_slice_v2_no_update"),
@@ -404,6 +508,14 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("strategy_shadow_event", "strategy_shadow_event_no_delete"),
         ("strategy_shadow_artifact", "strategy_shadow_artifact_no_update"),
         ("strategy_shadow_artifact", "strategy_shadow_artifact_no_delete"),
+        (
+            "strategy_shadow_policy_authority",
+            "strategy_shadow_policy_authority_no_update",
+        ),
+        (
+            "entry_holding_exit_qualification_policy",
+            "entry_holding_exit_qualification_policy_no_update",
+        ),
         ("continuous_runtime_authority_evidence", "continuous_runtime_authority_evidence_no_update"),
         ("continuous_runtime_authority_evidence", "continuous_runtime_authority_evidence_no_delete"),
         ("state_runtime_receipt", "state_runtime_receipt_no_update"),

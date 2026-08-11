@@ -81,6 +81,39 @@ from market_regime_alpha.application.research_validation.free_historical_samples
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
 )
+from market_regime_alpha.application.research_validation.calibration_qualification import (
+    CalibrationQualificationPolicy,
+)
+from market_regime_alpha.application.research_validation.formal_evaluation import (
+    FormalEvaluationProtocol,
+)
+from market_regime_alpha.application.research_validation.formal_protocol import (
+    FormalResearchProtocol,
+    OutcomeTargetBoundMultiTargetForecast,
+)
+from market_regime_alpha.application.research_validation.phase_c_gates import (
+    EntryHoldingExitQualificationPolicy,
+    ProspectiveShadowQualificationPolicy,
+)
+from market_regime_alpha.application.research_validation.postgres_calibration_qualification import (
+    PostgresCalibrationQualificationAuthority,
+)
+from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
+    PostgresFormalProtocolRepository,
+)
+from market_regime_alpha.application.research_validation.postgres_phase_c_gates import (
+    PostgresPhaseCGateAuthority,
+)
+from market_regime_alpha.application.research_validation.postgres_qualification import (
+    PostgresResearchQualificationAuthority,
+)
+from market_regime_alpha.application.research_validation.qualification import (
+    FormalEvaluationObservationBinding,
+    FormalOOSQualificationPolicy,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    OutcomeTargetProtocol,
+)
 from market_regime_alpha.application.runtime_operations.observability import (
     PostgresRuntimeObservability,
 )
@@ -282,6 +315,69 @@ def build_parser() -> argparse.ArgumentParser:
     replay_day.add_argument("--trading-date", required=True)
     recovery_audit = subparsers.add_parser("recovery-audit")
     recovery_audit.add_argument("--checked-at", required=True)
+    protocol_record = subparsers.add_parser(
+        "qualification-protocol-record",
+        help="Record the C0 frozen Protocol and every exact component payload.",
+    )
+    protocol_record.add_argument("--input", type=Path, required=True)
+    forecast_record = subparsers.add_parser(
+        "qualification-forecast-record",
+        help="Record one OutcomeTarget-bound C0 MultiTargetForecast.",
+    )
+    forecast_record.add_argument("--input", type=Path, required=True)
+    evaluation_record = subparsers.add_parser(
+        "qualification-evaluation-record",
+        help=(
+            "Resolve Forecast/Outcome/Panel bindings through PostgreSQL and record "
+            "one C4 Formal Evaluation candidate."
+        ),
+    )
+    evaluation_record.add_argument("--input", type=Path, required=True)
+    historical_status = subparsers.add_parser(
+        "qualification-historical",
+        help="Resolve C3 Historical Sample qualification from PostgreSQL owners.",
+    )
+    historical_status.add_argument("--dataset-id", required=True)
+    historical_status.add_argument("--formal-protocol-id")
+    historical_status.add_argument("--formal-pit-evidence-id")
+    historical_status.add_argument("--reason", required=True)
+    historical_status.add_argument("--idempotency-key", required=True)
+    oos_status = subparsers.add_parser(
+        "qualification-oos",
+        help="Resolve C4 Locked OOS qualification from replayed PostgreSQL evidence.",
+    )
+    oos_status.add_argument("--policy", type=Path, required=True)
+    oos_status.add_argument("--formal-protocol-id", required=True)
+    oos_status.add_argument("--evaluation-result-id", required=True)
+    oos_status.add_argument("--historical-sample-decision-id", required=True)
+    oos_status.add_argument("--formal-pit-evidence-id", required=True)
+    oos_status.add_argument("--reason", required=True)
+    oos_status.add_argument("--idempotency-key", required=True)
+    calibration_status = subparsers.add_parser(
+        "qualification-calibration",
+        help="Resolve C5 Calibration qualification from PostgreSQL-owned evidence.",
+    )
+    calibration_status.add_argument("--policy", type=Path, required=True)
+    calibration_status.add_argument("--formal-protocol-id", required=True)
+    calibration_status.add_argument("--calibration-artifact-id")
+    calibration_status.add_argument("--reason", required=True)
+    calibration_status.add_argument("--idempotency-key", required=True)
+    shadow_status = subparsers.add_parser(
+        "qualification-shadow",
+        help="Resolve C7 sustained prospective Strategy Shadow evidence.",
+    )
+    shadow_status.add_argument("--policy", type=Path, required=True)
+    shadow_status.add_argument("--reason", required=True)
+    shadow_status.add_argument("--idempotency-key", required=True)
+    phase_status = subparsers.add_parser(
+        "qualification-status",
+        help="Persist owner-resolved C6/C8/C9 status without granting Production.",
+    )
+    phase_status.add_argument("--formal-protocol-id", required=True)
+    phase_status.add_argument("--entry-policy", type=Path)
+    phase_status.add_argument("--governance-version", required=True)
+    phase_status.add_argument("--reason", required=True)
+    phase_status.add_argument("--idempotency-prefix", required=True)
     preflight = subparsers.add_parser("preflight", help="Inspect engineering readiness without executing a Tick.")
     preflight.add_argument("--trading-date", required=True)
     preflight.add_argument(
@@ -438,6 +534,209 @@ def _dispatch(
         return PostgresRecoveryAudit(factory).inspect(
             checked_at=_instant(args.checked_at)
         ).to_canonical_dict()
+    if args.operation == "qualification-protocol-record":
+        payload = _load_json_object(args.input)
+        protocol = FormalResearchProtocol.from_canonical_dict(
+            dict(_object_value(payload["formal_protocol"], "formal_protocol"))
+        )
+        target_protocol = OutcomeTargetProtocol.from_canonical_dict(
+            _object_value(payload["target_protocol"], "target_protocol")
+        )
+        evaluation_protocol = FormalEvaluationProtocol.from_canonical_dict(
+            dict(_object_value(payload["evaluation_protocol"], "evaluation_protocol"))
+        )
+        raw_components = _object_value(
+            payload["component_payloads"], "component_payloads"
+        )
+        component_payloads = {
+            str(role): _object_value(value, f"component_payloads.{role}")
+            for role, value in raw_components.items()
+        }
+        recorded_protocol = PostgresFormalProtocolRepository(
+            factory,
+            apply_migrations=False,
+        ).record_protocol(
+            protocol=protocol,
+            target_protocol=target_protocol,
+            evaluation_protocol=evaluation_protocol,
+            component_payloads=component_payloads,
+        )
+        return {
+            "operation": "QUALIFICATION_PROTOCOL_RECORD",
+            **recorded_protocol.to_canonical_dict(),
+        }
+    if args.operation == "qualification-forecast-record":
+        forecast = OutcomeTargetBoundMultiTargetForecast.from_canonical_dict(
+            dict(_load_json_object(args.input))
+        )
+        recorded_forecast = PostgresFormalProtocolRepository(
+            factory,
+            apply_migrations=False,
+        ).record_forecast(forecast)
+        return {
+            "operation": "QUALIFICATION_FORECAST_RECORD",
+            **recorded_forecast.to_canonical_dict(),
+        }
+    if args.operation == "qualification-evaluation-record":
+        payload = _load_json_object(args.input)
+        evaluation_result = PostgresResearchQualificationAuthority(
+            factory,
+            apply_migrations=False,
+        ).record_evaluation_candidate(
+            formal_protocol_id=ArtifactId(str(payload["formal_protocol_id"])),
+            panel_reference=ValidationArtifactReference.from_canonical_dict(
+                _object_value(payload["panel_reference"], "panel_reference")
+            ),
+            target_reference=ValidationArtifactReference.from_canonical_dict(
+                _object_value(payload["target_reference"], "target_reference")
+            ),
+            observation_bindings=tuple(
+                FormalEvaluationObservationBinding.from_canonical_dict(
+                    _object_value(item, "observation_bindings[]")
+                )
+                for item in _array_value(
+                    payload["observation_bindings"], "observation_bindings"
+                )
+            ),
+            formal_pit_evidence_id=ArtifactId(
+                str(payload["formal_pit_evidence_id"])
+            ),
+            created_at=_instant(str(payload["created_at"])),
+        )
+        return {
+            "operation": "QUALIFICATION_EVALUATION_RECORD",
+            "result_id": str(evaluation_result.result_id),
+            "result_hash": evaluation_result.result_hash,
+            **evaluation_result.identity_payload(),
+        }
+    if args.operation == "qualification-historical":
+        historical_decision = PostgresResearchQualificationAuthority(
+            factory,
+            apply_migrations=False,
+        ).qualify_historical_sample(
+            dataset_id=ArtifactId(args.dataset_id),
+            formal_protocol_id=(
+                None
+                if args.formal_protocol_id is None
+                else ArtifactId(args.formal_protocol_id)
+            ),
+            formal_pit_evidence_id=(
+                None
+                if args.formal_pit_evidence_id is None
+                else ArtifactId(args.formal_pit_evidence_id)
+            ),
+            actor=args.principal_id,
+            reason=args.reason,
+            idempotency_key=args.idempotency_key,
+        )
+        return {
+            "operation": "QUALIFICATION_HISTORICAL",
+            **historical_decision.to_canonical_dict(),
+        }
+    if args.operation == "qualification-oos":
+        policy = FormalOOSQualificationPolicy.from_canonical_dict(
+            _load_json_object(args.policy)
+        )
+        oos_decision = PostgresResearchQualificationAuthority(
+            factory,
+            apply_migrations=False,
+        ).qualify_formal_oos(
+            policy=policy,
+            formal_protocol_id=ArtifactId(args.formal_protocol_id),
+            evaluation_result_id=ArtifactId(args.evaluation_result_id),
+            historical_sample_decision_id=ArtifactId(
+                args.historical_sample_decision_id
+            ),
+            formal_pit_evidence_id=ArtifactId(args.formal_pit_evidence_id),
+            actor=args.principal_id,
+            reason=args.reason,
+            idempotency_key=args.idempotency_key,
+        )
+        return {
+            "operation": "QUALIFICATION_OOS",
+            **oos_decision.to_canonical_dict(),
+        }
+    if args.operation == "qualification-calibration":
+        calibration_policy = CalibrationQualificationPolicy.from_canonical_dict(
+            _load_json_object(args.policy)
+        )
+        calibration_decision = PostgresCalibrationQualificationAuthority(
+            factory,
+            apply_migrations=False,
+        ).qualify(
+            policy=calibration_policy,
+            formal_protocol_id=ArtifactId(args.formal_protocol_id),
+            calibration_artifact_id=(
+                None
+                if args.calibration_artifact_id is None
+                else ArtifactId(args.calibration_artifact_id)
+            ),
+            actor=args.principal_id,
+            reason=args.reason,
+            idempotency_key=args.idempotency_key,
+        )
+        return {
+            "operation": "QUALIFICATION_CALIBRATION",
+            **calibration_decision.to_canonical_dict(),
+        }
+    if args.operation == "qualification-shadow":
+        shadow_policy = ProspectiveShadowQualificationPolicy.from_canonical_dict(
+            _load_json_object(args.policy)
+        )
+        shadow_decision = PostgresPhaseCGateAuthority(
+            factory,
+            apply_migrations=False,
+        ).resolve_prospective_shadow(
+            policy=shadow_policy,
+            actor=args.principal_id,
+            reason=args.reason,
+            idempotency_key=args.idempotency_key,
+        )
+        return {
+            "operation": "QUALIFICATION_SHADOW",
+            **shadow_decision.to_canonical_dict(),
+        }
+    if args.operation == "qualification-status":
+        authority = PostgresPhaseCGateAuthority(factory, apply_migrations=False)
+        formal_protocol_id = ArtifactId(args.formal_protocol_id)
+        entry_policy = (
+            None
+            if args.entry_policy is None
+            else EntryHoldingExitQualificationPolicy.from_canonical_dict(
+                _load_json_object(args.entry_policy)
+            )
+        )
+        strategy = authority.resolve_entry_holding_exit(
+            formal_protocol_id=formal_protocol_id,
+            policy=entry_policy,
+            actor=args.principal_id,
+            reason=args.reason,
+            idempotency_key=f"{args.idempotency_prefix}:c6",
+        )
+        admission = authority.resolve_production_admission(
+            formal_protocol_id=formal_protocol_id,
+            governance_version=args.governance_version,
+            actor=args.principal_id,
+            reason=args.reason,
+            idempotency_key=f"{args.idempotency_prefix}:c8",
+        )
+        execution = authority.resolve_controlled_execution(
+            formal_protocol_id=formal_protocol_id,
+            actor=args.principal_id,
+            reason=args.reason,
+            idempotency_key=f"{args.idempotency_prefix}:c9",
+        )
+        return {
+            "operation": "QUALIFICATION_STATUS",
+            "entry_holding_exit": strategy.to_canonical_dict(),
+            "production_admission": {
+                "decision_id": str(admission.decision_id),
+                "decision_hash": admission.decision_hash,
+                **admission.identity_payload(),
+            },
+            "controlled_execution": execution.to_canonical_dict(),
+            **_authority_ceiling(),
+        }
     if args.operation == "report-day":
         trading_date = date.fromisoformat(args.trading_date)
         runtime = PostgresCanonicalRuntimeQuery(factory).inspect_trading_date(
@@ -991,6 +1290,18 @@ def _load_json_object(path: Path) -> Mapping[str, Any]:
     return payload
 
 
+def _object_value(value: object, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _array_value(value: object, label: str) -> tuple[object, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a JSON array")
+    return tuple(value)
+
+
 def _instant(value: str) -> datetime:
     instant = datetime.fromisoformat(value)
     if instant.tzinfo is None or instant.utcoffset() is None:
@@ -1018,6 +1329,17 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         return SecurityPermission.READ_RESEARCH
     if operation == "research-universe-sync":
         return SecurityPermission.RUN_RESEARCH
+    if operation in {
+        "qualification-protocol-record",
+        "qualification-forecast-record",
+        "qualification-evaluation-record",
+        "qualification-historical",
+        "qualification-oos",
+        "qualification-calibration",
+        "qualification-shadow",
+        "qualification-status",
+    }:
+        return SecurityPermission.RECORD_RESEARCH_EVIDENCE
     if operation == "resume":
         return SecurityPermission.RECOVER_RUNTIME
     if operation in {"prepare", "schedule", "reserve-due-tick", "run-due", "run-day"}:

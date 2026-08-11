@@ -32,8 +32,10 @@ class AdmissionFloor(str, Enum):
 
 
 class AdmissionFloorStatus(str, Enum):
+    SATISFIED = "SATISFIED"
     MISSING = "MISSING"
     REJECTED = "REJECTED"
+    BLOCKED = "BLOCKED"
 
 
 class ProductionAdmissionStatus(str, Enum):
@@ -50,6 +52,13 @@ class AdmissionFloorAssessment:
     def __post_init__(self) -> None:
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("Admission floor reasons must be unique and sorted")
+        if self.status is AdmissionFloorStatus.SATISFIED:
+            if self.evidence_reference is None or self.reason_codes:
+                raise ValueError(
+                    "satisfied Admission floor requires evidence and no reasons"
+                )
+        elif not self.reason_codes:
+            raise ValueError("non-satisfied Admission floor requires reasons")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,11 +77,28 @@ class ProductionAdmissionDecision:
 
     def __post_init__(self) -> None:
         require_sha256("decision_hash", self.decision_hash)
+        if self.schema_version != "production-admission-decision/v1":
+            raise ValueError("unsupported Production Admission schema")
+        if self.decision_id != ArtifactId(
+            f"production-admission-decision:{self.decision_hash[7:]}"
+        ):
+            raise ValueError("Production Admission identity mismatch")
+        if self.evaluated_at.tzinfo is None or self.evaluated_at.utcoffset() is None:
+            raise ValueError("Production Admission evaluation time must be timezone-aware")
         if self.assessments != tuple(sorted(self.assessments, key=lambda item: item.floor.value)) or {
             item.floor for item in self.assessments
         } != set(AdmissionFloor):
             raise ValueError("Production Admission must assess every Governance floor")
-        expected_blocked = tuple(sorted(AdmissionFloor, key=lambda item: item.value))
+        expected_blocked = tuple(
+            sorted(
+                (
+                    item.floor
+                    for item in self.assessments
+                    if item.status is not AdmissionFloorStatus.SATISFIED
+                ),
+                key=lambda item: item.value,
+            )
+        )
         if self.blocked_floors != expected_blocked:
             raise ValueError("Production Admission blocked-floor projection mismatch")
         if self.automatic_promotion:
@@ -81,6 +107,8 @@ class ProductionAdmissionDecision:
             raise ValueError("Production Admission is currently a blocked projection")
         if self.governance_decision_reference is not None:
             raise ValueError("blocked Admission cannot claim a Governance authorization")
+        if self.limitations != tuple(sorted(set(self.limitations))):
+            raise ValueError("Production Admission limitations must be unique and sorted")
         if canonical_hash(self.identity_payload()) != self.decision_hash:
             raise ValueError("Production Admission hash mismatch")
 
@@ -110,13 +138,28 @@ def evaluate_production_admission(
     if len(ordered) != len(AdmissionFloor) or {item.floor for item in ordered} != set(AdmissionFloor):
         raise ValueError("Production Admission requires every floor exactly once")
     status = ProductionAdmissionStatus.BLOCKED
-    blocked = tuple(sorted(AdmissionFloor, key=lambda item: item.value))
+    blocked = tuple(
+        sorted(
+            (
+                item.floor
+                for item in ordered
+                if item.status is not AdmissionFloorStatus.SATISFIED
+            ),
+            key=lambda item: item.value,
+        )
+    )
+    if not blocked:
+        raise ValueError(
+            "Production Admission authorization requires a future externally "
+            "authenticated approval writer"
+        )
     limitations = tuple(
         sorted(
             {
-                "ADMISSION_FLOOR_OWNER_RESOLUTION_NOT_IMPLEMENTED",
                 "AUTOMATIC_PROMOTION_FALSE",
                 "BROKER_MUTATION_FALSE",
+                "EXTERNAL_PRODUCTION_AUTHORIZATION_UNAVAILABLE",
+                "OWNER_RESOLVED_FLOORS_FAIL_CLOSED",
                 "PRODUCTION_AUTHORIZED_FALSE",
             }
         )
@@ -136,6 +179,48 @@ def evaluate_production_admission(
         False,
         limitations,
     )
+
+
+def production_admission_from_canonical_dict(
+    value: dict[str, Any],
+) -> ProductionAdmissionDecision:
+    assessments = tuple(
+        AdmissionFloorAssessment(
+            floor=AdmissionFloor(str(item["floor"])),
+            status=AdmissionFloorStatus(str(item["status"])),
+            evidence_reference=(
+                None
+                if item["evidence_reference"] is None
+                else ValidationArtifactReference.from_canonical_dict(
+                    item["evidence_reference"]
+                )
+            ),
+            reason_codes=tuple(str(reason) for reason in item["reason_codes"]),
+        )
+        for item in value["assessments"]
+    )
+    decision = ProductionAdmissionDecision(
+        decision_id=ArtifactId(str(value["decision_id"])),
+        decision_hash=str(value["decision_hash"]),
+        governance_version=str(value["governance_version"]),
+        assessments=assessments,
+        status=ProductionAdmissionStatus(str(value["status"])),
+        blocked_floors=tuple(
+            AdmissionFloor(str(item)) for item in value["blocked_floors"]
+        ),
+        evaluated_at=datetime.fromisoformat(str(value["evaluated_at"])),
+        governance_decision_reference=(
+            None
+            if value["governance_decision_reference"] is None
+            else ValidationArtifactReference.from_canonical_dict(
+                value["governance_decision_reference"]
+            )
+        ),
+        automatic_promotion=bool(value["automatic_promotion"]),
+        limitations=tuple(str(item) for item in value["limitations"]),
+        schema_version=str(value["schema_version"]),
+    )
+    return decision
 
 
 def current_engineering_blocked_admission(

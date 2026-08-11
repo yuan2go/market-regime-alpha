@@ -872,7 +872,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         strategy_replay = strategy_operator.replay(ArtifactId(strategy_result["session_id"]))
         assert strategy_replay["status"] == "SETTLED"
         assert strategy_replay["event_count"] == 10
-        assert strategy_replay["artifact_count"] == 10
+        assert strategy_replay["artifact_count"] == 9
         portfolio_policy = ShadowPortfolioPolicy.create(
             policy_version="free-data-stateful-e2e-v1",
             top_k=1,
@@ -1075,7 +1075,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                     "theme_rotation_state",
                 ),
             )
-        assert recovery.migration_head == 51
+        assert recovery.migration_head == 55
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

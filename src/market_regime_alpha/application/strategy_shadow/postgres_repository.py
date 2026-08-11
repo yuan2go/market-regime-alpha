@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from market_regime_alpha.application.strategy_shadow.contracts import (
+    StrategyShadowPolicy,
+    restore_strategy_shadow_artifact,
+    strategy_shadow_artifact_payload,
+)
 from market_regime_alpha.application.strategy_shadow.operations import (
     StrategyShadowArtifactKind,
     StrategyShadowArtifactRecord,
@@ -26,6 +31,69 @@ class PostgresStrategyShadowRepository:
         self._factory = factory
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
+
+    def save_policy(
+        self, policy: StrategyShadowPolicy, *, created_at: datetime
+    ) -> StrategyShadowPolicy:
+        payload = strategy_shadow_artifact_payload(policy)
+
+        def operation(connection: Any) -> None:
+            connection.execute(
+                """
+                INSERT INTO strategy_shadow_policy_authority(
+                    policy_id, policy_hash, policy_json,
+                    real_order_authority, real_fill_authority,
+                    real_position_authority, created_at
+                ) VALUES (%s, %s, %s, false, false, false, %s)
+                ON CONFLICT (policy_id) DO NOTHING
+                """,
+                (
+                    str(policy.policy_id),
+                    policy.policy_hash,
+                    Jsonb(payload),
+                    created_at,
+                ),
+            )
+            stored = connection.execute(
+                """
+                SELECT policy_hash, policy_json, real_order_authority,
+                       real_fill_authority, real_position_authority
+                FROM strategy_shadow_policy_authority WHERE policy_id = %s
+                """,
+                (str(policy.policy_id),),
+            ).fetchone()
+            if stored is None or (
+                str(stored[0]) != policy.policy_hash
+                or stored[1] != payload
+                or bool(stored[2])
+                or bool(stored[3])
+                or bool(stored[4])
+            ):
+                raise ValueError("Strategy Shadow Policy immutable identity conflict")
+
+        self._factory.run_transaction(operation)
+        return self.get_policy(policy.policy_id)
+
+    def get_policy(self, policy_id: ArtifactId) -> StrategyShadowPolicy:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT policy_hash, policy_json
+                FROM strategy_shadow_policy_authority WHERE policy_id = %s
+                """,
+                (str(policy_id),),
+            ).fetchone()
+        if row is None or not isinstance(row[1], dict):
+            raise KeyError(str(policy_id))
+        restored = restore_strategy_shadow_artifact(
+            artifact_kind="POLICY",
+            artifact_id=policy_id,
+            artifact_hash=str(row[0]),
+            payload=row[1],
+        )
+        if not isinstance(restored, StrategyShadowPolicy):
+            raise ValueError("Strategy Shadow Policy owner restored invalid type")
+        return restored
 
     def save(self, session: StrategyShadowSession, *, expected_revision: int | None) -> StrategyShadowSession:
         self._factory.run_transaction(
