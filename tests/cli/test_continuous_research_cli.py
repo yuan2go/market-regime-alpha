@@ -20,6 +20,9 @@ from market_regime_alpha.application.governance.access_control import (
     RoleEventKind,
     SecurityRole,
 )
+from market_regime_alpha.application.research_validation.research_model import (
+    ResearchInferenceRequest,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from tests.application.continuous_research.test_runner import NOW
 from market_regime_alpha.persistence.postgres.connection import (
@@ -30,6 +33,10 @@ from tests.application.continuous_research.test_runner import _command, _tick
 from tests.persistence.postgres.conftest import (
     TEST_DATABASE_URL_ENV,
     postgres_factory as postgres_factory,
+)
+from tests.application.research_validation.test_research_model import (
+    NOW as MODEL_NOW,
+    _request as _model_request,
 )
 
 
@@ -195,6 +202,33 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "portfolio-1",
         ]
     )
+    model_train = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "model-train",
+            "--input",
+            "model-training.json",
+        ]
+    )
+    model_report = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "model-report",
+            "--artifact-id",
+            "research-model-1",
+        ]
+    )
+    model_execute = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "model-execute",
+            "--input",
+            "model-inference.json",
+        ]
+    )
     recovery_audit = build_parser().parse_args(
         [
             "--database-url",
@@ -329,6 +363,9 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_auto.auto.name == "auto-portfolio.json"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
+    assert model_train.operation == "model-train"
+    assert model_report.operation == "model-report"
+    assert model_execute.operation == "model-execute"
     assert recovery_audit.operation == "recovery-audit"
     assert protocol_record.operation == "qualification-protocol-record"
     assert owners_record.operation == "qualification-owners-record"
@@ -378,6 +415,67 @@ def test_cli_exposes_read_only_preflight_and_canonical_inspection() -> None:
     assert preflight.operation == "preflight"
     assert preflight.runtime_mode == "SHADOW"
     assert inspect_tick.operation == "inspect-tick"
+
+
+def test_cli_trains_replays_and_executes_research_challenger(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path,
+    capsys,
+) -> None:
+    request = _model_request()
+    train_path = tmp_path / "model-training.json"
+    train_path.write_text(
+        json.dumps(
+            {
+                "request": request.to_canonical_dict(),
+                "trained_at": MODEL_NOW.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    authority = _authority_args(postgres_factory)
+
+    assert main([*authority, "model-train", "--input", str(train_path)]) == SUCCESS
+    trained = json.loads(capsys.readouterr().out)
+    artifact_id = trained["artifact_id"]
+    assert trained["runtime_role"] == "RESEARCH_CHALLENGER"
+    assert trained["research_model_available"] is True
+    assert trained["formal_model_qualified"] is False
+
+    assert main([*authority, "model-report", "--artifact-id", artifact_id]) == SUCCESS
+    reported = json.loads(capsys.readouterr().out)
+    assert reported["artifact_hash"] == trained["artifact_hash"]
+    assert main([*authority, "model-replay", "--artifact-id", artifact_id]) == SUCCESS
+    replayed = json.loads(capsys.readouterr().out)
+    assert replayed["artifact_hash"] == trained["artifact_hash"]
+
+    sample = request.samples[-1]
+    inference = ResearchInferenceRequest(
+        symbol=sample.symbol,
+        decision_time=sample.decision_time,
+        features=sample.features,
+        model_definition_hash=request.model_definition_reference.content_hash,
+        configuration_hash=request.configuration_reference.content_hash,
+        code_revision=request.code_revision,
+        code_hash=request.code_hash,
+    )
+    execute_path = tmp_path / "model-inference.json"
+    execute_path.write_text(
+        json.dumps(
+            {
+                "artifact_id": artifact_id,
+                "request": inference.to_canonical_dict(),
+                "executed_at": MODEL_NOW.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main([*authority, "model-execute", "--input", str(execute_path)]) == SUCCESS
+    executed = json.loads(capsys.readouterr().out)
+    assert executed["result"]["status"] == "AVAILABLE"
+    assert executed["result"]["barrier_scores_are_probabilities"] is False
+    assert executed["formal_oos"] is False
+    assert executed["calibrated"] is False
 
 
 def test_cli_prepare_admit_report_and_replay_are_structured(

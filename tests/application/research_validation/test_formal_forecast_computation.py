@@ -7,6 +7,7 @@ import pytest
 
 from market_regime_alpha.application.research_validation.formal_forecast_computation import (
     FormalForecastComputationRequest,
+    installed_formal_forecast_executors,
 )
 from market_regime_alpha.application.research_validation.postgres_formal_protocol import (
     PostgresFormalProtocolRepository,
@@ -60,3 +61,7 @@ def test_formal_forecast_repository_has_no_per_call_executor_injection() -> None
     assert "executor" not in parameters
     assert "executors" not in parameters
     assert "executor_set" not in parameters
+
+
+def test_exploratory_research_model_is_not_installed_as_a_formal_executor() -> None:
+    assert installed_formal_forecast_executors().executors == ()

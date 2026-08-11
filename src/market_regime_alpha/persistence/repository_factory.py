@@ -199,6 +199,13 @@ class RepositoryFactory:
 
         return PostgresShadowObservationRepository(self._postgres)
 
+    def research_models(self):
+        from market_regime_alpha.application.research_validation.postgres_research_model import (
+            PostgresResearchModelRepository,
+        )
+
+        return PostgresResearchModelRepository(self._postgres)
+
     def pit_authority(
         self,
         *,

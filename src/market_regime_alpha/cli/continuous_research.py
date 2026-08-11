@@ -125,6 +125,13 @@ from market_regime_alpha.application.research_validation.postgres_phase_c_gates 
 from market_regime_alpha.application.research_validation.postgres_qualification import (
     PostgresResearchQualificationAuthority,
 )
+from market_regime_alpha.application.research_validation.postgres_research_model import (
+    PostgresResearchModelRepository,
+)
+from market_regime_alpha.application.research_validation.research_model import (
+    ResearchInferenceRequest,
+    ResearchModelTrainingRequest,
+)
 from market_regime_alpha.application.research_validation.qualification import (
     FormalEvaluationObservationBinding,
     FormalOOSQualificationPolicy,
@@ -247,6 +254,8 @@ _READ_OPERATIONS = {
     "research-universe-replay",
     "strategy-replay",
     "portfolio-shadow-replay",
+    "model-report",
+    "model-replay",
     "recovery-audit",
     *_INSPECT_OPERATIONS,
 }
@@ -357,6 +366,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     portfolio_replay = subparsers.add_parser("portfolio-shadow-replay")
     portfolio_replay.add_argument("--portfolio-id", required=True)
+    model_train = subparsers.add_parser(
+        "model-train",
+        help="Train one owner-bound exploratory Research Challenger model.",
+    )
+    model_train.add_argument("--input", type=Path, required=True)
+    model_report = subparsers.add_parser("model-report")
+    model_report.add_argument("--artifact-id", required=True)
+    model_replay = subparsers.add_parser("model-replay")
+    model_replay.add_argument("--artifact-id", required=True)
+    model_execute = subparsers.add_parser(
+        "model-execute",
+        help="Record one exact-lineage exploratory Shadow inference.",
+    )
+    model_execute.add_argument("--input", type=Path, required=True)
     universe_sync = subparsers.add_parser("research-universe-sync")
     universe_sync.add_argument("--as-of-date", required=True)
     universe_sync.add_argument("--artifact-root", type=Path, required=True)
@@ -571,6 +594,56 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "model-train":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"request", "trained_at"}:
+            raise ValueError("model-train requires request and trained_at")
+        research_training_request = ResearchModelTrainingRequest.from_canonical_dict(
+            _object_value(payload["request"], "request")
+        )
+        research_artifact = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).train(
+            research_training_request,
+            trained_at=_instant(str(payload["trained_at"])),
+        )
+        return {
+            "operation": "MODEL_TRAIN",
+            **research_artifact.to_canonical_dict(),
+        }
+    if args.operation == "model-report":
+        artifact = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).get_artifact(ArtifactId(args.artifact_id))
+        return {"operation": "MODEL_REPORT", **artifact.to_canonical_dict()}
+    if args.operation == "model-replay":
+        artifact = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).replay(ArtifactId(args.artifact_id))
+        return {"operation": "MODEL_REPLAY", **artifact.to_canonical_dict()}
+    if args.operation == "model-execute":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"artifact_id", "request", "executed_at"}:
+            raise ValueError(
+                "model-execute requires artifact_id, request and executed_at"
+            )
+        research_inference_receipt = PostgresResearchModelRepository(
+            factory,
+            apply_migrations=False,
+        ).execute(
+            artifact_id=ArtifactId(str(payload["artifact_id"])),
+            request=ResearchInferenceRequest.from_canonical_dict(
+                _object_value(payload["request"], "request")
+            ),
+            executed_at=_instant(str(payload["executed_at"])),
+        )
+        return {
+            "operation": "MODEL_EXECUTE",
+            **research_inference_receipt.to_canonical_dict(),
+        }
     if args.operation == "strategy-day":
         if args.auto is not None:
             payload = _load_json_object(args.auto)
@@ -1816,6 +1889,8 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
     if operation in _READ_OPERATIONS:
         return SecurityPermission.READ_RESEARCH
     if operation == "research-universe-sync":
+        return SecurityPermission.RUN_RESEARCH
+    if operation == "model-train":
         return SecurityPermission.RUN_RESEARCH
     if operation in {
         "qualification-protocol-record",
