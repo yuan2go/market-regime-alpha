@@ -8,6 +8,13 @@ import pytest
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.pit_artifact_authority import (
+    CanonicalPITArtifactAuthorityResolver,
+)
+from market_regime_alpha.data.pit_authority import (
+    PITArtifactKind,
+    PITArtifactReference,
+)
 from market_regime_alpha.market_data import AssetType, Exchange, FormalPitStatus
 from market_regime_alpha.universe import (
     ListingStatus,
@@ -119,6 +126,45 @@ def test_operational_universe_records_explicit_exclusion_without_silent_drop() -
     assert len(artifact.symbols) == 100
     assert artifact.records[-1].exclusion_reasons == (
         "CONTROLLED_SCOPE_CAP_EXCEEDED",
+    )
+
+
+def test_strict_pit_reader_projects_complete_universe_membership(tmp_path: Path) -> None:
+    records = (_record(0), _record(1, included=False), _record(2))
+    artifact = OperationalUniverseArtifact.create(
+        decision_date=date(2026, 8, 5),
+        effective_at=datetime(2026, 8, 5, 6, 30, tzinfo=UTC),
+        available_at=datetime(2026, 8, 5, 6, 45, tzinfo=UTC),
+        records=records,
+        formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
+        data_eligibility=DataEligibility.EXPLORATORY,
+        source_artifact_references=tuple(
+            (ArtifactId(f"listing-source-{index}"), SOURCE_HASH)
+            for index in range(3)
+        ),
+        limitations=("FORMAL_PIT_NOT_ESTABLISHED",),
+    )
+    publish_operational_universe(root=tmp_path, artifact=artifact)
+    resolver = CanonicalPITArtifactAuthorityResolver(
+        artifact_roots={PITArtifactKind.UNIVERSE: tmp_path}
+    )
+
+    resolution, projection = resolver.resolve_universe_membership(
+        PITArtifactReference(
+            PITArtifactKind.UNIVERSE.value,
+            ArtifactId(str(artifact.universe_id)),
+            artifact.content_hash,
+        ),
+        resolved_at=datetime(2026, 8, 5, 7, 0, tzinfo=UTC),
+    )
+
+    assert projection.artifact_resolution_id == resolution.resolution_id
+    assert tuple(item.symbol for item in projection.members) == tuple(
+        item.symbol for item in records
+    )
+    assert projection.included_symbols == (records[0].symbol, records[2].symbol)
+    assert projection == type(projection).from_canonical_dict(
+        projection.to_canonical_dict()
     )
 
 

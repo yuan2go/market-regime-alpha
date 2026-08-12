@@ -358,6 +358,21 @@ CREATE TABLE formal_hypothesis_family_evaluation_pit_evidence (
     UNIQUE (result_id, formal_pit_evidence_id)
 );
 
+CREATE TABLE formal_hypothesis_family_evaluation_historical_decision (
+    result_id text NOT NULL
+        REFERENCES formal_hypothesis_family_evaluation(result_id)
+        ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    historical_decision_id text NOT NULL
+        REFERENCES historical_sample_qualification_decision(decision_id)
+        ON DELETE RESTRICT,
+    historical_decision_hash text NOT NULL CHECK (
+        historical_decision_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    PRIMARY KEY (result_id, ordinal),
+    UNIQUE (result_id, historical_decision_id)
+);
+
 CREATE INDEX formal_family_evaluation_protocol_idx
 ON formal_hypothesis_family_evaluation(formal_protocol_id);
 
@@ -369,6 +384,11 @@ ON formal_hypothesis_family_evaluation_target(family_id);
 
 CREATE INDEX formal_family_evaluation_pit_owner_idx
 ON formal_hypothesis_family_evaluation_pit_evidence(formal_pit_evidence_id);
+
+CREATE INDEX formal_family_evaluation_historical_owner_idx
+ON formal_hypothesis_family_evaluation_historical_decision(
+    historical_decision_id
+);
 
 CREATE TABLE phase_c_formal_operator_command (
     idempotency_key text PRIMARY KEY,
@@ -474,6 +494,11 @@ FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 CREATE TRIGGER formal_hypothesis_family_evaluation_pit_evidence_no_update
 BEFORE UPDATE OR DELETE ON formal_hypothesis_family_evaluation_pit_evidence
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER formal_family_evaluation_historical_decision_no_update
+BEFORE UPDATE OR DELETE
+ON formal_hypothesis_family_evaluation_historical_decision
 FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 CREATE TRIGGER phase_c_formal_operator_command_no_update

@@ -42,14 +42,14 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 063 and checksummed.
+- Packaged migrations are contiguous from 001 through 065 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 231 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–057 add exploratory sample, Research Universe, Portfolio Shadow and fail-closed Phase C owners. Migrations 058–062 extend those owners with explicit research-validity semantics, exploratory model execution, Runtime Scope/Historical journals, observations and performance. Migration 063 names the global Artifact-root locator contract for new Controlled packages. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
+The schema catalog currently contains 236 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–057 add exploratory sample, Research Universe, Portfolio Shadow and fail-closed Phase C owners. Migrations 058–059 add label-value-blind Locked rosters, immutable PIT Universe membership projections, exact Dataset lineage and pre-read Locked-OOS scope bindings. Migrations 060–064 extend those owners with explicit research-validity semantics, exploratory model execution, Runtime Scope/Historical journals, observations and performance. Migration 065 names the global Artifact-root locator contract for new Controlled packages. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
 
 ## Replay
 

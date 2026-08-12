@@ -1022,6 +1022,7 @@ def _dispatch(
         common = {
             "formal_protocol_id",
             "observation_groups",
+            "historical_sample_decision_ids",
             "actor",
             "reason",
             "idempotency_key",
@@ -1042,6 +1043,14 @@ def _dispatch(
         )
         if not raw_pit_ids or set(payload).intersection(pit_keys) == pit_keys:
             raise ValueError("Formal Family Evaluation requires a non-empty PIT owner set")
+        raw_sample_ids = _array_value(
+            payload["historical_sample_decision_ids"],
+            "historical_sample_decision_ids",
+        )
+        if not raw_sample_ids:
+            raise ValueError(
+                "Formal Family Evaluation requires qualified C3 decisions"
+            )
         _require_principal_actor(args, payload)
         pit_ids = tuple(ArtifactId(str(item)) for item in raw_pit_ids)
         evaluation_result = PostgresResearchQualificationAuthority(
@@ -1054,6 +1063,9 @@ def _dispatch(
                 for item in _array_value(
                     payload["observation_groups"], "observation_groups"
                 )
+            ),
+            historical_sample_decision_ids=tuple(
+                ArtifactId(str(item)) for item in raw_sample_ids
             ),
             formal_pit_evidence_id=pit_ids[0],
             formal_pit_evidence_ids=pit_ids,

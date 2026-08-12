@@ -9,7 +9,7 @@ physical package checksum are captured in an immutable resolution receipt.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping, Protocol
@@ -42,7 +42,10 @@ from market_regime_alpha.market_data.contracts import (
     parse_utc_second,
     require_utc_second,
 )
-from market_regime_alpha.universe.operational import load_operational_universe
+from market_regime_alpha.universe.operational import (
+    OperationalUniverseArtifact,
+    load_operational_universe,
+)
 
 
 class PITArtifactAuthorityUnavailableError(PITContractError):
@@ -213,6 +216,226 @@ class PITArtifactAuthorityResolution:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PITUniverseMembershipProjectionMember:
+    """One strict-Reader-resolved record in an immutable Universe projection."""
+
+    symbol: str
+    included: bool
+    record_hash: str
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        require_sha256("record_hash", self.record_hash)
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "included": self.included,
+            "record_hash": self.record_hash,
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> PITUniverseMembershipProjectionMember:
+        if set(payload) != {"symbol", "included", "record_hash"}:
+            raise PITContractError("PIT Universe member projection fields mismatch")
+        included = payload["included"]
+        if not isinstance(included, bool):
+            raise PITContractError("PIT Universe member included flag must be boolean")
+        return cls(
+            symbol=str(payload["symbol"]),
+            included=included,
+            record_hash=str(payload["record_hash"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PITUniverseMembershipAuthorityProjection:
+    """Content-addressed full membership resolved only by the Universe owner Reader."""
+
+    projection_id: ArtifactId
+    projection_hash: str
+    artifact_resolution_id: ArtifactId
+    artifact_resolution_hash: str
+    universe_reference: PITArtifactReference
+    decision_date: date
+    effective_at: datetime
+    available_at: datetime
+    members: tuple[PITUniverseMembershipProjectionMember, ...]
+    members_hash: str
+    resolved_at: datetime
+    schema_version: str = "pit-universe-membership-authority-projection-v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "pit-universe-membership-authority-projection-v1":
+            raise PITContractError("unsupported PIT Universe projection schema")
+        require_sha256("projection_hash", self.projection_hash)
+        require_sha256("artifact_resolution_hash", self.artifact_resolution_hash)
+        require_sha256("members_hash", self.members_hash)
+        if self.universe_reference.reference_kind != PITArtifactKind.UNIVERSE.value:
+            raise PITContractError("PIT Universe projection requires a Universe reference")
+        require_utc_second("effective_at", self.effective_at)
+        require_utc_second("available_at", self.available_at)
+        require_utc_second("resolved_at", self.resolved_at)
+        if self.available_at < self.effective_at:
+            raise PITContractError("PIT Universe projection availability is invalid")
+        symbols = tuple(item.symbol for item in self.members)
+        if not self.members or symbols != tuple(sorted(set(symbols))):
+            raise PITContractError("PIT Universe projection members must be non-empty and sorted")
+        expected_members_hash = canonical_hash(
+            {
+                "schema_version": "pit-universe-membership-set-v1",
+                "members": [item.to_canonical_dict() for item in self.members],
+            }
+        )
+        if self.members_hash != expected_members_hash:
+            raise PITContractError("PIT Universe projection member-set hash mismatch")
+        digest = canonical_hash(self.semantic_payload())
+        if self.projection_hash != digest:
+            raise PITContractError("PIT Universe projection hash mismatch")
+        expected_id = ArtifactId(
+            f"pit-universe-membership-projection-{digest.split(':', 1)[1][:24]}"
+        )
+        if self.projection_id != expected_id:
+            raise PITContractError("PIT Universe projection identity mismatch")
+
+    @property
+    def included_symbols(self) -> tuple[str, ...]:
+        return tuple(item.symbol for item in self.members if item.included)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        resolution: PITArtifactAuthorityResolution,
+        universe: OperationalUniverseArtifact,
+    ) -> PITUniverseMembershipAuthorityProjection:
+        reference = PITArtifactReference(
+            PITArtifactKind.UNIVERSE.value,
+            ArtifactId(str(universe.universe_id)),
+            universe.content_hash,
+        )
+        if (
+            resolution.reference != reference
+            or resolution.effective_at != universe.effective_at
+            or resolution.available_at != universe.available_at
+        ):
+            raise PITContractError("PIT Universe projection resolution binding mismatch")
+        members = tuple(
+            PITUniverseMembershipProjectionMember(
+                symbol=record.symbol,
+                included=record.included,
+                record_hash=canonical_hash(record.to_canonical_dict()),
+            )
+            for record in universe.records
+        )
+        members_hash = canonical_hash(
+            {
+                "schema_version": "pit-universe-membership-set-v1",
+                "members": [item.to_canonical_dict() for item in members],
+            }
+        )
+        semantic = _universe_projection_payload(
+            artifact_resolution_id=resolution.resolution_id,
+            artifact_resolution_hash=resolution.resolution_hash,
+            universe_reference=reference,
+            decision_date=universe.decision_date,
+            effective_at=universe.effective_at,
+            available_at=universe.available_at,
+            members=members,
+            members_hash=members_hash,
+        )
+        digest = canonical_hash(semantic)
+        return cls(
+            projection_id=ArtifactId(
+                f"pit-universe-membership-projection-{digest.split(':', 1)[1][:24]}"
+            ),
+            projection_hash=digest,
+            artifact_resolution_id=resolution.resolution_id,
+            artifact_resolution_hash=resolution.resolution_hash,
+            universe_reference=reference,
+            decision_date=universe.decision_date,
+            effective_at=universe.effective_at,
+            available_at=universe.available_at,
+            members=members,
+            members_hash=members_hash,
+            resolved_at=resolution.resolved_at,
+        )
+
+    def semantic_payload(self) -> dict[str, Any]:
+        return _universe_projection_payload(
+            artifact_resolution_id=self.artifact_resolution_id,
+            artifact_resolution_hash=self.artifact_resolution_hash,
+            universe_reference=self.universe_reference,
+            decision_date=self.decision_date,
+            effective_at=self.effective_at,
+            available_at=self.available_at,
+            members=self.members,
+            members_hash=self.members_hash,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "projection_id": str(self.projection_id),
+            "projection_hash": self.projection_hash,
+            **self.semantic_payload(),
+            "resolved_at": canonical_datetime(self.resolved_at),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> PITUniverseMembershipAuthorityProjection:
+        expected = {
+            "schema_version",
+            "projection_id",
+            "projection_hash",
+            "artifact_resolution_id",
+            "artifact_resolution_hash",
+            "universe_reference",
+            "decision_date",
+            "effective_at",
+            "available_at",
+            "member_count",
+            "included_member_count",
+            "members_hash",
+            "members",
+            "resolved_at",
+        }
+        if set(payload) != expected:
+            raise PITContractError("PIT Universe projection fields mismatch")
+        raw_members = payload["members"]
+        raw_reference = payload["universe_reference"]
+        if not isinstance(raw_members, list) or not isinstance(raw_reference, Mapping):
+            raise PITContractError("PIT Universe projection payload is malformed")
+        members = tuple(
+            PITUniverseMembershipProjectionMember.from_canonical_dict(_object(item))
+            for item in raw_members
+        )
+        if (
+            payload["member_count"] != len(members)
+            or payload["included_member_count"]
+            != sum(1 for item in members if item.included)
+        ):
+            raise PITContractError("PIT Universe projection member count mismatch")
+        return cls(
+            schema_version=str(payload["schema_version"]),
+            projection_id=ArtifactId(str(payload["projection_id"])),
+            projection_hash=str(payload["projection_hash"]),
+            artifact_resolution_id=ArtifactId(str(payload["artifact_resolution_id"])),
+            artifact_resolution_hash=str(payload["artifact_resolution_hash"]),
+            universe_reference=PITArtifactReference.from_canonical_dict(raw_reference),
+            decision_date=date.fromisoformat(str(payload["decision_date"])),
+            effective_at=parse_utc_second("effective_at", payload["effective_at"]),
+            available_at=parse_utc_second("available_at", payload["available_at"]),
+            members=members,
+            members_hash=str(payload["members_hash"]),
+            resolved_at=parse_utc_second("resolved_at", payload["resolved_at"]),
+        )
+
+
 class PITArtifactAuthorityResolver(Protocol):
     def resolve(
         self,
@@ -279,6 +502,49 @@ class CanonicalPITArtifactAuthorityResolver:
             )
         return resolution
 
+    def resolve_universe_membership(
+        self,
+        reference: PITArtifactReference,
+        *,
+        resolved_at: datetime,
+    ) -> tuple[
+        PITArtifactAuthorityResolution,
+        PITUniverseMembershipAuthorityProjection,
+    ]:
+        """Strictly load a Universe once and return its full membership projection."""
+
+        require_utc_second("resolved_at", resolved_at)
+        if reference.reference_kind != PITArtifactKind.UNIVERSE.value:
+            raise PITArtifactAuthorityUnavailableError(
+                "Universe membership projection requires a Universe reference"
+            )
+        root = self._roots.get(PITArtifactKind.UNIVERSE)
+        if root is None:
+            raise PITArtifactAuthorityUnavailableError(
+                "no configured canonical repository for PIT Artifact kind UNIVERSE"
+            )
+        package = root / str(reference.artifact_id)
+        try:
+            universe = load_operational_universe(package)
+            resolution = _universe_resolution(
+                universe=universe,
+                physical_hash=_package_checksums_hash(package),
+                resolved_at=resolved_at,
+            )
+            projection = PITUniverseMembershipAuthorityProjection.create(
+                resolution=resolution,
+                universe=universe,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise PITArtifactAuthorityUnavailableError(
+                f"canonical Reader rejected UNIVERSE {reference.artifact_id}"
+            ) from exc
+        if resolution.reference != reference:
+            raise PITArtifactAuthorityUnavailableError(
+                "canonical Reader identity differs from requested PIT Artifact reference"
+            )
+        return resolution, projection
+
     def _load(
         self,
         kind: PITArtifactKind,
@@ -343,19 +609,9 @@ class CanonicalPITArtifactAuthorityResolver:
             )
         if kind is PITArtifactKind.UNIVERSE:
             universe = load_operational_universe(package)
-            return PITArtifactAuthorityResolution.create(
-                reference=PITArtifactReference(
-                    kind.value,
-                    ArtifactId(str(universe.universe_id)),
-                    universe.content_hash,
-                ),
-                canonical_schema=universe.schema_version,
-                reader_contract="operational-universe-package-v1",
-                physical_checksums_hash=physical_hash,
-                data_eligibility=universe.data_eligibility,
-                formal_pit_status=universe.formal_pit_status.value,
-                effective_at=universe.effective_at,
-                available_at=universe.available_at,
+            return _universe_resolution(
+                universe=universe,
+                physical_hash=physical_hash,
                 resolved_at=resolved_at,
             )
         if kind is PITArtifactKind.FEATURE_MATERIALIZATION:
@@ -444,6 +700,55 @@ def _resolution_payload(
     }
 
 
+def _universe_resolution(
+    *,
+    universe: OperationalUniverseArtifact,
+    physical_hash: str,
+    resolved_at: datetime,
+) -> PITArtifactAuthorityResolution:
+    return PITArtifactAuthorityResolution.create(
+        reference=PITArtifactReference(
+            PITArtifactKind.UNIVERSE.value,
+            ArtifactId(str(universe.universe_id)),
+            universe.content_hash,
+        ),
+        canonical_schema=universe.schema_version,
+        reader_contract="operational-universe-package-v1",
+        physical_checksums_hash=physical_hash,
+        data_eligibility=universe.data_eligibility,
+        formal_pit_status=universe.formal_pit_status.value,
+        effective_at=universe.effective_at,
+        available_at=universe.available_at,
+        resolved_at=resolved_at,
+    )
+
+
+def _universe_projection_payload(
+    *,
+    artifact_resolution_id: ArtifactId,
+    artifact_resolution_hash: str,
+    universe_reference: PITArtifactReference,
+    decision_date: date,
+    effective_at: datetime,
+    available_at: datetime,
+    members: tuple[PITUniverseMembershipProjectionMember, ...],
+    members_hash: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "pit-universe-membership-authority-projection-v1",
+        "artifact_resolution_id": str(artifact_resolution_id),
+        "artifact_resolution_hash": artifact_resolution_hash,
+        "universe_reference": universe_reference.to_canonical_dict(),
+        "decision_date": decision_date.isoformat(),
+        "effective_at": canonical_datetime(effective_at),
+        "available_at": canonical_datetime(available_at),
+        "member_count": len(members),
+        "included_member_count": sum(1 for item in members if item.included),
+        "members_hash": members_hash,
+        "members": [item.to_canonical_dict() for item in members],
+    }
+
+
 def _package_checksums_hash(package: Path) -> str:
     content = (package / "SHA256SUMS.json").read_bytes()
     return f"sha256:{sha256(content).hexdigest()}"
@@ -468,4 +773,6 @@ __all__ = [
     "PITArtifactAuthorityResolution",
     "PITArtifactAuthorityResolver",
     "PITArtifactAuthorityUnavailableError",
+    "PITUniverseMembershipAuthorityProjection",
+    "PITUniverseMembershipProjectionMember",
 ]
