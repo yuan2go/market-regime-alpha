@@ -35,6 +35,8 @@ from market_regime_alpha.application.strategy_shadow.economics import (
     StrategyEconomicsPolicy,
     StrategyEconomicsStatus,
     StrategyEntryKind,
+    StrategyExecutionObservation,
+    StrategyExecutionPhase,
     StrategyExitKind,
     evaluate_strategy_economics,
 )
@@ -194,12 +196,46 @@ def _policy(target: TargetDefinition, exit_kind: StrategyExitKind) -> StrategyEc
     )
 
 
+def _execution(
+    phase: StrategyExecutionPhase,
+    *,
+    conditions: tuple[OutcomeMarketCondition, ...] = (
+        OutcomeMarketCondition.TRADING,
+    ),
+    price: Decimal | None = None,
+) -> StrategyExecutionObservation:
+    is_entry = phase is StrategyExecutionPhase.ENTRY
+    effective_at = NOW if is_entry else NOW + timedelta(days=1)
+    available_at = effective_at if is_entry else effective_at + timedelta(seconds=1)
+    resolved_price = Decimal("10") if is_entry else Decimal("10.5")
+    reference_payload = {
+        "phase": phase.value,
+        "conditions": [item.value for item in conditions],
+        "price": str(resolved_price if price is None else price),
+    }
+    return StrategyExecutionObservation(
+        phase=phase,
+        symbol="000001.SZ",
+        price=resolved_price if price is None else price,
+        market_conditions=tuple(sorted(conditions, key=lambda item: item.value)),
+        effective_at=effective_at,
+        available_at=available_at,
+        source_reference=ValidationArtifactReference(
+            f"{phase.value}_EXECUTION_OBSERVATION",
+            ArtifactId(f"{phase.value.lower()}-execution-observation"),
+            canonical_hash(reference_payload),
+        ),
+    )
+
+
 def test_fixed_time_strategy_economics_reports_gross_cost_net_and_capacity() -> None:
     target = _target()
     result = evaluate_strategy_economics(
         policy=_policy(target, StrategyExitKind.FIXED_TIME),
         label=_label(target),
         liquidity=_capacity(),
+        entry_execution=_execution(StrategyExecutionPhase.ENTRY),
+        exit_execution=_execution(StrategyExecutionPhase.EXIT),
         requested_notional=Decimal("100000"),
         evaluated_at=NOW + timedelta(days=1, seconds=2),
     )
@@ -215,29 +251,67 @@ def test_fixed_time_strategy_economics_reports_gross_cost_net_and_capacity() -> 
 
 
 @pytest.mark.parametrize(
-    "conditions",
+    ("conditions", "expected_status"),
     [
-        (OutcomeMarketCondition.SUSPENDED,),
-        (OutcomeMarketCondition.LIMIT_UP,),
-        (OutcomeMarketCondition.LIMIT_DOWN,),
-        (OutcomeMarketCondition.MISSING_QUOTE,),
+        ((OutcomeMarketCondition.SUSPENDED,), StrategyEconomicsStatus.NOT_ESTIMABLE),
+        ((OutcomeMarketCondition.LIMIT_UP,), StrategyEconomicsStatus.AVAILABLE),
+        ((OutcomeMarketCondition.LIMIT_DOWN,), StrategyEconomicsStatus.NOT_ESTIMABLE),
+        ((OutcomeMarketCondition.MISSING_QUOTE,), StrategyEconomicsStatus.NOT_ESTIMABLE),
     ],
 )
-def test_entry_market_constraints_fail_closed(
+def test_t_plus_one_exit_conditions_do_not_retroactively_deny_entry(
     conditions: tuple[OutcomeMarketCondition, ...],
+    expected_status: StrategyEconomicsStatus,
 ) -> None:
     target = _target()
     result = evaluate_strategy_economics(
         policy=_policy(target, StrategyExitKind.FIXED_TIME),
         label=_label(target, conditions=conditions),
         liquidity=_capacity(),
+        entry_execution=_execution(StrategyExecutionPhase.ENTRY),
+        exit_execution=_execution(
+            StrategyExecutionPhase.EXIT,
+            conditions=conditions,
+        ),
         requested_notional=Decimal("100000"),
         evaluated_at=NOW + timedelta(days=1, seconds=2),
     )
 
-    assert result.status is StrategyEconomicsStatus.NOT_ESTIMABLE
-    assert result.filled_quantity == 0
-    assert result.net_return is None
+    assert result.status is expected_status
+    assert result.filled_quantity > 0
+    assert result.entry_price == Decimal("10")
+    if expected_status is StrategyEconomicsStatus.NOT_ESTIMABLE:
+        assert result.net_return is None
+        assert "EXIT_MARKET_CONDITION_NOT_FILLABLE" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("conditions", "expected_status"),
+    [
+        ((OutcomeMarketCondition.LIMIT_UP,), StrategyEconomicsStatus.NO_ENTRY),
+        ((OutcomeMarketCondition.SUSPENDED,), StrategyEconomicsStatus.NO_ENTRY),
+        ((OutcomeMarketCondition.LIMIT_DOWN,), StrategyEconomicsStatus.AVAILABLE),
+    ],
+)
+def test_entry_execution_is_side_aware_and_independent_of_exit(
+    conditions: tuple[OutcomeMarketCondition, ...],
+    expected_status: StrategyEconomicsStatus,
+) -> None:
+    target = _target()
+    result = evaluate_strategy_economics(
+        policy=_policy(target, StrategyExitKind.FIXED_TIME),
+        label=_label(target),
+        liquidity=_capacity(),
+        entry_execution=_execution(
+            StrategyExecutionPhase.ENTRY,
+            conditions=conditions,
+        ),
+        exit_execution=_execution(StrategyExecutionPhase.EXIT),
+        requested_notional=Decimal("100000"),
+        evaluated_at=NOW + timedelta(days=1, seconds=2),
+    )
+
+    assert result.status is expected_status
 
 
 def test_barrier_strategy_does_not_assume_intrabar_ordering() -> None:
@@ -249,12 +323,16 @@ def test_barrier_strategy_does_not_assume_intrabar_ordering() -> None:
             barrier_ordering=BarrierOrderingOutcome.AMBIGUOUS_NOT_OBSERVABLE,
         ),
         liquidity=_capacity(),
+        entry_execution=_execution(StrategyExecutionPhase.ENTRY),
+        exit_execution=_execution(StrategyExecutionPhase.EXIT),
         requested_notional=Decimal("100000"),
         evaluated_at=NOW + timedelta(days=1, seconds=2),
     )
 
     assert result.status is StrategyEconomicsStatus.NOT_ESTIMABLE
     assert "BARRIER_ORDERING_NOT_OBSERVABLE" in result.reason_codes
+    assert result.filled_quantity > 0
+    assert result.entry_price == Decimal("10")
 
 
 def test_strategy_policy_rejects_target_horizon_drift() -> None:
@@ -272,6 +350,8 @@ def test_strategy_policy_rejects_target_horizon_drift() -> None:
             policy=policy,
             label=other,
             liquidity=_capacity(),
+            entry_execution=_execution(StrategyExecutionPhase.ENTRY),
+            exit_execution=_execution(StrategyExecutionPhase.EXIT),
             requested_notional=Decimal("100000"),
             evaluated_at=NOW + timedelta(days=1, seconds=2),
         )
