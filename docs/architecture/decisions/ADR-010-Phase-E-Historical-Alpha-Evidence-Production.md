@@ -92,6 +92,7 @@ Physical layout follows the two real consumers: cross-sectional Decision-Time
 scans and symbol-scoped T+1 path reads. It must not create symbol-by-day files.
 
 ```text
+raw/timeframe=TF/year=YYYY/bucket=BB/part.parquet
 daily/year=YYYY/bucket=BB/part.parquet
 minute_5/year=YYYY/month=MM/bucket=BB/part.parquet
 ```
