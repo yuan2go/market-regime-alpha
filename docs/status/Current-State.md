@@ -81,6 +81,14 @@ regime/liquidity/market-cap/volatility/theme/industry slices, Strategy Economics
 Portfolio Risk and diagnostic Feedback are content-addressed exploratory
 research artifacts. They do not qualify a model or establish economic value.
 
+The Phase D engineering correctness closure is complete:
+`PHASE_D_ENGINEERING_COMPLETE`. This marker covers temporal binding, exact
+Historical lineage, owner ID/hash integrity, durable Observation lineage,
+ordered/variant-specific metrics, separated Strategy execution semantics,
+deterministic replay and truthful Runtime boundaries. It is an engineering
+status only and does not establish Alpha, Formal PIT, Formal OOS, Strategy
+proof, Production readiness or trading authority.
+
 Canonical source acquisition is exposed through `SourceFreezeService`; the
 DailyLoop is retained only as its identity-compatible adapter. Controlled
 package recovery and Feature recovery use exact PostgreSQL/receipt locators and
@@ -157,6 +165,7 @@ data_engineering_complete = true
 research_engineering_complete = true
 evaluation_engineering_complete = true
 research_model_runtime_available = true
+phase_d_engineering_complete = true
 formal_model_qualified = false
 formal_oos = false
 strategy_validation_engineering_complete = true

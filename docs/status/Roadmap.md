@@ -68,10 +68,20 @@ calibration, prospective performance or Production qualification.
    service, resolve operational packages through the PostgreSQL authoritative
    locator with immutable hash verification, expose real lifecycle boundary
    sets, and remove only code proven to have no consumer.
-8. **Verification and publication — in progress on the feature branch:** run the repository quality gates,
-   PostgreSQL migration/idempotency/concurrency/recovery/replay tests, CLI smoke
-   tests and deterministic statistical proof suite. Publish logical commits on
-   the feature branch and open a Draft PR.
+8. **Verification and publication — engineering complete:** the repository
+   quality gates, PostgreSQL fresh/upgrade/idempotency/concurrency migrations,
+   recovery/replay, CLI integration and deterministic statistical proof suite
+   pass on the Phase D closure branch. Phase D is
+   `PHASE_D_ENGINEERING_COMPLETE`; publication remains a Draft PR until review
+   is complete.
+
+The next program is **Historical Alpha Evidence Production**. It must consume
+real owner-resolved historical facts under the frozen Protocol/Target lineage,
+preserve negative and inconclusive results and respect the existing Provider,
+PIT and Locked-OOS gates. Engineering completion does not supply the missing
+qualified Provider history, Formal PIT, qualified Historical Samples, pristine
+Formal OOS observations, Calibration, prospective Strategy evidence or
+Production Admission.
 
 ### Earlier Phase D capability inventory
 
