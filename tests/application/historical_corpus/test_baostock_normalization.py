@@ -11,6 +11,8 @@ from market_regime_alpha.application.historical_corpus.baostock_archive import (
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
+    HistoricalDataPartition,
+    HISTORICAL_PARTITION_SCHEMA_V1,
     HistoricalRawRequest,
     HistoricalTradingStatus,
     build_partitions,
@@ -159,6 +161,33 @@ def test_normalization_preserves_retrieval_clock_and_missingness() -> None:
     assert minute.st_status is None
     assert ("ST_STATUS", 1) in normalized.coverage.missing_field_counts
     assert ("LISTING_STATUS", 2) in normalized.coverage.missing_field_counts
+
+
+def test_legacy_raw_partition_replays_start_date_projection() -> None:
+    request = raw_request()
+    legacy = HistoricalDataPartition.create(
+        artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+        timeframe=request.timeframe,
+        symbol_bucket=build_partitions(
+            artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+            records=(request,),
+            bucket_count=4,
+        )[0].symbol_bucket,
+        bucket_count=4,
+        records=(request,),
+        schema_version=HISTORICAL_PARTITION_SCHEMA_V1,
+    )
+
+    assert legacy.first_market_date == request.start_date
+    assert legacy.last_market_date == request.start_date
+    assert "schema_version" not in legacy.reference_dict()
+    assert (
+        HistoricalDataPartition.from_reference_dict(
+            legacy.reference_dict(),
+            records=(request,),
+        )
+        == legacy
+    )
 
 
 def test_suspension_is_not_silently_price_filled() -> None:

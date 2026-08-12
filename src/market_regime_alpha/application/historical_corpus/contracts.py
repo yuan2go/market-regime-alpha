@@ -35,7 +35,8 @@ from market_regime_alpha.market_data.contracts import (
 
 HISTORICAL_RAW_REQUEST_SCHEMA = "historical-raw-request/v1"
 HISTORICAL_NORMALIZED_BAR_SCHEMA = "historical-normalized-bar/v1"
-HISTORICAL_PARTITION_SCHEMA = "historical-data-partition/v1"
+HISTORICAL_PARTITION_SCHEMA_V1 = "historical-data-partition/v1"
+HISTORICAL_PARTITION_SCHEMA = "historical-data-partition/v2"
 HISTORICAL_OWNER_SCHEMA = "historical-data-owner/v1"
 HISTORICAL_AVAILABILITY_BASIS = "RETROSPECTIVE_EVENT_TIME"
 HISTORICAL_EVIDENCE_LIMITATIONS = (
@@ -392,7 +393,10 @@ class HistoricalDataPartition:
     schema_version: str = HISTORICAL_PARTITION_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema_version != HISTORICAL_PARTITION_SCHEMA:
+        if self.schema_version not in {
+            HISTORICAL_PARTITION_SCHEMA_V1,
+            HISTORICAL_PARTITION_SCHEMA,
+        }:
             raise ValueError("unsupported Historical partition schema")
         if self.artifact_kind is HistoricalArtifactKind.RESEARCH_MATERIALIZATION:
             raise ValueError("research materialization uses JSON component packages")
@@ -404,8 +408,10 @@ class HistoricalDataPartition:
         symbols = {item.symbol for item in self.records}
         if self.symbol_count != len(symbols):
             raise ValueError("Historical partition symbol count mismatch")
-        first_dates = tuple(_record_first_date(item) for item in self.records)
-        last_dates = tuple(_record_last_date(item) for item in self.records)
+        first_dates, last_dates = _partition_record_dates(
+            self.records,
+            schema_version=self.schema_version,
+        )
         if (
             self.first_market_date != min(first_dates)
             or self.last_market_date != max(last_dates)
@@ -431,13 +437,22 @@ class HistoricalDataPartition:
         symbol_bucket: int,
         bucket_count: int,
         records: tuple[HistoricalPartitionRecord, ...],
+        schema_version: str = HISTORICAL_PARTITION_SCHEMA,
     ) -> HistoricalDataPartition:
         ordered = tuple(sorted(records, key=_record_sort_key))
         if not ordered:
             raise ValueError("Historical partition requires records")
-        first_dates = tuple(_record_first_date(item) for item in ordered)
-        last_dates = tuple(_record_last_date(item) for item in ordered)
+        if schema_version not in {
+            HISTORICAL_PARTITION_SCHEMA_V1,
+            HISTORICAL_PARTITION_SCHEMA,
+        }:
+            raise ValueError("unsupported Historical partition schema")
+        first_dates, last_dates = _partition_record_dates(
+            ordered,
+            schema_version=schema_version,
+        )
         values = {
+            "schema_version": schema_version,
             "artifact_kind": artifact_kind,
             "timeframe": timeframe,
             "first_market_date": min(first_dates),
@@ -462,8 +477,31 @@ class HistoricalDataPartition:
             **cast(Any, values),
         )
 
+    @classmethod
+    def from_reference_dict(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        records: tuple[HistoricalPartitionRecord, ...],
+    ) -> HistoricalDataPartition:
+        schema_version = str(
+            payload.get("schema_version", HISTORICAL_PARTITION_SCHEMA_V1)
+        )
+        result = cls.create(
+            artifact_kind=HistoricalArtifactKind(str(payload["artifact_kind"])),
+            timeframe=Timeframe(str(payload["timeframe"])),
+            symbol_bucket=int(payload["symbol_bucket"]),
+            bucket_count=int(payload["bucket_count"]),
+            records=records,
+            schema_version=schema_version,
+        )
+        if result.reference_dict() != dict(payload):
+            raise ValueError("Historical partition logical projection mismatch")
+        return result
+
     def semantic_payload(self) -> dict[str, Any]:
         return _partition_payload(
+            schema_version=self.schema_version,
             artifact_kind=self.artifact_kind,
             timeframe=self.timeframe,
             first_market_date=self.first_market_date,
@@ -483,7 +521,7 @@ class HistoricalDataPartition:
             raise ValueError("Historical partition identity mismatch")
 
     def reference_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "partition_id": str(self.partition_id),
             "content_hash": self.content_hash,
             "artifact_kind": self.artifact_kind.value,
@@ -496,6 +534,9 @@ class HistoricalDataPartition:
             "symbol_count": self.symbol_count,
             "relative_path": self.relative_path,
         }
+        if self.schema_version != HISTORICAL_PARTITION_SCHEMA_V1:
+            result["schema_version"] = self.schema_version
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -841,7 +882,10 @@ def _bar_payload(**values: Any) -> dict[str, Any]:
 
 def _partition_payload(**values: Any) -> dict[str, Any]:
     return {
-        "schema_version": HISTORICAL_PARTITION_SCHEMA,
+        "schema_version": values.get(
+            "schema_version",
+            HISTORICAL_PARTITION_SCHEMA,
+        ),
         "artifact_kind": values["artifact_kind"].value,
         "timeframe": values["timeframe"].value,
         "first_market_date": values["first_market_date"].isoformat(),
@@ -896,6 +940,17 @@ def _record_first_date(item: HistoricalPartitionRecord) -> date:
 
 def _record_last_date(item: HistoricalPartitionRecord) -> date:
     return item.end_date if isinstance(item, HistoricalRawRequest) else item.market_date
+
+
+def _partition_record_dates(
+    records: tuple[HistoricalPartitionRecord, ...],
+    *,
+    schema_version: str,
+) -> tuple[tuple[date, ...], tuple[date, ...]]:
+    first_dates = tuple(_record_first_date(item) for item in records)
+    if schema_version == HISTORICAL_PARTITION_SCHEMA_V1:
+        return first_dates, first_dates
+    return first_dates, tuple(_record_last_date(item) for item in records)
 
 
 def _record_sort_key(item: HistoricalPartitionRecord) -> tuple[Any, ...]:

@@ -15,7 +15,6 @@ from typing import Any, Callable, Mapping
 from market_regime_alpha.application.historical_corpus.contracts import (
     HISTORICAL_NORMALIZED_BAR_SCHEMA,
     HISTORICAL_RAW_REQUEST_SCHEMA,
-    HistoricalArtifactKind,
     HistoricalDataOwner,
     HistoricalDataPartition,
     HistoricalNormalizedBar,
@@ -23,7 +22,6 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
-from market_regime_alpha.market_data.contracts import Timeframe
 
 
 HISTORICAL_PACKAGE_ENCODING = "historical-columnar-package/v1"
@@ -259,15 +257,10 @@ def _read_partition(
         ):
             raise ValueError("Historical Parquet row projection mismatch")
         records.append(record)
-    partition = HistoricalDataPartition.create(
-        artifact_kind=HistoricalArtifactKind(str(reference["artifact_kind"])),
-        timeframe=Timeframe(str(reference["timeframe"])),
-        symbol_bucket=int(reference["symbol_bucket"]),
-        bucket_count=int(reference["bucket_count"]),
+    partition = HistoricalDataPartition.from_reference_dict(
+        reference,
         records=tuple(records),
     )
-    if partition.reference_dict() != dict(reference):
-        raise ValueError("Historical partition logical projection mismatch")
     if any(
         row["partition_id"] != str(partition.partition_id)
         or row["partition_hash"] != partition.content_hash
