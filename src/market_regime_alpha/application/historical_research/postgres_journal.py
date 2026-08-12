@@ -465,8 +465,19 @@ class PostgresHistoricalResearchJournal:
             ).fetchone()
             session_rows = connection.execute(
                 """
-                SELECT session_id FROM historical_research_session
+                SELECT session_id, session_hash, session_ordinal, status,
+                       next_stage_ordinal, version, fencing_token, session_json
+                FROM historical_research_session
                 WHERE run_id = %s ORDER BY session_ordinal
+                """,
+                (str(run_id),),
+            ).fetchall()
+            receipt_rows = connection.execute(
+                """
+                SELECT session_id, receipt_hash, payload_json
+                FROM historical_research_stage_receipt
+                WHERE run_id = %s
+                ORDER BY session_id, stage_ordinal
                 """,
                 (str(run_id),),
             ).fetchall()
@@ -475,8 +486,22 @@ class PostgresHistoricalResearchJournal:
         command = HistoricalResearchCommand.from_canonical_dict(row[3])
         if str(row[0]) != command.command_hash or command.run_id != run_id:
             raise HistoricalResearchConflict("Historical run owner hash diverged")
+        receipts_by_session: dict[
+            ArtifactId, list[ResearchSessionStageReceipt]
+        ] = {}
+        for receipt_row in receipt_rows:
+            session_id = ArtifactId(str(receipt_row[0]))
+            receipts_by_session.setdefault(session_id, []).append(
+                self._restore_receipt(receipt_row[1], receipt_row[2])
+            )
         sessions = tuple(
-            self.get_session(run_id, ArtifactId(str(item[0])))
+            self._restore_session(
+                run_id=run_id,
+                row=item,
+                receipts=tuple(
+                    receipts_by_session.get(ArtifactId(str(item[0])), ())
+                ),
+            )
             for item in session_rows
         )
         if len(sessions) != command.session_count:
@@ -502,10 +527,29 @@ class PostgresHistoricalResearchJournal:
                 (str(run_id), str(session_id)),
             ).fetchone()
             receipts = self._load_receipts(connection, run_id, session_id)
-        if row is None or not isinstance(row[6], dict):
+        if row is None:
             raise KeyError(str(session_id))
-        request = ResearchDecisionSessionRequest.from_canonical_dict(row[6])
-        if str(row[0]) != request.session_hash or request.session_id != session_id:
+        return self._restore_session(
+            run_id=run_id,
+            row=(session_id, *row),
+            receipts=receipts,
+        )
+
+    @staticmethod
+    def _restore_session(
+        *,
+        run_id: ArtifactId,
+        row: Any,
+        receipts: tuple[ResearchSessionStageReceipt, ...],
+    ) -> HistoricalSessionSnapshot:
+        session_id = ArtifactId(str(row[0]))
+        if not isinstance(row[7], dict):
+            raise HistoricalResearchConflict("Historical session payload is invalid")
+        request = ResearchDecisionSessionRequest.from_canonical_dict(row[7])
+        if (
+            str(row[1]) != request.session_hash
+            or request.session_id != session_id
+        ):
             raise HistoricalResearchConflict("Historical session owner hash diverged")
         if tuple(item.stage for item in receipts) != tuple(ResearchSessionStage)[
             : len(receipts)
@@ -513,11 +557,11 @@ class PostgresHistoricalResearchJournal:
             raise HistoricalResearchConflict("Historical stage projection diverged")
         return HistoricalSessionSnapshot(
             request=request,
-            ordinal=int(row[1]),
-            status=HistoricalSessionStatus(str(row[2])),
-            next_stage=tuple(ResearchSessionStage)[int(row[3]) - 1],
-            version=int(row[4]),
-            fencing_token=int(row[5]),
+            ordinal=int(row[2]),
+            status=HistoricalSessionStatus(str(row[3])),
+            next_stage=tuple(ResearchSessionStage)[int(row[4]) - 1],
+            version=int(row[5]),
+            fencing_token=int(row[6]),
             receipts=receipts,
         )
 
@@ -536,13 +580,22 @@ class PostgresHistoricalResearchJournal:
         ).fetchall()
         receipts: list[ResearchSessionStageReceipt] = []
         for row in rows:
-            if not isinstance(row[1], dict):
-                raise HistoricalResearchConflict("Historical receipt payload is invalid")
-            receipt = ResearchSessionStageReceipt.from_canonical_dict(row[1])
-            if str(row[0]) != receipt.receipt_hash:
-                raise HistoricalResearchConflict("Historical receipt hash diverged")
-            receipts.append(receipt)
+            receipts.append(
+                PostgresHistoricalResearchJournal._restore_receipt(row[0], row[1])
+            )
         return tuple(receipts)
+
+    @staticmethod
+    def _restore_receipt(
+        receipt_hash: object,
+        payload: object,
+    ) -> ResearchSessionStageReceipt:
+        if not isinstance(payload, dict):
+            raise HistoricalResearchConflict("Historical receipt payload is invalid")
+        receipt = ResearchSessionStageReceipt.from_canonical_dict(payload)
+        if str(receipt_hash) != receipt.receipt_hash:
+            raise HistoricalResearchConflict("Historical receipt hash diverged")
+        return receipt
 
     @staticmethod
     def _finish_run(connection: Any, run_id: ArtifactId, now: datetime) -> None:
