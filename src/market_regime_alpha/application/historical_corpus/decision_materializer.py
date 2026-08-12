@@ -231,6 +231,7 @@ class HistoricalDecisionMaterializer:
         self._dataset_indexes: dict[
             ValidationArtifactReference, _HistoricalDatasetIndex
         ] = {}
+        self._outcome_cache: dict[date, HistoricalSessionComponent] | None = None
 
     def _dataset(
         self, reference: ValidationArtifactReference
@@ -626,14 +627,7 @@ class HistoricalDecisionMaterializer:
             },
         )
         forecast_config = _forecast_configuration(request.decision_time)
-        prior_outcomes = tuple(
-            item
-            for item in self._components.list_for_run(
-                run_id=self._run_id,
-                component_kind=HistoricalComponentKind.OUTCOME,
-            )
-            if item.trading_date < request.trading_date
-        )
+        prior_outcomes = self._prior_outcomes(request.trading_date)
         forecasts = []
         used_prior_references: set[ValidationArtifactReference] = set()
         for snapshot in snapshots:
@@ -997,6 +991,7 @@ class HistoricalDecisionMaterializer:
                 "COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",
             ),
         )
+        self._remember_outcome(component)
         return _complete_stage(
             request=request,
             inputs=_references((*input_references, normalized_reference)),
@@ -1101,6 +1096,39 @@ class HistoricalDecisionMaterializer:
         if protocol.protocol_hash != request.target_protocol_reference.content_hash:
             raise ValueError("Historical Target Protocol owner hash mismatch")
         return protocol
+
+    def _prior_outcomes(
+        self, trading_date: date
+    ) -> tuple[HistoricalSessionComponent, ...]:
+        if self._outcome_cache is None:
+            self._outcome_cache = {
+                item.trading_date: item
+                for item in self._components.list_for_run(
+                    run_id=self._run_id,
+                    component_kind=HistoricalComponentKind.OUTCOME,
+                )
+            }
+        return tuple(
+            self._outcome_cache[item]
+            for item in sorted(self._outcome_cache)
+            if item < trading_date
+        )
+
+    def _remember_outcome(self, component: HistoricalSessionComponent) -> None:
+        if component.component_kind is not HistoricalComponentKind.OUTCOME:
+            raise ValueError("Historical Outcome cache only accepts Outcome owners")
+        if self._outcome_cache is None:
+            self._outcome_cache = {
+                item.trading_date: item
+                for item in self._components.list_for_run(
+                    run_id=self._run_id,
+                    component_kind=HistoricalComponentKind.OUTCOME,
+                )
+            }
+        existing = self._outcome_cache.get(component.trading_date)
+        if existing is not None and existing != component:
+            raise ValueError("Historical Outcome cache owner conflict")
+        self._outcome_cache[component.trading_date] = component
 
     def _put_component(
         self,

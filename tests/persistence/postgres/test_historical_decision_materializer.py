@@ -210,6 +210,11 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     outcome = component_repository.get(outcome_reference)
     assert outcome.payload["available_label_count"] == len(STOCKS) * 6
     assert len(outcome.payload["strategy_economics"]) == len(STOCKS) * 6
+    for result in outcome.payload["strategy_economics"]:
+        if result["net_return"] is not None:
+            assert Decimal(result["net_return"]) == (
+                Decimal(result["gross_return"]) - Decimal(result["cost_return"])
+            )
     panel_reference = resumed.sessions[0].receipts[-1].output_references[0]
     panel = component_repository.get(panel_reference)
     assert panel.payload["row_count"] == len(STOCKS)
