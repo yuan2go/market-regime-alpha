@@ -276,12 +276,22 @@ class HistoricalDecisionMaterializer:
     ) -> tuple[HistoricalNormalizedBar, ...]:
         index = self._dataset(reference)
         result: list[HistoricalNormalizedBar] = []
+        market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
         for key, values in index.series.items():
             end = bisect_right(index.event_ends[key], decision_time)
             admitted = values[:end]
             if key[1] is Timeframe.MINUTE_5:
+                admitted_dates = tuple(
+                    sorted(
+                        {
+                            item.market_date
+                            for item in admitted
+                            if item.market_date <= market_date
+                        }
+                    )[-2:]
+                )
                 admitted = tuple(
-                    item for item in admitted if item.market_date == decision_time.date()
+                    item for item in admitted if item.market_date in admitted_dates
                 )
             result.extend(admitted)
         return tuple(sorted(result, key=_historical_bar_key))

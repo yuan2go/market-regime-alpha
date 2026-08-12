@@ -191,12 +191,20 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         if item.artifact_kind == "HISTORICAL_SIGNAL"
     )
     signal = component_repository.get(signal_reference)
+    market_reference = next(
+        item
+        for item in partial.sessions[0].receipts[-1].output_references
+        if item.artifact_kind == "HISTORICAL_MARKET_REGIME"
+    )
+    market = component_repository.get(market_reference)
     candidate_reference = next(
         item
         for item in partial.sessions[0].receipts[-1].output_references
         if item.artifact_kind == "HISTORICAL_CANDIDATE"
     )
     candidate = component_repository.get(candidate_reference)
+    assert market.payload["market_state"] != "DATA_INSUFFICIENT"
+    assert "MARKET_REGIME_DATA_INSUFFICIENT" not in market.payload["reason_codes"]
     assert len(candidate.payload["records"]) == len(STOCKS)
     assert signal.payload["signal_count"] == signal.payload["selected_candidate_count"]
     assert resumed.status is HistoricalRunStatus.COMPLETE
