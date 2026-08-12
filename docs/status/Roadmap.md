@@ -3,7 +3,7 @@
 > **Status:** ROADMAP
 > **Authority:** Current forward engineering order
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-13
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 ## Phase C current order
@@ -75,13 +75,39 @@ calibration, prospective performance or Production qualification.
    `PHASE_D_ENGINEERING_COMPLETE`; publication remains a Draft PR until review
    is complete.
 
-The next program is **Historical Alpha Evidence Production**. It must consume
-real owner-resolved historical facts under the frozen Protocol/Target lineage,
-preserve negative and inconclusive results and respect the existing Provider,
-PIT and Locked-OOS gates. Engineering completion does not supply the missing
-qualified Provider history, Formal PIT, qualified Historical Samples, pristine
-Formal OOS observations, Calibration, prospective Strategy evidence or
-Production Admission.
+## Phase E Historical Alpha Evidence Production
+
+The representative vertical slice is complete: immutable Raw and Normalized
+owners, active Decision-Time materialization through canonical kernels, T+1
+Outcome, Panel, cumulative ablation, Strategy Economics, Portfolio Performance,
+owner-resolved challenger, durable Research Evidence, interruption recovery and
+deterministic replay all ran on a frozen real 2023-2025 BaoStock corpus.
+
+The run is useful negative evidence, not completion of the whole empirical
+program. Price, Volume, Regime, Theme and Dynamic Pool were estimable; the full
+effective chain remained net negative after engineering-assumption costs.
+BaoStock returned no `510300.SH` rows, so ETF and Capital were unobserved and
+Canonical gates rejected every Candidate. ETF, Capital, Candidate, Signal and
+Forecast incremental lift is therefore `NOT_ESTIMABLE`.
+
+Phase E priority order is now:
+
+1. Freeze a free Provider scope that supplies actual ETF/index context while
+   preserving its auxiliary, `PIT_INCOMPLETE` ceiling; do not substitute or
+   synthesize ETF facts.
+2. Expand the cross-section beyond six liquid stocks and obtain explicit
+   historical listing/ST/suspension, market-cap and industry facts so
+   survivorship and slice coverage can be measured rather than assumed.
+3. Re-run the same frozen cumulative chain without tuning to determine whether
+   Candidate/Signal/Forecast become estimable and whether any apparent
+   Regime/Volatility effects survive broader coverage.
+4. Empirically calibrate costs, fillability, impact and capacity before making
+   any economic-value claim. Continue preserving negative and inconclusive
+   outcomes.
+
+Engineering completion still does not supply qualified Provider history,
+Formal PIT, qualified Historical Samples, pristine Formal OOS observations,
+Calibration, prospective Strategy evidence or Production Admission.
 
 ### Earlier Phase D capability inventory
 

@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole current implementation-status document
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-13
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations`, `tests`
 
 ## Implemented engineering boundary
@@ -89,6 +89,68 @@ deterministic replay and truthful Runtime boundaries. It is an engineering
 status only and does not establish Alpha, Formal PIT, Formal OOS, Strategy
 proof, Production readiness or trading authority.
 
+Phase E now has one real representative historical-evidence vertical slice.
+PostgreSQL remains the sole business Authority for exact owner identity, logical
+and physical hashes, Artifact Root locator, schema/version, provenance,
+coverage, availability metadata, sessions, experiments and results. The
+content-addressed Artifact Root stores immutable Raw and Normalized Parquet
+packages only. Reads start from an exact PostgreSQL owner and verify every
+manifest, checksum and physical package hash; there is no directory scan,
+latest-file selection or implicit fallback. Publication is staging, validation,
+logical hashing, atomic installation, owner registration and exact reload.
+Raw partition schema v2 preserves full provider request intervals while v1
+owners remain immutable and replayable.
+
+The frozen BaoStock corpus requested raw-unadjusted Daily and 5-minute history
+for seven symbols over 2023-01-01 through 2025-12-31. Six liquid A-share stocks
+were observed; all six annual/timeframe requests for `510300.SH` returned an
+empty Provider result. The corrected Raw owner contains 42 successful Provider
+requests and 213,738 source rows. Its exact Normalized child contains 4,362
+Daily and 209,376 5-minute rows. Listing status is absent for all 213,738 rows;
+minute ST status is absent for 209,376 rows. Retrieval time remains the true
+2026 archive time; historical trading dates are only retrospective event time.
+Every artifact and result remains `EXPLORATORY` and `PIT_INCOMPLETE`.
+
+The representative run actively materializes 667 historical Decision Sessions
+from 2023-04-03 through 2025-12-30 and uses 2025-12-31 only for T+1 Outcome. It
+persists 667 exact owners for each of 13 Feature/State/Pool/Candidate/Signal/
+Forecast/Strategy/Portfolio/Outcome/Panel kinds, producing 4,002 panel samples
+with zero missing T+1 10:30 targets. Decision components have zero post-decision
+source-time violations; Outcome owners have zero non-T+1 time violations;
+component source bindings have zero cross-run contamination. A real interrupted
+seven-receipt process resumed to the same terminal corpus, and exact replay is
+deterministic.
+
+The frozen cumulative ablation does not establish general Alpha. Price-only
+RankIC is -0.01652 and net return is -0.001165 after an average 0.002100
+engineering-assumption cost. Adding Volume and Market Regime improves net by
+0.000070 and 0.000196 respectively, but both remain negative. Theme reduces net
+by 0.000350 and Dynamic Pool reduces it by another 0.000228. The resulting full
+effective chain has RankIC 0.00252, gross 0.000623, cost 0.002100, net -0.001477,
+turnover 0.2057 and maximum drawdown -0.7309. ETF and Capital have zero observed
+factor values. Canonical Theme/Capital gates reject all 4,002 Candidate rows, so
+Candidate, Signal and Forecast also have zero observed factor values. Their
+incremental lifts are durably `NOT_ESTIMABLE`, never represented as zero.
+
+All six T+1 execution checkpoints are net negative. Mean checkpoint net ranges
+from OPEN -0.001936 to 11:30 -0.000693; 19,953 of 24,012 symbol/checkpoint
+economics rows are estimable and all estimable rows reconcile `gross - cost =
+net`. The average capacity ceiling is approximately CNY 352.6 million, but
+cost, fillability, impact and capacity are engineering assumptions rather than
+empirically calibrated execution facts. Diagnostic slices are positive in
+`RISK_ON` and High Volatility and negative in `RISK_OFF`, Low and Normal
+Volatility; the one-session `EXTREME_RISK` slice is inconclusive. All names are
+High Liquidity, Theme is one global exploratory proxy, and Market Cap/Industry
+slices are `NOT_ESTIMABLE`.
+
+The owner-resolved fixed-ridge challenger reloads Feature and Target owners
+without a caller matrix. It uses 3,198 earlier training and 804 later validation
+samples. Validation MSE 0.00024454 is slightly below the mean-baseline MSE
+0.00024591 and validation RankIC is 0.05842, so its exploratory registry result
+is `POSITIVE`. This is not a Formal OOS, calibrated, model-qualified or economic
+value claim. Negative, inconclusive and not-estimable findings are persisted in
+the same PostgreSQL Research Evidence registry.
+
 Canonical source acquisition is exposed through `SourceFreezeService`; the
 DailyLoop is retained only as its identity-compatible adapter. Controlled
 package recovery and Feature recovery use exact PostgreSQL/receipt locators and
@@ -127,12 +189,12 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 685 | broad modular monolith; size alone is not a defect |
-| Python test files | 454 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 638 | broad modular monolith; size alone is not a defect |
+| Python test files | 468 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 67 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 244 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 244 independent business Authorities |
+| PostgreSQL migrations | 68 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 251 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 251 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |
@@ -166,6 +228,10 @@ research_engineering_complete = true
 evaluation_engineering_complete = true
 research_model_runtime_available = true
 phase_d_engineering_complete = true
+phase_e_representative_corpus_complete = true
+historical_corpus_replay_verified = true
+exploratory_alpha_established = false
+strategy_economic_value_established = false
 formal_model_qualified = false
 formal_oos = false
 strategy_validation_engineering_complete = true

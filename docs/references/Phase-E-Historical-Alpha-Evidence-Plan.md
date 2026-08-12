@@ -4,6 +4,17 @@
 > **Approved Design:** ADR-010
 > **Base:** `origin/main@8cd363d6b203df5413d20369f5d48100620c4246`
 
+## Execution status
+
+Tasks 1-8 have completed for one representative real-data vertical slice. The
+frozen corpus observes six liquid stocks across 667 Decision Sessions and 4,002
+T+1 panel samples. Exact Raw/Normalized owners contain 213,738 source/normalized
+rows, interruption recovery and replay are deterministic, and the five evidence
+kinds are durable. The effective chain is net negative after assumed costs;
+ETF/Capital/Candidate/Signal/Forecast lift is `NOT_ESTIMABLE`. Broader context,
+cross-section and calibrated execution facts remain the next evidence work, not
+an excuse to add infrastructure or tune this experiment.
+
 ## Goal
 
 Produce a real, owner-resolved, resumable and deterministic exploratory A-share
