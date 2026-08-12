@@ -95,3 +95,29 @@ def test_performance_operator_builds_reports_and_replays_from_portfolio_owner(
     assert report == expected
     assert operator.report(report.report_id) == expected
     assert operator.replay(report.report_id) == expected
+
+
+def test_performance_replay_rejects_correct_state_id_with_wrong_hash(
+    postgres_factory,
+) -> None:
+    policy, report = _persisted_inputs(postgres_factory)
+    repository = PostgresPortfolioPerformanceRepository(postgres_factory)
+    repository.publish(policy=policy, report=report)
+
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            "ALTER TABLE shadow_performance_state_binding DISABLE TRIGGER "
+            "shadow_performance_state_binding_no_update"
+        )
+        connection.execute(
+            "UPDATE shadow_performance_state_binding SET state_hash = %s "
+            "WHERE report_id = %s AND ordinal = 1",
+            ("sha256:" + "0" * 64, str(report.report_id)),
+        )
+        connection.execute(
+            "ALTER TABLE shadow_performance_state_binding ENABLE TRIGGER "
+            "shadow_performance_state_binding_no_update"
+        )
+
+    with pytest.raises(ValueError, match="State binding projection diverged"):
+        repository.get(report.report_id)

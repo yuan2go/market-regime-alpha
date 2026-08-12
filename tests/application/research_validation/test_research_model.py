@@ -151,6 +151,13 @@ def test_walk_forward_training_is_deterministic_replayable_and_exploratory() -> 
     assert request == request.from_canonical_dict(request.to_canonical_dict())
 
 
+def test_training_cannot_predate_request_or_owner_availability() -> None:
+    request = _request()
+
+    with pytest.raises(ValueError, match="predate required input availability"):
+        train_research_model(request, trained_at=NOW - timedelta(seconds=1))
+
+
 def test_partition_isolation_rejects_future_features_oos_overlap_and_bad_purge() -> None:
     request = _request()
     first = request.samples[0]

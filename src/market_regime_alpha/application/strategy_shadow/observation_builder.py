@@ -80,6 +80,91 @@ ObservationScalar = str | int | bool | None
 
 
 @dataclass(frozen=True, slots=True)
+class ShadowOwnerLineageRequest:
+    """Exact references used to reload the existing Phase D owner chain."""
+
+    decision_reference: ValidationArtifactReference
+    panel_reference: ValidationArtifactReference
+    candidate_reference: ValidationArtifactReference
+    target_protocol_reference: ValidationArtifactReference
+    outcome_reference: ValidationArtifactReference
+    enrichment_reference: ValidationArtifactReference
+
+    def __post_init__(self) -> None:
+        expected = (
+            (self.decision_reference, "SHADOW_DECISION"),
+            (self.panel_reference, "RESEARCH_PANEL_V2"),
+            (self.candidate_reference, "CANDIDATE_SET"),
+            (self.target_protocol_reference, "OUTCOME_TARGET_PROTOCOL"),
+            (self.outcome_reference, "TARGETED_SHADOW_OUTCOME"),
+            (self.enrichment_reference, "PANEL_ENRICHMENT"),
+        )
+        for reference, kind in expected:
+            if reference.artifact_kind != kind:
+                raise ValueError(f"Shadow lineage requires {kind}")
+
+    @property
+    def references(self) -> tuple[ValidationArtifactReference, ...]:
+        return _references(
+            (
+                self.decision_reference,
+                self.panel_reference,
+                self.candidate_reference,
+                self.target_protocol_reference,
+                self.outcome_reference,
+                self.enrichment_reference,
+            )
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "decision_reference": self.decision_reference.to_canonical_dict(),
+            "panel_reference": self.panel_reference.to_canonical_dict(),
+            "candidate_reference": self.candidate_reference.to_canonical_dict(),
+            "target_protocol_reference": (
+                self.target_protocol_reference.to_canonical_dict()
+            ),
+            "outcome_reference": self.outcome_reference.to_canonical_dict(),
+            "enrichment_reference": self.enrichment_reference.to_canonical_dict(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> ShadowOwnerLineageRequest:
+        expected = {
+            "decision_reference",
+            "panel_reference",
+            "candidate_reference",
+            "target_protocol_reference",
+            "outcome_reference",
+            "enrichment_reference",
+        }
+        if set(payload) != expected:
+            raise ValueError("Shadow lineage fields mismatch")
+        return cls(
+            decision_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(payload["decision_reference"])
+            ),
+            panel_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(payload["panel_reference"])
+            ),
+            candidate_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(payload["candidate_reference"])
+            ),
+            target_protocol_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(payload["target_protocol_reference"])
+            ),
+            outcome_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(payload["outcome_reference"])
+            ),
+            enrichment_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(payload["enrichment_reference"])
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class OwnerObservationValue:
     """One value plus the exact owner or policy source that establishes it."""
 

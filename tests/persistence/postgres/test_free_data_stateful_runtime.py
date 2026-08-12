@@ -114,6 +114,7 @@ from market_regime_alpha.application.research_evaluation import (
     publish_research_evaluation_dataset,
 )
 from market_regime_alpha.application.research_evaluation.targets import (
+    OutcomeCheckpoint,
     engineering_multi_horizon_protocol,
 )
 from market_regime_alpha.application.research_validation.common import (
@@ -143,8 +144,11 @@ from market_regime_alpha.application.shadow_research import (
     ShadowSessionStatus,
 )
 from market_regime_alpha.application.strategy_shadow.operator import (
-    StrategyDayObservation,
     StrategyShadowDayOperator,
+)
+from market_regime_alpha.application.strategy_shadow.observation_builder import (
+    ShadowOwnerLineageRequest,
+    ShadowObservationPolicy,
 )
 from market_regime_alpha.application.strategy_shadow.portfolio import (
     PortfolioWeightingMethod,
@@ -153,8 +157,6 @@ from market_regime_alpha.application.strategy_shadow.portfolio import (
     ShadowPortfolioTradeSession,
 )
 from market_regime_alpha.application.strategy_shadow.portfolio_operator import (
-    PortfolioMarketInput,
-    PortfolioShadowDayInput,
     PortfolioShadowDayOperator,
 )
 from market_regime_alpha.application.state_system.runtime import (
@@ -805,74 +807,87 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert persisted_hypothesis["calibrated"] is False
         assert persisted_hypothesis["formal_oos"] is False
         strategy_observed_at = multi_target_available_at + timedelta(seconds=1)
-        strategy_observation = StrategyDayObservation(
-            trading_date=command.trading_date,
-            observed_at=strategy_observed_at,
-            symbol=execution.decision.candidate_set.selected[0].symbol,
+        lineage = ShadowOwnerLineageRequest(
+            decision_reference=ValidationArtifactReference(
+                "SHADOW_DECISION", frozen.decision_id, frozen.decision_hash
+            ),
+            panel_reference=ValidationArtifactReference(
+                "RESEARCH_PANEL_V2", panel.panel_id, panel.panel_hash
+            ),
+            candidate_reference=ValidationArtifactReference(
+                "CANDIDATE_SET",
+                execution.decision.candidate_set.envelope.artifact_id,
+                execution.decision.candidate_set.envelope.content_hash,
+            ),
+            target_protocol_reference=ValidationArtifactReference(
+                "OUTCOME_TARGET_PROTOCOL",
+                target_protocol.protocol_id,
+                target_protocol.protocol_hash,
+            ),
+            outcome_reference=ValidationArtifactReference(
+                "TARGETED_SHADOW_OUTCOME",
+                operational_settlement.targeted_outcome_v2.settlement_id,
+                operational_settlement.targeted_outcome_v2.settlement_hash,
+            ),
+            enrichment_reference=ValidationArtifactReference(
+                "PANEL_ENRICHMENT",
+                enrichment.enrichment_id,
+                enrichment.enrichment_hash,
+            ),
+        )
+        observation_policy = ShadowObservationPolicy.create(
+            policy_version="free-data-stateful-auto-v1",
             intended_quantity=Decimal("100"),
-            decision_reference_price=Decimal("10"),
-            observed_fill_price=Decimal("10.01"),
+            fill_checkpoint=OutcomeCheckpoint.OPEN,
+            mark_checkpoint=OutcomeCheckpoint.TIME_1030,
+            trade_session=ShadowPortfolioTradeSession.CONTINUOUS_AM,
             fillability=Decimal("1"),
             slippage_bps=Decimal("5"),
             impact_bps=Decimal("3"),
             commission_bps=Decimal("2"),
-            sessions_held=0,
-            current_price=Decimal("10.10"),
-            signal_reversed=False,
-            market_deteriorated=False,
-            theme_deteriorated=False,
-            capital_deteriorated=False,
-            exit_cost=Decimal("1"),
-            mfe=Decimal("0.03"),
-            mae=Decimal("-0.01"),
-            value_provenance=tuple(
-                sorted(
-                    {
-                        "intended_quantity": ShadowParameterProvenance.OPERATOR_INPUT,
-                        "decision_reference_price": ShadowParameterProvenance.OBSERVED_FACT,
-                        "observed_fill_price": ShadowParameterProvenance.OBSERVED_FACT,
-                        "fillability": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-                        "slippage_bps": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-                        "impact_bps": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-                        "commission_bps": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-                        "sessions_held": ShadowParameterProvenance.OBSERVED_FACT,
-                        "current_price": ShadowParameterProvenance.OBSERVED_FACT,
-                        "signal_reversed": ShadowParameterProvenance.OBSERVED_FACT,
-                        "market_deteriorated": ShadowParameterProvenance.OBSERVED_FACT,
-                        "theme_deteriorated": ShadowParameterProvenance.OBSERVED_FACT,
-                        "capital_deteriorated": ShadowParameterProvenance.OBSERVED_FACT,
-                        "exit_cost": ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-                        "mfe": ShadowParameterProvenance.OBSERVED_FACT,
-                        "mae": ShadowParameterProvenance.OBSERVED_FACT,
-                    }.items()
-                )
-            ),
+            exit_cost_bps=Decimal("2"),
+            created_at=summary.decision_time,
         )
         strategy_operator = StrategyShadowDayOperator(postgres_factory)
-        holding_result = strategy_operator.run(strategy_observation)
-        assert holding_result["status"] == "SHADOW_HOLD"
-        assert strategy_operator.run(strategy_observation) == holding_result
-        strategy_result = strategy_operator.run(
-            replace(
-                strategy_observation,
-                observed_at=strategy_observed_at + timedelta(days=1),
-                sessions_held=1,
-                current_price=Decimal("10.20"),
+        with pytest.raises(ValueError, match="predates owner availability"):
+            strategy_operator.run_auto(
+                trading_date=command.trading_date,
+                observed_at=multi_target_available_at - timedelta(seconds=1),
+                policy=observation_policy,
+                lineage=lineage,
             )
+        with pytest.raises(ValueError, match="exact Panel slice"):
+            strategy_operator.run_auto(
+                trading_date=command.trading_date,
+                observed_at=strategy_observed_at,
+                policy=observation_policy,
+                lineage=replace(
+                    lineage,
+                    outcome_reference=ValidationArtifactReference(
+                        "TARGETED_SHADOW_OUTCOME",
+                        lineage.outcome_reference.artifact_id,
+                        canonical_hash({"wrong": "outcome-owner"}),
+                    ),
+                ),
+            )
+        strategy_result = strategy_operator.run_auto(
+            trading_date=command.trading_date,
+            observed_at=strategy_observed_at,
+            policy=observation_policy,
+            lineage=lineage,
         )
         assert strategy_result["status"] == "SETTLED"
-        assert strategy_operator.run(
-            replace(
-                strategy_observation,
-                observed_at=strategy_observed_at + timedelta(days=1),
-                sessions_held=1,
-                current_price=Decimal("10.20"),
-            )
+        assert strategy_operator.run_auto(
+            trading_date=command.trading_date,
+            observed_at=strategy_observed_at,
+            policy=observation_policy,
+            lineage=lineage,
         ) == strategy_result
         strategy_replay = strategy_operator.replay(ArtifactId(strategy_result["session_id"]))
         assert strategy_replay["status"] == "SETTLED"
-        assert strategy_replay["event_count"] == 10
-        assert strategy_replay["artifact_count"] == 9
+        assert strategy_replay["event_count"] == 8
+        assert strategy_replay["artifact_count"] == 7
+        strategy_session = strategy_operator.list_sessions(command.trading_date)[0]
         portfolio_policy = ShadowPortfolioPolicy.create(
             policy_version="free-data-stateful-e2e-v1",
             top_k=1,
@@ -903,59 +918,75 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             },
             created_at=summary.decision_time,
         )
-        market_inputs = tuple(
-            PortfolioMarketInput(
-                symbol=item.symbol,
-                reference_price=Decimal("10"),
-                mark_price=Decimal("10.1"),
-                average_daily_amount=Decimal("10000000"),
-                trading_status=TradingStatus.TRADING,
-                price_limit_state=PriceLimitState.NORMAL,
-                trade_session=ShadowPortfolioTradeSession.CONTINUOUS_PM,
-                value_provenance=tuple(
-                    (name, ShadowParameterProvenance.OBSERVED_FACT)
-                    for name in (
-                        "average_daily_amount",
-                        "mark_price",
-                        "price_limit_state",
-                        "reference_price",
-                        "trade_session",
-                        "trading_status",
-                    )
-                ),
-                risk_weight=None,
-                risk_weight_provenance=None,
-                reason_codes=(),
-            )
-            for item in execution.decision.candidate_set.selected
+        strategy_reference = ValidationArtifactReference(
+            "STRATEGY_SHADOW_SESSION",
+            strategy_session.session_id,
+            strategy_session.session_hash,
         )
-        portfolio_request = PortfolioShadowDayInput(
+        portfolio_operator = PortfolioShadowDayOperator(postgres_factory)
+        with pytest.raises(
+            ValueError,
+            match="Automatic Portfolio trading date must equal Outcome next session",
+        ):
+            portfolio_operator.run_auto(
+                research_trading_date=command.trading_date,
+                trading_date=command.trading_date,
+                observed_at=strategy_observed_at,
+                portfolio_id=None,
+                initial_cash=Decimal("1000000"),
+                policy=portfolio_policy,
+                observation_policy=observation_policy,
+                lineage=lineage,
+                strategy_reference=strategy_reference,
+            )
+        portfolio_result = portfolio_operator.run_auto(
             research_trading_date=command.trading_date,
-            trading_date=command.trading_date,
+            trading_date=next_session_date,
             observed_at=strategy_observed_at,
             portfolio_id=None,
             initial_cash=Decimal("1000000"),
             policy=portfolio_policy,
-            market_inputs=market_inputs,
+            observation_policy=observation_policy,
+            lineage=lineage,
+            strategy_reference=strategy_reference,
         )
-        portfolio_operator = PortfolioShadowDayOperator(postgres_factory)
-        portfolio_result = portfolio_operator.run(portfolio_request)
         assert portfolio_result["status"] == "RECORDED"
         assert portfolio_result["shadow_fill_is_real_fill"] is False
-        assert portfolio_operator.run(portfolio_request)["status"] == "RECOVERED_IDEMPOTENT"
-        portfolio_next = portfolio_operator.run(
-            replace(
-                portfolio_request,
-                trading_date=next_session_date,
-                observed_at=strategy_observed_at + timedelta(days=1),
-            )
-        )
-        assert portfolio_next["sequence"] == 2
+        assert portfolio_operator.run_auto(
+            research_trading_date=command.trading_date,
+            trading_date=next_session_date,
+            observed_at=strategy_observed_at,
+            portfolio_id=None,
+            initial_cash=Decimal("1000000"),
+            policy=portfolio_policy,
+            observation_policy=observation_policy,
+            lineage=lineage,
+            strategy_reference=strategy_reference,
+        )["status"] == "RECOVERED_IDEMPOTENT"
         portfolio_replay = portfolio_operator.replay(
             ArtifactId(str(portfolio_result["portfolio_id"]))
         )
-        assert portfolio_replay["state_count"] == 2
+        assert portfolio_replay["state_count"] == 1
         assert portfolio_replay["shadow_position_is_real_position"] is False
+        with postgres_factory.connection(read_only=True) as connection:
+            durable_receipts = connection.execute(
+                """
+                SELECT
+                  (SELECT count(*)
+                   FROM strategy_shadow_session_lineage_binding
+                   WHERE session_id = %s
+                     AND artifact_kind = 'SHADOW_OBSERVATION_RECEIPT'),
+                  (SELECT count(*)
+                   FROM strategy_shadow_portfolio_state_source_binding
+                   WHERE state_id = %s
+                     AND artifact_kind = 'SHADOW_OBSERVATION_RECEIPT')
+                """,
+                (
+                    str(strategy_session.session_id),
+                    str(portfolio_result["state_id"]),
+                ),
+            ).fetchone()
+        assert durable_receipts == (1, 1)
         access = PostgresAccessGovernance(postgres_factory)
         admin = access.bootstrap_admin(
             external_subject="fixture:stateful-admin",
@@ -986,8 +1017,8 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             action_kind=ApprovalAction.SHADOW_OPERATION,
             resource_reference=ValidationArtifactReference(
                 "SHADOW_PORTFOLIO_DAY_STATE",
-                ArtifactId(str(portfolio_next["state_id"])),
-                str(portfolio_next["state_hash"]),
+                ArtifactId(str(portfolio_result["state_id"])),
+                str(portfolio_result["state_hash"]),
             ),
             reason="review Portfolio Shadow engineering output",
             requested_at=strategy_observed_at + timedelta(days=2, seconds=3),
@@ -1048,8 +1079,8 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             artifact_root=tmp_path / "stateful-runtime",
             backup_root=tmp_path / "dr-backup",
             verified_at=source_archive.created_at,
-                table_names=(
-                    "capital_state",
+            table_names=(
+                "capital_state",
                 "continuous_research_run",
                 "continuous_runtime_tick",
                 "dynamic_stock_pool",
@@ -1060,22 +1091,30 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "model_runtime_assignment",
                 "prospective_outcome_settlement",
                 "research_daily_summary",
-                    "research_evaluation_dataset",
-                    "research_validation_artifact",
-                    "security_approval",
-                    "security_approval_decision",
-                    "security_audit_event",
-                    "security_governance_command",
-                    "security_principal",
-                    "security_principal_status_event",
-                    "security_role_event",
-                    "state_runtime_candidate_artifact",
-                    "strategy_shadow_portfolio",
-                    "strategy_shadow_portfolio_day",
-                    "theme_rotation_state",
-                ),
-            )
-        assert recovery.migration_head == 66
+                "research_evaluation_dataset",
+                "research_validation_artifact",
+                "security_approval",
+                "security_approval_decision",
+                "security_audit_event",
+                "security_governance_command",
+                "security_principal",
+                "security_principal_status_event",
+                "security_role_event",
+                "shadow_observation_policy",
+                "shadow_observation_receipt",
+                "shadow_observation_source_binding",
+                "shadow_observation_value",
+                "state_runtime_candidate_artifact",
+                "strategy_shadow_artifact",
+                "strategy_shadow_portfolio",
+                "strategy_shadow_portfolio_day",
+                "strategy_shadow_portfolio_state_source_binding",
+                "strategy_shadow_session",
+                "strategy_shadow_session_lineage_binding",
+                "theme_rotation_state",
+            ),
+        )
+        assert recovery.migration_head == 67
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

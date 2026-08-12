@@ -198,6 +198,8 @@ class RuntimeEligibilityObservation:
     symbol: str
     observed_at: datetime
     known_at: datetime
+    included: bool | None
+    listing_status: str | None
     is_st: bool | None
     suspended: bool | None
     history_sessions: int | None
@@ -211,6 +213,8 @@ class RuntimeEligibilityObservation:
         normalize_canonical_datetime(self.known_at)
         if self.known_at < self.observed_at:
             raise ValueError("eligibility known_at cannot precede observed_at")
+        if self.listing_status not in {None, "LISTED", "DELISTED", "UNKNOWN"}:
+            raise ValueError("listing_status is invalid")
         if self.history_sessions is not None and self.history_sessions < 0:
             raise ValueError("history_sessions cannot be negative")
         if self.median_daily_amount is not None and self.median_daily_amount < 0:
@@ -232,6 +236,8 @@ class RuntimeEligibilityObservation:
         symbol: str,
         observed_at: datetime,
         known_at: datetime,
+        included: bool | None,
+        listing_status: str | None,
         is_st: bool | None,
         suspended: bool | None,
         history_sessions: int | None,
@@ -243,6 +249,8 @@ class RuntimeEligibilityObservation:
             symbol=symbol,
             observed_at=observed_at,
             known_at=known_at,
+            included=included,
+            listing_status=listing_status,
             is_st=is_st,
             suspended=suspended,
             history_sessions=history_sessions,
@@ -256,6 +264,8 @@ class RuntimeEligibilityObservation:
             symbol,
             normalize_canonical_datetime(observed_at),
             normalize_canonical_datetime(known_at),
+            included,
+            listing_status,
             is_st,
             suspended,
             history_sessions,
@@ -268,6 +278,8 @@ class RuntimeEligibilityObservation:
             symbol=self.symbol,
             observed_at=self.observed_at,
             known_at=self.known_at,
+            included=self.included,
+            listing_status=self.listing_status,
             is_st=self.is_st,
             suspended=self.suspended,
             history_sessions=self.history_sessions,
@@ -292,6 +304,12 @@ class RuntimeEligibilityObservation:
             symbol=str(payload["symbol"]),
             observed_at=_datetime(payload["observed_at"]),
             known_at=_datetime(payload["known_at"]),
+            included=_optional_bool(payload.get("included")),
+            listing_status=(
+                None
+                if payload.get("listing_status") is None
+                else str(payload["listing_status"])
+            ),
             is_st=_optional_bool(payload["is_st"]),
             suspended=_optional_bool(payload["suspended"]),
             history_sessions=(
@@ -649,6 +667,18 @@ def _apply_eligibility(
     references.extend(observation.source_references)
     unknown = False
     excluded = False
+    if observation.included is None:
+        reasons.add("PROVIDER_INCLUSION_UNKNOWN")
+        unknown = True
+    elif not observation.included:
+        reasons.add("PROVIDER_EXCLUDED")
+        excluded = True
+    if observation.listing_status in {None, "UNKNOWN"}:
+        reasons.add("LISTING_STATUS_UNKNOWN")
+        unknown = True
+    elif observation.listing_status != "LISTED":
+        reasons.add("SECURITY_NOT_LISTED")
+        excluded = True
     if observation.is_st is None:
         reasons.add("ST_STATUS_UNKNOWN")
         unknown = True
@@ -673,10 +703,10 @@ def _apply_eligibility(
     elif observation.median_daily_amount < policy.minimum_median_daily_amount:
         reasons.add("MINIMUM_LIQUIDITY_NOT_MET")
         excluded = True
-    if unknown:
-        return RuntimeScopeDecision.UNKNOWN
     if excluded:
         return RuntimeScopeDecision.EXCLUDED
+    if unknown:
+        return RuntimeScopeDecision.UNKNOWN
     reasons.add("TRADING_ELIGIBILITY_SATISFIED")
     return RuntimeScopeDecision.INCLUDED
 
@@ -733,6 +763,8 @@ def _eligibility_payload(
     symbol: str,
     observed_at: datetime,
     known_at: datetime,
+    included: bool | None,
+    listing_status: str | None,
     is_st: bool | None,
     suspended: bool | None,
     history_sessions: int | None,
@@ -744,6 +776,8 @@ def _eligibility_payload(
         "symbol": symbol,
         "observed_at": canonical_datetime(observed_at),
         "known_at": canonical_datetime(known_at),
+        "included": included,
+        "listing_status": listing_status,
         "is_st": is_st,
         "suspended": suspended,
         "history_sessions": history_sessions,

@@ -59,6 +59,48 @@ class StrategyEconomicsStatus(str, Enum):
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
 
 
+class StrategyExecutionPhase(str, Enum):
+    ENTRY = "ENTRY"
+    EXIT = "EXIT"
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyExecutionObservation:
+    """Side-aware execution evidence; the Target label owns the holding path."""
+
+    phase: StrategyExecutionPhase
+    symbol: str
+    price: Decimal | None
+    market_conditions: tuple[OutcomeMarketCondition, ...]
+    effective_at: datetime
+    available_at: datetime
+    source_reference: ValidationArtifactReference
+
+    def __post_init__(self) -> None:
+        require_text("Strategy execution symbol", self.symbol)
+        if self.price is not None and self.price <= 0:
+            raise ValueError("Strategy execution price must be positive")
+        if self.market_conditions != tuple(
+            sorted(set(self.market_conditions), key=lambda item: item.value)
+        ):
+            raise ValueError(
+                "Strategy execution market conditions must be unique and sorted"
+            )
+        if self.available_at < self.effective_at:
+            raise ValueError("Strategy execution availability predates observation")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase.value,
+            "symbol": self.symbol,
+            "price": decimal_text(self.price),
+            "market_conditions": [item.value for item in self.market_conditions],
+            "effective_at": timestamp(self.effective_at),
+            "available_at": timestamp(self.available_at),
+            "source_reference": self.source_reference.to_canonical_dict(),
+        }
+
+
 _REQUIRED_COST_PARAMETERS = frozenset(
     {"commission_bps", "stamp_duty_bps", "spread_slippage_bps"}
 )
@@ -231,6 +273,8 @@ class StrategyEconomicsResult:
     policy_reference: ValidationArtifactReference
     target_label_reference: ValidationArtifactReference
     liquidity_reference: ValidationArtifactReference
+    entry_execution_reference: ValidationArtifactReference
+    exit_execution_reference: ValidationArtifactReference
     symbol: str
     status: StrategyEconomicsStatus
     requested_notional: Decimal
@@ -278,6 +322,8 @@ class StrategyEconomicsResult:
             self.policy_reference,
             self.target_label_reference,
             self.liquidity_reference,
+            self.entry_execution_reference,
+            self.exit_execution_reference,
             self.symbol,
             self.status,
             self.requested_notional,
@@ -302,6 +348,8 @@ def evaluate_strategy_economics(
     policy: StrategyEconomicsPolicy,
     label: TargetOutcomeLabel,
     liquidity: LiquidityCapacityAssessment,
+    entry_execution: StrategyExecutionObservation,
+    exit_execution: StrategyExecutionObservation,
     requested_notional: Decimal,
     evaluated_at: datetime,
     forecast_raw_score: Decimal | None = None,
@@ -316,25 +364,53 @@ def evaluate_strategy_economics(
         raise ValueError("Strategy/Outcome TargetDefinition identity mismatch")
     if liquidity.symbol != label.symbol:
         raise ValueError("Strategy Liquidity assessment symbol mismatch")
-    if evaluated_at < label.outcome_available_at:
-        raise ValueError("Strategy Economics cannot precede Outcome availability")
+    if (
+        entry_execution.phase is not StrategyExecutionPhase.ENTRY
+        or exit_execution.phase is not StrategyExecutionPhase.EXIT
+        or entry_execution.symbol != label.symbol
+        or exit_execution.symbol != label.symbol
+    ):
+        raise ValueError("Strategy execution phase/symbol lineage mismatch")
+    if entry_execution.effective_at >= exit_execution.effective_at:
+        raise ValueError("Strategy Entry must precede Exit execution evidence")
+    if entry_execution.effective_at > label.label_interval_start:
+        raise ValueError("Strategy Entry occurs after the holding path starts")
+    if exit_execution.effective_at < label.label_interval_end:
+        raise ValueError("Strategy Exit precedes the intended checkpoint")
+    if evaluated_at < max(
+        label.outcome_available_at,
+        liquidity.created_at,
+        entry_execution.available_at,
+        exit_execution.available_at,
+    ):
+        raise ValueError("Strategy Economics cannot precede required input availability")
     reasons: set[str] = set(label.reason_codes)
-    blocked_conditions = {
+    unavailable_conditions = {
         OutcomeMarketCondition.SUSPENDED,
-        OutcomeMarketCondition.LIMIT_UP,
-        OutcomeMarketCondition.LIMIT_DOWN,
         OutcomeMarketCondition.MISSING_QUOTE,
         OutcomeMarketCondition.UNAVAILABLE,
         OutcomeMarketCondition.NON_TRADING_DAY,
         OutcomeMarketCondition.CORPORATE_ACTION,
     }
-    if set(label.market_conditions) & blocked_conditions:
+    entry_conditions = set(entry_execution.market_conditions)
+    exit_conditions = set(exit_execution.market_conditions)
+    if (
+        entry_execution.price is None
+        or bool(entry_conditions & unavailable_conditions)
+        or OutcomeMarketCondition.LIMIT_UP in entry_conditions
+    ):
         reasons.add("ENTRY_MARKET_CONDITION_NOT_FILLABLE")
+    if (
+        exit_execution.price is None
+        or bool(exit_conditions & unavailable_conditions)
+        or OutcomeMarketCondition.LIMIT_DOWN in exit_conditions
+    ):
+        reasons.add("EXIT_MARKET_CONDITION_NOT_FILLABLE")
     if liquidity.fillability <= 0:
         reasons.add("LIQUIDITY_FILLABILITY_ZERO")
     if label.availability_status is OutcomeAvailabilityStatus.UNAVAILABLE:
         reasons.add("TARGET_OUTCOME_UNAVAILABLE")
-    if label.checkpoint_price is None:
+    if label.checkpoint_price is None or exit_execution.price is None:
         reasons.add("EXIT_PRICE_NOT_ESTIMABLE")
     if (
         policy.exit_kind is StrategyExitKind.BARRIER
@@ -351,6 +427,8 @@ def evaluate_strategy_economics(
                 policy,
                 label,
                 liquidity,
+                entry_execution,
+                exit_execution,
                 StrategyEconomicsStatus.NO_ENTRY,
                 requested_notional,
                 Decimal("0"),
@@ -366,16 +444,14 @@ def evaluate_strategy_economics(
     if reasons & {
         "ENTRY_MARKET_CONDITION_NOT_FILLABLE",
         "LIQUIDITY_FILLABILITY_ZERO",
-        "TARGET_OUTCOME_UNAVAILABLE",
-        "EXIT_PRICE_NOT_ESTIMABLE",
-        "BARRIER_ORDERING_NOT_OBSERVABLE",
-        "FORECAST_RAW_SCORE_MISSING",
     }:
         return _make_result(
             policy,
             label,
             liquidity,
-            StrategyEconomicsStatus.NOT_ESTIMABLE,
+            entry_execution,
+            exit_execution,
+            StrategyEconomicsStatus.NO_ENTRY,
             requested_notional,
             Decimal("0"),
             None,
@@ -387,7 +463,8 @@ def evaluate_strategy_economics(
             tuple(sorted(reasons)),
             evaluated_at,
         )
-    entry_price = label.decision_reference_price
+    entry_price = entry_execution.price
+    assert entry_price is not None
     executable_notional = min(
         requested_notional,
         liquidity.capacity_ceiling or requested_notional,
@@ -402,7 +479,9 @@ def evaluate_strategy_economics(
             policy,
             label,
             liquidity,
-            StrategyEconomicsStatus.NOT_ESTIMABLE,
+            entry_execution,
+            exit_execution,
+            StrategyEconomicsStatus.NO_ENTRY,
             requested_notional,
             Decimal("0"),
             None,
@@ -414,7 +493,32 @@ def evaluate_strategy_economics(
             tuple(sorted(reasons)),
             evaluated_at,
         )
-    exit_price = label.checkpoint_price
+    if reasons & {
+        "TARGET_OUTCOME_UNAVAILABLE",
+        "EXIT_PRICE_NOT_ESTIMABLE",
+        "EXIT_MARKET_CONDITION_NOT_FILLABLE",
+        "BARRIER_ORDERING_NOT_OBSERVABLE",
+        "FORECAST_RAW_SCORE_MISSING",
+    }:
+        return _make_result(
+            policy,
+            label,
+            liquidity,
+            entry_execution,
+            exit_execution,
+            StrategyEconomicsStatus.NOT_ESTIMABLE,
+            requested_notional,
+            filled_quantity,
+            entry_price,
+            None,
+            None,
+            None,
+            None,
+            Decimal("1"),
+            tuple(sorted(reasons)),
+            evaluated_at,
+        )
+    exit_price = exit_execution.price
     gross_return = label.checkpoint_return
     if policy.exit_kind is StrategyExitKind.BARRIER:
         assert policy.barrier_return is not None
@@ -425,9 +529,18 @@ def evaluate_strategy_economics(
         if selected_passage is not None:
             gross_return = policy.barrier_return
             exit_price = entry_price * (Decimal("1") + gross_return)
+            if exit_execution.price != exit_price:
+                raise ValueError(
+                    "Strategy barrier Exit price diverges from execution owner"
+                )
         else:
             reasons.add("SELECTED_BARRIER_NOT_TOUCHED_FIXED_TIME_FALLBACK")
     assert gross_return is not None and exit_price is not None
+    if (
+        policy.exit_kind is not StrategyExitKind.BARRIER
+        and exit_execution.price != label.checkpoint_price
+    ):
+        raise ValueError("Strategy Exit price diverges from Target checkpoint owner")
     impact_bps = liquidity.estimated_market_impact_bps or Decimal("0")
     round_trip_bps = (
         policy.parameter("commission_bps") * Decimal("2")
@@ -440,6 +553,8 @@ def evaluate_strategy_economics(
         policy,
         label,
         liquidity,
+        entry_execution,
+        exit_execution,
         StrategyEconomicsStatus.AVAILABLE,
         requested_notional,
         filled_quantity,
@@ -458,6 +573,8 @@ def _make_result(
     policy: StrategyEconomicsPolicy,
     label: TargetOutcomeLabel,
     liquidity: LiquidityCapacityAssessment,
+    entry_execution: StrategyExecutionObservation,
+    exit_execution: StrategyExecutionObservation,
     status: StrategyEconomicsStatus,
     requested_notional: Decimal,
     filled_quantity: Decimal,
@@ -485,6 +602,8 @@ def _make_result(
         policy_reference,
         label_reference,
         liquidity_reference,
+        entry_execution.source_reference,
+        exit_execution.source_reference,
         label.symbol,
         status,
         requested_notional,
@@ -509,6 +628,8 @@ def _make_result(
         policy_reference,
         label_reference,
         liquidity_reference,
+        entry_execution.source_reference,
+        exit_execution.source_reference,
         label.symbol,
         status,
         requested_notional,
@@ -572,6 +693,8 @@ def _result_payload(
     policy_reference: ValidationArtifactReference,
     target_label_reference: ValidationArtifactReference,
     liquidity_reference: ValidationArtifactReference,
+    entry_execution_reference: ValidationArtifactReference,
+    exit_execution_reference: ValidationArtifactReference,
     symbol: str,
     status: StrategyEconomicsStatus,
     requested_notional: Decimal,
@@ -594,6 +717,8 @@ def _result_payload(
         "policy_reference": policy_reference.to_canonical_dict(),
         "target_label_reference": target_label_reference.to_canonical_dict(),
         "liquidity_reference": liquidity_reference.to_canonical_dict(),
+        "entry_execution_reference": entry_execution_reference.to_canonical_dict(),
+        "exit_execution_reference": exit_execution_reference.to_canonical_dict(),
         "symbol": symbol,
         "status": status.value,
         "requested_notional": str(requested_notional),
@@ -618,6 +743,8 @@ __all__ = [
     "StrategyEconomicsPolicy",
     "StrategyEconomicsResult",
     "StrategyEconomicsStatus",
+    "StrategyExecutionObservation",
+    "StrategyExecutionPhase",
     "StrategyEntryKind",
     "StrategyExitKind",
     "evaluate_strategy_economics",

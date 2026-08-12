@@ -21,6 +21,7 @@ from market_regime_alpha.evidence.canonical import (
 
 
 RESEARCH_DECISION_SESSION_SCHEMA = "research-decision-session/v1"
+RESEARCH_DECISION_SESSION_SCHEMA_V2 = "research-decision-session/v2"
 
 
 class DataAuthorityMode(str, Enum):
@@ -63,10 +64,14 @@ class ResearchDecisionSessionRequest:
     target_protocol_reference: ValidationArtifactReference
     experiment_definition_reference: ValidationArtifactReference
     code_revision: str
+    configuration_references: tuple[ValidationArtifactReference, ...] = ()
     schema_version: str = RESEARCH_DECISION_SESSION_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema_version != RESEARCH_DECISION_SESSION_SCHEMA:
+        if self.schema_version not in {
+            RESEARCH_DECISION_SESSION_SCHEMA,
+            RESEARCH_DECISION_SESSION_SCHEMA_V2,
+        }:
             raise ValueError("unsupported Research Decision Session schema")
         for label, value in (
             ("trading_calendar_hash", self.trading_calendar_hash),
@@ -83,6 +88,14 @@ class ResearchDecisionSessionRequest:
             != "RESEARCH_EXPERIMENT_DEFINITION"
         ):
             raise ValueError("Research session requires frozen Experiment Definition")
+        if self.configuration_references != _references(
+            self.configuration_references
+        ):
+            raise ValueError("Research session configurations must be unique and sorted")
+        if (self.schema_version == RESEARCH_DECISION_SESSION_SCHEMA_V2) != bool(
+            self.configuration_references
+        ):
+            raise ValueError("Research session v2 requires exact configurations")
         decision_time = normalize_canonical_datetime(self.decision_time)
         materialized_at = normalize_canonical_datetime(self.materialized_at)
         if materialized_at < decision_time:
@@ -125,7 +138,14 @@ class ResearchDecisionSessionRequest:
         target_protocol_reference: ValidationArtifactReference,
         experiment_definition_reference: ValidationArtifactReference,
         code_revision: str,
+        configuration_references: tuple[ValidationArtifactReference, ...] = (),
     ) -> ResearchDecisionSessionRequest:
+        ordered_configurations = _references(configuration_references)
+        schema_version = (
+            RESEARCH_DECISION_SESSION_SCHEMA
+            if not ordered_configurations
+            else RESEARCH_DECISION_SESSION_SCHEMA_V2
+        )
         values: dict[str, Any] = {
             "trading_date": trading_date,
             "decision_time": normalize_canonical_datetime(decision_time),
@@ -142,11 +162,15 @@ class ResearchDecisionSessionRequest:
             "target_protocol_reference": target_protocol_reference,
             "experiment_definition_reference": experiment_definition_reference,
             "code_revision": code_revision,
+            "configuration_references": ordered_configurations,
         }
-        digest = canonical_hash(_session_payload(**values))
+        digest = canonical_hash(
+            _session_payload(**values, schema_version=schema_version)
+        )
         return cls(
             session_id=ArtifactId(f"research-decision-session-{digest[7:31]}"),
             session_hash=digest,
+            schema_version=schema_version,
             **values,
         )
 
@@ -169,10 +193,13 @@ class ResearchDecisionSessionRequest:
             "target_protocol_reference": self.target_protocol_reference,
             "experiment_definition_reference": self.experiment_definition_reference,
             "code_revision": self.code_revision,
+            "configuration_references": self.configuration_references,
         }
 
     def semantic_payload(self) -> dict[str, Any]:
-        return _session_payload(**self.semantic_values())
+        return _session_payload(
+            **self.semantic_values(), schema_version=self.schema_version
+        )
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -217,6 +244,12 @@ class ResearchDecisionSessionRequest:
                 payload["experiment_definition_reference"]
             ),
             code_revision=str(payload["code_revision"]),
+            configuration_references=_references(
+                tuple(
+                    ValidationArtifactReference.from_canonical_dict(item)
+                    for item in payload.get("configuration_references", ())
+                )
+            ),
             schema_version=str(payload["schema_version"]),
         )
         if set(payload) != set(result.to_canonical_dict()):
@@ -241,9 +274,11 @@ def _session_payload(
     target_protocol_reference: ValidationArtifactReference,
     experiment_definition_reference: ValidationArtifactReference,
     code_revision: str,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+    schema_version: str,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": RESEARCH_DECISION_SESSION_SCHEMA,
+    payload = {
+        "schema_version": schema_version,
         "trading_date": trading_date.isoformat(),
         "decision_time": canonical_datetime(decision_time),
         "materialized_at": canonical_datetime(materialized_at),
@@ -262,12 +297,33 @@ def _session_payload(
         ),
         "code_revision": code_revision,
     }
+    if schema_version == RESEARCH_DECISION_SESSION_SCHEMA_V2:
+        payload["configuration_references"] = [
+            item.to_canonical_dict() for item in configuration_references
+        ]
+    return payload
+
+
+def _references(
+    values: tuple[ValidationArtifactReference, ...],
+) -> tuple[ValidationArtifactReference, ...]:
+    return tuple(
+        sorted(
+            set(values),
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    )
 
 
 __all__ = [
     "DataAuthorityMode",
     "EvidenceQualification",
     "RESEARCH_DECISION_SESSION_SCHEMA",
+    "RESEARCH_DECISION_SESSION_SCHEMA_V2",
     "ResearchDecisionSessionRequest",
     "ResearchExecutionMode",
 ]

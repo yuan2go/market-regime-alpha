@@ -391,10 +391,14 @@ def build_portfolio_performance_report(
 ) -> PortfolioPerformanceReport:
     if not states:
         raise ValueError("performance report requires Portfolio Shadow states")
-    if tuple(item.trading_date for item in states) != tuple(
-        sorted({item.trading_date for item in states})
-    ):
-        raise ValueError("Portfolio Shadow states must be unique and chronological")
+    states = tuple(
+        sorted(
+            states,
+            key=lambda item: (item.trading_date, item.sequence, str(item.state_id)),
+        )
+    )
+    if len({item.trading_date for item in states}) != len(states):
+        raise ValueError("Portfolio Shadow state dates must be unique")
     if tuple(item.sequence for item in states) != tuple(range(1, len(states) + 1)):
         raise ValueError("Portfolio Shadow state sequence is not contiguous")
     if any(
@@ -403,6 +407,25 @@ def build_portfolio_performance_report(
         for item in states
     ):
         raise ValueError("performance input belongs to another Portfolio")
+    previous: ShadowPortfolioDayState | None = None
+    for state in states:
+        expected_previous = (
+            None
+            if previous is None
+            else ValidationArtifactReference(
+                "SHADOW_PORTFOLIO_DAY_STATE",
+                previous.state_id,
+                previous.state_hash,
+            )
+        )
+        if state.previous_state_reference != expected_previous:
+            raise ValueError("Portfolio Shadow state predecessor identity diverged")
+        if previous is not None and state.recorded_at < previous.recorded_at:
+            raise ValueError("Portfolio Shadow state recorded time is not monotonic")
+        previous = state
+    generated_at = normalize_canonical_datetime(generated_at)
+    if generated_at < max(portfolio.created_at, *(item.recorded_at for item in states)):
+        raise ValueError("Performance generated_at predates required input availability")
     returns = _returns(portfolio.initial_cash, states)
     metrics = _metrics(portfolio, states, returns, policy)
     state_references = tuple(
@@ -472,7 +495,7 @@ def build_portfolio_performance_report(
         policy_reference=policy_reference,
         start_date=states[0].trading_date,
         end_date=states[-1].trading_date,
-        generated_at=normalize_canonical_datetime(generated_at),
+        generated_at=generated_at,
         equity_curve=tuple((item.trading_date, item.nav) for item in states),
         metrics=metrics,
         monthly_returns=monthly,

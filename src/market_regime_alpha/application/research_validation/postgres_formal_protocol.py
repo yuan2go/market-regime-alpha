@@ -12,6 +12,7 @@ from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
 )
 from market_regime_alpha.application.research_validation.formal_evaluation import (
+    EvaluationPartition,
     FormalEvaluationProtocol,
 )
 from market_regime_alpha.application.research_validation.calibration_qualification import (
@@ -1832,6 +1833,7 @@ def _resolve_historical_dataset_owners(
     *,
     protocol: FormalResearchProtocol,
     require_complete_target_family: bool = True,
+    require_pre_oos_only: bool = True,
 ) -> tuple[
     tuple[
         ValidationArtifactReference,
@@ -1840,6 +1842,7 @@ def _resolve_historical_dataset_owners(
     ],
     ...,
 ]:
+    evaluation = _load_evaluation_protocol_owner(connection, protocol)
     resolved: list[
         tuple[
             ValidationArtifactReference,
@@ -1848,6 +1851,13 @@ def _resolve_historical_dataset_owners(
         ]
     ] = []
     for dataset_reference in protocol.historical_sample_dataset_references:
+        if require_pre_oos_only:
+            _verify_historical_dataset_pre_oos_metadata(
+                connection,
+                reference=dataset_reference,
+                protocol=protocol,
+                evaluation=evaluation,
+            )
         owner = _research_owner(
             connection,
             dataset_reference,
@@ -1864,6 +1874,82 @@ def _resolve_historical_dataset_owners(
             "Formal Protocol requires one Historical Sample Dataset per frozen Target"
         )
     return ordered
+
+
+def _verify_historical_dataset_pre_oos_metadata(
+    connection: Any,
+    *,
+    reference: ValidationArtifactReference,
+    protocol: FormalResearchProtocol,
+    evaluation: FormalEvaluationProtocol,
+) -> None:
+    """Reject Locked-OOS datasets before outcome values reach Python."""
+
+    projection = connection.execute(
+        """
+        SELECT artifact_hash, artifact_kind, qualified, production_authorized
+        FROM research_validation_artifact
+        WHERE artifact_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchone()
+    rows = connection.execute(
+        """
+        SELECT record->'target_reference'->>'artifact_id',
+               record->'target_reference'->>'content_hash',
+               (record->'sample'->>'sample_decision_time')::timestamptz
+        FROM research_validation_artifact AS artifact
+        CROSS JOIN LATERAL jsonb_array_elements(
+            artifact.payload_json->'records'
+        ) AS record
+        WHERE artifact.artifact_id = %s
+        ORDER BY (record->'sample'->>'sample_decision_time')::timestamptz,
+                 record->>'record_id'
+        """,
+        (str(reference.artifact_id),),
+    ).fetchall()
+    if (
+        projection is None
+        or str(projection[0]) != reference.content_hash
+        or str(projection[1]) != "HISTORICAL_SAMPLE_DATASET"
+        or bool(projection[2])
+        or bool(projection[3])
+        or not rows
+    ):
+        raise FormalProtocolConflict(
+            "Formal C3 Historical Dataset metadata owner mismatch"
+        )
+    for target_id, target_hash, decision_time in rows:
+        if not isinstance(decision_time, datetime):
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset DecisionTime metadata is invalid"
+            )
+        try:
+            target_reference = ValidationArtifactReference(
+                "OUTCOME_TARGET",
+                ArtifactId(str(target_id)),
+                str(target_hash),
+            )
+        except (TypeError, ValueError) as exc:
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset Target metadata is invalid"
+            ) from exc
+        partitions = {
+            window.partition
+            for window in evaluation.windows
+            if window.start_date <= decision_time.date() <= window.end_date
+        }
+        if (
+            target_reference not in protocol.target_references
+            or not partitions
+            or EvaluationPartition.LOCKED_OOS in partitions
+            or not partitions.issubset(
+                {EvaluationPartition.TRAIN, EvaluationPartition.VALIDATION}
+            )
+        ):
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset must be Train/Validation-only"
+            )
 
 
 def _verify_historical_dataset_owner_rows(
@@ -2667,6 +2753,7 @@ def load_formal_protocol_owner(
         connection,
         protocol=protocol,
         require_complete_target_family=not legacy_replay,
+        require_pre_oos_only=not legacy_replay,
     )
     _verify_historical_dataset_owner_rows(
         connection,
@@ -2755,9 +2842,102 @@ def load_formal_protocol_owner(
     return protocol
 
 
+def load_formal_protocol_pre_oos_owner(
+    connection: Any,
+    protocol_id: ArtifactId,
+) -> FormalResearchProtocol:
+    """Verify a current Protocol without reading Historical outcome values."""
+
+    row = connection.execute(
+        """
+        SELECT payload_json, protocol_hash
+        FROM formal_research_protocol WHERE protocol_id = %s
+        """,
+        (str(protocol_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[0], Mapping):
+        raise FormalProtocolConflict("Formal Protocol owner is missing")
+    try:
+        protocol = FormalResearchProtocol.from_canonical_dict(dict(row[0]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Formal Protocol canonical replay failed") from exc
+    if (
+        protocol.protocol_id != protocol_id
+        or protocol.protocol_hash != str(row[1])
+    ):
+        raise FormalProtocolConflict("Formal Protocol storage hash mismatch")
+    family_row = connection.execute(
+        "SELECT family_id FROM frozen_hypothesis_family WHERE formal_protocol_id = %s",
+        (str(protocol_id),),
+    ).fetchone()
+    if family_row is None:
+        raise FormalProtocolConflict(
+            "Pre-057 Formal Protocol is replay-only and cannot enter new Formal research"
+        )
+    component_rows = connection.execute(
+        """
+        SELECT component_role, artifact_kind, artifact_id, artifact_hash
+        FROM formal_research_protocol_component
+        WHERE protocol_id = %s ORDER BY component_role
+        """,
+        (str(protocol_id),),
+    ).fetchall()
+    stored = {
+        str(item[0]): (str(item[1]), str(item[2]), str(item[3]))
+        for item in component_rows
+    }
+    expected = {
+        role: (
+            reference.artifact_kind,
+            str(reference.artifact_id),
+            reference.content_hash,
+        )
+        for role, reference in protocol.component_references().items()
+    }
+    if stored != expected:
+        raise FormalProtocolConflict("Formal Protocol component replay mismatch")
+    evaluation = _load_evaluation_protocol_owner(connection, protocol)
+    target_rows: list[ValidationArtifactReference] = []
+    for reference in protocol.historical_sample_dataset_references:
+        _verify_historical_dataset_pre_oos_metadata(
+            connection,
+            reference=reference,
+            protocol=protocol,
+            evaluation=evaluation,
+        )
+        target_row = connection.execute(
+            """
+            SELECT payload_json->'target_reference'
+            FROM research_validation_artifact
+            WHERE artifact_id = %s AND artifact_hash = %s
+            """,
+            (str(reference.artifact_id), reference.content_hash),
+        ).fetchone()
+        if target_row is None or not isinstance(target_row[0], Mapping):
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset Target metadata is missing"
+            )
+        try:
+            target_rows.append(
+                ValidationArtifactReference.from_canonical_dict(dict(target_row[0]))
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset Target metadata replay failed"
+            ) from exc
+    if tuple(
+        sorted(target_rows, key=lambda item: str(item.artifact_id))
+    ) != protocol.target_references:
+        raise FormalProtocolConflict(
+            "Formal Protocol requires one Historical Sample Dataset per frozen Target"
+        )
+    return protocol
+
+
 __all__ = [
     "FormalProtocolConflict",
     "PostgresFormalProtocolRepository",
     "load_frozen_hypothesis_family_owner",
+    "load_formal_protocol_pre_oos_owner",
     "load_formal_protocol_owner",
 ]

@@ -214,6 +214,7 @@ def test_ablation_is_exploratory_and_reports_incremental_lift() -> None:
             selected=index % 2 == 0,
             previous_selected=index % 3 == 0,
             factor_values=((FactorFamily.PRICE, "price", Decimal(str(index))),),
+            trading_date=date(2026, 8, 1 + index // 2),
         )
         for index in range(1, 7)
     )

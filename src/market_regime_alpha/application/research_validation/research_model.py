@@ -402,8 +402,11 @@ class ResearchModelTrainingRequest:
         _aware("Research Model requested_at", self.requested_at)
         if self.dataset_references != _references(self.dataset_references):
             raise ValueError("Research Model datasets must be unique and sorted")
-        if self.locked_oos_reference.artifact_kind != "LOCKED_OOS_PARTITION":
-            raise ValueError("Research Model must bind one locked OOS partition")
+        if self.locked_oos_reference.artifact_kind not in {
+            "LOCKED_OOS_PARTITION",
+            "FORMAL_LOCKED_OOS_ROSTER",
+        }:
+            raise ValueError("Research Model must bind one locked OOS owner")
         if self.locked_oos_sample_ids != tuple(
             sorted(set(self.locked_oos_sample_ids), key=str)
         ):
@@ -1060,6 +1063,13 @@ def train_research_model(
     trained_at: datetime,
 ) -> ResearchModelArtifact:
     _aware("Research Model trained_at", trained_at)
+    required_at = max(
+        request.requested_at,
+        *(feature.available_at for sample in request.samples for feature in sample.features),
+        *(target.available_at for sample in request.samples for target in sample.targets),
+    )
+    if trained_at < required_at:
+        raise ValueError("Research Model trained_at cannot predate required input availability")
     diagnostics = []
     samples = {item.sample_id: item for item in request.samples}
     for penalty in request.penalty_candidates:

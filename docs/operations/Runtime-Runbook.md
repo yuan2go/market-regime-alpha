@@ -47,8 +47,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 066, `formal_execution_assessment`. Expected schema
-catalog: 241 tables. Migrations 052–066 add Formal Protocol bindings and
+Expected head: migration 067, `phase_d_correctness_lineage`. Expected schema
+catalog: 244 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -60,6 +60,9 @@ Calibration and Production flags remain database-enforced false.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.
+Migration 067 is a forward-only correction that adds exact Strategy/Portfolio
+lineage bindings and temporal/owner constraints. It does not rewrite migrations
+060–066 or infer typed lineage for legacy rows.
 Migration 065 names the global Artifact-root locator contract for Controlled
 packages. New rows must use it; old un-namespaced rows remain immutable and
 fail closed instead of triggering filesystem discovery.

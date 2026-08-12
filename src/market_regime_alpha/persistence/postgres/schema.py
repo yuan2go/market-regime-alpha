@@ -234,12 +234,15 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "shadow_performance_metric",
         "shadow_performance_period_return",
         "shadow_performance_attribution",
+        "strategy_shadow_session_lineage_binding",
+        "strategy_shadow_portfolio_state_source_binding",
         "formal_forecast_computation_command",
         "locked_oos_raw_evidence_unlock",
         "locked_oos_target_observation_consumption",
         "formal_hypothesis_family_evaluation",
         "formal_hypothesis_family_evaluation_target",
         "formal_hypothesis_family_evaluation_pit_evidence",
+        "formal_hypothesis_family_evaluation_historical_decision",
         "phase_c_formal_operator_command",
         "formal_locked_oos_roster",
         "formal_locked_oos_roster_member",
@@ -304,6 +307,8 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
                 "shadow_performance_metric",
                 "shadow_performance_period_return",
                 "shadow_performance_attribution",
+                "strategy_shadow_session_lineage_binding",
+                "strategy_shadow_portfolio_state_source_binding",
             )
         ),
         (
@@ -483,6 +488,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "formal_hypothesis_family_evaluation_pit_evidence",
             "formal_hypothesis_family_evaluation_pit_evidence_no_update",
+        ),
+        (
+            "formal_hypothesis_family_evaluation_historical_decision",
+            "formal_family_evaluation_historical_decision_no_update",
         ),
         (
             "phase_c_formal_operator_command",
@@ -729,6 +738,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "entry_holding_exit_qualification_policy",
             "entry_holding_exit_qualification_policy_no_update",
+        ),
+        (
+            "entry_holding_exit_qualification_policy",
+            "entry_holding_exit_portfolio_policy_owner_guard",
         ),
         ("continuous_runtime_authority_evidence", "continuous_runtime_authority_evidence_no_update"),
         ("continuous_runtime_authority_evidence", "continuous_runtime_authority_evidence_no_delete"),

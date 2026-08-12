@@ -116,6 +116,11 @@ class TargetOutcomeLabel:
     def create(cls, **values: Any) -> TargetOutcomeLabel:
         normalized = dict(values)
         normalized.setdefault("schema_version", "target-outcome-label/v2")
+        if (
+            normalized["schema_version"] == "target-outcome-label/v2"
+            and "barrier_ordering" not in normalized
+        ):
+            raise ValueError("Target Outcome label v2 requires barrier_ordering")
         normalized["barrier_passages"] = tuple(sorted(values["barrier_passages"], key=lambda item: item[0]))
         normalized["market_conditions"] = tuple(sorted(set(values["market_conditions"]), key=lambda item: item.value))
         normalized["reason_codes"] = tuple(sorted(set(values["reason_codes"])))

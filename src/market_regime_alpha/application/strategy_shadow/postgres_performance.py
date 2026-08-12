@@ -42,6 +42,7 @@ class PostgresPortfolioPerformanceRepository:
             raise ValueError("Performance report does not bind the supplied Policy")
 
         def operation(connection: Any) -> None:
+            self._verify_owner_chain(connection, report)
             connection.execute(
                 """
                 INSERT INTO shadow_performance_policy(
@@ -58,10 +59,13 @@ class PostgresPortfolioPerformanceRepository:
                 ),
             )
             policy_row = connection.execute(
-                "SELECT policy_hash FROM shadow_performance_policy WHERE policy_id = %s",
+                "SELECT policy_hash, payload_json FROM shadow_performance_policy WHERE policy_id = %s",
                 (str(policy.policy_id),),
             ).fetchone()
-            if policy_row is None or str(policy_row[0]) != policy.policy_hash:
+            if policy_row is None or (
+                str(policy_row[0]) != policy.policy_hash
+                or policy_row[1] != policy.to_canonical_dict()
+            ):
                 raise ValueError("Performance Policy identity conflict")
             connection.execute(
                 """
@@ -199,6 +203,7 @@ class PostgresPortfolioPerformanceRepository:
             report = PortfolioPerformanceReport.from_canonical_dict(row[1])
             if str(row[0]) != report.report_hash:
                 raise ValueError("Performance report owner hash diverged")
+            self._verify_owner_chain(connection, report)
             self._verify_projections(connection, report)
         return report
 
@@ -224,7 +229,48 @@ class PostgresPortfolioPerformanceRepository:
         return self.get(ArtifactId(str(row[0])))
 
     @staticmethod
+    def _verify_owner_chain(
+        connection: Any,
+        report: PortfolioPerformanceReport,
+    ) -> None:
+        portfolio = connection.execute(
+            "SELECT portfolio_hash, created_at FROM strategy_shadow_portfolio "
+            "WHERE portfolio_id = %s",
+            (str(report.portfolio_reference.artifact_id),),
+        ).fetchone()
+        if (
+            portfolio is None
+            or str(portfolio[0]) != report.portfolio_reference.content_hash
+            or report.generated_at < portfolio[1]
+        ):
+            raise ValueError("Performance Portfolio owner identity/time mismatch")
+        state_rows = connection.execute(
+            """
+            SELECT state_id, state_hash, portfolio_id, recorded_at
+            FROM strategy_shadow_portfolio_day
+            WHERE state_id = ANY(%s::text[])
+            """,
+            ([str(item.artifact_id) for item in report.input_state_references],),
+        ).fetchall()
+        by_id = {str(item[0]): item for item in state_rows}
+        for reference in report.input_state_references:
+            row = by_id.get(str(reference.artifact_id))
+            if (
+                row is None
+                or str(row[1]) != reference.content_hash
+                or str(row[2]) != str(report.portfolio_reference.artifact_id)
+                or report.generated_at < row[3]
+            ):
+                raise ValueError("Performance State owner identity/time mismatch")
+
+    @staticmethod
     def _verify_projections(connection: Any, report: PortfolioPerformanceReport) -> None:
+        state_rows = connection.execute(
+            "SELECT ordinal, state_id, state_hash "
+            "FROM shadow_performance_state_binding "
+            "WHERE report_id = %s ORDER BY ordinal",
+            (str(report.report_id),),
+        ).fetchall()
         state_count = connection.execute(
             "SELECT count(*) FROM shadow_performance_state_binding "
             "WHERE report_id = %s",
@@ -256,6 +302,15 @@ class PostgresPortfolioPerformanceRepository:
         )
         if actual != expected:
             raise ValueError("Performance report projection diverged")
+        if [
+            (int(row[0]), str(row[1]), str(row[2])) for row in state_rows
+        ] != [
+            (ordinal, str(reference.artifact_id), reference.content_hash)
+            for ordinal, reference in enumerate(
+                report.input_state_references, start=1
+            )
+        ]:
+            raise ValueError("Performance State binding projection diverged")
 
 
 __all__ = ["PostgresPortfolioPerformanceRepository"]

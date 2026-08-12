@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
+
 from market_regime_alpha.application.strategy_shadow.performance import (
     EstimationStatus,
     PerformancePolicy,
@@ -157,3 +159,30 @@ def test_performance_identity_is_deterministic_and_symbol_attribution_reconciles
         for item in first.attribution
         if item.status is EstimationStatus.NOT_ESTIMABLE
     }.issuperset({"REGIME", "THEME", "FACTOR", "SIGNAL", "CANDIDATE_RANK"})
+
+
+def test_performance_is_invariant_to_input_order_and_rejects_time_travel() -> None:
+    _portfolio_policy, portfolio, states = _states()
+    generated_at = NOW + timedelta(days=3)
+
+    ordered = build_portfolio_performance_report(
+        portfolio=portfolio,
+        states=states,
+        policy=_performance_policy(),
+        generated_at=generated_at,
+    )
+    shuffled = build_portfolio_performance_report(
+        portfolio=portfolio,
+        states=(states[2], states[0], states[1]),
+        policy=_performance_policy(),
+        generated_at=generated_at,
+    )
+
+    assert shuffled == ordered
+    with pytest.raises(ValueError, match="generated_at predates"):
+        build_portfolio_performance_report(
+            portfolio=portfolio,
+            states=states,
+            policy=_performance_policy(),
+            generated_at=states[-1].recorded_at - timedelta(seconds=1),
+        )

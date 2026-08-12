@@ -284,7 +284,7 @@ class ResearchShadowOperations:
                 settlement_dataset=settlement_dataset,
                 factual_evidence=factual_evidence,
             )
-        self._targets.register_protocol(target_protocol)
+        self._targets.register_protocol(target_protocol, recorded_at=created_at)
         targeted = build_targeted_shadow_outcome(
             decision=decision,
             factual_outcome_v1=factual,

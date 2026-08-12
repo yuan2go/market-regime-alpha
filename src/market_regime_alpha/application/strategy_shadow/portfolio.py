@@ -265,17 +265,27 @@ class ShadowPortfolio:
     initial_cash: Decimal
     created_at: datetime
     limitations: tuple[str, ...]
+    strategy_reference: ValidationArtifactReference | None = None
     schema_version: str = "shadow-portfolio/v1"
 
     def __post_init__(self) -> None:
         require_sha256("portfolio_hash", self.portfolio_hash)
         if self.initial_cash <= 0:
             raise ValueError("Shadow Portfolio initial cash must be positive")
+        if self.schema_version not in {
+            "shadow-portfolio/v1",
+            "shadow-portfolio/v2",
+        }:
+            raise ValueError("Shadow Portfolio schema version is unsupported")
+        if (self.schema_version == "shadow-portfolio/v2") != (
+            self.strategy_reference is not None
+        ):
+            raise ValueError("Shadow Portfolio v2 requires exact Strategy lineage")
         if canonical_hash(self.identity_payload()) != self.portfolio_hash:
             raise ValueError("Shadow Portfolio hash mismatch")
 
     def identity_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "policy_reference": self.policy_reference.to_canonical_dict(),
             "research_reference": self.research_reference.to_canonical_dict(),
@@ -284,6 +294,12 @@ class ShadowPortfolio:
             "created_at": timestamp(self.created_at),
             "limitations": list(self.limitations),
         }
+        if self.schema_version == "shadow-portfolio/v2":
+            assert self.strategy_reference is not None
+            payload["strategy_reference"] = (
+                self.strategy_reference.to_canonical_dict()
+            )
+        return payload
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -309,6 +325,13 @@ class ShadowPortfolio:
             initial_cash=Decimal(str(value["initial_cash"])),
             created_at=datetime.fromisoformat(str(value["created_at"])),
             limitations=tuple(str(item) for item in _sequence(value["limitations"])),
+            strategy_reference=(
+                None
+                if value.get("strategy_reference") is None
+                else ValidationArtifactReference.from_canonical_dict(
+                    _mapping(value["strategy_reference"])
+                )
+            ),
             schema_version=str(value["schema_version"]),
         )
 
@@ -658,6 +681,7 @@ def build_shadow_portfolio(
     policy: ShadowPortfolioPolicy,
     research_reference: ValidationArtifactReference,
     candidate_reference: ValidationArtifactReference,
+    strategy_reference: ValidationArtifactReference | None = None,
     initial_cash: Decimal,
     created_at: datetime,
 ) -> ShadowPortfolio:
@@ -673,8 +697,13 @@ def build_shadow_portfolio(
             }
         )
     )
+    schema_version = (
+        "shadow-portfolio/v1"
+        if strategy_reference is None
+        else "shadow-portfolio/v2"
+    )
     values = {
-        "schema_version": "shadow-portfolio/v1",
+        "schema_version": schema_version,
         "policy_reference": policy_reference.to_canonical_dict(),
         "research_reference": research_reference.to_canonical_dict(),
         "candidate_reference": candidate_reference.to_canonical_dict(),
@@ -682,6 +711,8 @@ def build_shadow_portfolio(
         "created_at": timestamp(created_at),
         "limitations": list(limitations),
     }
+    if strategy_reference is not None:
+        values["strategy_reference"] = strategy_reference.to_canonical_dict()
     portfolio_id, digest = content_identity("shadow-portfolio", values)
     return ShadowPortfolio(
         portfolio_id,
@@ -692,6 +723,8 @@ def build_shadow_portfolio(
         initial_cash,
         created_at,
         limitations,
+        strategy_reference,
+        schema_version,
     )
 
 
