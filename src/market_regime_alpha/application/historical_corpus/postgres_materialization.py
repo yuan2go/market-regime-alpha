@@ -44,19 +44,66 @@ class PostgresHistoricalMaterializationRepository:
             raise ValueError("Historical component ordinal must be positive")
 
         def operation(connection: Any) -> None:
-            session = connection.execute(
-                """
-                SELECT trading_date
-                FROM historical_research_session
-                WHERE run_id = %s AND session_id = %s
-                """,
-                (str(component.run_id), str(component.session_id)),
-            ).fetchone()
-            if session is None or session[0] != component.trading_date:
-                raise HistoricalMaterializationConflict(
-                    "Historical component session owner mismatch"
-                )
-            connection.execute(
+            self._verify_session(connection, component)
+            self._insert(connection, component, ordinal)
+
+        self._factory.run_transaction(operation)
+        return component
+
+    def put_many(
+        self,
+        items: tuple[tuple[HistoricalSessionComponent, int], ...],
+    ) -> tuple[HistoricalSessionComponent, ...]:
+        if not items:
+            raise ValueError("Historical component batch must not be empty")
+        components = tuple(item[0] for item in items)
+        for component, ordinal in items:
+            component.verify_identity()
+            if ordinal <= 0:
+                raise ValueError("Historical component ordinal must be positive")
+        first = components[0]
+        if any(
+            item.run_id != first.run_id
+            or item.session_id != first.session_id
+            or item.trading_date != first.trading_date
+            for item in components
+        ):
+            raise ValueError("Historical component batch must share one session")
+        if len({item.component_id for item in components}) != len(components):
+            raise ValueError("Historical component batch identities must be unique")
+        if len({ordinal for _component, ordinal in items}) != len(items):
+            raise ValueError("Historical component batch ordinals must be unique")
+
+        def operation(connection: Any) -> None:
+            self._verify_session(connection, first)
+            for component, ordinal in items:
+                self._insert(connection, component, ordinal)
+
+        self._factory.run_transaction(operation)
+        return components
+
+    @staticmethod
+    def _verify_session(connection: Any, component: HistoricalSessionComponent) -> None:
+        session = connection.execute(
+            """
+            SELECT trading_date
+            FROM historical_research_session
+            WHERE run_id = %s AND session_id = %s
+            """,
+            (str(component.run_id), str(component.session_id)),
+        ).fetchone()
+        if session is None or session[0] != component.trading_date:
+            raise HistoricalMaterializationConflict(
+                "Historical component session owner mismatch"
+            )
+
+    def _insert(
+        self,
+        connection: Any,
+        component: HistoricalSessionComponent,
+        ordinal: int,
+    ) -> None:
+        connection.execute(
                 """
                 INSERT INTO historical_corpus_session_component(
                     component_id, component_hash, run_id, session_id,
@@ -78,9 +125,9 @@ class PostgresHistoricalMaterializationRepository:
                     Jsonb(component.to_canonical_dict()),
                     component.materialized_at,
                 ),
-            )
-            for source_ordinal, source in enumerate(component.source_references, 1):
-                connection.execute(
+        )
+        for source_ordinal, source in enumerate(component.source_references, 1):
+            connection.execute(
                     """
                     INSERT INTO historical_corpus_component_source_binding(
                         component_id, component_hash, ordinal, artifact_kind,
@@ -96,11 +143,8 @@ class PostgresHistoricalMaterializationRepository:
                         str(source.artifact_id),
                         source.content_hash,
                     ),
-                )
-            self._verify_projection(connection, component, ordinal)
-
-        self._factory.run_transaction(operation)
-        return self.get(component.reference)
+            )
+        self._verify_projection(connection, component, ordinal)
 
     def get(
         self, reference: ValidationArtifactReference

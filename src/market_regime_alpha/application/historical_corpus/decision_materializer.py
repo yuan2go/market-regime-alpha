@@ -465,7 +465,7 @@ class HistoricalDecisionMaterializer:
             decision_time=request.decision_time,
         )
         source_max = _source_max_event_time(bars, request.decision_time)
-        feature_component = self._put_component(
+        feature_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.FEATURE,
             source_max_event_time=source_max,
@@ -499,14 +499,14 @@ class HistoricalDecisionMaterializer:
         market = evaluate_market_regime_v0(
             context, configuration.market_regime, code_revision=request.code_revision
         )
-        market_component = self._put_component(
+        market_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.MARKET_REGIME,
             source_max_event_time=source_max,
             source_references=(feature_component.reference, normalized_reference),
             payload=market.to_canonical_dict(),
         )
-        etf_component = self._put_component(
+        etf_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.ETF,
             source_max_event_time=source_max,
@@ -525,7 +525,7 @@ class HistoricalDecisionMaterializer:
         themes = evaluate_theme_rotation_v0(
             context, configuration.theme_rotation, code_revision=request.code_revision
         )
-        theme_component = self._put_component(
+        theme_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.THEME,
             source_max_event_time=source_max,
@@ -539,7 +539,7 @@ class HistoricalDecisionMaterializer:
             configuration.capital_evolution,
             code_revision=request.code_revision,
         )
-        capital_component = self._put_component(
+        capital_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.CAPITAL,
             source_max_event_time=source_max,
@@ -565,7 +565,7 @@ class HistoricalDecisionMaterializer:
             dynamic_pool_membership=pool_membership,
             dynamic_pool_reference=(pool_reference.artifact_id, pool_reference.content_hash),
         )
-        candidate_component = self._put_component(
+        candidate_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.CANDIDATE,
             source_max_event_time=source_max,
@@ -612,7 +612,7 @@ class HistoricalDecisionMaterializer:
             )
             for item in candidates.selected
         )
-        signal_component = self._put_component(
+        signal_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.SIGNAL,
             source_max_event_time=source_max,
@@ -653,7 +653,7 @@ class HistoricalDecisionMaterializer:
                 )
             )
             used_prior_references.update(source_references)
-        forecast_component = self._put_component(
+        forecast_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.FORECAST,
             source_max_event_time=source_max,
@@ -684,6 +684,22 @@ class HistoricalDecisionMaterializer:
             candidate_component.reference,
             signal_component.reference,
             forecast_component.reference,
+        )
+        decision_components = (
+            feature_component,
+            market_component,
+            etf_component,
+            theme_component,
+            capital_component,
+            candidate_component,
+            signal_component,
+            forecast_component,
+        )
+        self._components.put_many(
+            tuple(
+                (item, _COMPONENT_ORDINAL[item.component_kind])
+                for item in decision_components
+            )
         )
         return SessionStageComputation(
             status=SessionStageStatus.COMPLETE,
@@ -1095,6 +1111,28 @@ class HistoricalDecisionMaterializer:
         payload: Mapping[str, Any],
         limitations: tuple[str, ...] = (),
     ) -> HistoricalSessionComponent:
+        component = self._build_component(
+            request=request,
+            kind=kind,
+            source_max_event_time=source_max_event_time,
+            source_references=source_references,
+            payload=payload,
+            limitations=limitations,
+        )
+        return self._components.put(
+            component=component, ordinal=_COMPONENT_ORDINAL[kind]
+        )
+
+    def _build_component(
+        self,
+        *,
+        request: ResearchDecisionSessionRequest,
+        kind: HistoricalComponentKind,
+        source_max_event_time: datetime,
+        source_references: tuple[ValidationArtifactReference, ...],
+        payload: Mapping[str, Any],
+        limitations: tuple[str, ...] = (),
+    ) -> HistoricalSessionComponent:
         component = HistoricalSessionComponent.create(
             run_id=self._run_id,
             session_id=request.session_id,
@@ -1106,7 +1144,7 @@ class HistoricalDecisionMaterializer:
             payload=payload,
             limitations=limitations,
         )
-        return self._components.put(component=component, ordinal=_COMPONENT_ORDINAL[kind])
+        return component
 
 
 def _required_reference(
