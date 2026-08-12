@@ -921,7 +921,7 @@ def _partition_path(
 ) -> str:
     bucket = f"{symbol_bucket:03d}"
     if artifact_kind is HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE:
-        prefix = "raw"
+        prefix = f"raw/timeframe={timeframe.value.lower()}"
     else:
         prefix = "daily" if timeframe is Timeframe.DAILY else "minute_5"
     year = first_market_date.year
