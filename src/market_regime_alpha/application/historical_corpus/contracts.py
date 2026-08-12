@@ -241,10 +241,10 @@ class HistoricalNormalizedBar:
     event_start: datetime
     event_end: datetime
     retrieved_at: datetime
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
+    open: Decimal | None
+    high: Decimal | None
+    low: Decimal | None
+    close: Decimal | None
     volume: Decimal
     amount: Decimal | None
     adjustment_basis: str
@@ -272,18 +272,27 @@ class HistoricalNormalizedBar:
             raise ValueError("Historical normalized retrieval predates event")
         if self.event_start.date() != self.market_date:
             raise ValueError("Historical normalized market date mismatch")
+        prices = (self.open, self.high, self.low, self.close)
+        if any(item is None for item in prices) and any(item is not None for item in prices):
+            raise ValueError("Historical normalized OHLC must be present or absent together")
+        if self.trading_status is HistoricalTradingStatus.TRADING and self.open is None:
+            raise ValueError("trading Historical bar requires OHLC")
         for label, decimal_value in (
             ("open", self.open),
             ("high", self.high),
             ("low", self.low),
             ("close", self.close),
         ):
-            if not decimal_value.is_finite() or decimal_value <= 0:
+            if decimal_value is not None and (
+                not decimal_value.is_finite() or decimal_value <= 0
+            ):
                 raise ValueError(f"{label} must be positive and finite")
-        if self.high < max(self.open, self.low, self.close) or self.low > min(
-            self.open, self.high, self.close
-        ):
-            raise ValueError("Historical normalized OHLC ordering is invalid")
+        if self.open is not None:
+            assert self.high is not None and self.low is not None and self.close is not None
+            if self.high < max(self.open, self.low, self.close) or self.low > min(
+                self.open, self.high, self.close
+            ):
+                raise ValueError("Historical normalized OHLC ordering is invalid")
         if not self.volume.is_finite() or self.volume < 0:
             raise ValueError("Historical normalized volume must be non-negative")
         if self.amount is not None and (not self.amount.is_finite() or self.amount < 0):
@@ -335,10 +344,10 @@ class HistoricalNormalizedBar:
             event_start=parse_utc_second("event_start", payload["event_start"]),
             event_end=parse_utc_second("event_end", payload["event_end"]),
             retrieved_at=parse_utc_second("retrieved_at", payload["retrieved_at"]),
-            open=parse_canonical_decimal("open", payload["open"]),
-            high=parse_canonical_decimal("high", payload["high"]),
-            low=parse_canonical_decimal("low", payload["low"]),
-            close=parse_canonical_decimal("close", payload["close"]),
+            open=_optional_decimal(payload["open"], "open"),
+            high=_optional_decimal(payload["high"], "high"),
+            low=_optional_decimal(payload["low"], "low"),
+            close=_optional_decimal(payload["close"], "close"),
             volume=parse_canonical_decimal("volume", payload["volume"]),
             amount=(
                 parse_canonical_decimal("amount", payload["amount"])
@@ -808,10 +817,10 @@ def _bar_payload(**values: Any) -> dict[str, Any]:
         "event_start": canonical_datetime(values["event_start"]),
         "event_end": canonical_datetime(values["event_end"]),
         "retrieved_at": canonical_datetime(values["retrieved_at"]),
-        "open": canonical_decimal(values["open"]),
-        "high": canonical_decimal(values["high"]),
-        "low": canonical_decimal(values["low"]),
-        "close": canonical_decimal(values["close"]),
+        "open": canonical_decimal(values["open"]) if values["open"] is not None else None,
+        "high": canonical_decimal(values["high"]) if values["high"] is not None else None,
+        "low": canonical_decimal(values["low"]) if values["low"] is not None else None,
+        "close": canonical_decimal(values["close"]) if values["close"] is not None else None,
         "volume": canonical_decimal(values["volume"]),
         "amount": canonical_decimal(values["amount"]) if values["amount"] is not None else None,
         "adjustment_basis": values["adjustment_basis"],
@@ -932,6 +941,10 @@ def _partition_path(
 
 def _optional_string(value: object) -> str | None:
     return str(value) if value is not None else None
+
+
+def _optional_decimal(value: object, label: str) -> Decimal | None:
+    return parse_canonical_decimal(label, value) if value is not None else None
 
 
 def _strings(value: object, label: str) -> tuple[str, ...]:
