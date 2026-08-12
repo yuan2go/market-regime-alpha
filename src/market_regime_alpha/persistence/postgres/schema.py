@@ -254,6 +254,14 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "formal_execution_assessment",
         "formal_execution_stage_assessment",
         "formal_execution_source_binding",
+        "historical_corpus_owner",
+        "historical_corpus_partition",
+        "historical_corpus_command",
+        "historical_corpus_session",
+        "historical_corpus_session_component",
+        "historical_corpus_component_source_binding",
+        "historical_research_evidence",
+        "historical_research_evidence_metric",
     }
 )
 
@@ -309,8 +317,24 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
                 "shadow_performance_attribution",
                 "strategy_shadow_session_lineage_binding",
                 "strategy_shadow_portfolio_state_source_binding",
+                "historical_corpus_owner",
+                "historical_corpus_partition",
+                "historical_corpus_session_component",
+                "historical_corpus_component_source_binding",
+                "historical_research_evidence",
+                "historical_research_evidence_metric",
             )
         ),
+        (
+            "historical_corpus_command",
+            "historical_corpus_command_identity_immutable",
+        ),
+        ("historical_corpus_command", "historical_corpus_command_no_delete"),
+        (
+            "historical_corpus_session",
+            "historical_corpus_session_identity_immutable",
+        ),
+        ("historical_corpus_session", "historical_corpus_session_no_delete"),
         (
             "historical_research_run",
             "historical_research_run_identity_immutable",
