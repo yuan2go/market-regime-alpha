@@ -91,6 +91,30 @@ _FACTOR_MAP = {
     "signal": FactorFamily.SIGNAL,
     "forecast": FactorFamily.FORECAST,
 }
+_INCREMENTAL_FACTOR_BY_VARIANT = {
+    kind.value.lower(): family
+    for kind, family in (
+        (AblationVariantKind.PRICE_ONLY, FactorFamily.PRICE),
+        (AblationVariantKind.PRICE_VOLUME, FactorFamily.VOLUME),
+        (
+            AblationVariantKind.PRICE_VOLUME_MARKET_REGIME,
+            FactorFamily.MARKET_REGIME,
+        ),
+        (AblationVariantKind.PRICE_VOLUME_MARKET_REGIME_ETF, FactorFamily.ETF),
+        (
+            AblationVariantKind.PRICE_VOLUME_MARKET_REGIME_ETF_THEME,
+            FactorFamily.THEME,
+        ),
+        (
+            AblationVariantKind.PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL,
+            FactorFamily.CAPITAL,
+        ),
+        (AblationVariantKind.THROUGH_DYNAMIC_POOL, FactorFamily.DYNAMIC_POOL),
+        (AblationVariantKind.THROUGH_CANDIDATE_RANKING, FactorFamily.CANDIDATE),
+        (AblationVariantKind.THROUGH_SIGNAL, FactorFamily.SIGNAL),
+        (AblationVariantKind.THROUGH_FORECAST, FactorFamily.FORECAST),
+    )
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +167,7 @@ class HistoricalEvidenceProducer:
         observations, panel_missing = _observations(panels)
         if not observations:
             raise ValueError("Historical Evidence has no estimable Target observations")
+        factor_coverage = _factor_coverage(observations)
         variants = tuple(AblationVariant.standard(item) for item in _SEQUENCE)
         symbol_count = len({item.symbol for item in observations})
         protocol = AblationProtocol.create(
@@ -185,12 +210,13 @@ class HistoricalEvidenceProducer:
             classification=_ablation_finding(suite),
             rationale=_ablation_rationale(suite),
             source_references=sources,
-            metrics=_ablation_metrics(suite),
-            payload=_suite_payload(suite, panel_missing),
+            metrics=_ablation_metrics(suite, factor_coverage),
+            payload=_suite_payload(suite, panel_missing, factor_coverage),
             created_at=created_at,
             limitations=(
                 "CUMULATIVE_SCORING_CONTRACT_FROZEN_NOT_TUNED",
                 "MARKET_CAP_AND_INDUSTRY_NOT_ESTIMABLE_WHEN_PROVIDER_OMITS_FACTS",
+                "UNOBSERVED_LAYER_LIFT_NOT_ESTIMABLE",
             ),
         )
         strategy_metrics = _strategy_metrics(outcomes)
@@ -426,7 +452,48 @@ def _panel_set_reference(
     )
 
 
-def _suite_payload(suite: AlphaAblationSuite, missing: int) -> dict[str, Any]:
+def _factor_coverage(
+    observations: tuple[AblationObservation, ...],
+) -> dict[FactorFamily, int]:
+    coverage = {family: 0 for family in _INCREMENTAL_FACTOR_BY_VARIANT.values()}
+    for item in observations:
+        observed = {family for family, _factor_id, _value in item.factor_values}
+        for family in coverage:
+            if family in observed:
+                coverage[family] += 1
+    return coverage
+
+
+def _incremental_is_estimable(
+    variant_id: str,
+    factor_coverage: Mapping[FactorFamily, int],
+) -> bool:
+    family = _INCREMENTAL_FACTOR_BY_VARIANT[variant_id]
+    return factor_coverage.get(family, 0) > 0
+
+
+def _metrics_payload(
+    metrics: AblationMetrics,
+    *,
+    incremental_estimable: bool,
+) -> dict[str, Any]:
+    payload = metrics.to_canonical_dict()
+    if not incremental_estimable:
+        payload["incremental_lift"] = None
+    payload["incremental_lift_status"] = (
+        EvidenceMetricStatus.AVAILABLE.value
+        if incremental_estimable and metrics.incremental_lift is not None
+        else EvidenceMetricStatus.NOT_ESTIMABLE.value
+    )
+    return payload
+
+
+def _suite_payload(
+    suite: AlphaAblationSuite,
+    missing: int,
+    factor_coverage: Mapping[FactorFamily, int],
+) -> dict[str, Any]:
+    observation_count = suite.results[-1].metrics.sample_count
     return {
         "suite_id": str(suite.suite_id),
         "suite_hash": suite.suite_hash,
@@ -438,28 +505,83 @@ def _suite_payload(suite: AlphaAblationSuite, missing: int) -> dict[str, Any]:
                 "result_id": str(item.result_id),
                 "result_hash": item.result_hash,
                 "variant_id": item.variant.variant_id,
-                "metrics": item.metrics.to_canonical_dict(),
+                "metrics": _metrics_payload(
+                    item.metrics,
+                    incremental_estimable=_incremental_is_estimable(
+                        item.variant.variant_id,
+                        factor_coverage,
+                    ),
+                ),
             }
             for item in suite.results
         ],
         "slice_evaluations": [
-            item.to_canonical_dict() for item in suite.slice_evaluations
+            {
+                "variant_id": item.variant_id,
+                "dimension": item.dimension,
+                "value": item.value,
+                "metrics": _metrics_payload(
+                    item.metrics,
+                    incremental_estimable=_incremental_is_estimable(
+                        item.variant_id,
+                        factor_coverage,
+                    ),
+                ),
+            }
+            for item in suite.slice_evaluations
         ],
+        "factor_coverage": {
+            family.value: {
+                "observation_count": factor_coverage.get(family, 0),
+                "coverage_ratio": str(
+                    Decimal(factor_coverage.get(family, 0))
+                    / Decimal(observation_count)
+                ),
+            }
+            for family in sorted(factor_coverage, key=lambda item: item.value)
+        },
+        "incremental_estimability": {
+            variant_id: (
+                EvidenceMetricStatus.AVAILABLE.value
+                if _incremental_is_estimable(variant_id, factor_coverage)
+                else EvidenceMetricStatus.NOT_ESTIMABLE.value
+            )
+            for variant_id in suite.comparison_sequence
+        },
         "excluded_missing_target_rows": missing,
     }
 
 
 def _ablation_metrics(
     suite: AlphaAblationSuite,
+    factor_coverage: Mapping[FactorFamily, int],
 ) -> tuple[HistoricalEvidenceMetric, ...]:
     output: list[HistoricalEvidenceMetric] = []
     for result in suite.results:
         output.extend(
-            _metric_set(result.variant.variant_id, "ALL", "ALL", result.metrics)
+            _metric_set(
+                result.variant.variant_id,
+                "ALL",
+                "ALL",
+                result.metrics,
+                incremental_estimable=_incremental_is_estimable(
+                    result.variant.variant_id,
+                    factor_coverage,
+                ),
+            )
         )
     for item in suite.slice_evaluations:
         output.extend(
-            _metric_set(item.variant_id, item.dimension, item.value, item.metrics)
+            _metric_set(
+                item.variant_id,
+                item.dimension,
+                item.value,
+                item.metrics,
+                incremental_estimable=_incremental_is_estimable(
+                    item.variant_id,
+                    factor_coverage,
+                ),
+            )
         )
     return tuple(output)
 
@@ -469,10 +591,14 @@ def _metric_set(
     slice_kind: str,
     slice_value: str,
     metrics: AblationMetrics,
+    *,
+    incremental_estimable: bool = True,
 ) -> tuple[HistoricalEvidenceMetric, ...]:
     result = []
     for field in fields(metrics):
         value = getattr(metrics, field.name)
+        if field.name == "incremental_lift" and not incremental_estimable:
+            value = None
         decimal_value = (
             Decimal(value)
             if isinstance(value, int)
