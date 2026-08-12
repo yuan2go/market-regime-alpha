@@ -106,6 +106,14 @@ def test_acquisition_splits_requests_by_year_and_preserves_true_retrieval() -> N
     assert owner.retrieved_at == retrieved_at
     assert owner.coverage.expected_request_count == 4
     assert owner.coverage.source_row_count == 4
+    assert owner.first_market_date == date(2023, 1, 1)
+    assert owner.last_market_date == date(2024, 12, 31)
+    assert all(
+        partition.first_market_date == date(partition.first_market_date.year, 1, 1)
+        and partition.last_market_date
+        == date(partition.first_market_date.year, 12, 31)
+        for partition in owner.partitions
+    )
     assert len(provider.queries) == 4
     requests = tuple(
         record for partition in owner.partitions for record in partition.records

@@ -404,8 +404,12 @@ class HistoricalDataPartition:
         symbols = {item.symbol for item in self.records}
         if self.symbol_count != len(symbols):
             raise ValueError("Historical partition symbol count mismatch")
-        dates = tuple(_record_date(item) for item in self.records)
-        if self.first_market_date != min(dates) or self.last_market_date != max(dates):
+        first_dates = tuple(_record_first_date(item) for item in self.records)
+        last_dates = tuple(_record_last_date(item) for item in self.records)
+        if (
+            self.first_market_date != min(first_dates)
+            or self.last_market_date != max(last_dates)
+        ):
             raise ValueError("Historical partition date range mismatch")
         if any(item.timeframe is not self.timeframe for item in self.records):
             raise ValueError("Historical partition timeframe mismatch")
@@ -431,12 +435,13 @@ class HistoricalDataPartition:
         ordered = tuple(sorted(records, key=_record_sort_key))
         if not ordered:
             raise ValueError("Historical partition requires records")
-        dates = tuple(_record_date(item) for item in ordered)
+        first_dates = tuple(_record_first_date(item) for item in ordered)
+        last_dates = tuple(_record_last_date(item) for item in ordered)
         values = {
             "artifact_kind": artifact_kind,
             "timeframe": timeframe,
-            "first_market_date": min(dates),
-            "last_market_date": max(dates),
+            "first_market_date": min(first_dates),
+            "last_market_date": max(last_dates),
             "symbol_bucket": symbol_bucket,
             "bucket_count": bucket_count,
             "row_count": len(ordered),
@@ -450,8 +455,8 @@ class HistoricalDataPartition:
             relative_path=_partition_path(
                 artifact_kind=artifact_kind,
                 timeframe=timeframe,
-                first_market_date=min(dates),
-                last_market_date=max(dates),
+                first_market_date=min(first_dates),
+                last_market_date=max(last_dates),
                 symbol_bucket=symbol_bucket,
             ),
             **cast(Any, values),
@@ -725,7 +730,7 @@ def build_partitions(
         raise ValueError("research materialization does not use data partitions")
     grouped: dict[tuple[Timeframe, int, int, int | None], list[HistoricalPartitionRecord]] = {}
     for item in records:
-        item_date = _record_date(item)
+        item_date = _record_first_date(item)
         month = item_date.month if item.timeframe is not Timeframe.DAILY else None
         key = (
             item.timeframe,
@@ -885,8 +890,12 @@ def _owner_payload(**values: Any) -> dict[str, Any]:
     }
 
 
-def _record_date(item: HistoricalPartitionRecord) -> date:
+def _record_first_date(item: HistoricalPartitionRecord) -> date:
     return item.start_date if isinstance(item, HistoricalRawRequest) else item.market_date
+
+
+def _record_last_date(item: HistoricalPartitionRecord) -> date:
+    return item.end_date if isinstance(item, HistoricalRawRequest) else item.market_date
 
 
 def _record_sort_key(item: HistoricalPartitionRecord) -> tuple[Any, ...]:
