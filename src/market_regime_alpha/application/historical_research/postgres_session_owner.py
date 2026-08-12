@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
@@ -19,6 +19,7 @@ from market_regime_alpha.application.research_evaluation.postgres_target_reposit
     PostgresTargetOutcomeRepository,
 )
 from market_regime_alpha.application.research_session.contracts import (
+    DataAuthorityMode,
     ResearchDecisionSessionRequest,
 )
 from market_regime_alpha.application.research_session.kernel import (
@@ -67,6 +68,16 @@ StageHandler = Callable[
 ]
 
 
+class HistoricalArchiveMaterializer(Protocol):
+    def compute_stage(
+        self,
+        *,
+        request: ResearchDecisionSessionRequest,
+        stage: ResearchSessionStage,
+        input_references: tuple[ValidationArtifactReference, ...],
+    ) -> SessionStageComputation: ...
+
+
 class PostgresHistoricalSessionOwner:
     """Map each shared stage to immutable facts already owned by PostgreSQL."""
 
@@ -75,6 +86,7 @@ class PostgresHistoricalSessionOwner:
         factory: PostgresConnectionFactory,
         *,
         apply_migrations: bool = False,
+        archive_materializer: HistoricalArchiveMaterializer | None = None,
     ) -> None:
         self._factory = factory
         self._scope = PostgresRuntimeScopeRepository(
@@ -109,6 +121,7 @@ class PostgresHistoricalSessionOwner:
             factory,
             apply_migrations=False,
         )
+        self._archive_materializer = archive_materializer
 
     def compute_stage(
         self,
@@ -117,6 +130,15 @@ class PostgresHistoricalSessionOwner:
         stage: ResearchSessionStage,
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
+        if (
+            request.data_authority_mode is DataAuthorityMode.FREE_RESEARCH_ARCHIVE
+            and self._archive_materializer is not None
+        ):
+            return self._archive_materializer.compute_stage(
+                request=request,
+                stage=stage,
+                input_references=input_references,
+            )
         handlers: dict[ResearchSessionStage, StageHandler] = {
             ResearchSessionStage.SCOPE: self._scope_stage,
             ResearchSessionStage.DECISION: self._decision_stage,

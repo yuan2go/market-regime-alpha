@@ -119,100 +119,11 @@ ON historical_corpus_partition(
 CREATE INDEX historical_corpus_partition_owner_fk_idx
 ON historical_corpus_partition(owner_id, owner_hash);
 
-CREATE TABLE historical_corpus_command (
-    corpus_id text PRIMARY KEY CHECK (btrim(corpus_id) <> ''),
-    command_hash text NOT NULL CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'),
-    idempotency_key text NOT NULL UNIQUE CHECK (btrim(idempotency_key) <> ''),
-    normalized_dataset_id text NOT NULL,
-    normalized_dataset_hash text NOT NULL CHECK (
-        normalized_dataset_hash ~ '^sha256:[0-9a-f]{64}$'
-    ),
-    experiment_id text NOT NULL CHECK (btrim(experiment_id) <> ''),
-    experiment_hash text NOT NULL CHECK (experiment_hash ~ '^sha256:[0-9a-f]{64}$'),
-    start_date date NOT NULL,
-    end_date date NOT NULL,
-    decision_local_time time NOT NULL,
-    timezone_name text NOT NULL CHECK (btrim(timezone_name) <> ''),
-    code_revision text NOT NULL CHECK (btrim(code_revision) <> ''),
-    status text NOT NULL CHECK (status IN (
-        'CREATED', 'RUNNING', 'PARTIAL', 'COMPLETED', 'FAILED'
-    )),
-    command_json jsonb NOT NULL CHECK (
-        jsonb_typeof(command_json) = 'object'
-        AND command_json->>'corpus_id' = corpus_id
-        AND command_json->>'command_hash' = command_hash
-    ),
-    revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
-    created_at timestamptz NOT NULL,
-    updated_at timestamptz NOT NULL,
-    UNIQUE (corpus_id, command_hash),
-    FOREIGN KEY (normalized_dataset_id, normalized_dataset_hash)
-        REFERENCES historical_corpus_owner(owner_id, content_hash)
-        ON DELETE RESTRICT,
-    CHECK (start_date <= end_date),
-    CHECK (updated_at >= created_at)
-);
-
-CREATE INDEX historical_corpus_command_dataset_idx
-ON historical_corpus_command(
-    normalized_dataset_id, normalized_dataset_hash, experiment_id, experiment_hash,
-    start_date, end_date
-);
-
-CREATE TABLE historical_corpus_session (
-    corpus_id text NOT NULL,
-    command_hash text NOT NULL CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'),
-    trading_date date NOT NULL,
-    decision_time timestamptz NOT NULL,
-    status text NOT NULL CHECK (status IN (
-        'PENDING', 'RUNNING', 'COMPLETED', 'BLOCKED', 'FAILED'
-    )),
-    claim_token bigint NOT NULL DEFAULT 0 CHECK (claim_token >= 0),
-    lease_owner text,
-    lease_expires_at timestamptz,
-    attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-    materialization_owner_id text,
-    materialization_owner_hash text CHECK (
-        materialization_owner_hash IS NULL
-        OR materialization_owner_hash ~ '^sha256:[0-9a-f]{64}$'
-    ),
-    coverage_json jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (
-        jsonb_typeof(coverage_json) = 'object'
-    ),
-    reason_codes_json jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (
-        jsonb_typeof(reason_codes_json) = 'array'
-    ),
-    revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
-    created_at timestamptz NOT NULL,
-    updated_at timestamptz NOT NULL,
-    PRIMARY KEY (corpus_id, trading_date),
-    FOREIGN KEY (corpus_id, command_hash)
-        REFERENCES historical_corpus_command(corpus_id, command_hash)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (materialization_owner_id, materialization_owner_hash)
-        REFERENCES historical_corpus_owner(owner_id, content_hash)
-        ON DELETE RESTRICT,
-    CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)),
-    CHECK ((materialization_owner_id IS NULL) = (materialization_owner_hash IS NULL)),
-    CHECK (updated_at >= created_at)
-);
-
-CREATE INDEX historical_corpus_session_claim_idx
-ON historical_corpus_session(corpus_id, status, trading_date, lease_expires_at);
-
-CREATE INDEX historical_corpus_session_command_fk_idx
-ON historical_corpus_session(corpus_id, command_hash);
-
-CREATE INDEX historical_corpus_session_owner_idx
-ON historical_corpus_session(
-    materialization_owner_id, materialization_owner_hash, corpus_id, trading_date
-)
-WHERE materialization_owner_id IS NOT NULL;
-
 CREATE TABLE historical_corpus_session_component (
     component_id text PRIMARY KEY CHECK (btrim(component_id) <> ''),
     component_hash text NOT NULL CHECK (component_hash ~ '^sha256:[0-9a-f]{64}$'),
-    corpus_id text NOT NULL,
+    run_id text NOT NULL,
+    session_id text NOT NULL,
     trading_date date NOT NULL,
     ordinal integer NOT NULL CHECK (ordinal > 0),
     component_kind text NOT NULL CHECK (component_kind IN (
@@ -224,10 +135,10 @@ CREATE TABLE historical_corpus_session_component (
     payload_json jsonb NOT NULL CHECK (jsonb_typeof(payload_json) = 'object'),
     created_at timestamptz NOT NULL,
     UNIQUE (component_id, component_hash),
-    UNIQUE (corpus_id, trading_date, component_kind),
-    UNIQUE (corpus_id, trading_date, ordinal),
-    FOREIGN KEY (corpus_id, trading_date)
-        REFERENCES historical_corpus_session(corpus_id, trading_date)
+    UNIQUE (run_id, session_id, component_kind),
+    UNIQUE (run_id, session_id, ordinal),
+    FOREIGN KEY (run_id, session_id)
+        REFERENCES historical_research_session(run_id, session_id)
         ON DELETE RESTRICT,
     CHECK (materialized_at >= source_max_event_time),
     CHECK (created_at >= materialized_at)
@@ -235,7 +146,7 @@ CREATE TABLE historical_corpus_session_component (
 
 CREATE INDEX historical_corpus_component_replay_idx
 ON historical_corpus_session_component(
-    corpus_id, trading_date, ordinal, component_id, component_hash
+    run_id, session_id, ordinal, component_id, component_hash
 );
 
 CREATE TABLE historical_corpus_component_source_binding (
@@ -263,7 +174,7 @@ ON historical_corpus_component_source_binding(component_id, component_hash);
 CREATE TABLE historical_research_evidence (
     evidence_id text PRIMARY KEY CHECK (btrim(evidence_id) <> ''),
     evidence_hash text NOT NULL CHECK (evidence_hash ~ '^sha256:[0-9a-f]{64}$'),
-    corpus_id text NOT NULL,
+    run_id text NOT NULL,
     command_hash text NOT NULL CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'),
     experiment_id text NOT NULL CHECK (btrim(experiment_id) <> ''),
     experiment_hash text NOT NULL CHECK (experiment_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -284,19 +195,19 @@ CREATE TABLE historical_research_evidence (
     ),
     created_at timestamptz NOT NULL,
     UNIQUE (evidence_id, evidence_hash),
-    UNIQUE (corpus_id, experiment_id, experiment_hash, evidence_kind),
-    FOREIGN KEY (corpus_id, command_hash)
-        REFERENCES historical_corpus_command(corpus_id, command_hash)
+    UNIQUE (run_id, experiment_id, experiment_hash, evidence_kind),
+    FOREIGN KEY (run_id)
+        REFERENCES historical_research_run(run_id)
         ON DELETE RESTRICT
 );
 
 CREATE INDEX historical_research_evidence_query_idx
 ON historical_research_evidence(
-    corpus_id, experiment_id, experiment_hash, evidence_kind, classification
+    run_id, experiment_id, experiment_hash, evidence_kind, classification
 );
 
 CREATE INDEX historical_research_evidence_command_fk_idx
-ON historical_research_evidence(corpus_id, command_hash);
+ON historical_research_evidence(run_id, command_hash);
 
 CREATE TABLE historical_research_evidence_metric (
     evidence_id text NOT NULL,
@@ -353,63 +264,6 @@ FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 CREATE TRIGGER historical_research_evidence_metric_no_update
 BEFORE UPDATE OR DELETE ON historical_research_evidence_metric
-FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
-
-CREATE FUNCTION guard_historical_corpus_command_update() RETURNS trigger AS $$
-BEGIN
-    IF NEW.corpus_id <> OLD.corpus_id
-       OR NEW.command_hash <> OLD.command_hash
-       OR NEW.idempotency_key <> OLD.idempotency_key
-       OR NEW.normalized_dataset_id <> OLD.normalized_dataset_id
-       OR NEW.normalized_dataset_hash <> OLD.normalized_dataset_hash
-       OR NEW.experiment_id <> OLD.experiment_id
-       OR NEW.experiment_hash <> OLD.experiment_hash
-       OR NEW.start_date <> OLD.start_date
-       OR NEW.end_date <> OLD.end_date
-       OR NEW.decision_local_time <> OLD.decision_local_time
-       OR NEW.timezone_name <> OLD.timezone_name
-       OR NEW.code_revision <> OLD.code_revision
-       OR NEW.command_json <> OLD.command_json
-       OR NEW.created_at <> OLD.created_at
-       OR NEW.revision <> OLD.revision + 1
-       OR NEW.updated_at < OLD.updated_at THEN
-        RAISE EXCEPTION 'Historical Corpus command identity/CAS violation';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER historical_corpus_command_identity_immutable
-BEFORE UPDATE ON historical_corpus_command
-FOR EACH ROW EXECUTE FUNCTION guard_historical_corpus_command_update();
-
-CREATE TRIGGER historical_corpus_command_no_delete
-BEFORE DELETE ON historical_corpus_command
-FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
-
-CREATE FUNCTION guard_historical_corpus_session_update() RETURNS trigger AS $$
-BEGIN
-    IF NEW.corpus_id <> OLD.corpus_id
-       OR NEW.command_hash <> OLD.command_hash
-       OR NEW.trading_date <> OLD.trading_date
-       OR NEW.decision_time <> OLD.decision_time
-       OR NEW.created_at <> OLD.created_at
-       OR NEW.claim_token < OLD.claim_token
-       OR NEW.attempt_count < OLD.attempt_count
-       OR NEW.revision <> OLD.revision + 1
-       OR NEW.updated_at < OLD.updated_at THEN
-        RAISE EXCEPTION 'Historical Corpus session identity/CAS violation';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER historical_corpus_session_identity_immutable
-BEFORE UPDATE ON historical_corpus_session
-FOR EACH ROW EXECUTE FUNCTION guard_historical_corpus_session_update();
-
-CREATE TRIGGER historical_corpus_session_no_delete
-BEFORE DELETE ON historical_corpus_session
 FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 COMMENT ON TABLE historical_corpus_owner IS

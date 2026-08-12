@@ -1,0 +1,363 @@
+from __future__ import annotations
+
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
+from pathlib import Path
+
+from market_regime_alpha.application.historical_corpus.contracts import (
+    HistoricalArtifactKind,
+    HistoricalCorpusCoverage,
+    HistoricalDataOwner,
+    HistoricalListingStatus,
+    HistoricalNormalizedBar,
+    HistoricalTradingStatus,
+    build_partitions,
+)
+from market_regime_alpha.application.historical_corpus.decision_materializer import (
+    FREE_RESEARCH_UNIVERSE_KIND,
+    HistoricalDecisionMaterializer,
+)
+from market_regime_alpha.application.historical_corpus.postgres_materialization import (
+    PostgresHistoricalMaterializationRepository,
+)
+from market_regime_alpha.application.historical_corpus.postgres_repository import (
+    PostgresHistoricalCorpusRepository,
+)
+from market_regime_alpha.application.historical_research.contracts import (
+    HistoricalResearchCommand,
+)
+from market_regime_alpha.application.historical_research.postgres_journal import (
+    HistoricalRunStatus,
+    PostgresHistoricalResearchJournal,
+)
+from market_regime_alpha.application.historical_research.postgres_session_owner import (
+    PostgresHistoricalSessionOwner,
+)
+from market_regime_alpha.application.historical_research.runner import (
+    HistoricalResearchRunner,
+)
+from market_regime_alpha.application.research_session.contracts import (
+    DataAuthorityMode,
+    EvidenceQualification,
+)
+from market_regime_alpha.application.research_session.kernel import (
+    ResearchDecisionSessionKernel,
+    ResearchSessionStage,
+    SessionStageStatus,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
+from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.market_data import Timeframe
+from market_regime_alpha.universe.postgres_research import (
+    PostgresFreeResearchUniverseRepository,
+)
+from market_regime_alpha.universe.postgres_runtime_scope import (
+    PostgresRuntimeScopeRepository,
+)
+from market_regime_alpha.universe.research import (
+    FreeDataEvidenceOrigin,
+    build_free_research_universe_snapshot,
+)
+from market_regime_alpha.universe.runtime_scope import (
+    UniversePolicySelector,
+    UniverseScopeKind,
+    build_research_universe_policy,
+)
+from tests.application.historical_corpus.support import raw_owner
+from tests.persistence.postgres.test_historical_research_journal import MutableClock
+
+
+MATERIALIZED_AT = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+DECISION_DATE = date(2022, 4, 12)
+STOCKS = (
+    "000001.SZ",
+    "000002.SZ",
+    "000063.SZ",
+    "600000.SH",
+    "600036.SH",
+    "601318.SH",
+)
+ETF = "510300.SH"
+
+
+def test_existing_historical_runner_actively_materializes_and_replays(
+    postgres_factory,
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "artifact-root"
+    corpus = PostgresHistoricalCorpusRepository(
+        postgres_factory,
+        artifact_root=artifact_root,
+    )
+    raw = raw_owner()
+    corpus.publish_and_register(raw)
+    normalized = _normalized_owner(raw.reference)
+    corpus.publish_and_register(normalized)
+    universe_repository = PostgresFreeResearchUniverseRepository(postgres_factory)
+    universe = universe_repository.publish(_universe())
+    scope_repository = PostgresRuntimeScopeRepository(postgres_factory)
+    policy = scope_repository.register_policy(_policy())
+    command = _command(
+        normalized.reference,
+        ValidationArtifactReference(
+            FREE_RESEARCH_UNIVERSE_KIND,
+            universe.snapshot_id,
+            universe.snapshot_hash,
+        ),
+        policy.policy_id,
+        policy.policy_hash,
+    )
+    journal = PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(MATERIALIZED_AT),
+    )
+    component_repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory
+    )
+    materializer = HistoricalDecisionMaterializer(
+        run_id=command.run_id,
+        corpus_repository=corpus,
+        component_repository=component_repository,
+        universe_repository=universe_repository,
+        scope_repository=scope_repository,
+    )
+    runner = HistoricalResearchRunner(
+        journal=journal,
+        kernel=ResearchDecisionSessionKernel(
+            PostgresHistoricalSessionOwner(
+                postgres_factory,
+                archive_materializer=materializer,
+            )
+        ),
+    )
+
+    partial = runner.run(command=command, max_stage_commits=2)
+    resumed = runner.resume(run_id=command.run_id)
+    replay = runner.replay(run_id=command.run_id)
+
+    assert partial.status is HistoricalRunStatus.RUNNING
+    assert tuple(item.stage for item in partial.sessions[0].receipts) == (
+        ResearchSessionStage.SCOPE,
+        ResearchSessionStage.DECISION,
+    )
+    assert partial.sessions[0].receipts[-1].status is SessionStageStatus.COMPLETE
+    decision_kinds = {
+        item.artifact_kind
+        for item in partial.sessions[0].receipts[-1].output_references
+    }
+    assert {
+        "HISTORICAL_FEATURE",
+        "HISTORICAL_MARKET_REGIME",
+        "HISTORICAL_ETF",
+        "HISTORICAL_THEME",
+        "HISTORICAL_CAPITAL",
+        "HISTORICAL_CANDIDATE",
+        "HISTORICAL_SIGNAL",
+    }.issubset(decision_kinds)
+    signal_reference = next(
+        item
+        for item in partial.sessions[0].receipts[-1].output_references
+        if item.artifact_kind == "HISTORICAL_SIGNAL"
+    )
+    signal = component_repository.get(signal_reference)
+    assert signal.payload["selected_candidate_count"] >= 5
+    assert signal.payload["signal_count"] >= 5
+    assert resumed.status is HistoricalRunStatus.COMPLETE_WITH_BLOCKS
+    assert resumed.sessions[0].receipts[-1].stage is ResearchSessionStage.STRATEGY
+    assert resumed.sessions[0].receipts[-1].status is SessionStageStatus.NOT_ESTIMABLE
+    assert replay.matched is True
+
+
+def _normalized_owner(
+    raw_reference: ValidationArtifactReference,
+) -> HistoricalDataOwner:
+    records: list[HistoricalNormalizedBar] = []
+    start = DECISION_DATE - timedelta(days=75)
+    symbols = (*STOCKS, ETF)
+    for symbol_index, symbol in enumerate(symbols):
+        price = Decimal("10") + Decimal(symbol_index)
+        for index in range(70):
+            market_date = start + timedelta(days=index)
+            close = price * (Decimal("1.002") ** index)
+            volume = Decimal(1_000_000 + symbol_index * 100_000 + index * 10_000)
+            event_start = datetime.combine(market_date, time(1, 30), tzinfo=UTC)
+            records.append(
+                HistoricalNormalizedBar.create(
+                    symbol=symbol,
+                    timeframe=Timeframe.DAILY,
+                    market_date=market_date,
+                    event_start=event_start,
+                    event_end=event_start + timedelta(hours=5, minutes=30),
+                    retrieved_at=MATERIALIZED_AT,
+                    open=close * Decimal("0.999"),
+                    high=close * Decimal("1.004"),
+                    low=close * Decimal("0.996"),
+                    close=close,
+                    volume=volume,
+                    amount=volume * close,
+                    adjustment_basis="RAW_UNADJUSTED",
+                    trading_status=HistoricalTradingStatus.TRADING,
+                    st_status=False,
+                    listing_status=HistoricalListingStatus.UNKNOWN,
+                    raw_request_reference=ValidationArtifactReference(
+                        "RAW_PROVIDER_REQUEST",
+                        ArtifactId(f"raw-request-{symbol_index}"),
+                        canonical_hash({"raw": symbol_index}),
+                    ),
+                    raw_row_number=index + 1,
+                    missing_fields=("listing_status",),
+                    limitations=("PIT_INCOMPLETE",),
+                )
+            )
+        prior_close = price * (Decimal("1.002") ** 69)
+        for minute_index in range(66):
+            event_start = datetime.combine(
+                DECISION_DATE,
+                time(1, 30),
+                tzinfo=UTC,
+            ) + timedelta(minutes=5 * minute_index)
+            close = prior_close * (Decimal("1") + Decimal(minute_index + 1) / Decimal("10000"))
+            volume = Decimal(25_000 + symbol_index * 1_000 + minute_index * 100)
+            records.append(
+                HistoricalNormalizedBar.create(
+                    symbol=symbol,
+                    timeframe=Timeframe.MINUTE_5,
+                    market_date=DECISION_DATE,
+                    event_start=event_start,
+                    event_end=event_start + timedelta(minutes=5),
+                    retrieved_at=MATERIALIZED_AT,
+                    open=close * Decimal("0.9999"),
+                    high=close * Decimal("1.0005"),
+                    low=close * Decimal("0.9995"),
+                    close=close,
+                    volume=volume,
+                    amount=volume * close,
+                    adjustment_basis="RAW_UNADJUSTED",
+                    trading_status=HistoricalTradingStatus.TRADING,
+                    st_status=None,
+                    listing_status=HistoricalListingStatus.UNKNOWN,
+                    raw_request_reference=ValidationArtifactReference(
+                        "RAW_PROVIDER_REQUEST",
+                        ArtifactId(f"raw-request-{symbol_index}"),
+                        canonical_hash({"raw": symbol_index}),
+                    ),
+                    raw_row_number=1000 + minute_index,
+                    missing_fields=("listing_status", "st_status"),
+                    limitations=("PIT_INCOMPLETE",),
+                )
+            )
+    ordered = tuple(records)
+    partitions = build_partitions(
+        artifact_kind=HistoricalArtifactKind.NORMALIZED_DATASET,
+        records=ordered,
+        bucket_count=4,
+    )
+    return HistoricalDataOwner.create(
+        artifact_kind=HistoricalArtifactKind.NORMALIZED_DATASET,
+        provider_id="provider-baostock-public",
+        normalization_version="phase-e-normalization/v1",
+        parent_reference=raw_reference,
+        created_at=MATERIALIZED_AT,
+        retrieved_at=MATERIALIZED_AT,
+        first_market_date=min(item.market_date for item in ordered),
+        last_market_date=max(item.market_date for item in ordered),
+        bucket_count=4,
+        partitions=partitions,
+        coverage=HistoricalCorpusCoverage(
+            expected_symbols=tuple(sorted(symbols)),
+            observed_symbols=tuple(sorted(symbols)),
+            expected_request_count=len(symbols) * 2,
+            successful_request_count=len(symbols) * 2,
+            source_row_count=len(ordered),
+            normalized_row_count=len(ordered),
+            missing_field_counts=(("listing_status", len(ordered)),),
+            failure_counts=(),
+        ),
+    )
+
+
+def _universe():
+    return build_free_research_universe_snapshot(
+        as_of_date=DECISION_DATE,
+        known_at=MATERIALIZED_AT,
+        provider_id="provider-baostock-public",
+        provider_contract="baostock-query-stock-basic-all/v1",
+        source_manifest_reference=ValidationArtifactReference(
+            "SOURCE_MANIFEST",
+            ArtifactId("phase-e-security-master-manifest"),
+            canonical_hash({"security-master": "phase-e"}),
+        ),
+        raw_archive_id="phase-e-security-master-raw",
+        evidence_origin=FreeDataEvidenceOrigin.ENGINEERING_FIXTURE,
+        rows=tuple(
+            {
+                "code": f"{symbol[-2:].lower()}.{symbol[:6]}",
+                "code_name": symbol,
+                "ipoDate": "2000-01-01",
+                "outDate": "",
+                "type": "1",
+                "status": "1",
+            }
+            for symbol in STOCKS
+        ),
+    )
+
+
+def _policy():
+    return build_research_universe_policy(
+        policy_version="phase-e-test/v1",
+        selectors=(
+            UniversePolicySelector(
+                kind=UniverseScopeKind.WATCHLIST,
+                selector_id="phase-e-stock-scope",
+                symbols=STOCKS,
+            ),
+        ),
+        minimum_history_sessions=60,
+        minimum_median_daily_amount=Decimal("1000000"),
+        include_st=False,
+        require_tradable=True,
+        lot_size=100,
+        data_authority="FREE_RESEARCH_ARCHIVE_PIT_INCOMPLETE",
+    )
+
+
+def _command(
+    normalized: ValidationArtifactReference,
+    universe: ValidationArtifactReference,
+    policy_id: ArtifactId,
+    policy_hash: str,
+) -> HistoricalResearchCommand:
+    evidence_hash = canonical_hash({"phase-e": "integration"})
+    return HistoricalResearchCommand.create(
+        idempotency_key="phase-e-decision-materializer-integration-v1",
+        start_date=DECISION_DATE,
+        end_date=DECISION_DATE,
+        trading_sessions=(DECISION_DATE,),
+        decision_local_time=time(14, 55),
+        timezone_name="Asia/Shanghai",
+        trading_calendar_id=ArtifactId("phase-e-calendar"),
+        trading_calendar_hash=evidence_hash,
+        runtime_scope_policy_id=policy_id,
+        runtime_scope_policy_hash=policy_hash,
+        decision_policy_id=ArtifactId("phase-e-decision-policy"),
+        decision_policy_hash=evidence_hash,
+        target_protocol_reference=ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            ArtifactId("phase-e-target-protocol"),
+            evidence_hash,
+        ),
+        experiment_definition_reference=ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            ArtifactId("phase-e-experiment"),
+            evidence_hash,
+        ),
+        configuration_references=(normalized, universe),
+        data_authority_mode=DataAuthorityMode.FREE_RESEARCH_ARCHIVE,
+        evidence_qualification=EvidenceQualification.EXPLORATORY_PIT_INCOMPLETE,
+        code_revision="phase-e-integration",
+        created_at=MATERIALIZED_AT,
+    )

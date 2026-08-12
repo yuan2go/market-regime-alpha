@@ -329,7 +329,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
     ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (67,)
+    assert applied == (68,)
     assert restored == account
 
 
