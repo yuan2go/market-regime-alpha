@@ -183,11 +183,15 @@ def _combined_observation(
     amounts = tuple(
         record.liquidity_evidence.median_daily_amount for _, record, _ in inputs
     )
+    included_values = tuple(record.included for _, record, _ in inputs)
+    listing_values = tuple(record.listing_status.value for _, record, _ in inputs)
     known_amounts = tuple(item for item in amounts if item is not None)
     return RuntimeEligibilityObservation.create(
         symbol=symbol,
         observed_at=max(universe.effective_at for universe, _, _ in inputs),
         known_at=max(universe.available_at for universe, _, _ in inputs),
+        included=_conservative_inclusion(included_values),
+        listing_status=_conservative_listing(listing_values),
         is_st=_conservative_rejection(st_values),
         suspended=_conservative_rejection(suspension_values),
         history_sessions=min(
@@ -206,6 +210,18 @@ def _conservative_rejection(values: tuple[bool | None, ...]) -> bool | None:
     if all(item is False for item in values):
         return False
     return None
+
+
+def _conservative_inclusion(values: tuple[bool, ...]) -> bool:
+    return all(values)
+
+
+def _conservative_listing(values: tuple[str, ...]) -> str:
+    if "DELISTED" in values:
+        return "DELISTED"
+    if all(item == "LISTED" for item in values):
+        return "LISTED"
+    return "UNKNOWN"
 
 
 __all__ = ["PostgresRuntimeScopeOperator"]

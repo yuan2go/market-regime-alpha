@@ -53,6 +53,9 @@ def _receipt():
 
 def _operational_universe(
     source_id: ArtifactId = ArtifactId("free-operational-universe-source"),
+    *,
+    first_included: bool = True,
+    first_listing_status: ListingStatus = ListingStatus.LISTED,
 ) -> OperationalUniverseArtifact:
     records = tuple(
         OperationalUniverseRecord(
@@ -60,7 +63,9 @@ def _operational_universe(
             asset_type=AssetType.A_SHARE,
             exchange=Exchange.SZ,
             membership_source="FREE_A_SHARE_OPERATIONAL_UNIVERSE",
-            listing_status=ListingStatus.LISTED,
+            listing_status=(
+                first_listing_status if symbol == "000001.SZ" else ListingStatus.LISTED
+            ),
             st_status=st_status,
             suspension_status=SuspensionStatus.NOT_SUSPENDED,
             liquidity_evidence=OperationalLiquidityEvidence(
@@ -74,13 +79,20 @@ def _operational_universe(
             ),
             history_sessions_observed=300,
             history_sessions_required=250,
-            included=st_status is STStatus.NOT_ST,
+            included=(
+                first_included
+                if symbol == "000001.SZ"
+                else st_status is STStatus.NOT_ST
+            ),
             inclusion_reasons=("FREE_DATA_OPERATIONAL_ELIGIBLE",)
             if st_status is STStatus.NOT_ST
+            and (symbol != "000001.SZ" or first_included)
             else (),
-            exclusion_reasons=("ST_STATUS_ST",)
-            if st_status is STStatus.ST
-            else (),
+            exclusion_reasons=(
+                ("PROVIDER_EXCLUDED",)
+                if symbol == "000001.SZ" and not first_included
+                else ("ST_STATUS_ST",) if st_status is STStatus.ST else ()
+            ),
             source_artifact_references=((source_id, _snapshot().snapshot_hash),),
             data_eligibility=DataEligibility.EXPLORATORY,
         )
@@ -217,6 +229,36 @@ def test_runtime_scope_operator_conservatively_combines_overlapping_free_provide
     assert built.requested_symbols == ("000001.SZ",)
     assert len(provider_references) == 2
     assert operator.replay(built.scope_id) == built
+
+
+def test_runtime_scope_operator_cannot_readmit_provider_or_listing_exclusion(
+    postgres_factory,
+) -> None:
+    snapshot = PostgresFreeResearchUniverseRepository(postgres_factory).publish(
+        _snapshot()
+    )
+    operator = PostgresRuntimeScopeOperator(postgres_factory)
+
+    built = operator.build(
+        policy=_policy(),
+        as_of=AS_OF,
+        built_at=KNOWN_AT,
+        security_master_snapshot_id=snapshot.snapshot_id,
+        operational_universes=(
+            _operational_universe(ArtifactId("provider-includes")),
+            _operational_universe(
+                ArtifactId("provider-excludes"),
+                first_included=False,
+                first_listing_status=ListingStatus.DELISTED,
+            ),
+        ),
+        code_revision="phase-d-runtime-scope-exclusion-priority",
+    )
+
+    record = built.record_for("000001.SZ")
+    assert record.decision.value == "EXCLUDED"
+    assert "PROVIDER_EXCLUDED" in record.reason_codes
+    assert "SECURITY_NOT_LISTED" in record.reason_codes
 
 
 def test_runtime_scope_operator_rejects_substituted_operational_projection(

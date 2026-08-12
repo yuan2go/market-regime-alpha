@@ -81,6 +81,8 @@ def _eligibility(
         symbol=symbol,
         observed_at=AS_OF,
         known_at=KNOWN_AT,
+        included=True,
+        listing_status="LISTED",
         is_st=is_st,
         suspended=suspended,
         history_sessions=history,
@@ -202,3 +204,33 @@ def test_historical_free_snapshot_cannot_be_used_before_recorded_known_at() -> N
             membership_snapshots=(),
             code_revision="d27bc355",
         )
+
+
+def test_explicit_exclusion_wins_over_unknown_and_otherwise_passing_facts() -> None:
+    excluded = RuntimeEligibilityObservation.create(
+        symbol="000001.SZ",
+        observed_at=AS_OF,
+        known_at=KNOWN_AT,
+        included=False,
+        listing_status="UNKNOWN",
+        is_st=None,
+        suspended=False,
+        history_sessions=300,
+        median_daily_amount=Decimal("200000000"),
+        source_references=_eligibility("000001.SZ").source_references,
+    )
+
+    receipt = build_runtime_scope(
+        policy=_policy(),
+        as_of=AS_OF,
+        built_at=KNOWN_AT,
+        security_master=_snapshot(),
+        eligibility_observations=(excluded, _eligibility("000002.SZ")),
+        membership_snapshots=(),
+        code_revision="phase-d-exclusion-priority",
+    )
+
+    record = receipt.record_for("000001.SZ")
+    assert record.decision is RuntimeScopeDecision.EXCLUDED
+    assert "PROVIDER_EXCLUDED" in record.reason_codes
+    assert "LISTING_STATUS_UNKNOWN" in record.reason_codes
