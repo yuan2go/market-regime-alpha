@@ -128,7 +128,8 @@ CREATE TABLE historical_corpus_session_component (
     ordinal integer NOT NULL CHECK (ordinal > 0),
     component_kind text NOT NULL CHECK (component_kind IN (
         'FEATURE', 'MARKET_REGIME', 'ETF', 'THEME', 'CAPITAL', 'DYNAMIC_POOL',
-        'CANDIDATE', 'SIGNAL', 'FORECAST', 'OUTCOME', 'RESEARCH_PANEL'
+        'CANDIDATE', 'SIGNAL', 'FORECAST', 'STRATEGY', 'PORTFOLIO', 'OUTCOME',
+        'RESEARCH_PANEL'
     )),
     source_max_event_time timestamptz NOT NULL,
     materialized_at timestamptz NOT NULL,
@@ -209,6 +210,28 @@ ON historical_research_evidence(
 CREATE INDEX historical_research_evidence_command_fk_idx
 ON historical_research_evidence(run_id, command_hash);
 
+CREATE TABLE historical_research_evidence_source_binding (
+    evidence_id text NOT NULL,
+    evidence_hash text NOT NULL CHECK (evidence_hash ~ '^sha256:[0-9a-f]{64}$'),
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    artifact_kind text NOT NULL CHECK (btrim(artifact_kind) <> ''),
+    artifact_id text NOT NULL CHECK (btrim(artifact_id) <> ''),
+    content_hash text NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (evidence_id, ordinal),
+    UNIQUE (evidence_id, artifact_kind, artifact_id, content_hash),
+    FOREIGN KEY (evidence_id, evidence_hash)
+        REFERENCES historical_research_evidence(evidence_id, evidence_hash)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX historical_research_evidence_source_idx
+ON historical_research_evidence_source_binding(
+    artifact_kind, artifact_id, content_hash, evidence_id
+);
+
+CREATE INDEX historical_research_evidence_source_fk_idx
+ON historical_research_evidence_source_binding(evidence_id, evidence_hash);
+
 CREATE TABLE historical_research_evidence_metric (
     evidence_id text NOT NULL,
     evidence_hash text NOT NULL CHECK (evidence_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -264,6 +287,10 @@ FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 CREATE TRIGGER historical_research_evidence_metric_no_update
 BEFORE UPDATE OR DELETE ON historical_research_evidence_metric
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER historical_research_evidence_source_binding_no_update
+BEFORE UPDATE OR DELETE ON historical_research_evidence_source_binding
 FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
 COMMENT ON TABLE historical_corpus_owner IS

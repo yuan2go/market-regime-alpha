@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from math import sqrt
 from statistics import fmean, median
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -21,6 +23,9 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalNormalizedBar,
     HistoricalTradingStatus,
 )
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    VerifiedHistoricalPackage,
+)
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
     HistoricalComponentKind,
     HistoricalSessionComponent,
@@ -30,6 +35,22 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
 )
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
+)
+from market_regime_alpha.application.controlled_operation.prospective_outcome import (
+    OutcomeAvailabilityStatus,
+    OutcomeMarketCondition,
+)
+from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
+    PostgresTargetOutcomeRepository,
+)
+from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    TargetOutcomeLabel,
+    build_target_outcome_label_from_bars,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    OutcomeCheckpoint,
+    OutcomeTargetProtocol,
+    TargetDefinition,
 )
 from market_regime_alpha.application.research_session.contracts import (
     DataAuthorityMode,
@@ -43,7 +64,31 @@ from market_regime_alpha.application.research_session.kernel import (
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
-from market_regime_alpha.core.identity import ArtifactId, FeatureDefinitionId, ModelId, ProviderId
+from market_regime_alpha.application.research_validation.liquidity_capacity import (
+    CapacityParameter,
+    CapacityValueProvenance,
+    LiquidityCapacityAssessment,
+    LiquidityCapacityProtocol,
+)
+from market_regime_alpha.application.strategy_shadow.economics import (
+    StrategyEconomicsPolicy,
+    StrategyEconomicsResult,
+    StrategyEntryKind,
+    StrategyExecutionObservation,
+    StrategyExecutionPhase,
+    StrategyExitKind,
+    evaluate_strategy_economics,
+)
+from market_regime_alpha.application.strategy_shadow.portfolio import (
+    ShadowParameterProvenance,
+)
+from market_regime_alpha.core.identity import (
+    ArtifactId,
+    FeatureDefinitionId,
+    ModelId,
+    ProviderId,
+    TargetId,
+)
 from market_regime_alpha.core.time import AvailabilityTime, DecisionTime, RetrievedAt
 from market_regime_alpha.data.contracts import DataEligibility, SourceArtifactReference
 from market_regime_alpha.data.source_manifest import SourceManifest
@@ -61,6 +106,13 @@ from market_regime_alpha.features.technical.observables import (
     TechnicalFeatureComputation,
     compute_retrospective_technical_feature,
     missing_technical_feature_computation,
+)
+from market_regime_alpha.forecasting.path import (
+    PATH_FORECAST_CONFIG_SCHEMA,
+    PATH_FORECAST_SAMPLE_SCHEMA,
+    PathForecastConfig,
+    PathForecastSample,
+    build_retrospective_path_forecast,
 )
 from market_regime_alpha.market_data import (
     AdjustmentMode,
@@ -99,8 +151,12 @@ from market_regime_alpha.universe.runtime_scope import (
     UniverseScopeKind,
     build_runtime_scope,
 )
-
-
+from market_regime_alpha.strategies.entry.contracts import (
+    EntryBarrierSpec,
+    EntryPathObservationStatus,
+    EntryPathReasonCode,
+    build_entry_path_target_contract,
+)
 NORMALIZED_DATASET_KIND = "NORMALIZED_DATASET"
 FREE_RESEARCH_UNIVERSE_KIND = "FREE_RESEARCH_UNIVERSE"
 GLOBAL_RESEARCH_THEME_ID = "PHASE_E_GLOBAL_RESEARCH_SCOPE"
@@ -145,6 +201,14 @@ class _HistoricalResearchContext:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _HistoricalDatasetIndex:
+    package: VerifiedHistoricalPackage
+    series: Mapping[tuple[str, Timeframe], tuple[HistoricalNormalizedBar, ...]]
+    event_ends: Mapping[tuple[str, Timeframe], tuple[datetime, ...]]
+    daily_dates: tuple[date, ...]
+
+
 class HistoricalDecisionMaterializer:
     """Actively produce historical state while preserving true retrieval time."""
 
@@ -156,12 +220,105 @@ class HistoricalDecisionMaterializer:
         component_repository: PostgresHistoricalMaterializationRepository,
         universe_repository: PostgresFreeResearchUniverseRepository,
         scope_repository: PostgresRuntimeScopeRepository,
+        target_repository: PostgresTargetOutcomeRepository,
     ) -> None:
         self._run_id = run_id
         self._corpus = corpus_repository
         self._components = component_repository
         self._universes = universe_repository
         self._scopes = scope_repository
+        self._targets = target_repository
+        self._dataset_indexes: dict[
+            ValidationArtifactReference, _HistoricalDatasetIndex
+        ] = {}
+
+    def _dataset(
+        self, reference: ValidationArtifactReference
+    ) -> _HistoricalDatasetIndex:
+        cached = self._dataset_indexes.get(reference)
+        if cached is not None:
+            return cached
+        package = self._corpus.load(reference)
+        bars = _normalized_bars(package.owner)
+        grouped: dict[tuple[str, Timeframe], list[HistoricalNormalizedBar]] = {}
+        for bar in bars:
+            grouped.setdefault((bar.symbol, bar.timeframe), []).append(bar)
+        series = {
+            key: tuple(sorted(values, key=lambda item: item.event_end))
+            for key, values in grouped.items()
+        }
+        index = _HistoricalDatasetIndex(
+            package=package,
+            series=series,
+            event_ends={
+                key: tuple(item.event_end for item in values)
+                for key, values in series.items()
+            },
+            daily_dates=tuple(
+                sorted(
+                    {
+                        item.market_date
+                        for (symbol, timeframe), values in series.items()
+                        if timeframe is Timeframe.DAILY and not _is_etf_symbol(symbol)
+                        for item in values
+                    }
+                )
+            ),
+        )
+        self._dataset_indexes[reference] = index
+        return index
+
+    def _decision_bars(
+        self,
+        reference: ValidationArtifactReference,
+        decision_time: datetime,
+    ) -> tuple[HistoricalNormalizedBar, ...]:
+        index = self._dataset(reference)
+        result: list[HistoricalNormalizedBar] = []
+        for key, values in index.series.items():
+            end = bisect_right(index.event_ends[key], decision_time)
+            admitted = values[:end]
+            if key[1] is Timeframe.MINUTE_5:
+                admitted = tuple(
+                    item for item in admitted if item.market_date == decision_time.date()
+                )
+            result.extend(admitted)
+        return tuple(sorted(result, key=_historical_bar_key))
+
+    def _next_session(
+        self, reference: ValidationArtifactReference, trading_date: date
+    ) -> date | None:
+        return next(
+            (
+                item
+                for item in self._dataset(reference).daily_dates
+                if item > trading_date
+            ),
+            None,
+        )
+
+    def _outcome_bars(
+        self,
+        reference: ValidationArtifactReference,
+        *,
+        decision_time: datetime,
+        next_session: date,
+    ) -> tuple[HistoricalNormalizedBar, ...]:
+        index = self._dataset(reference)
+        result: list[HistoricalNormalizedBar] = []
+        for key, values in index.series.items():
+            if key[1] is Timeframe.DAILY:
+                result.extend(
+                    item
+                    for item in values
+                    if item.event_end <= decision_time
+                    or item.market_date == next_session
+                )
+            else:
+                result.extend(
+                    item for item in values if item.market_date == next_session
+                )
+        return tuple(sorted(result, key=_historical_bar_key))
 
     def compute_stage(
         self,
@@ -176,19 +333,19 @@ class HistoricalDecisionMaterializer:
             return self._scope_stage(request)
         if stage is ResearchSessionStage.DECISION:
             return self._decision_stage(request, input_references)
-        return SessionStageComputation(
-            status=SessionStageStatus.NOT_ESTIMABLE,
-            output_references=(),
-            input_references=input_references,
-            completed_at=request.materialized_at,
-            reason_codes=(f"PHASE_E_{stage.value}_PENDING_KERNEL",),
-        )
+        if stage is ResearchSessionStage.STRATEGY:
+            return self._strategy_stage(request, input_references)
+        if stage is ResearchSessionStage.PORTFOLIO:
+            return self._portfolio_stage(request, input_references)
+        if stage is ResearchSessionStage.OUTCOME:
+            return self._outcome_stage(request, input_references)
+        if stage is ResearchSessionStage.PERFORMANCE:
+            return self._performance_stage(request, input_references)
+        raise AssertionError(f"unhandled Historical stage {stage.value}")
 
     def _scope_stage(self, request: ResearchDecisionSessionRequest) -> SessionStageComputation:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
         universe_reference = _required_reference(request, FREE_RESEARCH_UNIVERSE_KIND)
-        package = self._corpus.load(normalized_reference)
-        owner = package.owner
         base_universe = self._universes.get(universe_reference.artifact_id)
         if base_universe.snapshot_hash != universe_reference.content_hash:
             raise ValueError("Historical Security Master owner hash mismatch")
@@ -206,7 +363,7 @@ class HistoricalDecisionMaterializer:
         stock_symbols = tuple(
             sorted({symbol for item in policy.selectors for symbol in item.symbols})
         )
-        bars = _normalized_bars(owner)
+        bars = self._decision_bars(normalized_reference, request.decision_time)
         observations = tuple(
             _eligibility_observation(
                 symbol=symbol,
@@ -286,9 +443,8 @@ class HistoricalDecisionMaterializer:
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
-        package = self._corpus.load(normalized_reference)
-        owner = package.owner
-        bars = _normalized_bars(owner)
+        owner = self._dataset(normalized_reference).package.owner
+        bars = self._decision_bars(normalized_reference, request.decision_time)
         scope_reference = _single_reference(input_references, "RUNTIME_SCOPE")
         pool_reference = _single_reference(input_references, "HISTORICAL_DYNAMIC_POOL")
         scope = self._scopes.get(scope_reference.artifact_id)
@@ -304,6 +460,7 @@ class HistoricalDecisionMaterializer:
         )
         computations = _compute_features(
             owner=owner,
+            bars=bars,
             stock_symbols=stock_symbols,
             decision_time=request.decision_time,
         )
@@ -330,6 +487,7 @@ class HistoricalDecisionMaterializer:
         )
         context = _build_context(
             owner=owner,
+            bars=bars,
             stock_symbols=stock_symbols,
             context_symbols=context_symbols,
             decision_time=request.decision_time,
@@ -466,6 +624,57 @@ class HistoricalDecisionMaterializer:
                 "signal_count": len(snapshots),
             },
         )
+        forecast_config = _forecast_configuration(request.decision_time)
+        prior_outcomes = tuple(
+            item
+            for item in self._components.list_for_run(
+                run_id=self._run_id,
+                component_kind=HistoricalComponentKind.OUTCOME,
+            )
+            if item.trading_date < request.trading_date
+        )
+        forecasts = []
+        used_prior_references: set[ValidationArtifactReference] = set()
+        for snapshot in snapshots:
+            samples, event_ends, source_references = _prior_forecast_samples(
+                prior_outcomes=prior_outcomes,
+                symbol=snapshot.symbol,
+                configuration=forecast_config,
+            )
+            forecasts.append(
+                build_retrospective_path_forecast(
+                    signal_snapshot=snapshot,
+                    configuration=forecast_config,
+                    samples=samples,
+                    sample_event_ends=event_ends,
+                    decision_time=DecisionTime(request.decision_time),
+                    created_at=request.materialized_at,
+                    code_revision=request.code_revision,
+                )
+            )
+            used_prior_references.update(source_references)
+        forecast_component = self._put_component(
+            request=request,
+            kind=HistoricalComponentKind.FORECAST,
+            source_max_event_time=source_max,
+            source_references=(
+                signal_component.reference,
+                *tuple(sorted(used_prior_references, key=_ref_key)),
+            ),
+            payload={
+                "configuration": forecast_config.to_canonical_dict(),
+                "forecasts": [item.to_canonical_dict() for item in forecasts],
+                "forecast_count": len(forecasts),
+                "available_for_research_count": sum(
+                    item.forecast.forecast_status.value == "AVAILABLE_FOR_RESEARCH"
+                    for item in forecasts
+                ),
+                "calibrated": False,
+                "formal_oos": False,
+                "formal_model_qualified": False,
+            },
+            limitations=("CALIBRATED_FALSE", "FORMAL_MODEL_QUALIFIED_FALSE"),
+        )
         outputs = (
             feature_component.reference,
             market_component.reference,
@@ -474,6 +683,7 @@ class HistoricalDecisionMaterializer:
             capital_component.reference,
             candidate_component.reference,
             signal_component.reference,
+            forecast_component.reference,
         )
         return SessionStageComputation(
             status=SessionStageStatus.COMPLETE,
@@ -482,6 +692,394 @@ class HistoricalDecisionMaterializer:
             completed_at=request.materialized_at,
             reason_codes=("HISTORICAL_DECISION_STATE_MATERIALIZED",),
         )
+
+    def _strategy_stage(
+        self,
+        request: ResearchDecisionSessionRequest,
+        input_references: tuple[ValidationArtifactReference, ...],
+    ) -> SessionStageComputation:
+        protocol = self._load_target_protocol(request)
+        signal = self._components.get(
+            _single_reference(input_references, "HISTORICAL_SIGNAL")
+        )
+        forecast = self._components.get(
+            _single_reference(input_references, "HISTORICAL_FORECAST")
+        )
+        policies = tuple(
+            _strategy_policy(target, request.materialized_at)
+            for target in protocol.targets
+        )
+        source_max = max(signal.source_max_event_time, forecast.source_max_event_time)
+        component = self._put_component(
+            request=request,
+            kind=HistoricalComponentKind.STRATEGY,
+            source_max_event_time=source_max,
+            source_references=(signal.reference, forecast.reference),
+            payload={
+                "entry": "FROZEN_DECISION_REFERENCE",
+                "holding": "T_PLUS_ONE",
+                "policies": [item.identity_payload() | {
+                    "policy_id": str(item.policy_id),
+                    "policy_hash": item.policy_hash,
+                } for item in policies],
+                "candidate_symbols": [
+                    str(item["symbol"])
+                    for item in _objects(signal.payload.get("snapshots"), "snapshots")
+                ],
+                "cost_assumptions": {
+                    "commission_bps_each_side": "3",
+                    "stamp_duty_bps_sell": "5",
+                    "spread_slippage_bps_each_side": "5",
+                    "impact_coefficient_bps": "8",
+                    "participation_rate": "0.1",
+                },
+            },
+            limitations=("COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",),
+        )
+        return _complete_stage(
+            request=request,
+            inputs=input_references,
+            output=component.reference,
+            reason="HISTORICAL_STRATEGY_POLICY_FROZEN",
+        )
+
+    def _portfolio_stage(
+        self,
+        request: ResearchDecisionSessionRequest,
+        input_references: tuple[ValidationArtifactReference, ...],
+    ) -> SessionStageComputation:
+        candidate = self._components.get(
+            _single_reference(input_references, "HISTORICAL_CANDIDATE")
+        )
+        strategy = self._components.get(
+            _single_reference(input_references, "HISTORICAL_STRATEGY")
+        )
+        records = _objects(candidate.payload.get("records"), "candidate records")
+        selected = tuple(
+            item for item in records if item.get("selection_status") == "SELECTED"
+        )
+        positions = tuple(
+            {
+                "symbol": str(item["symbol"]),
+                "rank": int(item["rank"]),
+                "target_weight": (
+                    None if not selected else str(Decimal("1") / Decimal(len(selected)))
+                ),
+                "requested_notional": "100000",
+            }
+            for item in sorted(selected, key=lambda value: int(value["rank"]))
+        )
+        component = self._put_component(
+            request=request,
+            kind=HistoricalComponentKind.PORTFOLIO,
+            source_max_event_time=max(
+                candidate.source_max_event_time, strategy.source_max_event_time
+            ),
+            source_references=(candidate.reference, strategy.reference),
+            payload={
+                "construction": "EQUAL_WEIGHT_SELECTED_CANDIDATES_V1",
+                "positions": list(positions),
+                "selected_count": len(positions),
+                "lot_size": 100,
+                "requested_notional_per_symbol": "100000",
+                "actual_position_authority": False,
+            },
+            limitations=("RESEARCH_PORTFOLIO_NOT_ACTUAL_POSITION",),
+        )
+        return _complete_stage(
+            request=request,
+            inputs=input_references,
+            output=component.reference,
+            reason="HISTORICAL_RESEARCH_PORTFOLIO_FROZEN",
+        )
+
+    def _outcome_stage(
+        self,
+        request: ResearchDecisionSessionRequest,
+        input_references: tuple[ValidationArtifactReference, ...],
+    ) -> SessionStageComputation:
+        normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
+        owner = self._dataset(normalized_reference).package.owner
+        protocol = self._load_target_protocol(request)
+        signal = self._components.get(
+            _single_reference(input_references, "HISTORICAL_SIGNAL")
+        )
+        candidate = self._components.get(
+            _single_reference(input_references, "HISTORICAL_CANDIDATE")
+        )
+        portfolio = self._components.get(
+            _single_reference(input_references, "HISTORICAL_PORTFOLIO")
+        )
+        next_session = self._next_session(normalized_reference, request.trading_date)
+        if next_session is None:
+            return SessionStageComputation(
+                status=SessionStageStatus.NOT_ESTIMABLE,
+                output_references=(),
+                input_references=_references((*input_references, normalized_reference)),
+                completed_at=request.materialized_at,
+                reason_codes=("T_PLUS_ONE_SESSION_NOT_IN_FROZEN_DATASET",),
+            )
+        bars = self._outcome_bars(
+            normalized_reference,
+            decision_time=request.decision_time,
+            next_session=next_session,
+        )
+        canonical = tuple(_canonical_outcome_bars(bars, next_session))
+        symbols = tuple(
+            str(item["symbol"])
+            for item in _objects(
+                candidate.payload.get("records"), "candidate records"
+            )
+        )
+        labels: list[TargetOutcomeLabel] = []
+        economics: list[StrategyEconomicsResult] = []
+        capacity_protocol = _capacity_protocol(request.materialized_at)
+        requested_notional = Decimal("100000")
+        for symbol in symbols:
+            reference_price = _decision_reference_price(
+                bars, symbol, request.trading_date, request.decision_time
+            )
+            if reference_price is None:
+                continue
+            initial_conditions = _market_conditions(bars, symbol, next_session)
+            fallback_open = next(
+                (
+                    item.open
+                    for item in bars
+                    if item.symbol == symbol
+                    and item.market_date == next_session
+                    and item.timeframe is Timeframe.DAILY
+                ),
+                None,
+            )
+            symbol_labels = tuple(
+                build_target_outcome_label_from_bars(
+                    symbol=symbol,
+                    decision_frozen_at=request.decision_time,
+                    decision_reference_price=reference_price,
+                    target=target,
+                    protocol=protocol,
+                    bars=canonical,
+                    fallback_available_at=owner.retrieved_at,
+                    next_session_date=next_session,
+                    initial_market_conditions=initial_conditions,
+                    fallback_open=fallback_open,
+                )
+                for target in protocol.targets
+            )
+            labels.extend(symbol_labels)
+            historical_daily = _canonical_bars(
+                tuple(
+                    item
+                    for item in bars
+                    if item.symbol == symbol
+                    and item.timeframe is Timeframe.DAILY
+                    and item.event_end <= request.decision_time
+                    and item.open is not None
+                ),
+                asset_type=AssetType.A_SHARE,
+                assume_normal_price_limit=True,
+            )
+            liquidity = LiquidityCapacityAssessment.create(
+                symbol=symbol,
+                as_of_date=request.trading_date,
+                market_data_reference=normalized_reference,
+                bars=historical_daily,
+                requested_position=requested_notional,
+                requested_order=requested_notional,
+                protocol=capacity_protocol,
+                created_at=request.materialized_at,
+            )
+            for label in symbol_labels:
+                target = next(
+                    item for item in protocol.targets
+                    if item.target_id == label.target.artifact_id
+                )
+                policy = _strategy_policy(target, request.materialized_at)
+                entry = _execution_observation(
+                    phase=StrategyExecutionPhase.ENTRY,
+                    symbol=symbol,
+                    price=reference_price,
+                    market_conditions=(OutcomeMarketCondition.TRADING,),
+                    effective_at=request.decision_time,
+                    available_at=request.materialized_at,
+                    source_reference=candidate.reference,
+                )
+                exit_conditions = label.market_conditions
+                exit_at = label.label_interval_end
+                exit_execution = _execution_observation(
+                    phase=StrategyExecutionPhase.EXIT,
+                    symbol=symbol,
+                    price=label.checkpoint_price,
+                    market_conditions=exit_conditions,
+                    effective_at=exit_at,
+                    available_at=max(owner.retrieved_at, exit_at),
+                    source_reference=normalized_reference,
+                )
+                economics.append(
+                    evaluate_strategy_economics(
+                        policy=policy,
+                        label=label,
+                        liquidity=liquidity,
+                        entry_execution=entry,
+                        exit_execution=exit_execution,
+                        requested_notional=requested_notional,
+                        evaluated_at=max(owner.retrieved_at, label.outcome_available_at),
+                    )
+                )
+        outcome_max = max(
+            (
+                item.event_end
+                for item in bars
+                if item.market_date == next_session
+            ),
+            default=request.decision_time,
+        )
+        component = self._put_component(
+            request=request,
+            kind=HistoricalComponentKind.OUTCOME,
+            source_max_event_time=outcome_max,
+            source_references=(
+                normalized_reference,
+                candidate.reference,
+                signal.reference,
+                portfolio.reference,
+                request.target_protocol_reference,
+            ),
+            payload={
+                "next_session_date": next_session.isoformat(),
+                "target_protocol": protocol.to_canonical_dict(),
+                "labels": [item.to_canonical_dict() for item in labels],
+                "strategy_economics": [item.identity_payload() | {
+                    "result_id": str(item.result_id),
+                    "result_hash": item.result_hash,
+                } for item in economics],
+                "available_label_count": sum(
+                    item.availability_status is OutcomeAvailabilityStatus.COMPLETE
+                    for item in labels
+                ),
+                "not_estimated_label_count": sum(
+                    item.availability_status is not OutcomeAvailabilityStatus.COMPLETE
+                    for item in labels
+                ),
+                "engineering_assumptions": [
+                    "COMMISSION_3_BPS_EACH_SIDE",
+                    "STAMP_DUTY_5_BPS_SELL",
+                    "SPREAD_SLIPPAGE_5_BPS_EACH_SIDE",
+                    "IMPACT_COEFFICIENT_8_BPS",
+                    "PARTICIPATION_RATE_10_PERCENT",
+                    "CORPORATE_ACTION_COVERAGE_INCOMPLETE_RAW_ONLY",
+                ],
+            },
+            limitations=(
+                "CORPORATE_ACTION_COVERAGE_INCOMPLETE",
+                "COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",
+            ),
+        )
+        return _complete_stage(
+            request=request,
+            inputs=_references((*input_references, normalized_reference)),
+            output=component.reference,
+            reason="HISTORICAL_T_PLUS_ONE_OUTCOME_MATERIALIZED",
+        )
+
+    def _performance_stage(
+        self,
+        request: ResearchDecisionSessionRequest,
+        input_references: tuple[ValidationArtifactReference, ...],
+    ) -> SessionStageComputation:
+        candidate = self._components.get(
+            _single_reference(input_references, "HISTORICAL_CANDIDATE")
+        )
+        feature = self._components.get(
+            _single_reference(input_references, "HISTORICAL_FEATURE")
+        )
+        market = self._components.get(
+            _single_reference(input_references, "HISTORICAL_MARKET_REGIME")
+        )
+        etf = self._components.get(
+            _single_reference(input_references, "HISTORICAL_ETF")
+        )
+        theme = self._components.get(
+            _single_reference(input_references, "HISTORICAL_THEME")
+        )
+        capital = self._components.get(
+            _single_reference(input_references, "HISTORICAL_CAPITAL")
+        )
+        signal = self._components.get(
+            _single_reference(input_references, "HISTORICAL_SIGNAL")
+        )
+        forecast = self._components.get(
+            _single_reference(input_references, "HISTORICAL_FORECAST")
+        )
+        outcome = self._components.get(
+            _single_reference(input_references, "HISTORICAL_OUTCOME")
+        )
+        pool = self._components.get(
+            _single_reference(input_references, "HISTORICAL_DYNAMIC_POOL")
+        )
+        rows = _research_panel_rows(
+            trading_date=request.trading_date,
+            feature=feature,
+            market=market,
+            etf=etf,
+            theme=theme,
+            capital=capital,
+            pool=pool,
+            candidate=candidate,
+            signal=signal,
+            forecast=forecast,
+            outcome=outcome,
+        )
+        component = self._put_component(
+            request=request,
+            kind=HistoricalComponentKind.RESEARCH_PANEL,
+            source_max_event_time=outcome.source_max_event_time,
+            source_references=(
+                feature.reference,
+                market.reference,
+                etf.reference,
+                theme.reference,
+                capital.reference,
+                pool.reference,
+                candidate.reference,
+                signal.reference,
+                forecast.reference,
+                outcome.reference,
+            ),
+            payload={
+                "rows": list(rows),
+                "row_count": len(rows),
+                "missing_target_count": sum(
+                    item["target_return"] is None for item in rows
+                ),
+                "gross_return": _mean_decimal_text(
+                    item["gross_return"] for item in rows
+                ),
+                "cost_return": _mean_decimal_text(
+                    item["cost_return"] for item in rows
+                ),
+                "net_return": _mean_decimal_text(
+                    item["net_return"] for item in rows
+                ),
+            },
+        )
+        return _complete_stage(
+            request=request,
+            inputs=input_references,
+            output=component.reference,
+            reason="HISTORICAL_RESEARCH_PANEL_MATERIALIZED",
+        )
+
+    def _load_target_protocol(
+        self, request: ResearchDecisionSessionRequest
+    ) -> OutcomeTargetProtocol:
+        protocol = self._targets.get_protocol(
+            request.target_protocol_reference.artifact_id
+        )
+        if protocol.protocol_hash != request.target_protocol_reference.content_hash:
+            raise ValueError("Historical Target Protocol owner hash mismatch")
+        return protocol
 
     def _put_component(
         self,
@@ -533,6 +1131,12 @@ def _normalized_bars(owner: HistoricalDataOwner) -> tuple[HistoricalNormalizedBa
     if any(not isinstance(item, HistoricalNormalizedBar) for item in records):
         raise ValueError("Historical materialization requires a normalized owner")
     return tuple(item for item in records if isinstance(item, HistoricalNormalizedBar))
+
+
+def _historical_bar_key(
+    item: HistoricalNormalizedBar,
+) -> tuple[str, str, datetime, str]:
+    return (item.symbol, item.timeframe.value, item.event_end, str(item.bar_id))
 
 
 def _source_max_event_time(
@@ -596,10 +1200,10 @@ def _eligibility_observation(
 def _compute_features(
     *,
     owner: HistoricalDataOwner,
+    bars: tuple[HistoricalNormalizedBar, ...],
     stock_symbols: tuple[str, ...],
     decision_time: datetime,
 ) -> tuple[TechnicalFeatureComputation, ...]:
-    bars = _normalized_bars(owner)
     feature_set = canonical_technical_feature_set(
         effective_from=datetime(1990, 1, 1, tzinfo=UTC)
     )
@@ -664,6 +1268,7 @@ def _canonical_bars(
     *,
     asset_type: AssetType,
     initial_previous_close: Decimal | None = None,
+    assume_normal_price_limit: bool = False,
 ) -> tuple[CanonicalMarketBar, ...]:
     previous = initial_previous_close
     result: list[CanonicalMarketBar] = []
@@ -694,9 +1299,16 @@ def _canonical_bars(
             trading_status=(
                 TradingStatus.TRADING
                 if item.trading_status is HistoricalTradingStatus.TRADING
+                else TradingStatus.SUSPENDED
+                if item.trading_status is HistoricalTradingStatus.SUSPENDED
                 else TradingStatus.UNKNOWN
             ),
-            price_limit_state=PriceLimitState.UNKNOWN,
+            price_limit_state=(
+                PriceLimitState.NORMAL
+                if assume_normal_price_limit
+                and item.trading_status is HistoricalTradingStatus.TRADING
+                else PriceLimitState.UNKNOWN
+            ),
             source_artifact_id=item.bar_id,
             source_content_hash=item.content_hash,
         )
@@ -771,6 +1383,7 @@ def _feature_float(
 def _build_context(
     *,
     owner: HistoricalDataOwner,
+    bars: tuple[HistoricalNormalizedBar, ...],
     stock_symbols: tuple[str, ...],
     context_symbols: tuple[str, ...],
     decision_time: datetime,
@@ -778,7 +1391,6 @@ def _build_context(
     source_reference: ValidationArtifactReference,
     computations: tuple[TechnicalFeatureComputation, ...],
 ) -> _HistoricalResearchContext:
-    bars = _normalized_bars(owner)
     retrieved_at = max(item.retrieved_at for item in bars)
     source_manifest = SourceManifest(
         provider_profile_id=f"{owner.provider_id}-historical-retrospective",
@@ -819,9 +1431,11 @@ def _build_context(
         source_id=owner.owner_id,
     )
     theme = _theme_observation(
+        bars=bars,
         stock_series=stock_series,
         benchmark=benchmark,
         etf_symbol=etf_symbol,
+        decision_time=decision_time,
         retrieved_at=retrieved_at,
         source_id=owner.owner_id,
     )
@@ -830,15 +1444,24 @@ def _build_context(
             symbol=symbol,
             series=stock_series[symbol],
             all_series=stock_series,
+            bars=bars,
+            decision_time=decision_time,
             computations=computations,
             retrieved_at=retrieved_at,
             source_id=owner.owner_id,
         )
         for symbol in stock_symbols
     )
+    etf_amount_expansion = (
+        None
+        if etf_symbol is None
+        else _symbol_same_cutoff_amount_change(bars, etf_symbol, decision_time)
+    )
     etfs = (
         ()
-        if etf_symbol is None or len(benchmark) < 6
+        if etf_symbol is None
+        or len(benchmark) < 6
+        or etf_amount_expansion is None
         else (
             ETFObservation(
                 etf_id=etf_symbol,
@@ -846,7 +1469,7 @@ def _build_context(
                 available_at=AvailabilityTime(retrieved_at),
                 source_artifact_id=owner.owner_id,
                 relative_strength=_return(benchmark, 5) or 0.0,
-                amount_expansion=_amount_expansion(benchmark) or 0.0,
+                amount_expansion=etf_amount_expansion,
             ),
         )
     )
@@ -938,7 +1561,9 @@ def _market_observation(
             intraday_returns.append(float(minutes[-1].close / prior - Decimal("1")))
             if highs and lows:
                 ranges.append((max(highs) - min(lows)) / float(prior))
-    amount_change = _amount_expansion(benchmark)
+    amount_change = _same_cutoff_amount_change(
+        bars, stock_symbols, decision_time
+    )
     coverage = len(intraday_returns) / len(stock_symbols) if stock_symbols else 0.0
     return MarketObservation(
         available_at=AvailabilityTime(retrieved_at),
@@ -963,15 +1588,28 @@ def _market_observation(
             else None
         ),
         coverage=coverage,
-        reason_codes=("RETROSPECTIVE_CROSS_SECTIONAL_MARKET_CONTEXT",),
+        reason_codes=tuple(
+            sorted(
+                {
+                    "RETROSPECTIVE_CROSS_SECTIONAL_MARKET_CONTEXT",
+                    (
+                        "SAME_CUTOFF_MINUTE_AMOUNT_AVAILABLE"
+                        if amount_change is not None
+                        else "SAME_CUTOFF_MINUTE_AMOUNT_NOT_ESTIMABLE"
+                    ),
+                }
+            )
+        ),
     )
 
 
 def _theme_observation(
     *,
+    bars: tuple[HistoricalNormalizedBar, ...],
     stock_series: Mapping[str, tuple[HistoricalNormalizedBar, ...]],
     benchmark: tuple[HistoricalNormalizedBar, ...],
     etf_symbol: str | None,
+    decision_time: datetime,
     retrieved_at: datetime,
     source_id: ArtifactId,
 ) -> ThemeResearchObservation | None:
@@ -989,7 +1627,14 @@ def _theme_observation(
     }
     return5 = tuple(_return(series, 5) or 0.0 for series in eligible)
     amount_values = tuple(
-        value for series in eligible if (value := _amount_expansion(series)) is not None
+        value
+        for symbol in stock_series
+        if (
+            value := _symbol_same_cutoff_amount_change(
+                bars, symbol, decision_time
+            )
+        )
+        is not None
     )
     latest_amounts = sorted(
         (float(series[-1].amount or Decimal("0")) for series in eligible), reverse=True
@@ -1008,7 +1653,13 @@ def _theme_observation(
         relative_strength_5d=relative[5],
         relative_strength_10d=relative[10],
         amount_expansion=fmean(amount_values) if amount_values else None,
-        etf_amount_expansion=_amount_expansion(benchmark),
+        etf_amount_expansion=(
+            None
+            if etf_symbol is None
+            else _symbol_same_cutoff_amount_change(
+                bars, etf_symbol, decision_time
+            )
+        ),
         breadth=breadth,
         new_high_breadth=sum(
             float(series[-1].close or 0) >= max(float(item.close or 0) for item in series[-21:-1])
@@ -1016,8 +1667,12 @@ def _theme_observation(
         )
         / len(eligible),
         leader_strength=max(return5) - (benchmark_returns[5] or 0.0),
-        participation_change=breadth - 0.5,
-        rank_persistence=0.5,
+        participation_change=(
+            breadth
+            - sum((_return(series[:-1], 5) or 0.0) > 0 for series in eligible)
+            / len(eligible)
+        ),
+        rank_persistence=_cross_sectional_rank_persistence(eligible, 5),
         amount_persistence=sum(value > 0 for value in amount_values) / len(amount_values) if amount_values else None,
         capital_concentration=(sum(latest_amounts[:5]) / total_amount if total_amount > 0 else None),
         diffusion_score=breadth,
@@ -1034,6 +1689,8 @@ def _symbol_observation(
     symbol: str,
     series: tuple[HistoricalNormalizedBar, ...],
     all_series: Mapping[str, tuple[HistoricalNormalizedBar, ...]],
+    bars: tuple[HistoricalNormalizedBar, ...],
+    decision_time: datetime,
     computations: tuple[TechnicalFeatureComputation, ...],
     retrieved_at: datetime,
     source_id: ArtifactId,
@@ -1042,8 +1699,22 @@ def _symbol_observation(
         value for item in all_series.values() if (value := _return(item, 5)) is not None
     )
     symbol_return = _return(series, 5)
-    amount = _amount_expansion(series)
+    amount = _symbol_same_cutoff_amount_change(bars, symbol, decision_time)
     complete = len(series) >= 61
+    leader_series = max(
+        all_series.values(),
+        key=lambda item: _return(item, 5) or float("-inf"),
+        default=(),
+    )
+    symbol_returns = _daily_returns(series, 21)
+    leader_returns = _daily_returns(leader_series, 21)
+    current_ranks = _cross_sectional_percentile_ranks(all_series, offset=0)
+    previous_ranks = _cross_sectional_percentile_ranks(all_series, offset=1)
+    amount_history = tuple(
+        value
+        for end in range(max(6, len(series) - 4), len(series) + 1)
+        if (value := _amount_expansion(series[:end])) is not None
+    )
     return SymbolResearchObservation(
         symbol=symbol,
         available_at=AvailabilityTime(retrieved_at),
@@ -1057,10 +1728,26 @@ def _symbol_observation(
         theme_participation_contribution=(
             None if amount is None else amount / max(1, len(all_series))
         ),
-        leader_correlation=0.0 if complete else None,
-        leader_lag=0.0 if complete else None,
-        rank_persistence=0.5 if complete else None,
-        amount_persistence=(1.0 if amount is not None and amount > 0 else 0.0) if complete else None,
+        leader_correlation=(
+            _correlation(symbol_returns, leader_returns) if complete else None
+        ),
+        leader_lag=(
+            _correlation(symbol_returns[1:], leader_returns[:-1])
+            if complete
+            else None
+        ),
+        rank_persistence=(
+            None
+            if not complete
+            or symbol not in current_ranks
+            or symbol not in previous_ranks
+            else 1.0 - abs(current_ranks[symbol] - previous_ranks[symbol])
+        ),
+        amount_persistence=(
+            None
+            if not complete or not amount_history
+            else sum(item > 0 for item in amount_history) / len(amount_history)
+        ),
         liquidity_eligible=bool(series and series[-1].amount is not None),
         history_complete=complete,
         status_known=bool(series and series[-1].trading_status is not HistoricalTradingStatus.UNKNOWN),
@@ -1094,6 +1781,138 @@ def _amount_expansion(series: tuple[HistoricalNormalizedBar, ...]) -> float | No
     return float(series[-1].amount / baseline - Decimal("1"))
 
 
+def _symbol_same_cutoff_amount_change(
+    bars: tuple[HistoricalNormalizedBar, ...],
+    symbol: str,
+    decision_time: datetime,
+) -> float | None:
+    amounts = _same_cutoff_amount_pair(bars, symbol, decision_time)
+    if amounts is None or amounts[1] <= 0:
+        return None
+    return float(amounts[0] / amounts[1] - Decimal("1"))
+
+
+def _same_cutoff_amount_change(
+    bars: tuple[HistoricalNormalizedBar, ...],
+    symbols: tuple[str, ...],
+    decision_time: datetime,
+) -> float | None:
+    pairs = tuple(
+        pair
+        for symbol in symbols
+        if (pair := _same_cutoff_amount_pair(bars, symbol, decision_time))
+        is not None
+    )
+    if not pairs:
+        return None
+    current = sum((item[0] for item in pairs), Decimal("0"))
+    previous = sum((item[1] for item in pairs), Decimal("0"))
+    return None if previous <= 0 else float(current / previous - Decimal("1"))
+
+
+def _same_cutoff_amount_pair(
+    bars: tuple[HistoricalNormalizedBar, ...],
+    symbol: str,
+    decision_time: datetime,
+) -> tuple[Decimal, Decimal] | None:
+    zone = ZoneInfo("Asia/Shanghai")
+    market_date = decision_time.astimezone(zone).date()
+    cutoff = decision_time.astimezone(zone).time().replace(tzinfo=None)
+    dates = sorted(
+        {
+            item.market_date
+            for item in bars
+            if item.symbol == symbol
+            and item.timeframe is Timeframe.MINUTE_5
+            and item.market_date <= market_date
+        }
+    )
+    if market_date not in dates:
+        return None
+    prior_dates = tuple(item for item in dates if item < market_date)
+    if not prior_dates:
+        return None
+    previous_date = prior_dates[-1]
+
+    def amount_for(target_date: date) -> Decimal | None:
+        values = tuple(
+            item.amount
+            for item in bars
+            if item.symbol == symbol
+            and item.timeframe is Timeframe.MINUTE_5
+            and item.market_date == target_date
+            and item.event_end.astimezone(zone).time().replace(tzinfo=None) <= cutoff
+            and item.amount is not None
+        )
+        return None if not values else sum(values, Decimal("0"))
+
+    current = amount_for(market_date)
+    previous = amount_for(previous_date)
+    return None if current is None or previous is None else (current, previous)
+
+
+def _daily_returns(
+    series: tuple[HistoricalNormalizedBar, ...], maximum: int
+) -> tuple[float, ...]:
+    values = tuple(item.close for item in series if item.close is not None)
+    return tuple(
+        float(current / previous - Decimal("1"))
+        for previous, current in zip(values[-maximum - 1 : -1], values[-maximum:], strict=False)
+        if previous > 0
+    )
+
+
+def _cross_sectional_percentile_ranks(
+    series_by_symbol: Mapping[str, tuple[HistoricalNormalizedBar, ...]],
+    *,
+    offset: int,
+    window: int = 5,
+) -> dict[str, float]:
+    values = {
+        symbol: value
+        for symbol, series in series_by_symbol.items()
+        if len(series) > offset
+        and (value := _return(series[:-offset] if offset else series, window))
+        is not None
+    }
+    ordered = sorted(values, key=lambda symbol: (values[symbol], symbol))
+    denominator = max(1, len(ordered) - 1)
+    return {
+        symbol: index / denominator for index, symbol in enumerate(ordered)
+    }
+
+
+def _cross_sectional_rank_persistence(
+    series: tuple[tuple[HistoricalNormalizedBar, ...], ...], window: int
+) -> float | None:
+    by_symbol = {item[-1].symbol: item for item in series if item}
+    current = _cross_sectional_percentile_ranks(by_symbol, offset=0, window=window)
+    previous = _cross_sectional_percentile_ranks(by_symbol, offset=1, window=window)
+    symbols = tuple(sorted(set(current) & set(previous)))
+    if len(symbols) < 2:
+        return None
+    return _correlation(
+        tuple(current[symbol] for symbol in symbols),
+        tuple(previous[symbol] for symbol in symbols),
+    )
+
+
+def _correlation(left: tuple[float, ...], right: tuple[float, ...]) -> float | None:
+    if len(left) < 2 or len(left) != len(right):
+        return None
+    left_mean = fmean(left)
+    right_mean = fmean(right)
+    numerator = sum(
+        (x - left_mean) * (y - right_mean)
+        for x, y in zip(left, right, strict=True)
+    )
+    denominator = sqrt(
+        sum((item - left_mean) ** 2 for item in left)
+        * sum((item - right_mean) ** 2 for item in right)
+    )
+    return None if denominator == 0 else numerator / denominator
+
+
 def _is_etf_symbol(symbol: str) -> bool:
     return symbol.startswith(("510", "511", "512", "513", "515", "516", "518", "159", "588"))
 
@@ -1119,6 +1938,530 @@ def _signal_configuration(decision_time: datetime) -> SignalModelConfig:
         scoring_method="EQUAL_CONFIRMATION_MEAN_V1",
         schema_version=SIGNAL_MODEL_CONFIG_SCHEMA,
     )
+
+
+def _forecast_configuration(decision_time: datetime) -> PathForecastConfig:
+    target = build_entry_path_target_contract(
+        EntryBarrierSpec(
+            upper_return=0.02,
+            lower_return=-0.01,
+            horizon_sessions=1,
+            price_adjustment_basis="RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+        )
+    )
+    return PathForecastConfig(
+        profile_id="phase-e-retrospective-path-forecast-v1",
+        model_id=ModelId("empirical-path-forecast-v1"),
+        model_version="1.0.0-exploratory-pit-incomplete",
+        decision_profile_id="phase-e-historical-decision-v1",
+        decision_time_local=decision_time.astimezone(
+            ZoneInfo("Asia/Shanghai")
+        ).strftime("%H:%M"),
+        timezone_name="Asia/Shanghai",
+        market_scope="A_SHARE",
+        allowed_side="LONG_ONLY",
+        target_contract=target,
+        horizon_label="T_PLUS_ONE_TO_1030",
+        return_quantile_levels=(0.25, 0.5, 0.75),
+        minimum_usable_samples=20,
+        aggregation_method="EMPIRICAL_LINEAR_QUANTILE_MEAN_EXCURSION_V1",
+        schema_version=PATH_FORECAST_CONFIG_SCHEMA,
+    )
+
+
+def _prior_forecast_samples(
+    *,
+    prior_outcomes: tuple[HistoricalSessionComponent, ...],
+    symbol: str,
+    configuration: PathForecastConfig,
+) -> tuple[
+    tuple[PathForecastSample, ...],
+    dict[ArtifactId, datetime],
+    tuple[ValidationArtifactReference, ...],
+]:
+    samples: list[PathForecastSample] = []
+    event_ends: dict[ArtifactId, datetime] = {}
+    sources: list[ValidationArtifactReference] = []
+    for component in prior_outcomes:
+        protocol_payload = component.payload.get("target_protocol")
+        if not isinstance(protocol_payload, Mapping):
+            raise ValueError("Historical Outcome Target Protocol payload is missing")
+        protocol = OutcomeTargetProtocol.from_canonical_dict(protocol_payload)
+        target = next(
+            item
+            for item in protocol.targets
+            if item.checkpoint is OutcomeCheckpoint.TIME_1030
+        )
+        matching = tuple(
+            TargetOutcomeLabel.from_canonical_dict(item)
+            for item in _objects(component.payload.get("labels"), "outcome labels")
+            if str(item.get("symbol")) == symbol
+            and isinstance(item.get("target"), Mapping)
+            and str(item["target"].get("artifact_id")) == str(target.target_id)
+        )
+        if not matching:
+            continue
+        if len(matching) != 1:
+            raise ValueError("Historical Outcome label identity is ambiguous")
+        label = matching[0]
+        usable = all(
+            item is not None
+            for item in (label.checkpoint_return, label.mfe, label.mae)
+        )
+        sample_identity = canonical_hash(
+            {
+                "outcome_component_id": str(component.component_id),
+                "outcome_component_hash": component.component_hash,
+                "label_id": str(label.label_id),
+                "forecast_target_id": str(configuration.target_contract.target_id),
+            }
+        )
+        sample = PathForecastSample(
+            sample_id=ArtifactId(f"historical-path-sample-{sample_identity[7:31]}"),
+            source_artifact_id=component.component_id,
+            source_content_hash=component.component_hash,
+            symbol=symbol,
+            target_id=TargetId(str(configuration.target_contract.target_id)),
+            sample_decision_time=DecisionTime(label.label_interval_start),
+            available_at=AvailabilityTime(label.outcome_available_at),
+            observation_status=(
+                EntryPathObservationStatus.AVAILABLE
+                if usable
+                else EntryPathObservationStatus.NOT_YET_OBSERVED
+            ),
+            observation_reason_code=(
+                EntryPathReasonCode.OUTCOME_RESOLVED
+                if usable
+                else EntryPathReasonCode.EVIDENCE_COVERAGE_NOT_COMPLETE
+            ),
+            realized_mfe=(
+                None if label.mfe is None else max(0.0, float(label.mfe))
+            ),
+            realized_mae=(
+                None if label.mae is None else min(0.0, float(label.mae))
+            ),
+            realized_return=(
+                None
+                if label.checkpoint_return is None
+                else float(label.checkpoint_return)
+            ),
+            schema_version=PATH_FORECAST_SAMPLE_SCHEMA,
+        )
+        samples.append(sample)
+        event_ends[sample.sample_id] = label.label_interval_end
+        sources.append(component.reference)
+    ordered = tuple(
+        sorted(
+            samples,
+            key=lambda item: (item.sample_decision_time.value, str(item.sample_id)),
+        )
+    )
+    return ordered, event_ends, _references(tuple(sources))
+
+
+def _strategy_policy(
+    target: TargetDefinition, created_at: datetime
+) -> StrategyEconomicsPolicy:
+    return StrategyEconomicsPolicy.create(
+        policy_version=f"phase-e-{target.checkpoint.value}-engineering-cost-v1",
+        prediction_target=target,
+        entry_kind=StrategyEntryKind.FROZEN_DECISION_REFERENCE,
+        exit_kind=StrategyExitKind.FIXED_TIME,
+        fixed_exit_checkpoint=target.checkpoint,
+        barrier_id=None,
+        forecast_raw_score_threshold=None,
+        lot_size=100,
+        t_plus_one=True,
+        parameters={
+            "commission_bps": (
+                Decimal("3"),
+                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+            ),
+            "stamp_duty_bps": (
+                Decimal("5"),
+                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+            ),
+            "spread_slippage_bps": (
+                Decimal("5"),
+                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+            ),
+        },
+        created_at=created_at,
+    )
+
+
+def _capacity_protocol(created_at: datetime) -> LiquidityCapacityProtocol:
+    return LiquidityCapacityProtocol.create(
+        protocol_version="phase-e-capacity-engineering-v1",
+        parameters=tuple(
+            CapacityParameter(
+                name,
+                value,
+                CapacityValueProvenance.ENGINEERING_ASSUMPTION,
+            )
+            for name, value in (
+                ("impact_coefficient_bps", Decimal("8")),
+                ("participation_rate", Decimal("0.1")),
+                ("slippage_bps", Decimal("5")),
+            )
+        ),
+        created_at=created_at,
+    )
+
+
+def _canonical_outcome_bars(
+    bars: tuple[HistoricalNormalizedBar, ...], next_session: date
+) -> tuple[CanonicalMarketBar, ...]:
+    result: list[CanonicalMarketBar] = []
+    symbols = sorted(
+        {item.symbol for item in bars if item.market_date == next_session}
+    )
+    for symbol in symbols:
+        rows = tuple(
+            sorted(
+                (
+                    item
+                    for item in bars
+                    if item.symbol == symbol
+                    and item.market_date == next_session
+                    and item.open is not None
+                ),
+                key=lambda item: (item.timeframe.value, item.event_start),
+            )
+        )
+        result.extend(
+            _canonical_bars(
+                rows,
+                asset_type=(
+                    AssetType.ETF if _is_etf_symbol(symbol) else AssetType.A_SHARE
+                ),
+            )
+        )
+    return tuple(sorted(result, key=lambda item: (item.symbol, item.event_start)))
+
+
+def _decision_reference_price(
+    bars: tuple[HistoricalNormalizedBar, ...],
+    symbol: str,
+    trading_date: date,
+    decision_time: datetime,
+) -> Decimal | None:
+    intraday = tuple(
+        item
+        for item in bars
+        if item.symbol == symbol
+        and item.market_date == trading_date
+        and item.timeframe is Timeframe.MINUTE_5
+        and item.event_end <= decision_time
+        and item.close is not None
+    )
+    if intraday:
+        return intraday[-1].close
+    daily = tuple(
+        item
+        for item in bars
+        if item.symbol == symbol
+        and item.timeframe is Timeframe.DAILY
+        and item.event_end <= decision_time
+        and item.close is not None
+    )
+    return None if not daily else daily[-1].close
+
+
+def _market_conditions(
+    bars: tuple[HistoricalNormalizedBar, ...], symbol: str, market_date: date
+) -> tuple[OutcomeMarketCondition, ...]:
+    selected = tuple(
+        item
+        for item in bars
+        if item.symbol == symbol and item.market_date == market_date
+    )
+    if not selected:
+        return (OutcomeMarketCondition.MISSING_QUOTE,)
+    if any(
+        item.trading_status is HistoricalTradingStatus.SUSPENDED
+        for item in selected
+    ):
+        return (OutcomeMarketCondition.SUSPENDED,)
+    conditions = {OutcomeMarketCondition.TRADING}
+    daily = next(
+        (item for item in selected if item.timeframe is Timeframe.DAILY), None
+    )
+    prior = tuple(
+        item
+        for item in bars
+        if item.symbol == symbol
+        and item.timeframe is Timeframe.DAILY
+        and item.market_date < market_date
+        and item.close is not None
+    )
+    if daily is not None and daily.open is not None and prior:
+        previous_close = prior[-1].close
+        assert previous_close is not None
+        threshold = (
+            Decimal("0.05")
+            if daily.st_status
+            else Decimal("0.20")
+            if symbol.startswith(("300", "301", "688"))
+            else Decimal("0.30")
+            if symbol.startswith(("4", "8"))
+            else Decimal("0.10")
+        )
+        tolerance = Decimal("0.001")
+        change = daily.open / previous_close - Decimal("1")
+        if change >= threshold - tolerance:
+            conditions.add(OutcomeMarketCondition.LIMIT_UP)
+        if change <= -threshold + tolerance:
+            conditions.add(OutcomeMarketCondition.LIMIT_DOWN)
+    return tuple(sorted(conditions, key=lambda item: item.value))
+
+
+def _execution_observation(
+    *,
+    phase: StrategyExecutionPhase,
+    symbol: str,
+    price: Decimal | None,
+    market_conditions: tuple[OutcomeMarketCondition, ...],
+    effective_at: datetime,
+    available_at: datetime,
+    source_reference: ValidationArtifactReference,
+) -> StrategyExecutionObservation:
+    return StrategyExecutionObservation(
+        phase=phase,
+        symbol=symbol,
+        price=price,
+        market_conditions=tuple(
+            sorted(set(market_conditions), key=lambda item: item.value)
+        ),
+        effective_at=effective_at,
+        available_at=available_at,
+        source_reference=source_reference,
+    )
+
+
+def _complete_stage(
+    *,
+    request: ResearchDecisionSessionRequest,
+    inputs: tuple[ValidationArtifactReference, ...],
+    output: ValidationArtifactReference,
+    reason: str,
+) -> SessionStageComputation:
+    return SessionStageComputation(
+        status=SessionStageStatus.COMPLETE,
+        output_references=(output,),
+        input_references=_references(inputs),
+        completed_at=request.materialized_at,
+        reason_codes=(reason,),
+    )
+
+
+def _research_panel_rows(
+    *,
+    trading_date: date,
+    feature: HistoricalSessionComponent,
+    market: HistoricalSessionComponent,
+    etf: HistoricalSessionComponent,
+    theme: HistoricalSessionComponent,
+    capital: HistoricalSessionComponent,
+    pool: HistoricalSessionComponent,
+    candidate: HistoricalSessionComponent,
+    signal: HistoricalSessionComponent,
+    forecast: HistoricalSessionComponent,
+    outcome: HistoricalSessionComponent,
+) -> tuple[dict[str, Any], ...]:
+    feature_values = _panel_feature_values(feature)
+    signal_by_symbol = {
+        str(item["symbol"]): item
+        for item in _objects(signal.payload.get("snapshots"), "signal snapshots")
+    }
+    forecast_by_symbol = {
+        str(_mapping(item.get("forecast"), "forecast")["symbol"]): _mapping(
+            item.get("forecast"), "forecast"
+        )
+        for item in _objects(forecast.payload.get("forecasts"), "forecasts")
+    }
+    protocol = OutcomeTargetProtocol.from_canonical_dict(
+        _mapping(outcome.payload.get("target_protocol"), "target protocol")
+    )
+    target = next(
+        item
+        for item in protocol.targets
+        if item.checkpoint is OutcomeCheckpoint.TIME_1030
+    )
+    labels = {
+        label.symbol: label
+        for label in (
+            TargetOutcomeLabel.from_canonical_dict(item)
+            for item in _objects(outcome.payload.get("labels"), "outcome labels")
+        )
+        if label.target.artifact_id == target.target_id
+    }
+    economics = {
+        str(item["symbol"]): item
+        for item in _objects(
+            outcome.payload.get("strategy_economics"), "strategy economics"
+        )
+        if isinstance(item.get("target_label_reference"), Mapping)
+        and str(item["target_label_reference"].get("artifact_id"))
+        in {str(label.label_id) for label in labels.values()}
+    }
+    market_state = str(market.payload.get("market_state", "DATA_INSUFFICIENT"))
+    volatility = str(market.payload.get("market_volatility", "UNKNOWN"))
+    etf_observations = _objects(etf.payload.get("observations"), "ETF observations")
+    etf_score = (
+        None
+        if not etf_observations
+        else (
+            Decimal(str(etf_observations[0].get("relative_strength", 0)))
+            + Decimal(str(etf_observations[0].get("amount_expansion", 0)))
+        )
+        / Decimal("2")
+    )
+    pool_membership = {
+        str(item["symbol"]): bool(item["included"])
+        for item in _objects(pool.payload.get("membership"), "pool membership")
+    }
+    records = _objects(candidate.payload.get("records"), "candidate records")
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        symbol = str(record["symbol"])
+        label = labels.get(symbol)
+        result = economics.get(symbol)
+        values = feature_values.get(symbol, {})
+        forecast_payload = forecast_by_symbol.get(symbol)
+        median_forecast = _forecast_median(forecast_payload)
+        capacity = None if result is None else _optional_decimal(result.get("capacity_ceiling"))
+        rows.append(
+            {
+                "session_key": trading_date.isoformat(),
+                "trading_date": trading_date.isoformat(),
+                "symbol": symbol,
+                "selected": record.get("selection_status") == "SELECTED",
+                "candidate_rank": record.get("rank"),
+                "score": _decimal_string(record.get("candidate_discovery_score")),
+                "factor_values": {
+                    "price": _decimal_string(values.get("return_3")),
+                    "volume": _decimal_string(values.get("amount_ratio_5")),
+                    "market_regime": _decimal_string(
+                        record.get("market_regime_score")
+                    ),
+                    "etf": _decimal_string(etf_score),
+                    "theme": _decimal_string(record.get("theme_score")),
+                    "capital": _decimal_string(
+                        record.get("capital_evolution_score")
+                    ),
+                    "dynamic_pool": (
+                        "1" if pool_membership.get(symbol, False) else "0"
+                    ),
+                    "candidate": _decimal_string(
+                        record.get("candidate_discovery_score")
+                    ),
+                    "signal": _decimal_string(
+                        None
+                        if symbol not in signal_by_symbol
+                        else signal_by_symbol[symbol].get("signal_score")
+                    ),
+                    "forecast": _decimal_string(median_forecast),
+                },
+                "target_return": (
+                    None
+                    if label is None
+                    else _decimal_string(label.checkpoint_return)
+                ),
+                "mfe": None if label is None else _decimal_string(label.mfe),
+                "mae": None if label is None else _decimal_string(label.mae),
+                "gross_return": (
+                    None if result is None else result.get("gross_return")
+                ),
+                "cost_return": (
+                    None if result is None else result.get("cost_return")
+                ),
+                "net_return": (
+                    None if result is None else result.get("net_return")
+                ),
+                "economics_status": (
+                    "NOT_ESTIMABLE" if result is None else str(result["status"])
+                ),
+                "capacity_ceiling": (
+                    None if capacity is None else str(capacity)
+                ),
+                "market_regime": market_state,
+                "liquidity_bucket": _liquidity_bucket(capacity),
+                "market_cap_bucket": "NOT_ESTIMABLE",
+                "volatility_bucket": volatility,
+                "theme": str(record.get("primary_theme_id") or "NOT_ESTIMABLE"),
+                "industry": "NOT_ESTIMABLE",
+                "evidence_ceiling": "EXPLORATORY_PIT_INCOMPLETE",
+                "theme_owner_status": str(theme.payload.get("rotation_state", "UNKNOWN")),
+                "capital_owner_status": str(capital.payload.get("capital_state", "UNKNOWN")),
+            }
+        )
+    return tuple(rows)
+
+
+def _panel_feature_values(
+    feature: HistoricalSessionComponent,
+) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for computation in _objects(feature.payload.get("features"), "features"):
+        symbol_values = result.setdefault(str(computation["symbol"]), {})
+        for value in _objects(computation.get("values"), "feature values"):
+            if value.get("state") == "AVAILABLE":
+                symbol_values[str(value["output_id"])] = value.get("value")
+    return result
+
+
+def _forecast_median(payload: Mapping[str, Any] | None) -> object:
+    if payload is None:
+        return None
+    quantiles = _objects(payload.get("return_quantiles"), "return quantiles")
+    return next(
+        (
+            item.get("return_value")
+            for item in quantiles
+            if float(item.get("probability", -1)) == 0.5
+        ),
+        None,
+    )
+
+
+def _liquidity_bucket(capacity: Decimal | None) -> str:
+    if capacity is None:
+        return "NOT_ESTIMABLE"
+    if capacity < Decimal("100000"):
+        return "LOW"
+    if capacity < Decimal("1000000"):
+        return "MEDIUM"
+    return "HIGH"
+
+
+def _mean_decimal_text(values: Any) -> str | None:
+    numbers = tuple(
+        Decimal(str(item)) for item in values if item is not None
+    )
+    return None if not numbers else str(sum(numbers, Decimal("0")) / len(numbers))
+
+
+def _decimal_string(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(Decimal(str(value)))
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
+
+
+def _mapping(value: object, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"Historical {label} must be an object")
+    return value
+
+
+def _objects(value: object, label: str) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, list) or any(not isinstance(item, Mapping) for item in value):
+        raise ValueError(f"Historical {label} must be an object array")
+    return tuple(value)
 
 
 def _ref_key(item: ValidationArtifactReference) -> tuple[str, str, str]:

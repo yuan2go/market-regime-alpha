@@ -19,6 +19,7 @@ from market_regime_alpha.forecasting import (
     PathForecastSample,
     PathForecastStatus,
     build_path_forecast,
+    build_retrospective_path_forecast,
     load_verified_path_forecast,
     publish_path_forecast,
     replay_path_forecast,
@@ -178,6 +179,44 @@ def test_path_forecast_rejects_temporal_leakage() -> None:
 
     with pytest.raises(ValueError, match="AvailabilityTime exceeds DecisionTime"):
         _build((late,), minimum=1)
+
+
+def test_retrospective_forecast_uses_event_time_without_faking_availability() -> None:
+    retrieved_later = _sample(
+        1,
+        available_at=AvailabilityTime(DECISION.value + timedelta(days=30)),
+    )
+    artifact = build_retrospective_path_forecast(
+        signal_snapshot=_signal(),
+        configuration=_config(minimum=1),
+        samples=(retrieved_later,),
+        sample_event_ends={
+            retrieved_later.sample_id: DECISION.value - timedelta(days=1)
+        },
+        decision_time=DECISION,
+        created_at=CREATED,
+        code_revision="test-revision",
+    )
+
+    assert artifact.samples[0].available_at.value > DECISION.value
+    assert artifact.forecast.forecast_status is PathForecastStatus.AVAILABLE_FOR_RESEARCH
+    assert "RETROSPECTIVE_EVENT_TIME" in artifact.forecast.reason_codes
+    assert "PIT_INCOMPLETE" in artifact.forecast.envelope.limitations
+
+
+def test_retrospective_forecast_rejects_future_outcome_event() -> None:
+    sample = _sample(1)
+
+    with pytest.raises(ValueError, match="leaks a future outcome"):
+        build_retrospective_path_forecast(
+            signal_snapshot=_signal(),
+            configuration=_config(minimum=1),
+            samples=(sample,),
+            sample_event_ends={sample.sample_id: DECISION.value + timedelta(minutes=1)},
+            decision_time=DECISION,
+            created_at=CREATED,
+            code_revision="test-revision",
+        )
 
 
 def test_dual_touch_and_missing_future_bar_fail_closed() -> None:

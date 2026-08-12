@@ -17,6 +17,16 @@ from market_regime_alpha.application.historical_corpus.decision_materializer imp
     FREE_RESEARCH_UNIVERSE_KIND,
     HistoricalDecisionMaterializer,
 )
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+    ResearchFinding,
+)
+from market_regime_alpha.application.historical_corpus.evidence_producer import (
+    HistoricalEvidenceProducer,
+)
+from market_regime_alpha.application.historical_corpus.postgres_evidence import (
+    PostgresHistoricalEvidenceRepository,
+)
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
 )
@@ -35,6 +45,12 @@ from market_regime_alpha.application.historical_research.postgres_session_owner 
 )
 from market_regime_alpha.application.historical_research.runner import (
     HistoricalResearchRunner,
+)
+from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
+    PostgresTargetOutcomeRepository,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    exploratory_five_minute_multi_horizon_protocol,
 )
 from market_regime_alpha.application.research_session.contracts import (
     DataAuthorityMode,
@@ -100,6 +116,11 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     universe = universe_repository.publish(_universe())
     scope_repository = PostgresRuntimeScopeRepository(postgres_factory)
     policy = scope_repository.register_policy(_policy())
+    target_repository = PostgresTargetOutcomeRepository(postgres_factory)
+    target_protocol = target_repository.register_protocol(
+        exploratory_five_minute_multi_horizon_protocol(),
+        recorded_at=MATERIALIZED_AT,
+    )
     command = _command(
         normalized.reference,
         ValidationArtifactReference(
@@ -109,6 +130,11 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         ),
         policy.policy_id,
         policy.policy_hash,
+        ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            target_protocol.protocol_id,
+            target_protocol.protocol_hash,
+        ),
     )
     journal = PostgresHistoricalResearchJournal(
         postgres_factory,
@@ -123,6 +149,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         component_repository=component_repository,
         universe_repository=universe_repository,
         scope_repository=scope_repository,
+        target_repository=target_repository,
     )
     runner = HistoricalResearchRunner(
         journal=journal,
@@ -163,12 +190,71 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         if item.artifact_kind == "HISTORICAL_SIGNAL"
     )
     signal = component_repository.get(signal_reference)
-    assert signal.payload["selected_candidate_count"] >= 5
-    assert signal.payload["signal_count"] >= 5
-    assert resumed.status is HistoricalRunStatus.COMPLETE_WITH_BLOCKS
-    assert resumed.sessions[0].receipts[-1].stage is ResearchSessionStage.STRATEGY
-    assert resumed.sessions[0].receipts[-1].status is SessionStageStatus.NOT_ESTIMABLE
+    candidate_reference = next(
+        item
+        for item in partial.sessions[0].receipts[-1].output_references
+        if item.artifact_kind == "HISTORICAL_CANDIDATE"
+    )
+    candidate = component_repository.get(candidate_reference)
+    assert len(candidate.payload["records"]) == len(STOCKS)
+    assert signal.payload["signal_count"] == signal.payload["selected_candidate_count"]
+    assert resumed.status is HistoricalRunStatus.COMPLETE
+    assert resumed.sessions[0].receipts[-1].stage is ResearchSessionStage.PERFORMANCE
+    assert resumed.sessions[0].receipts[-1].status is SessionStageStatus.COMPLETE
+    outcome_reference = next(
+        item
+        for item in resumed.sessions[0].receipts[-2].output_references
+        if item.artifact_kind == "HISTORICAL_OUTCOME"
+    )
+    outcome = component_repository.get(outcome_reference)
+    assert outcome.payload["available_label_count"] == len(STOCKS) * 6
+    assert len(outcome.payload["strategy_economics"]) == len(STOCKS) * 6
+    panel_reference = resumed.sessions[0].receipts[-1].output_references[0]
+    panel = component_repository.get(panel_reference)
+    assert panel.payload["row_count"] == len(STOCKS)
+    assert panel.payload["missing_target_count"] == 0
     assert replay.matched is True
+    evidence_repository = PostgresHistoricalEvidenceRepository(postgres_factory)
+    produced = HistoricalEvidenceProducer(
+        journal=journal,
+        corpus_repository=corpus,
+        component_repository=component_repository,
+        evidence_repository=evidence_repository,
+    ).produce(run_id=command.run_id)
+    assert produced.observation_count == len(STOCKS)
+    assert {item.evidence_kind for item in produced.evidence} == {
+        HistoricalEvidenceKind.CORPUS_SUMMARY,
+        HistoricalEvidenceKind.ALPHA_ABLATION,
+        HistoricalEvidenceKind.STRATEGY_ECONOMICS,
+        HistoricalEvidenceKind.PORTFOLIO_PERFORMANCE,
+        HistoricalEvidenceKind.EXPLORATORY_MODEL,
+    }
+    ablation = next(
+        item
+        for item in produced.evidence
+        if item.evidence_kind is HistoricalEvidenceKind.ALPHA_ABLATION
+    )
+    assert ablation.classification is ResearchFinding.INCONCLUSIVE
+    model = next(
+        item
+        for item in produced.evidence
+        if item.evidence_kind is HistoricalEvidenceKind.EXPLORATORY_MODEL
+    )
+    assert model.classification is ResearchFinding.NOT_ESTIMABLE
+    assert model.payload["owner_resolved_training_matrix"] is True
+    repeated = HistoricalEvidenceProducer(
+        journal=journal,
+        corpus_repository=corpus,
+        component_repository=component_repository,
+        evidence_repository=evidence_repository,
+    ).produce(run_id=command.run_id)
+    assert repeated.evidence == produced.evidence
+    assert evidence_repository.list_for_run(command.run_id) == tuple(
+        sorted(
+            produced.evidence,
+            key=lambda item: (item.evidence_kind.value, str(item.evidence_id)),
+        )
+    )
 
 
 def _normalized_owner(
@@ -213,6 +299,50 @@ def _normalized_owner(
                 )
             )
         prior_close = price * (Decimal("1.002") ** 69)
+        prior_intraday_date = DECISION_DATE - timedelta(days=1)
+        prior_intraday_starts = tuple(
+            datetime.combine(prior_intraday_date, time(1, 30), tzinfo=UTC)
+            + timedelta(minutes=5 * index)
+            for index in range(24)
+        ) + tuple(
+            datetime.combine(prior_intraday_date, time(5, 0), tzinfo=UTC)
+            + timedelta(minutes=5 * index)
+            for index in range(24)
+        )
+        for minute_index, event_start in enumerate(prior_intraday_starts):
+            close = prior_close * (
+                Decimal("0.995")
+                + Decimal(minute_index + 1) / Decimal("20000")
+            )
+            volume = Decimal(15_000 + symbol_index * 500 + minute_index * 50)
+            records.append(
+                HistoricalNormalizedBar.create(
+                    symbol=symbol,
+                    timeframe=Timeframe.MINUTE_5,
+                    market_date=prior_intraday_date,
+                    event_start=event_start,
+                    event_end=event_start + timedelta(minutes=5),
+                    retrieved_at=MATERIALIZED_AT,
+                    open=close * Decimal("0.9999"),
+                    high=close * Decimal("1.0005"),
+                    low=close * Decimal("0.9995"),
+                    close=close,
+                    volume=volume,
+                    amount=volume * close,
+                    adjustment_basis="RAW_UNADJUSTED",
+                    trading_status=HistoricalTradingStatus.TRADING,
+                    st_status=None,
+                    listing_status=HistoricalListingStatus.UNKNOWN,
+                    raw_request_reference=ValidationArtifactReference(
+                        "RAW_PROVIDER_REQUEST",
+                        ArtifactId(f"raw-request-{symbol_index}"),
+                        canonical_hash({"raw": symbol_index}),
+                    ),
+                    raw_row_number=500 + minute_index,
+                    missing_fields=("listing_status", "st_status"),
+                    limitations=("PIT_INCOMPLETE",),
+                )
+            )
         for minute_index in range(66):
             event_start = datetime.combine(
                 DECISION_DATE,
@@ -245,6 +375,79 @@ def _normalized_owner(
                         canonical_hash({"raw": symbol_index}),
                     ),
                     raw_row_number=1000 + minute_index,
+                    missing_fields=("listing_status", "st_status"),
+                    limitations=("PIT_INCOMPLETE",),
+                )
+            )
+        next_date = DECISION_DATE + timedelta(days=1)
+        next_close = prior_close * Decimal("1.01")
+        next_start = datetime.combine(next_date, time(1, 30), tzinfo=UTC)
+        records.append(
+            HistoricalNormalizedBar.create(
+                symbol=symbol,
+                timeframe=Timeframe.DAILY,
+                market_date=next_date,
+                event_start=next_start,
+                event_end=next_start + timedelta(hours=5, minutes=30),
+                retrieved_at=MATERIALIZED_AT,
+                open=prior_close * Decimal("1.001"),
+                high=prior_close * Decimal("1.02"),
+                low=prior_close * Decimal("0.995"),
+                close=next_close,
+                volume=Decimal("2000000"),
+                amount=Decimal("2000000") * next_close,
+                adjustment_basis="RAW_UNADJUSTED",
+                trading_status=HistoricalTradingStatus.TRADING,
+                st_status=False,
+                listing_status=HistoricalListingStatus.UNKNOWN,
+                raw_request_reference=ValidationArtifactReference(
+                    "RAW_PROVIDER_REQUEST",
+                    ArtifactId(f"raw-request-{symbol_index}"),
+                    canonical_hash({"raw": symbol_index}),
+                ),
+                raw_row_number=2000,
+                missing_fields=("listing_status",),
+                limitations=("PIT_INCOMPLETE",),
+            )
+        )
+        starts = tuple(
+            datetime.combine(next_date, time(1, 30), tzinfo=UTC)
+            + timedelta(minutes=5 * index)
+            for index in range(24)
+        ) + tuple(
+            datetime.combine(next_date, time(5, 0), tzinfo=UTC)
+            + timedelta(minutes=5 * index)
+            for index in range(24)
+        )
+        for minute_index, event_start in enumerate(starts):
+            close = prior_close * (
+                Decimal("1.001")
+                + Decimal(minute_index + 1) / Decimal("10000")
+            )
+            records.append(
+                HistoricalNormalizedBar.create(
+                    symbol=symbol,
+                    timeframe=Timeframe.MINUTE_5,
+                    market_date=next_date,
+                    event_start=event_start,
+                    event_end=event_start + timedelta(minutes=5),
+                    retrieved_at=MATERIALIZED_AT,
+                    open=close * Decimal("0.9999"),
+                    high=close * Decimal("1.0005"),
+                    low=close * Decimal("0.9995"),
+                    close=close,
+                    volume=Decimal("30000"),
+                    amount=Decimal("30000") * close,
+                    adjustment_basis="RAW_UNADJUSTED",
+                    trading_status=HistoricalTradingStatus.TRADING,
+                    st_status=None,
+                    listing_status=HistoricalListingStatus.UNKNOWN,
+                    raw_request_reference=ValidationArtifactReference(
+                        "RAW_PROVIDER_REQUEST",
+                        ArtifactId(f"raw-request-{symbol_index}"),
+                        canonical_hash({"raw": symbol_index}),
+                    ),
+                    raw_row_number=3000 + minute_index,
                     missing_fields=("listing_status", "st_status"),
                     limitations=("PIT_INCOMPLETE",),
                 )
@@ -330,6 +533,7 @@ def _command(
     universe: ValidationArtifactReference,
     policy_id: ArtifactId,
     policy_hash: str,
+    target_protocol: ValidationArtifactReference,
 ) -> HistoricalResearchCommand:
     evidence_hash = canonical_hash({"phase-e": "integration"})
     return HistoricalResearchCommand.create(
@@ -345,11 +549,7 @@ def _command(
         runtime_scope_policy_hash=policy_hash,
         decision_policy_id=ArtifactId("phase-e-decision-policy"),
         decision_policy_hash=evidence_hash,
-        target_protocol_reference=ValidationArtifactReference(
-            "OUTCOME_TARGET_PROTOCOL",
-            ArtifactId("phase-e-target-protocol"),
-            evidence_hash,
-        ),
+        target_protocol_reference=target_protocol,
         experiment_definition_reference=ValidationArtifactReference(
             "RESEARCH_EXPERIMENT_DEFINITION",
             ArtifactId("phase-e-experiment"),

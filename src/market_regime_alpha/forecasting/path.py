@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from math import isfinite
 from statistics import fmean
-from typing import Any, cast
+from typing import Any, Mapping, cast
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.core.identity import ArtifactId, ModelId, TargetId
@@ -378,6 +378,68 @@ def build_path_forecast(
 ) -> PathForecastArtifact:
     """Aggregate only resolved historical samples available by DecisionTime."""
 
+    return _build_path_forecast(
+        signal_snapshot=signal_snapshot,
+        configuration=configuration,
+        samples=samples,
+        decision_time=decision_time,
+        created_at=created_at,
+        code_revision=code_revision,
+        retrospective_event_ends=None,
+    )
+
+
+def build_retrospective_path_forecast(
+    *,
+    signal_snapshot: SignalSnapshotAuthority,
+    configuration: PathForecastConfig,
+    samples: tuple[PathForecastSample, ...],
+    sample_event_ends: Mapping[ArtifactId, datetime],
+    decision_time: DecisionTime,
+    created_at: datetime,
+    code_revision: str,
+) -> PathForecastArtifact:
+    """Replay the canonical aggregation using explicit historical event times.
+
+    Free archives retain their true later retrieval timestamps, so they cannot
+    pass the live AvailabilityTime gate.  This adapter requires an exact event
+    end for every sample and rejects any outcome not complete by DecisionTime.
+    It never upgrades the resulting forecast beyond exploratory PIT-incomplete
+    evidence.
+    """
+
+    if set(sample_event_ends) != {item.sample_id for item in samples}:
+        raise ValueError("Retrospective PathForecast event-end scope mismatch")
+    for sample in samples:
+        event_end = sample_event_ends[sample.sample_id]
+        if event_end.tzinfo is None or event_end.utcoffset() is None:
+            raise ValueError("Retrospective PathForecast event end must be aware")
+        if event_end <= sample.sample_decision_time.value:
+            raise ValueError("Retrospective PathForecast outcome did not follow DecisionTime")
+        if event_end > decision_time.value:
+            raise ValueError("Retrospective PathForecast sample leaks a future outcome")
+    return _build_path_forecast(
+        signal_snapshot=signal_snapshot,
+        configuration=configuration,
+        samples=samples,
+        decision_time=decision_time,
+        created_at=created_at,
+        code_revision=code_revision,
+        retrospective_event_ends=sample_event_ends,
+    )
+
+
+def _build_path_forecast(
+    *,
+    signal_snapshot: SignalSnapshotAuthority,
+    configuration: PathForecastConfig,
+    samples: tuple[PathForecastSample, ...],
+    decision_time: DecisionTime,
+    created_at: datetime,
+    code_revision: str,
+    retrospective_event_ends: Mapping[ArtifactId, datetime] | None,
+) -> PathForecastArtifact:
+
     local = decision_time.value.astimezone(ZoneInfo(configuration.timezone_name))
     if local.strftime("%H:%M") != configuration.decision_time_local:
         raise ValueError("DecisionTime does not match versioned PathForecast profile")
@@ -392,7 +454,10 @@ def build_path_forecast(
             raise ValueError("PathForecast V1 samples must match forecast symbol")
         if sample.sample_decision_time.value >= decision_time.value:
             raise ValueError("PathForecast sample DecisionTime is not historical")
-        if sample.available_at.value > decision_time.value:
+        if (
+            retrospective_event_ends is None
+            and sample.available_at.value > decision_time.value
+        ):
             raise ValueError("PathForecast sample AvailabilityTime exceeds DecisionTime")
     usable = tuple(
         item
@@ -437,6 +502,17 @@ def build_path_forecast(
                 {
                     "PATH_FORECAST_UNCALIBRATED_RESEARCH_ONLY",
                     *(item.observation_reason_code.value for item in excluded),
+                }
+            )
+        )
+    if retrospective_event_ends is not None:
+        reasons = tuple(
+            sorted(
+                {
+                    *reasons,
+                    "FORMAL_OOS_FALSE",
+                    "PIT_INCOMPLETE",
+                    "RETROSPECTIVE_EVENT_TIME",
                 }
             )
         )
@@ -485,9 +561,24 @@ def build_path_forecast(
         status=status.value,
         reason_codes=reasons,
         limitations=(
-            "UNCALIBRATED_NO_PROBABILITY",
-            "RESEARCH_FORECAST_NOT_ENTRY",
-            "NO_TRADING_AUTHORITY",
+            (
+                "UNCALIBRATED_NO_PROBABILITY",
+                "RESEARCH_FORECAST_NOT_ENTRY",
+                "NO_TRADING_AUTHORITY",
+            )
+            if retrospective_event_ends is None
+            else tuple(
+                sorted(
+                    {
+                        "UNCALIBRATED_NO_PROBABILITY",
+                        "RESEARCH_FORECAST_NOT_ENTRY",
+                        "NO_TRADING_AUTHORITY",
+                        "FORMAL_OOS_FALSE",
+                        "PIT_INCOMPLETE",
+                        "RETROSPECTIVE_EVENT_TIME",
+                    }
+                )
+            )
         ),
     )
     return PathForecastArtifact(

@@ -7,8 +7,10 @@ from typing import Any, Mapping
 from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
+    HistoricalComponentKind,
     HistoricalSessionComponent,
 )
+from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -126,6 +128,44 @@ class PostgresHistoricalMaterializationRepository:
                 "Historical component reference kind mismatch"
             )
         return component
+
+    def list_for_run(
+        self,
+        *,
+        run_id: ArtifactId,
+        component_kind: HistoricalComponentKind | None = None,
+    ) -> tuple[HistoricalSessionComponent, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            if component_kind is None:
+                rows = connection.execute(
+                    """
+                    SELECT component_id, component_hash, component_kind
+                    FROM historical_corpus_session_component
+                    WHERE run_id = %s
+                    ORDER BY trading_date, ordinal, component_id
+                    """,
+                    (str(run_id),),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT component_id, component_hash, component_kind
+                    FROM historical_corpus_session_component
+                    WHERE run_id = %s AND component_kind = %s
+                    ORDER BY trading_date, ordinal, component_id
+                    """,
+                    (str(run_id), component_kind.value),
+                ).fetchall()
+        return tuple(
+            self.get(
+                ValidationArtifactReference(
+                    f"HISTORICAL_{str(row[2])}",
+                    ArtifactId(str(row[0])),
+                    str(row[1]),
+                )
+            )
+            for row in rows
+        )
 
     @staticmethod
     def _verify_projection(

@@ -542,6 +542,50 @@ def engineering_multi_horizon_protocol() -> OutcomeTargetProtocol:
     )
 
 
+def exploratory_five_minute_multi_horizon_protocol() -> OutcomeTargetProtocol:
+    """Canonical T+1 checkpoints whose frozen market-data basis is 5m.
+
+    BaoStock does not provide the formal one-minute provider evidence expected
+    by the engineering protocol.  This explicit exploratory protocol prevents
+    a silent timeframe substitution while retaining the same Target/Horizon
+    semantics and raw-only fail-closed label kernel.
+    """
+
+    barriers = (
+        BarrierDefinition("DOWN_1_PERCENT", Decimal("0.01"), "DOWN"),
+        BarrierDefinition("UP_1_PERCENT", Decimal("0.01"), "UP"),
+        BarrierDefinition("UP_2_PERCENT", Decimal("0.02"), "UP"),
+    )
+    targets = tuple(
+        TargetDefinition.create(
+            target_version="phase-e-free-5m-exploratory-v1",
+            canonical_horizon=canonical_target_horizon(
+                checkpoint=checkpoint,
+                barriers=barriers,
+                compute_mfe_mae=True,
+            ),
+            required_market_data=(
+                ("NORMALIZED_DAILY_OPEN",)
+                if checkpoint is OutcomeCheckpoint.OPEN
+                else ("MINUTE_5", "DAILY")
+                if checkpoint is OutcomeCheckpoint.CLOSE
+                else ("MINUTE_5",)
+            ),
+        )
+        for checkpoint in OutcomeCheckpoint
+    )
+    return OutcomeTargetProtocol.create(
+        protocol_version="phase-e-free-5m-exploratory-v1",
+        timezone_name="Asia/Shanghai",
+        session_offset=1,
+        targets=targets,
+        limitations=(
+            "BARRIER_ORDERING_WITHIN_FIVE_MINUTE_BAR_NOT_OBSERVABLE",
+            "FORMAL_OOS_FALSE",
+            "PIT_INCOMPLETE",
+            "RESEARCH_LABELS_ONLY",
+        ),
+    )
 def _protocol_payload(**values: Any) -> dict[str, Any]:
     return {
         "schema": "outcome_target_protocol/v1",
@@ -609,4 +653,5 @@ __all__ = [
     "TradabilityPolicy",
     "canonical_target_horizon",
     "engineering_multi_horizon_protocol",
+    "exploratory_five_minute_multi_horizon_protocol",
 ]

@@ -36,6 +36,7 @@ from .postgres_panel_v2 import (
 from .targeted_outcome import (
     TargetOutcomeLabel,
     TargetedShadowOutcome,
+    build_target_outcome_label_from_bars,
     build_targeted_shadow_outcome,
 )
 from .targets import (
@@ -48,6 +49,7 @@ from .targets import (
     TargetDefinition,
     TradabilityPolicy,
     engineering_multi_horizon_protocol,
+    exploratory_five_minute_multi_horizon_protocol,
 )
 
 __all__ = [
@@ -78,8 +80,10 @@ __all__ = [
     "TargetOutcomeLabel",
     "TargetedShadowOutcome",
     "TradabilityPolicy",
+    "build_target_outcome_label_from_bars",
     "build_targeted_shadow_outcome",
     "engineering_multi_horizon_protocol",
+    "exploratory_five_minute_multi_horizon_protocol",
     "build_evaluation_decision_slice",
     "build_research_panel_slice_v2",
     "load_research_evaluation_dataset",

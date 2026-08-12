@@ -32,6 +32,8 @@ class HistoricalComponentKind(str, Enum):
     CANDIDATE = "CANDIDATE"
     SIGNAL = "SIGNAL"
     FORECAST = "FORECAST"
+    STRATEGY = "STRATEGY"
+    PORTFOLIO = "PORTFOLIO"
     OUTCOME = "OUTCOME"
     RESEARCH_PANEL = "RESEARCH_PANEL"
 

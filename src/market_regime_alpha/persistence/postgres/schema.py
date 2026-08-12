@@ -259,6 +259,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "historical_corpus_session_component",
         "historical_corpus_component_source_binding",
         "historical_research_evidence",
+        "historical_research_evidence_source_binding",
         "historical_research_evidence_metric",
     }
 )
@@ -320,6 +321,7 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
                 "historical_corpus_session_component",
                 "historical_corpus_component_source_binding",
                 "historical_research_evidence",
+                "historical_research_evidence_source_binding",
                 "historical_research_evidence_metric",
             )
         ),
