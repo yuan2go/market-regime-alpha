@@ -7,12 +7,15 @@ from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.application.controlled_operation.evidence_package import (
     ControlledOperationalEvidencePackage,
     load_controlled_operation_package,
+)
+from market_regime_alpha.application.controlled_operation.longitudinal_index import (
+    resolve_artifact_root_locator,
 )
 from market_regime_alpha.application.controlled_operation.outcome_evidence import (
     TradeHorizonDefinition,
@@ -30,6 +33,9 @@ from market_regime_alpha.application.controlled_operation.outcome_source_archive
 )
 from market_regime_alpha.application.controlled_operation.postgres_prospective_outcome import (
     PostgresProspectiveOutcomeRepository,
+)
+from market_regime_alpha.application.controlled_operation.postgres_longitudinal_index import (
+    PostgresLongitudinalOperationalIndex,
 )
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     SettlementSessionStatus,
@@ -85,6 +91,10 @@ from market_regime_alpha.data_sources.a_share_bars import (
 from market_regime_alpha.features.materialization_v2 import (
     load_verified_feature_bundle_v2,
 )
+from market_regime_alpha.features.postgres_materialization_run import (
+    PostgresFeatureMaterializationRunRepository,
+)
+from market_regime_alpha.features.v2_contracts import FeatureMaterializationReceipt
 from market_regime_alpha.features.operational_overlay import (
     load_static_universe_feature_bundle,
 )
@@ -388,6 +398,8 @@ class FreeDataSettlementOperator:
             factory,
             apply_migrations=False,
         )
+        self._longitudinal = PostgresLongitudinalOperationalIndex(factory)
+        self._feature_runs = PostgresFeatureMaterializationRunRepository(factory)
         self._acquisition = acquisition or FreeOutcomeDatasetBuilder(clock=clock)
 
     def settle_day(
@@ -401,6 +413,7 @@ class FreeDataSettlementOperator:
         package, run_root = _resolve_operation_package(
             artifact_root,
             decision.controlled_operation.artifact_id,
+            locator=self._longitudinal,
         )
         candidate_set = self._state.get_runtime_candidate(
             run_id=decision.run_id,
@@ -480,9 +493,13 @@ class FreeDataSettlementOperator:
         static = load_static_universe_feature_bundle(
             _reference_path(package, run_root, "STATIC_FEATURE_BUNDLE")
         )
-        feature_path = _identity_directory(
+        feature_path = _feature_bundle_path(
             run_root / "static-features",
-            static.feature_bundle_id,
+            bundle_id=static.feature_bundle_id,
+            bundle_hash=static.feature_bundle_hash,
+            receipt_id=static.run_receipt_id,
+            receipt_hash=static.run_receipt_hash,
+            receipts=self._feature_runs.receipts(),
         )
         feature_bundle = load_verified_feature_bundle_v2(
             feature_path,
@@ -713,33 +730,60 @@ def _bar(**values: Any) -> CanonicalMarketBar:
     )
 
 
+class _PackageLocator(Protocol):
+    def get_by_package_id(self, package_id: ArtifactId) -> Any: ...
+
+
 def _resolve_operation_package(
     artifact_root: Path,
     controlled_operation_id: ArtifactId,
+    *,
+    locator: _PackageLocator,
 ) -> tuple[ControlledOperationalEvidencePackage, Path]:
-    matches = []
-    for packages_root in artifact_root.rglob("operation-packages"):
-        if not packages_root.is_dir():
-            continue
-        for path in packages_root.iterdir():
-            if not path.is_dir() or path.name.startswith("."):
-                continue
-            try:
-                package = load_controlled_operation_package(path)
-            except (OSError, ValueError):
-                continue
-            if package.package_id == controlled_operation_id:
-                matches.append((package, packages_root.parent))
-    if not matches:
-        raise ValueError("settle-day cannot locate the frozen Controlled package")
-    return max(matches, key=lambda item: (item[0].created_at, str(item[0].package_id)))
+    try:
+        record = locator.get_by_package_id(controlled_operation_id)
+    except KeyError as exc:
+        raise ValueError(
+            "settle-day PostgreSQL locator has no Controlled package"
+        ) from exc
+    package_path = resolve_artifact_root_locator(
+        artifact_root=artifact_root,
+        locator=str(record.package_locator),
+    )
+    package = load_controlled_operation_package(package_path)
+    if (
+        package.package_id != controlled_operation_id
+        or package.content_hash != record.package_hash
+        or package.command.run_id != record.operation_run_id
+    ):
+        raise ValueError("PostgreSQL locator does not bind Controlled package identity")
+    return package, package_path.parent.parent
 
 
-def _identity_directory(root: Path, object_id: ArtifactId) -> Path:
-    matches = tuple(path for path in root.rglob(str(object_id)) if path.is_dir())
+def _feature_bundle_path(
+    root: Path,
+    *,
+    bundle_id: ArtifactId,
+    bundle_hash: str,
+    receipt_id: ArtifactId,
+    receipt_hash: str,
+    receipts: tuple[FeatureMaterializationReceipt, ...],
+) -> Path:
+    matches = tuple(
+        item
+        for item in receipts
+        if item.receipt_id == receipt_id
+        and item.content_hash == receipt_hash
+        and item.bundle_id == bundle_id
+        and item.bundle_hash == bundle_hash
+    )
     if len(matches) != 1:
-        raise ValueError(f"settle-day identity directory mismatch: {object_id}")
-    return matches[0]
+        raise ValueError("PostgreSQL Feature receipt locator is missing or ambiguous")
+    authority_root = root.resolve()
+    path = (authority_root / matches[0].bundle_locator).resolve()
+    if authority_root not in path.parents:
+        raise ValueError("Feature receipt locator escapes its Artifact root")
+    return path
 
 
 def _recover_acquisition(

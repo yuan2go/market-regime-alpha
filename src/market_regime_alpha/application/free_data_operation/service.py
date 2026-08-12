@@ -36,14 +36,14 @@ from market_regime_alpha.application.controlled_operation.runner import (
     ControlledOperationPreparation,
     Sleeper,
 )
-from market_regime_alpha.application.daily_loop import (
-    DailyLoopRunner,
-    DailyLoopSourceFreezeResult,
-    DailyRunCommand,
-    RunMode,
-)
+from market_regime_alpha.application.daily_loop import DailyRunCommand, RunMode
 from market_regime_alpha.application.daily_loop.repositories import (
     AcquisitionStageReceipt,
+)
+from market_regime_alpha.application.source_freeze import (
+    SourceFreezeResult,
+    SourceFreezeService,
+    compose_daily_source_freeze,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.application.free_data_operation.builders import (
@@ -100,7 +100,7 @@ def free_data_decision_time_operation_policy() -> DecisionTimeOperationPolicy:
 
 @dataclass(frozen=True, slots=True)
 class FreeDataOperationPreparation:
-    source: DailyLoopSourceFreezeResult
+    source: SourceFreezeResult
     prepared_inputs: FreeDataPreparedInputs
     controlled_command: ControlledOperationCommand
     controlled_preparation: ControlledOperationPreparation
@@ -226,7 +226,7 @@ class FreeDataOperationService:
         ):
             daily_runner.prepare_history(daily_command)
             daily_runner.freeze_supplemental(daily_command)
-        source = daily_runner.freeze_sources(daily_command)
+        source = daily_runner.freeze(daily_command)
         history_receipt = daily_repository.get_acquisition_receipt(
             daily_command.run_request_id,
             PublicSourceAcquisitionStage.HISTORY_SOURCE_FROZEN,
@@ -454,7 +454,7 @@ class FreeDataOperationService:
         *,
         request: FreeDataPreparationRequest,
         configuration: ControlledOperationRuntimeConfiguration,
-    ) -> tuple[DailyRunCommand, DailyLoopRunner]:
+    ) -> tuple[DailyRunCommand, SourceFreezeService]:
         operation_root = self._operation_root(request)
         operation_root.mkdir(parents=True, exist_ok=True)
         policy = DailyUniversePolicy(
@@ -477,7 +477,7 @@ class FreeDataOperationService:
         )
         self._repositories.bind_runtime("FREE_DATA_OPERATION", request.command_hash)
         self._repositories.bind_runtime("DAILY_LOOP", str(command.run_request_id))
-        return command, DailyLoopRunner(
+        return command, compose_daily_source_freeze(
             repository=self._repositories.daily(),
             code_revision=self._code_revision,
             live_profile=self._live_profile,
@@ -492,6 +492,7 @@ class FreeDataOperationService:
         return ControlledDecisionTimeOperationRunner(
             journal=self._repositories.controlled_operation(clock=self._clock),
             output_root=operation_root / "controlled-runtime",
+            artifact_locator_root=self._output_root,
             clock=self._clock,
             longitudinal_index=self._repositories.longitudinal(clock=self._clock),
             canonical_repository_factory=(
@@ -510,7 +511,7 @@ def _load_existing_prepared_inputs(
     *,
     operation_root: Path,
     request: FreeDataPreparationRequest,
-    source: DailyLoopSourceFreezeResult,
+    source: SourceFreezeResult,
 ) -> FreeDataPreparedInputs | None:
     """Recover the first immutable materialization instead of changing its clock."""
 

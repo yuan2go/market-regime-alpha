@@ -44,6 +44,8 @@ from market_regime_alpha.application.canonical_lifecycle.stages.risk_reduction i
 )
 from market_regime_alpha.application.canonical_lifecycle.states import (
     LIFECYCLE_STAGE_ORDER,
+    POSITION_REVIEW_CONTRACT_ONLY_STAGE_ORDER,
+    POSTGRES_COMPOSED_STAGE_ORDER,
     LifecycleStageName,
 )
 from market_regime_alpha.application.operational_research.postgres_composite_repository import (
@@ -79,7 +81,12 @@ def build_postgres_lifecycle_runner(
     configurations: RuntimeConfigurationSet,
     clock: Clock,
 ) -> CanonicalDecisionLifecycleRunner:
-    """Build the 16-stage graph with one PostgreSQL authority schema."""
+    """Build the journal-compatible graph at its explicit capability ceiling.
+
+    PostgreSQL owns the research/decision-support and observed manual-account
+    stages.  Position review stages retain stable journal identities but remain
+    fail-closed contract-only handlers until durable readers are composed.
+    """
 
     base_handlers = build_lifecycle_stage_handlers(
         command=command,
@@ -102,7 +109,7 @@ def postgres_lifecycle_stage_handlers(
     factory: PostgresConnectionFactory,
     base_handlers: tuple[LifecycleStageHandler, ...],
 ) -> tuple[LifecycleStageHandler, ...]:
-    """Bind domain-authority stages directly to PostgreSQL repositories."""
+    """Bind the declared PostgreSQL-owned stages to their repositories."""
 
     if len(base_handlers) != len(LIFECYCLE_STAGE_ORDER):
         raise ValueError("base_handlers must cover the canonical 16-stage graph")
@@ -127,6 +134,12 @@ def postgres_lifecycle_stage_handlers(
     handlers[LifecycleStageName.MANUAL_TRADE] = ManualTradeStageHandler(repository=execution_repository)
     handlers[LifecycleStageName.FILL_POSITION] = FillPositionStageHandler(repository=execution_repository)
     handlers[LifecycleStageName.THESIS_HEALTH] = ThesisHealthStageHandler(repository=thesis_health_repository)
+    if POSTGRES_COMPOSED_STAGE_ORDER[-1] is not LifecycleStageName.THESIS_HEALTH:
+        raise AssertionError("PostgreSQL lifecycle boundary drifted")
+    if POSITION_REVIEW_CONTRACT_ONLY_STAGE_ORDER != LIFECYCLE_STAGE_ORDER[
+        len(POSTGRES_COMPOSED_STAGE_ORDER) :
+    ]:
+        raise AssertionError("contract-only lifecycle boundary drifted")
     return tuple(handlers[stage] for stage in LIFECYCLE_STAGE_ORDER)
 
 

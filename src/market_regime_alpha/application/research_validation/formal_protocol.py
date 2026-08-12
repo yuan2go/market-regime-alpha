@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
@@ -55,6 +55,213 @@ _REFERENCE_KINDS = {
 
 
 @dataclass(frozen=True, slots=True)
+class HyperparameterDomain:
+    parameter_name: str
+    allowed_values: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        require_text("parameter_name", self.parameter_name)
+        if (
+            not self.allowed_values
+            or self.allowed_values != tuple(sorted(set(self.allowed_values)))
+            or any(not value.strip() for value in self.allowed_values)
+        ):
+            raise ValueError("Hyperparameter domain values must be non-empty and sorted")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "parameter_name": self.parameter_name,
+            "allowed_values": list(self.allowed_values),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SearchBudget:
+    max_model_fits: int
+    max_wall_clock_seconds: int
+
+    def __post_init__(self) -> None:
+        if self.max_model_fits <= 0 or self.max_wall_clock_seconds <= 0:
+            raise ValueError("Search budget limits must be positive")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "max_model_fits": self.max_model_fits,
+            "max_wall_clock_seconds": self.max_wall_clock_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchExperimentDefinition:
+    """Immutable value object that freezes researcher degrees of freedom."""
+
+    definition_id: ArtifactId
+    definition_hash: str
+    research_question: str
+    hypothesis: str
+    decision_time_policy: str
+    target_references: tuple[ValidationArtifactReference, ...]
+    feature_reference: ValidationArtifactReference
+    feature_version: str
+    allowed_model_families: tuple[str, ...]
+    hyperparameter_space: tuple[HyperparameterDomain, ...]
+    search_budget: SearchBudget
+    primary_hypothesis_ids: tuple[str, ...]
+    secondary_hypothesis_ids: tuple[str, ...]
+    multiple_testing_family_id: str
+    stopping_rule: str
+    train_validation_policy: str
+    purge_embargo_policy: str
+    oos_unlock_policy: str
+    randomness_algorithm: str
+    random_seeds: tuple[int, ...]
+    cost_policy_reference: ValidationArtifactReference
+    schema_version: str = "research-experiment-definition/v1"
+
+    def __post_init__(self) -> None:
+        require_sha256("definition_hash", self.definition_hash)
+        for name in (
+            "research_question",
+            "hypothesis",
+            "decision_time_policy",
+            "feature_version",
+            "multiple_testing_family_id",
+            "stopping_rule",
+            "train_validation_policy",
+            "purge_embargo_policy",
+            "oos_unlock_policy",
+            "randomness_algorithm",
+        ):
+            require_text(name, str(getattr(self, name)))
+        if self.schema_version != "research-experiment-definition/v1":
+            raise ValueError("unsupported Research Experiment Definition schema")
+        if self.feature_reference.artifact_kind != "FEATURE_DEFINITION_SET":
+            raise ValueError("Experiment feature reference kind mismatch")
+        if self.cost_policy_reference.artifact_kind != "SHADOW_PORTFOLIO_POLICY":
+            raise ValueError("Experiment cost policy reference kind mismatch")
+        if (
+            not self.target_references
+            or self.target_references
+            != tuple(
+                sorted(set(self.target_references), key=lambda item: str(item.artifact_id))
+            )
+            or any(item.artifact_kind != "OUTCOME_TARGET" for item in self.target_references)
+        ):
+            raise ValueError("Experiment Target references must be non-empty and sorted")
+        if (
+            not self.allowed_model_families
+            or self.allowed_model_families
+            != tuple(sorted(set(self.allowed_model_families)))
+        ):
+            raise ValueError("Experiment model families must be non-empty and sorted")
+        domain_names = tuple(item.parameter_name for item in self.hyperparameter_space)
+        if domain_names != tuple(sorted(set(domain_names))):
+            raise ValueError("Experiment hyperparameter domains must be unique and sorted")
+        if (
+            not self.primary_hypothesis_ids
+            or self.primary_hypothesis_ids
+            != tuple(sorted(set(self.primary_hypothesis_ids)))
+            or self.secondary_hypothesis_ids
+            != tuple(sorted(set(self.secondary_hypothesis_ids)))
+            or set(self.primary_hypothesis_ids) & set(self.secondary_hypothesis_ids)
+        ):
+            raise ValueError("Experiment metric hypotheses must be disjoint and sorted")
+        if (
+            not self.random_seeds
+            or self.random_seeds != tuple(sorted(set(self.random_seeds)))
+            or any(value < 0 for value in self.random_seeds)
+        ):
+            raise ValueError("Experiment random seeds must be non-negative and sorted")
+        if canonical_hash(self.identity_payload()) != self.definition_hash:
+            raise ValueError("Research Experiment Definition hash mismatch")
+        if self.definition_id != ArtifactId(
+            f"research-experiment-definition:{self.definition_hash[7:]}"
+        ):
+            raise ValueError("Research Experiment Definition identity mismatch")
+
+    @classmethod
+    def create(cls, **values: Any) -> ResearchExperimentDefinition:
+        normalized = dict(values)
+        for name in (
+            "target_references",
+            "allowed_model_families",
+            "hyperparameter_space",
+            "primary_hypothesis_ids",
+            "secondary_hypothesis_ids",
+            "random_seeds",
+        ):
+            normalized[name] = tuple(sorted(set(normalized[name]), key=_experiment_sort_key))
+        payload = _experiment_payload(**normalized)
+        definition_id, definition_hash = content_identity(
+            "research-experiment-definition", payload
+        )
+        return cls(definition_id, definition_hash, **normalized)
+
+    def identity_payload(self) -> dict[str, Any]:
+        return _experiment_payload(
+            **{
+                name: getattr(self, name)
+                for name in self.__dataclass_fields__
+                if name not in {"definition_id", "definition_hash", "schema_version"}
+            }
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "definition_id": str(self.definition_id),
+            "definition_hash": self.definition_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: dict[str, Any]
+    ) -> ResearchExperimentDefinition:
+        budget = _mapping(value["search_budget"])
+        return cls(
+            definition_id=ArtifactId(str(value["definition_id"])),
+            definition_hash=str(value["definition_hash"]),
+            research_question=str(value["research_question"]),
+            hypothesis=str(value["hypothesis"]),
+            decision_time_policy=str(value["decision_time_policy"]),
+            target_references=tuple(
+                ValidationArtifactReference.from_canonical_dict(_mapping(item))
+                for item in _sequence(value["target_references"])
+            ),
+            feature_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["feature_reference"])
+            ),
+            feature_version=str(value["feature_version"]),
+            allowed_model_families=tuple(str(item) for item in _sequence(value["allowed_model_families"])),
+            hyperparameter_space=tuple(
+                HyperparameterDomain(
+                    str(_mapping(item)["parameter_name"]),
+                    tuple(str(entry) for entry in _sequence(_mapping(item)["allowed_values"])),
+                )
+                for item in _sequence(value["hyperparameter_space"])
+            ),
+            search_budget=SearchBudget(
+                int(budget["max_model_fits"]), int(budget["max_wall_clock_seconds"])
+            ),
+            primary_hypothesis_ids=tuple(str(item) for item in _sequence(value["primary_hypothesis_ids"])),
+            secondary_hypothesis_ids=tuple(str(item) for item in _sequence(value["secondary_hypothesis_ids"])),
+            multiple_testing_family_id=str(value["multiple_testing_family_id"]),
+            stopping_rule=str(value["stopping_rule"]),
+            train_validation_policy=str(value["train_validation_policy"]),
+            purge_embargo_policy=str(value["purge_embargo_policy"]),
+            oos_unlock_policy=str(value["oos_unlock_policy"]),
+            randomness_algorithm=str(value["randomness_algorithm"]),
+            random_seeds=tuple(
+                int(str(item)) for item in _sequence(value["random_seeds"])
+            ),
+            cost_policy_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["cost_policy_reference"])
+            ),
+            schema_version=str(value["schema_version"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FormalResearchProtocol:
     """Content-addressed freeze of all Phase C result-affecting choices."""
 
@@ -78,16 +285,24 @@ class FormalResearchProtocol:
     calibration_policy_reference: ValidationArtifactReference
     strategy_policy_reference: ValidationArtifactReference
     entry_holding_exit_qualification_policy_reference: ValidationArtifactReference
+    experiment_definition: ResearchExperimentDefinition | None
     locked_at: datetime
     historical_sample_dataset_references: tuple[ValidationArtifactReference, ...] = ()
     locked_oos_reuse_policy: str = "NEVER_REUSE_FOR_SELECTION_OR_TUNING"
-    schema_version: str = "formal-research-protocol/v1"
+    schema_version: str = "formal-research-protocol/v2"
 
     def __post_init__(self) -> None:
         require_sha256("protocol_hash", self.protocol_hash)
         require_text("protocol_version", self.protocol_version)
-        if self.schema_version != "formal-research-protocol/v1":
+        if self.schema_version not in {
+            "formal-research-protocol/v1",
+            "formal-research-protocol/v2",
+        }:
             raise ValueError("unsupported Formal Research Protocol schema")
+        if (self.experiment_definition is None) != (
+            self.schema_version == "formal-research-protocol/v1"
+        ):
+            raise ValueError("Formal Protocol V2 requires one Experiment Definition")
         if self.locked_oos_reuse_policy != "NEVER_REUSE_FOR_SELECTION_OR_TUNING":
             raise ValueError("Locked OOS reuse policy cannot be weakened")
         if self.locked_at.tzinfo is None or self.locked_at.utcoffset() is None:
@@ -125,6 +340,14 @@ class FormalResearchProtocol:
             reference = getattr(self, field_name)
             if reference.artifact_kind != expected_kind:
                 raise ValueError(f"{field_name} must reference {expected_kind}")
+        if self.experiment_definition is not None:
+            experiment = self.experiment_definition
+            if (
+                experiment.target_references != self.target_references
+                or experiment.feature_reference != self.feature_reference
+                or experiment.cost_policy_reference != self.cost_policy_reference
+            ):
+                raise ValueError("Experiment Definition component identity mismatch")
         if self.outcome_target_protocol_reference.artifact_kind != "OUTCOME_TARGET_PROTOCOL":
             raise ValueError("Formal protocol requires Outcome Target Protocol authority")
         if self.trading_calendar_reference.artifact_kind != "TRADING_CALENDAR":
@@ -146,6 +369,7 @@ class FormalResearchProtocol:
         target_protocol: OutcomeTargetProtocol,
         trading_calendar: TradingCalendarArtifact,
         evaluation_protocol: FormalEvaluationProtocol,
+        experiment_definition: ResearchExperimentDefinition,
         universe_reference: ValidationArtifactReference,
         dataset_reference: ValidationArtifactReference,
         historical_sample_dataset_reference: ValidationArtifactReference,
@@ -199,6 +423,22 @@ class FormalResearchProtocol:
                 key=lambda item: str(item.artifact_id),
             )
         )
+        registered_hypotheses = {
+            item.hypothesis_id for item in evaluation_protocol.hypothesis_specs
+        }
+        selected_hypotheses = {
+            *experiment_definition.primary_hypothesis_ids,
+            *experiment_definition.secondary_hypothesis_ids,
+        }
+        if (
+            experiment_definition.target_references != target_references
+            or experiment_definition.feature_reference != feature_reference
+            or experiment_definition.cost_policy_reference != cost_policy_reference
+            or experiment_definition.multiple_testing_family_id
+            != evaluation_protocol.hypothesis_family_id
+            or not selected_hypotheses.issubset(registered_hypotheses)
+        ):
+            raise ValueError("Experiment Definition does not match frozen Protocol components")
         calendar_reference = ValidationArtifactReference(
             "TRADING_CALENDAR",
             trading_calendar.artifact_id,
@@ -241,35 +481,39 @@ class FormalResearchProtocol:
             entry_holding_exit_qualification_policy_reference=(
                 entry_holding_exit_qualification_policy_reference
             ),
+            experiment_definition=experiment_definition,
             locked_at=locked_at,
             historical_sample_dataset_references=historical_references,
+            schema_version="formal-research-protocol/v2",
         )
         protocol_id, protocol_hash = content_identity(
             "formal-research-protocol", payload
         )
         return cls(
-            protocol_id,
-            protocol_hash,
-            protocol_version,
-            target_protocol_reference,
-            target_references,
-            calendar_reference,
-            calendar_dates,
-            evaluation_reference,
-            universe_reference,
-            dataset_reference,
-            historical_sample_dataset_reference,
-            feature_reference,
-            factor_reference,
-            model_reference,
-            threshold_policy_reference,
-            formal_oos_qualification_policy_reference,
-            cost_policy_reference,
-            calibration_policy_reference,
-            strategy_policy_reference,
-            entry_holding_exit_qualification_policy_reference,
-            locked_at,
-            historical_references,
+            protocol_id=protocol_id,
+            protocol_hash=protocol_hash,
+            protocol_version=protocol_version,
+            outcome_target_protocol_reference=target_protocol_reference,
+            target_references=target_references,
+            trading_calendar_reference=calendar_reference,
+            frozen_trading_dates=calendar_dates,
+            evaluation_protocol_reference=evaluation_reference,
+            universe_reference=universe_reference,
+            dataset_reference=dataset_reference,
+            historical_sample_dataset_reference=historical_sample_dataset_reference,
+            feature_reference=feature_reference,
+            factor_reference=factor_reference,
+            model_reference=model_reference,
+            threshold_policy_reference=threshold_policy_reference,
+            formal_oos_qualification_policy_reference=formal_oos_qualification_policy_reference,
+            cost_policy_reference=cost_policy_reference,
+            calibration_policy_reference=calibration_policy_reference,
+            strategy_policy_reference=strategy_policy_reference,
+            entry_holding_exit_qualification_policy_reference=entry_holding_exit_qualification_policy_reference,
+            experiment_definition=experiment_definition,
+            locked_at=locked_at,
+            historical_sample_dataset_references=historical_references,
+            schema_version="formal-research-protocol/v2",
         )
 
     def identity_payload(self) -> dict[str, Any]:
@@ -294,10 +538,12 @@ class FormalResearchProtocol:
             entry_holding_exit_qualification_policy_reference=(
                 self.entry_holding_exit_qualification_policy_reference
             ),
+            experiment_definition=self.experiment_definition,
             locked_at=self.locked_at,
             historical_sample_dataset_references=(
                 self.historical_sample_dataset_references
             ),
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -374,6 +620,13 @@ class FormalResearchProtocol:
             entry_holding_exit_qualification_policy_reference=ValidationArtifactReference.from_canonical_dict(
                 _mapping(value["entry_holding_exit_qualification_policy_reference"])
             ),
+            experiment_definition=(
+                None
+                if value.get("experiment_definition") is None
+                else ResearchExperimentDefinition.from_canonical_dict(
+                    _mapping(value["experiment_definition"])
+                )
+            ),
             locked_at=datetime.fromisoformat(str(value["locked_at"])),
             historical_sample_dataset_references=tuple(
                 ValidationArtifactReference.from_canonical_dict(_mapping(item))
@@ -394,59 +647,232 @@ class OutcomeTargetForecastStatus(str, Enum):
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
 
 
-@dataclass(frozen=True, slots=True)
-class OutcomeTargetForecastEstimate:
-    """One uncalibrated estimate for one exact Outcome Target identity."""
+class ForecastMeasureStatus(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    NOT_ESTIMABLE = "NOT_ESTIMABLE"
 
-    target_id: ArtifactId
-    target_hash: str
-    status: OutcomeTargetForecastStatus
-    score: Decimal | None
-    expected_return: Decimal | None
-    expected_mfe: Decimal | None
-    expected_mae: Decimal | None
-    barrier_scores: tuple[tuple[str, Decimal], ...]
-    reason_codes: tuple[str, ...]
+
+class ForecastMeasureKind(str, Enum):
+    """Semantically distinct forecast measures; raw scores are never probabilities."""
+
+    RANKING_SCORE = "RANKING_SCORE"
+    EXPECTED_RETURN = "EXPECTED_RETURN"
+    EXPECTED_DOWNSIDE = "EXPECTED_DOWNSIDE"
+    RETURN_POSITIVE_RAW_LOGIT = "RETURN_POSITIVE_RAW_LOGIT"
+    RETURN_POSITIVE_PROBABILITY = "RETURN_POSITIVE_PROBABILITY"
+    EXPECTED_MFE = "EXPECTED_MFE"
+    EXPECTED_MAE = "EXPECTED_MAE"
+    UPPER_BEFORE_LOWER_RAW_LOGIT = "UPPER_BEFORE_LOWER_RAW_LOGIT"
+    UPPER_BEFORE_LOWER_PROBABILITY = "UPPER_BEFORE_LOWER_PROBABILITY"
+    BARRIER_RAW_LOGIT = "BARRIER_RAW_LOGIT"
+
+
+_PROBABILITY_MEASURES = {
+    ForecastMeasureKind.RETURN_POSITIVE_PROBABILITY,
+    ForecastMeasureKind.UPPER_BEFORE_LOWER_PROBABILITY,
+}
+_RAW_LOGIT_MEASURES = {
+    ForecastMeasureKind.RETURN_POSITIVE_RAW_LOGIT,
+    ForecastMeasureKind.UPPER_BEFORE_LOWER_RAW_LOGIT,
+    ForecastMeasureKind.BARRIER_RAW_LOGIT,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastMeasureEstimate:
+    """One independently estimable measure for an exact Target identity.
+
+    Logistic heads emit RAW_LOGIT measures.  A probability is valid only when it
+    binds an immutable Calibration Artifact; applying sigmoid is not calibration.
+    """
+
+    kind: ForecastMeasureKind
+    status: ForecastMeasureStatus
+    value: Decimal | None
+    reason_codes: tuple[str, ...] = ()
+    barrier_id: str | None = None
+    calibration_reference: ValidationArtifactReference | None = None
 
     def __post_init__(self) -> None:
-        require_sha256("target_hash", self.target_hash)
-        if self.barrier_scores != tuple(sorted(set(self.barrier_scores))):
-            raise ValueError("Forecast barrier scores must be unique and sorted")
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
-            raise ValueError("Forecast reasons must be unique and sorted")
-        if self.status is OutcomeTargetForecastStatus.NOT_ESTIMABLE:
-            if any(
-                value is not None
-                for value in (
-                    self.score,
-                    self.expected_return,
-                    self.expected_mfe,
-                    self.expected_mae,
-                )
-            ) or self.barrier_scores:
-                raise ValueError("NOT_ESTIMABLE Forecast cannot carry estimates")
+            raise ValueError("Forecast measure reasons must be unique and sorted")
+        if self.kind is ForecastMeasureKind.BARRIER_RAW_LOGIT:
+            if not self.barrier_id or not self.barrier_id.strip():
+                raise ValueError("Barrier raw logit requires barrier_id")
+        elif self.barrier_id is not None:
+            raise ValueError("Only barrier-specific measures may bind barrier_id")
+        if self.status is ForecastMeasureStatus.NOT_ESTIMABLE:
+            if self.value is not None or self.calibration_reference is not None:
+                raise ValueError("NOT_ESTIMABLE measure cannot carry a value or calibration")
             if not self.reason_codes:
-                raise ValueError("NOT_ESTIMABLE Forecast requires reason codes")
-        elif self.score is None:
-            raise ValueError("available Outcome Target Forecast requires a score")
-        if self.expected_mfe is not None and self.expected_mfe < 0:
+                raise ValueError("NOT_ESTIMABLE measure requires reason codes")
+            return
+        if self.value is None or not self.value.is_finite():
+            raise ValueError("AVAILABLE measure requires a finite value")
+        if self.reason_codes:
+            raise ValueError("AVAILABLE measure cannot carry failure reasons")
+        if self.kind in _PROBABILITY_MEASURES:
+            if not Decimal("0") <= self.value <= Decimal("1"):
+                raise ValueError("Forecast probability must be within [0, 1]")
+            if (
+                self.calibration_reference is None
+                or self.calibration_reference.artifact_kind != "CALIBRATION_ARTIFACT"
+            ):
+                raise ValueError("Forecast probability requires Calibration Artifact evidence")
+        elif self.calibration_reference is not None:
+            raise ValueError("Only calibrated probability measures bind Calibration evidence")
+        if self.kind is ForecastMeasureKind.EXPECTED_MFE and self.value < 0:
             raise ValueError("Forecast MFE cannot be negative")
-        if self.expected_mae is not None and self.expected_mae > 0:
-            raise ValueError("Forecast MAE cannot be positive")
+        if self.kind in {
+            ForecastMeasureKind.EXPECTED_MAE,
+            ForecastMeasureKind.EXPECTED_DOWNSIDE,
+        } and self.value > 0:
+            raise ValueError("Forecast downside/MAE must use a non-positive return convention")
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.kind.value, self.barrier_id or ""
+
+    @property
+    def is_raw_score(self) -> bool:
+        return self.kind in _RAW_LOGIT_MEASURES or self.kind is ForecastMeasureKind.RANKING_SCORE
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
+            "kind": self.kind.value,
+            "status": self.status.value,
+            "value": decimal_text(self.value),
+            "reason_codes": list(self.reason_codes),
+            "barrier_id": self.barrier_id,
+            "calibration_reference": (
+                None
+                if self.calibration_reference is None
+                else self.calibration_reference.to_canonical_dict()
+            ),
+        }
+
+    @classmethod
+    def from_canonical_dict(cls, value: Mapping[str, Any]) -> ForecastMeasureEstimate:
+        raw_value = value["value"]
+        raw_calibration = value["calibration_reference"]
+        return cls(
+            kind=ForecastMeasureKind(str(value["kind"])),
+            status=ForecastMeasureStatus(str(value["status"])),
+            value=None if raw_value is None else Decimal(str(raw_value)),
+            reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+            barrier_id=(None if value["barrier_id"] is None else str(value["barrier_id"])),
+            calibration_reference=(
+                None
+                if raw_calibration is None
+                else ValidationArtifactReference.from_canonical_dict(
+                    _mapping(raw_calibration)
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeTargetForecastEstimate:
+    """Measure-oriented estimates for one exact Outcome Target identity."""
+
+    target_id: ArtifactId
+    target_hash: str
+    measures: tuple[ForecastMeasureEstimate, ...]
+    reason_codes: tuple[str, ...]
+    schema_version: str = "outcome-target-forecast-estimate/v2"
+
+    def __post_init__(self) -> None:
+        require_sha256("target_hash", self.target_hash)
+        if self.measures != tuple(sorted(self.measures, key=lambda item: item.key)):
+            raise ValueError("Forecast measures must be sorted")
+        if len({item.key for item in self.measures}) != len(self.measures):
+            raise ValueError("Forecast measures must be unique")
+        if self.reason_codes != tuple(sorted(set(self.reason_codes))):
+            raise ValueError("Forecast reasons must be unique and sorted")
+        if self.schema_version not in {
+            "outcome-target-forecast-estimate/v1",
+            "outcome-target-forecast-estimate/v2",
+        }:
+            raise ValueError("unsupported Forecast estimate schema")
+        if self.schema_version.endswith("/v2") and not self.measures:
+            raise ValueError("V2 Forecast estimate requires an explicit measure plan")
+        if self.status is OutcomeTargetForecastStatus.NOT_ESTIMABLE and not self.reason_codes:
+            raise ValueError("fully NOT_ESTIMABLE Forecast requires target reason codes")
+
+    @property
+    def status(self) -> OutcomeTargetForecastStatus:
+        if any(item.status is ForecastMeasureStatus.AVAILABLE for item in self.measures):
+            return OutcomeTargetForecastStatus.AVAILABLE_FOR_RESEARCH
+        return OutcomeTargetForecastStatus.NOT_ESTIMABLE
+
+    def measure(
+        self, kind: ForecastMeasureKind, *, barrier_id: str | None = None
+    ) -> ForecastMeasureEstimate | None:
+        return next(
+            (
+                item
+                for item in self.measures
+                if item.kind is kind and item.barrier_id == barrier_id
+            ),
+            None,
+        )
+
+    def _available_value(self, kind: ForecastMeasureKind) -> Decimal | None:
+        item = self.measure(kind)
+        return (
+            item.value
+            if item is not None and item.status is ForecastMeasureStatus.AVAILABLE
+            else None
+        )
+
+    @property
+    def score(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.RANKING_SCORE)
+
+    @property
+    def expected_return(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.EXPECTED_RETURN)
+
+    @property
+    def expected_mfe(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.EXPECTED_MFE)
+
+    @property
+    def expected_mae(self) -> Decimal | None:
+        return self._available_value(ForecastMeasureKind.EXPECTED_MAE)
+
+    @property
+    def barrier_scores(self) -> tuple[tuple[str, Decimal], ...]:
+        return tuple(
+            (item.barrier_id or "", item.value)
+            for item in self.measures
+            if item.kind is ForecastMeasureKind.BARRIER_RAW_LOGIT
+            and item.status is ForecastMeasureStatus.AVAILABLE
+            and item.value is not None
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        if self.schema_version.endswith("/v1"):
+            return {
+                "target_id": str(self.target_id),
+                "target_hash": self.target_hash,
+                "status": self.status.value,
+                "score": decimal_text(self.score),
+                "expected_return": decimal_text(self.expected_return),
+                "expected_mfe": decimal_text(self.expected_mfe),
+                "expected_mae": decimal_text(self.expected_mae),
+                "barrier_scores": [
+                    {"barrier_id": barrier_id, "score": str(score)}
+                    for barrier_id, score in self.barrier_scores
+                ],
+                "reason_codes": list(self.reason_codes),
+            }
+        return {
+            "schema_version": self.schema_version,
             "target_id": str(self.target_id),
             "target_hash": self.target_hash,
             "status": self.status.value,
-            "score": decimal_text(self.score),
-            "expected_return": decimal_text(self.expected_return),
-            "expected_mfe": decimal_text(self.expected_mfe),
-            "expected_mae": decimal_text(self.expected_mae),
-            "barrier_scores": [
-                {"barrier_id": barrier_id, "score": str(score)}
-                for barrier_id, score in self.barrier_scores
-            ],
+            "measures": [item.to_canonical_dict() for item in self.measures],
             "reason_codes": list(self.reason_codes),
         }
 
@@ -454,24 +880,98 @@ class OutcomeTargetForecastEstimate:
     def from_canonical_dict(
         cls, value: dict[str, Any]
     ) -> OutcomeTargetForecastEstimate:
+        if "measures" in value:
+            return cls(
+                target_id=ArtifactId(str(value["target_id"])),
+                target_hash=str(value["target_hash"]),
+                measures=tuple(
+                    ForecastMeasureEstimate.from_canonical_dict(_mapping(item))
+                    for item in _sequence(value["measures"])
+                ),
+                reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+                schema_version=str(value["schema_version"]),
+            )
+
         def optional_decimal(name: str) -> Decimal | None:
             raw = value[name]
             return None if raw is None else Decimal(str(raw))
-
+        reasons = tuple(str(item) for item in _sequence(value["reason_codes"]))
+        measures: list[ForecastMeasureEstimate] = []
+        for kind, raw in (
+            (ForecastMeasureKind.RANKING_SCORE, optional_decimal("score")),
+            (ForecastMeasureKind.EXPECTED_RETURN, optional_decimal("expected_return")),
+            (ForecastMeasureKind.EXPECTED_MFE, optional_decimal("expected_mfe")),
+            (ForecastMeasureKind.EXPECTED_MAE, optional_decimal("expected_mae")),
+        ):
+            if raw is not None:
+                measures.append(ForecastMeasureEstimate(kind, ForecastMeasureStatus.AVAILABLE, raw))
+        measures.extend(
+            ForecastMeasureEstimate(
+                ForecastMeasureKind.BARRIER_RAW_LOGIT,
+                ForecastMeasureStatus.AVAILABLE,
+                Decimal(str(_mapping(item)["score"])),
+                barrier_id=str(_mapping(item)["barrier_id"]),
+            )
+            for item in _sequence(value["barrier_scores"])
+        )
         return cls(
             target_id=ArtifactId(str(value["target_id"])),
             target_hash=str(value["target_hash"]),
-            status=OutcomeTargetForecastStatus(str(value["status"])),
-            score=optional_decimal("score"),
-            expected_return=optional_decimal("expected_return"),
-            expected_mfe=optional_decimal("expected_mfe"),
-            expected_mae=optional_decimal("expected_mae"),
-            barrier_scores=tuple(
-                (str(_mapping(item)["barrier_id"]), Decimal(str(_mapping(item)["score"])))
-                for item in _sequence(value["barrier_scores"])
-            ),
-            reason_codes=tuple(str(item) for item in _sequence(value["reason_codes"])),
+            measures=tuple(sorted(measures, key=lambda item: item.key)),
+            reason_codes=reasons,
+            schema_version="outcome-target-forecast-estimate/v1",
         )
+
+
+def not_estimable_target_forecast(
+    *,
+    target_id: ArtifactId,
+    target_hash: str,
+    barrier_ids: tuple[str, ...],
+    reason_codes: tuple[str, ...],
+) -> OutcomeTargetForecastEstimate:
+    """Build the canonical independent-measure failure projection."""
+
+    reasons = tuple(sorted(set(reason_codes)))
+    if not reasons:
+        raise ValueError("NOT_ESTIMABLE Forecast requires reason codes")
+    measures = (
+        *(
+            ForecastMeasureEstimate(
+                kind,
+                ForecastMeasureStatus.NOT_ESTIMABLE,
+                None,
+                reasons,
+            )
+            for kind in (
+                ForecastMeasureKind.RANKING_SCORE,
+                ForecastMeasureKind.EXPECTED_RETURN,
+                ForecastMeasureKind.EXPECTED_DOWNSIDE,
+                ForecastMeasureKind.RETURN_POSITIVE_RAW_LOGIT,
+                ForecastMeasureKind.RETURN_POSITIVE_PROBABILITY,
+                ForecastMeasureKind.EXPECTED_MFE,
+                ForecastMeasureKind.EXPECTED_MAE,
+                ForecastMeasureKind.UPPER_BEFORE_LOWER_RAW_LOGIT,
+                ForecastMeasureKind.UPPER_BEFORE_LOWER_PROBABILITY,
+            )
+        ),
+        *(
+            ForecastMeasureEstimate(
+                ForecastMeasureKind.BARRIER_RAW_LOGIT,
+                ForecastMeasureStatus.NOT_ESTIMABLE,
+                None,
+                reasons,
+                barrier_id=barrier_id,
+            )
+            for barrier_id in barrier_ids
+        ),
+    )
+    return OutcomeTargetForecastEstimate(
+        target_id=target_id,
+        target_hash=target_hash,
+        measures=tuple(sorted(measures, key=lambda item: item.key)),
+        reason_codes=reasons,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,15 +1113,6 @@ def build_outcome_target_bound_forecast(
         if actual_ids == expected_ids:
             raise ValueError("Forecast and Outcome Target identity/hash mismatch")
         raise ValueError("MultiTargetForecast must bind exactly every Outcome Target")
-    for estimate in estimates:
-        target = expected[(str(estimate.target_id), estimate.target_hash)]
-        barrier_ids = tuple(item.barrier_id for item in target.barriers)
-        estimate_barrier_ids = tuple(item[0] for item in estimate.barrier_scores)
-        if (
-            estimate.status is OutcomeTargetForecastStatus.AVAILABLE_FOR_RESEARCH
-            and estimate_barrier_ids != barrier_ids
-        ):
-            raise ValueError("available Forecast must score every frozen Target barrier")
     target_reference = ValidationArtifactReference(
         "OUTCOME_TARGET_PROTOCOL",
         target_protocol.protocol_id,
@@ -696,13 +1187,15 @@ def _formal_protocol_payload(
     calibration_policy_reference: ValidationArtifactReference,
     strategy_policy_reference: ValidationArtifactReference,
     entry_holding_exit_qualification_policy_reference: ValidationArtifactReference,
+    experiment_definition: ResearchExperimentDefinition | None,
     locked_at: datetime,
     historical_sample_dataset_references: tuple[
         ValidationArtifactReference, ...
     ] | None = None,
+    schema_version: str = "formal-research-protocol/v2",
 ) -> dict[str, Any]:
     payload = {
-        "schema_version": "formal-research-protocol/v1",
+        "schema_version": schema_version,
         "protocol_version": protocol_version,
         "outcome_target_protocol_reference": outcome_target_protocol_reference.to_canonical_dict(),
         "target_references": [item.to_canonical_dict() for item in target_references],
@@ -730,12 +1223,53 @@ def _formal_protocol_payload(
         "locked_at": timestamp(locked_at),
         "locked_oos_reuse_policy": "NEVER_REUSE_FOR_SELECTION_OR_TUNING",
     }
+    if schema_version == "formal-research-protocol/v2":
+        if experiment_definition is None:
+            raise ValueError("Formal Protocol V2 requires an Experiment Definition")
+        payload["experiment_definition"] = experiment_definition.to_canonical_dict()
     historical_references = historical_sample_dataset_references
     if historical_references is not None and len(historical_references) > 1:
         payload["historical_sample_dataset_references"] = [
             item.to_canonical_dict() for item in historical_references
         ]
     return payload
+
+
+def _experiment_payload(**values: Any) -> dict[str, Any]:
+    return {
+        "schema_version": "research-experiment-definition/v1",
+        "research_question": values["research_question"],
+        "hypothesis": values["hypothesis"],
+        "decision_time_policy": values["decision_time_policy"],
+        "target_references": [
+            item.to_canonical_dict() for item in values["target_references"]
+        ],
+        "feature_reference": values["feature_reference"].to_canonical_dict(),
+        "feature_version": values["feature_version"],
+        "allowed_model_families": list(values["allowed_model_families"]),
+        "hyperparameter_space": [
+            item.to_canonical_dict() for item in values["hyperparameter_space"]
+        ],
+        "search_budget": values["search_budget"].to_canonical_dict(),
+        "primary_hypothesis_ids": list(values["primary_hypothesis_ids"]),
+        "secondary_hypothesis_ids": list(values["secondary_hypothesis_ids"]),
+        "multiple_testing_family_id": values["multiple_testing_family_id"],
+        "stopping_rule": values["stopping_rule"],
+        "train_validation_policy": values["train_validation_policy"],
+        "purge_embargo_policy": values["purge_embargo_policy"],
+        "oos_unlock_policy": values["oos_unlock_policy"],
+        "randomness_algorithm": values["randomness_algorithm"],
+        "random_seeds": list(values["random_seeds"]),
+        "cost_policy_reference": values["cost_policy_reference"].to_canonical_dict(),
+    }
+
+
+def _experiment_sort_key(value: Any) -> Any:
+    if isinstance(value, ValidationArtifactReference):
+        return str(value.artifact_id), value.content_hash
+    if isinstance(value, HyperparameterDomain):
+        return value.parameter_name
+    return value
 
 
 def _mapping(value: object) -> dict[str, Any]:
@@ -751,9 +1285,16 @@ def _sequence(value: object) -> tuple[object, ...]:
 
 
 __all__ = [
+    "ForecastMeasureEstimate",
+    "ForecastMeasureKind",
+    "ForecastMeasureStatus",
     "FormalResearchProtocol",
+    "HyperparameterDomain",
     "OutcomeTargetBoundMultiTargetForecast",
     "OutcomeTargetForecastEstimate",
     "OutcomeTargetForecastStatus",
+    "ResearchExperimentDefinition",
+    "SearchBudget",
     "build_outcome_target_bound_forecast",
+    "not_estimable_target_forecast",
 ]

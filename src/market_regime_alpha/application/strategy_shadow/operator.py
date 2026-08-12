@@ -62,6 +62,13 @@ from market_regime_alpha.application.strategy_shadow.operations import (
     StrategyShadowSession,
     StrategyShadowSessionStatus,
 )
+from market_regime_alpha.application.strategy_shadow.observation_builder import (
+    ObservationBuildStatus,
+    ShadowObservationPolicy,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_observations import (
+    PostgresOwnerResolvedShadowObservationBuilder,
+)
 from market_regime_alpha.application.strategy_shadow.postgres_repository import (
     PostgresStrategyShadowRepository,
 )
@@ -524,6 +531,47 @@ class StrategyShadowDayOperator:
             holding=holding,
             exit_assessment=exit_assessment,
         )
+
+    def run_auto(
+        self,
+        *,
+        trading_date: date,
+        observed_at: datetime,
+        policy: ShadowObservationPolicy,
+        symbol: str | None = None,
+    ) -> dict[str, Any]:
+        """Build inputs from PostgreSQL fact owners, then run the same operator."""
+
+        receipt = PostgresOwnerResolvedShadowObservationBuilder(
+            self._factory,
+            apply_migrations=False,
+        ).build_strategy(
+            research_trading_date=trading_date,
+            observed_at=observed_at,
+            policy=policy,
+            symbol=symbol,
+        )
+        receipt_fields = {
+            "observation_mode": "OWNER_RESOLVED_AUTO",
+            "observation_receipt_id": str(receipt.receipt_id),
+            "observation_receipt_hash": receipt.receipt_hash,
+        }
+        if (
+            receipt.status is not ObservationBuildStatus.READY
+            or receipt.observation_payload is None
+        ):
+            return {
+                **_result(
+                    operation="STRATEGY_DAY",
+                    status="DATA_INSUFFICIENT",
+                    reason_codes=receipt.reason_codes,
+                ),
+                **receipt_fields,
+            }
+        output = self.run(
+            StrategyDayObservation.from_canonical_dict(receipt.observation_payload)
+        )
+        return {**output, **receipt_fields}
 
     def replay(self, session_id: ArtifactId) -> dict[str, Any]:
         session = self._strategy.replay(session_id)

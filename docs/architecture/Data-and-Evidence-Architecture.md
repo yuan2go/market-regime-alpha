@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical data, time and evidence rules
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Code Evidence:** `src/market_regime_alpha/data`, `src/market_regime_alpha/market_data`, `src/market_regime_alpha/evidence`, `src/market_regime_alpha/data/postgres_pit_authority.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Evidence is not a reference
@@ -36,20 +36,20 @@ No stage may infer PIT from a filename, current API response, caller timestamp o
 
 ## Data eligibility and Provider ceiling
 
-`UNQUALIFIED`, `EXPLORATORY`, `REHEARSAL` and `FORMAL_RESEARCH` are distinct. Tencent and BaoStock currently support recorded exploratory operation only. Xuntou/ThinkTrader/XtQuant remains the formal Provider direction, but no current real bundle establishes formal qualification.
+`UNQUALIFIED`, `EXPLORATORY`, `REHEARSAL` and `FORMAL_RESEARCH` are distinct. BaoStock, Tencent, AKShare and other available public sources may be combined by Provider × Contract × Fact Kind for Research/Shadow operation and cross-checking. They remain Provider-specific evidence behind canonical facts, never downstream dependencies or a second Authority. Paid terminals are optional future Formal Provider candidates, not Phase D dependencies. No current real bundle establishes Formal qualification.
 
 A downstream artifact may retain or lower the minimum input eligibility. It may never raise it. A valid Summary or receipt ID does not upgrade data authority.
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 059 and checksummed.
+- Packaged migrations are contiguous from 001 through 065 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 206 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–055 add exploratory sample, Research Universe, Portfolio Shadow, engineering access-governance owners, Path Calibration Hypothesis evidence and fail-closed Phase C gates. Migration 056 adds a Calendar payload snapshot anchored to the existing PIT Artifact Authority and Formal Protocol owner-resolution receipts. Migration 057 adds owner-computed Forecast receipts, frozen multi-target families, one-time raw OOS unlock, Target-specific consumption, family evaluation, per-record PIT/Historical/Forecast bindings and typed operator command audit. Migration 058 adds the label-value-blind Locked roster and commits its exact raw/Target consumption claims before any Locked outcome payload is read. Migration 059 projects the strict PIT Universe Reader's complete immutable member set, binds every new Locked roster to it and requires exact Dataset ID+hash lineage from factual settlement through Target Outcome and Panel. New Formal Protocols admit only Train/Validation Historical Dataset records into C3. Their metadata-only owner seam runs before the pre-OOS readiness barrier, and the full frozen Locked roster must match canonical Universe members plus Target/Forecast/Label metadata before its realized payload can be read. Migration-027 Model Registry action envelopes remain replay-only for pre-057 Protocols. None weakens migration 046 or creates a second Universe/PIT/Forecast/Evaluation owner.
+The schema catalog currently contains 236 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–057 add exploratory sample, Research Universe, Portfolio Shadow and fail-closed Phase C owners. Migrations 058–059 add label-value-blind Locked rosters, immutable PIT Universe membership projections, exact Dataset lineage and pre-read Locked-OOS scope bindings. Migrations 060–064 extend those owners with explicit research-validity semantics, exploratory model execution, Runtime Scope/Historical journals, observations and performance. Migration 065 names the global Artifact-root locator contract for new Controlled packages. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
 
 ## Replay
 

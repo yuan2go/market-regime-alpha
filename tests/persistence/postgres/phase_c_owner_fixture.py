@@ -39,10 +39,15 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationPartition,
     EvaluationWindow,
     FormalEvaluationProtocol,
+    MultipleTestingErrorRate,
     MultipleTestingMethod,
+    benchmark_evaluation_hypotheses,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
+    HyperparameterDomain,
+    ResearchExperimentDefinition,
+    SearchBudget,
 )
 from market_regime_alpha.application.research_validation.formal_protocol_components import (
     FeatureDefinitionSet,
@@ -426,20 +431,49 @@ def record_phase_c_protocol_owners(
         protocol_locked_at = connection.execute(
             "SELECT date_trunc('second', clock_timestamp())"
         ).fetchone()[0]
+    feature_reference = ValidationArtifactReference(
+        "FEATURE_DEFINITION_SET",
+        feature_set.definition_set_id,
+        feature_set.definition_set_hash,
+    )
+    cost_reference = entry_policy.portfolio_policy_reference
+    experiment = ResearchExperimentDefinition.create(
+        research_question="Does the frozen Phase C baseline add T+1 ranking information?",
+        hypothesis="RankIC and top-bottom spread exceed their frozen nulls.",
+        decision_time_policy="FROZEN_DECISION_TIME",
+        target_references=tuple(
+            ValidationArtifactReference("OUTCOME_TARGET", item.target_id, item.target_hash)
+            for item in targets.targets
+        ),
+        feature_reference=feature_reference,
+        feature_version="phase-c-owner-v1",
+        allowed_model_families=(definition.implementation_ref,),
+        hyperparameter_space=(
+            HyperparameterDomain("frozen_configuration", ("owner-v1",)),
+        ),
+        search_budget=SearchBudget(1, 300),
+        primary_hypothesis_ids=("BASELINE:RANK_IC:V1", "BASELINE:SPREAD:V1"),
+        secondary_hypothesis_ids=("BASELINE:IC:V1",),
+        multiple_testing_family_id=evaluation.hypothesis_family_id,
+        stopping_rule="SINGLE_FROZEN_CONFIGURATION",
+        train_validation_policy="PURGED_WALK_FORWARD_NO_LOCKED_OOS",
+        purge_embargo_policy="EVALUATION_PROTOCOL_DERIVED",
+        oos_unlock_policy="ONE_TIME_AFTER_MODEL_SELECTION_FREEZE",
+        randomness_algorithm="DETERMINISTIC_OWNER_MODEL",
+        random_seeds=(20260812,),
+        cost_policy_reference=cost_reference,
+    )
     protocol = FormalResearchProtocol.create(
         protocol_version="phase-c-owner-v1",
         target_protocol=targets,
         trading_calendar=calendar,
         evaluation_protocol=evaluation,
+        experiment_definition=experiment,
         universe_reference=universe_reference,
         dataset_reference=dataset_reference,
         historical_sample_dataset_reference=historical_references[0],
         historical_sample_dataset_references=historical_references,
-        feature_reference=ValidationArtifactReference(
-            "FEATURE_DEFINITION_SET",
-            feature_set.definition_set_id,
-            feature_set.definition_set_hash,
-        ),
+        feature_reference=feature_reference,
         factor_reference=ValidationArtifactReference(
             "FACTOR_CATALOG", factor_catalog.catalog_id, factor_catalog.catalog_hash
         ),
@@ -456,7 +490,7 @@ def record_phase_c_protocol_owners(
             oos_policy.policy_id,
             oos_policy.policy_hash,
         ),
-        cost_policy_reference=entry_policy.portfolio_policy_reference,
+        cost_policy_reference=cost_reference,
         calibration_policy_reference=ValidationArtifactReference(
             "CALIBRATION_POLICY",
             calibration_policy.policy_id,
@@ -535,6 +569,8 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
         bootstrap_iterations=100,
         confidence_level=Decimal("0.95"),
         multiple_testing_method=MultipleTestingMethod.BONFERRONI,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FWER,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         locked_at=NOW,
     )
 
