@@ -349,12 +349,6 @@ class HistoricalDecisionMaterializer:
         base_universe = self._universes.get(universe_reference.artifact_id)
         if base_universe.snapshot_hash != universe_reference.content_hash:
             raise ValueError("Historical Security Master owner hash mismatch")
-        projected = self._universes.publish(
-            project_free_research_universe_as_of(
-                base_universe,
-                as_of_date=request.trading_date,
-            )
-        )
         policy = self._scopes.get_policy(request.runtime_scope_policy_id)
         if policy.policy_hash != request.runtime_scope_policy_hash:
             raise ValueError("Historical Runtime Scope Policy hash mismatch")
@@ -362,6 +356,13 @@ class HistoricalDecisionMaterializer:
             raise ValueError("Phase E vertical slice requires frozen WATCHLIST selectors")
         stock_symbols = tuple(
             sorted({symbol for item in policy.selectors for symbol in item.symbols})
+        )
+        projected = self._universes.publish(
+            project_free_research_universe_as_of(
+                base_universe,
+                as_of_date=request.trading_date,
+                symbols=stock_symbols,
+            )
         )
         bars = self._decision_bars(normalized_reference, request.decision_time)
         observations = tuple(

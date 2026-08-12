@@ -292,13 +292,20 @@ def project_free_research_universe_as_of(
     snapshot: FreeResearchUniverseSnapshot,
     *,
     as_of_date: date,
+    symbols: tuple[str, ...] | None = None,
 ) -> FreeResearchUniverseSnapshot:
     """Project retrieved listing dates without rewriting the true known-at clock."""
 
+    selected = None if symbols is None else tuple(sorted(set(symbols)))
+    if selected is not None and not selected:
+        raise ValueError("Research Universe projection symbols must not be empty")
     projected = tuple(
         _project_record_as_of(item, as_of_date=as_of_date)
         for item in snapshot.records
+        if selected is None or item.symbol in selected
     )
+    if not projected:
+        raise ValueError("Research Universe projection has no Security Master records")
     limitations = tuple(
         sorted(
             {
@@ -306,6 +313,11 @@ def project_free_research_universe_as_of(
                 "CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY",
                 "HISTORICAL_AVAILABILITY_NOT_PROVIDED",
                 "PIT_INCOMPLETE",
+                *(
+                    ("FROZEN_SELECTOR_SUBSET_PROJECTION",)
+                    if selected is not None
+                    else ()
+                ),
             }
         )
     )

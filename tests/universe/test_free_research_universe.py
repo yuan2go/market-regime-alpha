@@ -107,3 +107,20 @@ def test_retrospective_projection_uses_listing_dates_but_keeps_true_known_at() -
     assert by_symbol["600001.SH"].membership_status is ResearchUniverseMembershipStatus.EXCLUDED
     assert "CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY" in projected.limitations
     assert projected.snapshot_hash != source.snapshot_hash
+
+
+def test_retrospective_projection_can_freeze_exact_selector_subset() -> None:
+    source = _snapshot()
+
+    projected = project_free_research_universe_as_of(
+        source,
+        as_of_date=date(2022, 1, 3),
+        symbols=("300999.SZ", "000001.SZ"),
+    )
+
+    assert tuple(item.symbol for item in projected.records) == (
+        "000001.SZ",
+        "300999.SZ",
+    )
+    assert projected.source_manifest_reference == source.source_manifest_reference
+    assert "FROZEN_SELECTOR_SUBSET_PROJECTION" in projected.limitations
