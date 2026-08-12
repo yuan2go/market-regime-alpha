@@ -246,6 +246,11 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "pit_universe_membership_projection",
         "pit_universe_membership_projection_member",
         "formal_locked_oos_roster_universe_binding",
+        "formal_execution_request",
+        "formal_execution_provider_requirement",
+        "formal_execution_assessment",
+        "formal_execution_stage_assessment",
+        "formal_execution_source_binding",
     }
 )
 
@@ -316,6 +321,23 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "formal_locked_oos_roster_member",
             "formal_locked_oos_roster_member_no_update",
+        ),
+        ("formal_execution_request", "formal_execution_request_no_update"),
+        (
+            "formal_execution_provider_requirement",
+            "formal_execution_provider_requirement_no_update",
+        ),
+        (
+            "formal_execution_assessment",
+            "formal_execution_assessment_no_update",
+        ),
+        (
+            "formal_execution_stage_assessment",
+            "formal_execution_stage_assessment_no_update",
+        ),
+        (
+            "formal_execution_source_binding",
+            "formal_execution_source_binding_no_update",
         ),
         ("formal_research_protocol", "formal_research_protocol_no_update"),
         (

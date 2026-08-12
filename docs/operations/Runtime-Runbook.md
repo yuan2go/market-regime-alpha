@@ -47,8 +47,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 065, `authoritative_artifact_locator`. Expected schema
-catalog: 236 tables. Migrations 052–065 add Formal Protocol bindings and
+Expected head: migration 066, `formal_execution_assessment`. Expected schema
+catalog: 241 tables. Migrations 052–066 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,

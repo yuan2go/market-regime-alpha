@@ -90,6 +90,26 @@ ResearchDailySummary
 -> blocked Production Admission projection
 ```
 
+Historical Research is a bounded batch child, not another all-day Runtime or a
+separate Backtest authority:
+
+```text
+Free Research Universe + captured Operational Universe facts
+-> immutable Runtime Scope receipt
+-> PostgreSQL Historical Research Journal
+-> shared Decision Session Kernel
+-> existing Continuous/Shadow/Strategy/Portfolio/Outcome owners
+-> immutable Performance/Attribution report
+-> deterministic replay against the same owner hashes
+```
+
+The journal applies sessions and stateful portfolio transitions serially in
+trading-calendar order. Each stage uses a lease, fencing token, expected
+predecessor and immutable receipt. Resume advances the same run; replay reloads
+captured facts and never calls a replacement Provider. Free Provider overlap is
+resolved below Canonical facts with complete provenance and conservative
+eligibility aggregation.
+
 ## Installed CLI boundary
 
 There are six installed scripts and exactly the same six CLI modules have
@@ -101,7 +121,7 @@ not remove an importable compatibility function or its tests.
 
 | Module | Classification | Executable treatment |
 |---|---|---|
-| `continuous_research` | `PUBLIC_OPERATOR` | installed; owns `run-day`, `settle-day`, `strategy-day`, `portfolio-shadow-day`, `report-day`, `recovery-audit`, resume and replay |
+| `continuous_research` | `PUBLIC_OPERATOR` | installed; owns the daily commands plus Runtime Scope, Historical Research, Performance, exploratory Model and fail-closed Formal assessment build/report/replay operations |
 | `state_system` | `PUBLIC_OPERATOR` | installed bounded owner/admin command |
 | `decision_system` | `PUBLIC_OPERATOR` | installed bounded decision-support command |
 | `model_governance` | `PUBLIC_OPERATOR` | installed Model and engineering Access Governance administration command |
@@ -138,6 +158,8 @@ were duplicate entry points and were removed from packaging.
 | `application/shadow_research` | Freeze research decisions and settle factual prospective outcomes. |
 | `application/research_evaluation` | Build immutable outcome datasets, target protocols and complete Research Panel V2. |
 | `application/research_validation` | Compute engineering-only factor, ablation, calibration, evaluation and Entry evidence. |
+| `application/research_session` | Apply one ordered live/Shadow/Historical decision session through typed owner stages. |
+| `application/historical_research` | Own the bounded multi-session command, PostgreSQL journal, recovery and deterministic replay. |
 | `application/strategy_shadow` | Simulate Entry/Fill/Position/Holding/Exit without real execution mutation. |
 | `application/governance` | Own append-only engineering Principal/Role/Approval/Audit facts; never Production Admission. |
 | `research/**` | Hold pure research models and observable State algorithms. |

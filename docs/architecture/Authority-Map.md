@@ -28,7 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 236 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 241 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -63,8 +63,59 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Runtime caller:** Continuous Tick Runner.
 - **Downstream consumer:** Dataset freeze, State System, Controlled Operation and Research Summary.
 - **Replay mechanism:** immutable commit reload and current-pointer lineage replay.
-- **Evidence ceiling:** public free data remains exploratory and PIT-incomplete.
+- **Evidence ceiling:** public free data remains exploratory and PIT-incomplete;
+  multiple free Providers may contribute or cross-check one Fact Kind, but
+  agreement cannot manufacture archive/finality/availability qualification.
 - **Legacy replacement:** replaces mutable/local provider result handoff in the Canonical composition.
+
+### Runtime Scope
+
+- **Domain / Capability:** Universe / immutable per-session runnable symbol scope.
+- **Classification:** Research Evidence Authority; Policy constrains but does not write.
+- **Owner:** Runtime Scope bounded context.
+- **Canonical Writer:** `PostgresRuntimeScopeRepository` through `PostgresRuntimeScopeOperator`.
+- **Reader:** scope/policy/operational-input reload and as-of resolution.
+- **PostgreSQL tables:** `research_universe_policy`, `runtime_scope_receipt`,
+  `runtime_scope_input_reference`, `runtime_scope_member`,
+  `runtime_scope_operational_input`.
+- **Artifact / Receipt:** content-addressed `RuntimeScopeReceipt` with
+  `INCLUDED`, `EXCLUDED` and `UNKNOWN` members and exact source references.
+- **Runtime caller:** bounded `continuous-research runtime-scope-*` commands and
+  the shared Decision Session Kernel.
+- **Downstream consumer:** Historical/Research/Shadow owner stages; consumers do
+  not select a Provider.
+- **Replay mechanism:** reload Policy, free Security Master and captured
+  Operational Universe payloads, rebuild, compare exact receipt hash.
+- **Evidence ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`, `formal_pit=false`.
+  Overlapping free Provider facts are combined conservatively with all provenance.
+- **Legacy replacement:** replaces operator-maintained daily symbol lists; it is
+  not a second Security Master or membership Authority.
+
+### Historical Research Journal
+
+- **Domain / Capability:** Research / chronological multi-session execution,
+  recovery and replay.
+- **Classification:** bounded Runtime Journal, not the all-day Runtime or a
+  business fact owner.
+- **Owner:** Historical Research application context.
+- **Canonical Writer:** `PostgresHistoricalResearchJournal`; business stages use
+  their existing owners through `ResearchDecisionSessionKernel` and
+  `PostgresHistoricalSessionOwner`.
+- **Reader:** run/session/receipt/event report and deterministic replay.
+- **PostgreSQL tables:** `historical_research_run`,
+  `historical_research_session`, `historical_research_stage_receipt`,
+  `historical_research_attempt`, `historical_research_event`.
+- **Artifact / Receipt:** frozen command, session request and stage receipts for
+  Scope, Decision, Strategy, Portfolio, Outcome and Performance.
+- **Runtime caller:** `continuous-research historical-run`, `historical-resume`,
+  `historical-report` and `historical-replay`.
+- **Downstream consumer:** exploratory model research and human research review.
+- **Replay mechanism:** lease/fence/CAS journal plus exact owner/hash reload;
+  Decision reuse also matches calendar, scope, policy and code revision.
+- **Evidence ceiling:** Historical/Shadow engineering only; blocked stages are
+  valid terminal evidence and never become Formal OOS.
+- **Legacy replacement:** no legacy backtest or `daily_research` writer may
+  become a parallel journal or Authority.
 
 ### Source freeze and Dataset
 
@@ -356,19 +407,61 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Evidence ceiling:** migration 046 remains unchanged; later owner writers can only satisfy a gate from exact upstream owner evidence. Current upstream evidence is absent.
 - **Legacy replacement:** five reference-only promotion helpers and their generic Governance binding DTO were deleted.
 
+### Exploratory Model Research and Formal assessment
+
+- **Domain / Capability:** Research Validation / deterministic exploratory
+  training, inference and ordered Formal predecessor assessment.
+- **Classification:** Research artifact owner plus fail-closed qualification
+  orchestration; neither grants Production Authority.
+- **Owner:** Research Validation.
+- **Canonical Writer:** `PostgresResearchModelRepository` for exploratory
+  artifacts/receipts and `PostgresFormalExecutionRepository` for assessments.
+- **Reader:** model/assessment report and exact deterministic replay.
+- **PostgreSQL tables:** `research_model_training_*`,
+  `research_model_walk_forward_fold`, `research_model_artifact`,
+  `research_model_candidate_diagnostic`, `research_model_coefficient_head`,
+  `research_model_inference_*`, `formal_execution_request`,
+  `formal_execution_provider_requirement`, `formal_execution_assessment`,
+  `formal_execution_stage_assessment`, `formal_execution_source_binding`.
+- **Artifact / Receipt:** immutable research challenger, walk-forward diagnostics,
+  inference receipt and ordered Formal Execution assessment.
+- **Runtime caller:** bounded `continuous-research model-*` and
+  `formal-execution-*` commands.
+- **Downstream consumer:** Historical/Daily Shadow research and Formal gap
+  reporting; the Formal Forecast owner remains separately governed.
+- **Replay mechanism:** restore exact samples/features/targets/folds/coefficients
+  or exact qualification predecessors and compare canonical identities.
+- **Evidence ceiling:** `RESEARCH_MODEL_AVAILABLE=true` only for a stored valid
+  artifact; `FORMAL_MODEL_QUALIFIED=false`, `FORMAL_OOS=false`,
+  `CALIBRATED=false`. The assessment stops before OOS/calibration when Provider
+  Fact or PIT qualification is missing.
+- **Legacy replacement:** no caller-submitted score or generic evidence DTO can
+  qualify a model or unlock OOS.
+
 ### Strategy Shadow
 
 - **Domain / Capability:** Strategy Shadow / simulated Entry, Fill, Position, Portfolio, Holding and Exit.
 - **Classification:** isolated Research Harness and simulated ledger.
 - **Owner:** Strategy Shadow.
-- **Canonical Writer:** `PostgresStrategyShadowRepository` for single-trade sessions and `PostgresShadowPortfolioRepository` for Portfolio Shadow.
+- **Canonical Writer:** `PostgresStrategyShadowRepository` for single-trade
+  sessions, `PostgresShadowPortfolioRepository` for Portfolio Shadow,
+  `PostgresShadowObservationRepository` for owner-resolved inputs and
+  `PostgresPortfolioPerformanceRepository` for Performance/Attribution.
 - **Reader:** session, event, artifact and Portfolio day-state Readers plus deterministic replay.
 - **Repository:** `PostgresStrategyShadowRepository`, `PostgresShadowPortfolioRepository`.
-- **PostgreSQL tables:** `strategy_shadow_policy_authority`, `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`, `strategy_shadow_portfolio`, `strategy_shadow_portfolio_day`, prospective qualification policy and stage decision.
-- **Artifact / Receipt:** Strategy Shadow Session/Event and simulated Entry/Fill/Position/Holding/Exit artifacts; Portfolio Policy and CAS-linked day states.
+- **PostgreSQL tables:** `strategy_shadow_policy_authority`,
+  `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`,
+  `strategy_shadow_portfolio`, `strategy_shadow_portfolio_day`,
+  `shadow_observation_*`, `shadow_performance_*`, prospective qualification
+  policy and stage decision.
+- **Artifact / Receipt:** Strategy Shadow Session/Event, provenance-complete
+  Observation, simulated Entry/Fill/Position/Holding/Exit artifacts, Portfolio
+  Policy/CAS-linked day states and immutable Performance report.
 - **Runtime caller:** thin subcommands of the installed `continuous-research` CLI; no second Runtime.
 - **Downstream consumer:** Holding/Exit engineering evaluation and Production Admission gap projection.
-- **Replay mechanism:** reusable Policy owner plus CAS session/event/artifact and Portfolio replay; prospective proof counts only post-policy-lock live sessions.
+- **Replay mechanism:** reusable Policy owner plus exact source binding,
+  CAS session/event/artifact, Portfolio chain and Performance/Attribution replay;
+  prospective proof counts only post-policy-lock live sessions.
 - **Evidence ceiling:** simulated only; no actual Fill, Position or broker mutation.
 - **Legacy replacement:** no legacy trading simulator may write actual Position Authority.
 

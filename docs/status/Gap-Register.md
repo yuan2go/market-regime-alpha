@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current unresolved engineering and evidence gaps
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 ## P0 Authority and architecture correctness
@@ -22,7 +22,8 @@
 | Gap | Current fact | Exit condition |
 |---|---|---|
 | Exact-window sustained operation | mechanics pass locally; no sustained real 14:30-14:55 series | consecutive real runs replay with no duplicate Provider calls or fence violations |
-| Free-data operator deployment evidence | run/settle/strategy/portfolio/report/recovery-audit/replay mechanics exist locally | repeated real PostgreSQL day cycles recover provider, partial-journal and missed-settlement scenarios under an operator runbook |
+| Free-data operator deployment evidence | run/settle/scope/Historical/strategy/portfolio/performance/model/formal-assessment/report/recovery/replay mechanics exist locally | repeated real PostgreSQL day and multi-session archive cycles recover provider, partial-journal and missed-settlement scenarios under the operator runbook |
+| Representative exploratory Historical corpus | the multi-session runner, Full-A Runtime Scope, model and performance loops are executable/replayable; no repository artifact proves a sustained real multi-year free archive run | one frozen real free-data corpus completes representative years with recorded coverage/missingness, interruption recovery and exact replay; it remains exploratory and cannot satisfy Formal PIT/OOS |
 | Durable prospective sample | qualification owner excludes pre-policy, Replay and Fixture sessions and currently proves zero real sessions | the frozen policy accumulates enough post-lock trusted-clock/live-origin sessions with exact replay and acceptable incident/drift/Provider failure rates |
 | State/Pool/Signal model validation preparation | mechanics and policies exist | frozen protocols and qualified inputs exist without parameter tuning in implementation code |
 | External authentication binding | Principal/RBAC/role-separated Approval/Audit owners exist; CLI principal identifiers are not authenticated subjects | a deployed authentication provider binds verified subjects to durable Principals without adding Production permission |

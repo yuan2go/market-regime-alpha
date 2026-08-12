@@ -178,6 +178,41 @@ class RepositoryFactory:
     def model_governance(self):
         return PostgresModelGovernanceRepository(self._postgres)
 
+    def runtime_scope(self):
+        from market_regime_alpha.universe.postgres_runtime_scope import (
+            PostgresRuntimeScopeRepository,
+        )
+
+        return PostgresRuntimeScopeRepository(self._postgres)
+
+    def shadow_performance(self):
+        from market_regime_alpha.application.strategy_shadow.postgres_performance import (
+            PostgresPortfolioPerformanceRepository,
+        )
+
+        return PostgresPortfolioPerformanceRepository(self._postgres)
+
+    def shadow_observations(self):
+        from market_regime_alpha.application.strategy_shadow.postgres_observations import (
+            PostgresShadowObservationRepository,
+        )
+
+        return PostgresShadowObservationRepository(self._postgres)
+
+    def research_models(self):
+        from market_regime_alpha.application.research_validation.postgres_research_model import (
+            PostgresResearchModelRepository,
+        )
+
+        return PostgresResearchModelRepository(self._postgres)
+
+    def formal_execution(self):
+        from market_regime_alpha.application.research_validation.postgres_formal_execution import (
+            PostgresFormalExecutionRepository,
+        )
+
+        return PostgresFormalExecutionRepository(self._postgres)
+
     def pit_authority(
         self,
         *,
@@ -251,6 +286,22 @@ class RepositoryFactory:
         lease_duration: timedelta = DEFAULT_CONTINUOUS_TICK_LEASE,
     ) -> PostgresContinuousResearchJournal:
         return PostgresContinuousResearchJournal(
+            self._postgres,
+            clock=clock,
+            lease_duration=lease_duration,
+        )
+
+    def historical_research(
+        self,
+        *,
+        clock: Clock,
+        lease_duration: timedelta,
+    ):
+        from market_regime_alpha.application.historical_research.postgres_journal import (
+            PostgresHistoricalResearchJournal,
+        )
+
+        return PostgresHistoricalResearchJournal(
             self._postgres,
             clock=clock,
             lease_duration=lease_duration,

@@ -3,14 +3,15 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current capability and evidence-ceiling matrix
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-12
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 | Capability | Engineering state | Current Authority / ceiling |
 |---|---|---|
 | Continuous scheduling, lease, fence, recovery | Implemented | one PostgreSQL Runtime; Research/Shadow only for free data |
 | BaoStock/Tencent acquisition and archive | Implemented | recorded exploratory evidence, not Formal PIT |
-| Full A-share Research Universe | Operational engineering complete | append-only BaoStock Security Master/Research Universe snapshots retain `UNKNOWN`; `PIT_INCOMPLETE` |
+| Full A-share Research Universe → Runtime Scope | Operational engineering complete | immutable Policy/receipt; captured overlapping free Operational Universe inputs retain all provenance and combine eligibility conservatively; `UNKNOWN` is not runnable; `PIT_INCOMPLETE` |
+| Multi-session Historical Runner | Operational engineering complete | shared Decision Session Kernel plus PostgreSQL lease/fence/CAS Journal, typed blocked stages, resume/report and deterministic owner replay; exploratory only, not Formal OOS |
 | ETF/Index/Industry/Theme Reference | Engineering complete | Declared/Derived/Proxy are distinct, versioned and lineage-bound; free mappings remain Proxy |
 | Dataset and Feature materialization | Implemented | canonical content-addressed artifacts |
 | Formal PIT mechanics | Implemented mechanics | real qualified Provider/fact coverage absent |
@@ -23,6 +24,8 @@
 | Market/ETF/Theme/Capital State | Implemented | PostgreSQL State owner; models remain unvalidated |
 | StateSeries / Dynamic Pool / Candidate | Implemented | PostgreSQL receipt and CAS authority |
 | Free Historical Sample pipeline | Operationally implemented | BaoStock retrospective decisions/outcomes; PostgreSQL `UNQUALIFIED`, `FREE_DATA_EXPLORATORY` only |
+| Exploratory Model Training / Executor | Operational engineering complete | frozen samples/features/targets, purged walk-forward folds, deterministic regularized multi-head artifact and inference; `RESEARCH_MODEL_AVAILABLE=true`, raw barrier scores are not probabilities |
+| Formal execution orchestration | Persisted fail-closed owner implemented | ordered Provider Fact → Formal PIT → Historical Sample → OOS → Calibration assessment stops before unqualified predecessors; `FORMAL_MODEL_QUALIFIED=false`, `FORMAL_OOS=false`, `CALIBRATED=false` |
 | Minute / Signal / PathForecast | Operationally wired for free Research/Shadow | Historical Registry samples may produce exploratory uncalibrated Forecast; no samples fails closed; Production excluded |
 | ResearchDailySummary | Implemented | canonical Research/Shadow summary projection |
 | Opportunity / Thesis / Portfolio / Risk | Implemented mechanics | human decision support; no actual Position creation |
@@ -35,7 +38,9 @@
 | Formal Evaluation / Locked OOS | Family owner writer and two-level consumption Authority implemented, evidence absent | one immutable Hypothesis Family contains all registered Targets and the metric/slice/sensitivity/fold catalog; each raw subject/session/outcome path unlocks once, Target observations consume within that first family, and correction spans the complete family including `NOT_ESTIMABLE` planned folds; revisions or Model/Forecast/Dataset/Protocol substitution cannot make raw OOS pristine; no current qualified PIT/sample observations |
 | Entry research / Holding / Exit qualification | Owner writer implemented, evidence absent | replays Locked-OOS Strategy Shadow Entry→Fill→Position→Exit→Outcome, economic/provenance floors and independent approval; no Canonical `ENTER` unlock |
 | Strategy Shadow | Operational loop implemented | Entry/Fill/Position/Holding/Exit/Outcome via Continuous CLI; simulated ledger, no real mutation |
+| Owner-resolved Strategy / Portfolio Observations | Operational engineering complete | builders reload immutable facts, persist per-value source bindings, and block missing/stale required facts; explicit JSON remains an auditable Operator Input path |
 | Portfolio Strategy Shadow | Operational engineering complete | Top1/3/5 Equal/Score/Risk, Cash/NAV/exposure/turnover/cost/capacity/drawdown/attribution and A-share constraints; no real mutation |
+| Multi-period Performance / Attribution | Operational engineering complete | immutable metrics, equity/period returns and attribution with exact state bindings, explicit `NOT_ESTIMABLE`, reconciliation and deterministic replay |
 | Operator surface convergence | Implemented | six installed scripts and six installed CLI module guards; typed Phase C owner freeze, Protocol freeze, Formal Forecast compute and Formal family evaluation are subcommands of existing CLIs with RBAC, audit and idempotency; no generic artifact registrar |
 | Holding/Exit validation | Included in owner-resolved C6 gate | current Formal OOS/Calibration/qualified outcomes absent; `holding_exit_validated=false` |
 | Prospective Strategy Shadow qualification | Operational engineering complete | post-policy-lock, `LIVE_TRUSTED`/`LIVE_ACQUISITION` sessions only; exact session/outcome/portfolio replay and Provider failure floors; zero current qualifying sessions |
