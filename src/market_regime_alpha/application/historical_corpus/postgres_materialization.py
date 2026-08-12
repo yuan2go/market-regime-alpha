@@ -139,7 +139,8 @@ class PostgresHistoricalMaterializationRepository:
             if component_kind is None:
                 rows = connection.execute(
                     """
-                    SELECT component_id, component_hash, component_kind
+                    SELECT component_id, component_hash, component_kind,
+                           ordinal, payload_json
                     FROM historical_corpus_session_component
                     WHERE run_id = %s
                     ORDER BY trading_date, ordinal, component_id
@@ -149,23 +150,78 @@ class PostgresHistoricalMaterializationRepository:
             else:
                 rows = connection.execute(
                     """
-                    SELECT component_id, component_hash, component_kind
+                    SELECT component_id, component_hash, component_kind,
+                           ordinal, payload_json
                     FROM historical_corpus_session_component
                     WHERE run_id = %s AND component_kind = %s
                     ORDER BY trading_date, ordinal, component_id
                     """,
                     (str(run_id), component_kind.value),
                 ).fetchall()
-        return tuple(
-            self.get(
-                ValidationArtifactReference(
-                    f"HISTORICAL_{str(row[2])}",
-                    ArtifactId(str(row[0])),
-                    str(row[1]),
-                )
+            if component_kind is None:
+                source_rows = connection.execute(
+                    """
+                    SELECT binding.component_id, binding.ordinal,
+                           binding.artifact_kind, binding.artifact_id,
+                           binding.content_hash
+                    FROM historical_corpus_component_source_binding AS binding
+                    JOIN historical_corpus_session_component AS component
+                      ON component.component_id = binding.component_id
+                     AND component.component_hash = binding.component_hash
+                    WHERE component.run_id = %s
+                    ORDER BY binding.component_id, binding.ordinal
+                    """,
+                    (str(run_id),),
+                ).fetchall()
+            else:
+                source_rows = connection.execute(
+                    """
+                    SELECT binding.component_id, binding.ordinal,
+                           binding.artifact_kind, binding.artifact_id,
+                           binding.content_hash
+                    FROM historical_corpus_component_source_binding AS binding
+                    JOIN historical_corpus_session_component AS component
+                      ON component.component_id = binding.component_id
+                     AND component.component_hash = binding.component_hash
+                    WHERE component.run_id = %s AND component.component_kind = %s
+                    ORDER BY binding.component_id, binding.ordinal
+                    """,
+                    (str(run_id), component_kind.value),
+                ).fetchall()
+        sources: dict[str, list[tuple[int, str, str, str]]] = {}
+        for item in source_rows:
+            sources.setdefault(str(item[0]), []).append(
+                (int(item[1]), str(item[2]), str(item[3]), str(item[4]))
             )
-            for row in rows
-        )
+        components = []
+        for row in rows:
+            payload = row[4]
+            if not isinstance(payload, Mapping):
+                raise HistoricalMaterializationConflict(
+                    "Historical component payload projection is invalid"
+                )
+            component = HistoricalSessionComponent.from_canonical_dict(payload)
+            expected_reference = ValidationArtifactReference(
+                f"HISTORICAL_{str(row[2])}",
+                ArtifactId(str(row[0])),
+                str(row[1]),
+            )
+            source_projection = tuple(
+                (index, item.artifact_kind, str(item.artifact_id), item.content_hash)
+                for index, item in enumerate(component.source_references, 1)
+            )
+            if (
+                component.reference != expected_reference
+                or component.run_id != run_id
+                or int(row[3]) <= 0
+                or tuple(sources.get(str(component.component_id), ()))
+                != source_projection
+            ):
+                raise HistoricalMaterializationConflict(
+                    "Historical component batch projection conflict"
+                )
+            components.append(component)
+        return tuple(components)
 
     @staticmethod
     def _verify_projection(
