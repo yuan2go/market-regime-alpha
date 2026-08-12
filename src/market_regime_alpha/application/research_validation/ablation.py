@@ -647,7 +647,8 @@ def _metrics(
         pairs = by_session[session_key]
         ordered = sorted(pairs, key=lambda pair: (-pair[1], pair[0].symbol))
         top = ordered[: min(top_k, len(ordered))]
-        bottom = ordered[-min(top_k, len(ordered)) :]
+        remaining = ordered[len(top) :]
+        bottom = remaining[-min(top_k, len(remaining)) :]
         top_returns.extend(float(item.realized_return) for item, _score in top)
         top_costs.extend(float(item.cost_return) for item, _score in top)
         top_gross_decimals.extend(item.realized_return for item, _score in top)

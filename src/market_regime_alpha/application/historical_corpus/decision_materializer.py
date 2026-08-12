@@ -632,7 +632,9 @@ class HistoricalDecisionMaterializer:
             },
         )
         forecast_config = _forecast_configuration(request.decision_time)
-        prior_outcomes = self._prior_outcomes(request.trading_date)
+        prior_outcomes = (
+            self._prior_outcomes(request.trading_date) if snapshots else ()
+        )
         forecasts = []
         used_prior_references: set[ValidationArtifactReference] = set()
         for snapshot in snapshots:

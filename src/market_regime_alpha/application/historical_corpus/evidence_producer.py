@@ -144,11 +144,12 @@ class HistoricalEvidenceProducer:
         if not observations:
             raise ValueError("Historical Evidence has no estimable Target observations")
         variants = tuple(AblationVariant.standard(item) for item in _SEQUENCE)
+        symbol_count = len({item.symbol for item in observations})
         protocol = AblationProtocol.create(
             protocol_version="phase-e-cumulative-chain-v1",
             variants=variants,
             comparison_sequence=tuple(item.value.lower() for item in _SEQUENCE),
-            top_k=min(10, max(1, len({item.symbol for item in observations}))),
+            top_k=max(1, min(10, symbol_count // 3)),
             scoring_contract="WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1",
             created_at=created_at,
         )

@@ -250,3 +250,44 @@ def test_ablation_path_metrics_reject_missing_canonical_session_dates() -> None:
         assert "canonical trading date" in str(exc)
     else:
         raise AssertionError("path metrics without canonical dates must fail closed")
+
+
+def test_ablation_spread_does_not_reuse_top_names_as_bottom_names() -> None:
+    variant = AblationVariant.standard(AblationVariantKind.PRICE_ONLY)
+    protocol = AblationProtocol.create(
+        protocol_version="disjoint-top-bottom-v1",
+        variants=(variant,),
+        top_k=2,
+        scoring_contract="EXACT_SCORE_V1",
+        created_at=NOW,
+    )
+    observations = tuple(
+        AblationObservation(
+            observation_id=f"one-session-{symbol}",
+            session_key="one-session",
+            symbol=symbol,
+            score=score,
+            realized_return=realized,
+            mfe=None,
+            mae=None,
+            selected=True,
+            previous_selected=False,
+            factor_values=((FactorFamily.PRICE, "price", score),),
+            trading_date=date(2026, 8, 12),
+        )
+        for symbol, score, realized in (
+            ("A", Decimal("2"), Decimal("0.02")),
+            ("B", Decimal("1"), Decimal("-0.01")),
+        )
+    )
+
+    suite = run_alpha_ablation_suite(
+        protocol=protocol,
+        panel_reference=_reference(),
+        observations=observations,
+        score_functions={variant.variant_id: lambda item, _variant: item.score},
+        created_at=NOW,
+    )
+
+    assert suite.results[0].metrics.top_k_return == Decimal("0.005")
+    assert suite.results[0].metrics.spread is None
