@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import UTC, datetime
 import json
 from typing import Any, Mapping
@@ -194,26 +193,15 @@ class PostgresPITAuthority(NativePostgresRepository):
                     if universe_projection is not None:
                         _persist_universe_membership_projection(
                             connection,
-                            replace(
-                                universe_projection,
-                                resolved_at=restored.resolved_at,
-                            ),
+                            universe_projection,
                         )
                     connection.commit()
                     return restored
                 _persist_resolution(connection, resolution)
                 if universe_projection is not None:
-                    stored_resolution = _load_resolution(
-                        connection,
-                        resolution.resolution_id,
-                        resolution.resolution_hash,
-                    )
                     _persist_universe_membership_projection(
                         connection,
-                        replace(
-                            universe_projection,
-                            resolved_at=stored_resolution.resolved_at,
-                        ),
+                        universe_projection,
                     )
                 _insert_action(
                     connection,
