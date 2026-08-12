@@ -440,8 +440,9 @@ def build_target_outcome_label_from_bars(
     suspended = any(
         item.trading_status is TradingStatus.SUSPENDED for item in selected
     )
-    unknown_status = any(
-        item.trading_status is TradingStatus.UNKNOWN for item in selected
+    unknown_status = (
+        OutcomeMarketCondition.TRADING not in conditions
+        and any(item.trading_status is TradingStatus.UNKNOWN for item in selected)
     )
     if suspended:
         conditions.add(OutcomeMarketCondition.SUSPENDED)
