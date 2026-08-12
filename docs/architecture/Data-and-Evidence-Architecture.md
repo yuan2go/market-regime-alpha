@@ -42,14 +42,14 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 057 and checksummed.
+- Packaged migrations are contiguous from 001 through 059 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 200 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–055 add exploratory sample, Research Universe, Portfolio Shadow, engineering access-governance owners, Path Calibration Hypothesis evidence and fail-closed Phase C gates. Migration 056 adds a Calendar payload snapshot anchored to the existing PIT Artifact Authority and Formal Protocol owner-resolution receipts. Migration 057 adds owner-computed Forecast receipts, frozen multi-target families, one-time raw OOS unlock, Target-specific consumption, family evaluation, per-record PIT/Historical/Forecast bindings and typed operator command audit. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
+The schema catalog currently contains 206 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–055 add exploratory sample, Research Universe, Portfolio Shadow, engineering access-governance owners, Path Calibration Hypothesis evidence and fail-closed Phase C gates. Migration 056 adds a Calendar payload snapshot anchored to the existing PIT Artifact Authority and Formal Protocol owner-resolution receipts. Migration 057 adds owner-computed Forecast receipts, frozen multi-target families, one-time raw OOS unlock, Target-specific consumption, family evaluation, per-record PIT/Historical/Forecast bindings and typed operator command audit. Migration 058 adds the label-value-blind Locked roster and commits its exact raw/Target consumption claims before any Locked outcome payload is read. Migration 059 projects the strict PIT Universe Reader's complete immutable member set, binds every new Locked roster to it and requires exact Dataset ID+hash lineage from factual settlement through Target Outcome and Panel. New Formal Protocols admit only Train/Validation Historical Dataset records into C3. Their metadata-only owner seam runs before the pre-OOS readiness barrier, and the full frozen Locked roster must match canonical Universe members plus Target/Forecast/Label metadata before its realized payload can be read. Migration-027 Model Registry action envelopes remain replay-only for pre-057 Protocols. None weakens migration 046 or creates a second Universe/PIT/Forecast/Evaluation owner.
 
 ## Replay
 

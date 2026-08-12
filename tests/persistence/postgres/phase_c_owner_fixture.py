@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
@@ -151,7 +151,6 @@ from tests.persistence.postgres.pit_fixture import (
 )
 from tests.platform.test_platform_kernel import _model_definition
 
-
 NOW = datetime(2026, 8, 1, 8, tzinfo=UTC)
 
 
@@ -283,9 +282,7 @@ def record_phase_c_protocol_owners(
             ),
             implementation_ref=definition.implementation_ref,
             code_revision="80bd8e85daf6115bbf147fcd3bfbe60ce781e02c",
-            code_hash=canonical_hash(
-                {"code_revision": "phase-c-owner-model-code-v1"}
-            ),
+            code_hash=canonical_hash({"code_revision": "phase-c-owner-model-code-v1"}),
             validation_protocol_refs=(
                 ArtifactLineageReference(
                     reference_kind="VALIDATION_PROTOCOL",
@@ -358,9 +355,7 @@ def record_phase_c_protocol_owners(
         minimum_coverage=Decimal("0.90"),
         locked_at=NOW,
     )
-    PostgresCalibrationQualificationAuthority(factory).record_policy(
-        calibration_policy
-    )
+    PostgresCalibrationQualificationAuthority(factory).record_policy(calibration_policy)
 
     strategy_policy = StrategyShadowPolicy.create(
         policy_version="phase-c-owner-v1",
@@ -425,9 +420,7 @@ def record_phase_c_protocol_owners(
         ),
         locked_at=NOW,
     )
-    PostgresPhaseCGateAuthority(factory).record_entry_holding_exit_policy(
-        entry_policy
-    )
+    PostgresPhaseCGateAuthority(factory).record_entry_holding_exit_policy(entry_policy)
 
     with factory.connection(read_only=True) as connection:
         protocol_locked_at = connection.execute(
@@ -518,7 +511,11 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
         target_protocol=targets,
         windows=(
             EvaluationWindow(
-                "train", EvaluationPartition.TRAIN, date(2026, 1, 5), date(2026, 1, 12), 1
+                "train",
+                EvaluationPartition.TRAIN,
+                date(2026, 1, 5),
+                date(2026, 1, 12),
+                1,
             ),
             EvaluationWindow(
                 "validation",
@@ -544,16 +541,23 @@ def _evaluation(targets: OutcomeTargetProtocol) -> FormalEvaluationProtocol:
 
 def _historical_dataset(
     target_reference: ValidationArtifactReference,
+    *,
+    decision_time: datetime = datetime(2026, 1, 6, 6, 45, tzinfo=UTC),
+    available_at: datetime = datetime(2026, 1, 7, 8, 0, tzinfo=UTC),
+    identity_suffix: str = "",
 ) -> HistoricalSampleDataset:
     suffix = str(target_reference.artifact_id)
+    sample_suffix = f"{suffix}{identity_suffix}"
     sample = PathForecastSample(
-        sample_id=ArtifactId(f"phase-c-owner-sample:{suffix}"),
-        source_artifact_id=ArtifactId(f"phase-c-owner-outcome:{suffix}"),
-        source_content_hash=canonical_hash({"outcome": "phase-c-owner", "target": suffix}),
+        sample_id=ArtifactId(f"phase-c-owner-sample:{sample_suffix}"),
+        source_artifact_id=ArtifactId(f"phase-c-owner-outcome:{sample_suffix}"),
+        source_content_hash=canonical_hash(
+            {"outcome": "phase-c-owner", "target": sample_suffix}
+        ),
         symbol="000001.SZ",
         target_id=TargetId(str(target_reference.artifact_id)),
-        sample_decision_time=DecisionTime(NOW - timedelta(days=5)),
-        available_at=AvailabilityTime(NOW - timedelta(days=1)),
+        sample_decision_time=DecisionTime(decision_time),
+        available_at=AvailabilityTime(available_at),
         observation_status=EntryPathObservationStatus.AVAILABLE,
         observation_reason_code=EntryPathReasonCode.OUTCOME_RESOLVED,
         realized_mfe=0.04,
@@ -564,15 +568,17 @@ def _historical_dataset(
     record = HistoricalPathSampleRecord.register_unqualified(
         sample=sample,
         target_reference=target_reference,
-        outcome_reference=_reference("FACTUAL_OUTCOME", f"phase-c-owner-outcome:{suffix}"),
+        outcome_reference=_reference(
+            "FACTUAL_OUTCOME", f"phase-c-owner-outcome:{sample_suffix}"
+        ),
         pit_lineage=(),
-        registered_at=NOW - timedelta(days=1),
+        registered_at=available_at,
     )
     return HistoricalSampleDataset.create(
         registry_version="phase-c-owner-v1",
         target_reference=target_reference,
         records=(record,),
-        available_at=NOW - timedelta(days=1),
+        available_at=available_at,
     )
 
 

@@ -209,12 +209,30 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "formal_hypothesis_family_evaluation",
         "formal_hypothesis_family_evaluation_target",
         "formal_hypothesis_family_evaluation_pit_evidence",
+        "formal_hypothesis_family_evaluation_historical_decision",
         "phase_c_formal_operator_command",
+        "formal_locked_oos_roster",
+        "formal_locked_oos_roster_member",
+        "pit_universe_membership_projection",
+        "pit_universe_membership_projection_member",
+        "formal_locked_oos_roster_universe_binding",
     }
 )
 
 EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
+        (
+            "pit_universe_membership_projection",
+            "pit_universe_membership_projection_no_update",
+        ),
+        (
+            "pit_universe_membership_projection_member",
+            "pit_universe_membership_projection_member_no_update",
+        ),
+        (
+            "formal_locked_oos_roster_universe_binding",
+            "formal_locked_oos_roster_universe_binding_no_update",
+        ),
         ("formal_research_protocol", "formal_research_protocol_no_update"),
         (
             "outcome_target_bound_forecast",
@@ -361,8 +379,17 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
             "formal_hypothesis_family_evaluation_pit_evidence_no_update",
         ),
         (
+            "formal_hypothesis_family_evaluation_historical_decision",
+            "formal_family_evaluation_historical_decision_no_update",
+        ),
+        (
             "phase_c_formal_operator_command",
             "phase_c_formal_operator_command_no_update",
+        ),
+        ("formal_locked_oos_roster", "formal_locked_oos_roster_no_update"),
+        (
+            "formal_locked_oos_roster_member",
+            "formal_locked_oos_roster_member_no_update",
         ),
         ("security_principal", "security_principal_no_update"),
         (

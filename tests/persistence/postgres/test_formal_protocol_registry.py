@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+import json
+
 import pytest
 from psycopg.types.json import Jsonb
 
@@ -30,10 +33,13 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.platform.contracts import ModelLifecycleStatus
 from market_regime_alpha.platform.durable_governance import PersistentModelRegistry
 from market_regime_alpha.platform.postgres_runtime_governance import (
+    ModelGovernanceIntegrityError,
     PostgresModelGovernanceRepository,
+    resolve_formal_research_model_lineage,
 )
 from tests.persistence.postgres.phase_c_owner_fixture import (
     NOW,
+    _historical_dataset,
     freeze_phase_c_protocol,
     record_phase_c_protocol_owners,
 )
@@ -95,6 +101,94 @@ def test_formal_protocol_model_owner_freezes_current_governance_and_fails_termin
             actor="phase-c-owner-test",
             reason="terminal model cannot be frozen again",
             idempotency_key="terminal-model-formal-freeze",
+        )
+
+
+def test_formal_model_owner_replays_transition_ledger_not_mutable_projection(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    fixture = record_phase_c_protocol_owners(postgres_factory)
+    governance = PostgresModelGovernanceRepository(postgres_factory)
+    current = PersistentModelRegistry(governance).get(fixture.model_lineage.model_id)
+    PersistentModelRegistry(governance).transition(
+        fixture.model_lineage.model_id,
+        expected_version=current.version,
+        idempotency_key="research-model-before-projection-corruption",
+        to_status=ModelLifecycleStatus.RESEARCH,
+        changed_at=NOW,
+        reason="immutable lifecycle reason",
+    )
+    with postgres_factory.connection() as connection:
+        row = connection.execute(
+            "SELECT registration_json FROM model_registrations WHERE model_id = %s",
+            (str(fixture.model_lineage.model_id),),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(str(row[0]))
+        payload["transitions"][0]["reason"] = "forged mutable projection reason"
+        connection.execute(
+            "UPDATE model_registrations SET registration_json = %s WHERE model_id = %s",
+            (json.dumps(payload, sort_keys=True), str(fixture.model_lineage.model_id)),
+        )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        with pytest.raises(
+            ModelGovernanceIntegrityError,
+            match="projection diverges from append-only history",
+        ):
+            resolve_formal_research_model_lineage(
+                connection,
+                lineage_id=fixture.model_lineage.lineage_id,
+                lineage_hash=fixture.model_lineage.lineage_hash,
+            )
+
+
+def test_protocol_freeze_rejects_historical_dataset_with_locked_oos_values(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    fixture = record_phase_c_protocol_owners(postgres_factory)
+    locked = _historical_dataset(
+        fixture.protocol.target_references[0],
+        decision_time=datetime(2026, 1, 22, 6, 45, tzinfo=UTC),
+        available_at=datetime(2026, 1, 23, 8, 0, tzinfo=UTC),
+        identity_suffix=":locked-oos",
+    )
+    PostgresResearchValidationRepository(postgres_factory).record_sample_dataset(locked)
+    locked_reference = ValidationArtifactReference(
+        "HISTORICAL_SAMPLE_DATASET", locked.dataset_id, locked.dataset_hash
+    )
+    datasets = tuple(
+        sorted(
+            (
+                locked_reference,
+                *fixture.protocol.historical_sample_dataset_references[1:],
+            ),
+            key=lambda item: (str(item.artifact_id), item.content_hash),
+        )
+    )
+    components = dict(
+        FormalProtocolFreezeScope.from_protocol_references(
+            fixture.protocol
+        ).component_references
+    )
+    components["historical_sample_dataset_reference"] = datasets[0]
+    scope = FormalProtocolFreezeScope(
+        protocol_version="reject-locked-c3-dataset-v1",
+        outcome_target_protocol_reference=(
+            fixture.protocol.outcome_target_protocol_reference
+        ),
+        trading_calendar_reference=fixture.protocol.trading_calendar_reference,
+        evaluation_protocol_reference=fixture.protocol.evaluation_protocol_reference,
+        historical_sample_dataset_references=datasets,
+        component_references=tuple(sorted(components.items())),
+    )
+
+    with pytest.raises(FormalProtocolConflict, match="Train/Validation-only"):
+        PostgresFormalProtocolRepository(postgres_factory).freeze_protocol(
+            scope=scope,
+            actor="phase-c-owner-test",
+            reason="Locked outcomes cannot be bundled into formal C3",
+            idempotency_key="reject-locked-c3-dataset",
         )
 
 
@@ -246,9 +340,12 @@ def test_pre_057_protocol_is_replayable_but_cannot_enter_new_formal_research(
             ),
         )
 
-    assert PostgresFormalProtocolRepository(postgres_factory).get_protocol(
-        legacy.protocol_id
-    ) == legacy
+    assert (
+        PostgresFormalProtocolRepository(postgres_factory).get_protocol(
+            legacy.protocol_id
+        )
+        == legacy
+    )
     with postgres_factory.connection(read_only=True) as connection:
         with pytest.raises(FormalProtocolConflict, match="replay-only"):
             load_formal_protocol_owner(connection, legacy.protocol_id)
@@ -289,12 +386,15 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
         reason="freeze formal protocol",
         idempotency_key="formal-protocol-freeze",
     )
-    assert repository.freeze_protocol(
-        scope=scope,
-        actor="phase-c-test",
-        reason="freeze formal protocol",
-        idempotency_key="formal-protocol-freeze",
-    ) == frozen
+    assert (
+        repository.freeze_protocol(
+            scope=scope,
+            actor="phase-c-test",
+            reason="freeze formal protocol",
+            idempotency_key="formal-protocol-freeze",
+        )
+        == frozen
+    )
     protocol = frozen
     family = repository.get_hypothesis_family(protocol.protocol_id)
     assert family.formal_protocol_reference.artifact_id == protocol.protocol_id
@@ -319,7 +419,9 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
         ),
         component_references=tuple(sorted(missing_components.items())),
     )
-    with pytest.raises(FormalProtocolConflict, match="THRESHOLD_POLICY owner is missing"):
+    with pytest.raises(
+        FormalProtocolConflict, match="THRESHOLD_POLICY owner is missing"
+    ):
         repository.freeze_protocol(
             scope=caller_only_scope,
             actor="phase-c-test",
@@ -378,30 +480,42 @@ def test_protocol_and_outcome_target_forecast_replay_from_postgres(
         repository.record_forecast(caller_model_forecast)
 
     with postgres_factory.connection(read_only=True) as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM formal_research_protocol"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM formal_research_protocol"
+            ).fetchone()[0]
+            == 1
+        )
         assert connection.execute(
             "SELECT count(*) FROM formal_research_protocol_component"
         ).fetchone()[0] == len(protocol.component_references())
-        assert connection.execute(
-            """
+        assert (
+            connection.execute(
+                """
             SELECT count(*)
             FROM formal_research_protocol_component_owner_resolution
             """
-        ).fetchone()[0] == len(protocol.component_references()) + 2
-        assert connection.execute(
-            "SELECT count(*) FROM outcome_target_bound_forecast"
-        ).fetchone()[0] == 1
+            ).fetchone()[0]
+            == len(protocol.component_references()) + 2
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM outcome_target_bound_forecast"
+            ).fetchone()[0]
+            == 1
+        )
         assert connection.execute(
             "SELECT forecast_authority FROM outcome_target_bound_forecast"
         ).fetchone() == ("EXPLORATORY_CALLER_SUBMITTED",)
         assert connection.execute(
             "SELECT count(*) FROM outcome_target_bound_forecast_estimate"
         ).fetchone()[0] == len(fixture.targets.targets)
-        assert connection.execute(
-            "SELECT count(*) FROM frozen_hypothesis_family"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM frozen_hypothesis_family"
+            ).fetchone()[0]
+            == 1
+        )
         assert connection.execute(
             "SELECT count(*) FROM frozen_hypothesis_family_target"
         ).fetchone()[0] == len(fixture.targets.targets)

@@ -42,6 +42,16 @@ from market_regime_alpha.platform.governance_serialization import (
     model_registration_to_dict,
 )
 from market_regime_alpha.platform.model_registry import ModelRegistry
+from market_regime_alpha.platform.postgres_runtime_governance import (
+    ModelGovernanceIntegrityError,
+    PostgresModelGovernanceRepository,
+    resolve_legacy_formal_research_model_lineage_for_protocol_replay,
+    resolve_formal_research_model_lineage,
+)
+from market_regime_alpha.platform.runtime_governance import (
+    ArtifactLineageReference,
+    ModelVersionLineage,
+)
 from tests.platform.test_platform_kernel import _model_definition
 from tests.application.decision_system.support import observation
 from tests.application.state_system.test_repositories import _active_claim
@@ -53,7 +63,6 @@ from tests.persistence.postgres.test_continuous_research_journal import (
     NOW,
     MutableClock,
 )
-
 
 FREE_RUNTIME_MIGRATIONS = (
     (30, "research_summary_v2"),
@@ -84,15 +93,20 @@ FREE_RUNTIME_MIGRATIONS = (
     (55, "phase_c_gate_authority"),
     (56, "phase_c_correctness_closure"),
     (57, "formal_research_runtime_closure"),
+    (58, "locked_oos_roster_authority"),
+    (59, "pit_universe_oos_scope_authority"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 58))
-    assert len({item.name for item in migrations}) == 57
-    assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
+    assert tuple(item.version for item in migrations) == tuple(range(1, 60))
+    assert len({item.name for item in migrations}) == 59
+    assert all(
+        item.checksum == sha256(item.sql.encode("utf-8")).hexdigest()
+        for item in migrations
+    )
 
 
 def test_missing_migration_version_is_rejected() -> None:
@@ -113,11 +127,13 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 58))
+    assert tuple(item.version for item in first) == tuple(range(1, 60))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
-        rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 57
+        rows = connection.execute(
+            "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
+        ).fetchall()
+    assert len(rows) == 59
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -135,14 +151,18 @@ def test_failed_migration_does_not_record_version(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = (
-        PostgresMigration.create(1, "one", "CREATE TABLE durable_one(id bigint PRIMARY KEY);"),
+        PostgresMigration.create(
+            1, "one", "CREATE TABLE durable_one(id bigint PRIMARY KEY);"
+        ),
         PostgresMigration.create(2, "broken", "CREATE TABL invalid syntax;"),
     )
 
     with pytest.raises(Exception):
         PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
     with postgres_factory.connection(read_only=True) as connection:
-        rows = connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
+        rows = connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall()
         durable = connection.execute("SELECT to_regclass('durable_one')").fetchone()
     assert rows == [(1,)]
     assert durable == ("durable_one",)
@@ -161,7 +181,9 @@ def test_concurrent_migrators_are_serialized(
     migrator = PostgresMigrator(migrations=migrations)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = tuple(executor.map(lambda _: migrator.apply_all(postgres_factory), range(2)))
+        results = tuple(
+            executor.map(lambda _: migrator.apply_all(postgres_factory), range(2))
+        )
 
     assert sorted(len(result) for result in results) == [0, 1]
 
@@ -174,17 +196,21 @@ def test_migration_021_upgrades_an_existing_020_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (21, "continuous_runtime_schedule"),
-        (22, "state_system_dynamic_pool"),
-        (23, "state_system_runtime_child"),
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (21, "continuous_runtime_schedule"),
+            (22, "state_system_dynamic_pool"),
+            (23, "state_system_runtime_child"),
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
 
 
 def test_migration_022_upgrades_an_existing_021_authority(
@@ -195,16 +221,20 @@ def test_migration_022_upgrades_an_existing_021_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (22, "state_system_dynamic_pool"),
-        (23, "state_system_runtime_child"),
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (22, "state_system_dynamic_pool"),
+            (23, "state_system_runtime_child"),
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
 
 
 def test_migration_023_upgrades_an_existing_022_authority(
@@ -215,15 +245,19 @@ def test_migration_023_upgrades_an_existing_022_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (23, "state_system_runtime_child"),
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (23, "state_system_runtime_child"),
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
 
 
 def test_migrations_024_through_028_upgrade_existing_023_authority(
@@ -234,17 +268,25 @@ def test_migrations_024_through_028_upgrade_existing_023_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (24, "postgres_only_authority"),
-        (25, "decision_system"),
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (24, "postgres_only_authority"),
+            (25, "decision_system"),
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
     with postgres_factory.connection(read_only=True) as connection:
-        latest = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-        decision_table = connection.execute("SELECT to_regclass('daily_decision_summary')").fetchone()
+        latest = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1"
+        ).fetchone()
+        decision_table = connection.execute(
+            "SELECT to_regclass('daily_decision_summary')"
+        ).fetchone()
     assert latest == FREE_RUNTIME_MIGRATIONS[-1]
     assert decision_table == ("daily_decision_summary",)
 
@@ -299,13 +341,17 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
     restored = PostgresDecisionSystemRepository(
         postgres_factory
     ).get_manual_observation(account.observation_id)
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (26, "decision_authority_hardening"),
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (57,)
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (26, "decision_authority_hardening"),
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
+    assert applied == (59,)
     assert restored == account
 
 
@@ -377,29 +423,80 @@ def test_migration_027_backfills_existing_registry_history_and_guards_it(
     upgraded = PostgresMigrator().apply_all(postgres_factory)
     with postgres_factory.connection(read_only=True) as connection:
         actions = connection.execute(
-            "SELECT action_type, aggregate_id FROM model_governance_action "
-            "ORDER BY governance_revision"
+            "SELECT action_type, aggregate_id FROM model_governance_action ORDER BY governance_revision"
         ).fetchall()
         stored_version = connection.execute(
             "SELECT version FROM model_registrations WHERE model_id = %s",
             (str(definition.model_id),),
         ).fetchone()
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (27, "model_runtime_governance"),
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (27, "model_runtime_governance"),
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
     assert actions == [
         ("MODEL_REGISTER", str(definition.model_id)),
         ("MODEL_REGISTER", str(definition.model_id)),
         ("MODEL_LIFECYCLE_TRANSITION", str(definition.model_id)),
     ]
     assert stored_version == (1,)
+    lineage = PostgresModelGovernanceRepository(
+        postgres_factory
+    ).record_version_lineage(
+        ModelVersionLineage.create(
+            model_id=definition.model_id,
+            model_version=definition.version,
+            definition_hash=definition.definition_hash,
+            target_id=definition.target_id,
+            universe_contract_id=definition.universe_id,
+            feature_definition_ids=definition.feature_ids,
+            model_parameter_hash=definition.parameter_hash,
+            configuration=ArtifactLineageReference(
+                "MODEL_CONFIGURATION",
+                ArtifactId("pre-027-model-configuration"),
+                canonical_hash({"configuration": "pre-027"}),
+            ),
+            implementation_ref=definition.implementation_ref,
+            code_revision="pre-027-model-code",
+            code_hash=canonical_hash({"code": "pre-027"}),
+            validation_protocol_refs=(
+                ArtifactLineageReference(
+                    "VALIDATION_PROTOCOL",
+                    ArtifactId("pre-027-validation-protocol"),
+                    canonical_hash({"validation": "pre-027"}),
+                ),
+            ),
+            supported_data_eligibilities=(definition.supported_data_eligibilities),
+            created_at=datetime(2026, 8, 8, 7, 0, tzinfo=UTC),
+        ),
+        actor="migration-027-compatibility-test",
+        reason="record lineage after legacy Registry backfill",
+        idempotency_key="pre-027-model-lineage",
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        with pytest.raises(
+            ModelGovernanceIntegrityError,
+            match="create action replay mismatch",
+        ):
+            resolve_formal_research_model_lineage(
+                connection,
+                lineage_id=lineage.lineage_id,
+                lineage_hash=lineage.lineage_hash,
+            )
+        replay = resolve_legacy_formal_research_model_lineage_for_protocol_replay(
+            connection,
+            lineage_id=lineage.lineage_id,
+            lineage_hash=lineage.lineage_hash,
+        )
+    assert replay.lineage == lineage
+    assert replay.registration == registration
     with postgres_factory.connection() as connection:
         with pytest.raises(Exception, match="append-only"):
-            connection.execute(
-                "UPDATE model_governance_action SET reason = 'tamper'"
-            )
+            connection.execute("UPDATE model_governance_action SET reason = 'tamper'")
         connection.rollback()
 
 
@@ -443,8 +540,7 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
         "pipeline_artifact_id": str(pipeline_id),
         "pipeline_artifact_hash": pipeline_hash,
         "stage_references": [
-            item.to_reference().to_canonical_dict()
-            for item in legacy_stages
+            item.to_reference().to_canonical_dict() for item in legacy_stages
         ],
         "reason_codes": list(pipeline_result.reason_codes),
     }
@@ -452,8 +548,7 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
     result = ChildExecutionResult(
         child_kind=ContinuousChildKind.STATE_SYSTEM,
         child_run_id=ArtifactId(
-            "state-system-run:"
-            f"{request.idempotency_key.removeprefix('continuous-children-')}"
+            f"state-system-run:{request.idempotency_key.removeprefix('continuous-children-')}"
         ),
         child_receipt_id=ArtifactId(f"state-system-receipt:{receipt_hash[7:]}"),
         child_receipt_hash=receipt_hash,
@@ -474,8 +569,7 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
             item.to_canonical_dict() for item in result.input_references
         ],
         "configuration_references": [
-            item.to_canonical_dict()
-            for item in result.configuration_references
+            item.to_canonical_dict() for item in result.configuration_references
         ],
         "receipt_payload": receipt_payload,
     }
@@ -523,8 +617,7 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
     ).lookup_runtime_child(request)
     with postgres_factory.connection(read_only=True) as connection:
         eligibilities = connection.execute(
-            "SELECT DISTINCT data_eligibility "
-            "FROM state_research_stage_authority"
+            "SELECT DISTINCT data_eligibility FROM state_research_stage_authority"
         ).fetchall()
     assert restored == result
     assert eligibilities == [(None,)]
@@ -538,16 +631,19 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (28, "formal_pit_authority"),
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == (
+            (28, "formal_pit_authority"),
+            (29, "research_runtime_summary"),
+        )
+        + FREE_RUNTIME_MIGRATIONS
+    )
     with postgres_factory.connection(read_only=True) as connection:
         tables = {
             row[0]
             for row in connection.execute(
-                "SELECT tablename FROM pg_catalog.pg_tables "
-                "WHERE schemaname = current_schema() AND tablename LIKE 'pit_%'"
+                "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'pit_%'"
             ).fetchall()
         }
         evidence_table = connection.execute(
@@ -570,6 +666,8 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
         "pit_fact_temporal_authority_resolution",
             "pit_as_of_snapshot",
             "pit_trading_calendar_canonical_snapshot",
+            "pit_universe_membership_projection",
+            "pit_universe_membership_projection_member",
         }
     assert evidence_table == ("formal_pit_validation_evidence",)
     assert guards == {
@@ -586,15 +684,15 @@ def test_migration_029_adds_append_only_research_summary_authority(
 
     upgraded = PostgresMigrator().apply_all(postgres_factory)
 
-    assert tuple((item.version, item.name) for item in upgraded) == (
-        (29, "research_runtime_summary"),
-    ) + FREE_RUNTIME_MIGRATIONS
+    assert (
+        tuple((item.version, item.name) for item in upgraded)
+        == ((29, "research_runtime_summary"),) + FREE_RUNTIME_MIGRATIONS
+    )
     with postgres_factory.connection(read_only=True) as connection:
         tables = tuple(
             str(value)
             for value in connection.execute(
-                "SELECT to_regclass('research_daily_summary'), "
-                "to_regclass('research_summary_stage')"
+                "SELECT to_regclass('research_daily_summary'), to_regclass('research_summary_stage')"
             ).fetchone()
         )
         guards = {
@@ -693,7 +791,9 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
             ),
         )
 
-    upgraded = PostgresMigrator().apply_all(postgres_factory)
+    upgraded = PostgresMigrator(migrations=migrations[:57]).apply_all(
+        postgres_factory
+    )
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (57, "formal_research_runtime_closure"),
@@ -707,7 +807,10 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
                        to_regclass('formal_forecast_computation_receipt'),
                        to_regclass('locked_oos_raw_evidence_unlock'),
                        to_regclass('locked_oos_target_observation_consumption'),
-                       to_regclass('formal_hypothesis_family_evaluation')
+                       to_regclass('formal_hypothesis_family_evaluation'),
+                       to_regclass(
+                         'formal_hypothesis_family_evaluation_historical_decision'
+                       )
                 """
             ).fetchone()
         )
@@ -731,6 +834,7 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         "locked_oos_raw_evidence_unlock",
         "locked_oos_target_observation_consumption",
         "formal_hypothesis_family_evaluation",
+        "formal_hypothesis_family_evaluation_historical_decision",
     )
     assert old_migration is not None
     assert old_consumption == ("locked_oos_evidence_consumption",)
@@ -741,3 +845,129 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         dataset_hash,
         owner_payload_hash,
     )
+
+
+def test_migration_058_adds_label_blind_locked_oos_roster_forward_only(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:57]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator(migrations=migrations[:58]).apply_all(
+        postgres_factory
+    )
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (58, "locked_oos_roster_authority"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = tuple(
+            str(value)
+            for value in connection.execute(
+                """
+                SELECT to_regclass('formal_locked_oos_roster'),
+                       to_regclass('formal_locked_oos_roster_member')
+                """
+            ).fetchone()
+        )
+        guards = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT event_object_table, trigger_name
+                FROM information_schema.triggers
+                WHERE trigger_schema = current_schema()
+                  AND event_object_table IN (
+                    'formal_locked_oos_roster',
+                    'formal_locked_oos_roster_member'
+                  )
+                """
+            ).fetchall()
+        }
+        member_columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'formal_locked_oos_roster_member'
+                """
+            ).fetchall()
+        }
+    assert tables == (
+        "formal_locked_oos_roster",
+        "formal_locked_oos_roster_member",
+    )
+    assert guards == {
+        ("formal_locked_oos_roster", "formal_locked_oos_roster_no_update"),
+        (
+            "formal_locked_oos_roster_member",
+            "formal_locked_oos_roster_member_no_update",
+        ),
+    }
+    assert {
+        "target_protocol_id",
+        "target_protocol_hash",
+        "formal_pit_evidence_id",
+        "forecast_id",
+        "label_id",
+        "observation_set_id",
+    }.issubset(member_columns)
+
+
+def test_migration_059_adds_strict_universe_oos_scope_forward_only(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:58]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (59, "pit_universe_oos_scope_authority"),
+    )
+    expected_tables = {
+        "pit_universe_membership_projection",
+        "pit_universe_membership_projection_member",
+        "formal_locked_oos_roster_universe_binding",
+    }
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = ANY(%s)
+                """,
+                (list(expected_tables),),
+            ).fetchall()
+        }
+        guards = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT event_object_table, trigger_name
+                FROM information_schema.triggers
+                WHERE trigger_schema = current_schema()
+                  AND event_object_table = ANY(%s)
+                """,
+                (list(expected_tables),),
+            ).fetchall()
+        }
+    assert tables == expected_tables
+    assert guards == {
+        (
+            "pit_universe_membership_projection",
+            "pit_universe_membership_projection_no_update",
+        ),
+        (
+            "pit_universe_membership_projection_member",
+            "pit_universe_membership_projection_member_no_update",
+        ),
+        (
+            "formal_locked_oos_roster_universe_binding",
+            "formal_locked_oos_roster_universe_binding_no_update",
+        ),
+    }

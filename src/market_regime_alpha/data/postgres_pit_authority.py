@@ -14,12 +14,14 @@ from market_regime_alpha.data.pit_artifact_authority import (
     PITArtifactAuthorityResolution,
     PITArtifactAuthorityResolver,
     PITArtifactAuthorityUnavailableError,
+    PITUniverseMembershipAuthorityProjection,
 )
 from market_regime_alpha.data.pit_authority import (
     FormalPITEvidenceArtifact,
     FormalPITValidationRequest,
     PITAsOfQuery,
     PITAsOfSnapshot,
+    PITArtifactKind,
     PITArtifactReference,
     PITFactKind,
     PITFactEvidenceMode,
@@ -138,10 +140,24 @@ class PostgresPITAuthority(NativePostgresRepository):
         idempotency_key: str,
     ) -> PITArtifactAuthorityResolution:
         resolved_at, system_time_authority = self._authority_now()
-        resolution = self._artifact_resolver.resolve(
-            reference,
-            resolved_at=resolved_at,
-        )
+        universe_projection: PITUniverseMembershipAuthorityProjection | None = None
+        if (
+            reference.reference_kind == PITArtifactKind.UNIVERSE.value
+            and isinstance(
+                self._artifact_resolver, CanonicalPITArtifactAuthorityResolver
+            )
+        ):
+            resolution, universe_projection = (
+                self._artifact_resolver.resolve_universe_membership(
+                    reference,
+                    resolved_at=resolved_at,
+                )
+            )
+        else:
+            resolution = self._artifact_resolver.resolve(
+                reference,
+                resolved_at=resolved_at,
+            )
         payload = resolution.to_canonical_dict()
         command_hash = canonical_hash(payload)
         with self._connect() as connection:
@@ -174,9 +190,19 @@ class PostgresPITAuthority(NativePostgresRepository):
                         ArtifactId(str(duplicate["aggregate_id"])),
                         resolution.resolution_hash,
                     )
+                    if universe_projection is not None:
+                        _persist_universe_membership_projection(
+                            connection,
+                            universe_projection,
+                        )
                     connection.commit()
                     return restored
                 _persist_resolution(connection, resolution)
+                if universe_projection is not None:
+                    _persist_universe_membership_projection(
+                        connection,
+                        universe_projection,
+                    )
                 _insert_action(
                     connection,
                     action_type="RESOLVE_ARTIFACT",
@@ -1277,6 +1303,133 @@ def _persist_resolution(
         raise PITAuthorityIntegrityError(
             "PIT Artifact resolution identity conflict"
         )
+
+
+def _persist_universe_membership_projection(
+    connection: PostgresConnection,
+    projection: PITUniverseMembershipAuthorityProjection,
+) -> None:
+    payload = projection.to_canonical_dict()
+    connection.execute(
+        """
+        INSERT INTO pit_universe_membership_projection(
+            projection_id, projection_hash, artifact_resolution_id,
+            artifact_resolution_hash, universe_id, universe_hash,
+            decision_date, effective_at, available_at, member_count,
+            included_member_count, members_hash, payload_json, resolved_at
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        ON CONFLICT DO NOTHING
+        """,
+        (
+            str(projection.projection_id),
+            projection.projection_hash,
+            str(projection.artifact_resolution_id),
+            projection.artifact_resolution_hash,
+            str(projection.universe_reference.artifact_id),
+            projection.universe_reference.content_hash,
+            projection.decision_date,
+            projection.effective_at,
+            projection.available_at,
+            len(projection.members),
+            len(projection.included_symbols),
+            projection.members_hash,
+            _json(payload),
+            projection.resolved_at,
+        ),
+    )
+    for member in projection.members:
+        connection.execute(
+            """
+            INSERT INTO pit_universe_membership_projection_member(
+                projection_id, symbol, included, record_hash, payload_json
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                str(projection.projection_id),
+                member.symbol,
+                member.included,
+                member.record_hash,
+                _json(member.to_canonical_dict()),
+            ),
+        )
+    stored = connection.execute(
+        """
+        SELECT projection_id, projection_hash, artifact_resolution_id,
+               artifact_resolution_hash, universe_id, universe_hash,
+               decision_date, effective_at, available_at, member_count,
+               included_member_count, members_hash, payload_json, resolved_at
+        FROM pit_universe_membership_projection
+        WHERE artifact_resolution_id = %s
+        """,
+        (str(projection.artifact_resolution_id),),
+    ).fetchone()
+    if stored is None:
+        raise PITAuthorityIntegrityError("PIT Universe projection is missing")
+    expected = (
+        str(projection.projection_id),
+        projection.projection_hash,
+        str(projection.artifact_resolution_id),
+        projection.artifact_resolution_hash,
+        str(projection.universe_reference.artifact_id),
+        projection.universe_reference.content_hash,
+        projection.decision_date,
+        projection.effective_at,
+        projection.available_at,
+        len(projection.members),
+        len(projection.included_symbols),
+        projection.members_hash,
+        payload,
+        projection.resolved_at,
+    )
+    actual = (
+        str(stored["projection_id"]),
+        str(stored["projection_hash"]),
+        str(stored["artifact_resolution_id"]),
+        str(stored["artifact_resolution_hash"]),
+        str(stored["universe_id"]),
+        str(stored["universe_hash"]),
+        stored["decision_date"],
+        stored["effective_at"],
+        stored["available_at"],
+        int(stored["member_count"]),
+        int(stored["included_member_count"]),
+        str(stored["members_hash"]),
+        _object(stored["payload_json"]),
+        stored["resolved_at"],
+    )
+    if actual != expected:
+        raise PITAuthorityIntegrityError("PIT Universe projection identity conflict")
+    stored_members = connection.execute(
+        """
+        SELECT symbol, included, record_hash, payload_json
+        FROM pit_universe_membership_projection_member
+        WHERE projection_id = %s ORDER BY symbol
+        """,
+        (str(projection.projection_id),),
+    ).fetchall()
+    expected_members = tuple(
+        (
+            member.symbol,
+            member.included,
+            member.record_hash,
+            member.to_canonical_dict(),
+        )
+        for member in projection.members
+    )
+    actual_members = tuple(
+        (
+            str(row["symbol"]),
+            bool(row["included"]),
+            str(row["record_hash"]),
+            _object(row["payload_json"]),
+        )
+        for row in stored_members
+    )
+    if actual_members != expected_members:
+        raise PITAuthorityIntegrityError("PIT Universe projection member-set conflict")
 
 
 def _verify_immutable_replay_bindings(

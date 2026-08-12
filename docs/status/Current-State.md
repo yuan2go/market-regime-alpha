@@ -33,6 +33,9 @@ time from PostgreSQL and resolves exact Model/Configuration/Code/Feature/Factor/
 Threshold/Dataset/Universe/Target lineage. Unsupported installed executors emit
 `NOT_ESTIMABLE`; older caller-submitted forecasts remain explicitly
 `EXPLORATORY_CALLER_SUBMITTED` and cannot enter a new Formal family evaluation.
+The legacy single-Target evaluation writer is Train/Validation engineering-only;
+it rejects Locked partitions before any Label payload and cannot create a new
+Formal OOS result. Existing single-Target artifacts remain replay-compatible.
 The Model reference is resolved by Model Governance into a content-addressed
 freeze receipt containing the current lifecycle, Registry version and exact
 Registry/Lineage governance actions. `SUSPENDED` or `RETIRED` models fail closed,
@@ -50,12 +53,19 @@ RBAC expose owner freeze, Protocol freeze, Formal Forecast compute and family
 evaluation without a generic artifact registrar. The command actor must equal
 the authorized RBAC principal. C4 requires estimable Train and Validation floor
 metrics for every Target/fold/sensitivity before evaluating Locked OOS; its C3
-record-set comparison filters exactly the frozen Locked-OOS windows. These writers can
+record-set comparison covers only the frozen Train/Validation windows. New Formal
+C3 Dataset owners may not bundle Locked-OOS records; their metadata is verified
+without loading realized values before the pre-OOS readiness barrier. Migration
+058–059 then freeze the complete Locked roster from the strict PIT Universe
+Reader's immutable full-member projection, exact Formal PIT scope, owner-computed
+Forecast receipts and Target Label metadata, require Dataset ID+hash and exact submitted-set equality,
+and commits raw/Target consumption before reading any Locked outcome payload.
+Evaluation failure cannot roll that consumption back. These writers can
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.
 
 The 2026-08-11 isolated working-schema evidence resolution applied migrations
-001–057 and evaluated ten declared free-data Provider×Contract×Fact scopes:
+001–059 and evaluated ten declared free-data Provider×Contract×Fact scopes:
 BaoStock history Market Data and Adjustment Factor; BaoStock status Trading
 Calendar, Listing Status, ST Status, Trading Status and Trading Eligibility;
 BaoStock stock-basic Universe Membership; and Tencent current/minute Market Data.
@@ -67,7 +77,7 @@ Locked-OOS consumption, Formal OOS, Calibration qualification, Phase C stage or
 Production Admission evidence. This is a negative/absent evidence result, not a
 Provider-quality or Alpha conclusion.
 
-Migrations 047–057 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners, immutable Path Calibration Hypothesis evidence and the fail-closed Phase C owners described above. They do not alter migration 046, which removes reference-only
+Migrations 047–059 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, engineering access-governance owners, immutable Path Calibration Hypothesis evidence and the fail-closed Phase C owners described above. They do not alter migration 046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -87,8 +97,8 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Python test files | 427 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 57 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 200 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 200 independent business Authorities |
+| PostgreSQL migrations | 59 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 206 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 206 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |

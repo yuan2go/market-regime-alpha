@@ -23,9 +23,16 @@ from market_regime_alpha.platform.postgres_governance import (
 from market_regime_alpha.platform.governance_serialization import (
     model_registration_from_dict,
     model_registration_to_dict,
+    model_transition_from_dict,
 )
-from market_regime_alpha.platform.contracts import ModelLifecycleStatus
-from market_regime_alpha.platform.model_registry import ModelRegistration
+from market_regime_alpha.platform.contracts import (
+    EvidenceLevel,
+    ModelLifecycleStatus,
+)
+from market_regime_alpha.platform.model_registry import (
+    ModelRegistration,
+    ModelRegistry,
+)
 from market_regime_alpha.platform.repositories import VersionConflictError
 from market_regime_alpha.platform.runtime_governance import (
     AssignmentLane,
@@ -97,19 +104,46 @@ def resolve_formal_research_model_lineage(
 ) -> FormalResearchModelLineageResolution:
     """Return the Model Governance-owned current research eligibility receipt."""
 
+    return _resolve_formal_research_model_lineage(
+        connection,
+        lineage_id=lineage_id,
+        lineage_hash=lineage_hash,
+        allow_legacy_registry_actions=False,
+    )
+
+
+def resolve_legacy_formal_research_model_lineage_for_protocol_replay(
+    connection: Any,
+    *,
+    lineage_id: ArtifactId,
+    lineage_hash: str,
+) -> FormalResearchModelLineageResolution:
+    """Replay a pre-057 Protocol backed by migration-027 Registry envelopes."""
+
+    return _resolve_formal_research_model_lineage(
+        connection,
+        lineage_id=lineage_id,
+        lineage_hash=lineage_hash,
+        allow_legacy_registry_actions=True,
+    )
+
+
+def _resolve_formal_research_model_lineage(
+    connection: Any,
+    *,
+    lineage_id: ArtifactId,
+    lineage_hash: str,
+    allow_legacy_registry_actions: bool,
+) -> FormalResearchModelLineageResolution:
     row = connection.execute(
         """
         SELECT lineage.lineage_hash, lineage.payload_json, lineage.created_at,
                lineage.governance_revision, registration.registration_json,
                registration.definition_hash, registration.lifecycle_status,
-               registration.evidence_level, registration.version,
-               lineage_action.action_type, lineage_action.action_hash,
-               lineage_action.created_at
+               registration.evidence_level, registration.version
         FROM model_version_lineage AS lineage
         JOIN model_registrations AS registration
           ON registration.model_id = lineage.model_id
-        JOIN model_governance_action AS lineage_action
-          ON lineage_action.governance_revision = lineage.governance_revision
         WHERE lineage.lineage_id = %s
         """,
         (str(lineage_id),),
@@ -118,10 +152,15 @@ def resolve_formal_research_model_lineage(
         raise ModelGovernanceIntegrityError("Model Version Lineage owner is missing")
     try:
         lineage = ModelVersionLineage.from_canonical_dict(dict(row[1]))
-        registration_payload = json.loads(str(row[4]))
-        if not isinstance(registration_payload, Mapping):
-            raise ValueError("Model Registration payload must be an object")
-        registration = model_registration_from_dict(registration_payload)
+        registration, registry_action = _replay_formal_model_registration(
+            connection,
+            registration_payload_json=str(row[4]),
+            stored_definition_hash=str(row[5]),
+            stored_lifecycle_status=str(row[6]),
+            stored_evidence_level=str(row[7]),
+            stored_version=int(row[8]),
+            allow_legacy_registry_actions=allow_legacy_registry_actions,
+        )
         lineage.validate_definition(registration.definition)
         lifecycle_status = ModelLifecycleStatus(str(row[6]))
     except (KeyError, TypeError, ValueError) as exc:
@@ -136,7 +175,6 @@ def resolve_formal_research_model_lineage(
         or registration.lifecycle_status is not lifecycle_status
         or registration.evidence_level.value != str(row[7])
         or int(row[8]) != len(registration.transitions)
-        or str(row[9]) != "MODEL_VERSION_LINEAGE"
     ):
         raise ModelGovernanceIntegrityError(
             "Model Version Lineage governance binding mismatch"
@@ -148,25 +186,36 @@ def resolve_formal_research_model_lineage(
         raise ModelGovernanceIntegrityError(
             f"Model Version Lineage lifecycle is terminal: {lifecycle_status.value}"
         )
-    registry_action = connection.execute(
+    lineage_action = connection.execute(
         """
-        SELECT action.governance_revision, action.action_type,
-               action.action_hash, action.created_at, command.result_version
-        FROM model_governance_action AS action
-        JOIN governance_commands AS command
-          ON command.idempotency_key = action.idempotency_key
-        WHERE action.aggregate_id = %s
-          AND action.action_type IN ('MODEL_REGISTER', 'MODEL_LIFECYCLE_TRANSITION')
-        ORDER BY action.governance_revision DESC
-        LIMIT 1
+        SELECT governance_revision, action_type, aggregate_id, action_hash,
+               actor, reason, payload_json, created_at
+        FROM model_governance_action
+        WHERE governance_revision = %s
         """,
-        (str(lineage.model_id),),
+        (int(row[3]),),
     ).fetchone()
-    if registry_action is None or int(registry_action[4]) != int(row[8]):
+    expected_lineage_action = {
+        "lineage": lineage.to_canonical_dict(),
+        "actor": None if lineage_action is None else str(lineage_action[4]),
+        "reason": None if lineage_action is None else str(lineage_action[5]),
+        "created_at": lineage.created_at.isoformat(),
+    }
+    if (
+        lineage_action is None
+        or int(lineage_action[0]) != int(row[3])
+        or str(lineage_action[1]) != "MODEL_VERSION_LINEAGE"
+        or str(lineage_action[2]) != str(lineage.lineage_id)
+        or not isinstance(lineage_action[6], Mapping)
+        or dict(lineage_action[6]) != expected_lineage_action
+        or str(lineage_action[3]) != canonical_hash(expected_lineage_action)
+        or lineage_action[7] != lineage.created_at
+        or row[2] != lineage.created_at
+    ):
         raise ModelGovernanceIntegrityError(
-            "Model Registration current governance action is missing or stale"
+            "Model Version Lineage action replay mismatch"
         )
-    owner_recorded_at = max(row[2], row[11], registry_action[3]).replace(
+    owner_recorded_at = max(row[2], lineage_action[7], registry_action[3]).replace(
         microsecond=0
     )
     values = {
@@ -177,7 +226,7 @@ def resolve_formal_research_model_lineage(
         "registry_action_type": str(registry_action[1]),
         "registry_action_hash": str(registry_action[2]),
         "lineage_governance_revision": int(row[3]),
-        "lineage_action_hash": str(row[10]),
+        "lineage_action_hash": str(lineage_action[3]),
         "owner_recorded_at": owner_recorded_at,
     }
     identity_payload = {
@@ -198,6 +247,220 @@ def resolve_formal_research_model_lineage(
         resolution_hash=digest,
         **values,
     )
+
+
+def _replay_formal_model_registration(
+    connection: Any,
+    *,
+    registration_payload_json: str,
+    stored_definition_hash: str,
+    stored_lifecycle_status: str,
+    stored_evidence_level: str,
+    stored_version: int,
+    allow_legacy_registry_actions: bool,
+) -> tuple[ModelRegistration, tuple[Any, ...]]:
+    """Rebuild current Registry state from its append-only transition owner."""
+
+    try:
+        projected_payload = json.loads(registration_payload_json)
+        if not isinstance(projected_payload, Mapping):
+            raise ValueError("Model Registration payload must be an object")
+        projected = model_registration_from_dict(projected_payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ModelGovernanceIntegrityError(
+            "Model Registration projection replay failed"
+        ) from exc
+    model_id = projected.definition.model_id
+    initial = ModelRegistration(
+        definition=projected.definition,
+        lifecycle_status=ModelLifecycleStatus.DRAFT,
+        evidence_level=EvidenceLevel.UNQUALIFIED,
+        transitions=(),
+    )
+    initial_payload = model_registration_to_dict(initial)
+    register_rows = connection.execute(
+        """
+        SELECT action.governance_revision, action.action_type,
+               action.action_hash, action.created_at, action.aggregate_id,
+               action.payload_json, command.aggregate_type,
+               command.aggregate_id, command.payload_hash,
+               command.result_version
+        FROM model_governance_action AS action
+        JOIN governance_commands AS command
+          ON command.idempotency_key = action.idempotency_key
+        WHERE action.aggregate_id = %s
+          AND action.action_type = 'MODEL_REGISTER'
+          AND command.result_version = 0
+        ORDER BY action.governance_revision
+        """,
+        (str(model_id),),
+    ).fetchall()
+    register_action = next(
+        (
+            item
+            for item in register_rows
+            if (
+                (
+                    str(item[2]) == canonical_hash(initial_payload)
+                    and isinstance(item[5], Mapping)
+                    and dict(item[5]) == initial_payload
+                )
+                or (
+                    allow_legacy_registry_actions
+                    and _matches_legacy_model_command_envelope(
+                        item[5],
+                        aggregate_id=model_id,
+                        result_version=0,
+                        payload_hash=str(item[2]),
+                    )
+                )
+            )
+            and str(item[4]) == str(model_id)
+            and str(item[6]) == "MODEL"
+            and str(item[7]) == str(model_id)
+            and str(item[8]) == str(item[2])
+            and int(item[9]) == 0
+        ),
+        None,
+    )
+    if register_action is None:
+        raise ModelGovernanceIntegrityError(
+            "Model Registration create action replay mismatch"
+        )
+    transition_rows = connection.execute(
+        """
+        SELECT transition.sequence, transition.transition_json,
+               action.governance_revision, action.action_type,
+               action.action_hash, action.created_at, action.aggregate_id,
+               action.actor, action.reason, action.payload_json,
+               command.aggregate_type, command.aggregate_id,
+               command.payload_hash, command.result_version
+        FROM model_lifecycle_transitions AS transition
+        JOIN model_governance_action AS action
+          ON action.idempotency_key = transition.idempotency_key
+        JOIN governance_commands AS command
+          ON command.idempotency_key = transition.idempotency_key
+        WHERE transition.model_id = %s
+        ORDER BY transition.sequence
+        """,
+        (str(model_id),),
+    ).fetchall()
+    if [int(item[0]) for item in transition_rows] != list(range(1, stored_version + 1)):
+        raise ModelGovernanceIntegrityError(
+            "Model Registration transition sequence is incomplete"
+        )
+    transitions = []
+    current_action = register_action
+    for item in transition_rows:
+        try:
+            transition_payload = json.loads(str(item[1]))
+            if not isinstance(transition_payload, Mapping):
+                raise ValueError("transition payload must be an object")
+            transition = model_transition_from_dict(transition_payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ModelGovernanceIntegrityError(
+                "Model Registration transition replay failed"
+            ) from exc
+        sequence = int(item[0])
+        command_base = {
+            "operation": "MODEL_TRANSITION",
+            "model_id": str(model_id),
+            "expected_version": sequence - 1,
+            "to_status": transition.to_status.value,
+            "changed_at": transition.changed_at.isoformat(),
+            "reason": transition.reason,
+            "evidence_refs": list(transition.evidence_refs),
+            "approval_ref": transition.approval_ref,
+        }
+        command_hashes = {
+            canonical_hash({**command_base, "evidence_level": None}),
+            canonical_hash(
+                {
+                    **command_base,
+                    "evidence_level": transition.evidence_level.value,
+                }
+            ),
+        }
+        modern_action_matches = (
+            str(item[4]) in command_hashes
+            and item[5] == transition.changed_at
+            and str(item[7])
+            == (transition.approval_ref or "MODEL_REGISTRY_APPLICATION_SERVICE")
+            and str(item[8]) == transition.reason
+            and isinstance(item[9], Mapping)
+            and dict(item[9]) == dict(transition_payload)
+        )
+        legacy_action_matches = (
+            allow_legacy_registry_actions
+            and _matches_legacy_model_command_envelope(
+                item[9],
+                aggregate_id=model_id,
+                result_version=sequence,
+                payload_hash=str(item[4]),
+            )
+        )
+        if (
+            transition.model_id != model_id
+            or str(item[3]) != "MODEL_LIFECYCLE_TRANSITION"
+            or str(item[6]) != str(model_id)
+            or not (modern_action_matches or legacy_action_matches)
+            or str(item[10]) != "MODEL"
+            or str(item[11]) != str(model_id)
+            or str(item[12]) != str(item[4])
+            or int(item[13]) != sequence
+        ):
+            raise ModelGovernanceIntegrityError(
+                "Model Registration transition action replay mismatch"
+            )
+        transitions.append(transition)
+        current_action = (item[2], item[3], item[4], item[5])
+    registration = ModelRegistration(
+        definition=projected.definition,
+        lifecycle_status=(
+            ModelLifecycleStatus.DRAFT if not transitions else transitions[-1].to_status
+        ),
+        evidence_level=(
+            EvidenceLevel.UNQUALIFIED
+            if not transitions
+            else transitions[-1].evidence_level
+        ),
+        transitions=tuple(transitions),
+    )
+    try:
+        ModelRegistry().restore(registration)
+    except ValueError as exc:
+        raise ModelGovernanceIntegrityError(
+            "Model Registration transition history is invalid"
+        ) from exc
+    if (
+        registration != projected
+        or registration.definition.definition_hash != stored_definition_hash
+        or registration.lifecycle_status.value != stored_lifecycle_status
+        or registration.evidence_level.value != stored_evidence_level
+        or len(registration.transitions) != stored_version
+    ):
+        raise ModelGovernanceIntegrityError(
+            "Model Registration projection diverges from append-only history"
+        )
+    return registration, current_action
+
+
+def _matches_legacy_model_command_envelope(
+    payload: Any,
+    *,
+    aggregate_id: ModelId,
+    result_version: int,
+    payload_hash: str,
+) -> bool:
+    """Recognize migration-027 backfill without granting it new freeze authority."""
+
+    return isinstance(payload, Mapping) and dict(payload) == {
+        "schema_version": "legacy-model-governance-command/v1",
+        "aggregate_type": "MODEL",
+        "aggregate_id": str(aggregate_id),
+        "result_version": result_version,
+        "payload_hash": payload_hash,
+    }
 
 
 class ModelSelectionRejected(RuntimeError):
@@ -247,19 +510,15 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 _current_model_version(connection, model_id),
             )
             lineage_rows = connection.execute(
-                "SELECT payload_json FROM model_version_lineage "
-                "WHERE model_id = %s ORDER BY governance_revision",
+                "SELECT payload_json FROM model_version_lineage WHERE model_id = %s ORDER BY governance_revision",
                 (str(model_id),),
             ).fetchall()
             qualification_rows = connection.execute(
-                "SELECT payload_json, registry_version "
-                "FROM model_qualification_decision WHERE model_id = %s "
-                "ORDER BY governance_revision",
+                "SELECT payload_json, registry_version FROM model_qualification_decision WHERE model_id = %s ORDER BY governance_revision",
                 (str(model_id),),
             ).fetchall()
             evidence_rows = connection.execute(
-                "SELECT payload_json FROM model_qualification_evidence "
-                "WHERE model_id = %s ORDER BY governance_revision",
+                "SELECT payload_json FROM model_qualification_evidence WHERE model_id = %s ORDER BY governance_revision",
                 (str(model_id),),
             ).fetchall()
             policy_rows = connection.execute(
@@ -274,8 +533,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 (str(model_id), str(model_id)),
             ).fetchall()
             assignment_rows = connection.execute(
-                "SELECT payload_json FROM model_runtime_assignment "
-                "WHERE model_id = %s ORDER BY governance_revision",
+                "SELECT payload_json FROM model_runtime_assignment WHERE model_id = %s ORDER BY governance_revision",
                 (str(model_id),),
             ).fetchall()
             action_rows = connection.execute(
@@ -286,9 +544,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
             ).fetchall()
             return {
                 "governance_revision": _current_revision(connection),
-                "registration": model_registration_to_dict(
-                    versioned.registration
-                ),
+                "registration": model_registration_to_dict(versioned.registration),
                 "registry_version": versioned.version,
                 "version_lineages": [
                     dict(_object(row["payload_json"])) for row in lineage_rows
@@ -301,8 +557,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     for row in qualification_rows
                 ],
                 "qualification_evidence": [
-                    dict(_object(row["payload_json"]))
-                    for row in evidence_rows
+                    dict(_object(row["payload_json"])) for row in evidence_rows
                 ],
                 "governance_policies": [
                     dict(_object(row["payload_json"])) for row in policy_rows
@@ -327,14 +582,11 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
         with self._connect() as connection:
             policy = _load_policy(connection, policy_id)
             decisions = connection.execute(
-                "SELECT payload_json, registry_version "
-                "FROM model_qualification_decision WHERE policy_id = %s "
-                "ORDER BY governance_revision",
+                "SELECT payload_json, registry_version FROM model_qualification_decision WHERE policy_id = %s ORDER BY governance_revision",
                 (str(policy_id),),
             ).fetchall()
             assignments = connection.execute(
-                "SELECT payload_json FROM model_runtime_assignment "
-                "WHERE policy_id = %s ORDER BY governance_revision",
+                "SELECT payload_json FROM model_runtime_assignment WHERE policy_id = %s ORDER BY governance_revision",
                 (str(policy_id),),
             ).fetchall()
             return {
@@ -348,16 +600,14 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     for row in decisions
                 ],
                 "assignment_events": [
-                    dict(_object(row["payload_json"]))
-                    for row in assignments
+                    dict(_object(row["payload_json"])) for row in assignments
                 ],
             }
 
     def inspect_evidence(self, evidence_id: ArtifactId) -> dict[str, Any]:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT governance_revision, payload_json "
-                "FROM model_qualification_evidence WHERE evidence_id = %s",
+                "SELECT governance_revision, payload_json FROM model_qualification_evidence WHERE evidence_id = %s",
                 (str(evidence_id),),
             ).fetchone()
             if row is None:
@@ -389,16 +639,14 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
             _acquire_governance_revision_lock(connection)
             try:
                 existing_lineage = connection.execute(
-                    "SELECT governance_revision, payload_json "
-                    "FROM model_version_lineage WHERE lineage_id = %s",
+                    "SELECT governance_revision, payload_json FROM model_version_lineage WHERE lineage_id = %s",
                     (str(lineage.lineage_id),),
                 ).fetchone()
                 if existing_lineage is not None:
                     existing_action = _find_action(connection, idempotency_key)
                     if existing_action is None:
                         raise ValueError(
-                            "Model Version Lineage semantic duplicate requires "
-                            "the original idempotency key"
+                            "Model Version Lineage semantic duplicate requires the original idempotency key"
                         )
                     _validate_action(
                         existing_action,
@@ -415,9 +663,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                         _object(existing_lineage["payload_json"])
                     )
                     if restored != lineage:
-                        raise ValueError(
-                            "Model Version Lineage identity conflict"
-                        )
+                        raise ValueError("Model Version Lineage identity conflict")
                     connection.commit()
                     return restored
                 registration = self._load_at(
@@ -552,7 +798,9 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
         }
         with self._connect() as connection:
             acquire_scope_lock(
-                connection, namespace="model-governance-policy", identity=policy.policy_id
+                connection,
+                namespace="model-governance-policy",
+                identity=policy.policy_id,
             )
             _acquire_governance_revision_lock(connection)
             try:
@@ -632,8 +880,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 current_version = _current_model_version(connection, model_id)
                 if current_version != expected_registry_version:
                     raise VersionConflictError(
-                        f"model {model_id} expected version "
-                        f"{expected_registry_version}, found {current_version}"
+                        f"model {model_id} expected version {expected_registry_version}, found {current_version}"
                     )
                 registration = self._load_at(
                     connection, model_id, current_version
@@ -656,9 +903,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     idempotency_key=idempotency_key,
                     created_at=decided_at,
                 )
-                evidence = _latest_evidence(
-                    connection, lineage.lineage_id, revision
-                )
+                evidence = _latest_evidence(connection, lineage.lineage_id, revision)
                 decision = evaluate_qualification(
                     registration=registration,
                     lineage=lineage,
@@ -670,9 +915,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     approval_ref=approval_ref,
                     governance_revision=revision,
                     authority_rejection_codes=(
-                        (
-                            "PRODUCTION_EVIDENCE_OWNER_RESOLUTION_NOT_IMPLEMENTED",
-                        )
+                        ("PRODUCTION_EVIDENCE_OWNER_RESOLUTION_NOT_IMPLEMENTED",)
                         if policy.purpose is RuntimePurpose.PRODUCTION_DECISION
                         else ()
                     ),
@@ -754,8 +997,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 actual_revision = _current_revision(connection)
                 if actual_revision != expected_governance_revision:
                     raise VersionConflictError(
-                        "governance revision compare-and-swap failed: "
-                        f"expected {expected_governance_revision}, found {actual_revision}"
+                        f"governance revision compare-and-swap failed: expected {expected_governance_revision}, found {actual_revision}"
                     )
                 policy = _load_policy(connection, policy_id)
                 if policy.purpose is not purpose:
@@ -804,7 +1046,9 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     item.lane is AssignmentLane.CHAMPION for item in active
                 ):
                     raise ValueError("duplicate active Champion authority")
-                if any(item.lane is lane and item.model_id == model_id for item in active):
+                if any(
+                    item.lane is lane and item.model_id == model_id for item in active
+                ):
                     raise ValueError("duplicate active Runtime assignment")
                 revision, _ = _record_action(
                     connection,
@@ -855,8 +1099,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
         with self._connect() as connection:
             current = _load_assignment(connection, assignment_id)
             scope = (
-                f"{current.runtime_scope}:{current.model_slot}:"
-                f"{current.purpose.value}"
+                f"{current.runtime_scope}:{current.model_slot}:{current.purpose.value}"
             )
             acquire_scope_lock(
                 connection, namespace="model-runtime-assignment", identity=scope
@@ -881,8 +1124,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     connection.commit()
                     return result
                 superseding = connection.execute(
-                    "SELECT assignment_id FROM model_runtime_assignment "
-                    "WHERE supersedes_assignment_id = %s",
+                    "SELECT assignment_id FROM model_runtime_assignment WHERE supersedes_assignment_id = %s",
                     (str(assignment_id),),
                 ).fetchone()
                 if current.version != expected_version or superseding is not None:
@@ -941,8 +1183,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
         with self._connect() as connection:
             current = _load_assignment(connection, current_assignment_id)
             scope = (
-                f"{current.runtime_scope}:{current.model_slot}:"
-                f"{current.purpose.value}"
+                f"{current.runtime_scope}:{current.model_slot}:{current.purpose.value}"
             )
             acquire_scope_lock(
                 connection,
@@ -978,14 +1219,11 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 actual_revision = _current_revision(connection)
                 if actual_revision != expected_governance_revision:
                     raise VersionConflictError(
-                        "governance revision compare-and-swap failed: "
-                        f"expected {expected_governance_revision}, "
-                        f"found {actual_revision}"
+                        f"governance revision compare-and-swap failed: expected {expected_governance_revision}, found {actual_revision}"
                     )
                 current = _load_assignment(connection, current_assignment_id)
                 superseding = connection.execute(
-                    "SELECT assignment_id FROM model_runtime_assignment "
-                    "WHERE supersedes_assignment_id = %s",
+                    "SELECT assignment_id FROM model_runtime_assignment WHERE supersedes_assignment_id = %s",
                     (str(current_assignment_id),),
                 ).fetchone()
                 if (
@@ -1030,9 +1268,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                         and not qualification.production_authorized
                     )
                 ):
-                    raise ValueError(
-                        "replacement requires current qualified authority"
-                    )
+                    raise ValueError("replacement requires current qualified authority")
                 active_assignments = _current_assignments(
                     connection,
                     runtime_scope=current.runtime_scope,
@@ -1182,9 +1418,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     as_of=as_of,
                 )
                 champions = tuple(
-                    item
-                    for item in assignments
-                    if item.lane is AssignmentLane.CHAMPION
+                    item for item in assignments if item.lane is AssignmentLane.CHAMPION
                 )
                 if len(champions) != 1:
                     raise ModelGovernanceIntegrityError(
@@ -1208,8 +1442,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
     def select(self, request: ModelSelectionRequest) -> ModelSelectionReceipt:
         with self._connect() as connection:
             scope = (
-                f"{request.runtime_scope}:{request.model_slot}:"
-                f"{request.purpose.value}"
+                f"{request.runtime_scope}:{request.model_slot}:{request.purpose.value}"
             )
             acquire_scope_lock(
                 connection, namespace="model-runtime-assignment", identity=scope
@@ -1222,8 +1455,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
             _acquire_governance_revision_lock(connection)
             try:
                 existing = connection.execute(
-                    "SELECT request_hash, payload_json FROM model_selection_receipt "
-                    "WHERE idempotency_key = %s",
+                    "SELECT request_hash, payload_json FROM model_selection_receipt WHERE idempotency_key = %s",
                     (request.idempotency_key,),
                 ).fetchone()
                 if existing is not None:
@@ -1270,9 +1502,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
             raise ModelSelectionRejected(receipt)
         return receipt
 
-    def get_selection_receipt(
-        self, receipt_id: ArtifactId
-    ) -> ModelSelectionReceipt:
+    def get_selection_receipt(self, receipt_id: ArtifactId) -> ModelSelectionReceipt:
         with self._connect() as connection:
             return _load_selection(connection, receipt_id)[1]
 
@@ -1286,8 +1516,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
             raise ValueError("Model Governance replay requires Selection receipts")
         with self._connect() as connection:
             selection_rows = connection.execute(
-                "SELECT governance_revision FROM model_selection_receipt "
-                "WHERE receipt_id = ANY(%s)",
+                "SELECT governance_revision FROM model_selection_receipt WHERE receipt_id = ANY(%s)",
                 ([str(item) for item in ordered_ids],),
             ).fetchall()
             if len(selection_rows) != len(ordered_ids):
@@ -1295,9 +1524,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
             revision = max(int(row["governance_revision"]) for row in selection_rows)
             action_rows = _json_rows(
                 connection,
-                "SELECT * FROM model_governance_action "
-                "WHERE governance_revision <= %s "
-                "ORDER BY governance_revision",
+                "SELECT * FROM model_governance_action WHERE governance_revision <= %s ORDER BY governance_revision",
                 (revision,),
             )
             model_ids = tuple(
@@ -1312,9 +1539,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
             registrations = []
             for raw_model_id in model_ids:
                 model_id = ModelId(raw_model_id)
-                version = _registry_version_at_revision(
-                    connection, model_id, revision
-                )
+                version = _registry_version_at_revision(connection, model_id, revision)
                 versioned = self._load_at(connection, model_id, version)
                 registration = versioned.registration
                 registrations.append(
@@ -1323,9 +1548,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                         "registration_json": _json(
                             model_registration_to_dict(registration)
                         ),
-                        "definition_hash": (
-                            registration.definition.definition_hash
-                        ),
+                        "definition_hash": (registration.definition.definition_hash),
                         "lifecycle_status": registration.lifecycle_status.value,
                         "evidence_level": registration.evidence_level.value,
                         "version": version,
@@ -1376,8 +1599,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 ),
                 "model_selection_receipt": _json_rows(
                     connection,
-                    "SELECT * FROM model_selection_receipt "
-                    "WHERE receipt_id = ANY(%s) ORDER BY receipt_id",
+                    "SELECT * FROM model_selection_receipt WHERE receipt_id = ANY(%s) ORDER BY receipt_id",
                     ([str(item) for item in ordered_ids],),
                 ),
             }
@@ -1424,17 +1646,14 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 connection.rollback()
                 raise
         receipt_ids = tuple(
-            ArtifactId(_string(item))
-            for item in _sequence(bundle["receipt_ids"])
+            ArtifactId(_string(item)) for item in _sequence(bundle["receipt_ids"])
         )
         if self.export_replay_bundle(receipt_ids) != dict(bundle):
             raise ModelGovernanceIntegrityError(
                 "imported Model Governance replay bundle differs from source"
             )
 
-    def replay_selection(
-        self, receipt_id: ArtifactId
-    ) -> ModelSelectionReceipt:
+    def replay_selection(self, receipt_id: ArtifactId) -> ModelSelectionReceipt:
         with self._connect() as connection:
             request, stored = _load_selection(connection, receipt_id)
             try:
@@ -1453,9 +1672,7 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     model_slot=request.model_slot,
                     purpose=request.purpose,
                     governance_revision=stored.governance_revision,
-                    runtime_lineage_hash=(
-                        request.runtime_lineage.runtime_lineage_hash
-                    ),
+                    runtime_lineage_hash=(request.runtime_lineage.runtime_lineage_hash),
                     reason_codes=("GOVERNANCE_INTEGRITY_ERROR",),
                     selected_at=request.selected_at,
                 )
@@ -1479,7 +1696,9 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 runtime_scope=runtime_scope,
                 model_slot=model_slot,
                 purpose=purpose,
-                revision=_current_revision(connection) if revision is None else revision,
+                revision=(
+                    _current_revision(connection) if revision is None else revision
+                ),
                 as_of=datetime.max.replace(tzinfo=UTC),
             )
 
@@ -1584,7 +1803,13 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                     request.runtime_lineage.validate_against(lineage)
                 except ValueError:
                     reasons.add("RUNTIME_LINEAGE_MISMATCH")
-        if reasons or champion is None or policy is None or qualification is None or registration is None:
+        if (
+            reasons
+            or champion is None
+            or policy is None
+            or qualification is None
+            or registration is None
+        ):
             return ModelSelectionReceipt.rejected(
                 request_hash=request.request_hash,
                 runtime_scope=request.runtime_scope,
@@ -1592,7 +1817,9 @@ class PostgresModelGovernanceRepository(PostgresModelRegistryRepository):
                 purpose=request.purpose,
                 governance_revision=revision,
                 runtime_lineage_hash=request.runtime_lineage.runtime_lineage_hash,
-                reason_codes=tuple(sorted(reasons or {"GOVERNANCE_AUTHORITY_INCOMPLETE"})),
+                reason_codes=tuple(
+                    sorted(reasons or {"GOVERNANCE_AUTHORITY_INCOMPLETE"})
+                ),
                 selected_at=request.selected_at,
                 policy=policy,
                 champion=champion,
@@ -1677,14 +1904,15 @@ def _find_action(
 def _validate_action(
     row: Mapping[str, Any], action_type: str, payload: Mapping[str, Any]
 ) -> None:
-    if row["action_type"] != action_type or row["action_hash"] != canonical_hash(payload):
+    if row["action_type"] != action_type or row["action_hash"] != canonical_hash(
+        payload
+    ):
         raise ValueError("governance idempotency key was reused for another action")
 
 
 def _current_revision(connection: PostgresConnection) -> int:
     row = connection.execute(
-        "SELECT COALESCE(MAX(governance_revision), 0) AS revision "
-        "FROM model_governance_action"
+        "SELECT COALESCE(MAX(governance_revision), 0) AS revision FROM model_governance_action"
     ).fetchone()
     return 0 if row is None else int(row["revision"])
 
@@ -1755,7 +1983,9 @@ def _verify_formal_pit_evidence(
         evidence.outcome is not QualificationEvidenceOutcome.SATISFIED
         or evidence.evidence.reference_kind != "FORMAL_PIT_VALIDATION"
     ):
-        raise ValueError("FORMAL_PIT requires a satisfied Formal PIT validation reference")
+        raise ValueError(
+            "FORMAL_PIT requires a satisfied Formal PIT validation reference"
+        )
     row = connection.execute(
         "SELECT payload_json FROM formal_pit_validation_evidence WHERE evidence_id = %s",
         (str(evidence.evidence.artifact_id),),
@@ -1849,8 +2079,7 @@ def _qualification_evidence_is_current(
         )
     )
     return (
-        tuple(item.evidence_id for item in latest)
-        == qualification.evidence_ids
+        tuple(item.evidence_id for item in latest) == qualification.evidence_ids
         and tuple(item.evidence_hash for item in latest)
         == qualification.evidence_hashes
     )
@@ -1910,8 +2139,7 @@ def _load_qualification_by_revision(
     connection: PostgresConnection, revision: int
 ) -> tuple[ModelQualificationDecision, int]:
     row = connection.execute(
-        "SELECT payload_json, registry_version FROM model_qualification_decision "
-        "WHERE governance_revision = %s",
+        "SELECT payload_json, registry_version FROM model_qualification_decision WHERE governance_revision = %s",
         (revision,),
     ).fetchone()
     if row is None:
@@ -1973,8 +2201,7 @@ def _load_assignment_by_revision(
     connection: PostgresConnection, revision: int
 ) -> ModelRuntimeAssignment:
     row = connection.execute(
-        "SELECT payload_json FROM model_runtime_assignment "
-        "WHERE governance_revision = %s",
+        "SELECT payload_json FROM model_runtime_assignment WHERE governance_revision = %s",
         (revision,),
     ).fetchone()
     if row is None:
@@ -2137,10 +2364,7 @@ def _json_rows(
     parameters: tuple[Any, ...],
 ) -> list[dict[str, Any]]:
     return [
-        {
-            str(key): _canonical_db_value(value)
-            for key, value in row.items()
-        }
+        {str(key): _canonical_db_value(value) for key, value in row.items()}
         for row in connection.execute(query, parameters).fetchall()
     ]
 
@@ -2170,22 +2394,23 @@ def _canonical_db_value(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, Mapping):
-        return {
-            str(key): _canonical_db_value(item)
-            for key, item in value.items()
-        }
+        return {str(key): _canonical_db_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_canonical_db_value(item) for item in value]
     return value
 
 
 def _validate_replay_bundle_shape(bundle: Mapping[str, Any]) -> None:
-    if set(bundle) != {
-        "schema_version",
-        "governance_revision",
-        "receipt_ids",
-        "tables",
-    } or bundle.get("schema_version") != "model-governance-replay-bundle/v1":
+    if (
+        set(bundle)
+        != {
+            "schema_version",
+            "governance_revision",
+            "receipt_ids",
+            "tables",
+        }
+        or bundle.get("schema_version") != "model-governance-replay-bundle/v1"
+    ):
         raise ValueError("Model Governance replay bundle fields mismatch")
     revision = bundle.get("governance_revision")
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
@@ -2194,8 +2419,7 @@ def _validate_replay_bundle_shape(bundle: Mapping[str, Any]) -> None:
     if (
         not receipt_ids
         or any(not isinstance(item, str) or not item for item in receipt_ids)
-        or tuple(receipt_ids)
-        != tuple(sorted({str(item) for item in receipt_ids}))
+        or tuple(receipt_ids) != tuple(sorted({str(item) for item in receipt_ids}))
     ):
         raise ValueError("Model Governance replay receipt identities are invalid")
     tables = _mapping(bundle["tables"])
@@ -2250,9 +2474,7 @@ def _current_assignments(
     return tuple(
         sorted(
             (
-                ModelRuntimeAssignment.from_canonical_dict(
-                    _object(row["payload_json"])
-                )
+                ModelRuntimeAssignment.from_canonical_dict(_object(row["payload_json"]))
                 for row in rows
             ),
             key=lambda item: (item.lane.value, str(item.model_id)),
@@ -2281,13 +2503,14 @@ def _record_runtime_lineage(
         ),
     )
     row = connection.execute(
-        "SELECT payload_json FROM model_runtime_lineage "
-        "WHERE runtime_lineage_id = %s",
+        "SELECT payload_json FROM model_runtime_lineage WHERE runtime_lineage_id = %s",
         (str(lineage.runtime_lineage_id),),
     ).fetchone()
-    if row is None or RuntimeModelLineage.from_canonical_dict(
-        _object(row["payload_json"])
-    ) != lineage:
+    if (
+        row is None
+        or RuntimeModelLineage.from_canonical_dict(_object(row["payload_json"]))
+        != lineage
+    ):
         raise ValueError("Runtime Model Lineage identity conflict")
 
 
@@ -2315,7 +2538,11 @@ def _insert_selection(
             receipt.purpose.value,
             receipt.status.value,
             receipt.governance_revision,
-            None if receipt.selected_model_id is None else str(receipt.selected_model_id),
+            (
+                None
+                if receipt.selected_model_id is None
+                else str(receipt.selected_model_id)
+            ),
             receipt.selected_registry_version,
             str(request.runtime_lineage.runtime_lineage_id),
             _json(request.to_canonical_dict()),
@@ -2329,8 +2556,7 @@ def _load_selection(
     connection: PostgresConnection, receipt_id: ArtifactId
 ) -> tuple[ModelSelectionRequest, ModelSelectionReceipt]:
     row = connection.execute(
-        "SELECT request_json, payload_json FROM model_selection_receipt "
-        "WHERE receipt_id = %s",
+        "SELECT request_json, payload_json FROM model_selection_receipt WHERE receipt_id = %s",
         (str(receipt_id),),
     ).fetchone()
     if row is None:

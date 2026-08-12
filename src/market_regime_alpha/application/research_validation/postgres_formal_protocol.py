@@ -12,6 +12,7 @@ from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
 )
 from market_regime_alpha.application.research_validation.formal_evaluation import (
+    EvaluationPartition,
     FormalEvaluationProtocol,
 )
 from market_regime_alpha.application.research_validation.calibration_qualification import (
@@ -77,10 +78,13 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
-from market_regime_alpha.persistence.postgres.native_repository import acquire_scope_lock
+from market_regime_alpha.persistence.postgres.native_repository import (
+    acquire_scope_lock,
+)
 from market_regime_alpha.platform.runtime_governance import ModelVersionLineage
 from market_regime_alpha.platform.postgres_runtime_governance import (
     ModelGovernanceIntegrityError,
+    resolve_legacy_formal_research_model_lineage_for_protocol_replay,
     resolve_formal_research_model_lineage,
 )
 
@@ -162,11 +166,19 @@ class FormalProtocolFreezeScope:
             for role, reference in self.component_references
         ):
             raise ValueError("Formal Protocol freeze scope component kind mismatch")
-        if self.outcome_target_protocol_reference.artifact_kind != "OUTCOME_TARGET_PROTOCOL":
-            raise ValueError("Formal Protocol freeze scope Target Protocol kind mismatch")
+        if (
+            self.outcome_target_protocol_reference.artifact_kind
+            != "OUTCOME_TARGET_PROTOCOL"
+        ):
+            raise ValueError(
+                "Formal Protocol freeze scope Target Protocol kind mismatch"
+            )
         if self.trading_calendar_reference.artifact_kind != "TRADING_CALENDAR":
             raise ValueError("Formal Protocol freeze scope Calendar kind mismatch")
-        if self.evaluation_protocol_reference.artifact_kind != "FORMAL_EVALUATION_PROTOCOL":
+        if (
+            self.evaluation_protocol_reference.artifact_kind
+            != "FORMAL_EVALUATION_PROTOCOL"
+        ):
             raise ValueError("Formal Protocol freeze scope Evaluation kind mismatch")
 
     @classmethod
@@ -180,7 +192,9 @@ class FormalProtocolFreezeScope:
             "historical_sample_dataset_references",
             "component_references",
         }
-        if set(value) != expected or not isinstance(value["component_references"], Mapping):
+        if set(value) != expected or not isinstance(
+            value["component_references"], Mapping
+        ):
             raise ValueError("Formal Protocol freeze scope fields mismatch")
         components = value["component_references"]
         assert isinstance(components, Mapping)
@@ -196,7 +210,9 @@ class FormalProtocolFreezeScope:
                 _owner_mapping(value, "evaluation_protocol_reference")
             ),
             historical_sample_dataset_references=tuple(
-                ValidationArtifactReference.from_canonical_dict(_owner_mapping(item, "reference"))
+                ValidationArtifactReference.from_canonical_dict(
+                    _owner_mapping(item, "reference")
+                )
                 for item in _sequence_mapping(
                     value["historical_sample_dataset_references"],
                     "historical_sample_dataset_references",
@@ -291,7 +307,9 @@ class PostgresFormalProtocolRepository:
         idempotency_key: str,
     ) -> FormalResearchProtocol:
         if not actor.strip() or not reason.strip() or not idempotency_key.strip():
-            raise ValueError("Formal Protocol actor, reason and idempotency key are required")
+            raise ValueError(
+                "Formal Protocol actor, reason and idempotency key are required"
+            )
         command_payload = {
             "schema_version": "formal-protocol-freeze-command/v1",
             "scope": scope.to_canonical_dict(),
@@ -314,7 +332,10 @@ class PostgresFormalProtocolRepository:
                 (idempotency_key,),
             ).fetchone()
             if duplicate is not None:
-                if str(duplicate[0]) != command_hash or str(duplicate[1]) != "FREEZE_FORMAL_PROTOCOL":
+                if (
+                    str(duplicate[0]) != command_hash
+                    or str(duplicate[1]) != "FREEZE_FORMAL_PROTOCOL"
+                ):
                     raise FormalProtocolConflict("Formal Protocol idempotency conflict")
                 return ArtifactId(str(duplicate[2]))
             resolved_at = _postgres_now(connection)
@@ -322,9 +343,7 @@ class PostgresFormalProtocolRepository:
                 connection, scope=scope, locked_at=resolved_at
             )
             target_protocol = _load_target_protocol_owner(connection, protocol)
-            evaluation_protocol = _load_evaluation_protocol_owner(
-                connection, protocol
-            )
+            evaluation_protocol = _load_evaluation_protocol_owner(connection, protocol)
             owners = _resolve_component_owners(
                 connection,
                 protocol=protocol,
@@ -383,7 +402,9 @@ class PostgresFormalProtocolRepository:
                 (str(protocol.protocol_id),),
             ).fetchone()
             if stored is None or str(stored[0]) != protocol.protocol_hash:
-                raise FormalProtocolConflict("Formal Research Protocol identity conflict")
+                raise FormalProtocolConflict(
+                    "Formal Research Protocol identity conflict"
+                )
             for role, reference in sorted(references.items()):
                 owner = owners[role]
                 connection.execute(
@@ -526,7 +547,9 @@ class PostgresFormalProtocolRepository:
         protocol_id = self._factory.run_transaction(operation)
         return self.get_protocol(protocol_id)
 
-    def record_protocol(self, *, protocol: FormalResearchProtocol) -> FormalResearchProtocol:
+    def record_protocol(
+        self, *, protocol: FormalResearchProtocol
+    ) -> FormalResearchProtocol:
         del protocol
         raise FormalProtocolConflict(
             "caller-materialized Formal Protocol writes are closed; use freeze_protocol"
@@ -546,7 +569,10 @@ class PostgresFormalProtocolRepository:
                 """,
                 (str(forecast.target_protocol_reference.artifact_id),),
             ).fetchone()
-            if owner is None or str(owner[0]) != forecast.target_protocol_reference.content_hash:
+            if (
+                owner is None
+                or str(owner[0]) != forecast.target_protocol_reference.content_hash
+            ):
                 raise FormalProtocolConflict("Forecast Target Protocol owner mismatch")
             target_rows = connection.execute(
                 """
@@ -904,11 +930,7 @@ class PostgresFormalProtocolRepository:
         if row is None or not isinstance(row[0], dict):
             raise KeyError(str(forecast_id))
         forecast = OutcomeTargetBoundMultiTargetForecast.from_canonical_dict(row[0])
-        if (
-            forecast.forecast_hash != str(row[1])
-            or bool(row[2])
-            or bool(row[3])
-        ):
+        if forecast.forecast_hash != str(row[1]) or bool(row[2]) or bool(row[3]):
             raise FormalProtocolConflict("Target-bound Forecast storage drift")
         return forecast
 
@@ -955,13 +977,9 @@ def _resolve_formal_forecast_context(
         lineage = ModelVersionLineage.from_canonical_dict(
             dict(_owner_mapping(model_owner.owner_payload, "lineage"))
         )
-        definition = dict(
-            _owner_mapping(model_owner.owner_payload, "model_definition")
-        )
+        definition = dict(_owner_mapping(model_owner.owner_payload, "model_definition"))
     except (KeyError, TypeError, ValueError) as exc:
-        raise FormalProtocolConflict(
-            "Formal Forecast owner replay failed"
-        ) from exc
+        raise FormalProtocolConflict("Formal Forecast owner replay failed") from exc
     if (
         stored_evidence != pit_evidence
         or str(evidence_row[0]) != pit_evidence.evidence_hash
@@ -1137,14 +1155,8 @@ def _verify_formal_pit_clock_authority(
             """,
             (str(fact_id),),
         ).fetchone()
-        if (
-            row is None
-            or str(row[0]) != fact_hash
-            or str(row[1]) != "POSTGRESQL_CLOCK"
-        ):
-            raise FormalProtocolConflict(
-                "Formal Forecast PIT Fact authority drift"
-            )
+        if row is None or str(row[0]) != fact_hash or str(row[1]) != "POSTGRESQL_CLOCK":
+            raise FormalProtocolConflict("Formal Forecast PIT Fact authority drift")
 
 
 def _verify_forecast_pit_fact_scope(
@@ -1199,10 +1211,14 @@ def _verify_forecast_pit_fact_scope(
     }
     for fact in facts:
         expected = expected_by_kind.get(fact.fact_kind)
-        if expected is not None and (
-            fact.artifact.artifact_id,
-            fact.artifact.content_hash,
-        ) != expected:
+        if (
+            expected is not None
+            and (
+                fact.artifact.artifact_id,
+                fact.artifact.content_hash,
+            )
+            != expected
+        ):
             raise FormalProtocolConflict(
                 f"Formal Forecast {fact.fact_kind.value} owner mismatch"
             )
@@ -1317,10 +1333,7 @@ def _load_forecast_owner(
         forecast.forecast_hash != str(row[1])
         or bool(row[2])
         or bool(row[3])
-        or (
-            required_authority is not None
-            and str(row[4]) != required_authority
-        )
+        or (required_authority is not None and str(row[4]) != required_authority)
     ):
         raise FormalProtocolConflict("Target-bound Forecast storage drift")
     return forecast
@@ -1343,9 +1356,7 @@ def _load_forecast_computation_receipt(
     if row is None or not isinstance(row[2], Mapping):
         raise KeyError(str(receipt_id))
     try:
-        receipt = FormalForecastComputationReceipt.from_canonical_dict(
-            dict(row[2])
-        )
+        receipt = FormalForecastComputationReceipt.from_canonical_dict(dict(row[2]))
     except (KeyError, TypeError, ValueError) as exc:
         raise FormalProtocolConflict(
             "Formal Forecast computation receipt replay failed"
@@ -1443,19 +1454,23 @@ def _verify_protocol_model_semantics(
         ) from exc
     target_ids = {str(item.target_id) for item in target_protocol.targets}
     feature_ids = tuple(sorted(item.feature_id for item in features.definitions))
-    model_feature_ids = tuple(sorted(str(item) for item in model.feature_definition_ids))
+    model_feature_ids = tuple(
+        sorted(str(item) for item in model.feature_definition_ids)
+    )
     evaluation_ref = (
         protocol.evaluation_protocol_reference.artifact_id,
         protocol.evaluation_protocol_reference.content_hash,
     )
     validation_refs = {
-        (item.artifact_id, item.content_hash)
-        for item in model.validation_protocol_refs
+        (item.artifact_id, item.content_hash) for item in model.validation_protocol_refs
     }
     mismatches: list[str] = []
     if str(model.target_id) not in target_ids:
         mismatches.append("target")
-    if ArtifactId(str(model.universe_contract_id)) != protocol.universe_reference.artifact_id:
+    if (
+        ArtifactId(str(model.universe_contract_id))
+        != protocol.universe_reference.artifact_id
+    ):
         mismatches.append("universe")
     if model_feature_ids != feature_ids:
         mismatches.append("feature")
@@ -1576,7 +1591,9 @@ def _build_protocol_from_owner_scope(
         )
         calendar = TradingCalendarArtifact.from_canonical_dict(calendar_payload)
     except (KeyError, TypeError, ValueError) as exc:
-        raise FormalProtocolConflict("Formal Protocol freeze owner replay failed") from exc
+        raise FormalProtocolConflict(
+            "Formal Protocol freeze owner replay failed"
+        ) from exc
     if (
         target.protocol_id != scope.outcome_target_protocol_reference.artifact_id
         or target.protocol_hash != scope.outcome_target_protocol_reference.content_hash
@@ -1640,7 +1657,9 @@ def _load_evaluation_protocol_owner(
             }
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise FormalProtocolConflict("Formal Evaluation Protocol replay failed") from exc
+        raise FormalProtocolConflict(
+            "Formal Evaluation Protocol replay failed"
+        ) from exc
     if (
         artifact_kind != "FORMAL_EVALUATION_PROTOCOL"
         or qualified
@@ -1659,6 +1678,8 @@ def _resolve_component_owners(
     connection: Any,
     *,
     protocol: FormalResearchProtocol,
+    require_pre_oos_historical: bool = True,
+    allow_legacy_model_actions: bool = False,
 ) -> dict[str, _ComponentOwnerResolution]:
     target_protocol = _load_target_protocol_owner(connection, protocol)
     evaluation = _load_evaluation_protocol_owner(connection, protocol)
@@ -1666,9 +1687,7 @@ def _resolve_component_owners(
         "SELECT created_at FROM outcome_target_protocol WHERE protocol_id = %s",
         (str(target_protocol.protocol_id),),
     ).fetchone()
-    evaluation_row = _research_artifact_row(
-        connection, evaluation.protocol_id
-    )
+    evaluation_row = _research_artifact_row(connection, evaluation.protocol_id)
     if target_row is None or evaluation_row is None:
         raise FormalProtocolConflict("Formal Protocol owner timestamp is missing")
     owners: dict[str, _ComponentOwnerResolution] = {
@@ -1687,15 +1706,16 @@ def _resolve_component_owners(
             evaluation_row[5],
         ),
     }
-    owners["trading_calendar_reference"] = _calendar_owner(
-        connection, protocol
-    )
-    owners["universe_reference"] = _pit_owner(
-        connection, protocol.universe_reference
-    )
-    owners["dataset_reference"] = _pit_owner(
-        connection, protocol.dataset_reference
-    )
+    owners["trading_calendar_reference"] = _calendar_owner(connection, protocol)
+    owners["universe_reference"] = _pit_owner(connection, protocol.universe_reference)
+    owners["dataset_reference"] = _pit_owner(connection, protocol.dataset_reference)
+    if require_pre_oos_historical:
+        _verify_historical_dataset_pre_oos_metadata(
+            connection,
+            reference=protocol.historical_sample_dataset_reference,
+            protocol=protocol,
+            evaluation=evaluation,
+        )
     owners["historical_sample_dataset_reference"] = _research_owner(
         connection,
         protocol.historical_sample_dataset_reference,
@@ -1721,7 +1741,9 @@ def _resolve_component_owners(
         restore=ThresholdPolicy.from_canonical_dict,
     )
     owners["model_reference"] = _model_lineage_owner(
-        connection, protocol.model_reference
+        connection,
+        protocol.model_reference,
+        allow_legacy_registry_actions=allow_legacy_model_actions,
     )
     owners["formal_oos_qualification_policy_reference"] = _policy_owner(
         connection,
@@ -1745,9 +1767,7 @@ def _resolve_component_owners(
     owners["strategy_policy_reference"] = _strategy_policy_owner(
         connection, protocol.strategy_policy_reference
     )
-    owners[
-        "entry_holding_exit_qualification_policy_reference"
-    ] = _policy_owner(
+    owners["entry_holding_exit_qualification_policy_reference"] = _policy_owner(
         connection,
         protocol.entry_holding_exit_qualification_policy_reference,
         table="entry_holding_exit_qualification_policy",
@@ -1764,6 +1784,7 @@ def _resolve_historical_dataset_owners(
     *,
     protocol: FormalResearchProtocol,
     require_complete_target_family: bool = True,
+    require_pre_oos_only: bool = True,
 ) -> tuple[
     tuple[
         ValidationArtifactReference,
@@ -1772,6 +1793,7 @@ def _resolve_historical_dataset_owners(
     ],
     ...,
 ]:
+    evaluation = _load_evaluation_protocol_owner(connection, protocol)
     resolved: list[
         tuple[
             ValidationArtifactReference,
@@ -1780,6 +1802,13 @@ def _resolve_historical_dataset_owners(
         ]
     ] = []
     for dataset_reference in protocol.historical_sample_dataset_references:
+        if require_pre_oos_only:
+            _verify_historical_dataset_pre_oos_metadata(
+                connection,
+                reference=dataset_reference,
+                protocol=protocol,
+                evaluation=evaluation,
+            )
         owner = _research_owner(
             connection,
             dataset_reference,
@@ -1796,6 +1825,171 @@ def _resolve_historical_dataset_owners(
             "Formal Protocol requires one Historical Sample Dataset per frozen Target"
         )
     return ordered
+
+
+def _verify_historical_dataset_pre_oos_metadata(
+    connection: Any,
+    *,
+    reference: ValidationArtifactReference,
+    protocol: FormalResearchProtocol,
+    evaluation: FormalEvaluationProtocol,
+) -> None:
+    """Reject Locked outcomes before the Dataset payload reaches Python."""
+
+    projection = connection.execute(
+        """
+        SELECT artifact_hash, artifact_kind, qualified, production_authorized
+        FROM research_validation_artifact
+        WHERE artifact_id = %s
+        """,
+        (str(reference.artifact_id),),
+    ).fetchone()
+    rows = connection.execute(
+        """
+        SELECT record->'target_reference'->>'artifact_id',
+               record->'target_reference'->>'content_hash',
+               (record->'sample'->>'sample_decision_time')::timestamptz
+        FROM research_validation_artifact AS artifact
+        CROSS JOIN LATERAL jsonb_array_elements(
+            artifact.payload_json->'records'
+        ) AS record
+        WHERE artifact.artifact_id = %s
+        ORDER BY (record->'sample'->>'sample_decision_time')::timestamptz,
+                 record->>'record_id'
+        """,
+        (str(reference.artifact_id),),
+    ).fetchall()
+    if (
+        projection is None
+        or str(projection[0]) != reference.content_hash
+        or str(projection[1]) != "HISTORICAL_SAMPLE_DATASET"
+        or bool(projection[2])
+        or bool(projection[3])
+        or not rows
+    ):
+        raise FormalProtocolConflict(
+            "Formal C3 Historical Dataset metadata owner mismatch"
+        )
+    for target_id, target_hash, decision_time in rows:
+        if not isinstance(decision_time, datetime):
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset DecisionTime metadata is invalid"
+            )
+        try:
+            target_reference = ValidationArtifactReference(
+                "OUTCOME_TARGET",
+                ArtifactId(str(target_id)),
+                str(target_hash),
+            )
+        except (TypeError, ValueError) as exc:
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset Target metadata is invalid"
+            ) from exc
+        partitions = {
+            window.partition
+            for window in evaluation.windows
+            if window.start_date <= decision_time.date() <= window.end_date
+        }
+        if (
+            target_reference not in protocol.target_references
+            or not partitions
+            or EvaluationPartition.LOCKED_OOS in partitions
+            or not partitions.issubset(
+                {EvaluationPartition.TRAIN, EvaluationPartition.VALIDATION}
+            )
+        ):
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset must be Train/Validation-only"
+            )
+
+
+def load_formal_protocol_pre_oos_owner(
+    connection: Any,
+    protocol_id: ArtifactId,
+) -> FormalResearchProtocol:
+    """Verify a current Protocol without reading Historical outcome values."""
+
+    row = connection.execute(
+        """
+        SELECT payload_json, protocol_hash
+        FROM formal_research_protocol WHERE protocol_id = %s
+        """,
+        (str(protocol_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[0], Mapping):
+        raise FormalProtocolConflict("Formal Protocol owner is missing")
+    try:
+        protocol = FormalResearchProtocol.from_canonical_dict(dict(row[0]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FormalProtocolConflict("Formal Protocol canonical replay failed") from exc
+    if protocol.protocol_id != protocol_id or protocol.protocol_hash != str(row[1]):
+        raise FormalProtocolConflict("Formal Protocol storage hash mismatch")
+    family_row = connection.execute(
+        "SELECT family_id FROM frozen_hypothesis_family WHERE formal_protocol_id = %s",
+        (str(protocol_id),),
+    ).fetchone()
+    if family_row is None:
+        raise FormalProtocolConflict(
+            "Pre-057 Formal Protocol is replay-only and cannot enter new Formal research"
+        )
+    component_rows = connection.execute(
+        """
+        SELECT component_role, artifact_kind, artifact_id, artifact_hash
+        FROM formal_research_protocol_component
+        WHERE protocol_id = %s ORDER BY component_role
+        """,
+        (str(protocol_id),),
+    ).fetchall()
+    stored = {
+        str(item[0]): (str(item[1]), str(item[2]), str(item[3]))
+        for item in component_rows
+    }
+    expected = {
+        role: (
+            reference.artifact_kind,
+            str(reference.artifact_id),
+            reference.content_hash,
+        )
+        for role, reference in protocol.component_references().items()
+    }
+    if stored != expected:
+        raise FormalProtocolConflict("Formal Protocol component replay mismatch")
+    evaluation = _load_evaluation_protocol_owner(connection, protocol)
+    target_rows: list[ValidationArtifactReference] = []
+    for reference in protocol.historical_sample_dataset_references:
+        _verify_historical_dataset_pre_oos_metadata(
+            connection,
+            reference=reference,
+            protocol=protocol,
+            evaluation=evaluation,
+        )
+        target_row = connection.execute(
+            """
+            SELECT payload_json->'target_reference'
+            FROM research_validation_artifact
+            WHERE artifact_id = %s AND artifact_hash = %s
+            """,
+            (str(reference.artifact_id), reference.content_hash),
+        ).fetchone()
+        if target_row is None or not isinstance(target_row[0], Mapping):
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset Target metadata is missing"
+            )
+        try:
+            target_rows.append(
+                ValidationArtifactReference.from_canonical_dict(dict(target_row[0]))
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FormalProtocolConflict(
+                "Formal C3 Historical Dataset Target metadata replay failed"
+            ) from exc
+    if tuple(sorted(target_rows, key=lambda item: str(item.artifact_id))) != (
+        protocol.target_references
+    ):
+        raise FormalProtocolConflict(
+            "Formal Protocol requires one Historical Sample Dataset per frozen Target"
+        )
+    return protocol
 
 
 def _verify_historical_dataset_owner_rows(
@@ -1873,7 +2067,9 @@ def _research_owner(
     row = _research_artifact_row(connection, reference.artifact_id)
     if row is None:
         raise FormalProtocolConflict(f"{expected_kind} owner is missing")
-    artifact_hash, artifact_kind, qualified, production_authorized, payload, created = row
+    artifact_hash, artifact_kind, qualified, production_authorized, payload, created = (
+        row
+    )
     canonical = _with_research_identity(expected_kind, reference, payload)
     try:
         restored = restore(canonical)
@@ -1890,9 +2086,7 @@ def _research_owner(
     _verify_restored_reference(restored, reference, expected_kind)
     if expected_kind == "FACTOR_RESEARCH_CATALOG":
         enrichment = restored.enrichment_reference
-        enrichment_row = _research_artifact_row(
-            connection, enrichment.artifact_id
-        )
+        enrichment_row = _research_artifact_row(connection, enrichment.artifact_id)
         if enrichment_row is None or (
             enrichment_row[0] != enrichment.content_hash
             or enrichment_row[1] != "PANEL_ENRICHMENT"
@@ -1973,7 +2167,9 @@ def _calendar_owner(
     try:
         resolution = PITArtifactAuthorityResolution.from_canonical_dict(dict(row[2]))
     except (KeyError, TypeError, ValueError) as exc:
-        raise FormalProtocolConflict("Trading Calendar PIT owner replay failed") from exc
+        raise FormalProtocolConflict(
+            "Trading Calendar PIT owner replay failed"
+        ) from exc
     calendar_payload = dict(row[5])
     _verify_calendar_component(protocol, calendar_payload)
     if (
@@ -2016,9 +2212,7 @@ def _pit_owner(
             f"{reference.artifact_kind} PIT owner resolution is missing"
         )
     try:
-        resolution = PITArtifactAuthorityResolution.from_canonical_dict(
-            dict(row[2])
-        )
+        resolution = PITArtifactAuthorityResolution.from_canonical_dict(dict(row[2]))
     except (KeyError, TypeError, ValueError) as exc:
         raise FormalProtocolConflict("PIT owner resolution replay failed") from exc
     if (
@@ -2041,9 +2235,16 @@ def _pit_owner(
 def _model_lineage_owner(
     connection: Any,
     reference: ValidationArtifactReference,
+    *,
+    allow_legacy_registry_actions: bool = False,
 ) -> _ComponentOwnerResolution:
     try:
-        governance = resolve_formal_research_model_lineage(
+        resolver = (
+            resolve_legacy_formal_research_model_lineage_for_protocol_replay
+            if allow_legacy_registry_actions
+            else resolve_formal_research_model_lineage
+        )
+        governance = resolver(
             connection,
             lineage_id=reference.artifact_id,
             lineage_hash=reference.content_hash,
@@ -2112,8 +2313,7 @@ def _policy_owner(
     if (table, payload_column) not in allowed:
         raise AssertionError("unapproved Formal Protocol policy owner")
     row = connection.execute(
-        f"SELECT policy_hash, {payload_column}, created_at FROM {table} "
-        "WHERE policy_id = %s",
+        f"SELECT policy_hash, {payload_column}, created_at FROM {table} WHERE policy_id = %s",
         (str(reference.artifact_id),),
     ).fetchone()
     if row is None or not isinstance(row[1], Mapping):
@@ -2227,9 +2427,7 @@ def _verify_component_semantics(
         owners["calibration_policy_reference"].owner_payload
     )
     entry = EntryHoldingExitQualificationPolicy.from_canonical_dict(
-        owners[
-            "entry_holding_exit_qualification_policy_reference"
-        ].owner_payload
+        owners["entry_holding_exit_qualification_policy_reference"].owner_payload
     )
     if (
         oos.locked_at > protocol.locked_at
@@ -2287,10 +2485,7 @@ def _verify_stored_owner_resolutions(
         (str(protocol.protocol_id),),
     ).fetchall()
     references = _formal_owner_references(protocol)
-    actual = {
-        str(row[0]): tuple(row[1:8]) + (row[8], row[9])
-        for row in rows
-    }
+    actual = {str(row[0]): tuple(row[1:8]) + (row[8], row[9]) for row in rows}
     expected = {
         role: (
             reference.artifact_kind,
@@ -2326,8 +2521,7 @@ def _verify_stored_owner_resolutions(
                 reference.content_hash,
                 "MODEL_GOVERNANCE_AUTHORITY",
             )
-            and model[4:6]
-            == (str(reference.artifact_id), reference.content_hash)
+            and model[4:6] == (str(reference.artifact_id), reference.content_hash)
             and isinstance(model[7], Mapping)
             and str(model[6]) == canonical_hash(dict(model[7]))
             and _legacy_model_owner_payload_matches(
@@ -2365,6 +2559,7 @@ def _postgres_now(connection: Any) -> datetime:
         "SELECT date_trunc('second', clock_timestamp())"
     ).fetchone()[0]
 
+
 def _verify_calendar_component(
     protocol: FormalResearchProtocol,
     payload: Mapping[str, Any],
@@ -2374,9 +2569,7 @@ def _verify_calendar_component(
         canonical.setdefault(
             "artifact_id", str(protocol.trading_calendar_reference.artifact_id)
         )
-        calendar = TradingCalendarArtifact.from_canonical_dict(
-            canonical
-        )
+        calendar = TradingCalendarArtifact.from_canonical_dict(canonical)
     except (KeyError, TypeError, ValueError) as exc:
         raise FormalProtocolConflict(
             "Frozen Trading Calendar component replay failed"
@@ -2565,14 +2758,15 @@ def load_formal_protocol_owner(
         for role, reference in references.items()
     }
     if set(stored) != set(expected) or any(
-        stored[role][:3] != expected[role]
-        or not isinstance(stored[role][3], Mapping)
+        stored[role][:3] != expected[role] or not isinstance(stored[role][3], Mapping)
         for role in expected
     ):
         raise FormalProtocolConflict("Formal Protocol component replay mismatch")
     owners = _resolve_component_owners(
         connection,
         protocol=protocol,
+        require_pre_oos_historical=not legacy_replay,
+        allow_legacy_model_actions=legacy_replay,
     )
     if any(
         (
@@ -2599,6 +2793,7 @@ def load_formal_protocol_owner(
         connection,
         protocol=protocol,
         require_complete_target_family=not legacy_replay,
+        require_pre_oos_only=not legacy_replay,
     )
     _verify_historical_dataset_owner_rows(
         connection,
@@ -2643,7 +2838,9 @@ def load_formal_protocol_owner(
         != target_protocol.protocol_hash
         or protocol.target_references
         != tuple(
-            ValidationArtifactReference("OUTCOME_TARGET", item.target_id, item.target_hash)
+            ValidationArtifactReference(
+                "OUTCOME_TARGET", item.target_id, item.target_hash
+            )
             for item in target_protocol.targets
         )
         or tuple((str(item[0]), str(item[1]), item[2]) for item in target_rows)
@@ -2670,13 +2867,14 @@ def load_formal_protocol_owner(
             }
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise FormalProtocolConflict("Formal Evaluation Protocol replay failed") from exc
+        raise FormalProtocolConflict(
+            "Formal Evaluation Protocol replay failed"
+        ) from exc
     if (
         str(evaluation_row[2]) != "FORMAL_EVALUATION_PROTOCOL"
         or bool(evaluation_row[3])
         or bool(evaluation_row[4])
-        or evaluation.protocol_id
-        != protocol.evaluation_protocol_reference.artifact_id
+        or evaluation.protocol_id != protocol.evaluation_protocol_reference.artifact_id
         or evaluation.protocol_hash
         != protocol.evaluation_protocol_reference.content_hash
         or evaluation.target_protocol_reference
