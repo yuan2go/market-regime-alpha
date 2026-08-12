@@ -279,20 +279,15 @@ class HistoricalDecisionMaterializer:
         market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
         for key, values in index.series.items():
             end = bisect_right(index.event_ends[key], decision_time)
-            admitted = values[:end]
             if key[1] is Timeframe.MINUTE_5:
-                admitted_dates = tuple(
-                    sorted(
-                        {
-                            item.market_date
-                            for item in admitted
-                            if item.market_date <= market_date
-                        }
-                    )[-2:]
+                admitted = _latest_minute_sessions(
+                    values=values,
+                    end=end,
+                    market_date=market_date,
+                    session_count=2,
                 )
-                admitted = tuple(
-                    item for item in admitted if item.market_date in admitted_dates
-                )
+            else:
+                admitted = values[:end]
             result.extend(admitted)
         return tuple(sorted(result, key=_historical_bar_key))
 
@@ -1218,6 +1213,30 @@ def _historical_bar_key(
     item: HistoricalNormalizedBar,
 ) -> tuple[str, str, datetime, str]:
     return (item.symbol, item.timeframe.value, item.event_end, str(item.bar_id))
+
+
+def _latest_minute_sessions(
+    *,
+    values: tuple[HistoricalNormalizedBar, ...],
+    end: int,
+    market_date: date,
+    session_count: int,
+) -> tuple[HistoricalNormalizedBar, ...]:
+    """Return a bounded as-of tail without rescanning all historical minutes."""
+
+    start = end
+    dates: list[date] = []
+    while start > 0:
+        candidate = values[start - 1].market_date
+        if candidate > market_date:
+            start -= 1
+            continue
+        if not dates or candidate != dates[-1]:
+            if len(dates) == session_count:
+                break
+            dates.append(candidate)
+        start -= 1
+    return values[start:end]
 
 
 def _source_max_event_time(
