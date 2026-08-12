@@ -19,6 +19,7 @@ from market_regime_alpha.application.research_validation.postgres_formal_protoco
     FormalProtocolFreezeScope,
     FormalProtocolConflict,
     PostgresFormalProtocolRepository,
+    load_formal_protocol_pre_oos_owner,
     load_formal_protocol_owner,
 )
 from market_regime_alpha.application.research_validation.postgres_repository import (
@@ -180,6 +181,7 @@ def test_protocol_freeze_rejects_historical_dataset_with_locked_oos_values(
         evaluation_protocol_reference=fixture.protocol.evaluation_protocol_reference,
         historical_sample_dataset_references=datasets,
         component_references=tuple(sorted(components.items())),
+        experiment_definition=fixture.protocol.experiment_definition,
     )
 
     with pytest.raises(FormalProtocolConflict, match="Train/Validation-only"):
@@ -188,6 +190,23 @@ def test_protocol_freeze_rejects_historical_dataset_with_locked_oos_values(
             actor="phase-c-owner-test",
             reason="Locked outcomes cannot be bundled into formal C3",
             idempotency_key="reject-locked-c3-dataset",
+        )
+
+
+def test_pre_oos_owner_loader_replays_current_protocol_without_oos_values(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    fixture = record_phase_c_protocol_owners(postgres_factory)
+    protocol = freeze_phase_c_protocol(
+        postgres_factory,
+        fixture,
+        idempotency_key="pre-oos-owner-loader",
+    )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        assert (
+            load_formal_protocol_pre_oos_owner(connection, protocol.protocol_id)
+            == protocol
         )
 
 

@@ -28,8 +28,10 @@ from market_regime_alpha.application.research_validation.formal_hypothesis_famil
     FamilyEvaluationObservationBindings,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
+    ForecastMeasureEstimate,
+    ForecastMeasureKind,
+    ForecastMeasureStatus,
     OutcomeTargetForecastEstimate,
-    OutcomeTargetForecastStatus,
     build_outcome_target_bound_forecast,
 )
 from market_regime_alpha.application.research_validation.postgres_qualification import (
@@ -366,18 +368,16 @@ def test_legacy_single_target_writer_rejects_locked_oos_before_owner_reads(
         decision_time=decision_time,
         estimates=tuple(
             OutcomeTargetForecastEstimate(
-                target.target_id,
-                target.target_hash,
-                OutcomeTargetForecastStatus.AVAILABLE_FOR_RESEARCH,
-                Decimal("0.5"),
-                    None,
-                    None,
-                    None,
-                    tuple(
-                        (barrier.barrier_id, Decimal("0.5"))
-                        for barrier in target.barriers
+                target_id=target.target_id,
+                target_hash=target.target_hash,
+                measures=(
+                    ForecastMeasureEstimate(
+                        kind=ForecastMeasureKind.RANKING_SCORE,
+                        status=ForecastMeasureStatus.AVAILABLE,
+                        value=Decimal("0.5"),
                     ),
-                    (),
+                ),
+                reason_codes=(),
             )
             for target in fixture.targets.targets
         ),
