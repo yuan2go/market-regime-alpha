@@ -924,7 +924,11 @@ class HistoricalDecisionMaterializer:
                         entry_execution=entry,
                         exit_execution=exit_execution,
                         requested_notional=requested_notional,
-                        evaluated_at=max(owner.retrieved_at, label.outcome_available_at),
+                        evaluated_at=max(
+                            request.materialized_at,
+                            owner.retrieved_at,
+                            label.outcome_available_at,
+                        ),
                     )
                 )
         outcome_max = max(

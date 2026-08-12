@@ -87,6 +87,7 @@ from tests.persistence.postgres.test_historical_research_journal import MutableC
 
 
 MATERIALIZED_AT = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+DATA_RETRIEVED_AT = MATERIALIZED_AT - timedelta(hours=1)
 DECISION_DATE = date(2022, 4, 12)
 STOCKS = (
     "000001.SZ",
@@ -277,7 +278,7 @@ def _normalized_owner(
                     market_date=market_date,
                     event_start=event_start,
                     event_end=event_start + timedelta(hours=5, minutes=30),
-                    retrieved_at=MATERIALIZED_AT,
+                    retrieved_at=DATA_RETRIEVED_AT,
                     open=close * Decimal("0.999"),
                     high=close * Decimal("1.004"),
                     low=close * Decimal("0.996"),
@@ -322,7 +323,7 @@ def _normalized_owner(
                     market_date=prior_intraday_date,
                     event_start=event_start,
                     event_end=event_start + timedelta(minutes=5),
-                    retrieved_at=MATERIALIZED_AT,
+                    retrieved_at=DATA_RETRIEVED_AT,
                     open=close * Decimal("0.9999"),
                     high=close * Decimal("1.0005"),
                     low=close * Decimal("0.9995"),
@@ -358,7 +359,7 @@ def _normalized_owner(
                     market_date=DECISION_DATE,
                     event_start=event_start,
                     event_end=event_start + timedelta(minutes=5),
-                    retrieved_at=MATERIALIZED_AT,
+                    retrieved_at=DATA_RETRIEVED_AT,
                     open=close * Decimal("0.9999"),
                     high=close * Decimal("1.0005"),
                     low=close * Decimal("0.9995"),
@@ -389,7 +390,7 @@ def _normalized_owner(
                 market_date=next_date,
                 event_start=next_start,
                 event_end=next_start + timedelta(hours=5, minutes=30),
-                retrieved_at=MATERIALIZED_AT,
+                retrieved_at=DATA_RETRIEVED_AT,
                 open=prior_close * Decimal("1.001"),
                 high=prior_close * Decimal("1.02"),
                 low=prior_close * Decimal("0.995"),
@@ -431,7 +432,7 @@ def _normalized_owner(
                     market_date=next_date,
                     event_start=event_start,
                     event_end=event_start + timedelta(minutes=5),
-                    retrieved_at=MATERIALIZED_AT,
+                    retrieved_at=DATA_RETRIEVED_AT,
                     open=close * Decimal("0.9999"),
                     high=close * Decimal("1.0005"),
                     low=close * Decimal("0.9995"),
@@ -464,7 +465,7 @@ def _normalized_owner(
         normalization_version="phase-e-normalization/v1",
         parent_reference=raw_reference,
         created_at=MATERIALIZED_AT,
-        retrieved_at=MATERIALIZED_AT,
+        retrieved_at=DATA_RETRIEVED_AT,
         first_market_date=min(item.market_date for item in ordered),
         last_market_date=max(item.market_date for item in ordered),
         bucket_count=4,
