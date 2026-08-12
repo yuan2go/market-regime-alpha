@@ -175,12 +175,12 @@ class HistoricalResearchRunner:
         max_stage_commits: int | None,
     ) -> HistoricalRunSnapshot:
         committed = 0
+        command = self._journal.get_run(run_id).command
         while max_stage_commits is None or committed < max_stage_commits:
             claim = self._journal.claim_next(run_id)
             if claim is None:
                 break
-            run = self._journal.get_run(run_id)
-            request = run.command.session_request(claim.trading_date)
+            request = command.session_request(claim.trading_date)
             computed = self._kernel.run_next(
                 request=request,
                 completed_prefix=claim.completed_prefix,
