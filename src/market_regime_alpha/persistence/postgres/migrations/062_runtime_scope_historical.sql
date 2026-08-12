@@ -1,3 +1,130 @@
+-- Phase D current-schema Runtime Scope and recoverable Historical Session journal.
+CREATE TABLE research_universe_policy (
+    policy_id text PRIMARY KEY,
+    policy_hash text NOT NULL UNIQUE CHECK (
+        policy_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    policy_version text NOT NULL CHECK (btrim(policy_version) <> ''),
+    data_authority text NOT NULL CHECK (btrim(data_authority) <> ''),
+    payload_json jsonb NOT NULL CHECK (
+        jsonb_typeof(payload_json) = 'object'
+        AND payload_json->>'schema_version' = 'research-universe-policy/v1'
+    ),
+    created_at timestamptz NOT NULL
+);
+
+CREATE TABLE runtime_scope_receipt (
+    scope_id text PRIMARY KEY,
+    scope_hash text NOT NULL UNIQUE CHECK (
+        scope_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    policy_id text NOT NULL
+        REFERENCES research_universe_policy(policy_id) ON DELETE RESTRICT,
+    policy_hash text NOT NULL CHECK (
+        policy_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    as_of timestamptz NOT NULL,
+    built_at timestamptz NOT NULL,
+    code_revision text NOT NULL CHECK (btrim(code_revision) <> ''),
+    data_eligibility text NOT NULL CHECK (
+        data_eligibility IN ('UNQUALIFIED', 'EXPLORATORY', 'REHEARSAL', 'FORMAL_RESEARCH')
+    ),
+    evidence_ceiling text NOT NULL CHECK (btrim(evidence_ceiling) <> ''),
+    formal_pit boolean NOT NULL,
+    member_count integer NOT NULL CHECK (member_count > 0),
+    included_count integer NOT NULL CHECK (
+        included_count >= 0 AND included_count <= member_count
+    ),
+    unknown_count integer NOT NULL CHECK (
+        unknown_count >= 0 AND unknown_count <= member_count
+    ),
+    payload_json jsonb NOT NULL CHECK (
+        jsonb_typeof(payload_json) = 'object'
+        AND payload_json->>'schema_version' = 'runtime-scope-receipt/v1'
+        AND (payload_json->>'formal_pit')::boolean = formal_pit
+    ),
+    created_at timestamptz NOT NULL,
+    CHECK (NOT formal_pit OR evidence_ceiling = 'FORMAL_PIT_PROVIDER')
+);
+
+CREATE INDEX runtime_scope_policy_asof_idx
+ON runtime_scope_receipt(policy_id, as_of, built_at, scope_id);
+
+CREATE TABLE runtime_scope_input_reference (
+    scope_id text NOT NULL
+        REFERENCES runtime_scope_receipt(scope_id) ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    artifact_kind text NOT NULL CHECK (btrim(artifact_kind) <> ''),
+    artifact_id text NOT NULL CHECK (btrim(artifact_id) <> ''),
+    content_hash text NOT NULL CHECK (
+        content_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    PRIMARY KEY (scope_id, ordinal),
+    UNIQUE (scope_id, artifact_kind, artifact_id, content_hash)
+);
+
+CREATE INDEX runtime_scope_input_owner_idx
+ON runtime_scope_input_reference(artifact_kind, artifact_id, content_hash);
+
+CREATE TABLE runtime_scope_member (
+    scope_id text NOT NULL
+        REFERENCES runtime_scope_receipt(scope_id) ON DELETE RESTRICT,
+    symbol text NOT NULL CHECK (btrim(symbol) <> ''),
+    decision text NOT NULL CHECK (
+        decision IN ('INCLUDED', 'EXCLUDED', 'UNKNOWN')
+    ),
+    payload_json jsonb NOT NULL CHECK (jsonb_typeof(payload_json) = 'object'),
+    PRIMARY KEY (scope_id, symbol)
+);
+
+CREATE INDEX runtime_scope_member_decision_idx
+ON runtime_scope_member(scope_id, decision, symbol);
+
+CREATE TABLE runtime_scope_operational_input (
+    scope_id text NOT NULL
+        REFERENCES runtime_scope_receipt(scope_id) ON DELETE RESTRICT,
+    ordinal integer NOT NULL CHECK (ordinal > 0),
+    universe_id text NOT NULL,
+    universe_hash text NOT NULL CHECK (universe_hash ~ '^sha256:[0-9a-f]{64}$'),
+    decision_date date NOT NULL,
+    effective_at timestamptz NOT NULL,
+    available_at timestamptz NOT NULL,
+    payload_json jsonb NOT NULL CHECK (
+        jsonb_typeof(payload_json) = 'object'
+        AND payload_json->>'schema_version' IN (
+            'operational-universe-artifact-v1',
+            'operational-universe-artifact-v2'
+        )
+    ),
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY (scope_id, ordinal),
+    UNIQUE (scope_id, universe_id, universe_hash),
+    CHECK (available_at >= effective_at)
+);
+
+CREATE INDEX runtime_scope_operational_owner_idx
+ON runtime_scope_operational_input(universe_id, universe_hash);
+
+CREATE TRIGGER research_universe_policy_no_update
+BEFORE UPDATE OR DELETE ON research_universe_policy
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER runtime_scope_receipt_no_update
+BEFORE UPDATE OR DELETE ON runtime_scope_receipt
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER runtime_scope_input_reference_no_update
+BEFORE UPDATE OR DELETE ON runtime_scope_input_reference
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER runtime_scope_member_no_update
+BEFORE UPDATE OR DELETE ON runtime_scope_member
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER runtime_scope_operational_input_no_update
+BEFORE UPDATE OR DELETE ON runtime_scope_operational_input
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
 CREATE TABLE historical_research_run (
     run_id text PRIMARY KEY,
     command_hash text NOT NULL UNIQUE CHECK (
@@ -14,6 +141,16 @@ CREATE TABLE historical_research_run (
         REFERENCES research_universe_policy(policy_id) ON DELETE RESTRICT,
     runtime_scope_policy_hash text NOT NULL CHECK (
         runtime_scope_policy_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    target_protocol_id text NOT NULL CHECK (btrim(target_protocol_id) <> ''),
+    target_protocol_hash text NOT NULL CHECK (
+        target_protocol_hash ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    experiment_definition_id text NOT NULL CHECK (
+        btrim(experiment_definition_id) <> ''
+    ),
+    experiment_definition_hash text NOT NULL CHECK (
+        experiment_definition_hash ~ '^sha256:[0-9a-f]{64}$'
     ),
     data_authority_mode text NOT NULL CHECK (data_authority_mode IN (
         'RECORDED_LIVE_RESEARCH', 'FREE_RESEARCH_ARCHIVE', 'QUALIFIED_FORMAL_PIT'
@@ -163,6 +300,10 @@ BEGIN
        OR NEW.trading_calendar_hash IS DISTINCT FROM OLD.trading_calendar_hash
        OR NEW.runtime_scope_policy_id IS DISTINCT FROM OLD.runtime_scope_policy_id
        OR NEW.runtime_scope_policy_hash IS DISTINCT FROM OLD.runtime_scope_policy_hash
+       OR NEW.target_protocol_id IS DISTINCT FROM OLD.target_protocol_id
+       OR NEW.target_protocol_hash IS DISTINCT FROM OLD.target_protocol_hash
+       OR NEW.experiment_definition_id IS DISTINCT FROM OLD.experiment_definition_id
+       OR NEW.experiment_definition_hash IS DISTINCT FROM OLD.experiment_definition_hash
        OR NEW.data_authority_mode IS DISTINCT FROM OLD.data_authority_mode
        OR NEW.evidence_qualification IS DISTINCT FROM OLD.evidence_qualification
        OR NEW.command_json IS DISTINCT FROM OLD.command_json

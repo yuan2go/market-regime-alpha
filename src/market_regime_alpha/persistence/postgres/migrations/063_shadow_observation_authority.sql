@@ -1,3 +1,4 @@
+-- Phase D owner-built Strategy/Portfolio observations with explicit provenance.
 CREATE TABLE shadow_observation_policy (
     policy_id text PRIMARY KEY,
     policy_hash text NOT NULL UNIQUE CHECK (

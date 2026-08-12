@@ -27,11 +27,15 @@ def test_postgres_longitudinal_index_is_append_only_and_queryable(
     index = PostgresLongitudinalOperationalIndex(
         postgres_factory, clock=lambda: NOW
     )
-    record = index.append(package=package, package_locator="packages/one")
-    assert index.append(package=package, package_locator="packages/one") == record
+    locator = "artifact-root-v1/packages/one"
+    record = index.append(package=package, package_locator=locator)
+    assert index.append(package=package, package_locator=locator) == record
     assert PostgresLongitudinalOperationalIndex(
         postgres_factory, clock=lambda: NOW
     ).get(package.command.run_id) == record
+    assert PostgresLongitudinalOperationalIndex(
+        postgres_factory, clock=lambda: NOW
+    ).get_by_package_id(package.package_id) == record
     assert index.query(
         start_date=date(2026, 8, 4),
         end_date=date(2026, 8, 4),
@@ -57,7 +61,7 @@ def test_postgres_longitudinal_index_rebuilds_from_immutable_packages(
     )
     rebuilt = PostgresLongitudinalOperationalIndex.rebuild(
         factory=postgres_factory,
-        packages=((package_path, "packages/one"),),
+        packages=((package_path, "artifact-root-v1/packages/one"),),
         clock=lambda: NOW,
     )
     assert rebuilt.query() == (rebuilt.get(package.command.run_id),)

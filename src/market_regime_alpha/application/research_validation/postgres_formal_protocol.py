@@ -23,6 +23,7 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.research_validation.formal_protocol import (
     FormalResearchProtocol,
     OutcomeTargetBoundMultiTargetForecast,
+    ResearchExperimentDefinition,
     build_outcome_target_bound_forecast,
 )
 from market_regime_alpha.application.research_validation.formal_forecast_computation import (
@@ -33,6 +34,12 @@ from market_regime_alpha.application.research_validation.formal_forecast_computa
 )
 from market_regime_alpha.application.research_validation.formal_hypothesis_family import (
     FrozenHypothesisFamily,
+)
+from market_regime_alpha.application.research_validation.postgres_research_model import (
+    load_executable_research_model_owner,
+)
+from market_regime_alpha.application.research_validation.research_model import (
+    RESEARCH_MODEL_IMPLEMENTATION,
 )
 from market_regime_alpha.application.research_validation.factor_research import (
     FactorResearchCatalog,
@@ -99,7 +106,8 @@ class FormalProtocolFreezeScope:
     evaluation_protocol_reference: ValidationArtifactReference
     historical_sample_dataset_references: tuple[ValidationArtifactReference, ...]
     component_references: tuple[tuple[str, ValidationArtifactReference], ...]
-    schema_version: str = "formal-protocol-freeze-scope/v1"
+    experiment_definition: ResearchExperimentDefinition | None
+    schema_version: str = "formal-protocol-freeze-scope/v2"
 
     def __post_init__(self) -> None:
         expected_roles = set(FormalResearchProtocol.__dataclass_fields__) - {
@@ -112,6 +120,7 @@ class FormalProtocolFreezeScope:
             "frozen_trading_dates",
             "evaluation_protocol_reference",
             "historical_sample_dataset_references",
+            "experiment_definition",
             "locked_at",
             "locked_oos_reuse_policy",
             "schema_version",
@@ -121,6 +130,10 @@ class FormalProtocolFreezeScope:
             self.component_references
         ):
             raise ValueError("Formal Protocol freeze scope component roles mismatch")
+        if (self.experiment_definition is None) != (
+            self.schema_version == "formal-protocol-freeze-scope/v1"
+        ):
+            raise ValueError("Formal Protocol Freeze Scope V2 requires Experiment Definition")
         primary_historical = dict(self.component_references)[
             "historical_sample_dataset_reference"
         ]
@@ -180,6 +193,11 @@ class FormalProtocolFreezeScope:
             "historical_sample_dataset_references",
             "component_references",
         }
+        schema = str(value.get("schema_version"))
+        if schema == "formal-protocol-freeze-scope/v2":
+            expected.add("experiment_definition")
+        elif schema != "formal-protocol-freeze-scope/v1":
+            raise ValueError("unsupported Formal Protocol Freeze Scope schema")
         if set(value) != expected or not isinstance(value["component_references"], Mapping):
             raise ValueError("Formal Protocol freeze scope fields mismatch")
         components = value["component_references"]
@@ -213,7 +231,14 @@ class FormalProtocolFreezeScope:
                     for role in components
                 )
             ),
-            schema_version=str(value["schema_version"]),
+            experiment_definition=(
+                None
+                if value.get("experiment_definition") is None
+                else ResearchExperimentDefinition.from_canonical_dict(
+                    dict(_owner_mapping(value, "experiment_definition"))
+                )
+            ),
+            schema_version=schema,
         )
 
     @classmethod
@@ -235,13 +260,19 @@ class FormalProtocolFreezeScope:
                     if role != "trading_calendar_reference"
                 )
             ),
+            experiment_definition=protocol.experiment_definition,
+            schema_version=(
+                "formal-protocol-freeze-scope/v2"
+                if protocol.experiment_definition is not None
+                else "formal-protocol-freeze-scope/v1"
+            ),
         )
 
     def reference_map(self) -> dict[str, ValidationArtifactReference]:
         return dict(self.component_references)
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "protocol_version": self.protocol_version,
             "outcome_target_protocol_reference": self.outcome_target_protocol_reference.to_canonical_dict(),
@@ -256,6 +287,11 @@ class FormalProtocolFreezeScope:
                 for role, reference in self.component_references
             },
         }
+        if self.experiment_definition is not None:
+            payload["experiment_definition"] = (
+                self.experiment_definition.to_canonical_dict()
+            )
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -1005,6 +1041,23 @@ def _resolve_formal_forecast_context(
         )
         for reference in selected
     )
+    research_model_artifact = None
+    research_model_training_request = None
+    if lineage.implementation_ref == RESEARCH_MODEL_IMPLEMENTATION:
+        try:
+            (
+                research_model_artifact,
+                research_model_training_request,
+            ) = load_executable_research_model_owner(
+                connection,
+                model_parameter_hash=lineage.model_parameter_hash,
+            )
+        except KeyError:
+            pass
+        except ValueError as exc:
+            raise FormalProtocolConflict(
+                "Formal Forecast executable model owner verification failed"
+            ) from exc
     return ResolvedFormalForecastContext(
         protocol=protocol,
         target_protocol=target_protocol,
@@ -1021,6 +1074,8 @@ def _resolve_formal_forecast_context(
         ),
         selected_fact_references=selected,
         selected_fact_payloads=fact_payloads,
+        research_model_artifact=research_model_artifact,
+        research_model_training_request=research_model_training_request,
         symbol=request.symbol,
         decision_time=pit_request.decision_time,
         materialized_at=materialized_at,
@@ -1463,6 +1518,14 @@ def _verify_protocol_model_semantics(
         mismatches.append("evaluation_protocol")
     if DataEligibility.FORMAL_RESEARCH not in model.supported_data_eligibilities:
         mismatches.append("formal_data_eligibility")
+    experiment = protocol.experiment_definition
+    if experiment is None:
+        mismatches.append("experiment_definition")
+    else:
+        if model.implementation_ref not in experiment.allowed_model_families:
+            mismatches.append("allowed_model_family")
+        if features.definition_set_version != experiment.feature_version:
+            mismatches.append("feature_version")
     if mismatches:
         raise FormalProtocolConflict(
             "Formal Protocol model/component lineage mismatch: "
@@ -1591,12 +1654,17 @@ def _build_protocol_from_owner_scope(
         or str(calendar_row[1]) != calendar.content_hash
     ):
         raise FormalProtocolConflict("Formal Protocol freeze owner identity mismatch")
+    if scope.experiment_definition is None:
+        raise FormalProtocolConflict(
+            "new Formal Protocol freeze requires Experiment Definition"
+        )
     references = scope.reference_map()
     return FormalResearchProtocol.create(
         protocol_version=scope.protocol_version,
         target_protocol=target,
         trading_calendar=calendar,
         evaluation_protocol=evaluation,
+        experiment_definition=scope.experiment_definition,
         universe_reference=references["universe_reference"],
         dataset_reference=references["dataset_reference"],
         historical_sample_dataset_reference=references[

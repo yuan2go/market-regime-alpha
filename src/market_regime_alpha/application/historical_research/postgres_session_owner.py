@@ -258,16 +258,29 @@ class PostgresHistoricalSessionOwner:
         rows = self._rows(
             """
             SELECT settlement_id FROM targeted_shadow_outcome
-            WHERE shadow_decision_id = %s AND created_at <= %s
+            WHERE shadow_decision_id = %s
+              AND target_protocol_id = %s
+              AND created_at <= %s
             ORDER BY target_protocol_id, settlement_id
             """,
-            (str(decision.artifact_id), request.materialized_at),
+            (
+                str(decision.artifact_id),
+                str(request.target_protocol_reference.artifact_id),
+                request.materialized_at,
+            ),
         )
         outcomes = tuple(
             self._outcomes.get(ArtifactId(str(row[0]))) for row in rows
         )
         if not outcomes:
             return _blocked(request, inputs, "HISTORICAL_OUTCOME_OWNER_MISSING")
+        if any(
+            item.target_protocol_reference != request.target_protocol_reference
+            for item in outcomes
+        ):
+            raise HistoricalResearchConflict(
+                "Historical Outcome Target Protocol drift"
+            )
         return _complete(
             inputs,
             tuple(

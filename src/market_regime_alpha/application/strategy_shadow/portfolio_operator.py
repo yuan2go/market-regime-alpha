@@ -349,9 +349,7 @@ class PortfolioShadowDayOperator:
         if portfolio_id is not None:
             previous = self._portfolio.latest_state(portfolio_id)
             if previous is not None:
-                required_symbols = tuple(
-                    sorted(item.symbol for item in previous.positions)
-                )
+                required_symbols = tuple(sorted(item.symbol for item in previous.positions))
         receipt = PostgresOwnerResolvedShadowObservationBuilder(
             self._factory,
             apply_migrations=False,

@@ -569,9 +569,7 @@ class StrategyShadowDayOperator:
                 **receipt_fields,
             }
         output = self.run(
-            StrategyDayObservation.from_canonical_dict(
-                receipt.observation_payload
-            )
+            StrategyDayObservation.from_canonical_dict(receipt.observation_payload)
         )
         return {**output, **receipt_fields}
 

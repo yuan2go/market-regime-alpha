@@ -33,6 +33,10 @@ from market_regime_alpha.signals.governance import (
 )
 from market_regime_alpha.signals.input_assembly import SignalFactorName
 from market_regime_alpha.signals.input_v3 import canonical_signal_input_mapping_v2
+from market_regime_alpha.signals.research_semantics import (
+    CalibratedProbabilityStatus,
+    project_signal_research_measures,
+)
 from market_regime_alpha.signals.policies import (
     FactorFreshnessState,
     SignalFactorFreshnessMode,
@@ -119,6 +123,21 @@ def test_decimal_model_has_fixed_denominator_missingness_and_overheat_gate() -> 
     assert overheated.signal_state is SignalState.INACTIVE
     assert overheated.signal_score == Decimal("0.6")
     assert overheated.reason_codes == ("OVERHEAT_CONTRADICTED",)
+
+
+def test_research_projection_does_not_present_coverage_as_probability() -> None:
+    _, snapshot = _canonical_snapshot_hash(
+        missing_factor=SignalFactorName.TREND_RETURN
+    )
+
+    measures = project_signal_research_measures(snapshot)
+
+    assert measures.data_completeness == Decimal("0.8")
+    assert measures.signal_strength is None
+    assert measures.calibrated_probability is None
+    assert measures.calibrated_probability_status is (
+        CalibratedProbabilityStatus.NOT_ESTIMABLE_UNCALIBRATED
+    )
 
 
 def test_decimal_model_ignores_global_context_and_is_cross_process_stable() -> None:

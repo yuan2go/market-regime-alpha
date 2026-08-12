@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current executable operator procedures
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-11
 > **Code Evidence:** `pyproject.toml`, `scripts/*.py`, `src/market_regime_alpha/cli`
 
 ## Install and verify environment
@@ -15,11 +15,6 @@ uv run continuous-research run-day --help
 uv run continuous-research settle-day --help
 uv run continuous-research strategy-day --help
 uv run continuous-research portfolio-shadow-day --help
-uv run continuous-research runtime-scope-build --help
-uv run continuous-research historical-run --help
-uv run continuous-research performance-build --help
-uv run continuous-research model-train --help
-uv run continuous-research formal-execution-assess --help
 uv run continuous-research recovery-audit --help
 uv run continuous-research qualification-protocol-record --help
 uv run continuous-research qualification-forecast-record --help
@@ -52,16 +47,22 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 064, `phase_d_operator_composition`. Expected schema
-catalog: 236 tables. Migrations 052–057 add Formal Protocol bindings and
+Expected head: migration 066, `formal_execution_assessment`. Expected schema
+catalog: 241 tables. Migrations 052–066 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
 reusable Strategy Shadow Policy, C6/C7 stage decisions,
 persisted blocked Production Admission and Controlled Execution readiness.
-Migrations 058–064 add Runtime Scope, Historical Journal,
-Performance/Attribution, owner-resolved Shadow Observation, exploratory Model,
-Formal Execution assessment and captured Operational Universe composition.
+Migration 059 adds only the immutable exploratory training/model-parameter
+journal consumed by the owner-resolved Forecast executor; all Formal/OOS,
+Calibration and Production flags remain database-enforced false.
+Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
+Session journal, owner-resolved Shadow observations and multi-period Shadow
+performance evidence. They grant no trading or Formal research authority.
+Migration 065 names the global Artifact-root locator contract for Controlled
+packages. New rows must use it; old un-namespaced rows remain immutable and
+fail closed instead of triggering filesystem discovery.
 Migration 046 remains unchanged. Missing/unreachable PostgreSQL is a blocked
 operation; there is no alternate persistent backend.
 
@@ -79,18 +80,6 @@ uv run continuous-research strategy-day --help
 uv run continuous-research portfolio-shadow-day --help
 uv run continuous-research portfolio-shadow-replay --help
 uv run continuous-research research-universe-sync --help
-uv run continuous-research runtime-scope-build --help
-uv run continuous-research runtime-scope-replay --help
-uv run continuous-research historical-run --help
-uv run continuous-research historical-resume --help
-uv run continuous-research historical-replay --help
-uv run continuous-research performance-build --help
-uv run continuous-research performance-replay --help
-uv run continuous-research model-train --help
-uv run continuous-research model-replay --help
-uv run continuous-research model-execute --help
-uv run continuous-research formal-execution-assess --help
-uv run continuous-research formal-execution-replay --help
 uv run continuous-research recovery-audit --help
 uv run continuous-research report-day --help
 uv run continuous-research replay-day --help
@@ -122,8 +111,8 @@ continuous-research run-day ...
 continuous-research settle-day \
   --trading-date YYYY-MM-DD --next-session-date YYYY-MM-DD \
   --artifact-root ARTIFACT_ROOT --at RFC3339
-continuous-research strategy-day --auto AUTO_STRATEGY_JSON
-continuous-research portfolio-shadow-day --auto AUTO_PORTFOLIO_JSON
+continuous-research strategy-day --observations OBSERVATION_JSON
+continuous-research portfolio-shadow-day --observations PORTFOLIO_JSON
 continuous-research report-day --trading-date YYYY-MM-DD --at RFC3339
 continuous-research recovery-audit --checked-at RFC3339
 continuous-research replay-day --trading-date YYYY-MM-DD
@@ -147,13 +136,12 @@ promoted to factual OHLC/barrier evidence. Once factual settlement exists,
 retries reload its PostgreSQL-owned identities and immutable packages without
 calling the Provider again.
 
-`strategy-day --auto` and `portfolio-shadow-day --auto` resolve the relevant
-Candidate, Signal, Forecast, State, Panel, market, position, outcome and prior
-portfolio owners, then persist the constructed Observation and per-value source
-bindings before advancing the isolated ledgers. Missing or stale required facts
-block the observation; they are not filled with zero. The existing
-`--observations` inputs remain explicit `OPERATOR_INPUT` compatibility paths and
-must still provide every result-affecting value and provenance category.
+`strategy-day` resolves the settled Research Shadow, Panel and Candidate from
+PostgreSQL. Its observation file must explicitly provide every quantity,
+price, fillability, cost, holding/exit value and each value's provenance as
+`OBSERVED_FACT`, `ENGINEERING_ASSUMPTION`, `CALIBRATED_PARAMETER` or
+`OPERATOR_INPUT`; no result-affecting numeric default is supplied. It advances
+only the isolated Strategy Shadow ledger.
 
 `portfolio-shadow-day` resolves current Candidate scores, the settled Panel
 and any previous Portfolio state from PostgreSQL. Its input supplies a stable
@@ -178,75 +166,6 @@ Panel V2, partial Strategy Shadow and failed Portfolio replay. It reports the
 owner command to use; it does not mutate or bypass a fence.
 
 Free data may run only in `RESEARCH` or `SHADOW`. A Production request must fail with `FREE_DATA_PRODUCTION_AUTHORITY_DENIED`. Do not edit status rows, receipts or hashes to recover a run; resume through the owning journal.
-
-## Phase D exploratory research loop
-
-Build a Runtime Scope only after `research-universe-sync` has persisted the
-free Security Master snapshot and the operational acquisition has emitted one
-or more immutable Operational Universe artifacts:
-
-```bash
-uv run continuous-research runtime-scope-build --input RUNTIME_SCOPE_JSON
-uv run continuous-research runtime-scope-report --scope-id SCOPE_ID
-uv run continuous-research runtime-scope-replay --scope-id SCOPE_ID
-```
-
-`RUNTIME_SCOPE_JSON` contains exactly `policy`, `as_of`, `built_at`,
-`security_master_snapshot_id`, `operational_universes` and `code_revision`.
-Operational Universe values are complete canonical artifacts, not Provider
-selectors. Multiple free artifacts may overlap; all are captured in PostgreSQL
-and conservatively combined. Report/replay must fail if a captured payload,
-hash, Policy or Security Master projection diverges.
-
-Run or resume a frozen historical range through the shared kernel:
-
-```bash
-uv run continuous-research historical-run --input HISTORICAL_RUN_JSON
-uv run continuous-research historical-resume --run-id RUN_ID
-uv run continuous-research historical-report --run-id RUN_ID
-uv run continuous-research historical-replay --run-id RUN_ID
-```
-
-`HISTORICAL_RUN_JSON` contains the canonical `command` and nullable
-`max_stage_commits`. The command freezes the date/calendar sessions, decision
-time, Runtime Scope and decision policies, data/evidence mode, configurations
-and code revision. `max_stage_commits` is an intentional checkpoint control;
-resume uses the same run identity. Sessions are chronological and stateful
-portfolio work is never parallelized. `BLOCKED` is a completed truthful result.
-Do not alter journal attempts or replace a Provider during replay.
-
-Build Performance/Attribution from the owned Portfolio chain, then train and
-execute an exploratory challenger:
-
-```bash
-uv run continuous-research performance-build --input PERFORMANCE_JSON
-uv run continuous-research performance-replay --report-id REPORT_ID
-uv run continuous-research model-train --input MODEL_TRAINING_JSON
-uv run continuous-research model-replay --artifact-id ARTIFACT_ID
-uv run continuous-research model-execute --input MODEL_INFERENCE_JSON
-```
-
-The performance input contains `portfolio_id`, canonical `policy` and
-`generated_at`. Model training contains canonical `request` and `trained_at`;
-inference contains `artifact_id`, canonical `request` and `executed_at`.
-Training rejects future-available features, partition leakage, identity
-substitution and degenerate targets. A successful artifact reports
-`research_model_available=true`; `formal_model_qualified`, `formal_oos` and
-`calibrated` remain false. Barrier values are raw scores.
-
-The Formal path is diagnostic and fail-closed:
-
-```bash
-uv run continuous-research formal-execution-assess --input FORMAL_REQUEST_JSON
-uv run continuous-research formal-execution-report --assessment-id ASSESSMENT_ID
-uv run continuous-research formal-execution-replay --assessment-id ASSESSMENT_ID
-```
-
-It checks Provider Fact qualification, Formal PIT, Historical Sample, Locked
-OOS and Calibration in order. With current free data the expected persisted
-status is `BLOCKED`; the operator must not add a paid Provider dependency,
-weaken qualification, call raw OOS consumption or fit calibration to make it
-pass.
 
 ## Phase C evidence resolution
 

@@ -48,6 +48,7 @@ from market_regime_alpha.application.controlled_operation.input_artifacts import
 from market_regime_alpha.application.controlled_operation.longitudinal_index import (
     LongitudinalOperationalIndex,
     LongitudinalOperationalRecord,
+    encode_artifact_root_locator,
 )
 from market_regime_alpha.application.controlled_operation.journal import (
     ChildRunReferenceKind,
@@ -243,6 +244,7 @@ class ControlledDecisionTimeOperationRunner:
         *,
         journal: DecisionTimeOperationJournal,
         output_root: Path,
+        artifact_locator_root: Path | None = None,
         clock: Clock = _utc_now,
         minute_client_factory: MinuteClientFactory | None = None,
         sleeper: Sleeper = sleep,
@@ -254,6 +256,16 @@ class ControlledDecisionTimeOperationRunner:
     ) -> None:
         self._journal = journal
         self._output_root = output_root.resolve()
+        self._artifact_locator_root = (
+            self._output_root
+            if artifact_locator_root is None
+            else artifact_locator_root.resolve()
+        )
+        if (
+            self._artifact_locator_root != self._output_root
+            and self._artifact_locator_root not in self._output_root.parents
+        ):
+            raise ValueError("Controlled output root must be below Artifact locator root")
         self._clock = clock
         self._minute_client_factory = minute_client_factory
         self._sleeper = sleeper
@@ -1166,7 +1178,10 @@ class ControlledDecisionTimeOperationRunner:
             outcome = load_trade_horizon_outcome_evidence(outcome_path)
             longitudinal_record = self._longitudinal_index.append(
                 package=settled,
-                package_locator=settled_path.relative_to(self._output_root).as_posix(),
+                package_locator=encode_artifact_root_locator(
+                    artifact_root=self._artifact_locator_root,
+                    path=settled_path,
+                ),
             )
             return ControlledOperationSettlementResult(
                 snapshot=self._journal.get(command.run_id),
@@ -1315,7 +1330,10 @@ class ControlledDecisionTimeOperationRunner:
                 raise ValueError("settled package supersession lineage mismatch")
             settled_path = run_root / "operation-packages" / str(settled.package_id)
 
-        locator = settled_path.relative_to(self._output_root).as_posix()
+        locator = encode_artifact_root_locator(
+            artifact_root=self._artifact_locator_root,
+            path=settled_path,
+        )
         longitudinal_record = self._longitudinal_index.append(
             package=settled,
             package_locator=locator,

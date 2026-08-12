@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 from time import perf_counter
 
 import pytest
@@ -26,6 +27,7 @@ from market_regime_alpha.data.pit_authority import (
     RecordedPITFactRevision,
 )
 from market_regime_alpha.data.pit_artifact_authority import (
+    CanonicalPITArtifactAuthorityResolver,
     PITArtifactAuthorityResolution,
 )
 from market_regime_alpha.data.postgres_pit_authority import (
@@ -38,6 +40,7 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.persistence.postgres.native_repository import (
     acquire_scope_lock,
 )
+from market_regime_alpha.universe import publish_operational_universe
 from tests.persistence.postgres.pit_fixture import (
     DECISION_TIME,
     HASH_A,
@@ -54,6 +57,7 @@ from tests.persistence.postgres.pit_fixture import (
     required_facts,
     source_qualification,
 )
+from tests.universe.test_operational_universe import _artifact
 
 
 class _LineageAttackResolver(FixturePITArtifactAuthorityResolver):
@@ -91,6 +95,63 @@ class _LineageAttackResolver(FixturePITArtifactAuthorityResolver):
             ),
             resolved_at=resolved_at,
         )
+
+
+def test_strict_universe_resolution_persists_complete_membership_projection(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path: Path,
+) -> None:
+    universe = _artifact(3)
+    publish_operational_universe(root=tmp_path, artifact=universe)
+    repository = PostgresPITAuthority(
+        postgres_factory,
+        clock=lambda: NOW,
+        artifact_resolver=CanonicalPITArtifactAuthorityResolver(
+            artifact_roots={PITArtifactKind.UNIVERSE: tmp_path}
+        ),
+    )
+    reference = PITArtifactReference(
+        PITArtifactKind.UNIVERSE.value,
+        ArtifactId(str(universe.universe_id)),
+        universe.content_hash,
+    )
+
+    first = repository.resolve_artifact(
+        reference,
+        actor="pit-authority-test",
+        reason="project exact strict-Reader Universe membership",
+        idempotency_key="strict-universe-membership-projection",
+    )
+    replayed = repository.resolve_artifact(
+        reference,
+        actor="pit-authority-test",
+        reason="project exact strict-Reader Universe membership",
+        idempotency_key="strict-universe-membership-projection",
+    )
+
+    assert replayed == first
+    with postgres_factory.connection(read_only=True) as connection:
+        projection = connection.execute(
+            """
+            SELECT artifact_resolution_id, universe_id, universe_hash,
+                   member_count, included_member_count
+            FROM pit_universe_membership_projection
+            """
+        ).fetchone()
+        members = connection.execute(
+            """
+            SELECT symbol, included
+            FROM pit_universe_membership_projection_member ORDER BY symbol
+            """
+        ).fetchall()
+    assert projection == (
+        str(first.resolution_id),
+        str(universe.universe_id),
+        universe.content_hash,
+        3,
+        3,
+    )
+    assert tuple(members) == tuple((record.symbol, True) for record in universe.records)
 
 
 def _record_complete_scope(

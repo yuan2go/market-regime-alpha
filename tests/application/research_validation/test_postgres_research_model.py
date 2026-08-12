@@ -10,7 +10,11 @@ from market_regime_alpha.application.research_validation.research_model import (
     ResearchInferenceRequest,
     ResearchModelStatus,
 )
-from tests.application.research_validation.test_research_model import NOW, _request
+from tests.application.research_validation.test_research_model import (
+    NOW,
+    _request,
+    _v2_request,
+)
 from tests.persistence.postgres.conftest import postgres_factory as postgres_factory
 
 
@@ -62,3 +66,23 @@ def test_research_model_owner_rows_are_append_only(postgres_factory) -> None:
             "UPDATE research_model_artifact SET payload_json = payload_json WHERE artifact_id = %s",
             (str(artifact.artifact_id),),
         )
+
+
+def test_v2_parameter_owner_is_content_addressed_and_formal_flags_stay_closed(
+    postgres_factory,
+) -> None:
+    repository = PostgresResearchModelRepository(postgres_factory)
+    request = _v2_request()
+    artifact = repository.train(request, trained_at=NOW)
+
+    assert artifact.model_parameter_hash is not None
+    loaded_artifact, loaded_request = repository.get_executable_by_parameter_hash(
+        artifact.model_parameter_hash
+    )
+
+    assert loaded_artifact == artifact
+    assert loaded_request == request
+    assert loaded_artifact.research_model_available is True
+    assert loaded_artifact.formal_model_qualified is False
+    assert loaded_artifact.formal_oos is False
+    assert loaded_artifact.calibrated is False

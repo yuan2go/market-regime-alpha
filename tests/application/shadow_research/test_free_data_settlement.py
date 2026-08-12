@@ -251,8 +251,9 @@ def test_controlled_package_resolution_uses_frozen_package_identity(
     package_dir.mkdir(parents=True)
     package = SimpleNamespace(
         package_id=ArtifactId("controlled-package-id"),
+        content_hash=canonical_hash({"package": 1}),
         created_at=datetime(2026, 8, 10, 7, tzinfo=UTC),
-        command=SimpleNamespace(run_id=ArtifactId("different-controlled-run-id")),
+        command=SimpleNamespace(run_id=ArtifactId("controlled-run-id")),
     )
     monkeypatch.setattr(
         "market_regime_alpha.application.shadow_research.free_data_settlement.load_controlled_operation_package",
@@ -262,6 +263,15 @@ def test_controlled_package_resolution_uses_frozen_package_identity(
     resolved, run_root = _resolve_operation_package(
         tmp_path,
         ArtifactId("controlled-package-id"),
+        locator=SimpleNamespace(
+            get_by_package_id=lambda _package_id: SimpleNamespace(
+                package_locator=(
+                    "artifact-root-v1/run/operation-packages/package"
+                ),
+                package_hash=package.content_hash,
+                operation_run_id=package.command.run_id,
+            )
+        ),
     )
 
     assert resolved is package

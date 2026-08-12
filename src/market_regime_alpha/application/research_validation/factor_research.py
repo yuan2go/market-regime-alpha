@@ -20,6 +20,7 @@ from market_regime_alpha.application.canonical_lifecycle._immutable_io import (
 )
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
+    ResearchEvidenceAuthority,
     ValidationArtifactReference,
     content_identity,
     timestamp,
@@ -42,6 +43,110 @@ class FactorScoringRole(str, Enum):
     MODEL_CONTRIBUTION_RECORDED = "MODEL_CONTRIBUTION_RECORDED"
     GATE_OR_DIAGNOSTIC = "GATE_OR_DIAGNOSTIC"
     DIAGNOSTIC_ONLY = "DIAGNOSTIC_ONLY"
+
+
+class AlphaFactorKind(str, Enum):
+    PRICE_MOMENTUM = "PRICE_MOMENTUM"
+    SHORT_TERM_REVERSAL = "SHORT_TERM_REVERSAL"
+    CROSS_SECTIONAL_RELATIVE_STRENGTH = "CROSS_SECTIONAL_RELATIVE_STRENGTH"
+    VOLUME_AMOUNT_EXPANSION = "VOLUME_AMOUNT_EXPANSION"
+    VOLUME_PERSISTENCE = "VOLUME_PERSISTENCE"
+    LIQUIDITY = "LIQUIDITY"
+    VOLATILITY = "VOLATILITY"
+    DRAWDOWN = "DRAWDOWN"
+    TREND = "TREND"
+    VWAP_DISTANCE = "VWAP_DISTANCE"
+    MARKET_BREADTH_CONTEXT = "MARKET_BREADTH_CONTEXT"
+    ETF_RELATIVE_STRENGTH = "ETF_RELATIVE_STRENGTH"
+    THEME_STRENGTH = "THEME_STRENGTH"
+    CAPITAL_PROXY = "CAPITAL_PROXY"
+
+
+@dataclass(frozen=True, slots=True)
+class AlphaFactorSpecification:
+    kind: AlphaFactorKind
+    allowed_families: tuple[FactorFamily, ...]
+    factor_id_tokens: tuple[str, ...]
+    normalization_policy: str
+    missing_policy: str = "EXPLICIT_MISSING_NO_IMPUTATION"
+    availability_policy: str = "AVAILABLE_AT_OR_BEFORE_DECISION_TIME"
+
+    def __post_init__(self) -> None:
+        if self.allowed_families != tuple(
+            sorted(set(self.allowed_families), key=lambda item: item.value)
+        ):
+            raise ValueError("Alpha factor families must be unique and sorted")
+        if self.factor_id_tokens != tuple(sorted(set(self.factor_id_tokens))):
+            raise ValueError("Alpha factor identity tokens must be unique and sorted")
+
+    def matches(self, exposure: ResearchFactorExposure) -> bool:
+        identity = exposure.factor_id.lower()
+        return exposure.family in self.allowed_families and any(
+            token in identity for token in self.factor_id_tokens
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind.value,
+            "allowed_families": [item.value for item in self.allowed_families],
+            "factor_id_tokens": list(self.factor_id_tokens),
+            "normalization_policy": self.normalization_policy,
+            "missing_policy": self.missing_policy,
+            "availability_policy": self.availability_policy,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AlphaFactorCoverage:
+    kind: AlphaFactorKind
+    matched_exposure_count: int
+    available_value_count: int
+    symbol_count: int
+    matched_factor_ids: tuple[str, ...]
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind.value,
+            "matched_exposure_count": self.matched_exposure_count,
+            "available_value_count": self.available_value_count,
+            "symbol_count": self.symbol_count,
+            "matched_factor_ids": list(self.matched_factor_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AlphaFactorBaselineAssessment:
+    assessment_id: ArtifactId
+    assessment_hash: str
+    enrichment_reference: ValidationArtifactReference
+    specifications: tuple[AlphaFactorSpecification, ...]
+    coverage: tuple[AlphaFactorCoverage, ...]
+    decision_time: datetime
+    assessed_at: datetime
+    authority: ResearchEvidenceAuthority
+    limitations: tuple[str, ...]
+    schema_version: str = "alpha-factor-baseline-assessment/v1"
+
+    def __post_init__(self) -> None:
+        require_sha256("assessment_hash", self.assessment_hash)
+        if self.authority is not ResearchEvidenceAuthority.EXPLORATORY:
+            raise ValueError("Alpha Factor Baseline is exploratory only")
+        if canonical_hash(self.identity_payload()) != self.assessment_hash:
+            raise ValueError("Alpha Factor Baseline Assessment hash mismatch")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "enrichment_reference": self.enrichment_reference.to_canonical_dict(),
+            "specifications": [
+                item.to_canonical_dict() for item in self.specifications
+            ],
+            "coverage": [item.to_canonical_dict() for item in self.coverage],
+            "decision_time": timestamp(self.decision_time),
+            "assessed_at": timestamp(self.assessed_at),
+            "authority": self.authority.value,
+            "limitations": list(self.limitations),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +368,238 @@ class FactorDeduplicationReport:
             "analyzed_at": timestamp(self.analyzed_at),
             "limitations": list(self.limitations),
         }
+
+
+def alpha_factor_baseline_specifications() -> tuple[AlphaFactorSpecification, ...]:
+    """Return the small, interpretable factor taxonomy used by Alpha research.
+
+    Specifications select existing canonical exposures.  They deliberately do
+    not recompute data or turn missing factor families into synthetic values.
+    """
+
+    cross_sectional = "WINSORIZE_1_99_THEN_CROSS_SECTIONAL_ZSCORE_PER_DECISION_TIME"
+    temporal = "OWNER_VALUE_OR_FROZEN_ROLLING_NORMALIZATION"
+    specs = (
+        _alpha_spec(
+            AlphaFactorKind.PRICE_MOMENTUM,
+            (FactorFamily.MOMENTUM_TREND, FactorFamily.PRICE_ACTION),
+            ("momentum", "return_10", "return_3", "return_5"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.SHORT_TERM_REVERSAL,
+            (FactorFamily.PRICE_ACTION,),
+            ("return_1", "short_return"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.CROSS_SECTIONAL_RELATIVE_STRENGTH,
+            (FactorFamily.CANDIDATE, FactorFamily.MOMENTUM_TREND),
+            ("relative_strength", "rank", "strength"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.VOLUME_AMOUNT_EXPANSION,
+            (FactorFamily.AMOUNT, FactorFamily.VOLUME),
+            ("amount_expansion", "amount_ratio", "volume_expansion", "volume_ratio"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.VOLUME_PERSISTENCE,
+            (FactorFamily.AMOUNT, FactorFamily.VOLUME),
+            ("amount_persistence", "turnover_persistence", "volume_persistence"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.LIQUIDITY,
+            (FactorFamily.AMOUNT, FactorFamily.LIQUIDITY),
+            ("amount_percentile", "median_amount", "turnover_rate"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.VOLATILITY,
+            (FactorFamily.PRICE_ACTION, FactorFamily.VOLATILITY),
+            ("high_low_range", "realized_volatility", "volatility"),
+            temporal,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.DRAWDOWN,
+            (FactorFamily.PRICE_ACTION, FactorFamily.VOLATILITY),
+            ("drawdown",),
+            temporal,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.TREND,
+            (FactorFamily.MA_EMA, FactorFamily.MACD, FactorFamily.MOMENTUM_TREND),
+            ("ma_slope", "macd", "price_vs_ema", "price_vs_sma", "trend"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.VWAP_DISTANCE,
+            (FactorFamily.VWAP,),
+            ("distance_from_vwap", "price_vs_vwap"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.MARKET_BREADTH_CONTEXT,
+            (FactorFamily.MARKET_REGIME,),
+            ("breadth", "market_regime"),
+            "OWNER_RECORDED_MARKET_CONTEXT_NO_CROSS_SECTIONAL_NORMALIZATION",
+        ),
+        _alpha_spec(
+            AlphaFactorKind.ETF_RELATIVE_STRENGTH,
+            (FactorFamily.ETF,),
+            ("relative_strength", "strength"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.THEME_STRENGTH,
+            (FactorFamily.THEME,),
+            ("strength", "theme"),
+            cross_sectional,
+        ),
+        _alpha_spec(
+            AlphaFactorKind.CAPITAL_PROXY,
+            (FactorFamily.CAPITAL,),
+            ("capital", "proxy", "strength"),
+            cross_sectional,
+        ),
+    )
+    return tuple(sorted(specs, key=lambda item: item.kind.value))
+
+
+def assess_alpha_factor_baseline(
+    *,
+    enrichment: ResearchPanelEnrichment,
+    decision_time: datetime,
+    assessed_at: datetime,
+) -> AlphaFactorBaselineAssessment:
+    if assessed_at < decision_time:
+        raise ValueError("Alpha factor assessment cannot predate DecisionTime")
+    future = tuple(
+        item
+        for item in enrichment.exposures
+        if item.available_at is not None and item.available_at > decision_time
+    )
+    if future:
+        raise ValueError("Alpha factor exposure is available after DecisionTime")
+    specs = alpha_factor_baseline_specifications()
+    coverage: list[AlphaFactorCoverage] = []
+    for specification in specs:
+        matched = tuple(
+            item for item in enrichment.exposures if specification.matches(item)
+        )
+        available = tuple(
+            item
+            for item in matched
+            if item.raw_numeric is not None and not item.missingness
+        )
+        coverage.append(
+            AlphaFactorCoverage(
+                specification.kind,
+                len(matched),
+                len(available),
+                len({item.symbol for item in available}),
+                tuple(sorted({item.factor_id for item in matched})),
+            )
+        )
+    enrichment_reference = ValidationArtifactReference(
+        "PANEL_ENRICHMENT", enrichment.enrichment_id, enrichment.enrichment_hash
+    )
+    limitations = tuple(
+        sorted(
+            {
+                *ENGINEERING_LIMITATIONS,
+                "EXPLORATORY_NOT_FORMAL_ALPHA_EVIDENCE",
+                "MISSING_FACTORS_REMAIN_MISSING",
+                "NORMALIZATION_POLICY_REQUIRES_EXPERIMENT_BINDING",
+            }
+        )
+    )
+    values = {
+        "schema_version": "alpha-factor-baseline-assessment/v1",
+        "enrichment_reference": enrichment_reference.to_canonical_dict(),
+        "specifications": [item.to_canonical_dict() for item in specs],
+        "coverage": [item.to_canonical_dict() for item in coverage],
+        "decision_time": timestamp(decision_time),
+        "assessed_at": timestamp(assessed_at),
+        "authority": ResearchEvidenceAuthority.EXPLORATORY.value,
+        "limitations": list(limitations),
+    }
+    assessment_id, digest = content_identity("alpha-factor-baseline", values)
+    return AlphaFactorBaselineAssessment(
+        assessment_id,
+        digest,
+        enrichment_reference,
+        specs,
+        tuple(coverage),
+        decision_time,
+        assessed_at,
+        ResearchEvidenceAuthority.EXPLORATORY,
+        limitations,
+    )
+
+
+def robust_cross_sectional_normalize(
+    values: Mapping[str, Decimal],
+    *,
+    lower_quantile: Decimal = Decimal("0.01"),
+    upper_quantile: Decimal = Decimal("0.99"),
+) -> dict[str, Decimal]:
+    """Winsorize one decision-time cross-section and population z-score it."""
+
+    if not values:
+        return {}
+    if not Decimal("0") <= lower_quantile < upper_quantile <= Decimal("1"):
+        raise ValueError("winsor quantiles must satisfy 0 <= lower < upper <= 1")
+    ordered = sorted(values.values())
+    if any(not item.is_finite() for item in ordered):
+        raise ValueError("cross-sectional values must be finite")
+    lower = _decimal_quantile(ordered, lower_quantile)
+    upper = _decimal_quantile(ordered, upper_quantile)
+    winsorized = {
+        symbol: min(max(value, lower), upper)
+        for symbol, value in sorted(values.items())
+    }
+    mean = sum(winsorized.values(), Decimal("0")) / Decimal(len(winsorized))
+    variance = sum(
+        ((value - mean) ** 2 for value in winsorized.values()), Decimal("0")
+    ) / Decimal(len(winsorized))
+    if variance == 0:
+        return {symbol: Decimal("0") for symbol in winsorized}
+    standard_deviation = Decimal(str(sqrt(float(variance))))
+    return {
+        symbol: (value - mean) / standard_deviation
+        for symbol, value in winsorized.items()
+    }
+
+
+def _alpha_spec(
+    kind: AlphaFactorKind,
+    families: tuple[FactorFamily, ...],
+    tokens: tuple[str, ...],
+    normalization: str,
+) -> AlphaFactorSpecification:
+    return AlphaFactorSpecification(
+        kind,
+        tuple(sorted(set(families), key=lambda item: item.value)),
+        tuple(sorted(set(tokens))),
+        normalization,
+    )
+
+
+def _decimal_quantile(
+    ordered: list[Decimal], probability: Decimal
+) -> Decimal:
+    if len(ordered) == 1:
+        return ordered[0]
+    position = probability * Decimal(len(ordered) - 1)
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(ordered) - 1)
+    weight = position - Decimal(lower_index)
+    return ordered[lower_index] * (Decimal("1") - weight) + ordered[
+        upper_index
+    ] * weight
 
 
 def build_factor_research_catalog(
@@ -493,11 +830,18 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 
 __all__ = [
+    "AlphaFactorBaselineAssessment",
+    "AlphaFactorCoverage",
+    "AlphaFactorKind",
+    "AlphaFactorSpecification",
     "FactorDeduplicationReport",
     "FactorResearchCatalog",
     "FactorScoringRole",
     "ResearchFactorDefinition",
     "analyze_factor_deduplication",
+    "alpha_factor_baseline_specifications",
+    "assess_alpha_factor_baseline",
     "build_factor_research_catalog",
     "publish_factor_research_artifact",
+    "robust_cross_sectional_normalize",
 ]

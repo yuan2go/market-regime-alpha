@@ -17,7 +17,9 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationPartition,
     EvaluationWindow,
     FormalEvaluationProtocol,
+    MultipleTestingErrorRate,
     MultipleTestingMethod,
+    benchmark_evaluation_hypotheses,
     run_formal_evaluation,
 )
 from market_regime_alpha.core.identity import ArtifactId
@@ -66,6 +68,8 @@ def _protocol(*, bootstrap_block_sessions: int = 1) -> FormalEvaluationProtocol:
         bootstrap_block_sessions=bootstrap_block_sessions,
         confidence_level=Decimal("0.90"),
         multiple_testing_method=MultipleTestingMethod.BENJAMINI_HOCHBERG,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FDR,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         hypothesis_family_id="PHASE_B_DAILY_CROSS_SECTION_V1",
         top_k=1,
         locked_at=NOW,

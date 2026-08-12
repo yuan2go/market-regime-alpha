@@ -7,8 +7,8 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from math import sqrt
-from statistics import fmean
-from typing import Any, Callable, Iterable
+from statistics import fmean, pstdev
+from typing import Any, Callable, Iterable, Mapping
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
@@ -32,6 +32,16 @@ class AblationVariantKind(str, Enum):
     PRICE_ONLY = "PRICE_ONLY"
     VOLUME_ONLY = "VOLUME_ONLY"
     PRICE_VOLUME = "PRICE_VOLUME"
+    PRICE_VOLUME_MARKET_REGIME = "PRICE_VOLUME_MARKET_REGIME"
+    PRICE_VOLUME_MARKET_REGIME_ETF = "PRICE_VOLUME_MARKET_REGIME_ETF"
+    PRICE_VOLUME_MARKET_REGIME_ETF_THEME = "PRICE_VOLUME_MARKET_REGIME_ETF_THEME"
+    PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL = (
+        "PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL"
+    )
+    THROUGH_DYNAMIC_POOL = "THROUGH_DYNAMIC_POOL"
+    THROUGH_CANDIDATE_RANKING = "THROUGH_CANDIDATE_RANKING"
+    THROUGH_SIGNAL = "THROUGH_SIGNAL"
+    THROUGH_FORECAST = "THROUGH_FORECAST"
     STATIC_ONLY = "STATIC_ONLY"
     DYNAMIC_ONLY = "DYNAMIC_ONLY"
     CUSTOM_DELETE = "CUSTOM_DELETE"
@@ -99,6 +109,60 @@ class AblationVariant:
                 FactorFamily.FORECAST,
             },
         }
+        price_volume = included[AblationVariantKind.PRICE_VOLUME]
+        cumulative: dict[AblationVariantKind, set[FactorFamily]] = {
+            AblationVariantKind.PRICE_VOLUME_MARKET_REGIME: {
+                *price_volume,
+                FactorFamily.MARKET_REGIME,
+            },
+            AblationVariantKind.PRICE_VOLUME_MARKET_REGIME_ETF: {
+                *price_volume,
+                FactorFamily.MARKET_REGIME,
+                FactorFamily.ETF,
+            },
+            AblationVariantKind.PRICE_VOLUME_MARKET_REGIME_ETF_THEME: {
+                *price_volume,
+                FactorFamily.MARKET_REGIME,
+                FactorFamily.ETF,
+                FactorFamily.THEME,
+            },
+            AblationVariantKind.PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL: {
+                *price_volume,
+                FactorFamily.MARKET_REGIME,
+                FactorFamily.ETF,
+                FactorFamily.THEME,
+                FactorFamily.CAPITAL,
+            },
+            AblationVariantKind.THROUGH_DYNAMIC_POOL: {
+                *price_volume,
+                FactorFamily.MARKET_REGIME,
+                FactorFamily.ETF,
+                FactorFamily.THEME,
+                FactorFamily.CAPITAL,
+                FactorFamily.DYNAMIC_POOL,
+            },
+            AblationVariantKind.THROUGH_CANDIDATE_RANKING: {
+                *price_volume,
+                FactorFamily.MARKET_REGIME,
+                FactorFamily.ETF,
+                FactorFamily.THEME,
+                FactorFamily.CAPITAL,
+                FactorFamily.DYNAMIC_POOL,
+                FactorFamily.CANDIDATE,
+            },
+            AblationVariantKind.THROUGH_SIGNAL: {
+                *price_volume,
+                FactorFamily.MARKET_REGIME,
+                FactorFamily.ETF,
+                FactorFamily.THEME,
+                FactorFamily.CAPITAL,
+                FactorFamily.DYNAMIC_POOL,
+                FactorFamily.CANDIDATE,
+                FactorFamily.SIGNAL,
+            },
+            AblationVariantKind.THROUGH_FORECAST: set(all_families),
+        }
+        included.update(cumulative)
         keep = included.get(kind, set(all_families))
         remove = deleted.get(kind, set())
         return cls(
@@ -118,6 +182,7 @@ class AblationProtocol:
     protocol_hash: str
     protocol_version: str
     variants: tuple[AblationVariant, ...]
+    comparison_sequence: tuple[str, ...]
     top_k: int
     scoring_contract: str
     created_at: datetime
@@ -128,6 +193,7 @@ class AblationProtocol:
         *,
         protocol_version: str,
         variants: tuple[AblationVariant, ...],
+        comparison_sequence: tuple[str, ...] | None = None,
         top_k: int,
         scoring_contract: str,
         created_at: datetime,
@@ -135,17 +201,40 @@ class AblationProtocol:
         ordered = tuple(sorted(variants, key=lambda item: item.variant_id))
         if not ordered or len({item.variant_id for item in ordered}) != len(ordered) or top_k <= 0:
             raise ValueError("Ablation Protocol variants/top_k are invalid")
+        frozen_sequence = (
+            tuple(item.variant_id for item in ordered)
+            if comparison_sequence is None
+            else comparison_sequence
+        )
+        if (
+            not frozen_sequence
+            or len(set(frozen_sequence)) != len(frozen_sequence)
+            or set(frozen_sequence) != {item.variant_id for item in ordered}
+        ):
+            raise ValueError(
+                "Ablation comparison sequence must cover frozen variants exactly once"
+            )
         require_text("scoring_contract", scoring_contract)
         payload = {
-            "schema": "ablation-protocol/v1",
+            "schema": "ablation-protocol/v2",
             "protocol_version": protocol_version,
             "variants": [_variant_payload(item) for item in ordered],
+            "comparison_sequence": list(frozen_sequence),
             "top_k": top_k,
             "scoring_contract": scoring_contract,
             "created_at": timestamp(created_at),
         }
         artifact_id, digest = content_identity("ablation-protocol", payload)
-        return cls(artifact_id, digest, protocol_version, ordered, top_k, scoring_contract, created_at)
+        return cls(
+            artifact_id,
+            digest,
+            protocol_version,
+            ordered,
+            frozen_sequence,
+            top_k,
+            scoring_contract,
+            created_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +249,13 @@ class AblationObservation:
     selected: bool
     previous_selected: bool
     factor_values: tuple[tuple[FactorFamily, str, Decimal], ...]
+    cost_return: Decimal = Decimal("0")
+    market_regime: str = "UNSPECIFIED"
+    liquidity_bucket: str = "UNSPECIFIED"
+    market_cap_bucket: str = "UNSPECIFIED"
+    volatility_bucket: str = "UNSPECIFIED"
+    theme: str = "UNSPECIFIED"
+    industry: str = "UNSPECIFIED"
 
     def __post_init__(self) -> None:
         require_text("observation_id", self.observation_id)
@@ -168,13 +264,29 @@ class AblationObservation:
         keys = tuple((family.value, factor_id) for family, factor_id, _value in self.factor_values)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("factor values must be unique and sorted")
+        if not self.cost_return.is_finite() or self.cost_return < 0:
+            raise ValueError("ablation cost_return must be finite and non-negative")
+        for label, value in self.slice_values():
+            require_text(f"ablation {label.lower()} slice", value)
+
+    def slice_values(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("INDUSTRY", self.industry),
+            ("LIQUIDITY", self.liquidity_bucket),
+            ("MARKET_CAP", self.market_cap_bucket),
+            ("MARKET_REGIME", self.market_regime),
+            ("THEME", self.theme),
+            ("VOLATILITY", self.volatility_bucket),
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class AblationMetrics:
     sample_count: int
+    session_count: int
     ic: Decimal | None
     rank_ic: Decimal | None
+    icir: Decimal | None
     top_k_return: Decimal | None
     spread: Decimal | None
     hit_rate: Decimal | None
@@ -185,12 +297,17 @@ class AblationMetrics:
     max_drawdown: Decimal | None
     overlap: Decimal | None
     incremental_lift: Decimal | None
+    gross_return: Decimal | None
+    cost_return: Decimal | None
+    net_return: Decimal | None
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "sample_count": self.sample_count,
+            "session_count": self.session_count,
             "ic": decimal_text(self.ic),
             "rank_ic": decimal_text(self.rank_ic),
+            "icir": decimal_text(self.icir),
             "top_k_return": decimal_text(self.top_k_return),
             "spread": decimal_text(self.spread),
             "hit_rate": decimal_text(self.hit_rate),
@@ -201,6 +318,9 @@ class AblationMetrics:
             "max_drawdown": decimal_text(self.max_drawdown),
             "overlap": decimal_text(self.overlap),
             "incremental_lift": decimal_text(self.incremental_lift),
+            "gross_return": decimal_text(self.gross_return),
+            "cost_return": decimal_text(self.cost_return),
+            "net_return": decimal_text(self.net_return),
         }
 
 
@@ -269,6 +389,70 @@ class FactorAblationResult:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AblationSliceEvaluation:
+    variant_id: str
+    dimension: str
+    value: str
+    metrics: AblationMetrics
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "variant_id": self.variant_id,
+            "dimension": self.dimension,
+            "value": self.value,
+            "metrics": self.metrics.to_canonical_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AlphaAblationSuite:
+    suite_id: ArtifactId
+    suite_hash: str
+    protocol_reference: ValidationArtifactReference
+    panel_reference: ValidationArtifactReference
+    comparison_sequence: tuple[str, ...]
+    results: tuple[FactorAblationResult, ...]
+    slice_evaluations: tuple[AblationSliceEvaluation, ...]
+    created_at: datetime
+    authority: ResearchEvidenceAuthority
+    limitations: tuple[str, ...]
+    schema_version: str = "alpha-ablation-suite/v1"
+
+    def __post_init__(self) -> None:
+        require_sha256("suite_hash", self.suite_hash)
+        if self.authority is not ResearchEvidenceAuthority.EXPLORATORY:
+            raise ValueError("Alpha Ablation Suite is exploratory evidence only")
+        if tuple(item.variant.variant_id for item in self.results) != (
+            self.comparison_sequence
+        ):
+            raise ValueError("Alpha Ablation results must follow frozen sequence")
+        if canonical_hash(self.identity_payload()) != self.suite_hash:
+            raise ValueError("Alpha Ablation Suite hash mismatch")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "protocol_reference": self.protocol_reference.to_canonical_dict(),
+            "panel_reference": self.panel_reference.to_canonical_dict(),
+            "comparison_sequence": list(self.comparison_sequence),
+            "result_references": [
+                {
+                    "artifact_kind": "FACTOR_ABLATION_RESULT",
+                    "artifact_id": str(item.result_id),
+                    "content_hash": item.result_hash,
+                }
+                for item in self.results
+            ],
+            "slice_evaluations": [
+                item.to_canonical_dict() for item in self.slice_evaluations
+            ],
+            "created_at": timestamp(self.created_at),
+            "authority": self.authority.value,
+            "limitations": list(self.limitations),
+        }
+
+
 ScoreFunction = Callable[[AblationObservation, AblationVariant], Decimal]
 
 
@@ -303,44 +487,191 @@ def run_factor_ablation(
     )
 
 
+def run_alpha_ablation_suite(
+    *,
+    protocol: AblationProtocol,
+    panel_reference: ValidationArtifactReference,
+    observations: tuple[AblationObservation, ...],
+    score_functions: Mapping[str, ScoreFunction],
+    created_at: datetime,
+) -> AlphaAblationSuite:
+    """Evaluate the frozen cumulative research chain and diagnostic slices.
+
+    Every step is compared with its immediate predecessor.  The output is
+    descriptive EXPLORATORY evidence; it cannot satisfy Formal PIT/OOS gates.
+    """
+
+    if set(score_functions) != set(protocol.comparison_sequence):
+        raise ValueError(
+            "Ablation score functions must exactly cover the frozen comparison sequence"
+        )
+    variant_by_id = {item.variant_id: item for item in protocol.variants}
+    results: list[FactorAblationResult] = []
+    slices: list[AblationSliceEvaluation] = []
+    baseline_metrics: AblationMetrics | None = None
+    baseline_reference: ValidationArtifactReference | None = None
+    baseline_slice_metrics: dict[tuple[str, str], AblationMetrics] = {}
+    for variant_id in protocol.comparison_sequence:
+        variant = variant_by_id[variant_id]
+        result = run_factor_ablation(
+            protocol=protocol,
+            panel_reference=panel_reference,
+            observations=observations,
+            variant=variant,
+            score_function=score_functions[variant_id],
+            baseline_metrics=baseline_metrics,
+            baseline_result=baseline_reference,
+            created_at=created_at,
+        )
+        results.append(result)
+        next_slice_metrics: dict[tuple[str, str], AblationMetrics] = {}
+        for dimension, value in sorted(
+            {
+                slice_value
+                for item in observations
+                for slice_value in item.slice_values()
+            }
+        ):
+            scoped = tuple(
+                item
+                for item in observations
+                if (dimension, value) in item.slice_values()
+            )
+            metrics = _metrics(
+                tuple(
+                    (item, score_functions[variant_id](item, variant))
+                    for item in scoped
+                ),
+                top_k=protocol.top_k,
+                baseline=baseline_slice_metrics.get((dimension, value)),
+            )
+            next_slice_metrics[(dimension, value)] = metrics
+            slices.append(
+                AblationSliceEvaluation(variant_id, dimension, value, metrics)
+            )
+        baseline_slice_metrics = next_slice_metrics
+        baseline_metrics = result.metrics
+        baseline_reference = ValidationArtifactReference(
+            "FACTOR_ABLATION_RESULT", result.result_id, result.result_hash
+        )
+    protocol_reference = ValidationArtifactReference(
+        "ABLATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash
+    )
+    limitations = tuple(
+        sorted(
+            {
+                *ENGINEERING_LIMITATIONS,
+                "EXPLORATORY",
+                "NOT_FORMAL_ALPHA_EVIDENCE",
+                "SLICES_ARE_DIAGNOSTIC_NOT_CAUSAL",
+            }
+        )
+    )
+    values = {
+        "schema_version": "alpha-ablation-suite/v1",
+        "protocol_reference": protocol_reference.to_canonical_dict(),
+        "panel_reference": panel_reference.to_canonical_dict(),
+        "comparison_sequence": list(protocol.comparison_sequence),
+        "result_references": [
+            {
+                "artifact_kind": "FACTOR_ABLATION_RESULT",
+                "artifact_id": str(item.result_id),
+                "content_hash": item.result_hash,
+            }
+            for item in results
+        ],
+        "slice_evaluations": [item.to_canonical_dict() for item in slices],
+        "created_at": timestamp(created_at),
+        "authority": ResearchEvidenceAuthority.EXPLORATORY.value,
+        "limitations": list(limitations),
+    }
+    suite_id, digest = content_identity("alpha-ablation-suite", values)
+    return AlphaAblationSuite(
+        suite_id,
+        digest,
+        protocol_reference,
+        panel_reference,
+        protocol.comparison_sequence,
+        tuple(results),
+        tuple(slices),
+        created_at,
+        ResearchEvidenceAuthority.EXPLORATORY,
+        limitations,
+    )
+
+
 def _metrics(
     scored: tuple[tuple[AblationObservation, Decimal], ...],
     *,
     top_k: int,
     baseline: AblationMetrics | None,
 ) -> AblationMetrics:
-    scores = [float(score) for _item, score in scored]
+    if not scored:
+        return _empty_metrics()
     returns = [float(item.realized_return) for item, _score in scored]
-    ranked_scores = _ranks(scores)
-    ranked_returns = _ranks(returns)
-    ic = _correlation(scores, returns)
-    rank_ic = _correlation(ranked_scores, ranked_returns)
     by_session: dict[str, list[tuple[AblationObservation, Decimal]]] = {}
     for pair in scored:
         by_session.setdefault(pair[0].session_key, []).append(pair)
     top_returns: list[float] = []
+    top_costs: list[float] = []
+    top_gross_decimals: list[Decimal] = []
+    top_cost_decimals: list[Decimal] = []
     bottom_returns: list[float] = []
     overlaps: list[float] = []
     turnovers: list[float] = []
     equity_returns: list[float] = []
+    session_ics: list[float] = []
+    session_rank_ics: list[float] = []
     for pairs in by_session.values():
         ordered = sorted(pairs, key=lambda pair: (-pair[1], pair[0].symbol))
         top = ordered[: min(top_k, len(ordered))]
         bottom = ordered[-min(top_k, len(ordered)) :]
         top_returns.extend(float(item.realized_return) for item, _score in top)
+        top_costs.extend(float(item.cost_return) for item, _score in top)
+        top_gross_decimals.extend(item.realized_return for item, _score in top)
+        top_cost_decimals.extend(item.cost_return for item, _score in top)
         bottom_returns.extend(float(item.realized_return) for item, _score in bottom)
         selected = {item.symbol for item, _score in top}
         full_selected = {item.symbol for item, _score in pairs if item.selected}
         previous = {item.symbol for item, _score in pairs if item.previous_selected}
         overlaps.append(len(selected & full_selected) / max(1, len(selected | full_selected)))
         turnovers.append(len(selected.symmetric_difference(previous)) / max(1, len(selected | previous)))
-        equity_returns.append(fmean(float(item.realized_return) for item, _score in top))
+        equity_returns.append(
+            fmean(
+                float(item.realized_return - item.cost_return)
+                for item, _score in top
+            )
+        )
+        session_scores = [float(score) for _item, score in pairs]
+        session_returns = [float(item.realized_return) for item, _score in pairs]
+        session_ic = _correlation(session_scores, session_returns)
+        session_rank_ic = _correlation(
+            _ranks(session_scores), _ranks(session_returns)
+        )
+        if session_ic is not None:
+            session_ics.append(session_ic)
+        if session_rank_ic is not None:
+            session_rank_ics.append(session_rank_ic)
     mean_return = fmean(returns)
     baseline_return = None if baseline is None or baseline.top_k_return is None else float(baseline.top_k_return)
+    gross_return = (
+        None
+        if not top_gross_decimals
+        else sum(top_gross_decimals, Decimal("0"))
+        / Decimal(len(top_gross_decimals))
+    )
+    cost_return = (
+        None
+        if not top_cost_decimals
+        else sum(top_cost_decimals, Decimal("0"))
+        / Decimal(len(top_cost_decimals))
+    )
     return AblationMetrics(
         sample_count=len(scored),
-        ic=_decimal(ic),
-        rank_ic=_decimal(rank_ic),
+        session_count=len(by_session),
+        ic=_mean_decimal(session_ics),
+        rank_ic=_mean_decimal(session_rank_ics),
+        icir=_information_ratio(session_ics),
         top_k_return=_mean_decimal(top_returns),
         spread=_decimal(fmean(top_returns) - fmean(bottom_returns)) if top_returns and bottom_returns else None,
         hit_rate=_decimal(sum(value > 0 for value in returns) / len(returns)),
@@ -351,7 +682,44 @@ def _metrics(
         max_drawdown=_decimal(_max_drawdown(equity_returns)),
         overlap=_mean_decimal(overlaps),
         incremental_lift=None if baseline_return is None or not top_returns else _decimal(fmean(top_returns) - baseline_return),
+        gross_return=gross_return,
+        cost_return=cost_return,
+        net_return=(
+            None
+            if gross_return is None or cost_return is None
+            else gross_return - cost_return
+        ),
     )
+
+
+def _empty_metrics() -> AblationMetrics:
+    return AblationMetrics(
+        sample_count=0,
+        session_count=0,
+        ic=None,
+        rank_ic=None,
+        icir=None,
+        top_k_return=None,
+        spread=None,
+        hit_rate=None,
+        mean_return=None,
+        mean_mfe=None,
+        mean_mae=None,
+        turnover=None,
+        max_drawdown=None,
+        overlap=None,
+        incremental_lift=None,
+        gross_return=None,
+        cost_return=None,
+        net_return=None,
+    )
+
+
+def _information_ratio(values: list[float]) -> Decimal | None:
+    if len(values) < 2:
+        return None
+    dispersion = pstdev(values)
+    return None if dispersion == 0 else _decimal(fmean(values) / dispersion)
 
 
 def _correlation(left: list[float], right: list[float]) -> float | None:

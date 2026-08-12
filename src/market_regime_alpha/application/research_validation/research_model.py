@@ -19,6 +19,10 @@ from market_regime_alpha.application.research_validation.common import (
     content_identity,
     timestamp,
 )
+from market_regime_alpha.application.research_validation.formal_protocol import (
+    ForecastMeasureKind,
+    ResearchExperimentDefinition,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import (
     canonical_hash,
@@ -53,6 +57,78 @@ class ResearchModelStatus(str, Enum):
 class ResearchForecastStatus(str, Enum):
     AVAILABLE = "AVAILABLE"
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
+
+
+class ResearchModelHeadKind(str, Enum):
+    CONTINUOUS_EXPECTATION = "CONTINUOUS_EXPECTATION"
+    LOGISTIC_RAW_LOGIT = "LOGISTIC_RAW_LOGIT"
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchMeasureBinding:
+    """Frozen mapping from a mathematical head to one Target V2 measure."""
+
+    training_target_name: str
+    target_reference: ValidationArtifactReference
+    measure_kind: ForecastMeasureKind
+    head_kind: ResearchModelHeadKind
+    barrier_id: str | None = None
+
+    def __post_init__(self) -> None:
+        require_text("Research binding target name", self.training_target_name)
+        if self.target_reference.artifact_kind != "OUTCOME_TARGET":
+            raise ValueError("Research binding requires an Outcome Target owner")
+        if self.measure_kind is ForecastMeasureKind.BARRIER_RAW_LOGIT:
+            if not self.barrier_id or not self.barrier_id.strip():
+                raise ValueError("Barrier raw-logit binding requires barrier_id")
+        elif self.barrier_id is not None:
+            raise ValueError("Only barrier-specific head may bind barrier_id")
+        continuous = {
+            ForecastMeasureKind.RANKING_SCORE,
+            ForecastMeasureKind.EXPECTED_RETURN,
+            ForecastMeasureKind.EXPECTED_DOWNSIDE,
+            ForecastMeasureKind.EXPECTED_MFE,
+            ForecastMeasureKind.EXPECTED_MAE,
+        }
+        raw_logits = {
+            ForecastMeasureKind.RETURN_POSITIVE_RAW_LOGIT,
+            ForecastMeasureKind.UPPER_BEFORE_LOWER_RAW_LOGIT,
+            ForecastMeasureKind.BARRIER_RAW_LOGIT,
+        }
+        if self.head_kind is ResearchModelHeadKind.CONTINUOUS_EXPECTATION:
+            if self.measure_kind not in continuous:
+                raise ValueError("Continuous head cannot claim a score/probability measure")
+        elif self.measure_kind not in raw_logits:
+            raise ValueError("Logistic head may emit only an explicitly raw logit")
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        return (
+            str(self.target_reference.artifact_id),
+            self.measure_kind.value,
+            self.barrier_id or "",
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "training_target_name": self.training_target_name,
+            "target_reference": self.target_reference.to_canonical_dict(),
+            "measure_kind": self.measure_kind.value,
+            "head_kind": self.head_kind.value,
+            "barrier_id": self.barrier_id,
+        }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> ResearchMeasureBinding:
+        return cls(
+            training_target_name=str(payload["training_target_name"]),
+            target_reference=_reference(payload["target_reference"]),
+            measure_kind=ForecastMeasureKind(str(payload["measure_kind"])),
+            head_kind=ResearchModelHeadKind(str(payload["head_kind"])),
+            barrier_id=(
+                None if payload["barrier_id"] is None else str(payload["barrier_id"])
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +390,8 @@ class ResearchModelTrainingRequest:
     code_revision: str
     code_hash: str
     requested_at: datetime
+    experiment_definition: ResearchExperimentDefinition | None = None
+    measure_bindings: tuple[ResearchMeasureBinding, ...] = ()
     limitations: tuple[str, ...] = RESEARCH_MODEL_LIMITATIONS
     schema_version: str = "research-model-training-request/v1"
 
@@ -365,6 +443,15 @@ class ResearchModelTrainingRequest:
             raise ValueError("Research Model limitations must be unique and sorted")
         if not set(RESEARCH_MODEL_LIMITATIONS).issubset(self.limitations):
             raise ValueError("Research Model authority ceiling is incomplete")
+        if self.schema_version not in {
+            "research-model-training-request/v1",
+            "research-model-training-request/v2",
+        }:
+            raise ValueError("unsupported Research Model request schema")
+        if self.schema_version.endswith("/v2"):
+            self._validate_experiment_bindings()
+        elif self.experiment_definition is not None or self.measure_bindings:
+            raise ValueError("V1 Research Model request cannot carry V2 bindings")
         self._validate_samples_and_partitions()
         if canonical_hash(self.identity_payload()) != self.request_hash:
             raise ValueError("Research Model request hash mismatch")
@@ -397,12 +484,72 @@ class ResearchModelTrainingRequest:
         normalized["penalty_candidates"] = tuple(
             sorted(set(values["penalty_candidates"]))
         )
+        normalized["measure_bindings"] = tuple(
+            sorted(set(values.get("measure_bindings", ())), key=lambda item: item.key)
+        )
+        normalized["schema_version"] = (
+            "research-model-training-request/v2"
+            if values.get("experiment_definition") is not None
+            else "research-model-training-request/v1"
+        )
         normalized["limitations"] = tuple(
             sorted(set(values.get("limitations", RESEARCH_MODEL_LIMITATIONS)))
         )
         payload = _request_payload(**normalized)
         request_id, digest = content_identity("research-model-request", payload)
         return cls(request_id, digest, **normalized)
+
+    def _validate_experiment_bindings(self) -> None:
+        experiment = self.experiment_definition
+        if experiment is None or not self.measure_bindings:
+            raise ValueError("V2 Research Model requires frozen Experiment measure bindings")
+        if self.feature_catalog_reference != experiment.feature_reference:
+            raise ValueError("Research Model feature owner diverged from Experiment")
+        if RESEARCH_MODEL_IMPLEMENTATION not in experiment.allowed_model_families:
+            raise ValueError("Research Model implementation is outside frozen model family")
+        if self.fold_seed not in experiment.random_seeds:
+            raise ValueError("Research Model seed is outside frozen randomness policy")
+        if len(self.penalty_candidates) * len(self.folds) + 1 > experiment.search_budget.max_model_fits:
+            raise ValueError("Research Model search exceeds frozen model-fit budget")
+        penalty_domain = next(
+            (
+                item
+                for item in experiment.hyperparameter_space
+                if item.parameter_name == "ridge_penalty"
+            ),
+            None,
+        )
+        if penalty_domain is None or not {
+            str(item) for item in self.penalty_candidates
+        }.issubset(penalty_domain.allowed_values):
+            raise ValueError("Research Model penalties exceed frozen hyperparameter space")
+        if self.measure_bindings != tuple(
+            sorted(self.measure_bindings, key=lambda item: item.key)
+        ) or len({item.key for item in self.measure_bindings}) != len(self.measure_bindings):
+            raise ValueError("Research Model measure bindings must be unique and sorted")
+        if len({item.training_target_name for item in self.measure_bindings}) != len(
+            self.measure_bindings
+        ):
+            raise ValueError("One training head cannot map to multiple measures")
+        if any(
+            item.target_reference not in experiment.target_references
+            for item in self.measure_bindings
+        ):
+            raise ValueError("Research Model measure target is outside frozen Experiment")
+        continuous = {
+            item.training_target_name
+            for item in self.measure_bindings
+            if item.head_kind is ResearchModelHeadKind.CONTINUOUS_EXPECTATION
+        }
+        logits = {
+            item.training_target_name
+            for item in self.measure_bindings
+            if item.head_kind is ResearchModelHeadKind.LOGISTIC_RAW_LOGIT
+        }
+        if continuous != set(self.continuous_target_names) or logits != set(
+            self.barrier_target_names
+        ):
+            raise ValueError("Research Model head projection diverged from measure bindings")
 
     def _validate_samples_and_partitions(self) -> None:
         samples = {item.sample_id: item for item in self.samples}
@@ -504,6 +651,17 @@ class ResearchModelTrainingRequest:
             code_revision=str(payload["code_revision"]),
             code_hash=str(payload["code_hash"]),
             requested_at=_instant(payload["requested_at"]),
+            experiment_definition=(
+                None
+                if payload.get("experiment_definition") is None
+                else ResearchExperimentDefinition.from_canonical_dict(
+                    _mapping(payload["experiment_definition"])
+                )
+            ),
+            measure_bindings=tuple(
+                ResearchMeasureBinding.from_canonical_dict(_mapping(item))
+                for item in _array(payload.get("measure_bindings", []))
+            ),
             limitations=tuple(str(item) for item in _array(payload["limitations"])),
             schema_version=str(payload["schema_version"]),
         )
@@ -560,6 +718,7 @@ class ResearchModelArtifact:
     selected_penalty: Decimal | None
     diagnostics: tuple[ResearchModelCandidateDiagnostic, ...]
     model: RegularizedMultiTargetModel | None
+    model_parameter_hash: str | None
     trained_at: datetime
     reason_codes: tuple[str, ...]
     research_model_available: bool
@@ -569,7 +728,7 @@ class ResearchModelArtifact:
     calibrated: bool = False
     production_authorized: bool = False
     limitations: tuple[str, ...] = RESEARCH_MODEL_LIMITATIONS
-    schema_version: str = "research-model-artifact/v1"
+    schema_version: str = "research-model-artifact/v2"
 
     def __post_init__(self) -> None:
         require_sha256("Research Model artifact hash", self.artifact_hash)
@@ -582,6 +741,15 @@ class ResearchModelArtifact:
             raise ValueError("Research Model runtime role must remain Challenger-only")
         if self.model is not None and self.model.penalty != self.selected_penalty:
             raise ValueError("Research Model selected penalty mismatch")
+        if (self.model is None) != (self.model_parameter_hash is None):
+            raise ValueError("Research Model parameter hash/model mismatch")
+        if self.model_parameter_hash is not None:
+            require_sha256("Research Model parameter hash", self.model_parameter_hash)
+        if self.schema_version not in {
+            "research-model-artifact/v1",
+            "research-model-artifact/v2",
+        }:
+            raise ValueError("unsupported Research Model artifact schema")
         if self.formal_model_qualified or self.formal_oos or self.calibrated or self.production_authorized:
             raise ValueError("Exploratory Research Model cannot claim Formal authority")
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
@@ -628,6 +796,11 @@ class ResearchModelArtifact:
             selected_penalty=None if payload["selected_penalty"] is None else Decimal(str(payload["selected_penalty"])),
             diagnostics=tuple(ResearchModelCandidateDiagnostic.from_canonical_dict(_mapping(item)) for item in _array(payload["diagnostics"])),
             model=None if raw_model is None else RegularizedMultiTargetModel.from_canonical_dict(_mapping(raw_model)),
+            model_parameter_hash=(
+                None
+                if payload.get("model_parameter_hash") is None
+                else str(payload["model_parameter_hash"])
+            ),
             trained_at=_instant(payload["trained_at"]),
             reason_codes=tuple(str(item) for item in _array(payload["reason_codes"])),
             research_model_available=_boolean(payload["research_model_available"]),
@@ -932,6 +1105,7 @@ def train_research_model(
             selected_penalty=None,
             diagnostics=tuple(diagnostics),
             model=None,
+            model_parameter_hash=None,
             trained_at=trained_at,
             reason_codes=("NO_ESTIMABLE_HYPERPARAMETER_CANDIDATE",),
             research_model_available=False,
@@ -948,6 +1122,7 @@ def train_research_model(
             selected_penalty=selected.penalty,
             diagnostics=tuple(diagnostics),
             model=None,
+            model_parameter_hash=None,
             trained_at=trained_at,
             reason_codes=(f"FINAL_FIT_NOT_ESTIMABLE:{error}",),
             research_model_available=False,
@@ -958,6 +1133,7 @@ def train_research_model(
         selected_penalty=selected.penalty,
         diagnostics=tuple(diagnostics),
         model=final_model,
+        model_parameter_hash=research_model_parameter_hash(request, final_model),
         trained_at=trained_at,
         reason_codes=("RESEARCH_MODEL_AVAILABLE", "WALK_FORWARD_SELECTION_COMPLETE"),
         research_model_available=True,
@@ -989,6 +1165,24 @@ def _matrix(
         rows=tuple(rows),
         continuous_targets={name: tuple(values) for name, values in continuous.items()},
         barrier_targets={name: tuple(values) for name, values in barriers.items()},
+    )
+
+
+def research_model_parameter_hash(
+    request: ResearchModelTrainingRequest,
+    model: RegularizedMultiTargetModel,
+) -> str:
+    """Bind executable parameters to their explicit Target/measure projection."""
+
+    return canonical_hash(
+        {
+            "schema_version": "research-model-parameter/v1",
+            "implementation": RESEARCH_MODEL_IMPLEMENTATION,
+            "model": model.to_canonical_dict(),
+            "measure_bindings": [
+                item.to_canonical_dict() for item in request.measure_bindings
+            ],
+        }
     )
 
 
@@ -1038,13 +1232,16 @@ def _request_value_names() -> tuple[str, ...]:
         "dataset_references", "locked_oos_reference", "locked_oos_sample_ids",
         "oos_start_date", "session_sequence", "samples", "folds", "feature_names",
         "continuous_target_names", "barrier_target_names", "penalty_candidates",
-        "fold_seed", "code_revision", "code_hash", "requested_at", "limitations",
+        "fold_seed", "code_revision", "code_hash", "requested_at",
+        "experiment_definition", "measure_bindings", "limitations", "schema_version",
     )
 
 
 def _request_payload(**values: Any) -> dict[str, Any]:
     return {
-        "schema_version": "research-model-training-request/v1",
+        "schema_version": values.get(
+            "schema_version", "research-model-training-request/v1"
+        ),
         "model_definition_reference": values["model_definition_reference"].to_canonical_dict(),
         "configuration_reference": values["configuration_reference"].to_canonical_dict(),
         "feature_catalog_reference": values["feature_catalog_reference"].to_canonical_dict(),
@@ -1064,6 +1261,18 @@ def _request_payload(**values: Any) -> dict[str, Any]:
         "code_revision": values["code_revision"],
         "code_hash": values["code_hash"],
         "requested_at": timestamp(values["requested_at"]),
+        **(
+            {
+                "experiment_definition": values[
+                    "experiment_definition"
+                ].to_canonical_dict(),
+                "measure_bindings": [
+                    item.to_canonical_dict() for item in values["measure_bindings"]
+                ],
+            }
+            if values.get("schema_version") == "research-model-training-request/v2"
+            else {}
+        ),
         "limitations": list(values["limitations"]),
     }
 
@@ -1071,6 +1280,7 @@ def _request_payload(**values: Any) -> dict[str, Any]:
 def _artifact_value_names() -> tuple[str, ...]:
     return (
         "request_reference", "status", "selected_penalty", "diagnostics", "model",
+        "model_parameter_hash",
         "trained_at", "reason_codes", "research_model_available",
         "runtime_role",
         "formal_model_qualified", "formal_oos", "calibrated",
@@ -1080,12 +1290,13 @@ def _artifact_value_names() -> tuple[str, ...]:
 
 def _artifact_payload(**values: Any) -> dict[str, Any]:
     return {
-        "schema_version": "research-model-artifact/v1",
+        "schema_version": values.get("schema_version", "research-model-artifact/v2"),
         "request_reference": values["request_reference"].to_canonical_dict(),
         "status": values["status"].value,
         "selected_penalty": None if values["selected_penalty"] is None else str(values["selected_penalty"]),
         "diagnostics": [item.to_canonical_dict() for item in values["diagnostics"]],
         "model": None if values["model"] is None else values["model"].to_canonical_dict(),
+        "model_parameter_hash": values["model_parameter_hash"],
         "trained_at": timestamp(values["trained_at"]),
         "reason_codes": list(values["reason_codes"]),
         "research_model_available": values["research_model_available"],
@@ -1156,6 +1367,8 @@ __all__ = [
     "ResearchForecastResult",
     "ResearchForecastStatus",
     "ResearchInferenceRequest",
+    "ResearchMeasureBinding",
+    "ResearchModelHeadKind",
     "ResearchModelArtifact",
     "ResearchModelCandidateDiagnostic",
     "ResearchModelInferenceReceipt",
@@ -1166,4 +1379,5 @@ __all__ = [
     "TimedResearchTarget",
     "WalkForwardFold",
     "train_research_model",
+    "research_model_parameter_hash",
 ]

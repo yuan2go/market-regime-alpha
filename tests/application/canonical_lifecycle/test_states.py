@@ -8,10 +8,17 @@ import pytest
 from market_regime_alpha.application.canonical_lifecycle.states import (
     ALLOWED_LIFECYCLE_RUN_TRANSITIONS,
     ALLOWED_LIFECYCLE_STAGE_TRANSITIONS,
+    LIFECYCLE_STAGE_ORDER,
+    MANUAL_ACCOUNT_OBSERVATION_STAGE_ORDER,
+    POSITION_REVIEW_CONTRACT_ONLY_STAGE_ORDER,
+    POSTGRES_COMPOSED_STAGE_ORDER,
+    RESEARCH_DECISION_SUPPORT_STAGE_ORDER,
     InvalidLifecycleTransition,
+    LifecycleCapabilityBoundary,
     LifecycleRunStatus,
     LifecycleStageName,
     LifecycleStageStatus,
+    lifecycle_stage_boundary,
     validate_lifecycle_run_transition,
     validate_lifecycle_stage_progression,
     validate_lifecycle_stage_transition,
@@ -114,3 +121,25 @@ def test_transition_validators_reject_untyped_values() -> None:
         validate_lifecycle_stage_transition(
             cast(Any, "PENDING"), LifecycleStageStatus.RUNNING
         )
+
+
+def test_lifecycle_capability_boundaries_express_real_composition() -> None:
+    assert (
+        RESEARCH_DECISION_SUPPORT_STAGE_ORDER
+        + MANUAL_ACCOUNT_OBSERVATION_STAGE_ORDER
+        + POSITION_REVIEW_CONTRACT_ONLY_STAGE_ORDER
+        == LIFECYCLE_STAGE_ORDER
+    )
+    assert POSTGRES_COMPOSED_STAGE_ORDER == LIFECYCLE_STAGE_ORDER[:13]
+    assert lifecycle_stage_boundary(LifecycleStageName.SIGNAL) is (
+        LifecycleCapabilityBoundary.RESEARCH_DECISION_SUPPORT
+    )
+    assert lifecycle_stage_boundary(LifecycleStageName.FILL_POSITION) is (
+        LifecycleCapabilityBoundary.MANUAL_ACCOUNT_OBSERVATION
+    )
+    assert lifecycle_stage_boundary(LifecycleStageName.OUTCOME_REVIEW) is (
+        LifecycleCapabilityBoundary.POSITION_REVIEW_CONTRACT_ONLY
+    )
+
+    with pytest.raises(TypeError, match="LifecycleStageName"):
+        lifecycle_stage_boundary(cast(Any, "OUTCOME_REVIEW"))

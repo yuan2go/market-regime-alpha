@@ -9,10 +9,18 @@ import pytest
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
+from market_regime_alpha.application.research_validation.formal_protocol import (
+    ForecastMeasureKind,
+    HyperparameterDomain,
+    ResearchExperimentDefinition,
+    SearchBudget,
+)
 from market_regime_alpha.application.research_validation.research_model import (
     RegularizedLinearForecastExecutor,
     ResearchForecastStatus,
     ResearchInferenceRequest,
+    ResearchMeasureBinding,
+    ResearchModelHeadKind,
     ResearchModelStatus,
     ResearchModelTrainingRequest,
     ResearchTrainingSample,
@@ -198,6 +206,64 @@ def test_executor_requires_exact_lineage_and_emits_raw_logits_not_probabilities(
     assert "MODEL_CONFIGURATION_HASH_MISMATCH" in mismatched.reason_codes
 
 
+def test_injected_barrier_signal_is_discriminated_by_raw_logit() -> None:
+    original = _request()
+    samples = tuple(
+        ResearchTrainingSample.create(
+            symbol=sample.symbol,
+            trading_date=sample.trading_date,
+            decision_time=sample.decision_time,
+            features=sample.features,
+            targets=tuple(
+                replace(
+                    target,
+                    value=(sample.trading_date.day >= 2),
+                )
+                if target.name == "up_barrier"
+                else target
+                for target in sample.targets
+            ),
+        )
+        for sample in original.samples
+    )
+    by_day = {item.trading_date.day: item.sample_id for item in samples}
+    folds = (
+        WalkForwardFold(
+            "fold-01",
+            tuple(sorted((by_day[1], by_day[2]), key=str)),
+            tuple(sorted((by_day[4], by_day[5]), key=str)),
+            1,
+            2,
+        ),
+        WalkForwardFold(
+            "fold-02",
+            tuple(
+                sorted(
+                    (by_day[1], by_day[2], by_day[4], by_day[5]),
+                    key=str,
+                )
+            ),
+            (by_day[7],),
+            1,
+            2,
+        ),
+    )
+    artifact = train_research_model(
+        _request(samples=samples, folds=folds),
+        trained_at=NOW,
+    )
+
+    assert artifact.model is not None
+    lower = artifact.model.predict(
+        {"momentum": Decimal("-2"), "value": Decimal("1")}
+    ).raw_barrier_logits["up_barrier"]
+    upper = artifact.model.predict(
+        {"momentum": Decimal("4"), "value": Decimal("7")}
+    ).raw_barrier_logits["up_barrier"]
+    assert lower < Decimal("0") < upper
+    assert upper > lower
+
+
 def test_degenerate_targets_produce_a_preserved_terminal_negative_artifact() -> None:
     original = _request()
     samples = tuple(
@@ -245,3 +311,73 @@ def test_degenerate_targets_produce_a_preserved_terminal_negative_artifact() -> 
         item.status is ResearchModelStatus.NOT_ESTIMABLE
         for item in artifact.diagnostics
     )
+
+
+def _v2_request(**overrides) -> ResearchModelTrainingRequest:
+    target = _reference("OUTCOME_TARGET", "7")
+    feature = _reference("FEATURE_DEFINITION_SET", "8")
+    experiment = ResearchExperimentDefinition.create(
+        research_question="Do price and volume features predict the frozen T+1 target?",
+        hypothesis="The regularized benchmark has positive out-of-fold information.",
+        decision_time_policy="T_CLOSE_AVAILABLE",
+        target_references=(target,),
+        feature_reference=feature,
+        feature_version="feature-set/v1",
+        allowed_model_families=("deterministic-regularized-linear/v1",),
+        hyperparameter_space=(
+            HyperparameterDomain("ridge_penalty", ("0.1", "1")),
+        ),
+        search_budget=SearchBudget(5, 60),
+        primary_hypothesis_ids=("rank-ic",),
+        secondary_hypothesis_ids=("spread",),
+        multiple_testing_family_id="baseline-family/v1",
+        stopping_rule="EXHAUST_FROZEN_GRID",
+        train_validation_policy="EXPANDING_WALK_FORWARD",
+        purge_embargo_policy="PURGE_1_EMBARGO_2",
+        oos_unlock_policy="OWNER_CONTROLLED_SINGLE_CONSUMPTION",
+        randomness_algorithm="NO_STOCHASTIC_OPTIMIZATION",
+        random_seeds=(17,),
+        cost_policy_reference=_reference("SHADOW_PORTFOLIO_POLICY", "9"),
+    )
+    bindings = (
+        ResearchMeasureBinding(
+            "expected_return",
+            target,
+            ForecastMeasureKind.EXPECTED_RETURN,
+            ResearchModelHeadKind.CONTINUOUS_EXPECTATION,
+        ),
+        ResearchMeasureBinding(
+            "up_barrier",
+            target,
+            ForecastMeasureKind.UPPER_BEFORE_LOWER_RAW_LOGIT,
+            ResearchModelHeadKind.LOGISTIC_RAW_LOGIT,
+        ),
+    )
+
+    return _request(
+        experiment_definition=experiment,
+        measure_bindings=bindings,
+        feature_catalog_reference=feature,
+        **overrides,
+    )
+
+
+def test_v2_training_request_binds_frozen_experiment_and_measure_semantics() -> None:
+    request = _v2_request()
+
+    assert request.schema_version == "research-model-training-request/v2"
+    assert request == request.from_canonical_dict(request.to_canonical_dict())
+    with pytest.raises(ValueError, match="hyperparameter space"):
+        _v2_request(
+            penalty_candidates=(Decimal("0.1"), Decimal("2")),
+        )
+
+
+def test_logistic_head_cannot_be_labeled_probability() -> None:
+    with pytest.raises(ValueError, match="raw logit"):
+        ResearchMeasureBinding(
+            "direction",
+            _reference("OUTCOME_TARGET", "7"),
+            ForecastMeasureKind.RETURN_POSITIVE_PROBABILITY,
+            ResearchModelHeadKind.LOGISTIC_RAW_LOGIT,
+        )

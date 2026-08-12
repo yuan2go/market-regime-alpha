@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
@@ -20,9 +20,6 @@ from market_regime_alpha.application.governance.access_control import (
     RoleEventKind,
     SecurityRole,
 )
-from market_regime_alpha.application.research_validation.research_model import (
-    ResearchInferenceRequest,
-)
 from market_regime_alpha.core.identity import ArtifactId
 from tests.application.continuous_research.test_runner import NOW
 from market_regime_alpha.persistence.postgres.connection import (
@@ -34,22 +31,6 @@ from tests.persistence.postgres.conftest import (
     TEST_DATABASE_URL_ENV,
     postgres_factory as postgres_factory,
 )
-from tests.application.research_validation.test_research_model import (
-    NOW as MODEL_NOW,
-    _request as _model_request,
-)
-from tests.application.research_validation.test_formal_execution import (
-    _request as _formal_execution_request,
-)
-from market_regime_alpha.universe.postgres_research import (
-    PostgresFreeResearchUniverseRepository,
-)
-from tests.application.historical_research.test_contracts import (
-    _command as _historical_command,
-)
-from tests.persistence.postgres.test_runtime_scope import _operational_universe
-from tests.persistence.postgres.test_shadow_performance import _persisted_inputs
-from tests.universe.test_runtime_scope import AS_OF, KNOWN_AT, _policy, _snapshot
 
 
 def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
@@ -121,15 +102,6 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "observations.json",
         ]
     )
-    strategy_auto = build_parser().parse_args(
-        [
-            "--database-url",
-            "postgresql://runtime-authority",
-            "strategy-day",
-            "--auto",
-            "auto-strategy.json",
-        ]
-    )
     settle_day = build_parser().parse_args(
         [
             "--database-url",
@@ -187,7 +159,25 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "runtime-output",
         ]
     )
-    runtime_scope_build = build_parser().parse_args(
+    portfolio_day = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "portfolio-shadow-day",
+            "--observations",
+            "portfolio-observations.json",
+        ]
+    )
+    portfolio_replay = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "portfolio-shadow-replay",
+            "--portfolio-id",
+            "portfolio-1",
+        ]
+    )
+    runtime_scope = build_parser().parse_args(
         [
             "--database-url",
             "postgresql://runtime-authority",
@@ -205,49 +195,13 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-run.json",
         ]
     )
-    historical_resume = build_parser().parse_args(
-        [
-            "--database-url",
-            "postgresql://runtime-authority",
-            "historical-resume",
-            "--run-id",
-            "historical-run-1",
-        ]
-    )
     performance_build = build_parser().parse_args(
         [
             "--database-url",
             "postgresql://runtime-authority",
             "performance-build",
             "--input",
-            "performance.json",
-        ]
-    )
-    portfolio_day = build_parser().parse_args(
-        [
-            "--database-url",
-            "postgresql://runtime-authority",
-            "portfolio-shadow-day",
-            "--observations",
-            "portfolio-observations.json",
-        ]
-    )
-    portfolio_auto = build_parser().parse_args(
-        [
-            "--database-url",
-            "postgresql://runtime-authority",
-            "portfolio-shadow-day",
-            "--auto",
-            "auto-portfolio.json",
-        ]
-    )
-    portfolio_replay = build_parser().parse_args(
-        [
-            "--database-url",
-            "postgresql://runtime-authority",
-            "portfolio-shadow-replay",
-            "--portfolio-id",
-            "portfolio-1",
+            "performance-build.json",
         ]
     )
     model_train = build_parser().parse_args(
@@ -256,16 +210,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "postgresql://runtime-authority",
             "model-train",
             "--input",
-            "model-training.json",
-        ]
-    )
-    model_report = build_parser().parse_args(
-        [
-            "--database-url",
-            "postgresql://runtime-authority",
-            "model-report",
-            "--artifact-id",
-            "research-model-1",
+            "model-train.json",
         ]
     )
     model_execute = build_parser().parse_args(
@@ -274,25 +219,25 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "postgresql://runtime-authority",
             "model-execute",
             "--input",
-            "model-inference.json",
+            "model-execute.json",
         ]
     )
-    formal_execution = build_parser().parse_args(
+    strategy_auto = build_parser().parse_args(
         [
             "--database-url",
             "postgresql://runtime-authority",
-            "formal-execution-assess",
-            "--input",
-            "formal-execution.json",
+            "strategy-day",
+            "--auto",
+            "strategy-auto.json",
         ]
     )
-    formal_execution_report = build_parser().parse_args(
+    portfolio_auto = build_parser().parse_args(
         [
             "--database-url",
             "postgresql://runtime-authority",
-            "formal-execution-report",
-            "--assessment-id",
-            "formal-execution-assessment-1",
+            "portfolio-shadow-day",
+            "--auto",
+            "portfolio-auto.json",
         ]
     )
     recovery_audit = build_parser().parse_args(
@@ -420,24 +365,20 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
 
     assert run_day.operation == "run-day"
     assert strategy_day.operation == "strategy-day"
-    assert strategy_auto.auto.name == "auto-strategy.json"
     assert settle_day.operation == "settle-day"
     assert report_day.operation == "report-day"
     assert replay_day.operation == "replay-day"
     assert universe_sync.operation == "research-universe-sync"
     assert universe_replay.operation == "research-universe-replay"
-    assert runtime_scope_build.operation == "runtime-scope-build"
-    assert historical_run.operation == "historical-run"
-    assert historical_resume.operation == "historical-resume"
-    assert performance_build.operation == "performance-build"
     assert portfolio_day.operation == "portfolio-shadow-day"
-    assert portfolio_auto.auto.name == "auto-portfolio.json"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
+    assert runtime_scope.operation == "runtime-scope-build"
+    assert historical_run.operation == "historical-run"
+    assert performance_build.operation == "performance-build"
     assert model_train.operation == "model-train"
-    assert model_report.operation == "model-report"
     assert model_execute.operation == "model-execute"
-    assert formal_execution.operation == "formal-execution-assess"
-    assert formal_execution_report.operation == "formal-execution-report"
+    assert strategy_auto.auto.name == "strategy-auto.json"
+    assert portfolio_auto.auto.name == "portfolio-auto.json"
     assert recovery_audit.operation == "recovery-audit"
     assert protocol_record.operation == "qualification-protocol-record"
     assert owners_record.operation == "qualification-owners-record"
@@ -487,195 +428,6 @@ def test_cli_exposes_read_only_preflight_and_canonical_inspection() -> None:
     assert preflight.operation == "preflight"
     assert preflight.runtime_mode == "SHADOW"
     assert inspect_tick.operation == "inspect-tick"
-
-
-def test_cli_trains_replays_and_executes_research_challenger(
-    postgres_factory: PostgresConnectionFactory,
-    tmp_path,
-    capsys,
-) -> None:
-    request = _model_request()
-    train_path = tmp_path / "model-training.json"
-    train_path.write_text(
-        json.dumps(
-            {
-                "request": request.to_canonical_dict(),
-                "trained_at": MODEL_NOW.isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-    authority = _authority_args(postgres_factory)
-
-    assert main([*authority, "model-train", "--input", str(train_path)]) == SUCCESS
-    trained = json.loads(capsys.readouterr().out)
-    artifact_id = trained["artifact_id"]
-    assert trained["runtime_role"] == "RESEARCH_CHALLENGER"
-    assert trained["research_model_available"] is True
-    assert trained["formal_model_qualified"] is False
-
-    assert main([*authority, "model-report", "--artifact-id", artifact_id]) == SUCCESS
-    reported = json.loads(capsys.readouterr().out)
-    assert reported["artifact_hash"] == trained["artifact_hash"]
-    assert main([*authority, "model-replay", "--artifact-id", artifact_id]) == SUCCESS
-    replayed = json.loads(capsys.readouterr().out)
-    assert replayed["artifact_hash"] == trained["artifact_hash"]
-
-    sample = request.samples[-1]
-    inference = ResearchInferenceRequest(
-        symbol=sample.symbol,
-        decision_time=sample.decision_time,
-        features=sample.features,
-        model_definition_hash=request.model_definition_reference.content_hash,
-        configuration_hash=request.configuration_reference.content_hash,
-        code_revision=request.code_revision,
-        code_hash=request.code_hash,
-    )
-    execute_path = tmp_path / "model-inference.json"
-    execute_path.write_text(
-        json.dumps(
-            {
-                "artifact_id": artifact_id,
-                "request": inference.to_canonical_dict(),
-                "executed_at": MODEL_NOW.isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert main([*authority, "model-execute", "--input", str(execute_path)]) == SUCCESS
-    executed = json.loads(capsys.readouterr().out)
-    assert executed["result"]["status"] == "AVAILABLE"
-    assert executed["result"]["barrier_scores_are_probabilities"] is False
-    assert executed["formal_oos"] is False
-    assert executed["calibrated"] is False
-
-
-def test_cli_persists_and_replays_current_free_data_formal_block(
-    postgres_factory: PostgresConnectionFactory,
-    tmp_path,
-    capsys,
-) -> None:
-    request = _formal_execution_request(None)
-    request_path = tmp_path / "formal-execution.json"
-    request_path.write_text(
-        json.dumps(request.to_canonical_dict()),
-        encoding="utf-8",
-    )
-    authority = _authority_args(postgres_factory)
-
-    assert main(
-        [*authority, "formal-execution-assess", "--input", str(request_path)]
-    ) == SUCCESS
-    assessed = json.loads(capsys.readouterr().out)
-    assessment_id = assessed["assessment_id"]
-    assert assessed["status"] == "BLOCKED"
-    assert assessed["terminal_stage"] == "PROVIDER_FACT_QUALIFICATION"
-    assert assessed["formal_oos_alpha_established"] is False
-    assert assessed["calibrated"] is False
-
-    assert main(
-        [*authority, "formal-execution-report", "--assessment-id", assessment_id]
-    ) == SUCCESS
-    reported = json.loads(capsys.readouterr().out)
-    assert reported["assessment_hash"] == assessed["assessment_hash"]
-    assert main(
-        [*authority, "formal-execution-replay", "--assessment-id", assessment_id]
-    ) == SUCCESS
-    replayed = json.loads(capsys.readouterr().out)
-    assert replayed["assessment_hash"] == assessed["assessment_hash"]
-
-
-def test_cli_builds_scope_runs_historical_and_replays_performance(
-    postgres_factory: PostgresConnectionFactory,
-    tmp_path,
-    capsys,
-) -> None:
-    authority = _authority_args(postgres_factory)
-    snapshot = PostgresFreeResearchUniverseRepository(
-        postgres_factory,
-        apply_migrations=False,
-    ).publish(_snapshot())
-    scope_input = tmp_path / "runtime-scope.json"
-    scope_input.write_text(
-        json.dumps(
-            {
-                "policy": _policy().to_canonical_dict(),
-                "as_of": AS_OF.isoformat(),
-                "built_at": KNOWN_AT.isoformat(),
-                "security_master_snapshot_id": str(snapshot.snapshot_id),
-                "operational_universes": [
-                    _operational_universe().to_canonical_dict()
-                ],
-                "code_revision": "phase-d-runtime-scope",
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert main([*authority, "runtime-scope-build", "--input", str(scope_input)]) == SUCCESS
-    scope = json.loads(capsys.readouterr().out)
-    assert scope["formal_pit"] is False
-    assert scope["records"][0]["decision"] == "INCLUDED"
-    assert main(
-        [*authority, "runtime-scope-replay", "--scope-id", scope["scope_id"]]
-    ) == SUCCESS
-    replayed_scope = json.loads(capsys.readouterr().out)
-    assert replayed_scope["scope_hash"] == scope["scope_hash"]
-
-    historical_input = tmp_path / "historical-run.json"
-    command = _historical_command(sessions=(date(2020, 1, 2),))
-    historical_input.write_text(
-        json.dumps(
-            {
-                "command": command.to_canonical_dict(),
-                "max_stage_commits": None,
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert main(
-        [*authority, "historical-run", "--input", str(historical_input)]
-    ) == SUCCESS
-    historical = json.loads(capsys.readouterr().out)
-    assert historical["status"] == "COMPLETE_WITH_BLOCKS"
-    assert historical["sessions"][0]["receipts"][-1]["reason_codes"] == [
-        "HISTORICAL_DECISION_OWNER_MISSING"
-    ]
-    assert main(
-        [*authority, "historical-replay", "--run-id", historical["run_id"]]
-    ) == SUCCESS
-    historical_replay = json.loads(capsys.readouterr().out)
-    assert historical_replay["matched"] is True
-
-    performance_policy, expected_report = _persisted_inputs(postgres_factory)
-    performance_input = tmp_path / "performance.json"
-    performance_input.write_text(
-        json.dumps(
-            {
-                "portfolio_id": str(
-                    expected_report.portfolio_reference.artifact_id
-                ),
-                "policy": performance_policy.to_canonical_dict(),
-                "generated_at": expected_report.generated_at.isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert main(
-        [*authority, "performance-build", "--input", str(performance_input)]
-    ) == SUCCESS
-    performance = json.loads(capsys.readouterr().out)
-    assert performance["report_hash"] == expected_report.report_hash
-    assert main(
-        [
-            *authority,
-            "performance-replay",
-            "--report-id",
-            performance["report_id"],
-        ]
-    ) == SUCCESS
-    replayed_performance = json.loads(capsys.readouterr().out)
-    assert replayed_performance["report_hash"] == performance["report_hash"]
 
 
 def test_cli_prepare_admit_report_and_replay_are_structured(

@@ -113,6 +113,19 @@ class PostgresLongitudinalOperationalIndex(NativePostgresRepository):
             raise KeyError(str(run_id))
         return _record_from_row(row)
 
+    def get_by_package_id(
+        self, package_id: ArtifactId
+    ) -> LongitudinalOperationalRecord:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM longitudinal_operational_index "
+                "WHERE package_id = %s ORDER BY operation_run_id",
+                (str(package_id),),
+            ).fetchall()
+        if len(rows) != 1:
+            raise KeyError(str(package_id))
+        return _record_from_row(rows[0])
+
     def query(
         self,
         *,

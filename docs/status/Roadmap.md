@@ -29,25 +29,66 @@
 Phase C must not add model parameters, Alpha claims or trading permissions to
 make a gate pass.
 
-## Phase D engineering complete, evidence bounded
+## Phase D Alpha proof foundation implementation order
 
-[ADR-008](../architecture/decisions/ADR-008-Phase-D-Research-Execution.md)
-records the implemented Shared Decision Session Kernel, PostgreSQL Historical
-Journal and Free-Data-First boundary. Migrations 058–064 and the existing
-`continuous-research` surface now provide Full-A Runtime Scope, owner-resolved
-Shadow Observations, multi-period Performance/Attribution, deterministic
-exploratory Model training/inference and ordered fail-closed Formal assessment.
-This is executable engineering, not Provider, PIT, OOS Alpha, calibration or
-Production evidence.
+Phase D is an approved engineering program on top of the Phase C fail-closed
+qualification boundary. It does not assert Alpha, Formal PIT, Formal OOS,
+calibration, prospective performance or Production qualification.
 
-The next Phase D work is operational evidence, not another framework:
+1. **Statistical validity — engineering complete:** freeze explicit per-hypothesis null, benchmark,
+   alternative, inference method and economic threshold. Separate effect,
+   sampling interval, hypothesis test and economic assessment. Implement
+   date-cluster moving-block confidence intervals, null-centred block tests and
+   family-level FWER/FDR semantics. Prove deterministic null size, injected
+   signal power, dependency handling and leakage rejection.
+2. **Experiment and target semantics — engineering complete:** extend the existing Formal Protocol with
+   one immutable Experiment Definition. Introduce Target Definition V2 with
+   explicit decision, entry, observation, evaluation, return, excursion,
+   barrier-ordering and market-data policies. Preserve V1 replay, but permit no
+   silent V1/V2 conversion.
+3. **Forecast computation — engineering complete, Formal evidence blocked:** separate deterministic measure kernels from the
+   existing Formal qualification gate. Install owner-resolved benchmark linear,
+   raw-logit and regime-conditioned executors. Each measure independently
+   reports availability; no uncalibrated score is represented as probability.
+4. **Research execution and Alpha decomposition — engineering complete, empirical results pending:** port the useful runtime
+   scope, session journal, historical runner, observation and performance
+   capabilities from the earlier Phase D inventory onto new migrations based on
+   migration 057. Add replayable feature policies, Candidate/Signal ablation,
+   ranking benchmarks, regime slices and incremental lift. Preserve negative
+   and inconclusive results.
+5. **Strategy economics and Portfolio risk — engineering complete, empirical calibration pending:** bind strategy experiments to the
+   canonical target while keeping Holding/Exit policies distinct. Report gross,
+   explicit costs, net, turnover, drawdown and capacity; add basic name,
+   exposure, liquidity, ADV, cluster, volatility, cash and drawdown constraints.
+   Unqualified PIT membership remains exploratory or fail-closed.
+6. **Attribution and feedback — engineering complete:** persist structured, non-causal diagnostic
+   attribution from regime through costs/capacity. A diagnosis can propose a
+   hypothesis, but only a newly frozen Experiment Protocol may execute it.
+7. **Architecture convergence — engineering complete:** move source freezing behind a dedicated
+   service, resolve operational packages through the PostgreSQL authoritative
+   locator with immutable hash verification, expose real lifecycle boundary
+   sets, and remove only code proven to have no consumer.
+8. **Verification and publication — in progress on the feature branch:** run the repository quality gates,
+   PostgreSQL migration/idempotency/concurrency/recovery/replay tests, CLI smoke
+   tests and deterministic statistical proof suite. Publish logical commits on
+   the feature branch and open a Draft PR.
 
-1. freeze representative real multi-year free-data corpora and record
-   coverage/missingness without inventing availability;
-2. exercise interruption/resume/replay across long ranges and daily Shadow;
-3. compare research challengers and preserve negative/inconclusive results;
-4. keep Formal execution blocked until independently qualified Provider Fact
-   and Formal PIT owners exist.
+### Earlier Phase D capability inventory
+
+The prior branch is never merged or mechanically cherry-picked. Its capability
+classification is:
+
+| Capability | Disposition | Reason |
+| --- | --- | --- |
+| decision-session kernel | PORT | approved seam; rebase identities on the canonical target |
+| PostgreSQL historical journal/runner | PORT | useful replay/recovery behavior; redesign migrations after 057 |
+| full-A runtime scope | PORT | useful owner boundary; keep Provider-independent facts |
+| observation/performance builders | PORT | extend with target identity and economic/diagnostic semantics |
+| regularized linear math kernel | REUSE after proof | estimator is Provider-independent and deterministic |
+| research-model persistence | REWRITE | bind Experiment, feature and target identities explicitly |
+| formal-execution assessment | DROP/REWRITE | old form predates measure-oriented Forecast and explicit hypotheses |
+| migrations 058--064 | DROP | current semantics require a new coherent migration history |
+| historical branch documentation | DROP | current architecture documents remain the sole documentation hierarchy |
 
 ## P1 Operational evidence completion
 

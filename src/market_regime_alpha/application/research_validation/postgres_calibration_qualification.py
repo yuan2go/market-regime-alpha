@@ -8,6 +8,10 @@ from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
 
+from market_regime_alpha.application.research_evaluation.targets import (
+    TargetDefinition,
+)
+
 from market_regime_alpha.application.research_validation.calibration import (
     CalibrationMethod,
     CalibrationObservation,
@@ -787,10 +791,15 @@ def _verify_policy_owners(
     )
     if len(exact) != 1:
         raise CalibrationQualificationConflict("Outcome Target owner mismatch")
-    barriers = {
-        str(_mapping(item)["barrier_id"])
-        for item in _sequence(_mapping(exact[0][1])["barriers"])
-    }
+    try:
+        target_definition = TargetDefinition.from_canonical_dict(
+            _mapping(exact[0][1])
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CalibrationQualificationConflict(
+            "Outcome Target owner replay failed"
+        ) from exc
+    barriers = {item.barrier_id for item in target_definition.barriers}
     if policy.barrier_id not in barriers:
         raise CalibrationQualificationConflict("Calibration barrier is not in Target")
 

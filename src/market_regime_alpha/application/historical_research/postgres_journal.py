@@ -125,10 +125,13 @@ class PostgresHistoricalResearchJournal:
                     run_id, command_hash, idempotency_key, start_date, end_date,
                     trading_calendar_id, trading_calendar_hash,
                     runtime_scope_policy_id, runtime_scope_policy_hash,
+                    target_protocol_id, target_protocol_hash,
+                    experiment_definition_id, experiment_definition_hash,
                     data_authority_mode, evidence_qualification, status, version,
                     command_json, created_at, updated_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
                     'PENDING', 1, %s, %s, %s
                 ) ON CONFLICT DO NOTHING
                 """,
@@ -142,6 +145,10 @@ class PostgresHistoricalResearchJournal:
                     command.trading_calendar_hash,
                     str(command.runtime_scope_policy_id),
                     command.runtime_scope_policy_hash,
+                    str(command.target_protocol_reference.artifact_id),
+                    command.target_protocol_reference.content_hash,
+                    str(command.experiment_definition_reference.artifact_id),
+                    command.experiment_definition_reference.content_hash,
                     command.data_authority_mode.value,
                     command.evidence_qualification.value,
                     Jsonb(command.to_canonical_dict()),

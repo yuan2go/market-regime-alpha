@@ -1,3 +1,4 @@
+-- Phase D multi-period Shadow economics and diagnostic attribution evidence.
 CREATE TABLE shadow_performance_policy (
     policy_id text PRIMARY KEY,
     policy_hash text NOT NULL UNIQUE CHECK (

@@ -77,6 +77,94 @@ order and stops at the first missing or rejected predecessor. With current free
 data it persists `BLOCKED`; it cannot invoke OOS consumption or calibration fit.
 Migration 046 still prevents reference-only promotion.
 
+## Phase D Alpha proof foundation decision
+
+> **Decision state:** IMPLEMENTED engineering boundary; empirical evidence pending
+
+Phase D converges the existing research owners around one semantic spine rather
+than adding another governance plane:
+
+```text
+Frozen Experiment Definition
+-> Canonical Target/Horizon
+-> deterministic measure-oriented Forecast computation
+-> Outcome settlement
+-> metric-specific Evaluation and Calibration
+-> target-bound Strategy/Portfolio research
+-> diagnostic Attribution
+-> frozen follow-up Experiment
+```
+
+The following decisions are normative for the implementation:
+
+- Confidence intervals describe sampling uncertainty. Hypothesis tests use a
+  separately frozen null, benchmark, alternative and inference method. Effect
+  size and economic significance remain separate results. Metrics without a
+  defensible frozen null do not manufacture a p-value.
+- `FormalResearchProtocol` remains the experiment Authority. Its immutable,
+  content-addressed Experiment Definition freezes the research question,
+  hypothesis, decision time, target, feature and model search space, budget,
+  metrics, multiplicity family, stopping rule, train/validation and
+  purge/embargo policies, OOS policy, randomness and cost assumptions before
+  execution. A mutation creates a different Protocol identity and cannot reuse
+  consumed Locked OOS evidence.
+- `TargetDefinition` is the canonical semantic identity shared by Forecast,
+  Outcome, Evaluation and Calibration. Strategy policies bind that identity but
+  retain independent Holding and Exit responsibilities. A bar that touches both
+  barriers without adequate path resolution is `AMBIGUOUS`/`NOT_OBSERVABLE`;
+  the system never invents an intrabar path.
+- Forecast estimators are deterministic mathematical kernels independent of PIT
+  qualification. Exploratory Research may execute them over explicitly
+  unqualified data. Only the existing owner-resolving Formal gate may persist a
+  Formal Forecast, and only from qualified PIT inputs.
+- Forecast output is measure-oriented. Expected return, downside, direction,
+  barriers, MFE and MAE each report `AVAILABLE` or `NOT_ESTIMABLE`. An
+  uncalibrated classifier emits a raw score or logit, never a probability.
+- Free public data remains `EXPLORATORY`/`PIT_INCOMPLETE`/`UNQUALIFIED` unless
+  its real Provider evidence satisfies the existing contract. Phase D neither
+  weakens the floor nor makes a paid Provider a dependency.
+
+The approved public seams are:
+
+```text
+FormalResearchProtocol.create(..., experiment_definition=...)
+FormalEvaluationProtocol.create(..., hypothesis_specs=...)
+TargetDefinition.create(..., canonical_horizon=...)
+FormalForecastExecutor.compute(resolved_owner_context)
+ResearchDecisionSessionKernel.run_next(...)
+HistoricalResearchRunner.run/resume/replay(...)
+run_shadow_portfolio_day(..., target_identity, policy_v2)
+FreeDataSettlementOperator.settle_day(...)
+```
+
+Earlier Phase D work is an implementation inventory, not a merge unit. Each
+capability is classified against the current `main` schema and this decision as
+`REUSE`, `PORT`, `REWRITE` or `DROP`. New migrations start after the current
+migration head and express only the accepted current semantics; historical
+migrations are not mechanically cherry-picked.
+
+The implementation order is dependency-bound: Statistics, Protocol/Target,
+Formal Forecast, Alpha/Ablation, Strategy Economics, Portfolio Risk,
+Attribution/Feedback, architecture simplification and full verification.
+
+The implemented boundary now includes deterministic synthetic null/power
+proofs, explicit hypothesis-specific inference, Protocol V2 and Target
+Definition V2, measure-oriented benchmark/linear/raw-logit/regime Forecast
+kernels, PostgreSQL research-model and multi-year Historical journals, Full-A
+Runtime Scope, owner-derived Strategy/Portfolio observations, multi-period
+performance, factor coverage and cumulative ablation, target-bound Strategy
+Economics, constrained Portfolio Risk, and non-causal Attribution/Feedback.
+These are executable research capabilities, not positive Alpha evidence.
+
+Canonical free-data composition now calls `SourceFreezeService`; the retained
+DailyLoop owns historical Daily identities only behind that adapter. Controlled
+package recovery uses the PostgreSQL longitudinal record's explicit
+`artifact-root-v1` locator and verifies immutable content hash. No recovery path
+discovers package or Feature identities by filesystem scan. Canonical Lifecycle
+keeps its journal-compatible stage identities but publishes three actual
+boundaries: Research Decision Support, Manual Account Observation, and
+contract-only Position Review. The last boundary remains fail-closed.
+
 ## Non-claims
 
 - no Alpha winner;

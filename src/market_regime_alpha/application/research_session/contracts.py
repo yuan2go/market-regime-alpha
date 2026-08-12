@@ -8,6 +8,9 @@ from enum import Enum
 from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.evidence.canonical import (
     canonical_datetime,
     canonical_hash,
@@ -57,6 +60,8 @@ class ResearchDecisionSessionRequest:
     runtime_scope_policy_hash: str
     decision_policy_id: ArtifactId
     decision_policy_hash: str
+    target_protocol_reference: ValidationArtifactReference
+    experiment_definition_reference: ValidationArtifactReference
     code_revision: str
     schema_version: str = RESEARCH_DECISION_SESSION_SCHEMA
 
@@ -71,6 +76,13 @@ class ResearchDecisionSessionRequest:
         ):
             require_sha256(label, value)
         require_text("code_revision", self.code_revision)
+        if self.target_protocol_reference.artifact_kind != "OUTCOME_TARGET_PROTOCOL":
+            raise ValueError("Research session requires canonical Target Protocol")
+        if (
+            self.experiment_definition_reference.artifact_kind
+            != "RESEARCH_EXPERIMENT_DEFINITION"
+        ):
+            raise ValueError("Research session requires frozen Experiment Definition")
         decision_time = normalize_canonical_datetime(self.decision_time)
         materialized_at = normalize_canonical_datetime(self.materialized_at)
         if materialized_at < decision_time:
@@ -110,6 +122,8 @@ class ResearchDecisionSessionRequest:
         runtime_scope_policy_hash: str,
         decision_policy_id: ArtifactId,
         decision_policy_hash: str,
+        target_protocol_reference: ValidationArtifactReference,
+        experiment_definition_reference: ValidationArtifactReference,
         code_revision: str,
     ) -> ResearchDecisionSessionRequest:
         values: dict[str, Any] = {
@@ -125,6 +139,8 @@ class ResearchDecisionSessionRequest:
             "runtime_scope_policy_hash": runtime_scope_policy_hash,
             "decision_policy_id": decision_policy_id,
             "decision_policy_hash": decision_policy_hash,
+            "target_protocol_reference": target_protocol_reference,
+            "experiment_definition_reference": experiment_definition_reference,
             "code_revision": code_revision,
         }
         digest = canonical_hash(_session_payload(**values))
@@ -150,6 +166,8 @@ class ResearchDecisionSessionRequest:
             "runtime_scope_policy_hash": self.runtime_scope_policy_hash,
             "decision_policy_id": self.decision_policy_id,
             "decision_policy_hash": self.decision_policy_hash,
+            "target_protocol_reference": self.target_protocol_reference,
+            "experiment_definition_reference": self.experiment_definition_reference,
             "code_revision": self.code_revision,
         }
 
@@ -192,6 +210,12 @@ class ResearchDecisionSessionRequest:
             runtime_scope_policy_hash=str(payload["runtime_scope_policy_hash"]),
             decision_policy_id=ArtifactId(str(payload["decision_policy_id"])),
             decision_policy_hash=str(payload["decision_policy_hash"]),
+            target_protocol_reference=ValidationArtifactReference.from_canonical_dict(
+                payload["target_protocol_reference"]
+            ),
+            experiment_definition_reference=ValidationArtifactReference.from_canonical_dict(
+                payload["experiment_definition_reference"]
+            ),
             code_revision=str(payload["code_revision"]),
             schema_version=str(payload["schema_version"]),
         )
@@ -214,6 +238,8 @@ def _session_payload(
     runtime_scope_policy_hash: str,
     decision_policy_id: ArtifactId,
     decision_policy_hash: str,
+    target_protocol_reference: ValidationArtifactReference,
+    experiment_definition_reference: ValidationArtifactReference,
     code_revision: str,
 ) -> dict[str, Any]:
     return {
@@ -230,6 +256,10 @@ def _session_payload(
         "runtime_scope_policy_hash": runtime_scope_policy_hash,
         "decision_policy_id": str(decision_policy_id),
         "decision_policy_hash": decision_policy_hash,
+        "target_protocol_reference": target_protocol_reference.to_canonical_dict(),
+        "experiment_definition_reference": (
+            experiment_definition_reference.to_canonical_dict()
+        ),
         "code_revision": code_revision,
     }
 

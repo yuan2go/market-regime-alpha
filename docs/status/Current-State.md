@@ -10,7 +10,7 @@
 
 The system is a PostgreSQL-only modular monolith with one Continuous Research Runtime. It has durable source freeze, Dataset/Feature materialization, Model Governance selection, State/StateSeries/Pool/Candidate, controlled minute/Signal/Forecast work, Research Summary, Canonical Lifecycle mechanics, manual-account Decision support, Research Shadow, prospective outcomes, Panel V2 and Research Validation harnesses. Free-data operation includes an automatic retrospective BaoStock decision/outcome/sample pipeline, a PostgreSQL Historical Registry Reader in the Research/Shadow Forecast composition, a full-A-share exploratory Security Master/Research Universe snapshot, explicit Proxy/Derived/Declared reference semantics, T+1 settlement/enrichment and factor lineage/de-duplication evidence. Research Summary and settlement bind the same Feature Bundle V2 identity used by Signal and Panel enrichment; the legacy static bundle remains its immutable Controlled-package wrapper, not a competing feature Authority.
 
-Phase B engineering also includes daily cross-sectional evaluation science, tie-aware RankIC, label-aware purging/embargo, trading-date moving-block bootstrap, explicit `NOT_ESTIMABLE`, calibration method harnesses and a PostgreSQL Portfolio Shadow ledger. `settle-day` automatically derives eighteen horizon/barrier calibration hypotheses from PostgreSQL-owned Panel V2 forecast exposures and Targeted Outcome labels, persists positive or negative hypothesis evidence, and records exact partition bindings with label-aware purging only when Forecast and Outcome Target identity are equal. The current multi-session Forecast cannot be reused as a T+1 target Forecast, so that mismatch remains truthfully `NOT_ESTIMABLE`. Every result remains `calibrated=false`. Portfolio Shadow records per-value provenance for market facts and assumptions alongside Cash, Order Intent, Shadow Fill, Shadow Position, NAV, exposure, turnover, cost, capacity, drawdown and attribution while enforcing A-share T+1, 100-share lots, suspension, price-limit and continuous-auction constraints. Append-only Principal/Role/Approval/Audit governance serializes bootstrap and last-Admin invariants; every Continuous CLI invocation is resource-bound and audited, and non-Admin Shadow/recovery mutation requires an exact independent approval. Production-mode mutation is rejected before Journal writes. A recovery audit is available through the same CLI. External authentication is not bound, so the caller-supplied Principal ID is not an authenticated identity proof.
+Phase B engineering also includes daily cross-sectional evaluation science, tie-aware RankIC, label-aware purging/embargo, explicit `NOT_ESTIMABLE`, calibration method harnesses and a PostgreSQL Portfolio Shadow ledger. The legacy multi-session PathForecast still cannot be reused as a T+1 Target Forecast, so that mismatch remains truthfully `NOT_ESTIMABLE`. Phase D adds explicit confidence-interval versus null-test semantics, deterministic statistical simulations, and Target-bound Forecast kernels without changing that identity. Every probability result remains `calibrated=false`. Portfolio Shadow records per-value provenance for market facts and assumptions alongside Cash, Order Intent, Shadow Fill, Shadow Position, NAV, exposure, turnover, cost, capacity, drawdown and attribution while enforcing A-share T+1, 100-share lots, suspension, price-limit and continuous-auction constraints. Append-only Principal/Role/Approval/Audit governance serializes bootstrap and last-Admin invariants; every Continuous CLI invocation is resource-bound and audited, and non-Admin Shadow/recovery mutation requires an exact independent approval. Production-mode mutation is rejected before Journal writes. A recovery audit is available through the same CLI. External authentication is not bound, so the caller-supplied Principal ID is not an authenticated identity proof.
 
 Actual positions derive only from observed manual fills. The system creates no broker order and does not automatically mutate actual positions.
 
@@ -54,36 +54,35 @@ record-set comparison filters exactly the frozen Locked-OOS windows. These write
 persist `REJECTED`, `NOT_ESTIMABLE`, `BLOCKED` and `ACCUMULATING` as first-class
 results. They do not automatically promote or authorize anything.
 
-Phase D engineering adds the Shared Decision Session Kernel and a PostgreSQL
-Historical Research Journal without adding a second all-day Runtime. A frozen
-multi-session command applies Scope, Decision, Strategy, Portfolio, Outcome and
-Performance stages chronologically under lease/fence/CAS. Resume advances the
-same journal; replay reloads the exact owner facts and compares canonical
-receipts. The PostgreSQL adapter requires a Shadow Decision's Continuous parent
-to match the Historical session's trading date, Runtime Scope symbols, Trading
-Calendar, Decision Policy and code revision. Missing owners and valid empty
-results persist typed `BLOCKED` receipts rather than fabricated output.
+Phase D engineering extends the same owners with an immutable Experiment
+Definition inside Formal Protocol V2 and one Target Definition V2 identity from
+Forecast through Outcome, Evaluation and Calibration. Inference freezes its
+null, benchmark, alternative and method per hypothesis; moving-block sampling
+intervals are not reused as null distributions. A deterministic research-model
+trainer/executor supports unconditional, linear, raw-logit and
+regime-conditioned measure heads. Each measure is independently `AVAILABLE` or
+`NOT_ESTIMABLE`; uncalibrated classifier output remains a raw logit. The
+mathematical executor can run over exploratory inputs, while the Formal
+Forecast writer still requires owner-resolved Formal PIT.
 
-The Full-A Runtime Scope owner reloads the append-only free Research Universe
-and captured Operational Universe artifacts. BaoStock, Tencent, AkShare and
-other supported free sources may split coverage or overlap on one symbol; every
-Provider artifact remains in provenance and ST/suspension/history/liquidity are
-combined conservatively. The resulting receipt retains `INCLUDED`, `EXCLUDED`
-and `UNKNOWN`, is `EXPLORATORY`/`PIT_INCOMPLETE`, and never establishes Formal
-PIT. Downstream Runtime consumes the receipt, not a Provider-specific path.
+The new Historical Research Runner is resumable/replayable through a PostgreSQL
+lease/fence/stage journal and binds Runtime Scope, Experiment and Target
+identities. Full-A Scope remains an exploratory population, not an Operational
+Universe bypass. Strategy/Portfolio observations can be derived from existing
+owners; multi-period performance reports gross, cost, net, turnover, drawdown,
+capacity and structured attribution. Factor coverage, cumulative ablation,
+regime/liquidity/market-cap/volatility/theme/industry slices, Strategy Economics,
+Portfolio Risk and diagnostic Feedback are content-addressed exploratory
+research artifacts. They do not qualify a model or establish economic value.
 
-Owner-resolved Shadow Observation builders now construct Strategy and Portfolio
-inputs from immutable Candidate/Signal/Forecast/State/market/position/outcome
-facts and persist per-value provenance. Portfolio Performance owns immutable
-metric, monthly/yearly return and attribution rows with explicit
-`NOT_ESTIMABLE` and reconciliation behavior. Exploratory Model Research owns
-frozen samples/features/targets, walk-forward folds, coefficients, diagnostics
-and deterministic inference. Barrier outputs remain scores, not probabilities.
-The ordered Formal Execution assessment reloads Provider Fact, Formal PIT,
-Historical Sample, OOS and Calibration predecessors and stops at the first
-unqualified stage. Current admissible flags are
-`RESEARCH_MODEL_AVAILABLE=true`, `FORMAL_MODEL_QUALIFIED=false`,
-`FORMAL_OOS=false` and `CALIBRATED=false`.
+Canonical source acquisition is exposed through `SourceFreezeService`; the
+DailyLoop is retained only as its identity-compatible adapter. Controlled
+package recovery and Feature recovery use exact PostgreSQL/receipt locators and
+hash verification rather than directory scanning. Migration 065 requires new
+Controlled package rows to use the global `artifact-root-v1` locator contract;
+legacy un-namespaced rows remain immutable and fail closed. Lifecycle stages
+are explicitly partitioned into composed Research Decision Support, composed
+Manual Account Observation and contract-only Position Review stages.
 
 The 2026-08-11 isolated working-schema evidence resolution applied migrations
 001–057 and evaluated ten declared free-data Provider×Contract×Fact scopes:
@@ -98,12 +97,7 @@ Locked-OOS consumption, Formal OOS, Calibration qualification, Phase C stage or
 Production Admission evidence. This is a negative/absent evidence result, not a
 Provider-quality or Alpha conclusion.
 
-Migrations 047–064 add free retrospective evidence, exploratory Research
-Universe/Runtime Scope, Historical Journal, Portfolio Shadow,
-Performance/Attribution, owner-resolved Observations, exploratory Model
-artifacts, engineering access-governance owners, immutable Path Calibration
-Hypothesis evidence and fail-closed Formal assessment owners. They do not alter
-migration 046, which removes reference-only
+Migrations 047–066 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, exact Locked-OOS roster and PIT Universe bindings, the Phase C owners, Phase D research execution journals, the authoritative locator contract and fail-closed Formal Execution assessments described above. They do not alter migration 046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -119,17 +113,18 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 618 | broad modular monolith; size alone is not a defect |
-| Python test files | 449 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 685 | broad modular monolith; size alone is not a defect |
+| Python test files | 454 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 64 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 236 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 236 independent business Authorities |
-| PostgreSQL Repository/Journal classes | 40 | bounded owners; not competing global Authorities |
-| Repository/Journal named classes | 59 | includes in-memory research stores and compatibility types |
-| Artifact/Receipt class names | 90 | immutable contracts across bounded contexts |
-| Policy-suffixed class names | 44 | time, risk, provider, state and research rules |
-| Protocol/Port class names | 17 | external/composition seams |
+| PostgreSQL migrations | 66 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 241 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 241 independent business Authorities |
+| PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
+| Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
+| Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |
+| Policy class names | 38 | time, risk, provider, state and research rules |
+| Protocol/Port class names | 16 | external/composition seams |
+| Qualification-named class types | 14 | contracts and statuses; Phase C owner writers persist fail-closed decisions, while current real Formal qualification evidence remains absent |
 | Current canonical docs | 11 | index, four architecture, four status, one runbook and one research registry |
 | Normative Constitution docs | 10 | unchanged `00` through `09` |
 | Current research registries | 1 | negative/inconclusive results |
@@ -154,16 +149,16 @@ broker_integration_proven = false
 free_data_engineering_complete = true
 data_engineering_complete = true
 research_engineering_complete = true
-historical_research_engineering_complete = true
-research_model_available = true
 evaluation_engineering_complete = true
+research_model_runtime_available = true
+formal_model_qualified = false
+formal_oos = false
 strategy_validation_engineering_complete = true
 shadow_engineering_complete = true
 operations_engineering_complete = true
 governance_engineering_complete = true
 entry_model_empirically_validated = false
 formal_pit_established = false
-formal_model_qualified = false
 formal_oos_alpha_established = false
 calibrated = false
 entry_qualified = false

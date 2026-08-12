@@ -145,12 +145,6 @@ from market_regime_alpha.application.research_validation.postgres_qualification 
 from market_regime_alpha.application.research_validation.postgres_research_model import (
     PostgresResearchModelRepository,
 )
-from market_regime_alpha.application.research_validation.formal_execution import (
-    FormalExecutionRequest,
-)
-from market_regime_alpha.application.research_validation.postgres_formal_execution import (
-    PostgresFormalExecutionRepository,
-)
 from market_regime_alpha.application.research_validation.research_model import (
     ResearchInferenceRequest,
     ResearchModelTrainingRequest,
@@ -296,8 +290,6 @@ _READ_OPERATIONS = {
     "portfolio-shadow-replay",
     "model-report",
     "model-replay",
-    "formal-execution-report",
-    "formal-execution-replay",
     "recovery-audit",
     *_INSPECT_OPERATIONS,
 }
@@ -422,15 +414,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Record one exact-lineage exploratory Shadow inference.",
     )
     model_execute.add_argument("--input", type=Path, required=True)
-    formal_execution = subparsers.add_parser(
-        "formal-execution-assess",
-        help="Assess the ordered Formal predecessor chain; current Free Data remains fail-closed.",
-    )
-    formal_execution.add_argument("--input", type=Path, required=True)
-    formal_execution_report = subparsers.add_parser("formal-execution-report")
-    formal_execution_report.add_argument("--assessment-id", required=True)
-    formal_execution_replay = subparsers.add_parser("formal-execution-replay")
-    formal_execution_replay.add_argument("--assessment-id", required=True)
     universe_sync = subparsers.add_parser("research-universe-sync")
     universe_sync.add_argument("--as-of-date", required=True)
     universe_sync.add_argument("--artifact-root", type=Path, required=True)
@@ -867,36 +850,6 @@ def _dispatch(
             "operation": "MODEL_EXECUTE",
             **research_inference_receipt.to_canonical_dict(),
         }
-    if args.operation == "formal-execution-assess":
-        formal_request = FormalExecutionRequest.from_canonical_dict(
-            _load_json_object(args.input)
-        )
-        formal_assessment = PostgresFormalExecutionRepository(
-            factory,
-            apply_migrations=False,
-        ).assess(formal_request)
-        return {
-            "operation": "FORMAL_EXECUTION_ASSESS",
-            **formal_assessment.to_canonical_dict(),
-        }
-    if args.operation == "formal-execution-report":
-        formal_assessment = PostgresFormalExecutionRepository(
-            factory,
-            apply_migrations=False,
-        ).get_assessment(ArtifactId(args.assessment_id))
-        return {
-            "operation": "FORMAL_EXECUTION_REPORT",
-            **formal_assessment.to_canonical_dict(),
-        }
-    if args.operation == "formal-execution-replay":
-        formal_assessment = PostgresFormalExecutionRepository(
-            factory,
-            apply_migrations=False,
-        ).replay(ArtifactId(args.assessment_id))
-        return {
-            "operation": "FORMAL_EXECUTION_REPLAY",
-            **formal_assessment.to_canonical_dict(),
-        }
     if args.operation == "strategy-day":
         if args.auto is not None:
             payload = _load_json_object(args.auto)
@@ -1069,6 +1022,7 @@ def _dispatch(
         common = {
             "formal_protocol_id",
             "observation_groups",
+            "historical_sample_decision_ids",
             "actor",
             "reason",
             "idempotency_key",
@@ -1089,6 +1043,14 @@ def _dispatch(
         )
         if not raw_pit_ids or set(payload).intersection(pit_keys) == pit_keys:
             raise ValueError("Formal Family Evaluation requires a non-empty PIT owner set")
+        raw_sample_ids = _array_value(
+            payload["historical_sample_decision_ids"],
+            "historical_sample_decision_ids",
+        )
+        if not raw_sample_ids:
+            raise ValueError(
+                "Formal Family Evaluation requires qualified C3 decisions"
+            )
         _require_principal_actor(args, payload)
         pit_ids = tuple(ArtifactId(str(item)) for item in raw_pit_ids)
         evaluation_result = PostgresResearchQualificationAuthority(
@@ -1101,6 +1063,9 @@ def _dispatch(
                 for item in _array_value(
                     payload["observation_groups"], "observation_groups"
                 )
+            ),
+            historical_sample_decision_ids=tuple(
+                ArtifactId(str(item)) for item in raw_sample_ids
             ),
             formal_pit_evidence_id=pit_ids[0],
             formal_pit_evidence_ids=pit_ids,
@@ -2159,7 +2124,6 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "qualification-calibration",
         "qualification-shadow",
         "qualification-status",
-        "formal-execution-assess",
     }:
         return SecurityPermission.RECORD_RESEARCH_EVIDENCE
     if operation in {"resume", "historical-resume"}:

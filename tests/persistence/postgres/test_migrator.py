@@ -84,21 +84,23 @@ FREE_RUNTIME_MIGRATIONS = (
     (55, "phase_c_gate_authority"),
     (56, "phase_c_correctness_closure"),
     (57, "formal_research_runtime_closure"),
-    (58, "runtime_scope_authority"),
-    (59, "historical_research_journal"),
-    (60, "shadow_performance_authority"),
-    (61, "shadow_observation_authority"),
-    (62, "research_model_artifact"),
-    (63, "formal_execution_assessment"),
-    (64, "phase_d_operator_composition"),
+    (58, "locked_oos_roster_authority"),
+    (59, "pit_universe_oos_scope_authority"),
+    (60, "research_validity_semantics"),
+    (61, "research_model_execution"),
+    (62, "runtime_scope_historical"),
+    (63, "shadow_observation_authority"),
+    (64, "shadow_performance_authority"),
+    (65, "authoritative_artifact_locator"),
+    (66, "formal_execution_assessment"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 65))
-    assert len({item.name for item in migrations}) == 64
+    assert tuple(item.version for item in migrations) == tuple(range(1, 67))
+    assert len({item.name for item in migrations}) == 66
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -120,11 +122,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 65))
+    assert tuple(item.version for item in first) == tuple(range(1, 67))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 64
+    assert len(rows) == 66
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -312,7 +314,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
     ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (64,)
+    assert applied == (66,)
     assert restored == account
 
 
@@ -700,17 +702,12 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
             ),
         )
 
-    upgraded = PostgresMigrator().apply_all(postgres_factory)
+    upgraded = PostgresMigrator(migrations=migrations[:57]).apply_all(
+        postgres_factory
+    )
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (57, "formal_research_runtime_closure"),
-        (58, "runtime_scope_authority"),
-        (59, "historical_research_journal"),
-        (60, "shadow_performance_authority"),
-        (61, "shadow_observation_authority"),
-        (62, "research_model_artifact"),
-        (63, "formal_execution_assessment"),
-        (64, "phase_d_operator_composition"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         tables = tuple(
@@ -755,3 +752,206 @@ def test_migration_057_upgrades_056_without_mutating_prior_authorities(
         dataset_hash,
         owner_payload_hash,
     )
+
+
+def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:57]).apply_all(postgres_factory)
+    before = canonical_hash({"protocol": "immutable-v1"})
+    target_hash = canonical_hash({"target": "immutable-v1"})
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO outcome_target_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                protocol_json, created_at
+            ) VALUES ('immutable-v1-targets', %s, 'v1', %s, %s)
+            """,
+            (target_hash, Jsonb({"schema_version": "outcome-target-protocol/v1"}), NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO formal_research_protocol(
+                protocol_id, protocol_hash, protocol_version,
+                outcome_target_protocol_id, evaluation_protocol_id,
+                trading_calendar_id, trading_calendar_hash,
+                payload_json, locked_at, created_at
+            ) VALUES ('immutable-v1-protocol', %s, 'v1',
+                      'immutable-v1-targets', 'evaluation-v1', 'calendar-v1',
+                      %s, %s, %s, %s)
+            """,
+            (
+                before,
+                canonical_hash({"calendar": "immutable-v1"}),
+                Jsonb({"schema_version": "formal-research-protocol/v1"}),
+                NOW,
+                NOW,
+            ),
+        )
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (58, "locked_oos_roster_authority"),
+        (59, "pit_universe_oos_scope_authority"),
+        (60, "research_validity_semantics"),
+        (61, "research_model_execution"),
+        (62, "runtime_scope_historical"),
+        (63, "shadow_observation_authority"),
+        (64, "shadow_performance_authority"),
+        (65, "authoritative_artifact_locator"),
+        (66, "formal_execution_assessment"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        stored = connection.execute(
+            "SELECT protocol_hash, payload_json FROM formal_research_protocol "
+            "WHERE protocol_id = 'immutable-v1-protocol'"
+        ).fetchone()
+        constraints = " ".join(
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid IN (
+                    'formal_research_protocol'::regclass,
+                    'frozen_hypothesis_family'::regclass
+                )
+                ORDER BY conname
+                """
+            ).fetchall()
+        )
+    assert stored == (before, {"schema_version": "formal-research-protocol/v1"})
+    assert "formal-research-protocol/v2" in constraints
+    assert "research-experiment-definition/v1" in constraints
+    assert "HOLM_BONFERRONI" in constraints
+
+
+def test_migration_058_adds_label_blind_locked_oos_roster_forward_only(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:57]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator(migrations=migrations[:58]).apply_all(
+        postgres_factory
+    )
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (58, "locked_oos_roster_authority"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = tuple(
+            str(value)
+            for value in connection.execute(
+                """
+                SELECT to_regclass('formal_locked_oos_roster'),
+                       to_regclass('formal_locked_oos_roster_member')
+                """
+            ).fetchone()
+        )
+        guards = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT event_object_table, trigger_name
+                FROM information_schema.triggers
+                WHERE trigger_schema = current_schema()
+                  AND event_object_table IN (
+                    'formal_locked_oos_roster',
+                    'formal_locked_oos_roster_member'
+                  )
+                """
+            ).fetchall()
+        }
+        member_columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'formal_locked_oos_roster_member'
+                """
+            ).fetchall()
+        }
+    assert tables == (
+        "formal_locked_oos_roster",
+        "formal_locked_oos_roster_member",
+    )
+    assert guards == {
+        ("formal_locked_oos_roster", "formal_locked_oos_roster_no_update"),
+        (
+            "formal_locked_oos_roster_member",
+            "formal_locked_oos_roster_member_no_update",
+        ),
+    }
+    assert {
+        "target_protocol_id",
+        "target_protocol_hash",
+        "formal_pit_evidence_id",
+        "forecast_id",
+        "label_id",
+        "observation_set_id",
+    }.issubset(member_columns)
+
+
+def test_migration_059_adds_strict_universe_oos_scope_forward_only(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:58]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator(migrations=migrations[:59]).apply_all(
+        postgres_factory
+    )
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (59, "pit_universe_oos_scope_authority"),
+    )
+    expected_tables = {
+        "pit_universe_membership_projection",
+        "pit_universe_membership_projection_member",
+        "formal_locked_oos_roster_universe_binding",
+    }
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = ANY(%s)
+                """,
+                (list(expected_tables),),
+            ).fetchall()
+        }
+        guards = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT event_object_table, trigger_name
+                FROM information_schema.triggers
+                WHERE trigger_schema = current_schema()
+                  AND event_object_table = ANY(%s)
+                """,
+                (list(expected_tables),),
+            ).fetchall()
+        }
+    assert tables == expected_tables
+    assert guards == {
+        (
+            "pit_universe_membership_projection",
+            "pit_universe_membership_projection_no_update",
+        ),
+        (
+            "pit_universe_membership_projection_member",
+            "pit_universe_membership_projection_member_no_update",
+        ),
+        (
+            "formal_locked_oos_roster_universe_binding",
+            "formal_locked_oos_roster_universe_binding_no_update",
+        ),
+    }

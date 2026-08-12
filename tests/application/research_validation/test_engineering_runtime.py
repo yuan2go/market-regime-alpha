@@ -44,7 +44,9 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
     EvaluationPartition,
     EvaluationWindow,
     FormalEvaluationProtocol,
+    MultipleTestingErrorRate,
     MultipleTestingMethod,
+    benchmark_evaluation_hypotheses,
     run_formal_evaluation,
 )
 from market_regime_alpha.application.research_validation.liquidity_capacity import (
@@ -314,6 +316,8 @@ def test_formal_evaluation_runs_but_cannot_emit_oos_without_formal_pit() -> None
         bootstrap_iterations=20,
         confidence_level=Decimal("0.90"),
         multiple_testing_method=MultipleTestingMethod.BONFERRONI,
+        multiple_testing_error_rate=MultipleTestingErrorRate.FWER,
+        hypothesis_specs=benchmark_evaluation_hypotheses(),
         locked_at=NOW,
     )
     observations = tuple(

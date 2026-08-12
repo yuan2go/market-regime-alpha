@@ -11,11 +11,18 @@ from market_regime_alpha.application.research_session.contracts import (
     ResearchExecutionMode,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 
 
 HASH = canonical_hash({"test": "owner"})
 DECISION_TIME = datetime(2026, 8, 10, 6, 55, tzinfo=UTC)
+
+
+def _reference(kind: str, name: str) -> ValidationArtifactReference:
+    return ValidationArtifactReference(kind, ArtifactId(name), HASH)
 
 
 def _request() -> ResearchDecisionSessionRequest:
@@ -32,6 +39,12 @@ def _request() -> ResearchDecisionSessionRequest:
         runtime_scope_policy_hash=HASH,
         decision_policy_id=ArtifactId("decision-1455-v1"),
         decision_policy_hash=HASH,
+        target_protocol_reference=_reference(
+            "OUTCOME_TARGET_PROTOCOL", "target-protocol-v2"
+        ),
+        experiment_definition_reference=_reference(
+            "RESEARCH_EXPERIMENT_DEFINITION", "experiment-v1"
+        ),
         code_revision="d27bc355",
     )
 
@@ -61,6 +74,12 @@ def test_free_archive_cannot_claim_formal_pit() -> None:
             runtime_scope_policy_hash=HASH,
             decision_policy_id=ArtifactId("decision-1455-v1"),
             decision_policy_hash=HASH,
+            target_protocol_reference=_reference(
+                "OUTCOME_TARGET_PROTOCOL", "target-protocol-v2"
+            ),
+            experiment_definition_reference=_reference(
+                "RESEARCH_EXPERIMENT_DEFINITION", "experiment-v1"
+            ),
             code_revision="d27bc355",
         )
 

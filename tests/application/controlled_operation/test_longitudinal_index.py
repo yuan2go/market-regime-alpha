@@ -10,6 +10,10 @@ import pytest
 from market_regime_alpha.application.controlled_operation.evidence_package import (
     publish_controlled_operation_package,
 )
+from market_regime_alpha.application.controlled_operation.longitudinal_index import (
+    encode_artifact_root_locator,
+    resolve_artifact_root_locator,
+)
 from tests.postgres_path_repositories import (
     PostgresLongitudinalOperationalIndex,
 )
@@ -51,9 +55,10 @@ def test_longitudinal_index_is_append_only_queryable_and_rebuildable(tmp_path: P
         root=tmp_path / "packages", artifact=package
     )
     index = PostgresLongitudinalOperationalIndex(tmp_path / "longitudinal.postgres-scope", clock=lambda: NOW)
-    record = index.append(package=package, package_locator="packages/one")
+    locator = "artifact-root-v1/packages/one"
+    record = index.append(package=package, package_locator=locator)
 
-    assert index.append(package=package, package_locator="packages/one") == record
+    assert index.append(package=package, package_locator=locator) == record
     assert index.get(package.command.run_id) == record
     assert index.query(
         start_date=date(2026, 8, 4),
@@ -67,7 +72,7 @@ def test_longitudinal_index_is_append_only_queryable_and_rebuildable(tmp_path: P
 
     rebuilt = PostgresLongitudinalOperationalIndex.rebuild(
         path=tmp_path / "rebuilt.postgres-scope",
-        packages=((package_path, "packages/one"),),
+        packages=((package_path, locator),),
         clock=lambda: NOW,
     )
     assert rebuilt.query() == (record,)
@@ -77,7 +82,10 @@ def test_longitudinal_database_triggers_block_update_and_delete(tmp_path: Path) 
     package = _artifact()
     path = tmp_path / "longitudinal.postgres-scope"
     index = PostgresLongitudinalOperationalIndex(path, clock=lambda: NOW)
-    index.append(package=package, package_locator="packages/one")
+    index.append(
+        package=package,
+        package_locator="artifact-root-v1/packages/one",
+    )
 
     with postgres_connection(path) as connection, pytest.raises(
         psycopg.Error, match="append-only"
@@ -89,3 +97,24 @@ def test_longitudinal_database_triggers_block_update_and_delete(tmp_path: Path) 
         psycopg.Error, match="append-only"
     ):
         connection.execute("DELETE FROM longitudinal_operational_index")
+
+
+def test_artifact_root_locator_is_exact_and_rejects_legacy_discovery(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "operation" / "packages" / "one"
+    locator = encode_artifact_root_locator(
+        artifact_root=tmp_path,
+        path=package_path,
+    )
+
+    assert locator == "artifact-root-v1/operation/packages/one"
+    assert resolve_artifact_root_locator(
+        artifact_root=tmp_path,
+        locator=locator,
+    ) == package_path
+    with pytest.raises(ValueError, match="ARTIFACT_ROOT_V1"):
+        resolve_artifact_root_locator(
+            artifact_root=tmp_path,
+            locator="operation/packages/one",
+        )

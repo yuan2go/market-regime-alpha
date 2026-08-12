@@ -36,34 +36,20 @@ No stage may infer PIT from a filename, current API response, caller timestamp o
 
 ## Data eligibility and Provider ceiling
 
-`UNQUALIFIED`, `EXPLORATORY`, `REHEARSAL` and `FORMAL_RESEARCH` are distinct.
-Current Runtime and Historical Research are Free-Data-First: BaoStock, Tencent,
-AkShare and other supported public sources may split or overlap Fact Kind
-coverage under the existing `Provider × Contract × Fact Kind` model. Canonical
-facts retain every source reference; conservative cross-provider composition
-does not create Formal PIT. Xuntou/ThinkTrader/XtQuant remains only a possible
-future Formal Provider direction. It and other paid sources are not current
-Phase D dependencies or completion conditions.
+`UNQUALIFIED`, `EXPLORATORY`, `REHEARSAL` and `FORMAL_RESEARCH` are distinct. BaoStock, Tencent, AKShare and other available public sources may be combined by Provider × Contract × Fact Kind for Research/Shadow operation and cross-checking. They remain Provider-specific evidence behind canonical facts, never downstream dependencies or a second Authority. Paid terminals are optional future Formal Provider candidates, not Phase D dependencies. No current real bundle establishes Formal qualification.
 
 A downstream artifact may retain or lower the minimum input eligibility. It may never raise it. A valid Summary or receipt ID does not upgrade data authority.
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 064 and checksummed.
+- Packaged migrations are contiguous from 001 through 066 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 236 tables. That count includes immutable
-authorities, workflow journals, read models and projections; table count alone
-is not an Authority count. Migrations 047–057 implement the exploratory and
-fail-closed Phase C owners. Migrations 058–064 add Runtime Scope, Historical
-Journal, Performance/Attribution, Shadow Observation, exploratory Model, Formal
-Execution assessment and captured Operational Universe composition tables.
-None weakens migration 046 or creates a second Calendar, PIT, Forecast,
-Evaluation, Runtime or data Authority.
+The schema catalog currently contains 241 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–057 add exploratory sample, Research Universe, Portfolio Shadow and fail-closed Phase C owners. Migrations 058–059 add label-value-blind Locked rosters, immutable PIT Universe membership projections, exact Dataset lineage and pre-read Locked-OOS scope bindings. Migrations 060–064 extend those owners with explicit research-validity semantics, exploratory model execution, Runtime Scope/Historical journals, observations and performance. Migration 065 names the global Artifact-root locator contract for new Controlled packages. Migration 066 adds fail-closed Formal Execution assessment records without granting Provider, trading or Production authority. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
 
 ## Replay
 
@@ -72,8 +58,6 @@ Replay reads the original owner rows and frozen inputs. It may re-run pure compu
 ## Evidence ceiling
 
 ```text
-RESEARCH_MODEL_AVAILABLE = true
-FORMAL_MODEL_QUALIFIED = false
 FORMAL_PIT_ESTABLISHED = false
 FORMAL_OOS_ALPHA_ESTABLISHED = false
 CALIBRATED_PROBABILITY_ESTABLISHED = false

@@ -170,7 +170,12 @@ def replay_controlled_operation(
         "STATIC_FEATURE_BUNDLE",
         load_static_universe_feature_bundle,
     )
-    static_bundle_path = _identity_directory(run_root / "static-features", static.feature_bundle_id)
+    static_bundle_path = _feature_bundle_path(
+        run_root / "static-features",
+        bundle_id=static.feature_bundle_id,
+        bundle_hash=static.feature_bundle_hash,
+        receipt_loader=receipt_loader,
+    )
     static_features = load_verified_feature_bundle_v2(
         static_bundle_path,
         artifact_root=run_root / "static-features" / "feature-artifacts",
@@ -233,7 +238,12 @@ def replay_controlled_operation(
         "INTRADAY_FEATURE_OVERLAY",
         load_candidate_intraday_feature_overlay,
     )
-    intraday_bundle_path = _identity_directory(run_root / "intraday-features", overlay.intraday_feature_bundle_id)
+    intraday_bundle_path = _feature_bundle_path(
+        run_root / "intraday-features",
+        bundle_id=overlay.intraday_feature_bundle_id,
+        bundle_hash=overlay.intraday_feature_bundle_hash,
+        receipt_loader=receipt_loader,
+    )
     intraday_features = load_verified_feature_bundle_v2(
         intraday_bundle_path,
         artifact_root=run_root / "intraday-features" / "feature-artifacts",
@@ -575,14 +585,50 @@ def _feature_child_reference(
     bundle_hash: str,
     receipt_loader: Callable[[Path], tuple[FeatureMaterializationReceipt, ...]],
 ) -> tuple[str, str]:
-    matches = [
+    receipt = _feature_receipt(
+        output_root,
+        bundle_id=bundle_id,
+        bundle_hash=bundle_hash,
+        receipt_loader=receipt_loader,
+    )
+    return receipt.command_hash, receipt.content_hash
+
+
+def _feature_receipt(
+    output_root: Path,
+    *,
+    bundle_id: ArtifactId,
+    bundle_hash: str,
+    receipt_loader: Callable[[Path], tuple[FeatureMaterializationReceipt, ...]],
+) -> FeatureMaterializationReceipt:
+    matches = tuple(
         receipt
         for receipt in receipt_loader(output_root)
         if receipt.bundle_id == bundle_id and receipt.bundle_hash == bundle_hash
-    ]
+    )
     if len(matches) != 1:
         raise ValueError("Controlled replay Feature child Receipt is ambiguous")
-    return matches[0].command_hash, matches[0].content_hash
+    return matches[0]
+
+
+def _feature_bundle_path(
+    output_root: Path,
+    *,
+    bundle_id: ArtifactId,
+    bundle_hash: str,
+    receipt_loader: Callable[[Path], tuple[FeatureMaterializationReceipt, ...]],
+) -> Path:
+    receipt = _feature_receipt(
+        output_root,
+        bundle_id=bundle_id,
+        bundle_hash=bundle_hash,
+        receipt_loader=receipt_loader,
+    )
+    root = output_root.resolve()
+    path = (root / receipt.bundle_locator).resolve()
+    if root not in path.parents:
+        raise ValueError("Feature receipt locator escapes its authoritative root")
+    return path
 
 
 def _single_ref(
@@ -620,13 +666,6 @@ def _resolved_locator(run_root: Path, reference: ControlledEvidenceReference) ->
     if path != root and root not in path.parents:
         raise ValueError("Controlled replay locator escapes run root")
     return path
-
-
-def _identity_directory(root: Path, object_id: ArtifactId) -> Path:
-    matches = tuple(path for path in root.rglob(str(object_id)) if path.is_dir())
-    if len(matches) != 1:
-        raise ValueError(f"Controlled replay identity directory mismatch: {object_id}")
-    return matches[0]
 
 
 __all__ = [

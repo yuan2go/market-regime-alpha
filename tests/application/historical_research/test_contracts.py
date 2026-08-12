@@ -39,6 +39,12 @@ def _command(*, sessions: tuple[date, ...] | None = None) -> HistoricalResearchC
         runtime_scope_policy_hash=scope_policy.policy_hash,
         decision_policy_id=ArtifactId("decision-1455-v1"),
         decision_policy_hash=HASH,
+        target_protocol_reference=ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL", ArtifactId("target-protocol-v2"), HASH
+        ),
+        experiment_definition_reference=ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION", ArtifactId("experiment-v1"), HASH
+        ),
         configuration_references=(
             ValidationArtifactReference(
                 "RESEARCH_CONFIGURATION",

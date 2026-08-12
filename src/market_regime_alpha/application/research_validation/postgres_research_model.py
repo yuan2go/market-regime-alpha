@@ -16,6 +16,7 @@ from market_regime_alpha.application.research_validation.research_model import (
     ResearchModelArtifact,
     ResearchModelInferenceReceipt,
     ResearchModelTrainingRequest,
+    research_model_parameter_hash,
     train_research_model,
 )
 from market_regime_alpha.core.identity import ArtifactId
@@ -46,12 +47,13 @@ class PostgresResearchModelRepository:
                     request_id, request_hash, model_definition_id,
                     model_definition_hash, configuration_id, configuration_hash,
                     feature_catalog_id, target_protocol_id,
+                    experiment_definition_id, experiment_definition_hash,
                     locked_oos_partition_id, locked_oos_partition_hash,
                     oos_start_date, fold_seed, code_revision, code_hash,
                     formal_pit, formal_oos, calibrated, payload_json, requested_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, false, false, false, %s, %s
+                    %s, %s, %s, %s, %s, %s, false, false, false, %s, %s
                 ) ON CONFLICT (request_id) DO NOTHING
                 """,
                 (
@@ -63,6 +65,16 @@ class PostgresResearchModelRepository:
                     request.configuration_reference.content_hash,
                     str(request.feature_catalog_reference.artifact_id),
                     str(request.target_protocol_reference.artifact_id),
+                    (
+                        None
+                        if request.experiment_definition is None
+                        else str(request.experiment_definition.definition_id)
+                    ),
+                    (
+                        None
+                        if request.experiment_definition is None
+                        else request.experiment_definition.definition_hash
+                    ),
                     str(request.locked_oos_reference.artifact_id),
                     request.locked_oos_reference.content_hash,
                     request.oos_start_date,
@@ -193,18 +205,20 @@ class PostgresResearchModelRepository:
                 """
                 INSERT INTO research_model_artifact(
                     artifact_id, artifact_hash, request_id, status,
-                    selected_penalty, research_model_available, runtime_role,
+                    selected_penalty, model_parameter_hash,
+                    research_model_available, runtime_role,
                     formal_model_qualified, formal_oos, calibrated,
                     production_authorized, payload_json, trained_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s,
                     false, false, false, false, %s, %s
                 ) ON CONFLICT (artifact_id) DO NOTHING
                 """,
                 (
                     str(artifact.artifact_id), artifact.artifact_hash,
                     str(request.request_id), artifact.status.value,
-                    artifact.selected_penalty, artifact.research_model_available,
+                    artifact.selected_penalty, artifact.model_parameter_hash,
+                    artifact.research_model_available,
                     artifact.runtime_role,
                     Jsonb(artifact.to_canonical_dict()), artifact.trained_at,
                 ),
@@ -283,6 +297,14 @@ class PostgresResearchModelRepository:
         if reproduced != artifact:
             raise ValueError("Research Model deterministic replay diverged")
         return artifact
+
+    def get_executable_by_parameter_hash(
+        self, model_parameter_hash: str
+    ) -> tuple[ResearchModelArtifact, ResearchModelTrainingRequest]:
+        with self._factory.connection(read_only=True) as connection:
+            return load_executable_research_model_owner(
+                connection, model_parameter_hash=model_parameter_hash
+            )
 
     def execute(
         self,
@@ -474,4 +496,59 @@ def _request_sources(
     )
 
 
-__all__ = ["PostgresResearchModelRepository"]
+def load_executable_research_model_owner(
+    connection: Any,
+    *,
+    model_parameter_hash: str,
+) -> tuple[ResearchModelArtifact, ResearchModelTrainingRequest]:
+    """Resolve one immutable executable parameter owner or fail closed."""
+
+    rows = connection.execute(
+        """
+        SELECT artifact.artifact_hash, artifact.payload_json,
+               request.request_hash, request.payload_json,
+               artifact.status, artifact.research_model_available,
+               artifact.formal_model_qualified, artifact.formal_oos,
+               artifact.calibrated, artifact.production_authorized
+        FROM research_model_artifact AS artifact
+        JOIN research_model_training_request AS request
+          ON request.request_id = artifact.request_id
+        WHERE artifact.model_parameter_hash = %s
+        ORDER BY artifact.artifact_id
+        """,
+        (model_parameter_hash,),
+    ).fetchall()
+    if not rows:
+        raise KeyError(model_parameter_hash)
+    if len(rows) != 1:
+        raise ValueError("Research Model parameter owner is ambiguous")
+    row = rows[0]
+    if not isinstance(row[1], dict) or not isinstance(row[3], dict):
+        raise ValueError("Research Model owner payload is malformed")
+    artifact = ResearchModelArtifact.from_canonical_dict(row[1])
+    request = ResearchModelTrainingRequest.from_canonical_dict(row[3])
+    if (
+        str(row[0]) != artifact.artifact_hash
+        or str(row[2]) != request.request_hash
+        or artifact.request_reference
+        != ValidationArtifactReference(
+            "RESEARCH_MODEL_TRAINING_REQUEST", request.request_id, request.request_hash
+        )
+        or artifact.status.value != str(row[4])
+        or bool(row[5]) is not True
+        or any(bool(item) for item in row[6:10])
+        or artifact.model is None
+        or artifact.model_parameter_hash != model_parameter_hash
+        or request.experiment_definition is None
+        or not request.measure_bindings
+        or research_model_parameter_hash(request, artifact.model)
+        != model_parameter_hash
+    ):
+        raise ValueError("Research Model executable owner verification failed")
+    return artifact, request
+
+
+__all__ = [
+    "PostgresResearchModelRepository",
+    "load_executable_research_model_owner",
+]

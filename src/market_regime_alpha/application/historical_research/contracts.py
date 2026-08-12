@@ -45,6 +45,8 @@ class HistoricalResearchCommand:
     runtime_scope_policy_hash: str
     decision_policy_id: ArtifactId
     decision_policy_hash: str
+    target_protocol_reference: ValidationArtifactReference
+    experiment_definition_reference: ValidationArtifactReference
     configuration_references: tuple[ValidationArtifactReference, ...]
     data_authority_mode: DataAuthorityMode
     evidence_qualification: EvidenceQualification
@@ -66,6 +68,13 @@ class HistoricalResearchCommand:
         require_text("idempotency_key", self.idempotency_key)
         require_text("timezone_name", self.timezone_name)
         require_text("code_revision", self.code_revision)
+        if self.target_protocol_reference.artifact_kind != "OUTCOME_TARGET_PROTOCOL":
+            raise ValueError("Historical Research requires canonical Target Protocol")
+        if (
+            self.experiment_definition_reference.artifact_kind
+            != "RESEARCH_EXPERIMENT_DEFINITION"
+        ):
+            raise ValueError("Historical Research requires frozen Experiment Definition")
         ZoneInfo(self.timezone_name)
         if self.start_date > self.end_date:
             raise ValueError("Historical Research start_date exceeds end_date")
@@ -130,6 +139,8 @@ class HistoricalResearchCommand:
         runtime_scope_policy_hash: str,
         decision_policy_id: ArtifactId,
         decision_policy_hash: str,
+        target_protocol_reference: ValidationArtifactReference,
+        experiment_definition_reference: ValidationArtifactReference,
         configuration_references: tuple[ValidationArtifactReference, ...],
         data_authority_mode: DataAuthorityMode,
         evidence_qualification: EvidenceQualification,
@@ -162,6 +173,8 @@ class HistoricalResearchCommand:
             "runtime_scope_policy_hash": runtime_scope_policy_hash,
             "decision_policy_id": decision_policy_id,
             "decision_policy_hash": decision_policy_hash,
+            "target_protocol_reference": target_protocol_reference,
+            "experiment_definition_reference": experiment_definition_reference,
             "configuration_references": ordered_references,
             "data_authority_mode": data_authority_mode,
             "evidence_qualification": evidence_qualification,
@@ -197,6 +210,8 @@ class HistoricalResearchCommand:
             runtime_scope_policy_hash=self.runtime_scope_policy_hash,
             decision_policy_id=self.decision_policy_id,
             decision_policy_hash=self.decision_policy_hash,
+            target_protocol_reference=self.target_protocol_reference,
+            experiment_definition_reference=self.experiment_definition_reference,
             code_revision=self.code_revision,
         )
 
@@ -214,6 +229,8 @@ class HistoricalResearchCommand:
             "runtime_scope_policy_hash": self.runtime_scope_policy_hash,
             "decision_policy_id": self.decision_policy_id,
             "decision_policy_hash": self.decision_policy_hash,
+            "target_protocol_reference": self.target_protocol_reference,
+            "experiment_definition_reference": self.experiment_definition_reference,
             "configuration_references": self.configuration_references,
             "data_authority_mode": self.data_authority_mode,
             "evidence_qualification": self.evidence_qualification,
@@ -256,6 +273,12 @@ class HistoricalResearchCommand:
             runtime_scope_policy_hash=str(payload["runtime_scope_policy_hash"]),
             decision_policy_id=ArtifactId(str(payload["decision_policy_id"])),
             decision_policy_hash=str(payload["decision_policy_hash"]),
+            target_protocol_reference=ValidationArtifactReference.from_canonical_dict(
+                payload["target_protocol_reference"]
+            ),
+            experiment_definition_reference=ValidationArtifactReference.from_canonical_dict(
+                payload["experiment_definition_reference"]
+            ),
             configuration_references=_references(
                 tuple(
                     ValidationArtifactReference.from_canonical_dict(item)
@@ -291,6 +314,8 @@ def _command_payload(
     runtime_scope_policy_hash: str,
     decision_policy_id: ArtifactId,
     decision_policy_hash: str,
+    target_protocol_reference: ValidationArtifactReference,
+    experiment_definition_reference: ValidationArtifactReference,
     configuration_references: tuple[ValidationArtifactReference, ...],
     data_authority_mode: DataAuthorityMode,
     evidence_qualification: EvidenceQualification,
@@ -312,6 +337,10 @@ def _command_payload(
         "runtime_scope_policy_hash": runtime_scope_policy_hash,
         "decision_policy_id": str(decision_policy_id),
         "decision_policy_hash": decision_policy_hash,
+        "target_protocol_reference": target_protocol_reference.to_canonical_dict(),
+        "experiment_definition_reference": (
+            experiment_definition_reference.to_canonical_dict()
+        ),
         "configuration_references": [
             item.to_canonical_dict() for item in configuration_references
         ],
