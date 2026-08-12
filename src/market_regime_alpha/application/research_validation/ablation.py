@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from math import sqrt
@@ -256,6 +256,7 @@ class AblationObservation:
     volatility_bucket: str = "UNSPECIFIED"
     theme: str = "UNSPECIFIED"
     industry: str = "UNSPECIFIED"
+    trading_date: date | None = None
 
     def __post_init__(self) -> None:
         require_text("observation_id", self.observation_id)
@@ -608,10 +609,30 @@ def _metrics(
 ) -> AblationMetrics:
     if not scored:
         return _empty_metrics()
-    returns = [float(item.realized_return) for item, _score in scored]
     by_session: dict[str, list[tuple[AblationObservation, Decimal]]] = {}
     for pair in scored:
         by_session.setdefault(pair[0].session_key, []).append(pair)
+    if len({(item.session_key, item.symbol) for item, _score in scored}) != len(scored):
+        raise ValueError("Ablation session/symbol observations must be unique")
+    session_dates: dict[str, date | None] = {}
+    for item, _score in scored:
+        prior = session_dates.setdefault(item.session_key, item.trading_date)
+        if prior != item.trading_date:
+            raise ValueError("Ablation session has inconsistent trading dates")
+    if any(value is not None for value in session_dates.values()) and any(
+        value is None for value in session_dates.values()
+    ):
+        raise ValueError("Ablation trading dates must be complete when provided")
+    ordered_sessions = tuple(
+        sorted(
+            by_session,
+            key=lambda key: (
+                session_dates[key] is None,
+                session_dates[key] or date.max,
+                key,
+            ),
+        )
+    )
     top_returns: list[float] = []
     top_costs: list[float] = []
     top_gross_decimals: list[Decimal] = []
@@ -622,7 +643,9 @@ def _metrics(
     equity_returns: list[float] = []
     session_ics: list[float] = []
     session_rank_ics: list[float] = []
-    for pairs in by_session.values():
+    previous_weights: dict[str, Decimal] | None = None
+    for session_key in ordered_sessions:
+        pairs = by_session[session_key]
         ordered = sorted(pairs, key=lambda pair: (-pair[1], pair[0].symbol))
         top = ordered[: min(top_k, len(ordered))]
         bottom = ordered[-min(top_k, len(ordered)) :]
@@ -633,9 +656,24 @@ def _metrics(
         bottom_returns.extend(float(item.realized_return) for item, _score in bottom)
         selected = {item.symbol for item, _score in top}
         full_selected = {item.symbol for item, _score in pairs if item.selected}
-        previous = {item.symbol for item, _score in pairs if item.previous_selected}
         overlaps.append(len(selected & full_selected) / max(1, len(selected | full_selected)))
-        turnovers.append(len(selected.symmetric_difference(previous)) / max(1, len(selected | previous)))
+        current_weight = Decimal("1") / Decimal(len(top))
+        current_weights = {item.symbol: current_weight for item, _score in top}
+        if previous_weights is not None:
+            symbols = set(previous_weights) | set(current_weights)
+            turnovers.append(
+                float(
+                    sum(
+                        abs(
+                            current_weights.get(symbol, Decimal("0"))
+                            - previous_weights.get(symbol, Decimal("0"))
+                        )
+                        for symbol in symbols
+                    )
+                    / Decimal("2")
+                )
+            )
+        previous_weights = current_weights
         equity_returns.append(
             fmean(
                 float(item.realized_return - item.cost_return)
@@ -652,7 +690,8 @@ def _metrics(
             session_ics.append(session_ic)
         if session_rank_ic is not None:
             session_rank_ics.append(session_rank_ic)
-    mean_return = fmean(returns)
+    all_returns = [float(item.realized_return) for item, _score in scored]
+    mean_return = fmean(all_returns)
     baseline_return = None if baseline is None or baseline.top_k_return is None else float(baseline.top_k_return)
     gross_return = (
         None
@@ -674,7 +713,9 @@ def _metrics(
         icir=_information_ratio(session_ics),
         top_k_return=_mean_decimal(top_returns),
         spread=_decimal(fmean(top_returns) - fmean(bottom_returns)) if top_returns and bottom_returns else None,
-        hit_rate=_decimal(sum(value > 0 for value in returns) / len(returns)),
+        hit_rate=_decimal(
+            sum(value > 0 for value in top_returns) / len(top_returns)
+        ),
         mean_return=_decimal(mean_return),
         mean_mfe=_mean_decimal([float(item.mfe) for item, _score in scored if item.mfe is not None]),
         mean_mae=_mean_decimal([float(item.mae) for item, _score in scored if item.mae is not None]),
