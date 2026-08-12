@@ -213,6 +213,7 @@ class HistoricalResearchCommand:
             target_protocol_reference=self.target_protocol_reference,
             experiment_definition_reference=self.experiment_definition_reference,
             code_revision=self.code_revision,
+            configuration_references=self.configuration_references,
         )
 
     def semantic_values(self) -> dict[str, Any]:

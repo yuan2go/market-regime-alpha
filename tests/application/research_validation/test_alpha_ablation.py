@@ -65,6 +65,7 @@ def _observations() -> tuple[AblationObservation, ...]:
                     volatility_bucket="HIGH" if session >= 3 else "LOW",
                     theme="TECH" if rank % 2 == 0 else "FINANCE",
                     industry="I1" if rank % 2 == 0 else "I2",
+                    trading_date=date(2026, 8, 1 + session),
                 )
             )
     return tuple(rows)
@@ -213,3 +214,39 @@ def test_variant_selection_drives_hit_rate_turnover_and_canonical_path_order() -
     assert [item.metrics for item in shuffled.results] == [
         item.metrics for item in ordered.results
     ]
+
+
+def test_ablation_path_metrics_reject_missing_canonical_session_dates() -> None:
+    variant = AblationVariant.standard(AblationVariantKind.PRICE_ONLY)
+    protocol = AblationProtocol.create(
+        protocol_version="missing-session-date-v1",
+        variants=(variant,),
+        top_k=1,
+        scoring_contract="EXACT_SCORE_V1",
+        created_at=NOW,
+    )
+    observation = AblationObservation(
+        observation_id="missing-date",
+        session_key="opaque-session",
+        symbol="A",
+        score=Decimal("1"),
+        realized_return=Decimal("0.01"),
+        mfe=None,
+        mae=None,
+        selected=True,
+        previous_selected=False,
+        factor_values=((FactorFamily.PRICE, "price", Decimal("1")),),
+    )
+
+    try:
+        run_alpha_ablation_suite(
+            protocol=protocol,
+            panel_reference=_reference(),
+            observations=(observation,),
+            score_functions={variant.variant_id: lambda item, _variant: item.score},
+            created_at=NOW,
+        )
+    except ValueError as exc:
+        assert "canonical trading date" in str(exc)
+    else:
+        raise AssertionError("path metrics without canonical dates must fail closed")

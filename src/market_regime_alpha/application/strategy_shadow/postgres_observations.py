@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 from market_regime_alpha.application.strategy_shadow.observation_builder import (
     ObservationKind,
     OwnerObservationValue,
+    ShadowOwnerLineageRequest,
     ShadowObservationPolicy,
     ShadowObservationReceipt,
     build_observation_receipt,
@@ -20,6 +21,12 @@ from market_regime_alpha.application.strategy_shadow.observation_builder import 
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     OutcomeAvailabilityStatus,
     OutcomeMarketCondition,
+)
+from market_regime_alpha.application.research_evaluation.panel_v2 import (
+    FrozenResearchPanelV2,
+)
+from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    TargetedShadowOutcome,
 )
 from market_regime_alpha.application.research_validation.factor_extraction import (
     ResearchPanelEnrichment,
@@ -44,6 +51,7 @@ from market_regime_alpha.application.strategy_shadow.portfolio import (
 )
 from market_regime_alpha.market_data import PriceLimitState, TradingStatus
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -178,6 +186,7 @@ class PostgresShadowObservationRepository:
                     ),
                 )
             self._verify_projections(connection, receipt)
+            self._verify_typed_owner_chain(connection, receipt)
 
         self._factory.run_transaction(operation)
         return self.get(receipt.receipt_id)
@@ -209,6 +218,7 @@ class PostgresShadowObservationRepository:
             if str(row[0]) != receipt.receipt_hash:
                 raise ValueError("Shadow Observation receipt owner hash diverged")
             self._verify_projections(connection, receipt)
+            self._verify_typed_owner_chain(connection, receipt)
         return receipt
 
     def replay(self, receipt_id: ArtifactId) -> ShadowObservationReceipt:
@@ -280,9 +290,394 @@ class PostgresShadowObservationRepository:
         ]:
             raise ValueError("Shadow Observation source projection diverged")
 
+    @staticmethod
+    def _verify_typed_owner_chain(
+        connection: Any,
+        receipt: ShadowObservationReceipt,
+    ) -> None:
+        required = {
+            "SHADOW_DECISION",
+            "RESEARCH_PANEL_V2",
+            "CANDIDATE_SET",
+            "OUTCOME_TARGET_PROTOCOL",
+            "TARGETED_SHADOW_OUTCOME",
+            "PANEL_ENRICHMENT",
+        }
+        typed_references = tuple(
+            item
+            for item in receipt.source_references
+            if item.artifact_kind in required
+        )
+        if not typed_references:
+            return
+        if (
+            len(typed_references) != len(required)
+            or {item.artifact_kind for item in typed_references} != required
+        ):
+            raise ValueError("Typed Shadow Observation owner chain is incomplete")
+        references = {item.artifact_kind: item for item in typed_references}
+        queries = {
+            "SHADOW_DECISION": (
+                "shadow_research_decision", "decision_id", "decision_hash", "created_at", ""
+            ),
+            "RESEARCH_PANEL_V2": (
+                "research_evaluation_panel_v2", "panel_id", "panel_hash", "created_at", ""
+            ),
+            "CANDIDATE_SET": (
+                "state_runtime_candidate_artifact", "candidate_id", "candidate_hash", "created_at", ""
+            ),
+            "OUTCOME_TARGET_PROTOCOL": (
+                "outcome_target_protocol", "protocol_id", "protocol_hash", "created_at", ""
+            ),
+            "TARGETED_SHADOW_OUTCOME": (
+                "targeted_shadow_outcome", "settlement_id", "settlement_hash",
+                "greatest(created_at, outcome_available_at)", ""
+            ),
+            "PANEL_ENRICHMENT": (
+                "research_validation_artifact", "artifact_id", "artifact_hash", "created_at",
+                " AND artifact_kind = 'PANEL_ENRICHMENT'",
+            ),
+        }
+        for kind, reference in references.items():
+            table, id_column, hash_column, time_column, predicate = queries[kind]
+            owner = connection.execute(
+                f"SELECT {hash_column}, {time_column} FROM {table} "
+                f"WHERE {id_column} = %s{predicate}",
+                (str(reference.artifact_id),),
+            ).fetchone()
+            if (
+                owner is None
+                or str(owner[0]) != reference.content_hash
+                or (owner[1] is not None and receipt.observed_at < owner[1])
+            ):
+                raise ValueError(f"Typed Shadow Observation {kind} owner mismatch")
+        PostgresShadowObservationRepository._verify_typed_relationships_and_values(
+            connection,
+            receipt,
+            references,
+        )
+
+    @staticmethod
+    def _verify_typed_relationships_and_values(
+        connection: Any,
+        receipt: ShadowObservationReceipt,
+        references: dict[str, ValidationArtifactReference],
+    ) -> None:
+        decision_row = connection.execute(
+            """
+            SELECT decision.decision_hash, decision.decision_time,
+                   shadow.trading_date
+            FROM shadow_research_decision AS decision
+            JOIN shadow_research_session AS shadow
+              ON shadow.session_id = decision.session_id
+            WHERE decision.decision_id = %s
+            """,
+            (str(references["SHADOW_DECISION"].artifact_id),),
+        ).fetchone()
+        panel_row = connection.execute(
+            "SELECT payload_json FROM research_evaluation_panel_v2 "
+            "WHERE panel_id = %s",
+            (str(references["RESEARCH_PANEL_V2"].artifact_id),),
+        ).fetchone()
+        outcome_row = connection.execute(
+            "SELECT payload_json FROM targeted_shadow_outcome "
+            "WHERE settlement_id = %s",
+            (str(references["TARGETED_SHADOW_OUTCOME"].artifact_id),),
+        ).fetchone()
+        enrichment_row = connection.execute(
+            "SELECT payload_json FROM research_validation_artifact "
+            "WHERE artifact_kind = 'PANEL_ENRICHMENT' AND artifact_id = %s",
+            (str(references["PANEL_ENRICHMENT"].artifact_id),),
+        ).fetchone()
+        if (
+            decision_row is None
+            or panel_row is None
+            or outcome_row is None
+            or enrichment_row is None
+            or not isinstance(panel_row[0], dict)
+            or not isinstance(outcome_row[0], dict)
+            or not isinstance(enrichment_row[0], dict)
+        ):
+            raise ValueError("Typed Shadow Observation relationship owner is missing")
+        panel = FrozenResearchPanelV2.from_canonical_dict(panel_row[0])
+        outcome = TargetedShadowOutcome.from_canonical_dict(outcome_row[0])
+        enrichment = ResearchPanelEnrichment.from_canonical_dict(
+            {
+                "enrichment_id": str(references["PANEL_ENRICHMENT"].artifact_id),
+                "enrichment_hash": references["PANEL_ENRICHMENT"].content_hash,
+                **enrichment_row[0],
+            }
+        )
+        slices = tuple(
+            item
+            for item in panel.slices
+            if _same_reference(item.shadow_decision, references["SHADOW_DECISION"])
+            and _same_reference(
+                item.targeted_outcome,
+                references["TARGETED_SHADOW_OUTCOME"],
+            )
+        )
+        if len(slices) != 1:
+            raise ValueError("Typed Shadow Observation Panel slice is ambiguous")
+        panel_slice = slices[0]
+        candidate = panel_slice.candidate_set
+        expected_candidate = references["CANDIDATE_SET"]
+        relationship_mismatches = tuple(
+            label
+            for label, matched in (
+                (
+                    "DECISION_HASH",
+                    str(decision_row[0])
+                    == references["SHADOW_DECISION"].content_hash,
+                ),
+                ("DECISION_DATE", decision_row[2] == receipt.research_trading_date),
+                (
+                    "PANEL_DATE",
+                    panel_slice.trading_date == receipt.research_trading_date,
+                ),
+                (
+                    "OUTCOME_DECISION",
+                    _same_reference(
+                        outcome.shadow_decision,
+                        references["SHADOW_DECISION"],
+                    ),
+                ),
+                (
+                    "OUTCOME_SESSION",
+                    outcome.next_session_date == receipt.trading_date,
+                ),
+                (
+                    "OUTCOME_PROTOCOL_ID",
+                    outcome.target_protocol_id
+                    == references["OUTCOME_TARGET_PROTOCOL"].artifact_id,
+                ),
+                (
+                    "OUTCOME_PROTOCOL_HASH",
+                    outcome.target_protocol_hash
+                    == references["OUTCOME_TARGET_PROTOCOL"].content_hash,
+                ),
+                (
+                    "CANDIDATE",
+                    candidate is not None
+                    and candidate.artifact_id == expected_candidate.artifact_id
+                    and candidate.content_hash == expected_candidate.content_hash,
+                ),
+                (
+                    "ENRICHMENT_PANEL",
+                    enrichment.panel_reference == references["RESEARCH_PANEL_V2"],
+                ),
+            )
+            if not matched
+        )
+        if relationship_mismatches:
+            raise ValueError(
+                "Typed Shadow Observation relationship lineage drift: "
+                + ",".join(relationship_mismatches)
+            )
+        label_rows = connection.execute(
+            "SELECT label_id, label_hash, label_json "
+            "FROM targeted_shadow_outcome_label "
+            "WHERE settlement_id = %s ORDER BY label_id",
+            (str(outcome.settlement_id),),
+        ).fetchall()
+        if [
+            (str(row[0]), str(row[1]), row[2]) for row in label_rows
+        ] != sorted(
+            (
+                str(item.label_id),
+                item.label_hash,
+                item.to_canonical_dict(),
+            )
+            for item in outcome.labels
+        ):
+            raise ValueError("Typed Shadow Observation Target projection drift")
+        exposure_rows = connection.execute(
+            "SELECT exposure_json FROM research_panel_factor_exposure "
+            "WHERE enrichment_id = %s",
+            (str(enrichment.enrichment_id),),
+        ).fetchall()
+        if {
+            canonical_hash(row[0]) for row in exposure_rows
+        } != {
+            canonical_hash(item.to_canonical_dict())
+            for item in enrichment.exposures
+        } or len(exposure_rows) != len(enrichment.exposures):
+            raise ValueError("Typed Shadow Observation Enrichment projection drift")
+        runtime_references = {
+            ValidationArtifactReference(
+                getattr(item, "artifact_kind", None)
+                or getattr(item, "reference_kind"),
+                item.artifact_id,
+                item.content_hash,
+            )
+            for item in (
+                panel_slice.market_state,
+                panel_slice.etf_state,
+                panel_slice.theme_state,
+                panel_slice.capital_state,
+                panel_slice.dynamic_pool,
+                panel_slice.candidate_set,
+                panel_slice.signal,
+                panel_slice.forecast,
+            )
+            if item is not None
+        }
+        value_references = {
+            item.source_reference
+            for item in receipt.values
+            if item.source_reference is not None
+        }
+        expected_references = {
+            *references.values(),
+            *runtime_references,
+            *value_references,
+            receipt.policy_reference,
+        }
+        if set(receipt.source_references) != expected_references:
+            raise ValueError("Typed Shadow Observation source set diverged")
+        summary_row = connection.execute(
+            "SELECT content_hash, created_at FROM research_daily_summary "
+            "WHERE summary_id = %s",
+            (str(panel_slice.summary.artifact_id),),
+        ).fetchone()
+        if (
+            summary_row is None
+            or str(summary_row[0]) != panel_slice.summary.content_hash
+            or receipt.observed_at < summary_row[1]
+        ):
+            raise ValueError("Typed Shadow Observation Summary owner mismatch")
+        for reference in runtime_references:
+            if (
+                reference.artifact_kind == "STATE_CONSTRAINED_CANDIDATE_SET"
+                and reference.artifact_id
+                == references["CANDIDATE_SET"].artifact_id
+                and reference.content_hash
+                == references["CANDIDATE_SET"].content_hash
+            ):
+                continue
+            stage_rows = connection.execute(
+                """
+                SELECT output_artifact_hash,
+                       greatest(available_at, stage_completed_at)
+                FROM research_summary_stage
+                WHERE summary_id = %s
+                  AND output_artifact_id = %s
+                  AND output_artifact_hash = %s
+                """,
+                (
+                    str(panel_slice.summary.artifact_id),
+                    str(reference.artifact_id),
+                    reference.content_hash,
+                ),
+            ).fetchall()
+            if (
+                len(stage_rows) != 1
+                or str(stage_rows[0][0]) != reference.content_hash
+                or receipt.observed_at < stage_rows[0][1]
+            ):
+                raise ValueError(
+                    "Typed Shadow Observation Runtime owner mismatch: "
+                    f"{reference.artifact_kind}"
+                )
+        PostgresShadowObservationRepository._verify_value_owners(
+            connection,
+            receipt=receipt,
+            outcome=outcome,
+            enrichment=enrichment,
+            decision_time=decision_row[1],
+        )
+
+    @staticmethod
+    def _verify_value_owners(
+        connection: Any,
+        *,
+        receipt: ShadowObservationReceipt,
+        outcome: TargetedShadowOutcome,
+        enrichment: ResearchPanelEnrichment,
+        decision_time: datetime,
+    ) -> None:
+        policy_row = connection.execute(
+            "SELECT policy_hash, created_at FROM shadow_observation_policy "
+            "WHERE policy_id = %s",
+            (str(receipt.policy_reference.artifact_id),),
+        ).fetchone()
+        if (
+            policy_row is None
+            or str(policy_row[0]) != receipt.policy_reference.content_hash
+            or receipt.observed_at < policy_row[1]
+        ):
+            raise ValueError("Typed Shadow Observation Policy owner mismatch")
+        labels = {
+            ValidationArtifactReference(
+                "TARGET_OUTCOME_LABEL", item.label_id, item.label_hash
+            ): item
+            for item in outcome.labels
+        }
+        enrichment_reference = ValidationArtifactReference(
+            "PANEL_ENRICHMENT",
+            enrichment.enrichment_id,
+            enrichment.enrichment_hash,
+        )
+        outcome_reference = ValidationArtifactReference(
+            "TARGETED_SHADOW_OUTCOME",
+            outcome.settlement_id,
+            outcome.settlement_hash,
+        )
+        exposure_sources = {
+            (item.source_reference, item.source_value_path): item
+            for item in enrichment.exposures
+        }
+        for value in receipt.values:
+            reference = value.source_reference
+            assert reference is not None
+            if reference == receipt.policy_reference:
+                if value.available_at != policy_row[1]:
+                    raise ValueError("Typed Shadow Observation Policy value time drift")
+                continue
+            label = labels.get(reference)
+            if label is not None:
+                expected_effective = (
+                    label.label_interval_start
+                    if value.source_value_path.endswith(".decision_reference_price")
+                    else label.label_interval_end
+                )
+                if (
+                    value.available_at != label.outcome_available_at
+                    or value.effective_at != expected_effective
+                    or receipt.observed_at < label.outcome_available_at
+                ):
+                    raise ValueError("Typed Shadow Observation Target value time drift")
+                continue
+            if reference == outcome_reference:
+                if (
+                    value.available_at != outcome.outcome_available_at
+                    or value.effective_at != outcome.outcome_available_at
+                ):
+                    raise ValueError("Typed Shadow Observation Outcome value time drift")
+                continue
+            if reference == enrichment_reference:
+                if (
+                    value.available_at != enrichment.extracted_at
+                    or value.effective_at != decision_time
+                    or value.source_value_path
+                    != "exposures[liquidity.adv20].raw_numeric"
+                ):
+                    raise ValueError("Typed Shadow Observation Enrichment value drift")
+                continue
+            exposure = exposure_sources.get((reference, value.source_value_path))
+            if exposure is None:
+                raise ValueError("Typed Shadow Observation value owner is unsupported")
+            expected_available = exposure.available_at or enrichment.extracted_at
+            if (
+                value.available_at != expected_available
+                or receipt.observed_at < max(expected_available, enrichment.extracted_at)
+                or value.effective_at != decision_time
+            ):
+                raise ValueError("Typed Shadow Observation exposure value time drift")
+
 
 @dataclass(frozen=True, slots=True)
-class _OwnerContext:
+class ShadowOwnerContext:
     decision: Any
     panel: Any
     panel_slice: Any
@@ -290,6 +685,7 @@ class _OwnerContext:
     outcome: Any
     protocol: Any
     enrichment: ResearchPanelEnrichment
+    available_at: datetime
 
 
 class PostgresOwnerResolvedShadowObservationBuilder:
@@ -323,15 +719,34 @@ class PostgresOwnerResolvedShadowObservationBuilder:
             apply_migrations=False,
         )
 
+    def resolve_lineage(
+        self,
+        *,
+        research_trading_date: date,
+        lineage: ShadowOwnerLineageRequest,
+    ) -> ShadowOwnerContext:
+        return self._context(
+            research_trading_date=research_trading_date,
+            lineage=lineage,
+        )
+
     def build_strategy(
         self,
         *,
         research_trading_date: date,
         observed_at: datetime,
         policy: ShadowObservationPolicy,
+        lineage: ShadowOwnerLineageRequest,
         symbol: str | None = None,
     ) -> ShadowObservationReceipt:
-        context = self._context(research_trading_date)
+        context = self._context(
+            research_trading_date=research_trading_date,
+            lineage=lineage,
+        )
+        if observed_at < context.available_at:
+            raise ValueError(
+                "Automatic Strategy observation predates owner availability"
+            )
         selected = context.candidate_set.selected
         selected_by_symbol = {item.symbol: item for item in selected}
         resolved_symbol = symbol or (None if not selected else selected[0].symbol)
@@ -365,7 +780,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
             policy.policy_hash,
         )
         outcome_reference = ValidationArtifactReference(
-            "TARGETED_OUTCOME",
+            "TARGETED_SHADOW_OUTCOME",
             context.outcome.settlement_id,
             context.outcome.settlement_hash,
         )
@@ -400,7 +815,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                         None if fill_label is None else fill_label.decision_reference_price,
                         ShadowParameterProvenance.OBSERVED_FACT,
                         fill_reference,
-                        context.decision.decision_time
+                        context.outcome.outcome_available_at
                         if fill_label is None
                         else fill_label.label_interval_start,
                         context.outcome.outcome_available_at
@@ -413,7 +828,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                         observed_fill_price,
                         ShadowParameterProvenance.OBSERVED_FACT,
                         fill_reference,
-                        context.decision.decision_time
+                        context.outcome.outcome_available_at
                         if fill_label is None
                         else fill_label.label_interval_end,
                         context.outcome.outcome_available_at
@@ -426,7 +841,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                         None if mark_label is None else mark_label.checkpoint_price,
                         ShadowParameterProvenance.OBSERVED_FACT,
                         mark_reference,
-                        context.decision.decision_time
+                        context.outcome.outcome_available_at
                         if mark_label is None
                         else mark_label.label_interval_end,
                         context.outcome.outcome_available_at
@@ -439,7 +854,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                         None if mark_label is None else mark_label.mfe,
                         ShadowParameterProvenance.OBSERVED_FACT,
                         mark_reference,
-                        context.decision.decision_time
+                        context.outcome.outcome_available_at
                         if mark_label is None
                         else mark_label.label_interval_end,
                         context.outcome.outcome_available_at
@@ -452,7 +867,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                         None if mark_label is None else mark_label.mae,
                         ShadowParameterProvenance.OBSERVED_FACT,
                         mark_reference,
-                        context.decision.decision_time
+                        context.outcome.outcome_available_at
                         if mark_label is None
                         else mark_label.label_interval_end,
                         context.outcome.outcome_available_at
@@ -507,9 +922,21 @@ class PostgresOwnerResolvedShadowObservationBuilder:
         trading_date: date,
         observed_at: datetime,
         policy: ShadowObservationPolicy,
+        lineage: ShadowOwnerLineageRequest,
         required_symbols: tuple[str, ...] = (),
     ) -> ShadowObservationReceipt:
-        context = self._context(research_trading_date)
+        context = self._context(
+            research_trading_date=research_trading_date,
+            lineage=lineage,
+        )
+        if observed_at < context.available_at:
+            raise ValueError(
+                "Automatic Portfolio observation predates owner availability"
+            )
+        if trading_date != context.outcome.next_session_date:
+            raise ValueError(
+                "Automatic Portfolio trading date must equal Outcome next session"
+            )
         selected = {item.symbol: item for item in context.candidate_set.selected}
         symbols = tuple(sorted(set(required_symbols) | set(selected)))
         policy_reference = ValidationArtifactReference(
@@ -539,7 +966,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                 None,
             )
             outcome_reference = ValidationArtifactReference(
-                "TARGETED_OUTCOME",
+                "TARGETED_SHADOW_OUTCOME",
                 context.outcome.settlement_id,
                 context.outcome.settlement_hash,
             )
@@ -559,14 +986,13 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                 else _label_reference(mark_label)
             )
             adv_ref = enrichment_reference if adv is None else adv.source_reference
-            effective = context.decision.decision_time
             fill_available = (
-                context.decision.decision_time
+                context.outcome.outcome_available_at
                 if fill_label is None
                 else fill_label.outcome_available_at
             )
             mark_available = (
-                context.decision.decision_time
+                context.outcome.outcome_available_at
                 if mark_label is None
                 else mark_label.outcome_available_at
             )
@@ -578,43 +1004,84 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                     "reference_price",
                     None if fill_label is None else fill_label.decision_reference_price,
                     fill_ref,
+                    (
+                        context.outcome.outcome_available_at
+                        if fill_label is None
+                        else fill_label.label_interval_start
+                    ),
                     fill_available,
+                    f"labels[{policy.fill_checkpoint.value}].decision_reference_price",
                 ),
                 (
                     "mark_price",
                     None if mark_label is None else mark_label.checkpoint_price,
                     mark_ref,
+                    (
+                        context.outcome.outcome_available_at
+                        if mark_label is None
+                        else mark_label.label_interval_end
+                    ),
                     mark_available,
+                    f"labels[{policy.mark_checkpoint.value}].checkpoint_price",
                 ),
                 (
                     "average_daily_amount",
                     None if adv is None else adv.raw_numeric,
                     adv_ref,
-                    context.decision.decision_time if adv is None or adv.available_at is None else adv.available_at,
+                    context.decision.decision_time,
+                    (
+                        context.enrichment.extracted_at
+                        if adv is None or adv.available_at is None
+                        else adv.available_at
+                    ),
+                    (
+                        "exposures[liquidity.adv20].raw_numeric"
+                        if adv is None
+                        else adv.source_value_path
+                    ),
                 ),
                 (
                     "trading_status",
                     None if trading_status is TradingStatus.UNKNOWN else trading_status.value,
                     fill_ref,
+                    (
+                        context.outcome.outcome_available_at
+                        if fill_label is None
+                        else fill_label.label_interval_end
+                    ),
                     fill_available,
+                    f"labels[{policy.fill_checkpoint.value}].market_conditions",
                 ),
                 (
                     "price_limit_state",
                     None if limit_state is PriceLimitState.UNKNOWN else limit_state.value,
                     fill_ref,
+                    (
+                        context.outcome.outcome_available_at
+                        if fill_label is None
+                        else fill_label.label_interval_end
+                    ),
                     fill_available,
+                    f"labels[{policy.fill_checkpoint.value}].market_conditions",
                 ),
             )
-            for name, value, reference, available_at in observed_values:
+            for (
+                name,
+                value,
+                reference,
+                effective_at,
+                available_at,
+                source_value_path,
+            ) in observed_values:
                 values.append(
                     _owner_value(
                         f"{symbol}.{name}",
                         value,
                         ShadowParameterProvenance.OBSERVED_FACT,
                         reference,
-                        effective,
+                        effective_at,
                         available_at,
-                        name,
+                        source_value_path,
                     )
                 )
             values.append(
@@ -672,45 +1139,62 @@ class PostgresOwnerResolvedShadowObservationBuilder:
         )
         return self._observations.publish(policy=policy, receipt=receipt)
 
-    def _context(self, trading_date: date) -> _OwnerContext:
-        with self._factory.connection(read_only=True) as connection:
-            rows = connection.execute(
-                """
-                SELECT decision.decision_id, panel.panel_id,
-                       slice.targeted_outcome_id
-                FROM shadow_research_decision AS decision
-                JOIN shadow_research_session AS shadow
-                  ON shadow.session_id = decision.session_id
-                JOIN research_evaluation_panel_slice_v2 AS slice
-                  ON slice.shadow_decision_id = decision.decision_id
-                JOIN research_evaluation_panel_v2 AS panel
-                  ON panel.panel_id = slice.panel_id
-                WHERE shadow.trading_date = %s
-                  AND shadow.status = 'SETTLED'
-                ORDER BY panel.created_at DESC, panel.panel_id DESC
-                """,
-                (trading_date,),
-            ).fetchall()
-        if len(rows) != 1:
-            raise ValueError(
-                "Automatic Shadow observation requires exactly one settled Panel"
-            )
-        decision = self._shadow.get_decision(ArtifactId(str(rows[0][0])))
-        panel = self._panels.replay(ArtifactId(str(rows[0][1])))
+    def _context(
+        self,
+        *,
+        research_trading_date: date,
+        lineage: ShadowOwnerLineageRequest,
+    ) -> ShadowOwnerContext:
+        decision = self._shadow.get_decision(
+            lineage.decision_reference.artifact_id
+        )
+        if decision.decision_hash != lineage.decision_reference.content_hash:
+            raise ValueError("Automatic Shadow Decision owner hash mismatch")
+        panel = self._panels.replay(lineage.panel_reference.artifact_id)
+        if panel.panel_hash != lineage.panel_reference.content_hash:
+            raise ValueError("Automatic Shadow Panel owner hash mismatch")
         panel_slices = tuple(
-            item for item in panel.slices if item.shadow_decision.artifact_id == decision.decision_id
+            item
+            for item in panel.slices
+            if _same_reference(item.shadow_decision, lineage.decision_reference)
+            and _same_reference(item.targeted_outcome, lineage.outcome_reference)
         )
         if len(panel_slices) != 1:
-            raise ValueError("Automatic Shadow observation Panel slice is ambiguous")
+            raise ValueError("Automatic Shadow exact Panel slice is missing or ambiguous")
         panel_slice = panel_slices[0]
-        outcome = self._targets.replay(ArtifactId(str(rows[0][2])))
+        outcome = self._targets.replay(lineage.outcome_reference.artifact_id)
+        if outcome.settlement_hash != lineage.outcome_reference.content_hash:
+            raise ValueError("Automatic Shadow Outcome owner hash mismatch")
         protocol = self._targets.get_protocol(outcome.target_protocol_id)
+        if ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            protocol.protocol_id,
+            protocol.protocol_hash,
+        ) != lineage.target_protocol_reference:
+            raise ValueError("Automatic Shadow Target Protocol owner mismatch")
+        if not _same_reference(
+            outcome.shadow_decision, lineage.decision_reference
+        ):
+            raise ValueError("Automatic Shadow Outcome/Decision lineage mismatch")
+        if decision.trading_date != research_trading_date:
+            raise ValueError("Automatic Shadow Outcome research date mismatch")
         candidate_set = self._state.get_runtime_candidate(
             run_id=decision.run_id,
             tick_id=decision.tick_id,
         )
-        enrichment = self._enrichment(panel.panel_id, panel.panel_hash)
-        return _OwnerContext(
+        candidate_reference = ValidationArtifactReference(
+            "CANDIDATE_SET",
+            candidate_set.envelope.artifact_id,
+            candidate_set.envelope.content_hash,
+        )
+        if candidate_reference != lineage.candidate_reference:
+            raise ValueError("Automatic Shadow Candidate owner mismatch")
+        enrichment = self._enrichment(
+            lineage.enrichment_reference,
+            panel_reference=lineage.panel_reference,
+        )
+        available_at = self._owner_available_at(lineage)
+        return ShadowOwnerContext(
             decision,
             panel,
             panel_slice,
@@ -718,36 +1202,93 @@ class PostgresOwnerResolvedShadowObservationBuilder:
             outcome,
             protocol,
             enrichment,
+            available_at,
         )
+
+    def _owner_available_at(
+        self,
+        lineage: ShadowOwnerLineageRequest,
+    ) -> datetime:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT 'SHADOW_DECISION', created_at
+                FROM shadow_research_decision
+                WHERE decision_id = %s AND decision_hash = %s
+                UNION ALL
+                SELECT 'RESEARCH_PANEL_V2', created_at
+                FROM research_evaluation_panel_v2
+                WHERE panel_id = %s AND panel_hash = %s
+                UNION ALL
+                SELECT 'CANDIDATE_SET', created_at
+                FROM state_runtime_candidate_artifact
+                WHERE candidate_id = %s AND candidate_hash = %s
+                UNION ALL
+                SELECT 'OUTCOME_TARGET_PROTOCOL', created_at
+                FROM outcome_target_protocol
+                WHERE protocol_id = %s AND protocol_hash = %s
+                UNION ALL
+                SELECT 'TARGETED_SHADOW_OUTCOME',
+                       greatest(created_at, outcome_available_at)
+                FROM targeted_shadow_outcome
+                WHERE settlement_id = %s AND settlement_hash = %s
+                UNION ALL
+                SELECT 'PANEL_ENRICHMENT', created_at
+                FROM research_validation_artifact
+                WHERE artifact_kind = 'PANEL_ENRICHMENT'
+                  AND artifact_id = %s AND artifact_hash = %s
+                """,
+                tuple(
+                    value
+                    for reference in (
+                        lineage.decision_reference,
+                        lineage.panel_reference,
+                        lineage.candidate_reference,
+                        lineage.target_protocol_reference,
+                        lineage.outcome_reference,
+                        lineage.enrichment_reference,
+                    )
+                    for value in (
+                        str(reference.artifact_id),
+                        reference.content_hash,
+                    )
+                ),
+            ).fetchall()
+        expected = {item.artifact_kind for item in lineage.references}
+        if len(rows) != len(expected) or {str(row[0]) for row in rows} != expected:
+            raise ValueError("Automatic Shadow owner availability chain is incomplete")
+        return max(row[1] for row in rows)
 
     def _enrichment(
         self,
-        panel_id: ArtifactId,
-        panel_hash: str,
+        reference: ValidationArtifactReference,
+        *,
+        panel_reference: ValidationArtifactReference,
     ) -> ResearchPanelEnrichment:
         with self._factory.connection(read_only=True) as connection:
-            rows = connection.execute(
+            row = connection.execute(
                 """
                 SELECT artifact_id, artifact_hash, payload_json
                 FROM research_validation_artifact
                 WHERE artifact_kind = 'PANEL_ENRICHMENT'
-                  AND payload_json->'panel_reference'->>'artifact_id' = %s
-                  AND payload_json->'panel_reference'->>'content_hash' = %s
-                ORDER BY created_at DESC, artifact_id DESC
+                  AND artifact_id = %s
                 """,
-                (str(panel_id), panel_hash),
-            ).fetchall()
-            if len(rows) != 1 or not isinstance(rows[0][2], dict):
-                raise ValueError(
-                    "Automatic Shadow observation requires one Panel Enrichment owner"
-                )
+                (str(reference.artifact_id),),
+            ).fetchone()
+            if row is None or not isinstance(row[2], dict):
+                raise ValueError("Automatic Shadow Panel Enrichment owner is missing")
             enrichment = ResearchPanelEnrichment.from_canonical_dict(
                 {
-                    "enrichment_id": str(rows[0][0]),
-                    "enrichment_hash": str(rows[0][1]),
-                    **rows[0][2],
+                    "enrichment_id": str(row[0]),
+                    "enrichment_hash": str(row[1]),
+                    **row[2],
                 }
             )
+            if (
+                enrichment.enrichment_hash != reference.content_hash
+                or enrichment.panel_reference != panel_reference
+            ):
+                raise ValueError("Automatic Shadow Panel Enrichment owner mismatch")
             exposure_rows = connection.execute(
                 """
                 SELECT exposure_json FROM research_panel_factor_exposure
@@ -757,15 +1298,19 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                 """,
                 (str(enrichment.enrichment_id),),
             ).fetchall()
-        if [row[0] for row in exposure_rows] != [
+        actual_exposures = tuple(row[0] for row in exposure_rows)
+        expected_exposures = tuple(
             item.to_canonical_dict() for item in enrichment.exposures
-        ]:
+        )
+        if len(actual_exposures) != len(expected_exposures) or {
+            canonical_hash(item) for item in actual_exposures
+        } != {canonical_hash(item) for item in expected_exposures}:
             raise ValueError("Panel Enrichment owner projection diverged")
         return enrichment
 
     @staticmethod
     def _optional_label(
-        context: _OwnerContext,
+        context: ShadowOwnerContext,
         *,
         symbol: str,
         checkpoint: Any,
@@ -788,7 +1333,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
 
     @staticmethod
     def _context_references(
-        context: _OwnerContext,
+        context: ShadowOwnerContext,
     ) -> tuple[ValidationArtifactReference, ...]:
         runtime_references = (
             context.panel_slice.market_state,
@@ -812,7 +1357,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
                 context.panel.panel_hash,
             ),
             ValidationArtifactReference(
-                "TARGETED_OUTCOME",
+                "TARGETED_SHADOW_OUTCOME",
                 context.outcome.settlement_id,
                 context.outcome.settlement_hash,
             ),
@@ -833,7 +1378,8 @@ class PostgresOwnerResolvedShadowObservationBuilder:
             ),
             *(
                 ValidationArtifactReference(
-                    item.artifact_kind,
+                    getattr(item, "artifact_kind", None)
+                    or getattr(item, "reference_kind"),
                     item.artifact_id,
                     item.content_hash,
                 )
@@ -887,6 +1433,15 @@ def _label_reference(label: Any) -> ValidationArtifactReference:
     )
 
 
+def _same_reference(left: Any, right: Any) -> bool:
+    return (
+        getattr(left, "artifact_kind", getattr(left, "reference_kind", None))
+        == getattr(right, "artifact_kind", getattr(right, "reference_kind", None))
+        and left.artifact_id == right.artifact_id
+        and left.content_hash == right.content_hash
+    )
+
+
 def _fill_blocked(label: Any) -> bool:
     blocked = {
         OutcomeMarketCondition.SUSPENDED,
@@ -927,4 +1482,5 @@ def _price_limit_state(
 __all__ = [
     "PostgresOwnerResolvedShadowObservationBuilder",
     "PostgresShadowObservationRepository",
+    "ShadowOwnerContext",
 ]

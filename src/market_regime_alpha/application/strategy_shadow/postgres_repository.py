@@ -8,6 +8,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.strategy_shadow.contracts import (
+    ShadowEntry,
     StrategyShadowPolicy,
     restore_strategy_shadow_artifact,
     strategy_shadow_artifact_payload,
@@ -17,6 +18,13 @@ from market_regime_alpha.application.strategy_shadow.operations import (
     StrategyShadowArtifactRecord,
     StrategyShadowSession,
     strategy_shadow_session_from_canonical_dict,
+)
+from market_regime_alpha.application.strategy_shadow.observation_builder import (
+    ObservationKind,
+    ShadowObservationReceipt,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_observations import (
+    PostgresShadowObservationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.application.research_validation.common import (
@@ -124,7 +132,9 @@ class PostgresStrategyShadowRepository:
     def get(self, session_id: ArtifactId) -> StrategyShadowSession:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT payload_json FROM strategy_shadow_session WHERE session_id = %s", (str(session_id),)
+                "SELECT payload_json, lineage_status FROM strategy_shadow_session "
+                "WHERE session_id = %s",
+                (str(session_id),),
             ).fetchone()
             event_rows = connection.execute(
                 """
@@ -141,7 +151,11 @@ class PostgresStrategyShadowRepository:
         if any(not isinstance(item, dict) for item in event_payloads):
             raise ValueError("Strategy Shadow durable event payload is invalid")
         payload = {**row[0], "events": event_payloads}
-        return strategy_shadow_session_from_canonical_dict(payload)
+        session = strategy_shadow_session_from_canonical_dict(payload)
+        if str(row[1]) == "EXACT_V1":
+            with self._factory.connection(read_only=True) as connection:
+                self._verify_session_lineage(connection, session)
+        return session
 
     def list_sessions(self, *, trading_date: date) -> tuple[StrategyShadowSession, ...]:
         with self._factory.connection(read_only=True) as connection:
@@ -227,6 +241,10 @@ class PostgresStrategyShadowRepository:
         session: StrategyShadowSession,
         expected_revision: int | None,
     ) -> None:
+        PostgresStrategyShadowRepository._verify_required_session_owners(
+            connection,
+            session,
+        )
         row = connection.execute(
             "SELECT revision FROM strategy_shadow_session WHERE session_id = %s FOR UPDATE", (str(session.session_id),)
         ).fetchone()
@@ -239,9 +257,12 @@ class PostgresStrategyShadowRepository:
                 INSERT INTO strategy_shadow_session(
                     session_id, session_hash, trading_date, scheduled_for,
                     research_shadow_id, runtime_run_id, runtime_tick_id,
-                    policy_id, status, revision, payload_json, created_at,
-                    updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    policy_id, status, revision, payload_json, lineage_status,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    'EXACT_V1', %s, %s
+                )
                 """,
                 (
                     str(session.session_id),
@@ -257,6 +278,16 @@ class PostgresStrategyShadowRepository:
                     Jsonb(session.to_canonical_dict()),
                     session.created_at,
                     session.updated_at,
+                ),
+            )
+            PostgresStrategyShadowRepository._append_session_lineage(
+                connection,
+                session.session_id,
+                (
+                    session.research_shadow_reference,
+                    session.runtime_run_reference,
+                    session.runtime_tick_reference,
+                    session.policy_reference,
                 ),
             )
         else:
@@ -330,3 +361,230 @@ class PostgresStrategyShadowRepository:
         expected_session = None if artifact.session_id is None else str(artifact.session_id)
         if stored is None or str(stored[0]) != artifact.artifact_reference.content_hash or stored[1] != expected_session:
             raise ValueError("Strategy Shadow Artifact identity conflict")
+        if (
+            artifact.artifact_kind is StrategyShadowArtifactKind.ENTRY
+            and PostgresStrategyShadowRepository._is_typed_entry_payload(
+                artifact.payload
+            )
+        ):
+            restored = restore_strategy_shadow_artifact(
+                artifact_kind=artifact.artifact_kind.value,
+                artifact_id=artifact.artifact_reference.artifact_id,
+                artifact_hash=artifact.artifact_reference.content_hash,
+                payload=artifact.payload,
+            )
+            if not isinstance(restored, ShadowEntry) or artifact.session_id is None:
+                raise ValueError("Strategy Shadow Entry owner restored invalid type")
+            PostgresStrategyShadowRepository._append_session_lineage(
+                connection,
+                artifact.session_id,
+                restored.source_references,
+            )
+
+    @staticmethod
+    def _append_session_lineage(
+        connection: Any,
+        session_id: ArtifactId,
+        references: tuple[ValidationArtifactReference, ...],
+    ) -> None:
+        row = connection.execute(
+            "SELECT coalesce(max(ordinal), 0) "
+            "FROM strategy_shadow_session_lineage_binding WHERE session_id = %s",
+            (str(session_id),),
+        ).fetchone()
+        ordinal = 0 if row is None else int(row[0])
+        existing = {
+            (str(item[0]), str(item[1]), str(item[2]))
+            for item in connection.execute(
+                "SELECT artifact_kind, artifact_id, content_hash "
+                "FROM strategy_shadow_session_lineage_binding WHERE session_id = %s",
+                (str(session_id),),
+            ).fetchall()
+        }
+        for reference in sorted(
+            references,
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        ):
+            key = (
+                reference.artifact_kind,
+                str(reference.artifact_id),
+                reference.content_hash,
+            )
+            if key in existing:
+                continue
+            ordinal += 1
+            connection.execute(
+                """
+                INSERT INTO strategy_shadow_session_lineage_binding(
+                    session_id, ordinal, artifact_kind, artifact_id, content_hash
+                ) VALUES (%s, %s, %s, %s, %s)
+                """,
+                (str(session_id), ordinal, *key),
+            )
+            existing.add(key)
+
+    @staticmethod
+    def _verify_session_lineage(
+        connection: Any,
+        session: StrategyShadowSession,
+    ) -> None:
+        PostgresStrategyShadowRepository._verify_required_session_owners(
+            connection,
+            session,
+        )
+        rows = connection.execute(
+            "SELECT artifact_kind, artifact_id, content_hash "
+            "FROM strategy_shadow_session_lineage_binding "
+            "WHERE session_id = %s ORDER BY ordinal",
+            (str(session.session_id),),
+        ).fetchall()
+        actual = {
+            ValidationArtifactReference(
+                str(row[0]), ArtifactId(str(row[1])), str(row[2])
+            )
+            for row in rows
+        }
+        required = {
+            session.research_shadow_reference,
+            session.runtime_run_reference,
+            session.runtime_tick_reference,
+            session.policy_reference,
+        }
+        entry_row = connection.execute(
+            "SELECT artifact_id, artifact_hash, payload_json "
+            "FROM strategy_shadow_artifact "
+            "WHERE session_id = %s AND artifact_kind = 'ENTRY'",
+            (str(session.session_id),),
+        ).fetchone()
+        if entry_row is not None and isinstance(entry_row[2], dict) and (
+            PostgresStrategyShadowRepository._is_typed_entry_payload(entry_row[2])
+        ):
+            restored = restore_strategy_shadow_artifact(
+                artifact_kind="ENTRY",
+                artifact_id=ArtifactId(str(entry_row[0])),
+                artifact_hash=str(entry_row[1]),
+                payload=entry_row[2],
+            )
+            if not isinstance(restored, ShadowEntry):
+                raise ValueError("Strategy Shadow Entry owner restored invalid type")
+            required.update(restored.source_references)
+        if actual != required:
+            raise ValueError("Strategy Shadow durable lineage projection diverged")
+        for reference in actual:
+            if reference.artifact_kind != "SHADOW_OBSERVATION_RECEIPT":
+                continue
+            owner = connection.execute(
+                "SELECT receipt_hash, observed_at, payload_json "
+                "FROM shadow_observation_receipt "
+                "WHERE receipt_id = %s",
+                (str(reference.artifact_id),),
+            ).fetchone()
+            if (
+                owner is None
+                or str(owner[0]) != reference.content_hash
+                or session.updated_at < owner[1]
+                or not isinstance(owner[2], dict)
+            ):
+                raise ValueError("Strategy Shadow Observation receipt owner mismatch")
+            receipt = ShadowObservationReceipt.from_canonical_dict(owner[2])
+            if (
+                receipt.kind is not ObservationKind.STRATEGY
+                or receipt.receipt_id != reference.artifact_id
+                or receipt.receipt_hash != reference.content_hash
+                or receipt.research_trading_date != session.trading_date
+            ):
+                raise ValueError("Strategy Shadow Observation receipt lineage mismatch")
+            PostgresShadowObservationRepository._verify_projections(
+                connection,
+                receipt,
+            )
+            PostgresShadowObservationRepository._verify_typed_owner_chain(
+                connection,
+                receipt,
+            )
+
+    @staticmethod
+    def _verify_required_session_owners(
+        connection: Any,
+        session: StrategyShadowSession,
+    ) -> None:
+        decision = connection.execute(
+            """
+            SELECT decision.decision_hash, decision.run_id, decision.tick_id,
+                   decision.decision_frozen_at, shadow.trading_date
+            FROM shadow_research_decision AS decision
+            JOIN shadow_research_session AS shadow
+              ON shadow.session_id = decision.session_id
+            WHERE decision.decision_id = %s
+            """,
+            (str(session.research_shadow_reference.artifact_id),),
+        ).fetchone()
+        run = connection.execute(
+            """
+            SELECT command_hash, trading_date, created_at
+            FROM continuous_research_run WHERE run_id = %s
+            """,
+            (str(session.runtime_run_reference.artifact_id),),
+        ).fetchone()
+        tick = connection.execute(
+            """
+            SELECT tick_hash, run_id, observed_at, created_at
+            FROM continuous_runtime_tick WHERE tick_id = %s
+            """,
+            (str(session.runtime_tick_reference.artifact_id),),
+        ).fetchone()
+        policy = connection.execute(
+            """
+            SELECT policy_hash, created_at
+            FROM strategy_shadow_policy_authority WHERE policy_id = %s
+            """,
+            (str(session.policy_reference.artifact_id),),
+        ).fetchone()
+        if decision is None or (
+            str(decision[0]) != session.research_shadow_reference.content_hash
+            or str(decision[1]) != str(session.runtime_run_reference.artifact_id)
+            or str(decision[2]) != str(session.runtime_tick_reference.artifact_id)
+            or decision[3] > session.created_at
+            or decision[4] != session.trading_date
+        ):
+            raise ValueError("Strategy Shadow Decision owner identity/time mismatch")
+        if run is None or (
+            str(run[0]) != session.runtime_run_reference.content_hash
+            or run[1] != session.trading_date
+            or run[2] > session.created_at
+        ):
+            raise ValueError("Strategy Shadow Runtime Run owner identity/time mismatch")
+        if tick is None or (
+            str(tick[0]) != session.runtime_tick_reference.content_hash
+            or str(tick[1]) != str(session.runtime_run_reference.artifact_id)
+            or max(tick[2], tick[3]) > session.created_at
+        ):
+            raise ValueError("Strategy Shadow Runtime Tick owner identity/time mismatch")
+        if policy is None or (
+            str(policy[0]) != session.policy_reference.content_hash
+            or policy[1] > session.created_at
+        ):
+            raise ValueError("Strategy Shadow Policy owner identity/time mismatch")
+
+    @staticmethod
+    def _is_typed_entry_payload(payload: dict[str, Any]) -> bool:
+        """Distinguish the canonical Entry owner from legacy generic artifacts.
+
+        The pre-067 repository contract admitted opaque engineering payloads for
+        every artifact kind.  Those rows remain readable and hash-checked, but
+        only the canonical Entry shape contributes durable owner lineage.
+        """
+
+        typed_markers = {
+            "assessment_reference",
+            "policy_reference",
+            "source_references",
+        }
+        present = typed_markers.intersection(payload)
+        if present and present != typed_markers:
+            raise ValueError("Strategy Shadow Entry typed lineage payload is incomplete")
+        return present == typed_markers

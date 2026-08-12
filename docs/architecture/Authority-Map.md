@@ -28,7 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 241 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 244 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -450,17 +450,19 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Reader:** session, event, artifact and Portfolio day-state Readers plus deterministic replay.
 - **Repository:** `PostgresStrategyShadowRepository`, `PostgresShadowPortfolioRepository`.
 - **PostgreSQL tables:** `strategy_shadow_policy_authority`,
-  `strategy_shadow_session`, `strategy_shadow_event`, `strategy_shadow_artifact`,
+  `strategy_shadow_session`, `strategy_shadow_session_lineage_binding`,
+  `strategy_shadow_event`, `strategy_shadow_artifact`,
   `strategy_shadow_portfolio`, `strategy_shadow_portfolio_day`,
-  `shadow_observation_*`, `shadow_performance_*`, prospective qualification
-  policy and stage decision.
+  `strategy_shadow_portfolio_state_source_binding`, `shadow_observation_*`,
+  `shadow_performance_*`, prospective qualification policy and stage decision.
 - **Artifact / Receipt:** Strategy Shadow Session/Event, provenance-complete
   Observation, simulated Entry/Fill/Position/Holding/Exit artifacts, Portfolio
   Policy/CAS-linked day states and immutable Performance report.
 - **Runtime caller:** thin subcommands of the installed `continuous-research` CLI; no second Runtime.
 - **Downstream consumer:** Holding/Exit engineering evaluation and Production Admission gap projection.
-- **Replay mechanism:** reusable Policy owner plus exact source binding,
-  CAS session/event/artifact, Portfolio chain and Performance/Attribution replay;
+- **Replay mechanism:** reusable Policy owner plus exact artifact ID/hash source
+  binding, durable Observation Receipt lineage, CAS session/event/artifact,
+  typed Strategy/Portfolio/Outcome chain and exact Performance state-set replay;
   prospective proof counts only post-policy-lock live sessions.
 - **Evidence ceiling:** simulated only; no actual Fill, Position or broker mutation.
 - **Legacy replacement:** no legacy trading simulator may write actual Position Authority.

@@ -34,6 +34,7 @@ from market_regime_alpha.application.strategy_shadow.portfolio import (
 )
 from market_regime_alpha.application.strategy_shadow.observation_builder import (
     ObservationBuildStatus,
+    ShadowOwnerLineageRequest,
     ShadowObservationPolicy,
 )
 from market_regime_alpha.application.strategy_shadow.postgres_observations import (
@@ -41,6 +42,9 @@ from market_regime_alpha.application.strategy_shadow.postgres_observations impor
 )
 from market_regime_alpha.application.strategy_shadow.postgres_portfolio import (
     PostgresShadowPortfolioRepository,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_repository import (
+    PostgresStrategyShadowRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.market_data import PriceLimitState, TradingStatus
@@ -143,6 +147,8 @@ class PortfolioShadowDayInput:
     initial_cash: Decimal
     policy: ShadowPortfolioPolicy
     market_inputs: tuple[PortfolioMarketInput, ...]
+    lineage: ShadowOwnerLineageRequest
+    strategy_reference: ValidationArtifactReference
 
     def __post_init__(self) -> None:
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
@@ -208,6 +214,12 @@ class PortfolioShadowDayInput:
             initial_cash=Decimal(str(value["initial_cash"])),
             policy=policy,
             market_inputs=market_inputs,
+            lineage=ShadowOwnerLineageRequest.from_canonical_dict(
+                _mapping(value["lineage"])
+            ),
+            strategy_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["strategy_reference"])
+            ),
         )
 
 
@@ -226,20 +238,36 @@ class PortfolioShadowDayOperator:
         self._portfolio = PostgresShadowPortfolioRepository(
             factory, apply_migrations=False
         )
+        self._strategy = PostgresStrategyShadowRepository(
+            factory, apply_migrations=False
+        )
 
-    def run(self, request: PortfolioShadowDayInput) -> dict[str, Any]:
-        decision, panel_reference = self._resolve_research_lineage(
-            request.research_trading_date
+    def run(
+        self,
+        request: PortfolioShadowDayInput,
+        *,
+        observation_receipt_reference: ValidationArtifactReference | None = None,
+    ) -> dict[str, Any]:
+        context = PostgresOwnerResolvedShadowObservationBuilder(
+            self._factory,
+            apply_migrations=False,
+        ).resolve_lineage(
+            research_trading_date=request.research_trading_date,
+            lineage=request.lineage,
         )
-        candidate_set = self._state.get_runtime_candidate(
-            run_id=decision.run_id,
-            tick_id=decision.tick_id,
-        )
-        candidate_reference = ValidationArtifactReference(
-            "CANDIDATE_SET",
-            candidate_set.envelope.artifact_id,
-            candidate_set.envelope.content_hash,
-        )
+        if request.observed_at < context.available_at:
+            raise ValueError("Portfolio observation predates owner availability")
+        if request.trading_date != context.outcome.next_session_date:
+            raise ValueError("Portfolio day must bind the Outcome next session")
+        panel_reference = request.lineage.panel_reference
+        candidate_reference = request.lineage.candidate_reference
+        candidate_set = context.candidate_set
+        strategy = self._strategy.get(request.strategy_reference.artifact_id)
+        if (
+            strategy.session_hash != request.strategy_reference.content_hash
+            or strategy.research_shadow_reference != request.lineage.decision_reference
+        ):
+            raise ValueError("Portfolio Strategy owner lineage mismatch")
         portfolio = self._resolve_portfolio(
             request=request,
             panel_reference=panel_reference,
@@ -290,6 +318,7 @@ class PortfolioShadowDayOperator:
                 observed_at=request.observed_at,
                 candidate_reference=candidate_reference,
                 panel_reference=panel_reference,
+                observation_receipt_reference=observation_receipt_reference,
             )
             for symbol in sorted(symbols)
         )
@@ -342,6 +371,8 @@ class PortfolioShadowDayOperator:
         initial_cash: Decimal,
         policy: ShadowPortfolioPolicy,
         observation_policy: ShadowObservationPolicy,
+        lineage: ShadowOwnerLineageRequest,
+        strategy_reference: ValidationArtifactReference,
     ) -> dict[str, Any]:
         """Resolve market inputs from owners before using the same ledger."""
 
@@ -358,6 +389,7 @@ class PortfolioShadowDayOperator:
             trading_date=trading_date,
             observed_at=observed_at,
             policy=observation_policy,
+            lineage=lineage,
             required_symbols=required_symbols,
         )
         receipt_fields = {
@@ -400,8 +432,17 @@ class PortfolioShadowDayOperator:
                     key=lambda item: item.symbol,
                 )
             ),
+            lineage=lineage,
+            strategy_reference=strategy_reference,
         )
-        output = self.run(request)
+        output = self.run(
+            request,
+            observation_receipt_reference=ValidationArtifactReference(
+                "SHADOW_OBSERVATION_RECEIPT",
+                receipt.receipt_id,
+                receipt.receipt_hash,
+            ),
+        )
         return {**output, **receipt_fields}
 
     def replay(self, portfolio_id: ArtifactId) -> dict[str, Any]:
@@ -433,8 +474,20 @@ class PortfolioShadowDayOperator:
                 raise ValueError("Portfolio Shadow request Policy conflicts with owner row")
             if portfolio.initial_cash != request.initial_cash:
                 raise ValueError("Portfolio Shadow initial cash conflicts with owner row")
+            if portfolio.strategy_reference != request.strategy_reference:
+                raise ValueError("Portfolio Shadow Strategy owner identity conflict")
             return portfolio
-        existing = self._portfolio.find_by_policy(request.policy.policy_id)
+        existing = self._portfolio.find_exact(
+            policy_reference=ValidationArtifactReference(
+                "SHADOW_PORTFOLIO_POLICY",
+                request.policy.policy_id,
+                request.policy.policy_hash,
+            ),
+            research_reference=panel_reference,
+            candidate_reference=candidate_reference,
+            strategy_reference=request.strategy_reference,
+            initial_cash=request.initial_cash,
+        )
         if existing is not None:
             stored_policy, portfolio = existing
             if stored_policy != request.policy or portfolio.initial_cash != request.initial_cash:
@@ -444,8 +497,9 @@ class PortfolioShadowDayOperator:
             policy=request.policy,
             research_reference=panel_reference,
             candidate_reference=candidate_reference,
+            strategy_reference=request.strategy_reference,
             initial_cash=request.initial_cash,
-            created_at=request.policy.created_at,
+            created_at=request.observed_at,
         )
         return self._portfolio.save_portfolio(
             policy=request.policy,
@@ -461,6 +515,7 @@ class PortfolioShadowDayOperator:
         observed_at: datetime,
         candidate_reference: ValidationArtifactReference,
         panel_reference: ValidationArtifactReference,
+        observation_receipt_reference: ValidationArtifactReference | None,
     ) -> ShadowPortfolioMarketObservation:
         if market_input is None:
             market_input = PortfolioMarketInput(
@@ -534,6 +589,11 @@ class PortfolioShadowDayOperator:
                             observation_id,
                             observation_hash,
                         ),
+                        *(
+                            ()
+                            if observation_receipt_reference is None
+                            else (observation_receipt_reference,)
+                        ),
                     },
                     key=lambda item: (
                         item.artifact_kind,
@@ -544,40 +604,6 @@ class PortfolioShadowDayOperator:
             ),
             reason_codes=market_input.reason_codes,
         )
-
-    def _resolve_research_lineage(
-        self, trading_date: date
-    ) -> tuple[Any, ValidationArtifactReference]:
-        with self._factory.connection(read_only=True) as connection:
-            rows = connection.execute(
-                """
-                SELECT decision.decision_id, panel.panel_id, panel.panel_hash
-                FROM shadow_research_decision AS decision
-                JOIN shadow_research_session AS shadow
-                  ON shadow.session_id = decision.session_id
-                JOIN research_evaluation_panel_slice_v2 AS slice
-                  ON slice.shadow_decision_id = decision.decision_id
-                JOIN research_evaluation_panel_v2 AS panel
-                  ON panel.panel_id = slice.panel_id
-                WHERE shadow.trading_date = %s
-                  AND shadow.status = 'SETTLED'
-                ORDER BY panel.created_at DESC, panel.panel_id DESC
-                """,
-                (trading_date,),
-            ).fetchall()
-        if len(rows) != 1:
-            raise ValueError(
-                "Portfolio Shadow requires exactly one settled Research Shadow Panel"
-            )
-        return (
-            self._research.get_decision(ArtifactId(str(rows[0][0]))),
-            ValidationArtifactReference(
-                "RESEARCH_PANEL_V2",
-                ArtifactId(str(rows[0][1])),
-                str(rows[0][2]),
-            ),
-        )
-
 
 def _result(
     *,

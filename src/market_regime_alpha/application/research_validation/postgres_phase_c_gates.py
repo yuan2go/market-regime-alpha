@@ -554,7 +554,8 @@ def _assess_prospective_shadow(
         SELECT session_id, session_hash, trading_date, runtime_run_id,
                runtime_tick_id, research_shadow_id, status, payload_json
         FROM strategy_shadow_session
-        WHERE policy_id = %s AND created_at >= %s AND scheduled_for >= %s
+        WHERE policy_id = %s AND lineage_status = 'EXACT_V1'
+          AND created_at >= %s AND scheduled_for >= %s
         ORDER BY trading_date, session_id
         """,
         (
@@ -1014,12 +1015,19 @@ def _record_entry_holding_exit_policy(
     portfolio_rows = connection.execute(
         """
         SELECT policy_hash, policy_json
-        FROM strategy_shadow_portfolio WHERE policy_id = %s
+        FROM strategy_shadow_portfolio
+        WHERE policy_id = %s AND policy_hash = %s
+        ORDER BY portfolio_id
         """,
-        (str(policy.portfolio_policy_reference.artifact_id),),
+        (
+            str(policy.portfolio_policy_reference.artifact_id),
+            policy.portfolio_policy_reference.content_hash,
+        ),
     ).fetchall()
-    if len(portfolio_rows) != 1 or str(portfolio_rows[0][0]) != (
-        policy.portfolio_policy_reference.content_hash
+    if not portfolio_rows or any(
+        str(row[0]) != policy.portfolio_policy_reference.content_hash
+        or row[1] != portfolio_rows[0][1]
+        for row in portfolio_rows
     ):
         raise PhaseCGateConflict("Shadow Portfolio Policy owner mismatch")
     try:
@@ -1031,8 +1039,9 @@ def _record_entry_holding_exit_policy(
         """
         INSERT INTO entry_holding_exit_qualification_policy(
             policy_id, policy_hash, entry_model_id, strategy_policy_id,
-            portfolio_policy_id, policy_json, locked_at, created_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            portfolio_policy_id, portfolio_policy_hash, policy_json,
+            locked_at, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (policy_id) DO NOTHING
         """,
         (
@@ -1041,6 +1050,7 @@ def _record_entry_holding_exit_policy(
             str(policy.entry_model_reference.artifact_id),
             str(policy.strategy_policy_reference.artifact_id),
             str(policy.portfolio_policy_reference.artifact_id),
+            policy.portfolio_policy_reference.content_hash,
             Jsonb(policy.to_canonical_dict()),
             policy.locked_at,
             now,
@@ -1137,6 +1147,7 @@ def _assess_entry_holding_exit(
                runtime_tick_id, research_shadow_id, status, payload_json
         FROM strategy_shadow_session
         WHERE policy_id = %s AND status = 'SETTLED'
+          AND lineage_status = 'EXACT_V1'
           AND created_at >= %s AND scheduled_for >= %s
         ORDER BY trading_date, session_id
         """,
@@ -1381,16 +1392,22 @@ def _record_prospective_policy(
     portfolio_owner = connection.execute(
         """
         SELECT policy_hash, policy_json FROM strategy_shadow_portfolio
-        WHERE policy_id = %s
+        WHERE policy_id = %s AND policy_hash = %s
+        ORDER BY portfolio_id
         """,
-        (str(policy.portfolio_policy_reference.artifact_id),),
+        (
+            str(policy.portfolio_policy_reference.artifact_id),
+            policy.portfolio_policy_reference.content_hash,
+        ),
     ).fetchall()
     if len(owner) != 1 or str(owner[0][0]) != (
         policy.strategy_policy_reference.content_hash
     ):
         raise PhaseCGateConflict("Strategy Shadow Policy owner mismatch")
-    if len(portfolio_owner) != 1 or str(portfolio_owner[0][0]) != (
-        policy.portfolio_policy_reference.content_hash
+    if not portfolio_owner or any(
+        str(row[0]) != policy.portfolio_policy_reference.content_hash
+        or row[1] != portfolio_owner[0][1]
+        for row in portfolio_owner
     ):
         raise PhaseCGateConflict("Shadow Portfolio Policy owner mismatch")
     try:

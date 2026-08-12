@@ -619,18 +619,17 @@ def _metrics(
         prior = session_dates.setdefault(item.session_key, item.trading_date)
         if prior != item.trading_date:
             raise ValueError("Ablation session has inconsistent trading dates")
-    if any(value is not None for value in session_dates.values()) and any(
-        value is None for value in session_dates.values()
-    ):
-        raise ValueError("Ablation trading dates must be complete when provided")
+    if any(value is None for value in session_dates.values()):
+        raise ValueError(
+            "Ablation path metrics require a canonical trading date for every session"
+        )
+    canonical_dates = tuple(value for value in session_dates.values() if value is not None)
+    if len(set(canonical_dates)) != len(canonical_dates):
+        raise ValueError("Ablation path metrics require one session per trading date")
     ordered_sessions = tuple(
         sorted(
             by_session,
-            key=lambda key: (
-                session_dates[key] is None,
-                session_dates[key] or date.max,
-                key,
-            ),
+            key=lambda key: (session_dates[key], key),
         )
     )
     top_returns: list[float] = []

@@ -35,12 +35,7 @@ from market_regime_alpha.application.research_validation.samples import (
 )
 from market_regime_alpha.application.shadow_research.attestation import ClockMode, RuntimeOrigin
 from market_regime_alpha.application.strategy_shadow.operations import (
-    StrategyShadowArtifactKind,
-    StrategyShadowArtifactRecord,
-    StrategyShadowEventKind,
     StrategyShadowSession,
-    StrategyShadowSessionStatus,
-    replay_strategy_shadow,
 )
 from market_regime_alpha.application.strategy_shadow.postgres_repository import PostgresStrategyShadowRepository
 from market_regime_alpha.core.identity import ArtifactId, TargetId
@@ -101,7 +96,9 @@ def test_runtime_authority_evidence_is_durable_and_append_only(postgres_factory:
         connection.execute("DELETE FROM continuous_runtime_authority_evidence WHERE evidence_id = %s", (str(evidence.evidence_id),))
 
 
-def test_panel_enrichment_and_strategy_shadow_replay_on_postgres(postgres_factory: PostgresConnectionFactory) -> None:
+def test_panel_enrichment_persists_and_strategy_writer_rejects_forged_lineage(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
     command, tick, now = _runtime(postgres_factory)
     panel_ref = _ref("RESEARCH_PANEL_V2", "panel-v2")
     exposure = ResearchFactorExposure(
@@ -134,39 +131,14 @@ def test_panel_enrichment_and_strategy_shadow_replay_on_postgres(postgres_factor
         created_at=now,
     )
     strategy = PostgresStrategyShadowRepository(postgres_factory)
-    assert strategy.save(session, expected_revision=None) == session
-    running = session.append(event_kind=StrategyShadowEventKind.STARTED, occurred_at=now, status=StrategyShadowSessionStatus.RUNNING)
-    restored = strategy.save(running, expected_revision=1)
-
-    assert replay_strategy_shadow(restored) == running
-    artifact_payload = {"entry": "shadow-only"}
-    artifact_reference = ValidationArtifactReference("SHADOW_ENTRY", ArtifactId("pg-shadow-entry"), canonical_hash(artifact_payload))
-    artifact = StrategyShadowArtifactRecord(
-        artifact_reference,
-        StrategyShadowArtifactKind.ENTRY,
-        session.session_id,
-        artifact_payload,
-        now,
-    )
-    with_entry = running.append(
-        event_kind=StrategyShadowEventKind.ENTRY_CREATED,
-        occurred_at=now,
-        artifact_reference=artifact_reference,
-    )
-    assert strategy.save_with_artifact(with_entry, expected_revision=2, artifact=artifact) == with_entry
+    with pytest.raises(ValueError, match="Decision owner identity/time mismatch"):
+        strategy.save(session, expected_revision=None)
     with postgres_factory.connection(read_only=True) as connection:
-        stored_artifact = connection.execute(
-            "SELECT payload_json FROM strategy_shadow_artifact WHERE artifact_id = %s",
-            (str(artifact_reference.artifact_id),),
-        ).fetchone()
-        stored_event = connection.execute(
-            "SELECT payload_json FROM strategy_shadow_event WHERE session_id = %s AND sequence = 3",
+        stored_session = connection.execute(
+            "SELECT session_id FROM strategy_shadow_session WHERE session_id = %s",
             (str(session.session_id),),
         ).fetchone()
-    assert stored_artifact is not None and stored_artifact[0] == artifact_payload
-    assert stored_event is not None and stored_event[0]["artifact_reference"]["artifact_id"] == "pg-shadow-entry"
-    with pytest.raises(ValueError, match="CAS conflict"):
-        strategy.save(running, expected_revision=1)
+    assert stored_session is None
 
 
 def test_postgres_historical_sample_reader_cannot_invent_qualification(

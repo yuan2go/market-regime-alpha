@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from market_regime_alpha.evidence.canonical import canonical_hash
+
 from market_regime_alpha.application.strategy_shadow.portfolio import (
     PortfolioWeightingMethod,
     ShadowParameterProvenance,
@@ -13,6 +15,22 @@ def _payload() -> dict[str, object]:
     parameter = {
         "value": "2",
         "provenance": "ENGINEERING_ASSUMPTION",
+    }
+    lineage_hash = canonical_hash({"lineage": "portfolio-operator"})
+    lineage = {
+        f"{name}_reference": {
+            "artifact_kind": kind,
+            "artifact_id": f"{name}-owner",
+            "content_hash": lineage_hash,
+        }
+        for name, kind in (
+            ("decision", "SHADOW_DECISION"),
+            ("panel", "RESEARCH_PANEL_V2"),
+            ("candidate", "CANDIDATE_SET"),
+            ("target_protocol", "OUTCOME_TARGET_PROTOCOL"),
+            ("outcome", "TARGETED_SHADOW_OUTCOME"),
+            ("enrichment", "PANEL_ENRICHMENT"),
+        )
     }
     return {
         "research_trading_date": "2026-08-10",
@@ -34,6 +52,12 @@ def _payload() -> dict[str, object]:
                 "exit_cost_bps": parameter,
                 "max_participation_rate": {**parameter, "value": "0.1"},
             },
+        },
+        "lineage": lineage,
+        "strategy_reference": {
+            "artifact_kind": "STRATEGY_SHADOW_SESSION",
+            "artifact_id": "strategy-session-owner",
+            "content_hash": lineage_hash,
         },
         "market_observations": [
             {

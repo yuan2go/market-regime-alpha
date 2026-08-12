@@ -42,14 +42,14 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 066 and checksummed.
+- Packaged migrations are contiguous from 001 through 067 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 241 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–057 add exploratory sample, Research Universe, Portfolio Shadow and fail-closed Phase C owners. Migrations 058–059 add label-value-blind Locked rosters, immutable PIT Universe membership projections, exact Dataset lineage and pre-read Locked-OOS scope bindings. Migrations 060–064 extend those owners with explicit research-validity semantics, exploratory model execution, Runtime Scope/Historical journals, observations and performance. Migration 065 names the global Artifact-root locator contract for new Controlled packages. Migration 066 adds fail-closed Formal Execution assessment records without granting Provider, trading or Production authority. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
+The schema catalog currently contains 244 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–057 add exploratory sample, Research Universe, Portfolio Shadow and fail-closed Phase C owners. Migrations 058–059 add label-value-blind Locked rosters, immutable PIT Universe membership projections, exact Dataset lineage and pre-read Locked-OOS scope bindings. Migrations 060–064 extend those owners with explicit research-validity semantics, exploratory model execution, Runtime Scope/Historical journals, observations and performance. Migration 065 names the global Artifact-root locator contract for new Controlled packages. Migration 066 adds fail-closed Formal Execution assessment records without granting Provider, trading or Production authority. Migration 067 adds forward-only exact Strategy/Portfolio lineage projections and temporal/owner constraints while leaving pre-067 rows legacy-unbound. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
 
 ## Replay
 

@@ -4,6 +4,7 @@ from dataclasses import replace
 from hashlib import sha256
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from decimal import Decimal
 import json
 
 import pytest
@@ -25,6 +26,18 @@ from market_regime_alpha.application.state_system.bundles import (
     state_research_pipeline_identity,
 )
 from market_regime_alpha.application.state_system.runtime import StateResearchStage
+from market_regime_alpha.application.strategy_shadow.portfolio import (
+    PortfolioWeightingMethod,
+    ShadowParameterProvenance,
+    ShadowPortfolioPolicy,
+    build_shadow_portfolio,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_portfolio import (
+    PostgresShadowPortfolioRepository,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
@@ -93,14 +106,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (64, "shadow_performance_authority"),
     (65, "authoritative_artifact_locator"),
     (66, "formal_execution_assessment"),
+    (67, "phase_d_correctness_lineage"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 67))
-    assert len({item.name for item in migrations}) == 66
+    assert tuple(item.version for item in migrations) == tuple(range(1, 68))
+    assert len({item.name for item in migrations}) == 67
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -122,11 +136,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 67))
+    assert tuple(item.version for item in first) == tuple(range(1, 68))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 66
+    assert len(rows) == 67
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -314,7 +328,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
     ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (66,)
+    assert applied == (67,)
     assert restored == account
 
 
@@ -577,9 +591,11 @@ def test_migration_028_adds_formal_pit_authority_forward_only(
         "pit_source_qualification_evidence",
         "pit_fact_revision",
         "pit_fact_temporal_authority_resolution",
-            "pit_as_of_snapshot",
-            "pit_trading_calendar_canonical_snapshot",
-        }
+        "pit_as_of_snapshot",
+        "pit_trading_calendar_canonical_snapshot",
+        "pit_universe_membership_projection",
+        "pit_universe_membership_projection_member",
+    }
     assert evidence_table == ("formal_pit_validation_evidence",)
     assert guards == {
         "pit_source_qualification_no_update",
@@ -803,6 +819,7 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (64, "shadow_performance_authority"),
         (65, "authoritative_artifact_locator"),
         (66, "formal_execution_assessment"),
+        (67, "phase_d_correctness_lineage"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
@@ -955,3 +972,141 @@ def test_migration_059_adds_strict_universe_oos_scope_forward_only(
             "formal_locked_oos_roster_universe_binding_no_update",
         ),
     }
+
+
+def test_migration_067_adds_forward_exact_lineage_without_rewriting_history(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:66]).apply_all(postgres_factory)
+    provenance = ShadowParameterProvenance.ENGINEERING_ASSUMPTION
+    legacy_policy = ShadowPortfolioPolicy.create(
+        policy_version="migration-067-legacy-v1",
+        top_k=1,
+        weighting_method=PortfolioWeightingMethod.EQUAL_WEIGHT,
+        lot_size=100,
+        t_plus_one=True,
+        parameters={
+            name: (value, provenance)
+            for name, value in (
+                ("commission_bps", Decimal("2")),
+                ("slippage_bps", Decimal("5")),
+                ("impact_bps", Decimal("3")),
+                ("exit_cost_bps", Decimal("2")),
+                ("max_participation_rate", Decimal("0.1")),
+            )
+        },
+        created_at=NOW,
+    )
+    legacy_portfolio = build_shadow_portfolio(
+        policy=legacy_policy,
+        research_reference=ValidationArtifactReference(
+            "RESEARCH_PANEL_V2", ArtifactId("migration-067-legacy-panel"),
+            canonical_hash({"legacy": "panel"}),
+        ),
+        candidate_reference=ValidationArtifactReference(
+            "CANDIDATE_SET", ArtifactId("migration-067-legacy-candidates"),
+            canonical_hash({"legacy": "candidates"}),
+        ),
+        initial_cash=Decimal("100000"),
+        created_at=NOW,
+    )
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO strategy_shadow_portfolio(
+                portfolio_id, portfolio_hash, policy_id, policy_hash,
+                research_artifact_id, candidate_artifact_id, initial_cash,
+                policy_json, portfolio_json, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                str(legacy_portfolio.portfolio_id),
+                legacy_portfolio.portfolio_hash,
+                str(legacy_policy.policy_id),
+                legacy_policy.policy_hash,
+                str(legacy_portfolio.research_reference.artifact_id),
+                str(legacy_portfolio.candidate_reference.artifact_id),
+                legacy_portfolio.initial_cash,
+                Jsonb(legacy_policy.to_canonical_dict()),
+                Jsonb(legacy_portfolio.to_canonical_dict()),
+                legacy_portfolio.created_at,
+            ),
+        )
+
+    upgraded = PostgresMigrator(migrations=migrations[:67]).apply_all(
+        postgres_factory
+    )
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (67, "phase_d_correctness_lineage"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        tables = tuple(
+            str(item)
+            for item in connection.execute(
+                """
+                SELECT to_regclass('strategy_shadow_session_lineage_binding'),
+                       to_regclass(
+                         'strategy_shadow_portfolio_state_source_binding'
+                       )
+                """
+            ).fetchone()
+        )
+        columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'strategy_shadow_portfolio'
+                """
+            ).fetchall()
+        }
+        session_columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'strategy_shadow_session'
+                """
+            ).fetchall()
+        }
+        policy_unique = connection.execute(
+            """
+            SELECT count(*) FROM pg_constraint
+            WHERE conrelid = 'strategy_shadow_portfolio'::regclass
+              AND conname = 'strategy_shadow_portfolio_policy_id_key'
+            """
+        ).fetchone()
+        legacy_projection = connection.execute(
+            """
+            SELECT lineage_status, research_artifact_hash,
+                   candidate_artifact_hash, strategy_session_id,
+                   strategy_session_hash
+            FROM strategy_shadow_portfolio WHERE portfolio_id = %s
+            """,
+            (str(legacy_portfolio.portfolio_id),),
+        ).fetchone()
+    assert tables == (
+        "strategy_shadow_session_lineage_binding",
+        "strategy_shadow_portfolio_state_source_binding",
+    )
+    assert {
+        "research_artifact_hash",
+        "candidate_artifact_hash",
+        "strategy_session_id",
+        "strategy_session_hash",
+        "lineage_status",
+    }.issubset(columns)
+    assert "lineage_status" in session_columns
+    assert policy_unique is not None and int(policy_unique[0]) == 0
+    assert legacy_projection == ("LEGACY_UNBOUND", None, None, None, None)
+    assert PostgresShadowPortfolioRepository(
+        postgres_factory,
+        apply_migrations=False,
+    ).get_portfolio(legacy_portfolio.portfolio_id) == (
+        legacy_policy,
+        legacy_portfolio,
+    )

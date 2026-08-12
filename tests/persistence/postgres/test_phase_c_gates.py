@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
+import pytest
+
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -48,7 +50,7 @@ def _reference(kind: str, name: str) -> ValidationArtifactReference:
     )
 
 
-def test_prospective_shadow_owner_reports_real_window_as_accumulating(
+def test_prospective_shadow_owner_excludes_forged_unbound_session(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     command, tick, now = _runtime(postgres_factory)
@@ -81,7 +83,8 @@ def test_prospective_shadow_owner_reports_real_window_as_accumulating(
     )
     strategy = PostgresStrategyShadowRepository(postgres_factory)
     strategy.save_policy(strategy_policy, created_at=now)
-    strategy.save(session, expected_revision=None)
+    with pytest.raises(ValueError, match="Decision owner identity/time mismatch"):
+        strategy.save(session, expected_revision=None)
     portfolio_policy = ShadowPortfolioPolicy.create(
         policy_version="phase-c7-portfolio-v1",
         top_k=1,
@@ -143,7 +146,7 @@ def test_prospective_shadow_owner_reports_real_window_as_accumulating(
     assert decision.outcome is PhaseCStageOutcome.ACCUMULATING
     assert decision.qualification_established is False
     assert decision.reason_codes == (
-        "PROSPECTIVE_DURATION_OR_SESSION_FLOOR_ACCUMULATING",
+        "NO_POST_LOCK_PROSPECTIVE_STRATEGY_SHADOW_SESSIONS",
     )
 
     post_lock_policy = ProspectiveShadowQualificationPolicy.create(

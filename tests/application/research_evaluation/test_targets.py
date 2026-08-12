@@ -164,6 +164,7 @@ def test_target_outcome_writer_rejects_same_dataset_id_with_wrong_hash(
         mfe=Decimal("0.02"),
         mae=Decimal("-0.01"),
         barrier_passages=(),
+        barrier_ordering=BarrierOrderingOutcome.NO_TOUCH,
         market_conditions=(OutcomeMarketCondition.TRADING,),
         availability_status=OutcomeAvailabilityStatus.COMPLETE,
         outcome_available_at=available_at,
@@ -210,7 +211,7 @@ def test_target_outcome_writer_rejects_same_dataset_id_with_wrong_hash(
                     )
                 )
             if "FROM outcome_target_protocol" in query:
-                return Result((protocol.protocol_hash,))
+                return Result((protocol.protocol_hash, decision_time))
             raise AssertionError("writer reached mutation after Dataset hash mismatch")
 
     class Factory:
@@ -225,6 +226,30 @@ def test_target_outcome_writer_rejects_same_dataset_id_with_wrong_hash(
 
     with pytest.raises(TargetOutcomeConflict, match="V1 lineage mismatch"):
         repository.settle(outcome)
+
+
+def test_target_outcome_label_v2_requires_explicit_barrier_ordering() -> None:
+    protocol = engineering_multi_horizon_protocol()
+    target = protocol.targets[0]
+
+    with pytest.raises(ValueError, match="requires barrier_ordering"):
+        TargetOutcomeLabel.create(
+            symbol="600000.SH",
+            target=RuntimeArtifactReference(
+                "OUTCOME_TARGET", target.target_id, target.target_hash
+            ),
+            label_interval_start=datetime(2026, 8, 10, 6, 55, tzinfo=UTC),
+            label_interval_end=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+            decision_reference_price=Decimal("10"),
+            checkpoint_price=Decimal("10.1"),
+            mfe=Decimal("0.02"),
+            mae=Decimal("-0.01"),
+            barrier_passages=(),
+            market_conditions=(OutcomeMarketCondition.TRADING,),
+            availability_status=OutcomeAvailabilityStatus.COMPLETE,
+            outcome_available_at=datetime(2026, 8, 11, 2, 31, tzinfo=UTC),
+            reason_codes=("TARGET_COMPLETE",),
+        )
 
 
 def test_missing_checkpoint_is_unavailable_not_zero() -> None:

@@ -234,6 +234,8 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "shadow_performance_metric",
         "shadow_performance_period_return",
         "shadow_performance_attribution",
+        "strategy_shadow_session_lineage_binding",
+        "strategy_shadow_portfolio_state_source_binding",
         "formal_forecast_computation_command",
         "locked_oos_raw_evidence_unlock",
         "locked_oos_target_observation_consumption",
@@ -305,6 +307,8 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
                 "shadow_performance_metric",
                 "shadow_performance_period_return",
                 "shadow_performance_attribution",
+                "strategy_shadow_session_lineage_binding",
+                "strategy_shadow_portfolio_state_source_binding",
             )
         ),
         (
@@ -734,6 +738,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "entry_holding_exit_qualification_policy",
             "entry_holding_exit_qualification_policy_no_update",
+        ),
+        (
+            "entry_holding_exit_qualification_policy",
+            "entry_holding_exit_portfolio_policy_owner_guard",
         ),
         ("continuous_runtime_authority_evidence", "continuous_runtime_authority_evidence_no_update"),
         ("continuous_runtime_authority_evidence", "continuous_runtime_authority_evidence_no_delete"),

@@ -67,10 +67,16 @@ Forecast writer still requires owner-resolved Formal PIT.
 
 The new Historical Research Runner is resumable/replayable through a PostgreSQL
 lease/fence/stage journal and binds Runtime Scope, Experiment and Target
-identities. Full-A Scope remains an exploratory population, not an Operational
-Universe bypass. Strategy/Portfolio observations can be derived from existing
-owners; multi-period performance reports gross, cost, net, turnover, drawdown,
-capacity and structured attribution. Factor coverage, cumulative ablation,
+identities. Historical Strategy, Portfolio, Outcome and Performance resolution
+follows the exact experiment/session/policy/owner chain; trading date is never
+used as owner identity. Full-A Scope remains an exploratory population, not an
+Operational Universe bypass. Strategy/Portfolio observations reload exact
+owners by ID and hash, bind the factual Outcome session, and persist their
+receipt and source bindings into Strategy and Portfolio replay lineage.
+Pre-migration-067 Portfolio rows remain readable but `LEGACY_UNBOUND`; they are
+not inferred or upgraded into typed evidence. Multi-period performance reports
+gross, cost, net, turnover, drawdown, capacity and structured attribution.
+Factor coverage, cumulative ablation,
 regime/liquidity/market-cap/volatility/theme/industry slices, Strategy Economics,
 Portfolio Risk and diagnostic Feedback are content-addressed exploratory
 research artifacts. They do not qualify a model or establish economic value.
@@ -97,7 +103,7 @@ Locked-OOS consumption, Formal OOS, Calibration qualification, Phase C stage or
 Production Admission evidence. This is a negative/absent evidence result, not a
 Provider-quality or Alpha conclusion.
 
-Migrations 047–066 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, exact Locked-OOS roster and PIT Universe bindings, the Phase C owners, Phase D research execution journals, the authoritative locator contract and fail-closed Formal Execution assessments described above. They do not alter migration 046, which removes reference-only
+Migrations 047–067 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, exact Locked-OOS roster and PIT Universe bindings, the Phase C owners, Phase D research execution journals, the authoritative locator contract, fail-closed Formal Execution assessments and forward-only exact Strategy/Portfolio lineage projections described above. They do not alter migration 046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -117,8 +123,8 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Python test files | 454 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 66 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 241 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 241 independent business Authorities |
+| PostgreSQL migrations | 67 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 244 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 244 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |

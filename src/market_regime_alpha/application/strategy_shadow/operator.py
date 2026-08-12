@@ -64,6 +64,7 @@ from market_regime_alpha.application.strategy_shadow.operations import (
 )
 from market_regime_alpha.application.strategy_shadow.observation_builder import (
     ObservationBuildStatus,
+    ShadowOwnerLineageRequest,
     ShadowObservationPolicy,
 )
 from market_regime_alpha.application.strategy_shadow.postgres_observations import (
@@ -199,14 +200,25 @@ class StrategyShadowDayOperator:
         )
         self._strategy = StrategyShadowOperations(self._strategy_repository)
 
-    def run(self, observation: StrategyDayObservation) -> dict[str, Any]:
-        decision, panel_reference = self._resolve_research_lineage(
-            observation.trading_date
+    def run(
+        self,
+        observation: StrategyDayObservation,
+        *,
+        lineage: ShadowOwnerLineageRequest,
+        observation_receipt_reference: ValidationArtifactReference | None = None,
+    ) -> dict[str, Any]:
+        context = PostgresOwnerResolvedShadowObservationBuilder(
+            self._factory,
+            apply_migrations=False,
+        ).resolve_lineage(
+            research_trading_date=observation.trading_date,
+            lineage=lineage,
         )
-        candidate_set = self._state.get_runtime_candidate(
-            run_id=decision.run_id,
-            tick_id=decision.tick_id,
-        )
+        if observation.observed_at < context.available_at:
+            raise ValueError("Strategy observation predates owner availability")
+        decision = context.decision
+        panel_reference = lineage.panel_reference
+        candidate_set = context.candidate_set
         selected = candidate_set.selected
         if not selected:
             return _result(
@@ -281,6 +293,10 @@ class StrategyShadowDayOperator:
             for item in run.ticks
             if item.command.tick_id == decision.tick_id
         )
+        self._strategy_repository.save_policy(
+            policy,
+            created_at=decision.decision_frozen_at,
+        )
         session = self._strategy.schedule(
             trading_date=observation.trading_date,
             scheduled_for=decision.decision_frozen_at,
@@ -304,10 +320,6 @@ class StrategyShadowDayOperator:
                 policy.policy_id,
                 policy.policy_hash,
             ),
-            created_at=decision.decision_frozen_at,
-        )
-        self._strategy_repository.save_policy(
-            policy,
             created_at=decision.decision_frozen_at,
         )
         if session.status is StrategyShadowSessionStatus.SETTLED:
@@ -339,7 +351,24 @@ class StrategyShadowDayOperator:
                 decision_time=decision.decision_time,
                 intended_quantity=observation.intended_quantity,
                 intended_reference_price=observation.decision_reference_price,
-                source_references=(candidate_reference, panel_reference),
+                source_references=tuple(
+                    sorted(
+                        {
+                            candidate_reference,
+                            panel_reference,
+                            *(
+                                ()
+                                if observation_receipt_reference is None
+                                else (observation_receipt_reference,)
+                            ),
+                        },
+                        key=lambda item: (
+                            item.artifact_kind,
+                            str(item.artifact_id),
+                            item.content_hash,
+                        ),
+                    )
+                ),
             )
             session = self._ensure_artifact(
                 session=session,
@@ -538,6 +567,7 @@ class StrategyShadowDayOperator:
         trading_date: date,
         observed_at: datetime,
         policy: ShadowObservationPolicy,
+        lineage: ShadowOwnerLineageRequest,
         symbol: str | None = None,
     ) -> dict[str, Any]:
         """Build inputs from PostgreSQL fact owners, then run the same operator."""
@@ -549,6 +579,7 @@ class StrategyShadowDayOperator:
             research_trading_date=trading_date,
             observed_at=observed_at,
             policy=policy,
+            lineage=lineage,
             symbol=symbol,
         )
         receipt_fields = {
@@ -569,7 +600,13 @@ class StrategyShadowDayOperator:
                 **receipt_fields,
             }
         output = self.run(
-            StrategyDayObservation.from_canonical_dict(receipt.observation_payload)
+            StrategyDayObservation.from_canonical_dict(receipt.observation_payload),
+            lineage=lineage,
+            observation_receipt_reference=ValidationArtifactReference(
+                "SHADOW_OBSERVATION_RECEIPT",
+                receipt.receipt_id,
+                receipt.receipt_hash,
+            ),
         )
         return {**output, **receipt_fields}
 
@@ -644,38 +681,6 @@ class StrategyShadowDayOperator:
 
     def list_sessions(self, trading_date: date) -> tuple[StrategyShadowSession, ...]:
         return self._strategy_repository.list_sessions(trading_date=trading_date)
-
-    def _resolve_research_lineage(
-        self,
-        trading_date: date,
-    ) -> tuple[Any, ValidationArtifactReference]:
-        with self._factory.connection(read_only=True) as connection:
-            rows = connection.execute(
-                """
-                SELECT decision.decision_id, panel.panel_id, panel.panel_hash
-                FROM shadow_research_decision AS decision
-                JOIN shadow_research_session AS shadow
-                  ON shadow.session_id = decision.session_id
-                JOIN research_evaluation_panel_slice_v2 AS slice
-                  ON slice.shadow_decision_id = decision.decision_id
-                JOIN research_evaluation_panel_v2 AS panel
-                  ON panel.panel_id = slice.panel_id
-                WHERE shadow.trading_date = %s
-                  AND shadow.status = 'SETTLED'
-                ORDER BY panel.created_at DESC, panel.panel_id DESC
-                """,
-                (trading_date,),
-            ).fetchall()
-        if len(rows) != 1:
-            raise ValueError("Strategy day requires exactly one settled Research Shadow Panel")
-        return (
-            self._research_shadow.get_decision(ArtifactId(str(rows[0][0]))),
-            ValidationArtifactReference(
-                "RESEARCH_PANEL_V2",
-                ArtifactId(str(rows[0][1])),
-                str(rows[0][2]),
-            ),
-        )
 
     def _ensure_started(
         self,

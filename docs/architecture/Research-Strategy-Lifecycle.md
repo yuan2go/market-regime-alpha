@@ -59,6 +59,11 @@ qualification or empirical validation.
   content-addressed metric, monthly/yearly return and attribution rows. Missing
   denominators or dimensions remain `NOT_ESTIMABLE`; reconciliation failure is
   rejected rather than hidden in a residual.
+- Migration 067 binds new Strategy and Portfolio rows to the exact Experiment,
+  session, Policy, Target, Outcome, Observation Receipt and source owners. Every
+  binding verifies artifact ID and content hash, and every derived timestamp is
+  at or after its required inputs. Pre-067 policy-only rows stay readable as
+  legacy-unbound data and cannot enter typed Historical or qualification paths.
 - Exploratory Model Research freezes samples, features, targets, walk-forward
   folds, coefficients and lineage. Its executor emits raw barrier scores, not
   probabilities. A real stored research artifact makes
@@ -155,6 +160,12 @@ Runtime Scope, owner-derived Strategy/Portfolio observations, multi-period
 performance, factor coverage and cumulative ablation, target-bound Strategy
 Economics, constrained Portfolio Risk, and non-causal Attribution/Feedback.
 These are executable research capabilities, not positive Alpha evidence.
+
+Only the bounded Strategy/Portfolio observation and simulated ledger operators
+have a natural CLI/runtime consumer. Strategy Economics, Portfolio Risk,
+Ablation and Attribution/Feedback remain exploratory kernels consumed by the
+Historical research composition; they are not installed as new Canonical
+Runtime stages and do not create a second Authority or qualification plane.
 
 Canonical free-data composition now calls `SourceFreezeService`; the retained
 DailyLoop owns historical Daily identities only behind that adapter. Controlled

@@ -187,6 +187,7 @@ from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyShadowDayOperator,
 )
 from market_regime_alpha.application.strategy_shadow.observation_builder import (
+    ShadowOwnerLineageRequest,
     ShadowObservationPolicy,
 )
 from market_regime_alpha.application.strategy_shadow.performance import (
@@ -402,7 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
     portfolio_replay.add_argument("--portfolio-id", required=True)
     model_train = subparsers.add_parser(
         "model-train",
-        help="Train one owner-bound exploratory Research Challenger model.",
+        help="Train one caller-provenance exploratory Research Challenger model.",
     )
     model_train.add_argument("--input", type=Path, required=True)
     model_report = subparsers.add_parser("model-report")
@@ -810,7 +811,7 @@ def _dispatch(
         research_artifact = PostgresResearchModelRepository(
             factory,
             apply_migrations=False,
-        ).train(
+        ).train_exploratory(
             research_training_request,
             trained_at=_instant(str(payload["trained_at"])),
         )
@@ -858,6 +859,7 @@ def _dispatch(
                 "observed_at",
                 "symbol",
                 "observation_policy",
+                "lineage",
             }
             if set(payload) != expected:
                 raise ValueError(
@@ -876,11 +878,22 @@ def _dispatch(
                         "observation_policy",
                     )
                 ),
+                lineage=ShadowOwnerLineageRequest.from_canonical_dict(
+                    _object_value(payload["lineage"], "lineage")
+                ),
+            )
+        payload = _load_json_object(args.observations)
+        if set(payload) != {"observation", "lineage"}:
+            raise ValueError(
+                "strategy-day requires exact observation and lineage objects"
             )
         return StrategyShadowDayOperator(factory).run(
             StrategyDayObservation.from_canonical_dict(
-                _load_json_object(args.observations)
-            )
+                _object_value(payload["observation"], "observation")
+            ),
+            lineage=ShadowOwnerLineageRequest.from_canonical_dict(
+                _object_value(payload["lineage"], "lineage")
+            ),
         )
     if args.operation == "settle-day":
         return FreeDataSettlementOperator(
@@ -906,6 +919,8 @@ def _dispatch(
                 "initial_cash",
                 "portfolio_policy",
                 "observation_policy",
+                "lineage",
+                "strategy_reference",
             }
             if set(payload) != expected:
                 raise ValueError(
@@ -931,6 +946,14 @@ def _dispatch(
                     _object_value(
                         payload["observation_policy"],
                         "observation_policy",
+                    )
+                ),
+                lineage=ShadowOwnerLineageRequest.from_canonical_dict(
+                    _object_value(payload["lineage"], "lineage")
+                ),
+                strategy_reference=ValidationArtifactReference.from_canonical_dict(
+                    _object_value(
+                        payload["strategy_reference"], "strategy_reference"
                     )
                 ),
             )

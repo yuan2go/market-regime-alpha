@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+import json
 from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
@@ -11,11 +12,23 @@ from psycopg.types.json import Jsonb
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
-from market_regime_alpha.application.research_validation.factor_extraction import (
-    ResearchPanelEnrichment,
+from market_regime_alpha.application.controlled_operation.prospective_outcome import (
+    OutcomeAvailabilityStatus,
+)
+from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    BarrierOrderingOutcome,
+    TargetOutcomeLabel,
+    TargetedShadowOutcome,
+)
+from market_regime_alpha.application.research_validation.formal_evaluation import (
+    EvaluationPartition,
+    FormalEvaluationProtocol,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     ForecastMeasureKind,
+)
+from market_regime_alpha.application.research_validation.formal_protocol_components import (
+    FeatureDefinitionSet,
 )
 from market_regime_alpha.application.research_validation.research_model import (
     RegularizedLinearForecastExecutor,
@@ -34,7 +47,19 @@ from market_regime_alpha.application.research_validation.samples import (
     HistoricalPathSampleRecord,
     HistoricalSampleDataset,
 )
+from market_regime_alpha.application.research_validation.qualification import (
+    HistoricalSampleQualificationDecision,
+)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.data.pit_authority import (
+    FormalPITEvidenceArtifact,
+    FormalPITValidationRequest,
+    PITAsOfSnapshot,
+    PITFactKind,
+    PITFactRevision,
+    PITValidationOutcome,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
@@ -45,7 +70,6 @@ from market_regime_alpha.platform.postgres_runtime_governance import (
 )
 
 
-_OWNER_RESOLVED_PROVENANCE = "OWNER_RESOLVED_POSTGRES_INPUTS"
 _CALLER_PAYLOAD_PROVENANCE = "EXPLORATORY_CALLER_PAYLOAD"
 
 
@@ -336,15 +360,26 @@ class PostgresResearchModelRepository:
     def get_artifact(self, artifact_id: ArtifactId) -> ResearchModelArtifact:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT artifact_hash, payload_json FROM research_model_artifact WHERE artifact_id = %s",
+                "SELECT artifact_hash, request_id, payload_json "
+                "FROM research_model_artifact WHERE artifact_id = %s",
                 (str(artifact_id),),
             ).fetchone()
-            if row is None or not isinstance(row[1], dict):
+            if row is None or not isinstance(row[2], dict):
                 raise KeyError(str(artifact_id))
-            artifact = ResearchModelArtifact.from_canonical_dict(row[1])
-            if str(row[0]) != artifact.artifact_hash:
+            artifact = ResearchModelArtifact.from_canonical_dict(row[2])
+            if (
+                str(row[0]) != artifact.artifact_hash
+                or str(row[1]) != str(artifact.request_reference.artifact_id)
+            ):
                 raise ValueError("Research Model artifact owner hash diverged")
             self._verify_artifact_projections(connection, artifact)
+        request = self.get_request(artifact.request_reference.artifact_id)
+        if artifact.request_reference != ValidationArtifactReference(
+            "RESEARCH_MODEL_TRAINING_REQUEST",
+            request.request_id,
+            request.request_hash,
+        ):
+            raise ValueError("Research Model artifact Request owner mismatch")
         return artifact
 
     def replay(self, artifact_id: ArtifactId) -> ResearchModelArtifact:
@@ -461,15 +496,26 @@ class PostgresResearchModelRepository:
     def get_inference(self, receipt_id: ArtifactId) -> ResearchModelInferenceReceipt:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT receipt_hash, payload_json FROM research_model_inference_receipt WHERE receipt_id = %s",
+                "SELECT receipt_hash, artifact_id, payload_json "
+                "FROM research_model_inference_receipt WHERE receipt_id = %s",
                 (str(receipt_id),),
             ).fetchone()
-            if row is None or not isinstance(row[1], dict):
+            if row is None or not isinstance(row[2], dict):
                 raise KeyError(str(receipt_id))
-            receipt = ResearchModelInferenceReceipt.from_canonical_dict(row[1])
-            if str(row[0]) != receipt.receipt_hash:
+            receipt = ResearchModelInferenceReceipt.from_canonical_dict(row[2])
+            if (
+                str(row[0]) != receipt.receipt_hash
+                or str(row[1]) != str(receipt.model_reference.artifact_id)
+            ):
                 raise ValueError("Research Model inference owner hash diverged")
             self._verify_inference_projection(connection, receipt)
+        artifact = self.get_artifact(receipt.model_reference.artifact_id)
+        if receipt.model_reference != ValidationArtifactReference(
+            "RESEARCH_MODEL_ARTIFACT",
+            artifact.artifact_id,
+            artifact.artifact_hash,
+        ):
+            raise ValueError("Research Model inference Artifact owner mismatch")
         return receipt
 
     @staticmethod
@@ -595,10 +641,8 @@ def _resolve_owner_training_request(
     ):
         raise ValueError("Research Model code identity diverged from Model Governance")
 
-    feature_recorded_at = _verify_research_artifact_owner(
-        connection,
-        request.feature_catalog_reference,
-        expected_kind="FEATURE_DEFINITION_SET",
+    feature_set, feature_recorded_at = _load_feature_definition_owner(
+        connection, request.feature_catalog_reference
     )
     target_recorded_at = _verify_target_protocol_owner(
         connection, request.target_protocol_reference
@@ -619,28 +663,40 @@ def _resolve_owner_training_request(
         or request.experiment_definition != protocol.experiment_definition
     ):
         raise ValueError("Research Model request diverged from frozen Formal Protocol owners")
-
-    historical_references = set(protocol.historical_sample_dataset_references)
-    request_references = set(request.dataset_references)
-    if not historical_references.issubset(request_references):
-        raise ValueError("Research Model request omits frozen Historical Dataset owners")
-    extra_references = request_references - historical_references
-    if any(item.artifact_kind != "PANEL_ENRICHMENT" for item in extra_references):
-        raise ValueError("Research Model dataset scope contains unsupported owner kinds")
-
-    dataset_owners = {
-        reference: _load_historical_dataset_owner(connection, reference)
-        for reference in protocol.historical_sample_dataset_references
-    }
-    enrichment_owners = {
-        reference: _load_panel_enrichment_owner(connection, reference)
-        for reference in sorted(
-            extra_references,
-            key=lambda item: (item.artifact_kind, str(item.artifact_id)),
+    experiment = protocol.experiment_definition
+    assert experiment is not None
+    penalty_domain = next(
+        (
+            item
+            for item in experiment.hyperparameter_space
+            if item.parameter_name == "ridge_penalty"
+        ),
+        None,
+    )
+    if penalty_domain is None:
+        raise ValueError("Research Model frozen ridge penalty domain is missing")
+    try:
+        frozen_penalties = tuple(
+            sorted(Decimal(item) for item in penalty_domain.allowed_values)
         )
-    }
-    if not enrichment_owners:
-        raise ValueError("Owner-resolved Research Model training requires Panel Enrichment owners")
+    except InvalidOperation as error:
+        raise ValueError("Research Model frozen ridge penalty domain is invalid") from error
+    if request.penalty_candidates != frozen_penalties:
+        raise ValueError("Research Model penalty grid must equal the frozen owner")
+    if experiment.random_seeds != (request.fold_seed,):
+        raise ValueError("Research Model fold seed must equal the sole frozen owner seed")
+
+    if request.dataset_references != protocol.historical_sample_dataset_references:
+        raise ValueError(
+            "Research Model datasets must equal the frozen Historical Dataset owners"
+        )
+    dataset_owners = tuple(
+        _load_historical_dataset_owner(connection, reference)
+        for reference in protocol.historical_sample_dataset_references
+    )
+    evaluation, evaluation_recorded_at = _load_evaluation_protocol_owner(
+        connection, protocol.evaluation_protocol_reference
+    )
 
     expected_locked_ids = tuple(
         sorted((ArtifactId(item) for item in roster.label_ids), key=str)
@@ -652,74 +708,348 @@ def _resolve_owner_training_request(
     if request.session_sequence != protocol.frozen_trading_dates:
         raise ValueError("Research Model session sequence is not the frozen Calendar owner")
 
-    bindings = {item.training_target_name: item for item in request.measure_bindings}
-    resolved_samples: list[ResearchTrainingSample] = []
-    sample_ids: dict[ArtifactId, ArtifactId] = {}
     latest_input_at = max(
         model.owner_recorded_at,
         feature_recorded_at,
         target_recorded_at,
         roster.frozen_at,
-        *(item[1] for item in dataset_owners.values()),
-        *(item[1] for item in enrichment_owners.values()),
+        evaluation_recorded_at,
+        *(item[1] for item in dataset_owners),
     )
-    for sample in request.samples:
-        features = tuple(
-            _resolve_feature_owner(
-                sample=sample,
-                feature=feature,
-                owners=enrichment_owners,
-            )
-            for feature in sample.features
-        )
-        targets = tuple(
-            _resolve_target_owner(
-                sample=sample,
-                target=target,
-                binding=bindings[target.name],
-                owners=dataset_owners,
-            )
-            for target in sample.targets
-        )
-        resolved = ResearchTrainingSample.create(
-            symbol=sample.symbol,
-            trading_date=sample.trading_date,
-            decision_time=sample.decision_time,
-            features=features,
-            targets=targets,
-        )
-        sample_ids[sample.sample_id] = resolved.sample_id
-        resolved_samples.append(resolved)
-        latest_input_at = max(
-            latest_input_at,
-            *(item.available_at for item in features),
-            *(item.available_at for item in targets),
-        )
     if request.requested_at < latest_input_at:
         raise ValueError("Research Model request predates required owner availability")
-    folds = tuple(
-        WalkForwardFold(
-            fold_name=fold.fold_name,
-            train_sample_ids=tuple(
-                sorted((sample_ids[item] for item in fold.train_sample_ids), key=str)
-            ),
-            validation_sample_ids=tuple(
-                sorted(
-                    (sample_ids[item] for item in fold.validation_sample_ids),
-                    key=str,
-                )
-            ),
-            purge_sessions=fold.purge_sessions,
-            embargo_sessions=fold.embargo_sessions,
-        )
-        for fold in request.folds
+    samples = _build_owner_training_samples(
+        connection,
+        request=request,
+        feature_set=feature_set,
+        datasets=tuple(item[0] for item in dataset_owners),
+        formal_protocol_reference=protocol_reference,
     )
+    folds = _build_owner_walk_forward_folds(
+        samples=samples,
+        evaluation=evaluation,
+        oos_start_date=roster.oos_start_date,
+        session_sequence=request.session_sequence,
+    )
+    selected_ids = {
+        sample_id
+        for fold in folds
+        for sample_id in (*fold.train_sample_ids, *fold.validation_sample_ids)
+    }
+    samples = tuple(item for item in samples if item.sample_id in selected_ids)
     return _rebuild_request(
         request,
-        samples=tuple(resolved_samples),
+        samples=samples,
         folds=folds,
-        limitations=(*request.limitations, _OWNER_RESOLVED_PROVENANCE),
+        feature_names=tuple(
+            sorted(item.feature_id for item in feature_set.definitions)
+        ),
+        limitations=(*request.limitations, "OWNER_RESOLVED_POSTGRES_INPUTS"),
     )
+
+
+def _build_owner_training_samples(
+    connection: Any,
+    *,
+    request: ResearchModelTrainingRequest,
+    feature_set: FeatureDefinitionSet,
+    datasets: tuple[HistoricalSampleDataset, ...],
+    formal_protocol_reference: ValidationArtifactReference,
+) -> tuple[ResearchTrainingSample, ...]:
+    feature_names = tuple(sorted(item.feature_id for item in feature_set.definitions))
+    if request.feature_names != feature_names:
+        raise ValueError("Research Model feature names diverge from frozen owner")
+    datasets_by_target = {item.target_reference: item for item in datasets}
+    if len(datasets_by_target) != len(datasets):
+        raise ValueError("Research Model Historical Dataset target owner is ambiguous")
+    binding_targets = {item.target_reference for item in request.measure_bindings}
+    if binding_targets != set(datasets_by_target):
+        raise ValueError("Research Model target bindings diverge from frozen Datasets")
+
+    records_by_target: dict[
+        ValidationArtifactReference,
+        dict[tuple[datetime, str], HistoricalPathSampleRecord],
+    ] = {}
+    qualifications: dict[
+        ValidationArtifactReference,
+        tuple[HistoricalSampleQualificationDecision, dict[datetime, FormalPITEvidenceArtifact]],
+    ] = {}
+    for target, dataset in datasets_by_target.items():
+        decision = _load_qualified_historical_dataset_owner(
+            connection,
+            dataset=dataset,
+            formal_protocol_reference=formal_protocol_reference,
+        )
+        evidence_by_time = _load_qualified_pit_evidence_set(
+            connection, decision
+        )
+        if request.requested_at < max(
+            decision.evaluated_at,
+            *(item.recorded_at for item in evidence_by_time.values()),
+        ):
+            raise ValueError(
+                "Research Model request predates qualification/PIT owner recording"
+            )
+        qualifications[target] = decision, evidence_by_time
+        by_key = {
+            (item.sample.sample_decision_time.value, item.sample.symbol): item
+            for item in dataset.records
+        }
+        if len(by_key) != len(dataset.records):
+            raise ValueError("Research Model Historical sample owner key is ambiguous")
+        records_by_target[target] = by_key
+
+    owner_keys = {frozenset(items) for items in records_by_target.values()}
+    if len(owner_keys) != 1:
+        raise ValueError("Research Model Target datasets do not align by session/symbol")
+    keys = sorted(next(iter(owner_keys)), key=lambda item: (item[0], item[1]))
+    samples: list[ResearchTrainingSample] = []
+    for decision_time, symbol in keys:
+        target_records = {
+            target: records_by_target[target][(decision_time, symbol)]
+            for target in records_by_target
+        }
+        feature_sets = {
+            frozenset(
+                item
+                for item in record.pit_lineage
+                if item.artifact_kind == "PIT_FACT_REVISION"
+            )
+            for record in target_records.values()
+        }
+        if len(feature_sets) != 1:
+            raise ValueError("Research Model Target records diverge on PIT lineage")
+        pit_references = tuple(
+            sorted(
+                next(iter(feature_sets)),
+                key=lambda item: (str(item.artifact_id), item.content_hash),
+            )
+        )
+        for target, record in target_records.items():
+            _decision, evidence_by_time = qualifications[target]
+            evidence = evidence_by_time.get(decision_time)
+            if evidence is None or symbol not in _formal_pit_symbols(
+                connection, evidence.evidence_id
+            ):
+                raise ValueError("Research Model Historical sample PIT owner is missing")
+            selected = {
+                (str(item.fact_id), item.fact_hash)
+                for item in evidence.selected_fact_authorities
+            }
+            if {
+                (str(item.artifact_id), item.content_hash)
+                for item in pit_references
+            } != selected:
+                raise ValueError("Research Model Historical sample PIT owner set diverged")
+        features = _load_feature_vector(
+            connection,
+            references=pit_references,
+            symbol=symbol,
+            decision_time=decision_time,
+            feature_names=feature_names,
+        )
+        targets = tuple(
+            _load_training_target(
+                connection,
+                binding=binding,
+                record=target_records[binding.target_reference],
+            )
+            for binding in request.measure_bindings
+        )
+        samples.append(
+            ResearchTrainingSample.create(
+                symbol=symbol,
+                trading_date=decision_time.date(),
+                decision_time=decision_time,
+                features=features,
+                targets=targets,
+            )
+        )
+    if not samples:
+        raise ValueError("Research Model owner-derived training matrix is empty")
+    return tuple(samples)
+
+
+def _load_feature_vector(
+    connection: Any,
+    *,
+    references: tuple[ValidationArtifactReference, ...],
+    symbol: str,
+    decision_time: datetime,
+    feature_names: tuple[str, ...],
+) -> tuple[TimedResearchFeature, ...]:
+    facts = tuple(_load_pit_fact_owner(connection, item) for item in references)
+    feature_facts = tuple(
+        (reference, fact)
+        for reference, fact in zip(references, facts, strict=True)
+        if fact.fact_kind is PITFactKind.FEATURE_MATERIALIZATION
+    )
+    if len(feature_facts) != 1:
+        raise ValueError("Research Model requires exactly one PIT Feature vector")
+    reference, fact = feature_facts[0]
+    if (
+        fact.data_eligibility is not DataEligibility.FORMAL_RESEARCH
+        or fact.effective_from > decision_time
+        or fact.available_at > decision_time
+        or fact.recorded_at > decision_time
+    ):
+        raise ValueError("Research Model Feature Fact is not valid at DecisionTime")
+    try:
+        value = json.loads(fact.value_json)
+    except json.JSONDecodeError as error:
+        raise ValueError("Research Model Feature vector JSON is invalid") from error
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "symbol", "decision_time", "features"}
+        or value["schema_version"] != "forecast-feature-vector/v1"
+        or value["symbol"] != symbol
+        or value["decision_time"] != decision_time.isoformat()
+        or not isinstance(value["features"], dict)
+        or tuple(sorted(str(item) for item in value["features"])) != feature_names
+    ):
+        raise ValueError("Research Model Feature vector owner identity mismatch")
+    output = []
+    for name in feature_names:
+        raw = value["features"][name]
+        try:
+            parsed = None if raw is None else Decimal(str(raw))
+        except InvalidOperation as error:
+            raise ValueError("Research Model Feature value is not decimal") from error
+        if parsed is not None and not parsed.is_finite():
+            raise ValueError("Research Model Feature value is not finite")
+        output.append(
+            TimedResearchFeature(
+                name=name,
+                value=parsed,
+                effective_at=fact.effective_from,
+                available_at=max(fact.available_at, fact.recorded_at),
+                source_reference=reference,
+                source_value_path=f"value_json.features.{name}",
+            )
+        )
+    return tuple(output)
+
+
+def _load_training_target(
+    connection: Any,
+    *,
+    binding: Any,
+    record: HistoricalPathSampleRecord,
+) -> TimedResearchTarget:
+    label = _load_target_label_owner(connection, record)
+    measure = binding.measure_kind
+    value: Decimal | bool | None
+    path: str
+    if measure in {ForecastMeasureKind.RANKING_SCORE, ForecastMeasureKind.EXPECTED_RETURN}:
+        value, path = label.checkpoint_return, "checkpoint_return"
+    elif measure is ForecastMeasureKind.EXPECTED_DOWNSIDE:
+        value = (
+            None
+            if label.checkpoint_return is None
+            else min(label.checkpoint_return, Decimal("0"))
+        )
+        path = "checkpoint_return.downside"
+    elif measure is ForecastMeasureKind.EXPECTED_MFE:
+        value, path = label.mfe, "mfe"
+    elif measure is ForecastMeasureKind.EXPECTED_MAE:
+        value, path = label.mae, "mae"
+    elif measure is ForecastMeasureKind.RETURN_POSITIVE_RAW_LOGIT:
+        value = (
+            None
+            if label.checkpoint_return is None
+            else label.checkpoint_return > 0
+        )
+        path = "checkpoint_return.positive"
+    elif measure is ForecastMeasureKind.UPPER_BEFORE_LOWER_RAW_LOGIT:
+        if label.barrier_ordering not in {
+            BarrierOrderingOutcome.UP_FIRST,
+            BarrierOrderingOutcome.DOWN_FIRST,
+        }:
+            value = None
+        else:
+            value = label.barrier_ordering is BarrierOrderingOutcome.UP_FIRST
+        path = "barrier_ordering.upper_before_lower"
+    elif measure is ForecastMeasureKind.BARRIER_RAW_LOGIT:
+        passages = dict(label.barrier_passages)
+        value = None if binding.barrier_id not in passages else passages[binding.barrier_id] is not None
+        path = f"barrier_passages.{binding.barrier_id}"
+    else:
+        raise ValueError("Research Model measure cannot be owner-derived for training")
+    if value is None:
+        raise ValueError("Research Model Target owner value is not estimable")
+    return TimedResearchTarget(
+        name=binding.training_target_name,
+        value=value,
+        available_at=max(label.outcome_available_at, record.registered_at),
+        source_reference=record.outcome_reference,
+        source_value_path=path,
+    )
+
+
+def _build_owner_walk_forward_folds(
+    *,
+    samples: tuple[ResearchTrainingSample, ...],
+    evaluation: FormalEvaluationProtocol,
+    oos_start_date: date,
+    session_sequence: tuple[date, ...],
+) -> tuple[WalkForwardFold, ...]:
+    session_index = {item: index for index, item in enumerate(session_sequence)}
+    if any(item.trading_date not in session_index for item in samples):
+        raise ValueError("Research Model owner sample is outside frozen Calendar")
+    folds = []
+    for fold_number in sorted({item.fold for item in evaluation.windows}):
+        scoped = tuple(item for item in evaluation.windows if item.fold == fold_number)
+        train = next(item for item in scoped if item.partition is EvaluationPartition.TRAIN)
+        validation = next(
+            item for item in scoped if item.partition is EvaluationPartition.VALIDATION
+        )
+        locked = next(
+            item for item in scoped if item.partition is EvaluationPartition.LOCKED_OOS
+        )
+        if locked.start_date != oos_start_date:
+            raise ValueError("Research Model Locked OOS start diverges from Evaluation owner")
+        try:
+            validation_start_index = session_index[validation.start_date]
+            locked_start_index = session_index[locked.start_date]
+        except KeyError as error:
+            raise ValueError(
+                "Research Model Evaluation boundary is outside frozen Calendar"
+            ) from error
+        purge = evaluation.embargo_sessions
+        train_latest_index = validation_start_index - purge - 1
+        validation_latest_index = locked_start_index - purge - 1
+        train_ids = tuple(
+            sorted(
+                (
+                    item.sample_id
+                    for item in samples
+                    if train.start_date <= item.trading_date <= train.end_date
+                    and session_index[item.trading_date] <= train_latest_index
+                ),
+                key=str,
+            )
+        )
+        validation_ids = tuple(
+            sorted(
+                (
+                    item.sample_id
+                    for item in samples
+                    if validation.start_date <= item.trading_date <= validation.end_date
+                    and session_index[item.trading_date] <= validation_latest_index
+                ),
+                key=str,
+            )
+        )
+        folds.append(
+            WalkForwardFold(
+                fold_name=f"fold-{fold_number:02d}",
+                train_sample_ids=train_ids,
+                validation_sample_ids=validation_ids,
+                purge_sessions=purge,
+                embargo_sessions=purge,
+            )
+        )
+    return tuple(folds)
 
 
 class _LockedOOSOwner:
@@ -829,6 +1159,50 @@ def _verify_target_protocol_owner(
     return row[2]
 
 
+def _load_feature_definition_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+) -> tuple[FeatureDefinitionSet, datetime]:
+    recorded_at = _verify_research_artifact_owner(
+        connection, reference, expected_kind="FEATURE_DEFINITION_SET"
+    )
+    row = connection.execute(
+        "SELECT payload_json FROM research_validation_artifact WHERE artifact_id = %s",
+        (str(reference.artifact_id),),
+    ).fetchone()
+    assert row is not None and isinstance(row[0], Mapping)
+    feature_set = FeatureDefinitionSet.from_canonical_dict(
+        {
+            "definition_set_id": str(reference.artifact_id),
+            "definition_set_hash": reference.content_hash,
+            **dict(row[0]),
+        }
+    )
+    return feature_set, recorded_at
+
+
+def _load_evaluation_protocol_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+) -> tuple[FormalEvaluationProtocol, datetime]:
+    recorded_at = _verify_research_artifact_owner(
+        connection, reference, expected_kind="FORMAL_EVALUATION_PROTOCOL"
+    )
+    row = connection.execute(
+        "SELECT payload_json FROM research_validation_artifact WHERE artifact_id = %s",
+        (str(reference.artifact_id),),
+    ).fetchone()
+    assert row is not None and isinstance(row[0], Mapping)
+    evaluation = FormalEvaluationProtocol.from_canonical_dict(
+        {
+            "protocol_id": str(reference.artifact_id),
+            "protocol_hash": reference.content_hash,
+            **dict(row[0]),
+        }
+    )
+    return evaluation, recorded_at
+
+
 def _load_historical_dataset_owner(
     connection: Any, reference: ValidationArtifactReference
 ) -> tuple[HistoricalSampleDataset, datetime]:
@@ -850,146 +1224,202 @@ def _load_historical_dataset_owner(
     return dataset, recorded_at
 
 
-def _load_panel_enrichment_owner(
-    connection: Any, reference: ValidationArtifactReference
-) -> tuple[ResearchPanelEnrichment, datetime]:
-    recorded_at = _verify_research_artifact_owner(
-        connection, reference, expected_kind="PANEL_ENRICHMENT"
-    )
+def _load_qualified_historical_dataset_owner(
+    connection: Any,
+    *,
+    dataset: HistoricalSampleDataset,
+    formal_protocol_reference: ValidationArtifactReference,
+) -> HistoricalSampleQualificationDecision:
     row = connection.execute(
-        "SELECT payload_json FROM research_validation_artifact WHERE artifact_id = %s",
+        """
+        SELECT decision_hash, payload_json, evaluated_at
+        FROM historical_sample_qualification_decision
+        WHERE dataset_id = %s AND formal_protocol_id = %s
+        ORDER BY revision DESC LIMIT 1
+        """,
+        (
+            str(dataset.dataset_id),
+            str(formal_protocol_reference.artifact_id),
+        ),
+    ).fetchone()
+    if row is None or not isinstance(row[1], Mapping):
+        raise ValueError("Research Model qualified Historical Dataset owner is missing")
+    decision = HistoricalSampleQualificationDecision.from_canonical_dict(row[1])
+    if (
+        decision.decision_hash != str(row[0])
+        or not decision.qualified
+        or decision.dataset_reference
+        != ValidationArtifactReference(
+            "HISTORICAL_SAMPLE_DATASET", dataset.dataset_id, dataset.dataset_hash
+        )
+        or decision.formal_protocol_reference != formal_protocol_reference
+        or decision.evaluated_at != row[2]
+    ):
+        raise ValueError("Research Model Historical Dataset qualification mismatch")
+    pit_rows = connection.execute(
+        """
+        SELECT formal_pit_evidence_id, formal_pit_evidence_hash
+        FROM historical_sample_qualification_pit_evidence
+        WHERE decision_id = %s ORDER BY ordinal
+        """,
+        (str(decision.decision_id),),
+    ).fetchall()
+    if [tuple(str(item) for item in row) for row in pit_rows] != [
+        (str(item.artifact_id), item.content_hash)
+        for item in decision.formal_pit_references
+    ]:
+        raise ValueError("Research Model Historical qualification PIT projection mismatch")
+    return decision
+
+
+def _load_qualified_pit_evidence_set(
+    connection: Any,
+    decision: HistoricalSampleQualificationDecision,
+) -> dict[datetime, FormalPITEvidenceArtifact]:
+    output: dict[datetime, FormalPITEvidenceArtifact] = {}
+    for reference in decision.formal_pit_references:
+        row = connection.execute(
+            """
+            SELECT evidence_hash, payload_json, request_json
+            FROM formal_pit_validation_evidence WHERE evidence_id = %s
+            """,
+            (str(reference.artifact_id),),
+        ).fetchone()
+        if (
+            row is None
+            or not isinstance(row[1], Mapping)
+            or not isinstance(row[2], Mapping)
+        ):
+            raise ValueError("Research Model Formal PIT owner is missing")
+        evidence = FormalPITEvidenceArtifact.from_canonical_dict(row[1])
+        pit_request = FormalPITValidationRequest.from_canonical_dict(row[2])
+        if (
+            evidence.evidence_hash != str(row[0])
+            or reference.artifact_id != evidence.evidence_id
+            or reference.content_hash != evidence.evidence_hash
+            or evidence.request_hash != pit_request.request_hash
+            or evidence.outcome is not PITValidationOutcome.SATISFIED
+            or pit_request.decision_time in output
+        ):
+            raise ValueError("Research Model Formal PIT owner identity mismatch")
+        snapshot_row = connection.execute(
+            "SELECT snapshot_hash, payload_json FROM pit_as_of_snapshot "
+            "WHERE snapshot_id = %s",
+            (str(evidence.snapshot_id),),
+        ).fetchone()
+        if snapshot_row is None or not isinstance(snapshot_row[1], Mapping):
+            raise ValueError("Research Model Formal PIT Snapshot owner is missing")
+        snapshot = PITAsOfSnapshot.from_canonical_dict(snapshot_row[1])
+        if (
+            snapshot.snapshot_hash != str(snapshot_row[0])
+            or snapshot.snapshot_hash != evidence.snapshot_hash
+            or snapshot.selected_fact_authorities
+            != evidence.selected_fact_authorities
+        ):
+            raise ValueError("Research Model Formal PIT Snapshot identity mismatch")
+        output[pit_request.decision_time] = evidence
+    if not output:
+        raise ValueError("Research Model requires qualified Formal PIT evidence")
+    return output
+
+
+def _formal_pit_symbols(
+    connection: Any,
+    evidence_id: ArtifactId,
+) -> tuple[str, ...]:
+    row = connection.execute(
+        "SELECT request_json FROM formal_pit_validation_evidence WHERE evidence_id = %s",
+        (str(evidence_id),),
+    ).fetchone()
+    if row is None or not isinstance(row[0], Mapping):
+        raise ValueError("Research Model Formal PIT request owner is missing")
+    return FormalPITValidationRequest.from_canonical_dict(row[0]).symbols
+
+
+def _load_pit_fact_owner(
+    connection: Any,
+    reference: ValidationArtifactReference,
+) -> PITFactRevision:
+    row = connection.execute(
+        "SELECT content_hash, payload_json FROM pit_fact_revision WHERE fact_id = %s",
         (str(reference.artifact_id),),
     ).fetchone()
-    assert row is not None and isinstance(row[0], Mapping)
-    enrichment = ResearchPanelEnrichment.from_canonical_dict(
-        {
-            "enrichment_id": str(reference.artifact_id),
-            "enrichment_hash": reference.content_hash,
-            **dict(row[0]),
-        }
-    )
-    projections = connection.execute(
-        """
-        SELECT exposure_json FROM research_panel_factor_exposure
-        WHERE enrichment_id = %s
-        ORDER BY symbol, factor_family, factor_id, timeframe,
-                 exposure_json->>'source_value_path'
-        """,
-        (str(reference.artifact_id),),
-    ).fetchall()
-    if [item[0] for item in projections] != [
-        item.to_canonical_dict() for item in enrichment.exposures
-    ]:
-        raise ValueError("Research Model Panel Enrichment projection mismatch")
-    return enrichment, recorded_at
+    if row is None or not isinstance(row[1], Mapping):
+        raise ValueError("Research Model PIT Fact owner is missing")
+    fact = PITFactRevision.from_canonical_dict(row[1])
+    if (
+        reference.artifact_kind != "PIT_FACT_REVISION"
+        or fact.fact_id != reference.artifact_id
+        or fact.content_hash != reference.content_hash
+        or str(row[0]) != reference.content_hash
+    ):
+        raise ValueError("Research Model PIT Fact owner identity mismatch")
+    return fact
 
 
-def _resolve_feature_owner(
-    *,
-    sample: ResearchTrainingSample,
-    feature: TimedResearchFeature,
-    owners: Mapping[
-        ValidationArtifactReference, tuple[ResearchPanelEnrichment, datetime]
-    ],
-) -> TimedResearchFeature:
-    owner = owners.get(feature.source_reference)
-    if owner is None:
-        raise ValueError("Research Model feature source is not a frozen dataset owner")
-    enrichment, recorded_at = owner
-    matches = tuple(
-        item
-        for item in enrichment.exposures
-        if item.symbol == sample.symbol and item.factor_id == feature.name
-    )
-    if len(matches) != 1:
-        raise ValueError("Research Model feature owner is missing or ambiguous")
-    exposure = matches[0]
-    path_values = {
-        f"exposures.{feature.name}.raw_numeric": exposure.raw_numeric,
-        f"exposures.{feature.name}.normalized_exposure": exposure.normalized_exposure,
-        f"exposures.{feature.name}.model_contribution": exposure.model_contribution,
-    }
-    if feature.source_value_path not in path_values:
-        raise ValueError("Research Model feature source path is unsupported")
-    available_at = exposure.available_at or recorded_at
-    return TimedResearchFeature(
-        name=feature.name,
-        value=path_values[feature.source_value_path],
-        effective_at=feature.effective_at,
-        available_at=available_at,
-        source_reference=feature.source_reference,
-        source_value_path=feature.source_value_path,
-    )
-
-
-def _resolve_target_owner(
-    *,
-    sample: ResearchTrainingSample,
-    target: TimedResearchTarget,
-    binding: Any,
-    owners: Mapping[
-        ValidationArtifactReference, tuple[HistoricalSampleDataset, datetime]
-    ],
-) -> TimedResearchTarget:
-    owner = owners.get(target.source_reference)
-    if owner is None:
-        raise ValueError("Research Model target source is not a frozen dataset owner")
-    dataset, _recorded_at = owner
-    if dataset.target_reference != binding.target_reference:
-        raise ValueError("Research Model target owner Target identity mismatch")
-    matches = tuple(
-        item
-        for item in dataset.records
-        if item.sample.symbol == sample.symbol
-        and item.sample.sample_decision_time.value == sample.decision_time
-    )
-    if len(matches) != 1:
-        raise ValueError("Research Model target owner is missing or ambiguous")
-    record = matches[0]
-    expected_path, value = _historical_target_value(record, binding.measure_kind)
-    if target.source_value_path != expected_path:
-        raise ValueError("Research Model target source path diverged")
-    return TimedResearchTarget(
-        name=target.name,
-        value=value,
-        available_at=record.sample.available_at.value,
-        source_reference=target.source_reference,
-        source_value_path=target.source_value_path,
-    )
-
-
-def _historical_target_value(
+def _load_target_label_owner(
+    connection: Any,
     record: HistoricalPathSampleRecord,
-    measure: ForecastMeasureKind,
-) -> tuple[str, Decimal | bool]:
-    prefix = f"records.{record.record_id}.sample"
-    if measure in {
-        ForecastMeasureKind.RANKING_SCORE,
-        ForecastMeasureKind.EXPECTED_RETURN,
-    }:
-        value = record.sample.realized_return
-        field = "realized_return"
-    elif measure is ForecastMeasureKind.EXPECTED_MFE:
-        value = record.sample.realized_mfe
-        field = "realized_mfe"
-    elif measure in {
-        ForecastMeasureKind.EXPECTED_MAE,
-        ForecastMeasureKind.EXPECTED_DOWNSIDE,
-    }:
-        value = record.sample.realized_mae
-        field = "realized_mae"
-    elif measure is ForecastMeasureKind.RETURN_POSITIVE_RAW_LOGIT:
-        value = record.sample.realized_return
-        if value is None:
-            raise ValueError("Research Model return-direction target is unavailable")
-        return f"{prefix}.realized_return_positive", value > 0
-    else:
-        raise ValueError(
-            "Historical Dataset owner cannot establish the requested barrier target"
-        )
-    if value is None:
-        raise ValueError("Research Model continuous target owner value is unavailable")
-    return f"{prefix}.{field}", Decimal(str(value))
+) -> TargetOutcomeLabel:
+    rows = connection.execute(
+        """
+        SELECT outcome.settlement_hash, outcome.payload_json,
+               label.label_hash, label.label_json, label.availability_status
+        FROM targeted_shadow_outcome_label AS label
+        JOIN targeted_shadow_outcome AS outcome
+          ON outcome.settlement_id = label.settlement_id
+        WHERE label.label_id = %s
+        """,
+        (str(record.outcome_reference.artifact_id),),
+    ).fetchall()
+    exact = []
+    for row in rows:
+        if (
+            str(row[2]) != record.outcome_reference.content_hash
+            or str(row[4]) != OutcomeAvailabilityStatus.COMPLETE.value
+            or not isinstance(row[1], Mapping)
+            or not isinstance(row[3], Mapping)
+        ):
+            continue
+        outcome = TargetedShadowOutcome.from_canonical_dict(row[1])
+        label = TargetOutcomeLabel.from_canonical_dict(row[3])
+        if (
+            outcome.settlement_hash == str(row[0])
+            and label in outcome.labels
+            and label.label_id == record.outcome_reference.artifact_id
+            and label.label_hash == record.outcome_reference.content_hash
+            and label.target.artifact_id == record.target_reference.artifact_id
+            and label.target.content_hash == record.target_reference.content_hash
+            and label.symbol == record.sample.symbol
+            and label.label_interval_start
+            == record.sample.sample_decision_time.value
+            and record.outcome_reference.artifact_kind == "TARGET_OUTCOME_LABEL"
+            and record.sample.source_artifact_id == outcome.settlement_id
+            and record.sample.source_content_hash == outcome.settlement_hash
+            and label.outcome_available_at <= record.sample.available_at.value
+            and (
+                None
+                if record.sample.realized_return is None
+                else Decimal(str(record.sample.realized_return))
+            )
+            == label.checkpoint_return
+            and (
+                None
+                if record.sample.realized_mfe is None
+                else Decimal(str(record.sample.realized_mfe))
+            )
+            == label.mfe
+            and (
+                None
+                if record.sample.realized_mae is None
+                else Decimal(str(record.sample.realized_mae))
+            )
+            == label.mae
+        ):
+            exact.append(label)
+    if len(exact) != 1:
+        raise ValueError("Research Model Target Label owner mismatch")
+    return exact[0]
 
 
 def _rebuild_request(
@@ -997,7 +1427,8 @@ def _rebuild_request(
     *,
     samples: tuple[ResearchTrainingSample, ...] | None = None,
     folds: tuple[WalkForwardFold, ...] | None = None,
-    limitations: tuple[str, ...] | None = None,
+    feature_names: tuple[str, ...] | None = None,
+    limitations: tuple[str, ...],
 ) -> ResearchModelTrainingRequest:
     return ResearchModelTrainingRequest.create(
         model_definition_reference=request.model_definition_reference,
@@ -1011,7 +1442,9 @@ def _rebuild_request(
         session_sequence=request.session_sequence,
         samples=request.samples if samples is None else samples,
         folds=request.folds if folds is None else folds,
-        feature_names=request.feature_names,
+        feature_names=(
+            request.feature_names if feature_names is None else feature_names
+        ),
         continuous_target_names=request.continuous_target_names,
         barrier_target_names=request.barrier_target_names,
         penalty_candidates=request.penalty_candidates,
@@ -1021,9 +1454,7 @@ def _rebuild_request(
         requested_at=request.requested_at,
         experiment_definition=request.experiment_definition,
         measure_bindings=request.measure_bindings,
-        limitations=(
-            request.limitations if limitations is None else tuple(sorted(set(limitations)))
-        ),
+        limitations=tuple(sorted(set(limitations))),
     )
 
 
