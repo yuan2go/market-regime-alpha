@@ -34,6 +34,7 @@ from market_regime_alpha.universe.research import (
     FreeDataEvidenceOrigin,
     FreeResearchUniverseSnapshot,
     build_free_research_universe_snapshot,
+    build_historical_constituent_universe_snapshot,
 )
 
 
@@ -170,6 +171,188 @@ class BaoStockResearchUniverseClient:
         )
         return FreeResearchUniverseAcquisition(provider_result, manifest, snapshot)
 
+    def acquire_historical_constituents(
+        self,
+        *,
+        effective_date: date,
+    ) -> FreeResearchUniverseAcquisition:
+        """Acquire an effective-dated CSI 300 member set plus lifecycle facts."""
+
+        try:
+            import baostock as bs
+        except ImportError as exc:
+            raise AShareDataError("baostock is not installed") from exc
+        previous_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(self._timeout_seconds)
+        try:
+            user_id, password = baostock_credentials()
+            with redirect_stdout(StringIO()):
+                login = bs.login(user_id=user_id, password=password)
+            if getattr(login, "error_code", "0") != "0":
+                raise AShareDataError(f"BaoStock login failed: {login.error_msg}")
+            try:
+                constituent_requested_at = self._clock()
+                constituents = _consume_result(
+                    bs.query_hs300_stocks(effective_date.isoformat())
+                )
+                basic_requested_at = self._clock()
+                security_master = _consume_result(bs.query_stock_basic())
+                retrieved_at = self._clock()
+            finally:
+                with redirect_stdout(StringIO()):
+                    bs.logout()
+        finally:
+            socket.setdefaulttimeout(previous_timeout)
+        for label, response in (
+            ("historical CSI 300 constituents", constituents),
+            ("Security Master lifecycle", security_master),
+        ):
+            if response["error_code"] != "0" or not response["rows"]:
+                raise AShareDataError(f"BaoStock {label} query returned no usable rows")
+        if any(
+            item.tzinfo is None
+            for item in (
+                constituent_requested_at,
+                basic_requested_at,
+                retrieved_at,
+            )
+        ):
+            raise ValueError("Research Universe client clock must be timezone-aware")
+        constituent_source = _historical_source_payload(
+            response=constituents,
+            product="query_hs300_stocks:effective-date:v1",
+            locator=(
+                "baostock://query-hs300-stocks/"
+                f"{effective_date.isoformat()}"
+            ),
+            requested_at=constituent_requested_at,
+            retrieved_at=retrieved_at,
+            request_parameters=(("date", effective_date.isoformat()),),
+            symbol_scope=("CSI_300_CONSTITUENTS",),
+        )
+        security_master_source = _historical_source_payload(
+            response=security_master,
+            product="query_stock_basic:all:v1",
+            locator=(
+                "baostock://query-stock-basic/all-for-historical-constituents/"
+                f"{effective_date.isoformat()}"
+            ),
+            requested_at=basic_requested_at,
+            retrieved_at=retrieved_at,
+            request_parameters=(("scope", "ALL_SECURITIES"),),
+            symbol_scope=("ALL_SECURITIES",),
+        )
+        decision_time = DecisionTime(retrieved_at)
+        provider_result = PublicCompositeProviderResult(
+            profile_id=BAOSTOCK_RESEARCH_UNIVERSE_PROFILE_ID,
+            decision_time=decision_time,
+            raw_payloads=(constituent_source, security_master_source),
+            bars=(),
+            quotes=(),
+            source_conflicts=(),
+            limitations=(
+                "CURRENT_CLASSIFICATION_NOT_BACKFILLED",
+                "FREE_DATA_EXPLORATORY",
+                "FORMAL_PIT_NOT_ESTABLISHED",
+                "NO_PROVIDER_FALLBACK",
+                "RETRIEVED_AFTER_CONSTITUENT_EFFECTIVE_DATE",
+            ),
+        )
+        manifest = SourceManifest(
+            provider_profile_id=BAOSTOCK_RESEARCH_UNIVERSE_PROFILE_ID,
+            decision_time=decision_time,
+            source_artifacts=provider_result.source_artifact_references,
+            fields=(),
+            source_conflicts=(),
+            limitations=provider_result.limitations,
+            data_eligibility=DataEligibility.EXPLORATORY,
+        )
+        archive_id = source_archive_id(
+            provider_result=provider_result,
+            source_manifest=manifest,
+        )
+        constituent_rows = _normalize_security_master_rows(
+            fields=tuple(str(item) for item in constituents["fields"]),
+            rows=tuple(
+                tuple(str(item) for item in row) for row in constituents["rows"]
+            ),
+        )
+        basic_rows = _normalize_security_master_rows(
+            fields=tuple(str(item) for item in security_master["fields"]),
+            rows=tuple(
+                tuple(str(item) for item in row)
+                for row in security_master["rows"]
+            ),
+        )
+        snapshot = build_historical_constituent_universe_snapshot(
+            effective_date=effective_date,
+            known_at=retrieved_at,
+            provider_id=str(BAOSTOCK_PUBLIC_PROVIDER_ID),
+            provider_contract="baostock-query-hs300-stocks/v1",
+            source_manifest_reference=ValidationArtifactReference(
+                "SOURCE_MANIFEST",
+                manifest.source_manifest_id,
+                manifest.content_hash,
+            ),
+            constituent_source_reference=ValidationArtifactReference(
+                "HISTORICAL_CONSTITUENT_SNAPSHOT",
+                constituent_source.source_artifact_id,
+                constituent_source.raw_hash,
+            ),
+            raw_archive_id=archive_id,
+            evidence_origin=FreeDataEvidenceOrigin.REAL_FREE_PROVIDER_OBSERVATION,
+            constituent_rows=constituent_rows,
+            security_master_rows=basic_rows,
+        )
+        return FreeResearchUniverseAcquisition(provider_result, manifest, snapshot)
+
+
+def _historical_source_payload(
+    *,
+    response: dict[str, Any],
+    product: str,
+    locator: str,
+    requested_at: datetime,
+    retrieved_at: datetime,
+    request_parameters: tuple[tuple[str, str], ...],
+    symbol_scope: tuple[str, ...],
+) -> AcquiredSourcePayload:
+    raw = json.dumps(
+        response,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return AcquiredSourcePayload(
+        provider_id=BAOSTOCK_PUBLIC_PROVIDER_ID,
+        product=product,
+        locator=locator,
+        raw_payload=raw,
+        retrieved_time=RetrievedAt(retrieved_at),
+        limitations=(
+            "BAOSTOCK_LIBRARY_RESULT_REENCODED_NOT_TRANSPORT_BYTES",
+            "FORMAL_PIT_NOT_ESTABLISHED",
+            "PUBLIC_DATA_EXPLORATORY_ONLY",
+            "RETRIEVED_AFTER_HISTORICAL_EFFECTIVE_DATE",
+        ),
+        request_metadata=RawSourceRequestMetadata(
+            provider_profile_id=BAOSTOCK_RESEARCH_UNIVERSE_PROFILE_ID,
+            endpoint=product.split(":", 1)[0],
+            request_parameters=request_parameters,
+            requested_at=requested_at,
+            provider_timestamp=None,
+            event_time=None,
+            available_at=retrieved_at,
+            decision_time=retrieved_at,
+            http_status=None,
+            content_type="application/json",
+            response_size=len(raw),
+            encoding="utf-8",
+            symbol_scope=symbol_scope,
+            field_scope=tuple(sorted(str(item) for item in response["fields"])),
+        ),
+    )
+
 
 def _consume_result(result: Any) -> dict[str, Any]:
     fields = [str(item) for item in getattr(result, "fields", ())]
@@ -201,7 +384,7 @@ def _normalize_security_master_rows(
                 f"row {index}"
             )
         malformed = len(row) != len(fields)
-        values = {
+        values: dict[str, Any] = {
             field: (row[field_index] if field_index < len(row) else "")
             for field_index, field in enumerate(fields)
         }

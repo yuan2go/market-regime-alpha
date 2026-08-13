@@ -12,13 +12,22 @@ from market_regime_alpha.application.controlled_operation.longitudinal_index imp
     resolve_artifact_root_locator,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
+    HistoricalPackageIndex,
+    load_historical_package_index,
     VerifiedHistoricalPackage,
     load_verified_historical_package,
     publish_historical_package,
+    scan_historical_package,
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
     HistoricalDataOwner,
+    historical_symbol_bucket,
+)
+from market_regime_alpha.application.historical_corpus.selective_read import (
+    HistoricalDataSlice,
+    HistoricalReadMetrics,
+    HistoricalReadQuery,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -292,6 +301,161 @@ class PostgresHistoricalCorpusRepository:
                 "Historical partition Authority projection diverged"
             )
         return verified
+
+    def open_index(
+        self,
+        reference: ValidationArtifactReference,
+    ) -> HistoricalPackageIndex:
+        """Resolve and verify package Authority without decoding Parquet rows."""
+
+        self._validate_reference_kind(reference)
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT content_hash, artifact_kind, package_locator, physical_hash,
+                       manifest_json
+                FROM historical_corpus_owner
+                WHERE owner_id = %s AND content_hash = %s
+                """,
+                (str(reference.artifact_id), reference.content_hash),
+            ).fetchone()
+            if row is None:
+                raise HistoricalCorpusOwnerNotFound(str(reference.artifact_id))
+            partition_rows = connection.execute(
+                """
+                SELECT ordinal, partition_json, physical_checksum
+                FROM historical_corpus_partition
+                WHERE owner_id = %s AND owner_hash = %s
+                ORDER BY ordinal
+                """,
+                (str(reference.artifact_id), reference.content_hash),
+            ).fetchall()
+        if str(row[1]) != reference.artifact_kind:
+            raise HistoricalCorpusIntegrityError("Historical owner kind mismatch")
+        package_path = resolve_artifact_root_locator(
+            artifact_root=self._artifact_root,
+            locator=str(row[2]),
+        )
+        index = load_historical_package_index(package_path)
+        if (
+            index.reference != reference
+            or dict(index.manifest) != dict(row[4])
+            or index.physical_hash != str(row[3])
+            or index.reference.content_hash != str(row[0])
+        ):
+            raise HistoricalCorpusIntegrityError(
+                "Historical owner and immutable package index diverged"
+            )
+        checksum_by_path = dict(index.checksums)
+        expected_partitions = tuple(
+            (
+                ordinal,
+                partition.reference_dict(),
+                checksum_by_path[partition.relative_path],
+            )
+            for ordinal, partition in enumerate(index.partitions, 1)
+        )
+        actual_partitions = tuple(
+            (int(item[0]), dict(item[1]), str(item[2])) for item in partition_rows
+        )
+        if actual_partitions != expected_partitions:
+            raise HistoricalCorpusIntegrityError(
+                "Historical partition Authority projection diverged"
+            )
+        return index
+
+    def read(self, query: HistoricalReadQuery) -> HistoricalDataSlice:
+        """Execute one bounded, predicate-pushed exact-owner read."""
+
+        package = self.open_index(query.reference)
+        buckets = (
+            None
+            if query.symbols is None
+            else sorted(
+                {
+                    historical_symbol_bucket(symbol, package.bucket_count)
+                    for symbol in query.symbols
+                }
+            )
+        )
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT partition_id, partition_json, physical_checksum
+                FROM historical_corpus_partition
+                WHERE owner_id = %s
+                  AND owner_hash = %s
+                  AND timeframe = ANY(%s)
+                  AND first_market_date <= %s
+                  AND last_market_date >= %s
+                  AND (%s::integer[] IS NULL OR symbol_bucket = ANY(%s))
+                ORDER BY ordinal
+                """,
+                (
+                    str(query.reference.artifact_id),
+                    query.reference.content_hash,
+                    [item.value for item in query.timeframes],
+                    query.last_market_date,
+                    query.first_market_date,
+                    buckets,
+                    buckets,
+                ),
+            ).fetchall()
+        descriptor_by_id = {
+            str(item.partition_id): item for item in package.partitions
+        }
+        checksum_by_path = dict(package.checksums)
+        selected = []
+        for row in rows:
+            descriptor = descriptor_by_id.get(str(row[0]))
+            if (
+                descriptor is None
+                or descriptor.reference_dict() != dict(row[1])
+                or checksum_by_path.get(descriptor.relative_path) != str(row[2])
+            ):
+                raise HistoricalCorpusIntegrityError(
+                    "Historical selected partition projection diverged"
+                )
+            selected.append(descriptor)
+        partitions = tuple(selected)
+        scan = scan_historical_package(
+            package=package,
+            partitions=partitions,
+            timeframes=query.timeframes,
+            first_market_date=query.first_market_date,
+            last_market_date=query.last_market_date,
+            symbols=query.symbols,
+            max_rows=query.max_rows,
+            batch_size=query.batch_size,
+        )
+        metrics = HistoricalReadMetrics(
+            candidate_partition_count=len(partitions),
+            candidate_partition_row_count=sum(item.row_count for item in partitions),
+            verified_partition_count=len(partitions),
+            verified_bytes=scan.verified_bytes,
+            returned_row_count=len(scan.records),
+            arrow_batch_count=scan.arrow_batch_count,
+            maximum_batch_row_count=scan.maximum_batch_row_count,
+            projected_columns=scan.projected_columns,
+            predicate_pushdown=True,
+        )
+        return HistoricalDataSlice(
+            package=package,
+            query=query,
+            partitions=partitions,
+            records=scan.records,
+            metrics=metrics,
+        )
+
+    @staticmethod
+    def _validate_reference_kind(reference: ValidationArtifactReference) -> None:
+        if reference.artifact_kind not in {
+            HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE.value,
+            HistoricalArtifactKind.NORMALIZED_DATASET.value,
+        }:
+            raise HistoricalCorpusIntegrityError(
+                "Historical owner reference kind is unsupported"
+            )
 
 
 __all__ = [

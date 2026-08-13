@@ -79,6 +79,7 @@ from market_regime_alpha.application.historical_corpus.baostock_archive import (
     BaoStockHistoricalArchiveClient,
 )
 from market_regime_alpha.application.historical_corpus.decision_materializer import (
+    FREE_RESEARCH_UNIVERSE_KIND,
     HistoricalDecisionMaterializer,
 )
 from market_regime_alpha.application.historical_corpus.evidence_producer import (
@@ -264,7 +265,7 @@ from market_regime_alpha.data_sources.a_share_bars import (
 from market_regime_alpha.forecasting.sample_provider import (
     HistoricalRegistryPathForecastSampleProvider,
 )
-from market_regime_alpha.market_data import AssetType
+from market_regime_alpha.market_data import AssetType, Timeframe
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -448,6 +449,14 @@ def build_parser() -> argparse.ArgumentParser:
     universe_sync = subparsers.add_parser("research-universe-sync")
     universe_sync.add_argument("--as-of-date", required=True)
     universe_sync.add_argument("--artifact-root", type=Path, required=True)
+    historical_universe_sync = subparsers.add_parser(
+        "historical-universe-sync",
+        help="Freeze a real effective-dated CSI 300 constituent Research Universe.",
+    )
+    historical_universe_sync.add_argument("--effective-date", required=True)
+    historical_universe_sync.add_argument(
+        "--artifact-root", type=Path, required=True
+    )
     universe_replay = subparsers.add_parser("research-universe-replay")
     universe_replay.add_argument("--snapshot-id", required=True)
     universe_replay.add_argument("--artifact-root", type=Path, required=True)
@@ -706,22 +715,83 @@ def _dispatch(
 ) -> dict[str, Any]:
     if args.operation == "historical-corpus-acquire":
         payload = _load_json_object(args.input)
-        if set(payload) != {"symbols", "start_date", "end_date", "bucket_count"}:
+        required = {"start_date", "end_date", "bucket_count"}
+        if not required.issubset(payload) or not set(payload).issubset(
+            {
+                *required,
+                "symbols",
+                "universe_snapshot_id",
+                "context_symbols",
+                "timeframe_ranges",
+            }
+        ):
             raise ValueError(
-                "historical-corpus-acquire requires symbols, start_date, "
-                "end_date and bucket_count"
+                "historical-corpus-acquire requires start_date, end_date, "
+                "bucket_count and either symbols or universe_snapshot_id"
             )
-        raw = BaoStockHistoricalArchiveClient().acquire(
-            symbols=tuple(
-                sorted(
-                    {
-                        str(item)
-                        for item in _array_value(payload["symbols"], "symbols")
-                    }
+        if ("symbols" in payload) == ("universe_snapshot_id" in payload):
+            raise ValueError(
+                "historical-corpus-acquire requires exactly one symbol source"
+            )
+        timeframe_ranges_payload = payload.get("timeframe_ranges")
+        timeframe_ranges = None
+        if timeframe_ranges_payload is not None:
+            ranges = _object_value(timeframe_ranges_payload, "timeframe_ranges")
+            if set(ranges) != {Timeframe.DAILY.value, Timeframe.MINUTE_5.value}:
+                raise ValueError(
+                    "timeframe_ranges requires exact DAILY and MINUTE_5 entries"
                 )
-            ),
+            timeframe_ranges = {
+                timeframe: (
+                    date.fromisoformat(
+                        str(
+                            _object_value(
+                                ranges[timeframe.value], timeframe.value
+                            )["start_date"]
+                        )
+                    ),
+                    date.fromisoformat(
+                        str(
+                            _object_value(
+                                ranges[timeframe.value], timeframe.value
+                            )["end_date"]
+                        )
+                    ),
+                )
+                for timeframe in (Timeframe.DAILY, Timeframe.MINUTE_5)
+            }
+        universe_reference = None
+        if "universe_snapshot_id" in payload:
+            universe = PostgresFreeResearchUniverseRepository(
+                factory,
+                apply_migrations=False,
+            ).get(ArtifactId(str(payload["universe_snapshot_id"])))
+            universe_reference = ValidationArtifactReference(
+                FREE_RESEARCH_UNIVERSE_KIND,
+                universe.snapshot_id,
+                universe.snapshot_hash,
+            )
+            stock_symbols = tuple(
+                item.symbol
+                for item in universe.records
+                if item.membership_status.value == "INCLUDED"
+            )
+        else:
+            stock_symbols = tuple(
+                str(item) for item in _array_value(payload["symbols"], "symbols")
+            )
+        context_symbols = tuple(
+            str(item)
+            for item in _array_value(
+                payload.get("context_symbols", []), "context_symbols"
+            )
+        )
+        symbols = tuple(sorted({*stock_symbols, *context_symbols}))
+        raw = BaoStockHistoricalArchiveClient().acquire(
+            symbols=symbols,
             start_date=date.fromisoformat(str(payload["start_date"])),
             end_date=date.fromisoformat(str(payload["end_date"])),
+            timeframe_ranges=timeframe_ranges,
             bucket_count=int(payload["bucket_count"]),
         )
         corpus = PostgresHistoricalCorpusRepository(
@@ -739,6 +809,13 @@ def _dispatch(
             "normalized_owner": normalized_package.owner.to_canonical_dict(),
             "raw_physical_hash": raw_package.physical_hash,
             "normalized_physical_hash": normalized_package.physical_hash,
+            "stock_symbol_count": len(stock_symbols),
+            "context_symbols": list(sorted(set(context_symbols))),
+            "universe_reference": (
+                None
+                if universe_reference is None
+                else universe_reference.to_canonical_dict()
+            ),
             "formal_pit": False,
             "formal_oos": False,
             "data_eligibility": "EXPLORATORY",
@@ -1088,6 +1165,11 @@ def _dispatch(
     if args.operation == "research-universe-sync":
         return FreeResearchUniverseOperator(factory).sync(
             as_of_date=date.fromisoformat(args.as_of_date),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "historical-universe-sync":
+        return FreeResearchUniverseOperator(factory).sync_historical_constituents(
+            effective_date=date.fromisoformat(args.effective_date),
             artifact_root=args.artifact_root.resolve(),
         )
     if args.operation == "research-universe-replay":
@@ -2294,6 +2376,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
     if operation in _READ_OPERATIONS:
         return SecurityPermission.READ_RESEARCH
     if operation in {
+        "historical-universe-sync",
         "research-universe-sync",
         "runtime-scope-build",
         "historical-run",

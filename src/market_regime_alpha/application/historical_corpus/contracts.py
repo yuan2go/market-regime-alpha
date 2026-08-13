@@ -965,6 +965,13 @@ def _stable_bucket(symbol: str, bucket_count: int) -> int:
     return int(canonical_hash({"symbol": symbol})[7:23], 16) % bucket_count
 
 
+def historical_symbol_bucket(symbol: str, bucket_count: int) -> int:
+    """Return the stable package bucket used by the canonical partitioner."""
+
+    require_text("symbol", symbol)
+    return _stable_bucket(symbol, bucket_count)
+
+
 def _partition_relative_path(item: HistoricalDataPartition) -> str:
     return _partition_path(
         artifact_kind=item.artifact_kind,
@@ -1048,4 +1055,5 @@ __all__ = [
     "HistoricalRawRequest",
     "HistoricalTradingStatus",
     "build_partitions",
+    "historical_symbol_bucket",
 ]

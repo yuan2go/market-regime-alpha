@@ -27,6 +27,10 @@ from market_regime_alpha.universe.research import FreeDataEvidenceOrigin
 class FreeResearchUniverseAcquirer(Protocol):
     def acquire(self, *, as_of_date: date) -> FreeResearchUniverseAcquisition: ...
 
+    def acquire_historical_constituents(
+        self, *, effective_date: date
+    ) -> FreeResearchUniverseAcquisition: ...
+
 
 class FreeResearchUniverseOperator:
     def __init__(
@@ -40,6 +44,26 @@ class FreeResearchUniverseOperator:
 
     def sync(self, *, as_of_date: date, artifact_root: Path) -> dict[str, object]:
         acquired = self._acquisition.acquire(as_of_date=as_of_date)
+        return self._publish(acquired, artifact_root=artifact_root, historical=False)
+
+    def sync_historical_constituents(
+        self,
+        *,
+        effective_date: date,
+        artifact_root: Path,
+    ) -> dict[str, object]:
+        acquired = self._acquisition.acquire_historical_constituents(
+            effective_date=effective_date
+        )
+        return self._publish(acquired, artifact_root=artifact_root, historical=True)
+
+    def _publish(
+        self,
+        acquired: FreeResearchUniverseAcquisition,
+        *,
+        artifact_root: Path,
+        historical: bool,
+    ) -> dict[str, object]:
         archive_root = artifact_root / "free-data-research-universe" / "raw-archives"
         archive_path = archive_root / acquired.snapshot.raw_archive_id
         if archive_path.exists():
@@ -58,7 +82,10 @@ class FreeResearchUniverseOperator:
                 source_manifest=acquired.source_manifest,
             )
         snapshot = self._repository.publish(acquired.snapshot)
-        return _result(snapshot, archive_path=str(archive_path), replayed=False)
+        result = _result(snapshot, archive_path=str(archive_path), replayed=False)
+        if historical:
+            result["operation"] = "HISTORICAL_RESEARCH_UNIVERSE_SYNC"
+        return result
 
     def replay(
         self,
@@ -100,6 +127,12 @@ def _result(snapshot, *, archive_path: str | None, replayed: bool) -> dict[str, 
         "included_count": snapshot.included_count,
         "unknown_count": snapshot.unknown_count,
         "evidence_origin": snapshot.evidence_origin.value,
+        "selection_basis": snapshot.selection_basis.value,
+        "constituent_effective_date": (
+            None
+            if snapshot.constituent_effective_date is None
+            else snapshot.constituent_effective_date.isoformat()
+        ),
         "runtime_evidence_origin": (
             FreeDataEvidenceOrigin.ARCHIVED_REPLAY.value
             if replayed

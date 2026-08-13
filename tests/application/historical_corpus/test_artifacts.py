@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from market_regime_alpha.application.historical_corpus.artifacts import (
+    load_historical_package_index,
     load_verified_historical_package,
     publish_historical_package,
 )
@@ -126,3 +127,22 @@ def test_unexpected_file_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="exact file set"):
         load_verified_historical_package(path)
+
+
+def test_package_index_verifies_identity_without_decoding_partitions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = raw_owner()
+    path = publish_historical_package(artifact_root=tmp_path, owner=owner)
+
+    monkeypatch.setattr(
+        "market_regime_alpha.application.historical_corpus.artifacts._read_partition",
+        lambda **_: (_ for _ in ()).throw(AssertionError("partition decoded")),
+    )
+
+    index = load_historical_package_index(path)
+
+    assert index.reference == owner.reference
+    assert index.coverage == owner.coverage
+    assert index.partition_count == len(owner.partitions)
+    assert index.physical_hash.startswith("sha256:")

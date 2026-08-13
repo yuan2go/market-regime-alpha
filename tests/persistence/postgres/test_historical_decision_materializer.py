@@ -75,7 +75,7 @@ from market_regime_alpha.universe.postgres_runtime_scope import (
 )
 from market_regime_alpha.universe.research import (
     FreeDataEvidenceOrigin,
-    build_free_research_universe_snapshot,
+    build_historical_constituent_universe_snapshot,
 )
 from market_regime_alpha.universe.runtime_scope import (
     UniversePolicySelector,
@@ -191,6 +191,37 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         if item.artifact_kind == "HISTORICAL_SIGNAL"
     )
     signal = component_repository.get(signal_reference)
+    feature_reference = next(
+        item
+        for item in partial.sessions[0].receipts[-1].output_references
+        if item.artifact_kind == "HISTORICAL_FEATURE"
+    )
+    feature = component_repository.get(feature_reference)
+    feature_value = feature.payload["features"][0]["values"][0]
+    assert feature_value["source_bar_count"] >= 0
+    assert feature_value["source_bar_lineage_hash"].startswith("sha256:")
+    assert "source_bar_ids" not in feature_value
+    assert "source_bar_hashes" not in feature_value
+    pool_reference = next(
+        item
+        for item in partial.sessions[0].receipts[0].output_references
+        if item.artifact_kind == "HISTORICAL_DYNAMIC_POOL"
+    )
+    pool = component_repository.get(pool_reference)
+    security_coverage = pool.payload["historical_security_fact_coverage"]
+    assert security_coverage["listing_date_available_count"] == len(STOCKS)
+    assert security_coverage["listing_age_available_count"] == len(STOCKS)
+    assert security_coverage["market_cap_status"] == "NOT_ESTIMABLE"
+    assert security_coverage["industry_status"] == "UNKNOWN"
+    assert pool.payload["selective_reads"]
+    assert any(read["selected_partitions"] for read in pool.payload["selective_reads"])
+    for read in pool.payload["selective_reads"]:
+        assert read["metrics"]["predicate_pushdown"] is True
+        assert read["metrics"]["maximum_batch_row_count"] <= read["query"]["batch_size"]
+        assert all(
+            item["physical_checksum"].startswith("sha256:")
+            for item in read["selected_partitions"]
+        )
     market_reference = next(
         item
         for item in partial.sessions[0].receipts[-1].output_references
@@ -203,6 +234,14 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         if item.artifact_kind == "HISTORICAL_CANDIDATE"
     )
     candidate = component_repository.get(candidate_reference)
+    etf_reference = next(
+        item
+        for item in partial.sessions[0].receipts[-1].output_references
+        if item.artifact_kind == "HISTORICAL_ETF"
+    )
+    etf = component_repository.get(etf_reference)
+    assert etf.payload["instrument_coverage"]["etf_available_count"] == 1
+    assert etf.payload["instrument_coverage"]["index_available_count"] == 0
     assert market.payload["market_state"] != "DATA_INSUFFICIENT"
     assert "MARKET_REGIME_DATA_INSUFFICIENT" not in market.payload["reason_codes"]
     assert len(candidate.payload["records"]) == len(STOCKS)
@@ -497,19 +536,32 @@ def _normalized_owner(
 
 
 def _universe():
-    return build_free_research_universe_snapshot(
-        as_of_date=DECISION_DATE,
+    return build_historical_constituent_universe_snapshot(
+        effective_date=DECISION_DATE,
         known_at=MATERIALIZED_AT,
         provider_id="provider-baostock-public",
-        provider_contract="baostock-query-stock-basic-all/v1",
+        provider_contract="baostock-historical-constituent/v1",
         source_manifest_reference=ValidationArtifactReference(
             "SOURCE_MANIFEST",
             ArtifactId("phase-e-security-master-manifest"),
             canonical_hash({"security-master": "phase-e"}),
         ),
+        constituent_source_reference=ValidationArtifactReference(
+            "RAW_PROVIDER_REQUEST",
+            ArtifactId("phase-e-historical-constituents"),
+            canonical_hash({"constituents": "phase-e"}),
+        ),
         raw_archive_id="phase-e-security-master-raw",
         evidence_origin=FreeDataEvidenceOrigin.ENGINEERING_FIXTURE,
-        rows=tuple(
+        constituent_rows=tuple(
+            {
+                "code": f"{symbol[-2:].lower()}.{symbol[:6]}",
+                "code_name": symbol,
+                "updateDate": DECISION_DATE.isoformat(),
+            }
+            for symbol in STOCKS
+        ),
+        security_master_rows=tuple(
             {
                 "code": f"{symbol[-2:].lower()}.{symbol[:6]}",
                 "code_name": symbol,
@@ -528,9 +580,9 @@ def _policy():
         policy_version="phase-e-test/v1",
         selectors=(
             UniversePolicySelector(
-                kind=UniverseScopeKind.WATCHLIST,
-                selector_id="phase-e-stock-scope",
-                symbols=STOCKS,
+                kind=UniverseScopeKind.FULL_A,
+                selector_id="phase-e-historical-constituent-scope",
+                symbols=(),
             ),
         ),
         minimum_history_sessions=60,

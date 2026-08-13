@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current executable operator procedures
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-11
+> **Last Updated:** 2026-08-13
 > **Code Evidence:** `pyproject.toml`, `scripts/*.py`, `src/market_regime_alpha/cli`
 
 ## Install and verify environment
@@ -34,8 +34,23 @@ This free-data path remains `EXPLORATORY / PIT_INCOMPLETE`. PostgreSQL is the
 only business Authority; the Artifact Root stores immutable large bytes and is
 never scanned to select an owner.
 
-`historical-corpus-acquire` accepts exactly `symbols`, `start_date`, `end_date`
-and `bucket_count`. It performs BaoStock acquisition, deterministic
+Freeze an effective-dated real historical constituent set before a Full-A run:
+
+```bash
+uv run continuous-research \
+  --database-url "$MARKET_REGIME_ALPHA_DATABASE_URL" \
+  --application-schema market_regime_alpha \
+  --principal-id "$MRA_PRINCIPAL_ID" \
+  historical-universe-sync \
+  --effective-date 2026-06-15 \
+  --artifact-root /absolute/path/to/artifact-root
+```
+
+`historical-corpus-acquire` accepts either an explicit `symbols` list or the
+exact `universe_snapshot_id`; the latter may be combined with
+`context_symbols` for real ETF/index instruments. Optional
+`timeframe_ranges` freezes different Daily and 5-minute windows without an
+implicit Reader shortcut. It performs BaoStock acquisition, deterministic
 normalization, logical hashing, staging validation, atomic publish, PostgreSQL
 registration and exact reload. Empty provider results, rejected rows and
 missing fields remain in coverage.
@@ -50,7 +65,7 @@ uv run continuous-research \
   --artifact-root /absolute/path/to/artifact-root
 ```
 
-Before execution, freeze one Free Research Universe owner, WATCHLIST policy,
+Before execution, freeze one Free Research Universe owner, WATCHLIST or Full-A policy,
 canonical exploratory Target Protocol, Governed Experiment owner and
 `HistoricalResearchCommand`. The command binds the exact normalized Dataset,
 security master, policy, target, experiment, calendar, code revision and
@@ -108,8 +123,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 068, `phase_e_historical_corpus`. Expected schema
-catalog: 244 tables. Migrations 052–067 add Formal Protocol bindings and
+Expected head: migration 070, `historical_constituent_universe`. Expected schema
+catalog: 251 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -118,6 +133,10 @@ persisted blocked Production Admission and Controlled Execution readiness.
 Migration 059 adds only the immutable exploratory training/model-parameter
 journal consumed by the owner-resolved Forecast executor; all Formal/OOS,
 Calibration and Production flags remain database-enforced false.
+Migration 068 installs Historical Corpus Authority. Migration 069 adds the
+exact-owner timeframe/date/symbol-bucket selective-read index. Migration 070
+accepts the v2 effective-dated historical constituent owner while preserving
+immutable v1 Research Universe rows.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.

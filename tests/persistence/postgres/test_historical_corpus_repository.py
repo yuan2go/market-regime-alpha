@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from datetime import date
 
 import pytest
 
@@ -14,10 +15,14 @@ from market_regime_alpha.application.historical_corpus.postgres_repository impor
     HistoricalCorpusOwnerNotFound,
     PostgresHistoricalCorpusRepository,
 )
+from market_regime_alpha.application.historical_corpus.selective_read import (
+    HistoricalReadQuery,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.market_data.contracts import Timeframe
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -99,3 +104,77 @@ def test_registered_package_corruption_fails_closed(
 
     with pytest.raises(ValueError, match="checksum mismatch"):
         repository.load(raw.reference)
+
+
+def test_selective_read_matches_full_owner_and_records_pushdown_metrics(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path: Path,
+) -> None:
+    repository = PostgresHistoricalCorpusRepository(
+        postgres_factory, artifact_root=tmp_path
+    )
+    raw = raw_owner()
+    normalized = normalized_owner(raw)
+    repository.publish_and_register(raw)
+    repository.publish_and_register(normalized)
+
+    result = repository.read(
+        HistoricalReadQuery.create(
+            reference=normalized.reference,
+            timeframes=(Timeframe.DAILY,),
+            first_market_date=date(2023, 1, 3),
+            last_market_date=date(2023, 1, 3),
+            symbols=("600000.SH",),
+            max_rows=10,
+        )
+    )
+
+    full_records = tuple(
+        record
+        for partition in repository.load(normalized.reference).owner.partitions
+        for record in partition.records
+    )
+    assert result.records == full_records
+    assert result.metrics.candidate_partition_count == 1
+    assert result.metrics.verified_partition_count == 1
+    assert result.metrics.returned_row_count == 1
+    assert result.metrics.maximum_batch_row_count <= 10
+    assert "record_json" in result.metrics.projected_columns
+
+
+def test_selective_read_rejects_unbounded_or_corrupt_slice(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path: Path,
+) -> None:
+    repository = PostgresHistoricalCorpusRepository(
+        postgres_factory, artifact_root=tmp_path
+    )
+    raw = raw_owner()
+    normalized = normalized_owner(raw)
+    repository.publish_and_register(raw)
+    registered = repository.publish_and_register(normalized)
+
+    with pytest.raises(ValueError, match="max_rows"):
+        HistoricalReadQuery.create(
+            reference=normalized.reference,
+            timeframes=(Timeframe.DAILY,),
+            first_market_date=date(2023, 1, 1),
+            last_market_date=date(2023, 1, 31),
+            symbols=None,
+            max_rows=0,
+        )
+
+    parquet = next(registered.root.rglob("*.parquet"))
+    with parquet.open("ab") as handle:
+        handle.write(b"corruption")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        repository.read(
+            HistoricalReadQuery.create(
+                reference=normalized.reference,
+                timeframes=(Timeframe.DAILY,),
+                first_market_date=date(2023, 1, 1),
+                last_market_date=date(2023, 1, 31),
+                symbols=None,
+                max_rows=10,
+            )
+        )
