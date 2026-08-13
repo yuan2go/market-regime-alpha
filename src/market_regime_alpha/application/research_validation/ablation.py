@@ -35,9 +35,7 @@ class AblationVariantKind(str, Enum):
     PRICE_VOLUME_MARKET_REGIME = "PRICE_VOLUME_MARKET_REGIME"
     PRICE_VOLUME_MARKET_REGIME_ETF = "PRICE_VOLUME_MARKET_REGIME_ETF"
     PRICE_VOLUME_MARKET_REGIME_ETF_THEME = "PRICE_VOLUME_MARKET_REGIME_ETF_THEME"
-    PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL = (
-        "PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL"
-    )
+    PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL = "PRICE_VOLUME_MARKET_REGIME_ETF_THEME_CAPITAL"
     THROUGH_DYNAMIC_POOL = "THROUGH_DYNAMIC_POOL"
     THROUGH_CANDIDATE_RANKING = "THROUGH_CANDIDATE_RANKING"
     THROUGH_SIGNAL = "THROUGH_SIGNAL"
@@ -201,19 +199,13 @@ class AblationProtocol:
         ordered = tuple(sorted(variants, key=lambda item: item.variant_id))
         if not ordered or len({item.variant_id for item in ordered}) != len(ordered) or top_k <= 0:
             raise ValueError("Ablation Protocol variants/top_k are invalid")
-        frozen_sequence = (
-            tuple(item.variant_id for item in ordered)
-            if comparison_sequence is None
-            else comparison_sequence
-        )
+        frozen_sequence = tuple(item.variant_id for item in ordered) if comparison_sequence is None else comparison_sequence
         if (
             not frozen_sequence
             or len(set(frozen_sequence)) != len(frozen_sequence)
             or set(frozen_sequence) != {item.variant_id for item in ordered}
         ):
-            raise ValueError(
-                "Ablation comparison sequence must cover frozen variants exactly once"
-            )
+            raise ValueError("Ablation comparison sequence must cover frozen variants exactly once")
         require_text("scoring_contract", scoring_contract)
         payload = {
             "schema": "ablation-protocol/v2",
@@ -271,11 +263,20 @@ class AblationObservation:
             require_text(f"ablation {label.lower()} slice", value)
 
     def slice_values(self) -> tuple[tuple[str, str], ...]:
+        period_slices: tuple[tuple[str, str], ...] = ()
+        if self.trading_date is not None:
+            quarter = ((self.trading_date.month - 1) // 3) + 1
+            period_slices = (
+                ("MONTH", self.trading_date.strftime("%Y-%m")),
+                ("QUARTER", f"{self.trading_date.year}-Q{quarter}"),
+                ("YEAR", str(self.trading_date.year)),
+            )
         return (
             ("INDUSTRY", self.industry),
             ("LIQUIDITY", self.liquidity_bucket),
             ("MARKET_CAP", self.market_cap_bucket),
             ("MARKET_REGIME", self.market_regime),
+            *period_slices,
             ("THEME", self.theme),
             ("VOLATILITY", self.volatility_bucket),
         )
@@ -424,9 +425,7 @@ class AlphaAblationSuite:
         require_sha256("suite_hash", self.suite_hash)
         if self.authority is not ResearchEvidenceAuthority.EXPLORATORY:
             raise ValueError("Alpha Ablation Suite is exploratory evidence only")
-        if tuple(item.variant.variant_id for item in self.results) != (
-            self.comparison_sequence
-        ):
+        if tuple(item.variant.variant_id for item in self.results) != (self.comparison_sequence):
             raise ValueError("Alpha Ablation results must follow frozen sequence")
         if canonical_hash(self.identity_payload()) != self.suite_hash:
             raise ValueError("Alpha Ablation Suite hash mismatch")
@@ -445,9 +444,7 @@ class AlphaAblationSuite:
                 }
                 for item in self.results
             ],
-            "slice_evaluations": [
-                item.to_canonical_dict() for item in self.slice_evaluations
-            ],
+            "slice_evaluations": [item.to_canonical_dict() for item in self.slice_evaluations],
             "created_at": timestamp(self.created_at),
             "authority": self.authority.value,
             "limitations": list(self.limitations),
@@ -503,9 +500,7 @@ def run_alpha_ablation_suite(
     """
 
     if set(score_functions) != set(protocol.comparison_sequence):
-        raise ValueError(
-            "Ablation score functions must exactly cover the frozen comparison sequence"
-        )
+        raise ValueError("Ablation score functions must exactly cover the frozen comparison sequence")
     variant_by_id = {item.variant_id: item for item in protocol.variants}
     results: list[FactorAblationResult] = []
     slices: list[AblationSliceEvaluation] = []
@@ -526,38 +521,127 @@ def run_alpha_ablation_suite(
         )
         results.append(result)
         next_slice_metrics: dict[tuple[str, str], AblationMetrics] = {}
-        for dimension, value in sorted(
-            {
-                slice_value
-                for item in observations
-                for slice_value in item.slice_values()
-            }
-        ):
-            scoped = tuple(
-                item
-                for item in observations
-                if (dimension, value) in item.slice_values()
-            )
+        for dimension, value in sorted({slice_value for item in observations for slice_value in item.slice_values()}):
+            scoped = tuple(item for item in observations if (dimension, value) in item.slice_values())
             metrics = _metrics(
-                tuple(
-                    (item, score_functions[variant_id](item, variant))
-                    for item in scoped
-                ),
+                tuple((item, score_functions[variant_id](item, variant)) for item in scoped),
                 top_k=protocol.top_k,
                 baseline=baseline_slice_metrics.get((dimension, value)),
             )
             next_slice_metrics[(dimension, value)] = metrics
-            slices.append(
-                AblationSliceEvaluation(variant_id, dimension, value, metrics)
-            )
+            slices.append(AblationSliceEvaluation(variant_id, dimension, value, metrics))
         baseline_slice_metrics = next_slice_metrics
         baseline_metrics = result.metrics
-        baseline_reference = ValidationArtifactReference(
-            "FACTOR_ABLATION_RESULT", result.result_id, result.result_hash
-        )
-    protocol_reference = ValidationArtifactReference(
-        "ABLATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash
+        baseline_reference = ValidationArtifactReference("FACTOR_ABLATION_RESULT", result.result_id, result.result_hash)
+    return _build_alpha_suite(
+        protocol=protocol,
+        panel_reference=panel_reference,
+        results=tuple(results),
+        slices=tuple(slices),
+        created_at=created_at,
     )
+
+
+def run_incremental_alpha_ablation_suite(
+    *,
+    protocol: AblationProtocol,
+    panel_reference: ValidationArtifactReference,
+    observation_sessions: Iterable[tuple[AblationObservation, ...]],
+    created_at: datetime,
+    maximum_slice_cells: int = 4096,
+) -> AlphaAblationSuite:
+    """Stream one cross-section at a time under the frozen percentile scorer."""
+
+    if protocol.scoring_contract != "WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1":
+        raise ValueError("Incremental Ablation requires the frozen percentile scorer")
+    if maximum_slice_cells <= 0:
+        raise ValueError("Incremental Ablation slice ceiling must be positive")
+    variant_by_id = {item.variant_id: item for item in protocol.variants}
+    accumulators = {variant_id: _MetricAccumulator(protocol.top_k) for variant_id in protocol.comparison_sequence}
+    slice_accumulators: dict[tuple[str, str, str], _MetricAccumulator] = {}
+    observed = False
+    last_order: tuple[date, str] | None = None
+    for session in observation_sessions:
+        if not session:
+            continue
+        observed = True
+        session_keys = {item.session_key for item in session}
+        trading_dates = {item.trading_date for item in session}
+        if len(session_keys) != 1 or len(trading_dates) != 1 or None in trading_dates:
+            raise ValueError("Incremental Ablation batch must contain one canonical session")
+        session_key = next(iter(session_keys))
+        trading_date = next(iter(trading_dates))
+        assert trading_date is not None
+        order = trading_date, session_key
+        if last_order is not None and order <= last_order:
+            raise ValueError("Incremental Ablation sessions must be strictly ordered")
+        last_order = order
+        scores = _within_session_percentile_scores(
+            session,
+            tuple(variant_by_id[item] for item in protocol.comparison_sequence),
+        )
+        slice_groups: dict[tuple[str, str], list[AblationObservation]] = {}
+        for item in session:
+            for dimension, value in item.slice_values():
+                slice_groups.setdefault((dimension, value), []).append(item)
+        for variant_id in protocol.comparison_sequence:
+            scored = tuple((item, scores[(variant_id, item.observation_id)]) for item in session)
+            accumulators[variant_id].add_session(scored)
+            scored_by_id = {item.observation_id: score for item, score in scored}
+            for (dimension, value), scoped in sorted(slice_groups.items()):
+                key = variant_id, dimension, value
+                accumulator = slice_accumulators.setdefault(key, _MetricAccumulator(protocol.top_k))
+                if len(slice_accumulators) > maximum_slice_cells:
+                    raise ValueError("Incremental Ablation exceeded declared slice ceiling")
+                accumulator.add_session(tuple((item, scored_by_id[item.observation_id]) for item in scoped))
+    if not observed:
+        raise ValueError("Ablation requires observations")
+    results: list[FactorAblationResult] = []
+    slices: list[AblationSliceEvaluation] = []
+    baseline_metrics: AblationMetrics | None = None
+    baseline_reference: ValidationArtifactReference | None = None
+    baseline_slice_metrics: dict[tuple[str, str], AblationMetrics] = {}
+    for variant_id in protocol.comparison_sequence:
+        variant = variant_by_id[variant_id]
+        metrics = accumulators[variant_id].metrics(baseline_metrics)
+        result = FactorAblationResult.create(
+            protocol_reference=ValidationArtifactReference("ABLATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash),
+            panel_reference=panel_reference,
+            variant=variant,
+            metrics=metrics,
+            baseline_result=baseline_reference,
+            created_at=created_at,
+        )
+        results.append(result)
+        next_slice_metrics: dict[tuple[str, str], AblationMetrics] = {}
+        slice_keys = sorted(
+            (dimension, value) for candidate_variant, dimension, value in slice_accumulators if candidate_variant == variant_id
+        )
+        for dimension, value in slice_keys:
+            slice_metrics = slice_accumulators[(variant_id, dimension, value)].metrics(baseline_slice_metrics.get((dimension, value)))
+            next_slice_metrics[(dimension, value)] = slice_metrics
+            slices.append(AblationSliceEvaluation(variant_id, dimension, value, slice_metrics))
+        baseline_slice_metrics = next_slice_metrics
+        baseline_metrics = metrics
+        baseline_reference = ValidationArtifactReference("FACTOR_ABLATION_RESULT", result.result_id, result.result_hash)
+    return _build_alpha_suite(
+        protocol=protocol,
+        panel_reference=panel_reference,
+        results=tuple(results),
+        slices=tuple(slices),
+        created_at=created_at,
+    )
+
+
+def _build_alpha_suite(
+    *,
+    protocol: AblationProtocol,
+    panel_reference: ValidationArtifactReference,
+    results: tuple[FactorAblationResult, ...],
+    slices: tuple[AblationSliceEvaluation, ...],
+    created_at: datetime,
+) -> AlphaAblationSuite:
+    protocol_reference = ValidationArtifactReference("ABLATION_PROTOCOL", protocol.protocol_id, protocol.protocol_hash)
     limitations = tuple(
         sorted(
             {
@@ -593,8 +677,8 @@ def run_alpha_ablation_suite(
         protocol_reference,
         panel_reference,
         protocol.comparison_sequence,
-        tuple(results),
-        tuple(slices),
+        results,
+        slices,
         created_at,
         ResearchEvidenceAuthority.EXPLORATORY,
         limitations,
@@ -612,17 +696,13 @@ def _metrics(
     by_session: dict[str, list[tuple[AblationObservation, Decimal]]] = {}
     for pair in scored:
         by_session.setdefault(pair[0].session_key, []).append(pair)
-    if len({(item.session_key, item.symbol) for item, _score in scored}) != len(scored):
-        raise ValueError("Ablation session/symbol observations must be unique")
     session_dates: dict[str, date | None] = {}
     for item, _score in scored:
         prior = session_dates.setdefault(item.session_key, item.trading_date)
         if prior != item.trading_date:
             raise ValueError("Ablation session has inconsistent trading dates")
     if any(value is None for value in session_dates.values()):
-        raise ValueError(
-            "Ablation path metrics require a canonical trading date for every session"
-        )
+        raise ValueError("Ablation path metrics require a canonical trading date for every session")
     canonical_dates = tuple(value for value in session_dates.values() if value is not None)
     if len(set(canonical_dates)) != len(canonical_dates):
         raise ValueError("Ablation path metrics require one session per trading date")
@@ -632,105 +712,204 @@ def _metrics(
             key=lambda key: (session_dates[key], key),
         )
     )
-    top_returns: list[float] = []
-    top_costs: list[float] = []
-    top_gross_decimals: list[Decimal] = []
-    top_cost_decimals: list[Decimal] = []
-    bottom_returns: list[float] = []
-    overlaps: list[float] = []
-    turnovers: list[float] = []
-    equity_returns: list[float] = []
-    session_ics: list[float] = []
-    session_rank_ics: list[float] = []
-    previous_weights: dict[str, Decimal] | None = None
+    accumulator = _MetricAccumulator(top_k)
     for session_key in ordered_sessions:
-        pairs = by_session[session_key]
-        ordered = sorted(pairs, key=lambda pair: (-pair[1], pair[0].symbol))
-        top = ordered[: min(top_k, len(ordered))]
+        accumulator.add_session(tuple(by_session[session_key]))
+    return accumulator.metrics(baseline)
+
+
+class _MetricAccumulator:
+    """Fixed-dimension sufficient statistics for one ordered research path."""
+
+    def __init__(self, top_k: int) -> None:
+        self._top_k = top_k
+        self._sample_count = 0
+        self._session_count = 0
+        self._last_order: tuple[date, str] | None = None
+        self._all_return_sum = 0.0
+        self._top_return_sum = 0.0
+        self._top_return_count = 0
+        self._top_hit_count = 0
+        self._bottom_return_sum = 0.0
+        self._bottom_return_count = 0
+        self._mfe_sum = 0.0
+        self._mfe_count = 0
+        self._mae_sum = 0.0
+        self._mae_count = 0
+        self._turnover_sum = 0.0
+        self._turnover_count = 0
+        self._overlap_sum = 0.0
+        self._overlap_count = 0
+        self._gross_sum = Decimal("0")
+        self._cost_sum = Decimal("0")
+        self._session_ics = _RunningMoments()
+        self._session_rank_ics = _RunningMoments()
+        self._wealth = 1.0
+        self._peak_wealth = 1.0
+        self._maximum_drawdown = 0.0
+        self._previous_weights: dict[str, Decimal] | None = None
+
+    def add_session(
+        self,
+        scored: tuple[tuple[AblationObservation, Decimal], ...],
+    ) -> None:
+        if not scored:
+            raise ValueError("Ablation session batch cannot be empty")
+        session_keys = {item.session_key for item, _score in scored}
+        trading_dates = {item.trading_date for item, _score in scored}
+        symbols = [item.symbol for item, _score in scored]
+        if len(session_keys) != 1 or len(trading_dates) != 1:
+            raise ValueError("Ablation batch must contain one session")
+        if len(symbols) != len(set(symbols)):
+            raise ValueError("Ablation session/symbol observations must be unique")
+        trading_date = next(iter(trading_dates))
+        if trading_date is None:
+            raise ValueError("Ablation path metrics require a canonical trading date for every session")
+        session_key = next(iter(session_keys))
+        order = trading_date, session_key
+        if self._last_order is not None and order <= self._last_order:
+            raise ValueError("Ablation sessions must be added in canonical order")
+        if self._last_order is not None and trading_date == self._last_order[0]:
+            raise ValueError("Ablation path metrics require one session per trading date")
+        self._last_order = order
+        self._session_count += 1
+        self._sample_count += len(scored)
+        ordered = sorted(scored, key=lambda pair: (-pair[1], pair[0].symbol))
+        top = ordered[: min(self._top_k, len(ordered))]
         remaining = ordered[len(top) :]
-        bottom = remaining[-min(top_k, len(remaining)) :]
-        top_returns.extend(float(item.realized_return) for item, _score in top)
-        top_costs.extend(float(item.cost_return) for item, _score in top)
-        top_gross_decimals.extend(item.realized_return for item, _score in top)
-        top_cost_decimals.extend(item.cost_return for item, _score in top)
-        bottom_returns.extend(float(item.realized_return) for item, _score in bottom)
+        bottom = remaining[-min(self._top_k, len(remaining)) :]
+        for item, _score in scored:
+            self._all_return_sum += float(item.realized_return)
+            if item.mfe is not None:
+                self._mfe_sum += float(item.mfe)
+                self._mfe_count += 1
+            if item.mae is not None:
+                self._mae_sum += float(item.mae)
+                self._mae_count += 1
+        for item, _score in top:
+            value = float(item.realized_return)
+            self._top_return_sum += value
+            self._top_return_count += 1
+            self._top_hit_count += value > 0
+            self._gross_sum += item.realized_return
+            self._cost_sum += item.cost_return
+        for item, _score in bottom:
+            self._bottom_return_sum += float(item.realized_return)
+            self._bottom_return_count += 1
         selected = {item.symbol for item, _score in top}
-        full_selected = {item.symbol for item, _score in pairs if item.selected}
-        overlaps.append(len(selected & full_selected) / max(1, len(selected | full_selected)))
+        full_selected = {item.symbol for item, _score in scored if item.selected}
+        self._overlap_sum += len(selected & full_selected) / max(1, len(selected | full_selected))
+        self._overlap_count += 1
         current_weight = Decimal("1") / Decimal(len(top))
         current_weights = {item.symbol: current_weight for item, _score in top}
-        if previous_weights is not None:
-            symbols = set(previous_weights) | set(current_weights)
-            turnovers.append(
-                float(
-                    sum(
-                        abs(
-                            current_weights.get(symbol, Decimal("0"))
-                            - previous_weights.get(symbol, Decimal("0"))
-                        )
-                        for symbol in symbols
-                    )
-                    / Decimal("2")
+        if self._previous_weights is not None:
+            weight_symbols = set(self._previous_weights) | set(current_weights)
+            self._turnover_sum += float(
+                sum(
+                    abs(current_weights.get(symbol, Decimal("0")) - self._previous_weights.get(symbol, Decimal("0")))
+                    for symbol in weight_symbols
                 )
+                / Decimal("2")
             )
-        previous_weights = current_weights
-        equity_returns.append(
-            fmean(
-                float(item.realized_return - item.cost_return)
-                for item, _score in top
-            )
+            self._turnover_count += 1
+        self._previous_weights = current_weights
+        session_net_return = fmean(float(item.realized_return - item.cost_return) for item, _score in top)
+        self._wealth *= 1.0 + session_net_return
+        self._peak_wealth = max(self._peak_wealth, self._wealth)
+        self._maximum_drawdown = min(
+            self._maximum_drawdown,
+            self._wealth / self._peak_wealth - 1.0,
         )
-        session_scores = [float(score) for _item, score in pairs]
-        session_returns = [float(item.realized_return) for item, _score in pairs]
+        session_scores = [float(score) for _item, score in scored]
+        session_returns = [float(item.realized_return) for item, _score in scored]
         session_ic = _correlation(session_scores, session_returns)
-        session_rank_ic = _correlation(
-            _ranks(session_scores), _ranks(session_returns)
-        )
+        session_rank_ic = _correlation(_ranks(session_scores), _ranks(session_returns))
         if session_ic is not None:
-            session_ics.append(session_ic)
+            self._session_ics.add(session_ic)
         if session_rank_ic is not None:
-            session_rank_ics.append(session_rank_ic)
-    all_returns = [float(item.realized_return) for item, _score in scored]
-    mean_return = fmean(all_returns)
-    baseline_return = None if baseline is None or baseline.top_k_return is None else float(baseline.top_k_return)
-    gross_return = (
-        None
-        if not top_gross_decimals
-        else sum(top_gross_decimals, Decimal("0"))
-        / Decimal(len(top_gross_decimals))
-    )
-    cost_return = (
-        None
-        if not top_cost_decimals
-        else sum(top_cost_decimals, Decimal("0"))
-        / Decimal(len(top_cost_decimals))
-    )
-    return AblationMetrics(
-        sample_count=len(scored),
-        session_count=len(by_session),
-        ic=_mean_decimal(session_ics),
-        rank_ic=_mean_decimal(session_rank_ics),
-        icir=_information_ratio(session_ics),
-        top_k_return=_mean_decimal(top_returns),
-        spread=_decimal(fmean(top_returns) - fmean(bottom_returns)) if top_returns and bottom_returns else None,
-        hit_rate=_decimal(
-            sum(value > 0 for value in top_returns) / len(top_returns)
-        ),
-        mean_return=_decimal(mean_return),
-        mean_mfe=_mean_decimal([float(item.mfe) for item, _score in scored if item.mfe is not None]),
-        mean_mae=_mean_decimal([float(item.mae) for item, _score in scored if item.mae is not None]),
-        turnover=_mean_decimal(turnovers),
-        max_drawdown=_decimal(_max_drawdown(equity_returns)),
-        overlap=_mean_decimal(overlaps),
-        incremental_lift=None if baseline_return is None or not top_returns else _decimal(fmean(top_returns) - baseline_return),
-        gross_return=gross_return,
-        cost_return=cost_return,
-        net_return=(
-            None
-            if gross_return is None or cost_return is None
-            else gross_return - cost_return
-        ),
-    )
+            self._session_rank_ics.add(session_rank_ic)
+
+    def metrics(self, baseline: AblationMetrics | None) -> AblationMetrics:
+        if self._sample_count == 0:
+            return _empty_metrics()
+        top_mean = self._top_return_sum / self._top_return_count
+        gross = self._gross_sum / Decimal(self._top_return_count)
+        cost = self._cost_sum / Decimal(self._top_return_count)
+        baseline_return = None if baseline is None or baseline.top_k_return is None else float(baseline.top_k_return)
+        return AblationMetrics(
+            sample_count=self._sample_count,
+            session_count=self._session_count,
+            ic=self._session_ics.mean_decimal(),
+            rank_ic=self._session_rank_ics.mean_decimal(),
+            icir=self._session_ics.information_ratio(),
+            top_k_return=_decimal(top_mean),
+            spread=(None if not self._bottom_return_count else _decimal(top_mean - self._bottom_return_sum / self._bottom_return_count)),
+            hit_rate=_decimal(self._top_hit_count / self._top_return_count),
+            mean_return=_decimal(self._all_return_sum / self._sample_count),
+            mean_mfe=(None if not self._mfe_count else _decimal(self._mfe_sum / self._mfe_count)),
+            mean_mae=(None if not self._mae_count else _decimal(self._mae_sum / self._mae_count)),
+            turnover=(None if not self._turnover_count else _decimal(self._turnover_sum / self._turnover_count)),
+            max_drawdown=_decimal(self._maximum_drawdown),
+            overlap=_decimal(self._overlap_sum / self._overlap_count),
+            incremental_lift=(None if baseline_return is None else _decimal(top_mean - baseline_return)),
+            gross_return=gross,
+            cost_return=cost,
+            net_return=gross - cost,
+        )
+
+
+class _RunningMoments:
+    """Deterministic population moments without retaining observations."""
+
+    def __init__(self) -> None:
+        self._count = 0
+        self._mean = 0.0
+        self._m2 = 0.0
+
+    def add(self, value: float) -> None:
+        self._count += 1
+        delta = value - self._mean
+        self._mean += delta / self._count
+        self._m2 += delta * (value - self._mean)
+
+    def mean_decimal(self) -> Decimal | None:
+        return None if not self._count else _decimal(self._mean)
+
+    def information_ratio(self) -> Decimal | None:
+        if self._count < 2:
+            return None
+        dispersion = sqrt(self._m2 / self._count)
+        return None if dispersion == 0 else _decimal(self._mean / dispersion)
+
+
+def _within_session_percentile_scores(
+    observations: tuple[AblationObservation, ...],
+    variants: tuple[AblationVariant, ...],
+) -> Mapping[tuple[str, str], Decimal]:
+    if len({item.observation_id for item in observations}) != len(observations):
+        raise ValueError("Ablation observation identities must be unique")
+    rank_values: dict[tuple[str, FactorFamily, str], Decimal] = {}
+    grouped: dict[tuple[FactorFamily, str], list[tuple[str, Decimal]]] = {}
+    for item in observations:
+        for family, factor_id, value in item.factor_values:
+            grouped.setdefault((family, factor_id), []).append((item.observation_id, value))
+    for (family, factor_id), values in grouped.items():
+        ordered = sorted(values, key=lambda item: (item[1], item[0]))
+        denominator = Decimal(max(1, len(ordered) - 1))
+        for index, (observation_id, _value) in enumerate(ordered):
+            rank_values[(observation_id, family, factor_id)] = Decimal(index) / denominator
+    result: dict[tuple[str, str], Decimal] = {}
+    for variant in variants:
+        for item in observations:
+            percentile_values = tuple(
+                rank_values[(item.observation_id, family, factor_id)]
+                for family, factor_id, _raw in item.factor_values
+                if variant.includes(family, factor_id)
+            )
+            result[(variant.variant_id, item.observation_id)] = (
+                Decimal("0") if not percentile_values else sum(percentile_values, Decimal("0")) / Decimal(len(percentile_values))
+            )
+    return result
 
 
 def _empty_metrics() -> AblationMetrics:

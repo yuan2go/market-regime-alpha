@@ -259,6 +259,190 @@ class FreeResearchUniverseSnapshot:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class HistoricalConstituentCohort:
+    effective_date: date
+    snapshot_reference: ValidationArtifactReference
+
+    def __post_init__(self) -> None:
+        if self.snapshot_reference.artifact_kind != "FREE_RESEARCH_UNIVERSE":
+            raise ValueError("Historical cohort requires a Universe snapshot")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "effective_date": self.effective_date.isoformat(),
+            "snapshot_reference": self.snapshot_reference.to_canonical_dict(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> HistoricalConstituentCohort:
+        return cls(
+            effective_date=date.fromisoformat(str(payload["effective_date"])),
+            snapshot_reference=ValidationArtifactReference.from_canonical_dict(payload["snapshot_reference"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalConstituentTimeline:
+    """Exact owner for one complete Provider history scan and its cohorts."""
+
+    timeline_id: ArtifactId
+    timeline_hash: str
+    start_date: date
+    end_date: date
+    queried_trading_dates: tuple[date, ...]
+    query_effective_dates: tuple[tuple[date, date], ...]
+    cohorts: tuple[HistoricalConstituentCohort, ...]
+    scan_source_manifest_reference: ValidationArtifactReference
+    raw_archive_id: str
+    known_at: datetime
+    limitations: tuple[str, ...]
+    schema_version: str = "historical-constituent-timeline/v1"
+
+    def __post_init__(self) -> None:
+        require_sha256("timeline_hash", self.timeline_hash)
+        require_text("raw_archive_id", self.raw_archive_id)
+        if self.start_date > self.end_date:
+            raise ValueError("Historical constituent timeline range is reversed")
+        if self.known_at.tzinfo is None or self.known_at.utcoffset() is None:
+            raise ValueError("Historical constituent timeline known_at must be aware")
+        if (
+            not self.queried_trading_dates
+            or self.queried_trading_dates != tuple(sorted(set(self.queried_trading_dates)))
+            or self.queried_trading_dates[0] < self.start_date
+            or self.queried_trading_dates[-1] > self.end_date
+        ):
+            raise ValueError("Historical constituent query sessions are invalid")
+        if not self.cohorts or self.cohorts != tuple(sorted(set(self.cohorts), key=lambda item: item.effective_date)):
+            raise ValueError("Historical constituent cohorts must be unique and ordered")
+        if (
+            tuple(item[0] for item in self.query_effective_dates) != self.queried_trading_dates
+            or any(effective > query for query, effective in self.query_effective_dates)
+            or {item[1] for item in self.query_effective_dates} != {item.effective_date for item in self.cohorts}
+        ):
+            raise ValueError("Historical constituent query/effective mapping does not prove cohorts")
+        if self.cohorts[0].effective_date > self.queried_trading_dates[0]:
+            raise ValueError("Historical constituent timeline starts after its scan")
+        if self.scan_source_manifest_reference.artifact_kind != "SOURCE_MANIFEST":
+            raise ValueError("Historical constituent scan source kind mismatch")
+        required = {
+            "FORMAL_PIT_NOT_ESTABLISHED",
+            "FREE_DATA_EXPLORATORY",
+            "PIT_INCOMPLETE",
+            "RETRIEVED_AFTER_CONSTITUENT_EFFECTIVE_DATE",
+        }
+        if not required.issubset(self.limitations):
+            raise ValueError("Historical constituent timeline ceiling is incomplete")
+        if canonical_hash(self.identity_payload()) != self.timeline_hash:
+            raise ValueError("Historical constituent timeline hash mismatch")
+        if self.timeline_id != ArtifactId(f"historical-constituent-timeline:{self.timeline_hash[7:]}"):
+            raise ValueError("Historical constituent timeline identity mismatch")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        start_date: date,
+        end_date: date,
+        queried_trading_dates: tuple[date, ...],
+        query_effective_dates: tuple[tuple[date, date], ...],
+        cohorts: tuple[HistoricalConstituentCohort, ...],
+        scan_source_manifest_reference: ValidationArtifactReference,
+        raw_archive_id: str,
+        known_at: datetime,
+    ) -> HistoricalConstituentTimeline:
+        limitations = (
+            "FORMAL_PIT_NOT_ESTABLISHED",
+            "FREE_DATA_EXPLORATORY",
+            "PIT_INCOMPLETE",
+            "RETRIEVED_AFTER_CONSTITUENT_EFFECTIVE_DATE",
+        )
+        values = {
+            "schema_version": "historical-constituent-timeline/v1",
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "queried_trading_dates": [item.isoformat() for item in queried_trading_dates],
+            "query_effective_dates": [[query.isoformat(), effective.isoformat()] for query, effective in query_effective_dates],
+            "cohorts": [item.to_canonical_dict() for item in cohorts],
+            "scan_source_manifest_reference": scan_source_manifest_reference.to_canonical_dict(),
+            "raw_archive_id": raw_archive_id,
+            "known_at": timestamp(known_at),
+            "limitations": list(limitations),
+        }
+        artifact_id, digest = content_identity("historical-constituent-timeline", values)
+        return cls(
+            timeline_id=artifact_id,
+            timeline_hash=digest,
+            start_date=start_date,
+            end_date=end_date,
+            queried_trading_dates=queried_trading_dates,
+            query_effective_dates=query_effective_dates,
+            cohorts=cohorts,
+            scan_source_manifest_reference=scan_source_manifest_reference,
+            raw_archive_id=raw_archive_id,
+            known_at=known_at,
+            limitations=limitations,
+        )
+
+    @property
+    def reference(self) -> ValidationArtifactReference:
+        return ValidationArtifactReference(
+            "HISTORICAL_CONSTITUENT_TIMELINE",
+            self.timeline_id,
+            self.timeline_hash,
+        )
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "start_date": self.start_date.isoformat(),
+            "end_date": self.end_date.isoformat(),
+            "queried_trading_dates": [item.isoformat() for item in self.queried_trading_dates],
+            "query_effective_dates": [[query.isoformat(), effective.isoformat()] for query, effective in self.query_effective_dates],
+            "cohorts": [item.to_canonical_dict() for item in self.cohorts],
+            "scan_source_manifest_reference": self.scan_source_manifest_reference.to_canonical_dict(),
+            "raw_archive_id": self.raw_archive_id,
+            "known_at": timestamp(self.known_at),
+            "limitations": list(self.limitations),
+        }
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "timeline_id": str(self.timeline_id),
+            "timeline_hash": self.timeline_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> HistoricalConstituentTimeline:
+        return cls(
+            timeline_id=ArtifactId(str(payload["timeline_id"])),
+            timeline_hash=str(payload["timeline_hash"]),
+            start_date=date.fromisoformat(str(payload["start_date"])),
+            end_date=date.fromisoformat(str(payload["end_date"])),
+            queried_trading_dates=tuple(date.fromisoformat(str(item)) for item in payload["queried_trading_dates"]),
+            query_effective_dates=tuple(
+                (
+                    date.fromisoformat(str(item[0])),
+                    date.fromisoformat(str(item[1])),
+                )
+                for item in payload["query_effective_dates"]
+            ),
+            cohorts=tuple(HistoricalConstituentCohort.from_canonical_dict(item) for item in payload["cohorts"]),
+            scan_source_manifest_reference=ValidationArtifactReference.from_canonical_dict(payload["scan_source_manifest_reference"]),
+            raw_archive_id=str(payload["raw_archive_id"]),
+            known_at=datetime.fromisoformat(str(payload["known_at"])),
+            limitations=tuple(str(item) for item in payload["limitations"]),
+            schema_version=str(payload["schema_version"]),
+        )
+
+
 def build_free_research_universe_snapshot(
     *,
     as_of_date: date,
@@ -405,6 +589,12 @@ def build_historical_constituent_universe_snapshot(
 
     if not constituent_rows:
         raise ValueError("Historical constituent response must not be empty")
+    provider_effective_dates = {value for row in constituent_rows if (value := _optional_date(row.get("updateDate"))) is not None}
+    if len(provider_effective_dates) != 1:
+        raise ValueError("Historical constituent response requires one Provider effective date")
+    provider_effective_date = next(iter(provider_effective_dates))
+    if provider_effective_date > effective_date:
+        raise ValueError("Historical constituent response is effective after query date")
     basic_by_code = {str(item.get("code", "")).lower(): item for item in security_master_rows}
     records = tuple(
         sorted(
@@ -412,7 +602,7 @@ def build_historical_constituent_universe_snapshot(
                 _historical_constituent_record(
                     row,
                     basic=basic_by_code.get(str(row.get("code", "")).lower()),
-                    effective_date=effective_date,
+                    effective_date=provider_effective_date,
                 )
                 for row in constituent_rows
             ),
@@ -445,7 +635,7 @@ def build_historical_constituent_universe_snapshot(
         "formal_pit": False,
         "limitations": list(limitations),
         "selection_basis": (ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT.value),
-        "constituent_effective_date": effective_date.isoformat(),
+        "constituent_effective_date": provider_effective_date.isoformat(),
         "constituent_source_reference": (constituent_source_reference.to_canonical_dict()),
     }
     snapshot_id, digest = content_identity("free-research-universe", values)
@@ -465,7 +655,7 @@ def build_historical_constituent_universe_snapshot(
         formal_pit=False,
         limitations=limitations,
         selection_basis=(ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT),
-        constituent_effective_date=effective_date,
+        constituent_effective_date=provider_effective_date,
         constituent_source_reference=constituent_source_reference,
         schema_version="free-research-universe-snapshot/v2",
     )
@@ -736,6 +926,8 @@ def _optional_date(value: object) -> date | None:
 
 __all__ = [
     "FreeDataEvidenceOrigin",
+    "HistoricalConstituentCohort",
+    "HistoricalConstituentTimeline",
     "FreeResearchUniverseRecord",
     "FreeResearchUniverseSnapshot",
     "ResearchUniverseSelectionBasis",

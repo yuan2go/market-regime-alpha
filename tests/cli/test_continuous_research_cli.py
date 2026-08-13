@@ -159,6 +159,17 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "runtime-output",
         ]
     )
+    historical_facts = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-security-facts-sync",
+            "--input",
+            "historical-security-facts.json",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
     portfolio_day = build_parser().parse_args(
         [
             "--database-url",
@@ -392,6 +403,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert replay_day.operation == "replay-day"
     assert universe_sync.operation == "research-universe-sync"
     assert universe_replay.operation == "research-universe-replay"
+    assert historical_facts.operation == "historical-security-facts-sync"
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
     assert runtime_scope.operation == "runtime-scope-build"

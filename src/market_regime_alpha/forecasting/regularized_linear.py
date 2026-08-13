@@ -260,6 +260,50 @@ def fit_regularized_multi_target(
     )
 
 
+def fit_regularized_continuous_statistics(
+    *,
+    preprocessing: RobustPreprocessingState,
+    target_name: str,
+    normal_matrix: tuple[tuple[Decimal, ...], ...],
+    rhs: tuple[Decimal, ...],
+    distinct_target_count: int,
+    penalty: Decimal,
+) -> RegularizedMultiTargetModel:
+    """Fit the same Ridge head from bounded, incrementally built statistics."""
+
+    if not target_name.strip():
+        raise ValueError("continuous statistics require a target name")
+    if not penalty.is_finite() or penalty <= 0:
+        raise ValueError("regularization penalty must be positive and finite")
+    width = len(preprocessing.transformed_feature_names) + 1
+    if (
+        len(normal_matrix) != width
+        or any(len(row) != width for row in normal_matrix)
+        or len(rhs) != width
+    ):
+        raise ValueError("continuous sufficient-statistic dimensions mismatch")
+    if any(
+        normal_matrix[left][right] != normal_matrix[right][left]
+        for left in range(width)
+        for right in range(width)
+    ):
+        raise ValueError("continuous normal matrix must be symmetric")
+    if distinct_target_count < 2:
+        raise ValueError(f"degenerate continuous target: {target_name}")
+    normal = [list(row) for row in normal_matrix]
+    for index in range(1, width):
+        normal[index][index] += penalty
+    weights = _solve(normal, list(rhs))
+    return RegularizedMultiTargetModel(
+        preprocessing=preprocessing,
+        continuous_heads=(
+            RegularizedHead(target_name, "RIDGE", weights[0], weights[1:]),
+        ),
+        barrier_heads=(),
+        penalty=penalty,
+    )
+
+
 def _fit_preprocessing(
     feature_names: tuple[str, ...], rows: tuple[FeatureRow, ...]
 ) -> RobustPreprocessingState:
@@ -411,5 +455,6 @@ __all__ = [
     "RegularizedPrediction",
     "RobustPreprocessingState",
     "TrainingMatrix",
+    "fit_regularized_continuous_statistics",
     "fit_regularized_multi_target",
 ]

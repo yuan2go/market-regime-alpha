@@ -145,8 +145,17 @@ from market_regime_alpha.signals.engine import (
     build_signal_snapshot_from_metrics,
 )
 from market_regime_alpha.universe.postgres_research import PostgresFreeResearchUniverseRepository
+from market_regime_alpha.universe.postgres_historical_facts import (
+    HistoricalSecurityFactProjection,
+    PostgresHistoricalSecurityFactsRepository,
+)
+from market_regime_alpha.universe.historical_facts import (
+    HistoricalSecurityFact,
+    HistoricalSecurityFactCoverageGap,
+)
 from market_regime_alpha.universe.postgres_runtime_scope import PostgresRuntimeScopeRepository
 from market_regime_alpha.universe.research import (
+    FreeResearchUniverseSnapshot,
     ResearchUniverseMembershipStatus,
     ResearchUniverseSelectionBasis,
     project_free_research_universe_as_of,
@@ -168,6 +177,8 @@ from market_regime_alpha.strategies.entry.contracts import (
 
 NORMALIZED_DATASET_KIND = "NORMALIZED_DATASET"
 FREE_RESEARCH_UNIVERSE_KIND = "FREE_RESEARCH_UNIVERSE"
+HISTORICAL_SECURITY_FACTS_KIND = "HISTORICAL_SECURITY_FACTS"
+HISTORICAL_CONSTITUENT_TIMELINE_KIND = "HISTORICAL_CONSTITUENT_TIMELINE"
 GLOBAL_RESEARCH_THEME_ID = "PHASE_E_GLOBAL_RESEARCH_SCOPE"
 _COMPONENT_ORDINAL = {item: index for index, item in enumerate(HistoricalComponentKind, 1)}
 
@@ -243,26 +254,38 @@ class HistoricalDecisionMaterializer:
         universe_repository: PostgresFreeResearchUniverseRepository,
         scope_repository: PostgresRuntimeScopeRepository,
         target_repository: PostgresTargetOutcomeRepository,
+        historical_facts_repository: PostgresHistoricalSecurityFactsRepository | None = None,
         maximum_daily_rows: int = 1_000_000,
         maximum_minute_session_rows: int = 250_000,
         minute_session_cache_size: int = 4,
+        maximum_prior_forecast_sessions: int = 756,
     ) -> None:
+        if maximum_prior_forecast_sessions < 20:
+            raise ValueError("Historical Forecast window cannot lower the frozen sample floor")
         self._run_id = run_id
         self._corpus = corpus_repository
         self._components = component_repository
         self._universes = universe_repository
         self._scopes = scope_repository
         self._targets = target_repository
+        self._historical_facts = historical_facts_repository
+        self._maximum_prior_forecast_sessions = maximum_prior_forecast_sessions
         self._windows = HistoricalWindowReader(
             corpus_repository,
             maximum_daily_rows=maximum_daily_rows,
             maximum_minute_session_rows=maximum_minute_session_rows,
             minute_session_cache_size=minute_session_cache_size,
         )
-        self._outcome_cache: dict[date, HistoricalSessionComponent] | None = None
+        self._universe_cache: dict[
+            tuple[ValidationArtifactReference, ...],
+            tuple[tuple[date, FreeResearchUniverseSnapshot, ValidationArtifactReference], ...],
+        ] = {}
 
     def selective_read_metrics(self) -> tuple[HistoricalReadMetrics, ...]:
         return self._windows.metrics()
+
+    def window_cache_metrics(self) -> Mapping[str, int]:
+        return self._windows.cache_metrics()
 
     def compute_stage(
         self,
@@ -290,10 +313,10 @@ class HistoricalDecisionMaterializer:
 
     def _scope_stage(self, request: ResearchDecisionSessionRequest) -> SessionStageComputation:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
-        universe_reference = _required_reference(request, FREE_RESEARCH_UNIVERSE_KIND)
-        base_universe = self._universes.get(universe_reference.artifact_id)
-        if base_universe.snapshot_hash != universe_reference.content_hash:
-            raise ValueError("Historical Security Master owner hash mismatch")
+        base_universe, universe_reference = self._active_universe(
+            request.configuration_references,
+            request.trading_date,
+        )
         policy = self._scopes.get_policy(request.runtime_scope_policy_id)
         if policy.policy_hash != request.runtime_scope_policy_hash:
             raise ValueError("Historical Runtime Scope Policy hash mismatch")
@@ -316,7 +339,11 @@ class HistoricalDecisionMaterializer:
                 symbols=stock_symbols,
             )
         )
-        bars = self._windows.decision_bars(normalized_reference, request.decision_time)
+        bars = self._windows.decision_bars(
+            normalized_reference,
+            request.decision_time,
+            symbols=stock_symbols,
+        )
         observations = tuple(
             _eligibility_observation(
                 symbol=symbol,
@@ -326,6 +353,28 @@ class HistoricalDecisionMaterializer:
                 source_references=(normalized_reference, universe_reference),
             )
             for symbol in stock_symbols
+        )
+        facts_reference = _optional_reference(
+            request.configuration_references,
+            HISTORICAL_SECURITY_FACTS_KIND,
+        )
+        if facts_reference is not None and self._historical_facts is None:
+            raise ValueError("Historical Security Facts owner is bound but repository is absent")
+        if facts_reference is None:
+            fact_projection = None
+        else:
+            facts_repository = self._historical_facts
+            assert facts_repository is not None
+            fact_projection = facts_repository.resolve_as_of(
+                facts_reference,
+                symbols=tuple(sorted(stock_symbols)),
+                decision_date=request.trading_date,
+            )
+        business_facts = _historical_business_fact_rows(
+            symbols=tuple(sorted(stock_symbols)),
+            bars=bars,
+            decision_time=request.decision_time,
+            fact_projection=fact_projection,
         )
         scope = build_runtime_scope(
             policy=policy,
@@ -357,6 +406,7 @@ class HistoricalDecisionMaterializer:
                 universe_reference,
                 ValidationArtifactReference("RESEARCH_UNIVERSE_POLICY", policy.policy_id, policy.policy_hash),
                 ValidationArtifactReference("RUNTIME_SCOPE", scope.scope_id, scope.scope_hash),
+                *((facts_reference,) if facts_reference is not None else ()),
             ),
             payload={
                 "scope": scope.to_canonical_dict(),
@@ -370,7 +420,10 @@ class HistoricalDecisionMaterializer:
                     universe=projected,
                     observations=observations,
                     decision_date=request.trading_date,
+                    business_facts=business_facts,
+                    facts_owner_bound=facts_reference is not None,
                 ),
+                "historical_business_facts": list(business_facts),
                 "selective_reads": self._windows.stage_lineage_payload(),
                 "universe_selection_basis": projected.selection_basis.value,
                 "limitations": sorted(
@@ -384,6 +437,7 @@ class HistoricalDecisionMaterializer:
                             if projected.selection_basis is ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT
                             else {"CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY"}
                         ),
+                        *(() if facts_reference is not None else {"HISTORICAL_BUSINESS_FACT_OWNER_NOT_BOUND"}),
                     }
                 ),
             },
@@ -408,7 +462,6 @@ class HistoricalDecisionMaterializer:
     ) -> SessionStageComputation:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
         owner = self._windows.index(normalized_reference).package
-        bars = self._windows.decision_bars(normalized_reference, request.decision_time)
         scope_reference = _single_reference(input_references, "RUNTIME_SCOPE")
         pool_reference = _single_reference(input_references, "HISTORICAL_DYNAMIC_POOL")
         scope = self._scopes.get(scope_reference.artifact_id)
@@ -417,6 +470,11 @@ class HistoricalDecisionMaterializer:
         stock_symbols = tuple(item.symbol for item in scope.records)
         pool_membership = {item.symbol: item.decision is RuntimeScopeDecision.INCLUDED for item in scope.records}
         context_symbols = tuple(sorted(set(owner.coverage.expected_symbols) - set(stock_symbols)))
+        bars = self._windows.decision_bars(
+            normalized_reference,
+            request.decision_time,
+            symbols=tuple(sorted((*stock_symbols, *context_symbols))),
+        )
         computations = _compute_features(
             owner=owner,
             bars=bars,
@@ -582,12 +640,19 @@ class HistoricalDecisionMaterializer:
             },
         )
         forecast_config = _forecast_configuration(request.decision_time)
-        prior_outcomes = self._prior_outcomes(request.trading_date) if snapshots else ()
+        target_protocol = self._load_target_protocol(request)
+        forecast_target = next(item for item in target_protocol.targets if item.checkpoint is OutcomeCheckpoint.TIME_1030)
         forecasts = []
         used_prior_references: set[ValidationArtifactReference] = set()
         for snapshot in snapshots:
             samples, event_ends, source_references = _prior_forecast_samples(
-                prior_outcomes=prior_outcomes,
+                prior_labels=self._components.list_outcome_labels_before(
+                    run_id=self._run_id,
+                    before=request.trading_date,
+                    symbol=snapshot.symbol,
+                    target_id=forecast_target.target_id,
+                    maximum_labels=self._maximum_prior_forecast_sessions,
+                ),
                 symbol=snapshot.symbol,
                 configuration=forecast_config,
             )
@@ -650,6 +715,65 @@ class HistoricalDecisionMaterializer:
             completed_at=request.materialized_at,
             reason_codes=("HISTORICAL_DECISION_STATE_MATERIALIZED",),
         )
+
+    def _active_universe(
+        self,
+        references: tuple[ValidationArtifactReference, ...],
+        trading_date: date,
+    ) -> tuple[FreeResearchUniverseSnapshot, ValidationArtifactReference]:
+        universe_references = tuple(item for item in references if item.artifact_kind == FREE_RESEARCH_UNIVERSE_KIND)
+        if not universe_references:
+            raise ValueError("Historical session requires constituent owners")
+        timeline_references = tuple(item for item in references if item.artifact_kind == HISTORICAL_CONSTITUENT_TIMELINE_KIND)
+        if len(timeline_references) != 1:
+            raise ValueError("Every Historical session requires one exact cohort timeline")
+        timeline_owner = self._universes.get_timeline(timeline_references[0].artifact_id)
+        if (
+            timeline_owner.timeline_hash != timeline_references[0].content_hash
+            or tuple(
+                sorted(
+                    (cohort.snapshot_reference for cohort in timeline_owner.cohorts),
+                    key=lambda item: (
+                        item.artifact_kind,
+                        str(item.artifact_id),
+                        item.content_hash,
+                    ),
+                )
+            )
+            != universe_references
+            or not timeline_owner.start_date <= trading_date <= timeline_owner.end_date
+        ):
+            raise ValueError("Historical constituent timeline range/cohort lineage mismatch")
+        query_mapping = dict(timeline_owner.query_effective_dates)
+        expected_effective_date = query_mapping.get(trading_date)
+        if expected_effective_date is None:
+            raise ValueError("Decision session is absent from Historical constituent scan")
+        timeline = self._universe_cache.get(universe_references)
+        if timeline is None:
+            resolved: list[tuple[date, FreeResearchUniverseSnapshot, ValidationArtifactReference]] = []
+            seen_dates: set[date] = set()
+            for reference in universe_references:
+                snapshot = self._universes.get(reference.artifact_id)
+                if snapshot.snapshot_hash != reference.content_hash:
+                    raise ValueError("Historical Security Master owner hash mismatch")
+                if (
+                    snapshot.selection_basis is not ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT
+                    or snapshot.constituent_effective_date is None
+                ):
+                    raise ValueError("Historical INDEX requires effective-dated constituent owners")
+                if snapshot.constituent_effective_date in seen_dates:
+                    raise ValueError("Historical constituent timeline has duplicate effective dates")
+                seen_dates.add(snapshot.constituent_effective_date)
+                resolved.append((snapshot.constituent_effective_date, snapshot, reference))
+            timeline = tuple(sorted(resolved, key=lambda item: item[0]))
+            self._universe_cache[universe_references] = timeline
+        active = tuple(item for item in timeline if item[0] <= trading_date)
+        if not active:
+            raise ValueError("Historical constituent timeline starts after Decision session")
+        effective_date, snapshot, reference = active[-1]
+        if effective_date != expected_effective_date:
+            raise ValueError("Historical constituent timeline selected cohort does not match scan")
+        return snapshot, reference
 
     def _strategy_stage(
         self,
@@ -755,18 +879,51 @@ class HistoricalDecisionMaterializer:
                 completed_at=request.materialized_at,
                 reason_codes=("T_PLUS_ONE_SESSION_NOT_IN_FROZEN_DATASET",),
             )
+        symbols = tuple(str(item["symbol"]) for item in _objects(candidate.payload.get("records"), "candidate records"))
         bars = self._windows.outcome_bars(
             normalized_reference,
             decision_time=request.decision_time,
             next_session=next_session,
+            symbols=tuple(sorted(set(symbols))),
         )
         canonical = tuple(_canonical_outcome_bars(bars, next_session))
-        symbols = tuple(str(item["symbol"]) for item in _objects(candidate.payload.get("records"), "candidate records"))
+        facts_reference = _optional_reference(
+            request.configuration_references,
+            HISTORICAL_SECURITY_FACTS_KIND,
+        )
+        if facts_reference is not None and self._historical_facts is None:
+            raise ValueError("Historical Security Facts owner is bound but repository is absent")
+        if facts_reference is None:
+            actions_by_symbol: Mapping[str, tuple[HistoricalSecurityFact, ...]] = {}
+            action_gaps_by_symbol: Mapping[
+                str,
+                tuple[HistoricalSecurityFactCoverageGap, ...],
+            ] = {}
+        else:
+            facts_repository = self._historical_facts
+            assert facts_repository is not None
+            actions_by_symbol = facts_repository.corporate_actions_for_symbols(
+                facts_reference,
+                symbols=tuple(sorted(set(symbols))),
+                after=request.trading_date,
+                through=next_session,
+            )
+            action_gaps_by_symbol = facts_repository.corporate_action_gaps_for_symbols(
+                facts_reference,
+                symbols=tuple(sorted(set(symbols))),
+                after=request.trading_date,
+                through=next_session,
+            )
+        corporate_action_excluded_symbols = set(actions_by_symbol) | set(
+            action_gaps_by_symbol
+        )
         labels: list[TargetOutcomeLabel] = []
         economics: list[StrategyEconomicsResult] = []
         capacity_protocol = _capacity_protocol(request.materialized_at)
         requested_notional = Decimal("100000")
         for symbol in symbols:
+            if symbol in corporate_action_excluded_symbols:
+                continue
             reference_price = _decision_reference_price(bars, symbol, request.trading_date, request.decision_time)
             if reference_price is None:
                 continue
@@ -869,6 +1026,7 @@ class HistoricalDecisionMaterializer:
                 signal.reference,
                 portfolio.reference,
                 request.target_protocol_reference,
+                *((facts_reference,) if facts_reference is not None else ()),
             ),
             payload={
                 "next_session_date": next_session.isoformat(),
@@ -884,19 +1042,63 @@ class HistoricalDecisionMaterializer:
                 ],
                 "available_label_count": sum(item.availability_status is OutcomeAvailabilityStatus.COMPLETE for item in labels),
                 "not_estimated_label_count": sum(item.availability_status is not OutcomeAvailabilityStatus.COMPLETE for item in labels),
+                "corporate_action_exclusions": [
+                    {
+                        "symbol": symbol,
+                        "action_references": [
+                            {
+                                "artifact_kind": "HISTORICAL_SECURITY_FACT",
+                                "artifact_id": str(item.fact_id),
+                                "content_hash": item.fact_hash,
+                            }
+                            for item in actions_by_symbol.get(symbol, ())
+                        ],
+                        "coverage_gap_references": [
+                            {
+                                "artifact_kind": "HISTORICAL_SECURITY_FACT_COVERAGE_GAP",
+                                "artifact_id": str(item.gap_id),
+                                "content_hash": item.gap_hash,
+                            }
+                            for item in action_gaps_by_symbol.get(symbol, ())
+                        ],
+                        "excluded_target_count": len(protocol.targets),
+                        "reason_code": (
+                            "CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE"
+                            if symbol in action_gaps_by_symbol
+                            else "RAW_UNADJUSTED_RETURN_CROSSES_CORPORATE_ACTION"
+                        ),
+                    }
+                    for symbol in sorted(corporate_action_excluded_symbols)
+                ],
+                "corporate_action_coverage": {
+                    "facts_owner_bound": facts_reference is not None,
+                    "affected_symbol_count": len(corporate_action_excluded_symbols),
+                    "action_fact_count": sum(len(items) for items in actions_by_symbol.values()),
+                    "coverage_gap_count": sum(
+                        len(items) for items in action_gaps_by_symbol.values()
+                    ),
+                    "incomplete_symbol_count": len(action_gaps_by_symbol),
+                    "excluded_target_count": len(corporate_action_excluded_symbols)
+                    * len(protocol.targets),
+                    "price_adjustment_basis": "RAW_UNADJUSTED_TRADABLE_PRICE_V1",
+                },
                 "engineering_assumptions": [
                     "COMMISSION_3_BPS_EACH_SIDE",
                     "STAMP_DUTY_5_BPS_SELL",
                     "SPREAD_SLIPPAGE_5_BPS_EACH_SIDE",
                     "IMPACT_COEFFICIENT_8_BPS",
                     "PARTICIPATION_RATE_10_PERCENT",
-                    "CORPORATE_ACTION_COVERAGE_INCOMPLETE_RAW_ONLY",
+                    *([] if facts_reference is not None else ["CORPORATE_ACTION_COVERAGE_INCOMPLETE_RAW_ONLY"]),
                 ],
                 "selective_reads": self._windows.stage_lineage_payload(),
             },
-            limitations=(
-                "CORPORATE_ACTION_COVERAGE_INCOMPLETE",
-                "COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",
+            limitations=tuple(
+                sorted(
+                    {
+                        "COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",
+                        *(() if facts_reference is not None else {"CORPORATE_ACTION_COVERAGE_INCOMPLETE"}),
+                    }
+                )
             ),
         )
         self._remember_outcome(component)
@@ -973,32 +1175,9 @@ class HistoricalDecisionMaterializer:
             raise ValueError("Historical Target Protocol owner hash mismatch")
         return protocol
 
-    def _prior_outcomes(self, trading_date: date) -> tuple[HistoricalSessionComponent, ...]:
-        if self._outcome_cache is None:
-            self._outcome_cache = {
-                item.trading_date: item
-                for item in self._components.list_for_run(
-                    run_id=self._run_id,
-                    component_kind=HistoricalComponentKind.OUTCOME,
-                )
-            }
-        return tuple(self._outcome_cache[item] for item in sorted(self._outcome_cache) if item < trading_date)
-
     def _remember_outcome(self, component: HistoricalSessionComponent) -> None:
         if component.component_kind is not HistoricalComponentKind.OUTCOME:
             raise ValueError("Historical Outcome cache only accepts Outcome owners")
-        if self._outcome_cache is None:
-            self._outcome_cache = {
-                item.trading_date: item
-                for item in self._components.list_for_run(
-                    run_id=self._run_id,
-                    component_kind=HistoricalComponentKind.OUTCOME,
-                )
-            }
-        existing = self._outcome_cache.get(component.trading_date)
-        if existing is not None and existing != component:
-            raise ValueError("Historical Outcome cache owner conflict")
-        self._outcome_cache[component.trading_date] = component
 
     def _put_component(
         self,
@@ -1052,6 +1231,16 @@ def _required_reference(
     if len(matches) != 1:
         raise ValueError(f"Historical session requires one {artifact_kind} owner")
     return matches[0]
+
+
+def _optional_reference(
+    references: tuple[ValidationArtifactReference, ...],
+    artifact_kind: str,
+) -> ValidationArtifactReference | None:
+    matches = tuple(item for item in references if item.artifact_kind == artifact_kind)
+    if len(matches) > 1:
+        raise ValueError(f"Historical session accepts at most one {artifact_kind} owner")
+    return None if not matches else matches[0]
 
 
 def _single_reference(references: tuple[ValidationArtifactReference, ...], artifact_kind: str) -> ValidationArtifactReference:
@@ -1145,6 +1334,8 @@ def _security_fact_coverage(
     universe: Any,
     observations: tuple[RuntimeEligibilityObservation, ...],
     decision_date: date,
+    business_facts: tuple[Mapping[str, Any], ...],
+    facts_owner_bound: bool,
 ) -> dict[str, Any]:
     """Persist exact fact coverage without inventing unavailable classifications."""
 
@@ -1158,17 +1349,77 @@ def _security_fact_coverage(
         "listing_status_known_count": sum(item.listing_status.value != "UNKNOWN" for item in records),
         "st_status_known_count": sum(item.is_st is not None for item in observations),
         "suspension_status_known_count": sum(item.suspended is not None for item in observations),
-        "market_cap_available_count": 0,
-        "market_cap_status": "NOT_ESTIMABLE",
-        "industry_available_count": 0,
-        "industry_status": "UNKNOWN",
-        "reason_codes": [
-            "CURRENT_CLASSIFICATION_NOT_BACKFILLED",
-            "HISTORICAL_MARKET_CAP_OWNER_NOT_AVAILABLE",
-            "HISTORICAL_SUSPENSION_UNKNOWN_WITHOUT_POSITIVE_OBSERVATION",
-            "LISTING_AGE_DERIVED_ONLY_FROM_OWNER_RESOLVED_LISTING_DATE",
-        ],
+        "market_cap_available_count": sum(item.get("market_cap") is not None for item in business_facts),
+        "market_cap_status": (
+            "PARTIAL_OR_AVAILABLE" if any(item.get("market_cap") is not None for item in business_facts) else "NOT_ESTIMABLE"
+        ),
+        "industry_available_count": sum(item.get("industry") is not None for item in business_facts),
+        "industry_status": ("PARTIAL_OR_AVAILABLE" if any(item.get("industry") is not None for item in business_facts) else "UNKNOWN"),
+        "facts_owner_bound": facts_owner_bound,
+        "reason_codes": sorted(
+            {
+                "CURRENT_CLASSIFICATION_NOT_BACKFILLED",
+                "HISTORICAL_SUSPENSION_UNKNOWN_WITHOUT_POSITIVE_OBSERVATION",
+                "LISTING_AGE_DERIVED_ONLY_FROM_OWNER_RESOLVED_LISTING_DATE",
+                *(() if facts_owner_bound else {"HISTORICAL_BUSINESS_FACT_OWNER_NOT_BOUND"}),
+            }
+        ),
     }
+
+
+def _historical_business_fact_rows(
+    *,
+    symbols: tuple[str, ...],
+    bars: tuple[HistoricalNormalizedBar, ...],
+    decision_time: datetime,
+    fact_projection: HistoricalSecurityFactProjection | None,
+) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    for symbol in symbols:
+        industry = None if fact_projection is None else fact_projection.industries.get(symbol)
+        shares = None if fact_projection is None else fact_projection.share_capital.get(symbol)
+        share_values = {} if shares is None else dict(shares.values)
+        raw_total_shares = share_values.get("total_shares")
+        total_shares = None if raw_total_shares in {None, ""} else Decimal(str(raw_total_shares))
+        price = _decision_reference_price(
+            bars,
+            symbol,
+            decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date(),
+            decision_time,
+        )
+        market_cap = None if total_shares is None or price is None else total_shares * price
+        rows.append(
+            {
+                "symbol": symbol,
+                "industry": (None if industry is None else dict(industry.values)["industry"]),
+                "industry_fact_reference": (
+                    None
+                    if industry is None
+                    else {
+                        "artifact_kind": "HISTORICAL_SECURITY_FACT",
+                        "artifact_id": str(industry.fact_id),
+                        "content_hash": industry.fact_hash,
+                    }
+                ),
+                "share_fact_reference": (
+                    None
+                    if shares is None
+                    else {
+                        "artifact_kind": "HISTORICAL_SECURITY_FACT",
+                        "artifact_id": str(shares.fact_id),
+                        "content_hash": shares.fact_hash,
+                    }
+                ),
+                "share_effective_date": (None if shares is None else shares.effective_date.isoformat()),
+                "share_published_date": (None if shares is None or shares.published_date is None else shares.published_date.isoformat()),
+                "total_shares": (None if total_shares is None else str(total_shares)),
+                "liquid_shares": share_values.get("liquid_shares") or None,
+                "decision_reference_price": (None if price is None else str(price)),
+                "market_cap": None if market_cap is None else str(market_cap),
+                "market_cap_method": (None if market_cap is None else "PUBLISHED_TOTAL_SHARES_X_RAW_DECISION_PRICE_V1"),
+            }
+        )
+    return tuple(rows)
 
 
 def _compute_features(
@@ -1918,7 +2169,7 @@ def _forecast_configuration(decision_time: datetime) -> PathForecastConfig:
 
 def _prior_forecast_samples(
     *,
-    prior_outcomes: tuple[HistoricalSessionComponent, ...],
+    prior_labels: tuple[tuple[ValidationArtifactReference, TargetOutcomeLabel], ...],
     symbol: str,
     configuration: PathForecastConfig,
 ) -> tuple[
@@ -1929,37 +2180,22 @@ def _prior_forecast_samples(
     samples: list[PathForecastSample] = []
     event_ends: dict[ArtifactId, datetime] = {}
     sources: list[ValidationArtifactReference] = []
-    for component in prior_outcomes:
-        protocol_payload = component.payload.get("target_protocol")
-        if not isinstance(protocol_payload, Mapping):
-            raise ValueError("Historical Outcome Target Protocol payload is missing")
-        protocol = OutcomeTargetProtocol.from_canonical_dict(protocol_payload)
-        target = next(item for item in protocol.targets if item.checkpoint is OutcomeCheckpoint.TIME_1030)
-        matching = tuple(
-            TargetOutcomeLabel.from_canonical_dict(item)
-            for item in _objects(component.payload.get("labels"), "outcome labels")
-            if str(item.get("symbol")) == symbol
-            and isinstance(item.get("target"), Mapping)
-            and str(item["target"].get("artifact_id")) == str(target.target_id)
-        )
-        if not matching:
-            continue
-        if len(matching) != 1:
-            raise ValueError("Historical Outcome label identity is ambiguous")
-        label = matching[0]
+    for component_reference, label in prior_labels:
+        if label.symbol != symbol:
+            raise ValueError("Historical Outcome label symbol projection drift")
         usable = all(item is not None for item in (label.checkpoint_return, label.mfe, label.mae))
         sample_identity = canonical_hash(
             {
-                "outcome_component_id": str(component.component_id),
-                "outcome_component_hash": component.component_hash,
+                "outcome_component_id": str(component_reference.artifact_id),
+                "outcome_component_hash": component_reference.content_hash,
                 "label_id": str(label.label_id),
                 "forecast_target_id": str(configuration.target_contract.target_id),
             }
         )
         sample = PathForecastSample(
             sample_id=ArtifactId(f"historical-path-sample-{sample_identity[7:31]}"),
-            source_artifact_id=component.component_id,
-            source_content_hash=component.component_hash,
+            source_artifact_id=component_reference.artifact_id,
+            source_content_hash=component_reference.content_hash,
             symbol=symbol,
             target_id=TargetId(str(configuration.target_contract.target_id)),
             sample_decision_time=DecisionTime(label.label_interval_start),
@@ -1975,7 +2211,7 @@ def _prior_forecast_samples(
         )
         samples.append(sample)
         event_ends[sample.sample_id] = label.label_interval_end
-        sources.append(component.reference)
+        sources.append(component_reference)
     ordered = tuple(
         sorted(
             samples,
@@ -2191,6 +2427,20 @@ def _research_panel_rows(
         / Decimal("2")
     )
     pool_membership = {str(item["symbol"]): bool(item["included"]) for item in _objects(pool.payload.get("membership"), "pool membership")}
+    business_facts = {
+        str(item["symbol"]): item
+        for item in _objects(
+            pool.payload.get("historical_business_facts", []),
+            "historical business facts",
+        )
+    }
+    action_exclusions = {
+        str(item["symbol"])
+        for item in _objects(
+            outcome.payload.get("corporate_action_exclusions", []),
+            "corporate action exclusions",
+        )
+    }
     records = _objects(candidate.payload.get("records"), "candidate records")
     rows: list[dict[str, Any]] = []
     for record in records:
@@ -2200,7 +2450,10 @@ def _research_panel_rows(
         values = feature_values.get(symbol, {})
         forecast_payload = forecast_by_symbol.get(symbol)
         median_forecast = _forecast_median(forecast_payload)
+        signal_payload = signal_by_symbol.get(symbol)
         capacity = None if result is None else _optional_decimal(result.get("capacity_ceiling"))
+        business = business_facts.get(symbol, {})
+        market_cap = _optional_decimal(business.get("market_cap"))
         rows.append(
             {
                 "session_key": trading_date.isoformat(),
@@ -2218,10 +2471,54 @@ def _research_panel_rows(
                     "capital": _decimal_string(record.get("capital_evolution_score")),
                     "dynamic_pool": ("1" if pool_membership.get(symbol, False) else "0"),
                     "candidate": _decimal_string(record.get("candidate_discovery_score")),
-                    "signal": _decimal_string(None if symbol not in signal_by_symbol else signal_by_symbol[symbol].get("signal_score")),
+                    "signal": _decimal_string(None if signal_payload is None else signal_payload.get("signal_score")),
                     "forecast": _decimal_string(median_forecast),
                 },
+                "signal_diagnostic": (
+                    {
+                        "state": "NOT_EMITTED_NOT_SELECTED",
+                        "confirmation_states": {},
+                        "reason_codes": ["CANDIDATE_NOT_SELECTED"],
+                    }
+                    if signal_payload is None
+                    else {
+                        "state": str(signal_payload["signal_state"]),
+                        "confirmation_states": {
+                            name: str(signal_payload[name])
+                            for name in (
+                                "price_action_state",
+                                "volume_confirmation_state",
+                                "trend_confirmation_state",
+                                "vwap_state",
+                                "overheat_state",
+                            )
+                        },
+                        "reason_codes": list(signal_payload["reason_codes"]),
+                    }
+                ),
+                "forecast_diagnostic": (
+                    {
+                        "status": "NOT_EMITTED_NO_SIGNAL",
+                        "usable_sample_count": 0,
+                        "excluded_sample_count": 0,
+                        "reason_codes": ["SIGNAL_NOT_EMITTED"],
+                    }
+                    if forecast_payload is None
+                    else {
+                        "status": str(forecast_payload["forecast_status"]),
+                        "usable_sample_count": int(forecast_payload["usable_sample_count"]),
+                        "excluded_sample_count": int(forecast_payload["excluded_sample_count"]),
+                        "reason_codes": list(forecast_payload["reason_codes"]),
+                    }
+                ),
                 "target_return": (None if label is None else _decimal_string(label.checkpoint_return)),
+                "target_status": (
+                    "CORPORATE_ACTION_EXCLUDED"
+                    if symbol in action_exclusions
+                    else "NOT_ESTIMABLE"
+                    if label is None
+                    else label.availability_status.value
+                ),
                 "mfe": None if label is None else _decimal_string(label.mfe),
                 "mae": None if label is None else _decimal_string(label.mae),
                 "gross_return": (None if result is None else result.get("gross_return")),
@@ -2231,10 +2528,10 @@ def _research_panel_rows(
                 "capacity_ceiling": (None if capacity is None else str(capacity)),
                 "market_regime": market_state,
                 "liquidity_bucket": _liquidity_bucket(capacity),
-                "market_cap_bucket": "NOT_ESTIMABLE",
+                "market_cap_bucket": _market_cap_bucket(market_cap),
                 "volatility_bucket": volatility,
                 "theme": str(record.get("primary_theme_id") or "NOT_ESTIMABLE"),
-                "industry": "NOT_ESTIMABLE",
+                "industry": str(business.get("industry") or "NOT_ESTIMABLE"),
                 "evidence_ceiling": "EXPLORATORY_PIT_INCOMPLETE",
                 "theme_owner_status": str(theme.payload.get("rotation_state", "UNKNOWN")),
                 "capital_owner_status": str(capital.payload.get("capital_state", "UNKNOWN")),
@@ -2273,6 +2570,16 @@ def _liquidity_bucket(capacity: Decimal | None) -> str:
     if capacity < Decimal("1000000"):
         return "MEDIUM"
     return "HIGH"
+
+
+def _market_cap_bucket(market_cap: Decimal | None) -> str:
+    if market_cap is None:
+        return "NOT_ESTIMABLE"
+    if market_cap < Decimal("10000000000"):
+        return "SMALL_LT_CNY_10B"
+    if market_cap < Decimal("50000000000"):
+        return "MID_CNY_10B_TO_50B"
+    return "LARGE_GTE_CNY_50B"
 
 
 def _mean_decimal_text(values: Any) -> str | None:
@@ -2316,6 +2623,7 @@ def _references(
 __all__ = [
     "FREE_RESEARCH_UNIVERSE_KIND",
     "GLOBAL_RESEARCH_THEME_ID",
+    "HISTORICAL_SECURITY_FACTS_KIND",
     "NORMALIZED_DATASET_KIND",
     "HistoricalDecisionMaterializer",
 ]

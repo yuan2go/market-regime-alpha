@@ -128,8 +128,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 070, `historical_constituent_universe`. Expected schema
-catalog: 251 tables. Migrations 052–067 add Formal Protocol bindings and
+Expected head: migration 075, `phase_e3_lineage_and_fact_gap_closure`. Expected schema
+catalog: 257 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,

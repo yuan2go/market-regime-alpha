@@ -68,6 +68,9 @@ from market_regime_alpha.application.free_data_operation.service import (
 from market_regime_alpha.application.free_data_operation.research_universe import (
     FreeResearchUniverseOperator,
 )
+from market_regime_alpha.application.free_data_operation.historical_security_facts import (
+    HistoricalSecurityFactsOperator,
+)
 from market_regime_alpha.application.governance.access_control import (
     PostgresAccessGovernance,
     SecurityPermission,
@@ -276,6 +279,9 @@ from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 from market_regime_alpha.universe.postgres_research import (
     PostgresFreeResearchUniverseRepository,
 )
+from market_regime_alpha.universe.postgres_historical_facts import (
+    PostgresHistoricalSecurityFactsRepository,
+)
 from market_regime_alpha.universe.postgres_runtime_scope import (
     PostgresRuntimeScopeRepository,
 )
@@ -454,9 +460,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Freeze a real effective-dated CSI 300 constituent Research Universe.",
     )
     historical_universe_sync.add_argument("--effective-date", required=True)
-    historical_universe_sync.add_argument(
-        "--artifact-root", type=Path, required=True
+    historical_universe_sync.add_argument("--artifact-root", type=Path, required=True)
+    historical_universe_history_sync = subparsers.add_parser(
+        "historical-universe-history-sync",
+        help=("Scan real trading sessions and freeze every distinct effective-dated CSI 300 constituent cohort."),
     )
+    historical_universe_history_sync.add_argument("--start-date", required=True)
+    historical_universe_history_sync.add_argument("--end-date", required=True)
+    historical_universe_history_sync.add_argument("--artifact-root", type=Path, required=True)
+    historical_security_facts_sync = subparsers.add_parser(
+        "historical-security-facts-sync",
+        help=("Acquire and publish effective/publication-dated Industry, shares and corporate-action facts for exact historical cohorts."),
+    )
+    historical_security_facts_sync.add_argument("--input", type=Path, required=True)
+    historical_security_facts_sync.add_argument("--artifact-root", type=Path, required=True)
     universe_replay = subparsers.add_parser("research-universe-replay")
     universe_replay.add_argument("--snapshot-id", required=True)
     universe_replay.add_argument("--artifact-root", type=Path, required=True)
@@ -514,33 +531,24 @@ def build_parser() -> argparse.ArgumentParser:
     recovery_audit.add_argument("--checked-at", required=True)
     protocol_record = subparsers.add_parser(
         "qualification-protocol-record",
-        help=(
-            "Record C0 only after PostgreSQL reloads every exact component owner."
-        ),
+        help=("Record C0 only after PostgreSQL reloads every exact component owner."),
     )
     protocol_record.add_argument("--input", type=Path, required=True)
     owners_record = subparsers.add_parser(
         "qualification-owners-record",
         help=(
-            "Record the exact typed pre-Protocol owner package; Model Lineage "
-            "and PIT Dataset/Universe remain owned by their existing CLIs."
+            "Record the exact typed pre-Protocol owner package; Model Lineage and PIT Dataset/Universe remain owned by their existing CLIs."
         ),
     )
     owners_record.add_argument("--input", type=Path, required=True)
     forecast_record = subparsers.add_parser(
         "qualification-forecast-record",
-        help=(
-            "Compute one owner-controlled Formal MultiTargetForecast from "
-            "Formal Protocol and Formal PIT references."
-        ),
+        help=("Compute one owner-controlled Formal MultiTargetForecast from Formal Protocol and Formal PIT references."),
     )
     forecast_record.add_argument("--input", type=Path, required=True)
     evaluation_record = subparsers.add_parser(
         "qualification-evaluation-record",
-        help=(
-            "Resolve the complete frozen Target family through PostgreSQL and "
-            "record one family-level C4 Evaluation candidate."
-        ),
+        help=("Resolve the complete frozen Target family through PostgreSQL and record one family-level C4 Evaluation candidate."),
     )
     evaluation_record.add_argument("--input", type=Path, required=True)
     historical_status = subparsers.add_parser(
@@ -549,9 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_status.add_argument("--dataset-id", required=True)
     historical_status.add_argument("--formal-protocol-id")
-    historical_status.add_argument(
-        "--formal-pit-evidence-id", action="append", dest="formal_pit_evidence_ids"
-    )
+    historical_status.add_argument("--formal-pit-evidence-id", action="append", dest="formal_pit_evidence_ids")
     historical_status.add_argument("--reason", required=True)
     historical_status.add_argument("--idempotency-key", required=True)
     oos_status = subparsers.add_parser(
@@ -664,11 +670,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             principal_id=ArtifactId(args.principal_id),
             permission=permission,
             resource_reference=resource_reference,
-            approval_decision_id=(
-                None
-                if args.approval_decision_id is None
-                else ArtifactId(args.approval_decision_id)
-            ),
+            approval_decision_id=(None if args.approval_decision_id is None else ArtifactId(args.approval_decision_id)),
             occurred_at=_operational_now(),
         )
         if not decision.allowed:
@@ -721,71 +723,101 @@ def _dispatch(
                 *required,
                 "symbols",
                 "universe_snapshot_id",
+                "universe_snapshot_ids",
+                "universe_timeline_id",
                 "context_symbols",
                 "timeframe_ranges",
             }
         ):
             raise ValueError(
-                "historical-corpus-acquire requires start_date, end_date, "
-                "bucket_count and either symbols or universe_snapshot_id"
+                "historical-corpus-acquire requires start_date, end_date, bucket_count and either symbols or universe_snapshot_id"
             )
-        if ("symbols" in payload) == ("universe_snapshot_id" in payload):
-            raise ValueError(
-                "historical-corpus-acquire requires exactly one symbol source"
+        symbol_sources = tuple(
+            key
+            for key in (
+                "symbols",
+                "universe_snapshot_id",
+                "universe_snapshot_ids",
+                "universe_timeline_id",
             )
+            if key in payload
+        )
+        if len(symbol_sources) != 1:
+            raise ValueError("historical-corpus-acquire requires exactly one symbol source")
         timeframe_ranges_payload = payload.get("timeframe_ranges")
         timeframe_ranges = None
         if timeframe_ranges_payload is not None:
             ranges = _object_value(timeframe_ranges_payload, "timeframe_ranges")
             if set(ranges) != {Timeframe.DAILY.value, Timeframe.MINUTE_5.value}:
-                raise ValueError(
-                    "timeframe_ranges requires exact DAILY and MINUTE_5 entries"
-                )
+                raise ValueError("timeframe_ranges requires exact DAILY and MINUTE_5 entries")
             timeframe_ranges = {
                 timeframe: (
-                    date.fromisoformat(
-                        str(
-                            _object_value(
-                                ranges[timeframe.value], timeframe.value
-                            )["start_date"]
-                        )
-                    ),
-                    date.fromisoformat(
-                        str(
-                            _object_value(
-                                ranges[timeframe.value], timeframe.value
-                            )["end_date"]
-                        )
-                    ),
+                    date.fromisoformat(str(_object_value(ranges[timeframe.value], timeframe.value)["start_date"])),
+                    date.fromisoformat(str(_object_value(ranges[timeframe.value], timeframe.value)["end_date"])),
                 )
                 for timeframe in (Timeframe.DAILY, Timeframe.MINUTE_5)
             }
-        universe_reference = None
-        if "universe_snapshot_id" in payload:
-            universe = PostgresFreeResearchUniverseRepository(
+        universe_references: tuple[ValidationArtifactReference, ...] = ()
+        if any(
+            key in payload
+            for key in (
+                "universe_snapshot_id",
+                "universe_snapshot_ids",
+                "universe_timeline_id",
+            )
+        ):
+            universe_repository = PostgresFreeResearchUniverseRepository(
                 factory,
                 apply_migrations=False,
-            ).get(ArtifactId(str(payload["universe_snapshot_id"])))
-            universe_reference = ValidationArtifactReference(
-                FREE_RESEARCH_UNIVERSE_KIND,
-                universe.snapshot_id,
-                universe.snapshot_hash,
+            )
+            timeline_reference: ValidationArtifactReference | None = None
+            if "universe_timeline_id" in payload:
+                timeline = universe_repository.get_timeline(ArtifactId(str(payload["universe_timeline_id"])))
+                snapshot_ids = tuple(str(item.snapshot_reference.artifact_id) for item in timeline.cohorts)
+                timeline_reference = timeline.reference
+            else:
+                snapshot_ids = (
+                    (str(payload["universe_snapshot_id"]),)
+                    if "universe_snapshot_id" in payload
+                    else tuple(
+                        str(item)
+                        for item in _array_value(
+                            payload["universe_snapshot_ids"],
+                            "universe_snapshot_ids",
+                        )
+                    )
+                )
+            if not snapshot_ids or len(snapshot_ids) != len(set(snapshot_ids)):
+                raise ValueError("historical universe snapshot IDs must be non-empty, sorted and unique")
+            if timeline_reference is None and snapshot_ids != tuple(sorted(snapshot_ids)):
+                raise ValueError("historical universe snapshot IDs must be non-empty, sorted and unique")
+            universes = tuple(universe_repository.get(ArtifactId(snapshot_id)) for snapshot_id in snapshot_ids)
+            universe_references = tuple(
+                sorted(
+                    (
+                        *tuple(
+                            ValidationArtifactReference(
+                                FREE_RESEARCH_UNIVERSE_KIND,
+                                universe.snapshot_id,
+                                universe.snapshot_hash,
+                            )
+                            for universe in universes
+                        ),
+                        *((timeline_reference,) if timeline_reference is not None else ()),
+                    ),
+                    key=lambda item: (
+                        item.artifact_kind,
+                        str(item.artifact_id),
+                        item.content_hash,
+                    ),
+                )
             )
             stock_symbols = tuple(
-                item.symbol
-                for item in universe.records
-                if item.membership_status.value == "INCLUDED"
+                sorted({item.symbol for universe in universes for item in universe.records if item.membership_status.value == "INCLUDED"})
             )
         else:
-            stock_symbols = tuple(
-                str(item) for item in _array_value(payload["symbols"], "symbols")
-            )
-        context_symbols = tuple(
-            str(item)
-            for item in _array_value(
-                payload.get("context_symbols", []), "context_symbols"
-            )
-        )
+            stock_symbols = tuple(str(item) for item in _array_value(payload["symbols"], "symbols"))
+        context_symbols = tuple(str(item) for item in _array_value(payload.get("context_symbols", []), "context_symbols"))
         symbols = tuple(sorted({*stock_symbols, *context_symbols}))
         raw = BaoStockHistoricalArchiveClient().acquire(
             symbols=symbols,
@@ -800,9 +832,7 @@ def _dispatch(
             apply_migrations=False,
         )
         raw_package = corpus.publish_and_register(raw)
-        normalized_package = corpus.publish_and_register(
-            normalize_baostock_archive(raw_package.owner)
-        )
+        normalized_package = corpus.publish_and_register(normalize_baostock_archive(raw_package.owner))
         return {
             "operation": "HISTORICAL_CORPUS_ACQUIRE",
             "raw_owner": raw_package.owner.to_canonical_dict(),
@@ -811,11 +841,7 @@ def _dispatch(
             "normalized_physical_hash": normalized_package.physical_hash,
             "stock_symbol_count": len(stock_symbols),
             "context_symbols": list(sorted(set(context_symbols))),
-            "universe_reference": (
-                None
-                if universe_reference is None
-                else universe_reference.to_canonical_dict()
-            ),
+            "universe_references": [item.to_canonical_dict() for item in universe_references],
             "formal_pit": False,
             "formal_oos": False,
             "data_eligibility": "EXPLORATORY",
@@ -836,18 +862,12 @@ def _dispatch(
             factory,
             apply_migrations=False,
         ).build(
-            policy=ResearchUniversePolicy.from_canonical_dict(
-                _object_value(payload["policy"], "policy")
-            ),
+            policy=ResearchUniversePolicy.from_canonical_dict(_object_value(payload["policy"], "policy")),
             as_of=_instant(str(payload["as_of"])),
             built_at=_instant(str(payload["built_at"])),
-            security_master_snapshot_id=ArtifactId(
-                str(payload["security_master_snapshot_id"])
-            ),
+            security_master_snapshot_id=ArtifactId(str(payload["security_master_snapshot_id"])),
             operational_universes=tuple(
-                OperationalUniverseArtifact.from_canonical_dict(
-                    _object_value(item, "operational_universe")
-                )
+                OperationalUniverseArtifact.from_canonical_dict(_object_value(item, "operational_universe"))
                 for item in _array_value(
                     payload["operational_universes"],
                     "operational_universes",
@@ -888,12 +908,8 @@ def _dispatch(
         if args.operation == "historical-run":
             payload = _load_json_object(args.input)
             if set(payload) != {"command", "max_stage_commits"}:
-                raise ValueError(
-                    "historical-run requires command and max_stage_commits"
-                )
-            command = HistoricalResearchCommand.from_canonical_dict(
-                _object_value(payload["command"], "command")
-            )
+                raise ValueError("historical-run requires command and max_stage_commits")
+            command = HistoricalResearchCommand.from_canonical_dict(_object_value(payload["command"], "command"))
             historical_runner = _historical_runner(
                 factory=factory,
                 journal=historical_journal,
@@ -903,13 +919,9 @@ def _dispatch(
             raw_limit = payload["max_stage_commits"]
             historical_snapshot = historical_runner.run(
                 command=command,
-                max_stage_commits=(
-                    None if raw_limit is None else int(raw_limit)
-                ),
+                max_stage_commits=(None if raw_limit is None else int(raw_limit)),
             )
-            return _historical_snapshot_payload(
-                "HISTORICAL_RUN", historical_snapshot
-            )
+            return _historical_snapshot_payload("HISTORICAL_RUN", historical_snapshot)
         run_id = ArtifactId(args.run_id)
         if args.operation == "historical-report":
             return _historical_snapshot_payload(
@@ -950,12 +962,8 @@ def _dispatch(
                 artifact_root=args.artifact_root.resolve(),
                 apply_migrations=False,
             ),
-            component_repository=PostgresHistoricalMaterializationRepository(
-                factory, apply_migrations=False
-            ),
-            evidence_repository=PostgresHistoricalEvidenceRepository(
-                factory, apply_migrations=False
-            ),
+            component_repository=PostgresHistoricalMaterializationRepository(factory, apply_migrations=False),
+            evidence_repository=PostgresHistoricalEvidenceRepository(factory, apply_migrations=False),
         ).produce(run_id=run_id)
         return {
             "operation": "HISTORICAL_EVIDENCE",
@@ -966,17 +974,13 @@ def _dispatch(
     if args.operation == "performance-build":
         payload = _load_json_object(args.input)
         if set(payload) != {"portfolio_id", "policy", "generated_at"}:
-            raise ValueError(
-                "performance-build requires portfolio_id, policy and generated_at"
-            )
+            raise ValueError("performance-build requires portfolio_id, policy and generated_at")
         performance_report = PortfolioPerformanceOperator(
             factory,
             apply_migrations=False,
         ).build(
             portfolio_id=ArtifactId(str(payload["portfolio_id"])),
-            policy=PerformancePolicy.from_canonical_dict(
-                _object_value(payload["policy"], "policy")
-            ),
+            policy=PerformancePolicy.from_canonical_dict(_object_value(payload["policy"], "policy")),
             generated_at=_instant(str(payload["generated_at"])),
         )
         return {
@@ -1001,9 +1005,7 @@ def _dispatch(
         payload = _load_json_object(args.input)
         if set(payload) != {"request", "trained_at"}:
             raise ValueError("model-train requires request and trained_at")
-        research_training_request = ResearchModelTrainingRequest.from_canonical_dict(
-            _object_value(payload["request"], "request")
-        )
+        research_training_request = ResearchModelTrainingRequest.from_canonical_dict(_object_value(payload["request"], "request"))
         research_artifact = PostgresResearchModelRepository(
             factory,
             apply_migrations=False,
@@ -1030,17 +1032,13 @@ def _dispatch(
     if args.operation == "model-execute":
         payload = _load_json_object(args.input)
         if set(payload) != {"artifact_id", "request", "executed_at"}:
-            raise ValueError(
-                "model-execute requires artifact_id, request and executed_at"
-            )
+            raise ValueError("model-execute requires artifact_id, request and executed_at")
         research_inference_receipt = PostgresResearchModelRepository(
             factory,
             apply_migrations=False,
         ).execute(
             artifact_id=ArtifactId(str(payload["artifact_id"])),
-            request=ResearchInferenceRequest.from_canonical_dict(
-                _object_value(payload["request"], "request")
-            ),
+            request=ResearchInferenceRequest.from_canonical_dict(_object_value(payload["request"], "request")),
             executed_at=_instant(str(payload["executed_at"])),
         )
         return {
@@ -1058,38 +1056,25 @@ def _dispatch(
                 "lineage",
             }
             if set(payload) != expected:
-                raise ValueError(
-                    "strategy-day --auto requires trading_date, observed_at, "
-                    "symbol and observation_policy"
-                )
+                raise ValueError("strategy-day --auto requires trading_date, observed_at, symbol and observation_policy")
             return StrategyShadowDayOperator(factory).run_auto(
                 trading_date=date.fromisoformat(str(payload["trading_date"])),
                 observed_at=_instant(str(payload["observed_at"])),
-                symbol=(
-                    None if payload["symbol"] is None else str(payload["symbol"])
-                ),
+                symbol=(None if payload["symbol"] is None else str(payload["symbol"])),
                 policy=ShadowObservationPolicy.from_canonical_dict(
                     _object_value(
                         payload["observation_policy"],
                         "observation_policy",
                     )
                 ),
-                lineage=ShadowOwnerLineageRequest.from_canonical_dict(
-                    _object_value(payload["lineage"], "lineage")
-                ),
+                lineage=ShadowOwnerLineageRequest.from_canonical_dict(_object_value(payload["lineage"], "lineage")),
             )
         payload = _load_json_object(args.observations)
         if set(payload) != {"observation", "lineage"}:
-            raise ValueError(
-                "strategy-day requires exact observation and lineage objects"
-            )
+            raise ValueError("strategy-day requires exact observation and lineage objects")
         return StrategyShadowDayOperator(factory).run(
-            StrategyDayObservation.from_canonical_dict(
-                _object_value(payload["observation"], "observation")
-            ),
-            lineage=ShadowOwnerLineageRequest.from_canonical_dict(
-                _object_value(payload["lineage"], "lineage")
-            ),
+            StrategyDayObservation.from_canonical_dict(_object_value(payload["observation"], "observation")),
+            lineage=ShadowOwnerLineageRequest.from_canonical_dict(_object_value(payload["lineage"], "lineage")),
         )
     if args.operation == "settle-day":
         return FreeDataSettlementOperator(
@@ -1101,9 +1086,7 @@ def _dispatch(
             artifact_root=args.artifact_root.resolve(),
         )
     if args.operation == "strategy-replay":
-        return StrategyShadowDayOperator(factory).replay(
-            ArtifactId(args.session_id)
-        )
+        return StrategyShadowDayOperator(factory).replay(ArtifactId(args.session_id))
     if args.operation == "portfolio-shadow-day":
         if args.auto is not None:
             payload = _load_json_object(args.auto)
@@ -1119,49 +1102,29 @@ def _dispatch(
                 "strategy_reference",
             }
             if set(payload) != expected:
-                raise ValueError(
-                    "portfolio-shadow-day --auto requires exact owner and Policy inputs"
-                )
+                raise ValueError("portfolio-shadow-day --auto requires exact owner and Policy inputs")
             portfolio_id = payload["portfolio_id"]
             return PortfolioShadowDayOperator(factory).run_auto(
-                research_trading_date=date.fromisoformat(
-                    str(payload["research_trading_date"])
-                ),
+                research_trading_date=date.fromisoformat(str(payload["research_trading_date"])),
                 trading_date=date.fromisoformat(str(payload["trading_date"])),
                 observed_at=_instant(str(payload["observed_at"])),
-                portfolio_id=(
-                    None
-                    if portfolio_id is None
-                    else ArtifactId(str(portfolio_id))
-                ),
+                portfolio_id=(None if portfolio_id is None else ArtifactId(str(portfolio_id))),
                 initial_cash=Decimal(str(payload["initial_cash"])),
-                policy=ShadowPortfolioPolicy.from_canonical_dict(
-                    _object_value(payload["portfolio_policy"], "portfolio_policy")
-                ),
+                policy=ShadowPortfolioPolicy.from_canonical_dict(_object_value(payload["portfolio_policy"], "portfolio_policy")),
                 observation_policy=ShadowObservationPolicy.from_canonical_dict(
                     _object_value(
                         payload["observation_policy"],
                         "observation_policy",
                     )
                 ),
-                lineage=ShadowOwnerLineageRequest.from_canonical_dict(
-                    _object_value(payload["lineage"], "lineage")
-                ),
+                lineage=ShadowOwnerLineageRequest.from_canonical_dict(_object_value(payload["lineage"], "lineage")),
                 strategy_reference=ValidationArtifactReference.from_canonical_dict(
-                    _object_value(
-                        payload["strategy_reference"], "strategy_reference"
-                    )
+                    _object_value(payload["strategy_reference"], "strategy_reference")
                 ),
             )
-        return PortfolioShadowDayOperator(factory).run(
-            PortfolioShadowDayInput.from_canonical_dict(
-                _load_json_object(args.observations)
-            )
-        )
+        return PortfolioShadowDayOperator(factory).run(PortfolioShadowDayInput.from_canonical_dict(_load_json_object(args.observations)))
     if args.operation == "portfolio-shadow-replay":
-        return PortfolioShadowDayOperator(factory).replay(
-            ArtifactId(args.portfolio_id)
-        )
+        return PortfolioShadowDayOperator(factory).replay(ArtifactId(args.portfolio_id))
     if args.operation == "research-universe-sync":
         return FreeResearchUniverseOperator(factory).sync(
             as_of_date=date.fromisoformat(args.as_of_date),
@@ -1172,15 +1135,62 @@ def _dispatch(
             effective_date=date.fromisoformat(args.effective_date),
             artifact_root=args.artifact_root.resolve(),
         )
+    if args.operation == "historical-universe-history-sync":
+        return FreeResearchUniverseOperator(factory).sync_historical_constituent_history(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "historical-security-facts-sync":
+        payload = _load_json_object(args.input)
+        common = {"start_date", "end_date"}
+        if set(payload) == {*common, "universe_timeline_id"}:
+            timeline_id = ArtifactId(str(payload["universe_timeline_id"]))
+            timeline = PostgresFreeResearchUniverseRepository(
+                factory, apply_migrations=False
+            ).get_timeline(timeline_id)
+            raw_ids = tuple(
+                sorted(
+                    str(item.snapshot_reference.artifact_id)
+                    for item in timeline.cohorts
+                )
+            )
+        elif set(payload) == {*common, "universe_snapshot_ids"}:
+            timeline_id = None
+            raw_ids = tuple(
+                str(item)
+                for item in _array_value(
+                    payload["universe_snapshot_ids"], "universe_snapshot_ids"
+                )
+            )
+        else:
+            raise ValueError(
+                "historical-security-facts-sync requires one exact Universe "
+                "timeline or cohort owner set and range"
+            )
+        if not raw_ids or raw_ids != tuple(sorted(set(raw_ids))):
+            raise ValueError(
+                "historical Security Fact Universe IDs must be ordered and unique"
+            )
+        result = HistoricalSecurityFactsOperator(factory).sync(
+            universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
+            start_date=date.fromisoformat(str(payload["start_date"])),
+            end_date=date.fromisoformat(str(payload["end_date"])),
+            artifact_root=args.artifact_root.resolve(),
+        )
+        return {
+            **result,
+            "universe_timeline_id": (
+                None if timeline_id is None else str(timeline_id)
+            ),
+        }
     if args.operation == "research-universe-replay":
         return FreeResearchUniverseOperator(factory).replay(
             ArtifactId(args.snapshot_id),
             artifact_root=args.artifact_root.resolve(),
         )
     if args.operation == "recovery-audit":
-        return PostgresRecoveryAudit(factory).inspect(
-            checked_at=_instant(args.checked_at)
-        ).to_canonical_dict()
+        return PostgresRecoveryAudit(factory).inspect(checked_at=_instant(args.checked_at)).to_canonical_dict()
     if args.operation == "qualification-owners-record":
         payload = _load_json_object(args.input)
         _require_principal_actor(args, payload)
@@ -1203,9 +1213,7 @@ def _dispatch(
         idempotency_key = str(payload["idempotency_key"])
         if not actor.strip() or not reason.strip() or not idempotency_key.strip():
             raise ValueError("Formal Protocol actor, reason and idempotency key are required")
-        scope = FormalProtocolFreezeScope.from_canonical_dict(
-            dict(_object_value(payload["freeze_scope"], "freeze_scope"))
-        )
+        scope = FormalProtocolFreezeScope.from_canonical_dict(dict(_object_value(payload["freeze_scope"], "freeze_scope")))
         recorded_protocol = PostgresFormalProtocolRepository(
             factory,
             apply_migrations=False,
@@ -1222,13 +1230,9 @@ def _dispatch(
     if args.operation == "qualification-forecast-record":
         payload = _load_json_object(args.input)
         if set(payload) != {"request", "actor", "reason"}:
-            raise ValueError(
-                "qualification-forecast-record requires request, actor and reason"
-            )
+            raise ValueError("qualification-forecast-record requires request, actor and reason")
         _require_principal_actor(args, payload)
-        request = FormalForecastComputationRequest.from_canonical_dict(
-            dict(_object_value(payload["request"], "request"))
-        )
+        request = FormalForecastComputationRequest.from_canonical_dict(dict(_object_value(payload["request"], "request")))
         receipt = PostgresFormalProtocolRepository(
             factory,
             apply_migrations=False,
@@ -1257,8 +1261,7 @@ def _dispatch(
             {"formal_pit_evidence_ids"},
         ) or not common.issubset(payload):
             raise ValueError(
-                "qualification-evaluation-record accepts only immutable owner "
-                "references; result time is assigned by PostgreSQL"
+                "qualification-evaluation-record accepts only immutable owner references; result time is assigned by PostgreSQL"
             )
         raw_pit_ids = (
             (payload["formal_pit_evidence_id"],)
@@ -1272,9 +1275,7 @@ def _dispatch(
             "historical_sample_decision_ids",
         )
         if not raw_sample_ids:
-            raise ValueError(
-                "Formal Family Evaluation requires qualified C3 decisions"
-            )
+            raise ValueError("Formal Family Evaluation requires qualified C3 decisions")
         _require_principal_actor(args, payload)
         pit_ids = tuple(ArtifactId(str(item)) for item in raw_pit_ids)
         evaluation_result = PostgresResearchQualificationAuthority(
@@ -1283,14 +1284,9 @@ def _dispatch(
         ).record_family_evaluation_candidate(
             formal_protocol_id=ArtifactId(str(payload["formal_protocol_id"])),
             observation_groups=tuple(
-                _family_observation_group(item)
-                for item in _array_value(
-                    payload["observation_groups"], "observation_groups"
-                )
+                _family_observation_group(item) for item in _array_value(payload["observation_groups"], "observation_groups")
             ),
-            historical_sample_decision_ids=tuple(
-                ArtifactId(str(item)) for item in raw_sample_ids
-            ),
+            historical_sample_decision_ids=tuple(ArtifactId(str(item)) for item in raw_sample_ids),
             formal_pit_evidence_id=pit_ids[0],
             formal_pit_evidence_ids=pit_ids,
             actor=str(payload["actor"]),
@@ -1309,19 +1305,9 @@ def _dispatch(
             apply_migrations=False,
         ).qualify_historical_sample(
             dataset_id=ArtifactId(args.dataset_id),
-            formal_protocol_id=(
-                None
-                if args.formal_protocol_id is None
-                else ArtifactId(args.formal_protocol_id)
-            ),
-            formal_pit_evidence_id=(
-                None
-                if not args.formal_pit_evidence_ids
-                else ArtifactId(args.formal_pit_evidence_ids[0])
-            ),
-            formal_pit_evidence_ids=tuple(
-                ArtifactId(item) for item in (args.formal_pit_evidence_ids or ())
-            ),
+            formal_protocol_id=(None if args.formal_protocol_id is None else ArtifactId(args.formal_protocol_id)),
+            formal_pit_evidence_id=(None if not args.formal_pit_evidence_ids else ArtifactId(args.formal_pit_evidence_ids[0])),
+            formal_pit_evidence_ids=tuple(ArtifactId(item) for item in (args.formal_pit_evidence_ids or ())),
             actor=args.principal_id,
             reason=args.reason,
             idempotency_key=args.idempotency_key,
@@ -1331,9 +1317,7 @@ def _dispatch(
             **historical_decision.to_canonical_dict(),
         }
     if args.operation == "qualification-oos":
-        policy = FormalOOSQualificationPolicy.from_canonical_dict(
-            _load_json_object(args.policy)
-        )
+        policy = FormalOOSQualificationPolicy.from_canonical_dict(_load_json_object(args.policy))
         oos_decision = PostgresResearchQualificationAuthority(
             factory,
             apply_migrations=False,
@@ -1341,16 +1325,10 @@ def _dispatch(
             policy=policy,
             formal_protocol_id=ArtifactId(args.formal_protocol_id),
             evaluation_result_id=ArtifactId(args.evaluation_result_id),
-            historical_sample_decision_id=ArtifactId(
-                args.historical_sample_decision_ids[0]
-            ),
-            historical_sample_decision_ids=tuple(
-                ArtifactId(item) for item in args.historical_sample_decision_ids
-            ),
+            historical_sample_decision_id=ArtifactId(args.historical_sample_decision_ids[0]),
+            historical_sample_decision_ids=tuple(ArtifactId(item) for item in args.historical_sample_decision_ids),
             formal_pit_evidence_id=ArtifactId(args.formal_pit_evidence_ids[0]),
-            formal_pit_evidence_ids=tuple(
-                ArtifactId(item) for item in args.formal_pit_evidence_ids
-            ),
+            formal_pit_evidence_ids=tuple(ArtifactId(item) for item in args.formal_pit_evidence_ids),
             actor=args.principal_id,
             reason=args.reason,
             idempotency_key=args.idempotency_key,
@@ -1360,20 +1338,14 @@ def _dispatch(
             **oos_decision.to_canonical_dict(),
         }
     if args.operation == "qualification-calibration":
-        calibration_policy = CalibrationQualificationPolicy.from_canonical_dict(
-            _load_json_object(args.policy)
-        )
+        calibration_policy = CalibrationQualificationPolicy.from_canonical_dict(_load_json_object(args.policy))
         calibration_decision = PostgresCalibrationQualificationAuthority(
             factory,
             apply_migrations=False,
         ).qualify(
             policy=calibration_policy,
             formal_protocol_id=ArtifactId(args.formal_protocol_id),
-            calibration_artifact_id=(
-                None
-                if args.calibration_artifact_id is None
-                else ArtifactId(args.calibration_artifact_id)
-            ),
+            calibration_artifact_id=(None if args.calibration_artifact_id is None else ArtifactId(args.calibration_artifact_id)),
             actor=args.principal_id,
             reason=args.reason,
             idempotency_key=args.idempotency_key,
@@ -1383,9 +1355,7 @@ def _dispatch(
             **calibration_decision.to_canonical_dict(),
         }
     if args.operation == "qualification-shadow":
-        shadow_policy = ProspectiveShadowQualificationPolicy.from_canonical_dict(
-            _load_json_object(args.policy)
-        )
+        shadow_policy = ProspectiveShadowQualificationPolicy.from_canonical_dict(_load_json_object(args.policy))
         shadow_decision = PostgresPhaseCGateAuthority(
             factory,
             apply_migrations=False,
@@ -1405,9 +1375,7 @@ def _dispatch(
         entry_policy = (
             None
             if args.entry_policy is None
-            else EntryHoldingExitQualificationPolicy.from_canonical_dict(
-                _load_json_object(args.entry_policy)
-            )
+            else EntryHoldingExitQualificationPolicy.from_canonical_dict(_load_json_object(args.entry_policy))
         )
         strategy = authority.resolve_entry_holding_exit(
             formal_protocol_id=formal_protocol_id,
@@ -1442,9 +1410,7 @@ def _dispatch(
         }
     if args.operation == "report-day":
         trading_date = date.fromisoformat(args.trading_date)
-        runtime = PostgresCanonicalRuntimeQuery(factory).inspect_trading_date(
-            trading_date
-        )
+        runtime = PostgresCanonicalRuntimeQuery(factory).inspect_trading_date(trading_date)
         with factory.connection(read_only=True) as connection:
             shadow_rows = connection.execute(
                 """
@@ -1465,10 +1431,7 @@ def _dispatch(
                 """,
                 (trading_date,),
             ).fetchall()
-        research_reports = [
-            ResearchShadowOperations(factory).report(ArtifactId(str(row[0])))
-            for row in shadow_rows
-        ]
+        research_reports = [ResearchShadowOperations(factory).report(ArtifactId(str(row[0]))) for row in shadow_rows]
         strategy_report = StrategyShadowDayOperator(factory).report_day(
             trading_date,
             generated_at=_instant(args.at),
@@ -1529,21 +1492,10 @@ def _dispatch(
         return {
             "operation": "REPLAY_DAY",
             "trading_date": trading_date.isoformat(),
-            "continuous_runtime": [
-                replay_continuous_research(journal, ArtifactId(str(row[0]))).to_canonical_dict()
-                for row in run_rows
-            ],
-            "research_shadow": [
-                research.replay(ArtifactId(str(row[0]))).to_canonical_dict()
-                for row in decision_rows
-            ],
-            "strategy_shadow": [
-                strategy_operator.replay(item.session_id) for item in strategy_sessions
-            ],
-            "portfolio_shadow": [
-                portfolio_operator.replay(ArtifactId(str(row[0])))
-                for row in portfolio_rows
-            ],
+            "continuous_runtime": [replay_continuous_research(journal, ArtifactId(str(row[0]))).to_canonical_dict() for row in run_rows],
+            "research_shadow": [research.replay(ArtifactId(str(row[0]))).to_canonical_dict() for row in decision_rows],
+            "strategy_shadow": [strategy_operator.replay(item.session_id) for item in strategy_sessions],
+            "portfolio_shadow": [portfolio_operator.replay(ArtifactId(str(row[0]))) for row in portfolio_rows],
             **_authority_ceiling(),
         }
     if args.operation == "preflight":
@@ -1773,9 +1725,7 @@ def _run_due(
             factory,
             apply_migrations=False,
         )
-        forecast_sample_provider = HistoricalRegistryPathForecastSampleProvider(
-            validation_repository
-        )
+        forecast_sample_provider = HistoricalRegistryPathForecastSampleProvider(validation_repository)
 
     service = FreeDataOperationService(
         repositories=repositories,
@@ -1924,11 +1874,7 @@ def _run_due(
         "entry_authority_granted": False,
         "broker_authority_granted": False,
         "daily_decision_window_summary_delivered": summary_id is not None,
-        "historical_sample_build": (
-            None
-            if historical_sample_build is None
-            else historical_sample_build.to_canonical_dict()
-        ),
+        "historical_sample_build": (None if historical_sample_build is None else historical_sample_build.to_canonical_dict()),
         "path_forecast_registry_wired": forecast_sample_provider is not None,
     }
 
@@ -2014,9 +1960,7 @@ def _family_observation_group(
         "panel_reference",
         "observation_bindings",
     }:
-        raise ValueError(
-            "observation_groups[] accepts only Target, Panel and immutable bindings"
-        )
+        raise ValueError("observation_groups[] accepts only Target, Panel and immutable bindings")
     return FamilyEvaluationObservationBindings(
         target_reference=ValidationArtifactReference.from_canonical_dict(
             _object_value(
@@ -2031,9 +1975,7 @@ def _family_observation_group(
             )
         ),
         observation_bindings=tuple(
-            FormalEvaluationObservationBinding.from_canonical_dict(
-                _object_value(item, "observation_bindings[]")
-            )
+            FormalEvaluationObservationBinding.from_canonical_dict(_object_value(item, "observation_bindings[]"))
             for item in _array_value(
                 group["observation_bindings"],
                 "observation_groups[].observation_bindings",
@@ -2066,59 +2008,41 @@ def _record_phase_c_owner_package(
         "idempotency_key",
     }
     if set(payload) != expected:
-        raise ValueError(
-            "qualification-owners-record requires the exact typed owner package"
-        )
+        raise ValueError("qualification-owners-record requires the exact typed owner package")
     actor = str(payload["actor"])
     reason = str(payload["reason"])
     idempotency_key = str(payload["idempotency_key"])
     if not actor.strip() or not reason.strip() or not idempotency_key.strip():
         raise ValueError("owner package actor, reason and idempotency key are required")
-    target = OutcomeTargetProtocol.from_canonical_dict(
-        _object_value(payload["target_protocol"], "target_protocol")
-    )
-    calendar = TradingCalendarArtifact.from_canonical_dict(
-        _object_value(payload["trading_calendar"], "trading_calendar")
-    )
-    evaluation = FormalEvaluationProtocol.from_canonical_dict(
-        dict(_object_value(payload["evaluation_protocol"], "evaluation_protocol"))
-    )
-    features = FeatureDefinitionSet.from_canonical_dict(
-        _object_value(payload["feature_definition_set"], "feature_definition_set")
-    )
-    enrichment = ResearchPanelEnrichment.from_canonical_dict(
-        _object_value(payload["panel_enrichment"], "panel_enrichment")
-    )
-    factors = FactorResearchCatalog.from_canonical_dict(
-        _object_value(payload["factor_catalog"], "factor_catalog")
-    )
-    threshold = ThresholdPolicy.from_canonical_dict(
-        _object_value(payload["threshold_policy"], "threshold_policy")
-    )
-    oos_policy = FormalOOSQualificationPolicy.from_canonical_dict(
-        _object_value(payload["formal_oos_policy"], "formal_oos_policy")
-    )
-    calibration_protocol = CalibrationProtocol.from_canonical_dict(
-        _object_value(payload["calibration_protocol"], "calibration_protocol")
-    )
+    target = OutcomeTargetProtocol.from_canonical_dict(_object_value(payload["target_protocol"], "target_protocol"))
+    calendar = TradingCalendarArtifact.from_canonical_dict(_object_value(payload["trading_calendar"], "trading_calendar"))
+    evaluation = FormalEvaluationProtocol.from_canonical_dict(dict(_object_value(payload["evaluation_protocol"], "evaluation_protocol")))
+    features = FeatureDefinitionSet.from_canonical_dict(_object_value(payload["feature_definition_set"], "feature_definition_set"))
+    enrichment = ResearchPanelEnrichment.from_canonical_dict(_object_value(payload["panel_enrichment"], "panel_enrichment"))
+    factors = FactorResearchCatalog.from_canonical_dict(_object_value(payload["factor_catalog"], "factor_catalog"))
+    threshold = ThresholdPolicy.from_canonical_dict(_object_value(payload["threshold_policy"], "threshold_policy"))
+    oos_policy = FormalOOSQualificationPolicy.from_canonical_dict(_object_value(payload["formal_oos_policy"], "formal_oos_policy"))
+    calibration_protocol = CalibrationProtocol.from_canonical_dict(_object_value(payload["calibration_protocol"], "calibration_protocol"))
     calibration_policy = CalibrationQualificationPolicy.from_canonical_dict(
         _object_value(payload["calibration_policy"], "calibration_policy")
     )
-    strategy_payload = dict(
-        _object_value(payload["strategy_policy"], "strategy_policy")
-    )
-    if set(strategy_payload) != {
-        "policy_id",
-        "policy_hash",
-        "schema",
-        "policy_version",
-        "rule_kinds",
-        "fixed_horizon_sessions",
-        "trailing_drawdown",
-        "protection_return",
-        "participation_rate",
-        "limitations",
-    } or strategy_payload["schema"] != "strategy-shadow-policy/v1":
+    strategy_payload = dict(_object_value(payload["strategy_policy"], "strategy_policy"))
+    if (
+        set(strategy_payload)
+        != {
+            "policy_id",
+            "policy_hash",
+            "schema",
+            "policy_version",
+            "rule_kinds",
+            "fixed_horizon_sessions",
+            "trailing_drawdown",
+            "protection_return",
+            "participation_rate",
+            "limitations",
+        }
+        or strategy_payload["schema"] != "strategy-shadow-policy/v1"
+    ):
         raise ValueError("strategy_policy must use the exact typed contract")
     strategy_id = ArtifactId(str(strategy_payload.pop("policy_id")))
     strategy_hash = str(strategy_payload.pop("policy_hash"))
@@ -2132,12 +2056,8 @@ def _record_phase_c_owner_package(
         raise ValueError("strategy_policy did not restore a typed Policy")
     if canonical_hash(strategy_shadow_artifact_payload(strategy)) != strategy_hash:
         raise ValueError("strategy_policy immutable identity mismatch")
-    portfolio_policy = ShadowPortfolioPolicy.from_canonical_dict(
-        _object_value(payload["portfolio_policy"], "portfolio_policy")
-    )
-    portfolio = ShadowPortfolio.from_canonical_dict(
-        _object_value(payload["portfolio"], "portfolio")
-    )
+    portfolio_policy = ShadowPortfolioPolicy.from_canonical_dict(_object_value(payload["portfolio_policy"], "portfolio_policy"))
+    portfolio = ShadowPortfolio.from_canonical_dict(_object_value(payload["portfolio"], "portfolio"))
     entry_policy = EntryHoldingExitQualificationPolicy.from_canonical_dict(
         _object_value(
             payload["entry_holding_exit_policy"],
@@ -2145,27 +2065,17 @@ def _record_phase_c_owner_package(
         )
     )
 
-    target = PostgresTargetOutcomeRepository(
-        factory, apply_migrations=False
-    ).register_protocol(target)
-    calendar = PostgresPITTradingCalendarSnapshotRepository(
-        factory, apply_migrations=False
-    ).record(calendar)
-    validation = PostgresResearchValidationRepository(
-        factory, apply_migrations=False
-    )
+    target = PostgresTargetOutcomeRepository(factory, apply_migrations=False).register_protocol(target)
+    calendar = PostgresPITTradingCalendarSnapshotRepository(factory, apply_migrations=False).record(calendar)
+    validation = PostgresResearchValidationRepository(factory, apply_migrations=False)
     validation.record_formal_evaluation_protocol(evaluation)
     validation.record_feature_definition_set(features)
     validation.record_panel_enrichment(enrichment)
     validation.record_factor_catalog(factors)
     validation.record_threshold_policy(threshold)
-    PostgresResearchQualificationAuthority(
-        factory, apply_migrations=False
-    ).record_oos_policy(oos_policy)
+    PostgresResearchQualificationAuthority(factory, apply_migrations=False).record_oos_policy(oos_policy)
     with factory.connection(read_only=True) as connection:
-        recorded_at_row = connection.execute(
-            "SELECT date_trunc('second', clock_timestamp())"
-        ).fetchone()
+        recorded_at_row = connection.execute("SELECT date_trunc('second', clock_timestamp())").fetchone()
     if recorded_at_row is None or not isinstance(recorded_at_row[0], datetime):
         raise RuntimeError("PostgreSQL clock did not return an authority timestamp")
     recorded_at = recorded_at_row[0]
@@ -2173,31 +2083,29 @@ def _record_phase_c_owner_package(
         calibration_protocol,
         recorded_at=recorded_at,
     )
-    PostgresCalibrationQualificationAuthority(
-        factory, apply_migrations=False
-    ).record_policy(calibration_policy)
-    PostgresStrategyShadowRepository(
-        factory, apply_migrations=False
-    ).save_policy(strategy, created_at=recorded_at)
-    PostgresShadowPortfolioRepository(
-        factory, apply_migrations=False
-    ).save_portfolio(policy=portfolio_policy, portfolio=portfolio)
-    PostgresPhaseCGateAuthority(
-        factory, apply_migrations=False
-    ).record_entry_holding_exit_policy(entry_policy)
+    PostgresCalibrationQualificationAuthority(factory, apply_migrations=False).record_policy(calibration_policy)
+    PostgresStrategyShadowRepository(factory, apply_migrations=False).save_policy(strategy, created_at=recorded_at)
+    PostgresShadowPortfolioRepository(factory, apply_migrations=False).save_portfolio(policy=portfolio_policy, portfolio=portfolio)
+    PostgresPhaseCGateAuthority(factory, apply_migrations=False).record_entry_holding_exit_policy(entry_policy)
 
     owners = (
         ("FREEZE_TARGET_PROTOCOL", _reference_for("OUTCOME_TARGET_PROTOCOL", target.protocol_id, target.protocol_hash)),
         ("FREEZE_TRADING_CALENDAR", _reference_for("TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash)),
         ("FREEZE_EVALUATION_PROTOCOL", _reference_for("FORMAL_EVALUATION_PROTOCOL", evaluation.protocol_id, evaluation.protocol_hash)),
-        ("FREEZE_FEATURE_DEFINITION_SET", _reference_for("FEATURE_DEFINITION_SET", features.definition_set_id, features.definition_set_hash)),
+        (
+            "FREEZE_FEATURE_DEFINITION_SET",
+            _reference_for("FEATURE_DEFINITION_SET", features.definition_set_id, features.definition_set_hash),
+        ),
         ("FREEZE_FACTOR_CATALOG", _reference_for("FACTOR_CATALOG", factors.catalog_id, factors.catalog_hash)),
         ("FREEZE_THRESHOLD_POLICY", _reference_for("THRESHOLD_POLICY", threshold.policy_id, threshold.policy_hash)),
         ("FREEZE_FORMAL_OOS_POLICY", _reference_for("FORMAL_OOS_QUALIFICATION_POLICY", oos_policy.policy_id, oos_policy.policy_hash)),
         ("FREEZE_CALIBRATION_POLICY", _reference_for("CALIBRATION_POLICY", calibration_policy.policy_id, calibration_policy.policy_hash)),
         ("FREEZE_STRATEGY_POLICY", _reference_for("STRATEGY_SHADOW_POLICY", strategy.policy_id, strategy.policy_hash)),
         ("FREEZE_COST_POLICY", _reference_for("SHADOW_PORTFOLIO_POLICY", portfolio_policy.policy_id, portfolio_policy.policy_hash)),
-        ("FREEZE_ENTRY_HOLDING_EXIT_POLICY", _reference_for("ENTRY_HOLDING_EXIT_QUALIFICATION_POLICY", entry_policy.policy_id, entry_policy.policy_hash)),
+        (
+            "FREEZE_ENTRY_HOLDING_EXIT_POLICY",
+            _reference_for("ENTRY_HOLDING_EXIT_QUALIFICATION_POLICY", entry_policy.policy_id, entry_policy.policy_hash),
+        ),
     )
     for action, reference in owners:
         _record_phase_c_operator_audit(
@@ -2267,9 +2175,7 @@ def _record_phase_c_operator_audit(
             if tuple(row) != expected:
                 raise ValueError("Phase C Formal operator idempotency conflict")
             return
-        created_at = connection.execute(
-            "SELECT date_trunc('second', clock_timestamp())"
-        ).fetchone()[0]
+        created_at = connection.execute("SELECT date_trunc('second', clock_timestamp())").fetchone()[0]
         connection.execute(
             """
             INSERT INTO phase_c_formal_operator_command(
@@ -2313,9 +2219,7 @@ def _historical_runner(
     archive_materializer = None
     if command.data_authority_mode is DataAuthorityMode.FREE_RESEARCH_ARCHIVE:
         if artifact_root is None:
-            raise ValueError(
-                "FREE_RESEARCH_ARCHIVE Historical execution requires --artifact-root"
-            )
+            raise ValueError("FREE_RESEARCH_ARCHIVE Historical execution requires --artifact-root")
         archive_materializer = HistoricalDecisionMaterializer(
             run_id=command.run_id,
             corpus_repository=PostgresHistoricalCorpusRepository(
@@ -2323,18 +2227,11 @@ def _historical_runner(
                 artifact_root=artifact_root.resolve(),
                 apply_migrations=False,
             ),
-            component_repository=PostgresHistoricalMaterializationRepository(
-                factory, apply_migrations=False
-            ),
-            universe_repository=PostgresFreeResearchUniverseRepository(
-                factory, apply_migrations=False
-            ),
-            scope_repository=PostgresRuntimeScopeRepository(
-                factory, apply_migrations=False
-            ),
-            target_repository=PostgresTargetOutcomeRepository(
-                factory, apply_migrations=False
-            ),
+            component_repository=PostgresHistoricalMaterializationRepository(factory, apply_migrations=False),
+            universe_repository=PostgresFreeResearchUniverseRepository(factory, apply_migrations=False),
+            scope_repository=PostgresRuntimeScopeRepository(factory, apply_migrations=False),
+            target_repository=PostgresTargetOutcomeRepository(factory, apply_migrations=False),
+            historical_facts_repository=PostgresHistoricalSecurityFactsRepository(factory, apply_migrations=False),
         )
     return HistoricalResearchRunner(
         journal=journal,
@@ -2354,9 +2251,7 @@ def _require_principal_actor(
 ) -> None:
     actor = payload.get("actor")
     if not isinstance(actor, str) or actor != args.principal_id:
-        raise PermissionError(
-            "Formal operator actor must equal the authorized RBAC principal"
-        )
+        raise PermissionError("Formal operator actor must equal the authorized RBAC principal")
 
 
 def _operational_now() -> datetime:
@@ -2376,6 +2271,8 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
     if operation in _READ_OPERATIONS:
         return SecurityPermission.READ_RESEARCH
     if operation in {
+        "historical-security-facts-sync",
+        "historical-universe-history-sync",
         "historical-universe-sync",
         "research-universe-sync",
         "runtime-scope-build",
@@ -2401,14 +2298,10 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
     if operation in {"resume", "historical-resume"}:
         return SecurityPermission.RECOVER_RUNTIME
     if operation in {"prepare", "schedule", "reserve-due-tick", "run-due", "run-day"}:
-        run_command = ContinuousResearchCommand.from_canonical_dict(
-            _load_json_object(args.run_command)
-        )
+        run_command = ContinuousResearchCommand.from_canonical_dict(_load_json_object(args.run_command))
         return _runtime_permission(run_command.authority_mode)
     if operation == "admit-tick":
-        tick_command = RuntimeTickCommand.from_canonical_dict(
-            _load_json_object(args.tick_command)
-        )
+        tick_command = RuntimeTickCommand.from_canonical_dict(_load_json_object(args.tick_command))
         return _runtime_permission(tick_command.authority_mode)
     return SecurityPermission.RUN_SHADOW
 
@@ -2418,9 +2311,7 @@ def _runtime_permission(mode: RuntimeAuthorityMode) -> SecurityPermission:
         return SecurityPermission.RUN_RESEARCH
     if mode is RuntimeAuthorityMode.SHADOW:
         return SecurityPermission.RUN_SHADOW
-    raise PermissionError(
-        "Free-data Continuous CLI cannot authorize Production Runtime mutations"
-    )
+    raise PermissionError("Free-data Continuous CLI cannot authorize Production Runtime mutations")
 
 
 def _operator_resource(args: argparse.Namespace) -> ValidationArtifactReference:
@@ -2460,17 +2351,12 @@ def _canonical_operator_argument(value: object) -> object:
     if isinstance(value, (date, datetime, time)):
         return value.isoformat()
     if isinstance(value, Mapping):
-        return {
-            str(name): _canonical_operator_argument(item)
-            for name, item in sorted(value.items(), key=lambda item: str(item[0]))
-        }
+        return {str(name): _canonical_operator_argument(item) for name, item in sorted(value.items(), key=lambda item: str(item[0]))}
     if isinstance(value, (list, tuple)):
         return [_canonical_operator_argument(item) for item in value]
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    raise TypeError(
-        f"Unsupported Continuous operator argument type: {type(value).__name__}"
-    )
+    raise TypeError(f"Unsupported Continuous operator argument type: {type(value).__name__}")
 
 
 def _historical_snapshot_payload(

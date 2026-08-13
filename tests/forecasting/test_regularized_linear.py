@@ -6,6 +6,7 @@ import pytest
 
 from market_regime_alpha.forecasting.regularized_linear import (
     TrainingMatrix,
+    fit_regularized_continuous_statistics,
     fit_regularized_multi_target,
 )
 
@@ -77,3 +78,42 @@ def test_constant_or_single_class_targets_are_rejected() -> None:
 
     with pytest.raises(ValueError, match="degenerate continuous target"):
         fit_regularized_multi_target(matrix, penalty=Decimal("1"))
+
+
+def test_incremental_continuous_statistics_match_canonical_ridge_head() -> None:
+    matrix = _matrix()
+    full = fit_regularized_multi_target(matrix, penalty=Decimal("0.1"))
+    design = tuple(
+        (Decimal("1"), *full.preprocessing.transform(row)) for row in matrix.rows
+    )
+    targets = matrix.continuous_targets["expected_return"]
+    width = len(design[0])
+    normal = tuple(
+        tuple(
+            sum(
+                (row[left] * row[right] for row in design),
+                Decimal("0"),
+            )
+            for right in range(width)
+        )
+        for left in range(width)
+    )
+    rhs = tuple(
+        sum(
+            (row[index] * target for row, target in zip(design, targets, strict=True)),
+            Decimal("0"),
+        )
+        for index in range(width)
+    )
+
+    streamed = fit_regularized_continuous_statistics(
+        preprocessing=full.preprocessing,
+        target_name="expected_return",
+        normal_matrix=normal,
+        rhs=rhs,
+        distinct_target_count=len(set(targets)),
+        penalty=Decimal("0.1"),
+    )
+
+    assert streamed.continuous_heads == full.continuous_heads
+    assert streamed.preprocessing == full.preprocessing

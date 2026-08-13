@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from bisect import bisect_right
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -33,10 +32,13 @@ from market_regime_alpha.market_data import Timeframe
 @dataclass(frozen=True, slots=True)
 class HistoricalDatasetWindowIndex:
     package: HistoricalPackageIndex
-    series: Mapping[tuple[str, Timeframe], tuple[HistoricalNormalizedBar, ...]]
-    event_ends: Mapping[tuple[str, Timeframe], tuple[datetime, ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedDailyMonth:
+    records: tuple[HistoricalNormalizedBar, ...]
     daily_dates: tuple[date, ...]
-    daily_read_lineage: Mapping[str, Any]
+    read_lineage: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,18 +57,28 @@ class HistoricalWindowReader:
         maximum_daily_rows: int,
         maximum_minute_session_rows: int,
         minute_session_cache_size: int,
+        daily_history_sessions: int = 61,
+        daily_month_cache_size: int = 9,
     ) -> None:
         if maximum_daily_rows <= 0 or maximum_minute_session_rows <= 0:
             raise ValueError("Historical window row limits must be positive")
         if minute_session_cache_size < 3:
             raise ValueError("Historical minute cache must hold Decision and T+1 sessions")
+        if daily_history_sessions < 61:
+            raise ValueError("Historical Daily history cannot lower the 61-session Canonical maximum")
+        if daily_month_cache_size < 3:
+            raise ValueError("Historical Daily cache must hold adjacent session months")
         self._repository = repository
         self._maximum_daily_rows = maximum_daily_rows
         self._maximum_minute_session_rows = maximum_minute_session_rows
         self._minute_session_cache_size = minute_session_cache_size
+        self._daily_history_sessions = daily_history_sessions
+        self._daily_month_cache_size = daily_month_cache_size
         self._indexes: dict[ValidationArtifactReference, HistoricalDatasetWindowIndex] = {}
+        self._daily_months: OrderedDict[tuple[ValidationArtifactReference, int, int], _CachedDailyMonth] = OrderedDict()
         self._minute_sessions: OrderedDict[tuple[ValidationArtifactReference, date], _CachedMinuteSession] = OrderedDict()
-        self._metrics: list[HistoricalReadMetrics] = []
+        self._aggregate_metrics: HistoricalReadMetrics | None = None
+        self._physical_read_count = 0
         self._active_lineage: list[Mapping[str, Any]] = []
 
     def begin_stage(self) -> None:
@@ -77,26 +89,156 @@ class HistoricalWindowReader:
         if cached is not None:
             return cached
         package = self._repository.open_index(reference)
-        daily_slice = self._read_normalized(
+        index = HistoricalDatasetWindowIndex(package=package)
+        self._indexes[reference] = index
+        return index
+
+    def decision_bars(
+        self,
+        reference: ValidationArtifactReference,
+        decision_time: datetime,
+        *,
+        symbols: tuple[str, ...],
+    ) -> tuple[HistoricalNormalizedBar, ...]:
+        result: list[HistoricalNormalizedBar] = []
+        market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        daily, daily_dates = self._daily_window(
+            reference,
+            market_date,
+            symbols=symbols,
+        )
+        result.extend(item for item in daily if item.event_end <= decision_time)
+        current = self._minute_session(reference, market_date)
+        prior_date = next(
+            (item for item in reversed(daily_dates) if item < market_date),
+            None,
+        )
+        prior = () if prior_date is None else self._minute_session(reference, prior_date)
+        if not prior:
+            prior = self._prior_minute_session(reference, market_date)
+        result.extend(item for item in (*prior, *current) if item.event_end <= decision_time and item.symbol in symbols)
+        return tuple(sorted(result, key=_bar_key))
+
+    def next_session(self, reference: ValidationArtifactReference, trading_date: date) -> date | None:
+        package = self.index(reference).package
+        search_end = min(package.last_market_date, trading_date + timedelta(days=40))
+        dates: set[date] = set()
+        for year, month in _month_keys(trading_date, search_end):
+            daily = self._daily_month(reference, year, month)
+            dates.update(daily.daily_dates)
+        return next((item for item in sorted(dates) if item > trading_date), None)
+
+    def outcome_bars(
+        self,
+        reference: ValidationArtifactReference,
+        *,
+        decision_time: datetime,
+        next_session: date,
+        symbols: tuple[str, ...],
+    ) -> tuple[HistoricalNormalizedBar, ...]:
+        market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        daily, _dates = self._daily_window(
+            reference,
+            market_date,
+            symbols=symbols,
+        )
+        next_daily = self._daily_month(reference, next_session.year, next_session.month)
+        self._record_lineage(next_daily.read_lineage)
+        result = [item for item in daily if item.event_end <= decision_time]
+        result.extend(item for item in next_daily.records if item.market_date == next_session and item.symbol in symbols)
+        result.extend(item for item in self._minute_session(reference, next_session) if item.symbol in symbols)
+        return tuple(sorted(result, key=_bar_key))
+
+    def metrics(self) -> tuple[HistoricalReadMetrics, ...]:
+        return () if self._aggregate_metrics is None else (self._aggregate_metrics,)
+
+    def stage_lineage_payload(self) -> list[Mapping[str, Any]]:
+        keyed = {canonical_hash(item): item for item in self._active_lineage}
+        return [keyed[key] for key in sorted(keyed)]
+
+    def cache_metrics(self) -> Mapping[str, int]:
+        return {
+            "daily_history_session_requirement": self._daily_history_sessions,
+            "daily_month_cache_limit": self._daily_month_cache_size,
+            "daily_month_cache_entries": len(self._daily_months),
+            "daily_cached_row_count": sum(len(item.records) for item in self._daily_months.values()),
+            "minute_session_cache_limit": self._minute_session_cache_size,
+            "minute_session_cache_entries": len(self._minute_sessions),
+            "minute_cached_row_count": sum(len(item.records) for item in self._minute_sessions.values()),
+            "physical_read_count": self._physical_read_count,
+            "read_metric_objects_retained": int(self._aggregate_metrics is not None),
+        }
+
+    def _daily_window(
+        self,
+        reference: ValidationArtifactReference,
+        market_date: date,
+        *,
+        symbols: tuple[str, ...],
+    ) -> tuple[tuple[HistoricalNormalizedBar, ...], tuple[date, ...]]:
+        requested_symbols = tuple(sorted(set(symbols)))
+        if not requested_symbols:
+            raise ValueError("Historical Daily window requires symbols")
+        package = self.index(reference).package
+        first = package.first_market_date
+        last = min(package.last_market_date, market_date)
+        if first > last:
+            return (), ()
+        by_symbol: dict[str, list[HistoricalNormalizedBar]] = {symbol: [] for symbol in requested_symbols}
+        dates: set[date] = set()
+        for year, month in reversed(_month_keys(first, last)):
+            cached = self._daily_month(reference, year, month)
+            self._record_lineage(cached.read_lineage)
+            for item in reversed(cached.records):
+                values = by_symbol.get(item.symbol)
+                if (
+                    values is not None
+                    and item.timeframe is Timeframe.DAILY
+                    and item.market_date <= last
+                    and len(values) < self._daily_history_sessions
+                ):
+                    values.append(item)
+                    dates.add(item.market_date)
+            if all(len(values) >= self._daily_history_sessions for values in by_symbol.values()):
+                break
+        records = tuple(item for symbol in requested_symbols for item in by_symbol[symbol])
+        return tuple(sorted(records, key=_bar_key)), tuple(sorted(dates))
+
+    def _daily_month(
+        self,
+        reference: ValidationArtifactReference,
+        year: int,
+        month: int,
+    ) -> _CachedDailyMonth:
+        key = (reference, year, month)
+        cached = self._daily_months.get(key)
+        if cached is not None:
+            self._daily_months.move_to_end(key)
+            return cached
+        package = self.index(reference).package
+        first, last = _month_bounds(year, month)
+        first = max(first, package.first_market_date)
+        last = min(last, package.last_market_date)
+        if first > last:
+            raise ValueError("Historical Daily month is outside the frozen Dataset")
+        data_slice = self._read_normalized(
             HistoricalReadQuery.create(
                 reference=reference,
                 timeframes=(Timeframe.DAILY,),
-                first_market_date=package.first_market_date,
-                last_market_date=package.last_market_date,
+                first_market_date=first,
+                last_market_date=last,
                 symbols=package.coverage.expected_symbols,
                 max_rows=self._maximum_daily_rows,
             ),
             record_lineage=False,
         )
+        records = tuple(item for item in data_slice.records if isinstance(item, HistoricalNormalizedBar))
         grouped: dict[tuple[str, Timeframe], list[HistoricalNormalizedBar]] = {}
-        for bar in daily_slice.records:
-            assert isinstance(bar, HistoricalNormalizedBar)
+        for bar in records:
             grouped.setdefault((bar.symbol, bar.timeframe), []).append(bar)
-        series = {key: tuple(sorted(values, key=_bar_key)) for key, values in grouped.items()}
-        index = HistoricalDatasetWindowIndex(
-            package=package,
-            series=series,
-            event_ends={key: tuple(item.event_end for item in values) for key, values in series.items()},
+        series = {series_key: tuple(sorted(values, key=_bar_key)) for series_key, values in grouped.items()}
+        cached = _CachedDailyMonth(
+            records=tuple(sorted(records, key=_bar_key)),
             daily_dates=tuple(
                 sorted(
                     {
@@ -107,63 +249,13 @@ class HistoricalWindowReader:
                     }
                 )
             ),
-            daily_read_lineage=_slice_lineage(daily_slice),
+            read_lineage=_slice_lineage(data_slice),
         )
-        self._indexes[reference] = index
-        return index
-
-    def decision_bars(
-        self,
-        reference: ValidationArtifactReference,
-        decision_time: datetime,
-    ) -> tuple[HistoricalNormalizedBar, ...]:
-        index = self.index(reference)
-        self._record_lineage(index.daily_read_lineage)
-        result: list[HistoricalNormalizedBar] = []
-        market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        for key, values in index.series.items():
-            result.extend(values[: bisect_right(index.event_ends[key], decision_time)])
-        current = self._minute_session(reference, market_date)
-        prior_date = next(
-            (item for item in reversed(index.daily_dates) if item < market_date),
-            None,
-        )
-        prior = () if prior_date is None else self._minute_session(reference, prior_date)
-        if not prior:
-            prior = self._prior_minute_session(reference, market_date)
-        result.extend(item for item in (*prior, *current) if item.event_end <= decision_time)
-        return tuple(sorted(result, key=_bar_key))
-
-    def next_session(self, reference: ValidationArtifactReference, trading_date: date) -> date | None:
-        return next(
-            (item for item in self.index(reference).daily_dates if item > trading_date),
-            None,
-        )
-
-    def outcome_bars(
-        self,
-        reference: ValidationArtifactReference,
-        *,
-        decision_time: datetime,
-        next_session: date,
-    ) -> tuple[HistoricalNormalizedBar, ...]:
-        index = self.index(reference)
-        self._record_lineage(index.daily_read_lineage)
-        result = [
-            item
-            for values in index.series.values()
-            for item in values
-            if item.event_end <= decision_time or item.market_date == next_session
-        ]
-        result.extend(self._minute_session(reference, next_session))
-        return tuple(sorted(result, key=_bar_key))
-
-    def metrics(self) -> tuple[HistoricalReadMetrics, ...]:
-        return tuple(self._metrics)
-
-    def stage_lineage_payload(self) -> list[Mapping[str, Any]]:
-        keyed = {canonical_hash(item): item for item in self._active_lineage}
-        return [keyed[key] for key in sorted(keyed)]
+        self._daily_months[key] = cached
+        self._daily_months.move_to_end(key)
+        while len(self._daily_months) > self._daily_month_cache_size:
+            self._daily_months.popitem(last=False)
+        return cached
 
     def _minute_session(
         self,
@@ -226,7 +318,11 @@ class HistoricalWindowReader:
 
     def _read_normalized(self, query: HistoricalReadQuery, *, record_lineage: bool) -> HistoricalDataSlice:
         data_slice = self._repository.read(query)
-        self._metrics.append(data_slice.metrics)
+        self._physical_read_count += 1
+        self._aggregate_metrics = _merge_read_metrics(
+            self._aggregate_metrics,
+            data_slice.metrics,
+        )
         if any(not isinstance(item, HistoricalNormalizedBar) for item in data_slice.records):
             raise ValueError("Historical materialization requires normalized bars")
         if record_lineage:
@@ -235,6 +331,39 @@ class HistoricalWindowReader:
 
     def _record_lineage(self, lineage: Mapping[str, Any]) -> None:
         self._active_lineage.append(lineage)
+
+
+def _merge_read_metrics(
+    aggregate: HistoricalReadMetrics | None,
+    current: HistoricalReadMetrics,
+) -> HistoricalReadMetrics:
+    if aggregate is None:
+        return current
+    return HistoricalReadMetrics(
+        candidate_partition_count=(
+            aggregate.candidate_partition_count + current.candidate_partition_count
+        ),
+        candidate_partition_row_count=(
+            aggregate.candidate_partition_row_count
+            + current.candidate_partition_row_count
+        ),
+        verified_partition_count=(
+            aggregate.verified_partition_count + current.verified_partition_count
+        ),
+        verified_bytes=aggregate.verified_bytes + current.verified_bytes,
+        returned_row_count=(
+            aggregate.returned_row_count + current.returned_row_count
+        ),
+        arrow_batch_count=aggregate.arrow_batch_count + current.arrow_batch_count,
+        maximum_batch_row_count=max(
+            aggregate.maximum_batch_row_count,
+            current.maximum_batch_row_count,
+        ),
+        projected_columns=tuple(
+            sorted(set(aggregate.projected_columns) | set(current.projected_columns))
+        ),
+        predicate_pushdown=aggregate.predicate_pushdown and current.predicate_pushdown,
+    )
 
 
 def _slice_lineage(data_slice: HistoricalDataSlice) -> dict[str, Any]:
@@ -261,6 +390,23 @@ def _slice_lineage(data_slice: HistoricalDataSlice) -> dict[str, Any]:
         ],
         "metrics": data_slice.metrics.to_canonical_dict(),
     }
+
+
+def _month_bounds(year: int, month: int) -> tuple[date, date]:
+    first = date(year, month, 1)
+    next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return first, next_month - timedelta(days=1)
+
+
+def _month_keys(first: date, last: date) -> tuple[tuple[int, int], ...]:
+    if first > last:
+        raise ValueError("Historical month range is reversed")
+    current = date(first.year, first.month, 1)
+    result: list[tuple[int, int]] = []
+    while current <= last:
+        result.append((current.year, current.month))
+        current = date(current.year + 1, 1, 1) if current.month == 12 else date(current.year, current.month + 1, 1)
+    return tuple(result)
 
 
 def _bar_key(item: HistoricalNormalizedBar) -> tuple[str, str, datetime, str]:

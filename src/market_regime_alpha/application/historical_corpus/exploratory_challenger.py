@@ -8,6 +8,7 @@ reloaded from immutable PostgreSQL panel owners for one Historical run.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterator
 from decimal import Decimal
 from math import sqrt
 from statistics import fmean
@@ -27,8 +28,8 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.forecasting.regularized_linear import (
     RegularizedMultiTargetModel,
-    TrainingMatrix,
-    fit_regularized_multi_target,
+    RobustPreprocessingState,
+    fit_regularized_continuous_statistics,
 )
 
 
@@ -48,6 +49,8 @@ CHALLENGER_TARGET = "t_plus_one_1030_return"
 CHALLENGER_PENALTY = Decimal("1")
 MIN_TRAINING_SESSIONS = 20
 MIN_VALIDATION_SESSIONS = 5
+MAXIMUM_CHALLENGER_SAMPLES = 250_000
+CHALLENGER_COMPONENT_BATCH_SIZE = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,14 +69,15 @@ class ExploratoryChallengerResult:
     validation_rank_ic: Decimal | None
     validation_hit_rate: Decimal | None
     model: RegularizedMultiTargetModel | None
+    component_batch_size: int
+    maximum_feature_buffer_rows: int
+    whole_run_sample_graph_materialized: bool = False
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "reason_codes": list(self.reason_codes),
-            "source_references": [
-                item.to_canonical_dict() for item in self.source_references
-            ],
+            "source_references": [item.to_canonical_dict() for item in self.source_references],
             "matrix_hash": self.matrix_hash,
             "feature_names": list(CHALLENGER_FEATURES),
             "target_name": CHALLENGER_TARGET,
@@ -89,100 +93,140 @@ class ExploratoryChallengerResult:
             "validation_hit_rate": _text(self.validation_hit_rate),
             "model": None if self.model is None else self.model.to_canonical_dict(),
             "owner_resolved_training_matrix": True,
-            "missing_feature_contract": (
-                "CANONICAL_ROBUST_PREPROCESSOR_MEDIAN_PLUS_EXPLICIT_MISSING_INDICATOR"
-            ),
+            "missing_feature_contract": ("CANONICAL_ROBUST_PREPROCESSOR_MEDIAN_PLUS_EXPLICIT_MISSING_INDICATOR"),
             "formal_model_qualified": False,
             "formal_oos": False,
             "calibrated": False,
+            "aggregation_runtime": {
+                "mode": "KEYSET_MULTI_PASS_SUFFICIENT_STATISTICS_V1",
+                "component_batch_size": self.component_batch_size,
+                "maximum_feature_buffer_rows": self.maximum_feature_buffer_rows,
+                "maximum_sample_ceiling": MAXIMUM_CHALLENGER_SAMPLES,
+                "whole_run_sample_graph_materialized": self.whole_run_sample_graph_materialized,
+            },
         }
 
 
 class HistoricalExploratoryChallenger:
     """Reload panel owners and fit one fixed, non-promotable challenger."""
 
-    def __init__(
-        self, component_repository: PostgresHistoricalMaterializationRepository
-    ) -> None:
+    def __init__(self, component_repository: PostgresHistoricalMaterializationRepository) -> None:
         self._components = component_repository
 
     def train(self, *, run_id: ArtifactId) -> ExploratoryChallengerResult:
-        panels = self._components.list_for_run(
+        sources = self._components.list_references_for_run(
             run_id=run_id,
             component_kind=HistoricalComponentKind.RESEARCH_PANEL,
         )
-        sources = tuple(item.reference for item in panels)
-        samples, excluded = _samples(panels)
+        session_bindings: list[dict[str, Any]] = []
+        sample_counts: list[int] = []
+        excluded = 0
+        for _index, panel, samples, panel_excluded in _iter_session_samples(
+            self._components,
+            run_id=run_id,
+        ):
+            sample_counts.append(len(samples))
+            excluded += panel_excluded
+            session_bindings.append(
+                {
+                    "panel_reference": panel.reference.to_canonical_dict(),
+                    "session_key": panel.trading_date.isoformat(),
+                    "sample_count": len(samples),
+                    "excluded_missing_target_count": panel_excluded,
+                    "session_sample_hash": canonical_hash({"samples": list(samples)}),
+                }
+            )
+        total_samples = sum(sample_counts)
         matrix_hash = canonical_hash(
             {
+                "schema_version": "historical-challenger-streaming-matrix/v2",
                 "feature_names": list(CHALLENGER_FEATURES),
                 "target_name": CHALLENGER_TARGET,
-                "samples": samples,
+                "session_bindings": session_bindings,
                 "source_references": [item.to_canonical_dict() for item in sources],
             }
         )
-        sessions = tuple(sorted({str(item["session_key"]) for item in samples}))
-        validation_count = max(MIN_VALIDATION_SESSIONS, (len(sessions) + 4) // 5)
-        training_count = len(sessions) - validation_count
+        session_count = len(sample_counts)
+        validation_count = max(MIN_VALIDATION_SESSIONS, (session_count + 4) // 5)
+        training_count = session_count - validation_count
+        training_sample_count = sum(sample_counts[: max(0, training_count)])
+        validation_sample_count = sum(sample_counts[max(0, training_count) :])
+        if total_samples > MAXIMUM_CHALLENGER_SAMPLES:
+            return _not_estimable(
+                sources=sources,
+                matrix_hash=matrix_hash,
+                training_sessions=max(0, training_count),
+                validation_sessions=min(session_count, validation_count),
+                training_samples=training_sample_count,
+                validation_samples=validation_sample_count,
+                excluded=excluded,
+                reason="DECLARED_CHALLENGER_SAMPLE_CEILING_EXCEEDED",
+                maximum_feature_buffer_rows=0,
+            )
         if training_count < MIN_TRAINING_SESSIONS or validation_count < MIN_VALIDATION_SESSIONS:
             return _not_estimable(
                 sources=sources,
                 matrix_hash=matrix_hash,
                 training_sessions=max(0, training_count),
-                validation_sessions=min(len(sessions), validation_count),
+                validation_sessions=min(session_count, validation_count),
                 training_samples=0,
                 validation_samples=0,
                 excluded=excluded,
                 reason="INSUFFICIENT_TEMPORAL_SESSIONS",
+                maximum_feature_buffer_rows=0,
             )
-        training_sessions = set(sessions[:training_count])
-        validation_sessions = set(sessions[training_count:])
-        training = tuple(
-            item for item in samples if str(item["session_key"]) in training_sessions
-        )
-        validation = tuple(
-            item for item in samples if str(item["session_key"]) in validation_sessions
-        )
-        if len(training) < len(CHALLENGER_FEATURES) + 2 or len(validation) < 2:
+        if training_sample_count < len(CHALLENGER_FEATURES) + 2 or validation_sample_count < 2:
             return _not_estimable(
                 sources=sources,
                 matrix_hash=matrix_hash,
-                training_sessions=len(training_sessions),
-                validation_sessions=len(validation_sessions),
-                training_samples=len(training),
-                validation_samples=len(validation),
+                training_sessions=training_count,
+                validation_sessions=validation_count,
+                training_samples=training_sample_count,
+                validation_samples=validation_sample_count,
                 excluded=excluded,
                 reason="INSUFFICIENT_TRAINING_OR_VALIDATION_SAMPLES",
+                maximum_feature_buffer_rows=0,
             )
+        preprocessing, maximum_feature_buffer_rows = _fit_streaming_preprocessing(
+            self._components,
+            run_id=run_id,
+            training_session_count=training_count,
+        )
+        normal, rhs, distinct_targets, target_sum = _stream_training_statistics(
+            self._components,
+            run_id=run_id,
+            training_session_count=training_count,
+            preprocessing=preprocessing,
+        )
         try:
-            model = fit_regularized_multi_target(
-                _matrix(training), penalty=CHALLENGER_PENALTY
+            model = fit_regularized_continuous_statistics(
+                preprocessing=preprocessing,
+                target_name=CHALLENGER_TARGET,
+                normal_matrix=normal,
+                rhs=rhs,
+                distinct_target_count=distinct_targets,
+                penalty=CHALLENGER_PENALTY,
             )
         except ValueError as error:
             return _not_estimable(
                 sources=sources,
                 matrix_hash=matrix_hash,
-                training_sessions=len(training_sessions),
-                validation_sessions=len(validation_sessions),
-                training_samples=len(training),
-                validation_samples=len(validation),
+                training_sessions=training_count,
+                validation_sessions=validation_count,
+                training_samples=training_sample_count,
+                validation_samples=validation_sample_count,
                 excluded=excluded,
                 reason=f"CANONICAL_MODEL_NOT_ESTIMABLE:{error}",
+                maximum_feature_buffer_rows=maximum_feature_buffer_rows,
             )
-        predictions = tuple(
-            model.predict(_feature_row(item)).continuous[CHALLENGER_TARGET]
-            for item in validation
+        training_mean = target_sum / Decimal(training_sample_count)
+        mse, baseline, rank_ic, hit_rate = _stream_validation_metrics(
+            self._components,
+            run_id=run_id,
+            training_session_count=training_count,
+            model=model,
+            training_mean=training_mean,
         )
-        targets = tuple(Decimal(str(item["target"])) for item in validation)
-        training_mean = sum(
-            (Decimal(str(item["target"])) for item in training), Decimal("0")
-        ) / Decimal(len(training))
-        mse = _mean((left - right) ** 2 for left, right in zip(predictions, targets, strict=True))
-        baseline = _mean((training_mean - item) ** 2 for item in targets)
-        rank_ic = _session_rank_ic(validation, predictions, targets)
-        hit_rate = Decimal(
-            sum((left >= 0) == (right >= 0) for left, right in zip(predictions, targets, strict=True))
-        ) / Decimal(len(targets))
         return ExploratoryChallengerResult(
             status="AVAILABLE",
             reason_codes=(
@@ -192,63 +236,201 @@ class HistoricalExploratoryChallenger:
             ),
             source_references=sources,
             matrix_hash=matrix_hash,
-            training_session_count=len(training_sessions),
-            validation_session_count=len(validation_sessions),
-            training_sample_count=len(training),
-            validation_sample_count=len(validation),
+            training_session_count=training_count,
+            validation_session_count=validation_count,
+            training_sample_count=training_sample_count,
+            validation_sample_count=validation_sample_count,
             excluded_missing_target_count=excluded,
             validation_mse=mse,
             baseline_mse=baseline,
             validation_rank_ic=rank_ic,
             validation_hit_rate=hit_rate,
             model=model,
+            component_batch_size=CHALLENGER_COMPONENT_BATCH_SIZE,
+            maximum_feature_buffer_rows=maximum_feature_buffer_rows,
         )
 
 
-def _samples(
-    panels: tuple[HistoricalSessionComponent, ...],
+def _panel_samples(
+    panel: HistoricalSessionComponent,
 ) -> tuple[tuple[Mapping[str, Any], ...], int]:
     samples: list[Mapping[str, Any]] = []
     excluded = 0
-    for panel in sorted(panels, key=lambda item: (item.trading_date, str(item.component_id))):
-        raw_rows = panel.payload.get("rows")
-        if not isinstance(raw_rows, list):
-            raise ValueError("Historical Research Panel rows must be an array")
-        for raw in raw_rows:
-            if not isinstance(raw, Mapping):
-                raise ValueError("Historical Research Panel row must be an object")
-            target = _optional_decimal(raw.get("target_return"))
-            if target is None:
-                excluded += 1
-                continue
-            factors = raw.get("factor_values")
-            if not isinstance(factors, Mapping):
-                raise ValueError("Historical Research Panel factors must be an object")
-            if set(factors) != set(CHALLENGER_FEATURES):
-                raise ValueError("Historical Research Panel feature projection drifted")
-            samples.append(
-                {
-                    "sample_key": f"{panel.component_id}:{raw.get('symbol')}",
-                    "session_key": panel.trading_date.isoformat(),
-                    "symbol": str(raw.get("symbol")),
-                    "features": {
-                        name: _text(_optional_decimal(factors[name]))
-                        for name in CHALLENGER_FEATURES
-                    },
-                    "target": str(target),
-                }
-            )
+    raw_rows = panel.payload.get("rows")
+    if not isinstance(raw_rows, list):
+        raise ValueError("Historical Research Panel rows must be an array")
+    for raw in raw_rows:
+        if not isinstance(raw, Mapping):
+            raise ValueError("Historical Research Panel row must be an object")
+        target = _optional_decimal(raw.get("target_return"))
+        if target is None:
+            excluded += 1
+            continue
+        factors = raw.get("factor_values")
+        if not isinstance(factors, Mapping):
+            raise ValueError("Historical Research Panel factors must be an object")
+        if set(factors) != set(CHALLENGER_FEATURES):
+            raise ValueError("Historical Research Panel feature projection drifted")
+        samples.append(
+            {
+                "sample_key": f"{panel.component_id}:{raw.get('symbol')}",
+                "session_key": panel.trading_date.isoformat(),
+                "symbol": str(raw.get("symbol")),
+                "features": {name: _text(_optional_decimal(factors[name])) for name in CHALLENGER_FEATURES},
+                "target": str(target),
+            }
+        )
     return tuple(samples), excluded
 
 
-def _matrix(samples: tuple[Mapping[str, Any], ...]) -> TrainingMatrix:
-    return TrainingMatrix.create(
-        feature_names=CHALLENGER_FEATURES,
-        rows=tuple(_feature_row(item) for item in samples),
-        continuous_targets={
-            CHALLENGER_TARGET: tuple(Decimal(str(item["target"])) for item in samples)
-        },
-        barrier_targets={},
+def _iter_session_samples(
+    repository: PostgresHistoricalMaterializationRepository,
+    *,
+    run_id: ArtifactId,
+) -> Iterator[
+    tuple[
+        int,
+        HistoricalSessionComponent,
+        tuple[Mapping[str, Any], ...],
+        int,
+    ]
+]:
+    index = 0
+    for batch in repository.iter_for_run(
+        run_id=run_id,
+        component_kind=HistoricalComponentKind.RESEARCH_PANEL,
+        batch_size=CHALLENGER_COMPONENT_BATCH_SIZE,
+    ):
+        for panel in batch:
+            samples, excluded = _panel_samples(panel)
+            yield index, panel, samples, excluded
+            index += 1
+
+
+def _fit_streaming_preprocessing(
+    repository: PostgresHistoricalMaterializationRepository,
+    *,
+    run_id: ArtifactId,
+    training_session_count: int,
+) -> tuple[RobustPreprocessingState, int]:
+    medians: list[Decimal] = []
+    scales: list[Decimal] = []
+    maximum_buffer = 0
+    for feature in CHALLENGER_FEATURES:
+        values: list[Decimal] = []
+        for index, _panel, samples, _excluded in _iter_session_samples(repository, run_id=run_id):
+            if index >= training_session_count:
+                break
+            for sample in samples:
+                value = _feature_row(sample)[feature]
+                if value is not None:
+                    values.append(value)
+        if len(values) > MAXIMUM_CHALLENGER_SAMPLES:
+            raise ValueError("Challenger feature buffer exceeds declared ceiling")
+        maximum_buffer = max(maximum_buffer, len(values))
+        values.sort()
+        if not values:
+            medians.append(Decimal("0"))
+            scales.append(Decimal("1"))
+            continue
+        median = _quantile(values, Decimal("0.5"))
+        scale = _quantile(values, Decimal("0.75")) - _quantile(values, Decimal("0.25"))
+        medians.append(median)
+        scales.append(Decimal("1") if scale == 0 else scale)
+    return (
+        RobustPreprocessingState(
+            feature_names=CHALLENGER_FEATURES,
+            medians=tuple(medians),
+            scales=tuple(scales),
+        ),
+        maximum_buffer,
+    )
+
+
+def _stream_training_statistics(
+    repository: PostgresHistoricalMaterializationRepository,
+    *,
+    run_id: ArtifactId,
+    training_session_count: int,
+    preprocessing: RobustPreprocessingState,
+) -> tuple[
+    tuple[tuple[Decimal, ...], ...],
+    tuple[Decimal, ...],
+    int,
+    Decimal,
+]:
+    width = len(preprocessing.transformed_feature_names) + 1
+    normal = [[Decimal("0") for _ in range(width)] for _ in range(width)]
+    rhs = [Decimal("0") for _ in range(width)]
+    first_target: Decimal | None = None
+    target_varies = False
+    target_sum = Decimal("0")
+    for index, _panel, samples, _excluded in _iter_session_samples(repository, run_id=run_id):
+        if index >= training_session_count:
+            break
+        for sample in samples:
+            target = Decimal(str(sample["target"]))
+            target_sum += target
+            if first_target is None:
+                first_target = target
+            elif target != first_target:
+                target_varies = True
+            design = (
+                Decimal("1"),
+                *preprocessing.transform(_feature_row(sample)),
+            )
+            for left in range(width):
+                rhs[left] += design[left] * target
+                for right in range(left, width):
+                    normal[left][right] += design[left] * design[right]
+    for left in range(width):
+        for right in range(left):
+            normal[left][right] = normal[right][left]
+    return (
+        tuple(tuple(row) for row in normal),
+        tuple(rhs),
+        2 if target_varies else (1 if first_target is not None else 0),
+        target_sum,
+    )
+
+
+def _stream_validation_metrics(
+    repository: PostgresHistoricalMaterializationRepository,
+    *,
+    run_id: ArtifactId,
+    training_session_count: int,
+    model: RegularizedMultiTargetModel,
+    training_mean: Decimal,
+) -> tuple[Decimal, Decimal, Decimal | None, Decimal]:
+    squared_error = Decimal("0")
+    baseline_error = Decimal("0")
+    hit_count = 0
+    sample_count = 0
+    session_rank_ics: list[Decimal] = []
+    for index, _panel, samples, _excluded in _iter_session_samples(repository, run_id=run_id):
+        if index < training_session_count:
+            continue
+        predictions: list[Decimal] = []
+        targets: list[Decimal] = []
+        for sample in samples:
+            prediction = model.predict(_feature_row(sample)).continuous[CHALLENGER_TARGET]
+            target = Decimal(str(sample["target"]))
+            predictions.append(prediction)
+            targets.append(target)
+            squared_error += (prediction - target) ** 2
+            baseline_error += (training_mean - target) ** 2
+            hit_count += (prediction >= 0) == (target >= 0)
+            sample_count += 1
+        rank_ic = _rank_correlation(predictions, targets)
+        if rank_ic is not None:
+            session_rank_ics.append(rank_ic)
+    if sample_count == 0:
+        raise ValueError("Challenger validation stream is empty")
+    return (
+        squared_error / Decimal(sample_count),
+        baseline_error / Decimal(sample_count),
+        None if not session_rank_ics else _mean(session_rank_ics),
+        Decimal(hit_count) / Decimal(sample_count),
     )
 
 
@@ -259,24 +441,6 @@ def _feature_row(sample: Mapping[str, Any]) -> Mapping[str, Decimal | None]:
     return {name: _optional_decimal(raw[name]) for name in CHALLENGER_FEATURES}
 
 
-def _session_rank_ic(
-    samples: tuple[Mapping[str, Any], ...],
-    predictions: tuple[Decimal, ...],
-    targets: tuple[Decimal, ...],
-) -> Decimal | None:
-    grouped: dict[str, tuple[list[Decimal], list[Decimal]]] = {}
-    for sample, prediction, target in zip(samples, predictions, targets, strict=True):
-        left, right = grouped.setdefault(str(sample["session_key"]), ([], []))
-        left.append(prediction)
-        right.append(target)
-    values = tuple(
-        value
-        for left, right in grouped.values()
-        if (value := _rank_correlation(left, right)) is not None
-    )
-    return None if not values else _mean(values)
-
-
 def _rank_correlation(left: list[Decimal], right: list[Decimal]) -> Decimal | None:
     if len(left) < 2 or len(left) != len(right):
         return None
@@ -284,15 +448,19 @@ def _rank_correlation(left: list[Decimal], right: list[Decimal]) -> Decimal | No
     right_rank = _ranks(right)
     left_mean = fmean(left_rank)
     right_mean = fmean(right_rank)
-    numerator = sum(
-        (a - left_mean) * (b - right_mean)
-        for a, b in zip(left_rank, right_rank, strict=True)
-    )
-    denominator = sqrt(
-        sum((item - left_mean) ** 2 for item in left_rank)
-        * sum((item - right_mean) ** 2 for item in right_rank)
-    )
+    numerator = sum((a - left_mean) * (b - right_mean) for a, b in zip(left_rank, right_rank, strict=True))
+    denominator = sqrt(sum((item - left_mean) ** 2 for item in left_rank) * sum((item - right_mean) ** 2 for item in right_rank))
     return None if denominator == 0 else Decimal(str(numerator / denominator))
+
+
+def _quantile(values: list[Decimal], probability: Decimal) -> Decimal:
+    if len(values) == 1:
+        return values[0]
+    position = probability * Decimal(len(values) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(values) - 1)
+    fraction = position - Decimal(lower)
+    return values[lower] * (Decimal("1") - fraction) + values[upper] * fraction
 
 
 def _ranks(values: list[Decimal]) -> list[float]:
@@ -320,6 +488,7 @@ def _not_estimable(
     validation_samples: int,
     excluded: int,
     reason: str,
+    maximum_feature_buffer_rows: int,
 ) -> ExploratoryChallengerResult:
     return ExploratoryChallengerResult(
         status="NOT_ESTIMABLE",
@@ -336,6 +505,8 @@ def _not_estimable(
         validation_rank_ic=None,
         validation_hit_rate=None,
         model=None,
+        component_batch_size=CHALLENGER_COMPONENT_BATCH_SIZE,
+        maximum_feature_buffer_rows=maximum_feature_buffer_rows,
     )
 
 

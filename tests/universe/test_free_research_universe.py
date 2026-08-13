@@ -188,3 +188,70 @@ def test_historical_constituent_snapshot_does_not_project_current_master() -> No
             snapshot,
             as_of_date=date(2026, 6, 14),
         )
+
+
+def test_historical_constituent_uses_provider_effective_date_not_query_date() -> None:
+    snapshot = build_historical_constituent_universe_snapshot(
+        effective_date=date(2025, 1, 2),
+        known_at=KNOWN_AT,
+        provider_id="provider-baostock-public",
+        provider_contract="baostock-query-hs300-stocks/v1",
+        source_manifest_reference=ValidationArtifactReference(
+            "SOURCE_MANIFEST",
+            ArtifactId("historical-universe-query-date-manifest"),
+            canonical_hash({"manifest": "query-date"}),
+        ),
+        constituent_source_reference=ValidationArtifactReference(
+            "HISTORICAL_CONSTITUENT_SNAPSHOT",
+            ArtifactId("hs300-query-date"),
+            canonical_hash({"hs300": "query-date"}),
+        ),
+        raw_archive_id="historical-hs300-query-date-archive",
+        evidence_origin=FreeDataEvidenceOrigin.REAL_FREE_PROVIDER_OBSERVATION,
+        constituent_rows=(
+            {
+                "updateDate": "2024-12-30",
+                "code": "sh.600000",
+                "code_name": "浦发银行",
+            },
+        ),
+        security_master_rows=(),
+    )
+
+    assert snapshot.as_of_date == date(2025, 1, 2)
+    assert snapshot.constituent_effective_date == date(2024, 12, 30)
+
+
+def test_historical_constituent_rejects_mixed_provider_effective_dates() -> None:
+    with pytest.raises(ValueError, match="one Provider effective date"):
+        build_historical_constituent_universe_snapshot(
+            effective_date=date(2025, 1, 2),
+            known_at=KNOWN_AT,
+            provider_id="provider-baostock-public",
+            provider_contract="baostock-query-hs300-stocks/v1",
+            source_manifest_reference=ValidationArtifactReference(
+                "SOURCE_MANIFEST",
+                ArtifactId("historical-universe-mixed-manifest"),
+                canonical_hash({"manifest": "mixed"}),
+            ),
+            constituent_source_reference=ValidationArtifactReference(
+                "HISTORICAL_CONSTITUENT_SNAPSHOT",
+                ArtifactId("hs300-mixed"),
+                canonical_hash({"hs300": "mixed"}),
+            ),
+            raw_archive_id="historical-hs300-mixed-archive",
+            evidence_origin=FreeDataEvidenceOrigin.REAL_FREE_PROVIDER_OBSERVATION,
+            constituent_rows=(
+                {
+                    "updateDate": "2024-12-30",
+                    "code": "sh.600000",
+                    "code_name": "浦发银行",
+                },
+                {
+                    "updateDate": "2025-01-02",
+                    "code": "sz.000001",
+                    "code_name": "平安银行",
+                },
+            ),
+            security_master_rows=(),
+        )

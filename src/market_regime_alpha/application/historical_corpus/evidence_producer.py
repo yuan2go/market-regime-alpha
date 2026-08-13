@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from decimal import Decimal
 from typing import Any, Mapping
@@ -54,8 +56,7 @@ from market_regime_alpha.application.research_validation.ablation import (
     AblationVariant,
     AblationVariantKind,
     AlphaAblationSuite,
-    ScoreFunction,
-    run_alpha_ablation_suite,
+    run_incremental_alpha_ablation_suite,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -125,6 +126,27 @@ class HistoricalEvidenceProductionResult:
     evidence: tuple[HistoricalResearchEvidence, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _StreamingPanelSummary:
+    observation_count: int
+    missing_target_count: int
+    session_count: int
+    symbol_count: int
+    maximum_session_observations: int
+    component_batch_size: int
+    factor_coverage: Mapping[FactorFamily, int]
+    target_status_counts: Mapping[str, int]
+    signal_state_counts: Mapping[str, int]
+    signal_confirmation_counts: Mapping[str, int]
+    signal_reason_counts: Mapping[str, int]
+    forecast_status_counts: Mapping[str, int]
+    forecast_reason_counts: Mapping[str, int]
+    forecast_usable_sample_total: int
+    forecast_usable_sample_maximum: int
+    forecast_excluded_sample_total: int
+    period_observation_counts: Mapping[str, int]
+
+
 class HistoricalEvidenceProducer:
     """Resolve immutable owners, run frozen research science, persist findings."""
 
@@ -148,28 +170,42 @@ class HistoricalEvidenceProducer:
             HistoricalRunStatus.COMPLETE_WITH_BLOCKS,
         }:
             raise ValueError("Historical Evidence requires a terminal corpus run")
-        panels = self._components.list_for_run(
+        panel_references = self._components.list_references_for_run(
             run_id=run_id,
             component_kind=HistoricalComponentKind.RESEARCH_PANEL,
         )
-        outcomes = self._components.list_for_run(
+        outcome_references = self._components.list_references_for_run(
             run_id=run_id,
             component_kind=HistoricalComponentKind.OUTCOME,
         )
-        if not panels:
+        if not panel_references:
             raise ValueError("Historical Evidence requires Research Panel owners")
         owner = self._normalized_owner(snapshot.command.configuration_references)
         created_at = max(
             owner.created_at,
-            *(item.materialized_at for item in panels),
-            *(item.materialized_at for item in outcomes),
+            self._components.maximum_materialized_at(
+                run_id=run_id,
+                component_kinds=tuple(
+                    sorted(
+                        (
+                            HistoricalComponentKind.OUTCOME,
+                            HistoricalComponentKind.RESEARCH_PANEL,
+                        ),
+                        key=lambda item: item.value,
+                    )
+                ),
+            ),
         )
-        observations, panel_missing = _observations(panels)
-        if not observations:
+        panel_summary = _streaming_panel_summary(
+            self._components,
+            run_id=run_id,
+            component_batch_size=4,
+        )
+        if panel_summary.observation_count == 0:
             raise ValueError("Historical Evidence has no estimable Target observations")
-        factor_coverage = _factor_coverage(observations)
+        factor_coverage = panel_summary.factor_coverage
         variants = tuple(AblationVariant.standard(item) for item in _SEQUENCE)
-        symbol_count = len({item.symbol for item in observations})
+        symbol_count = panel_summary.symbol_count
         protocol = AblationProtocol.create(
             protocol_version="phase-e-cumulative-chain-v1",
             variants=variants,
@@ -178,20 +214,22 @@ class HistoricalEvidenceProducer:
             scoring_contract="WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1",
             created_at=created_at,
         )
-        panel_reference = _panel_set_reference(panels)
-        score_functions = _score_functions(protocol, observations)
-        suite = run_alpha_ablation_suite(
+        panel_reference = _panel_set_reference(panel_references)
+        suite = run_incremental_alpha_ablation_suite(
             protocol=protocol,
             panel_reference=panel_reference,
-            observations=observations,
-            score_functions=score_functions,
+            observation_sessions=_stream_observation_sessions(
+                self._components,
+                run_id=run_id,
+                component_batch_size=panel_summary.component_batch_size,
+            ),
             created_at=created_at,
         )
         sources = tuple(
             sorted(
                 {
-                    *(item.reference for item in panels),
-                    *(item.reference for item in outcomes),
+                    *panel_references,
+                    *outcome_references,
                     owner.reference,
                 },
                 key=_reference_key,
@@ -203,15 +241,25 @@ class HistoricalEvidenceProducer:
             command_hash=snapshot.command.command_hash,
             experiment_reference=experiment,
             evidence_kind=HistoricalEvidenceKind.ALPHA_ABLATION,
-            research_question=(
-                "Price through Forecast: which canonical research layers add "
-                "incremental T+1 10:30 explanatory value?"
-            ),
+            research_question=("Price through Forecast: which canonical research layers add incremental T+1 10:30 explanatory value?"),
             classification=_ablation_finding(suite),
             rationale=_ablation_rationale(suite),
             source_references=sources,
             metrics=_ablation_metrics(suite, factor_coverage),
-            payload=_suite_payload(suite, panel_missing, factor_coverage),
+            payload={
+                **_suite_payload(
+                    suite,
+                    panel_summary.missing_target_count,
+                    factor_coverage,
+                ),
+                "aggregation_runtime": {
+                    "mode": "KEYSET_COMPONENT_BATCH_PLUS_SESSION_ACCUMULATOR_V1",
+                    "component_batch_size": panel_summary.component_batch_size,
+                    "maximum_session_observations": panel_summary.maximum_session_observations,
+                    "whole_run_panel_materialized": False,
+                    "whole_run_observation_graph_materialized": False,
+                },
+            },
             created_at=created_at,
             limitations=(
                 "CUMULATIVE_SCORING_CONTRACT_FROZEN_NOT_TUNED",
@@ -219,7 +267,15 @@ class HistoricalEvidenceProducer:
                 "UNOBSERVED_LAYER_LIFT_NOT_ESTIMABLE",
             ),
         )
-        strategy_metrics = _strategy_metrics(outcomes)
+        strategy_metrics = _strategy_metrics(
+            component
+            for batch in self._components.iter_for_run(
+                run_id=run_id,
+                component_kind=HistoricalComponentKind.OUTCOME,
+                batch_size=4,
+            )
+            for component in batch
+        )
         strategy_evidence = HistoricalResearchEvidence.create(
             run_id=run_id,
             command_hash=snapshot.command.command_hash,
@@ -234,9 +290,7 @@ class HistoricalEvidenceProducer:
             source_references=sources,
             metrics=strategy_metrics,
             payload={
-                "checkpoint_count": len(
-                    {item.variant_id for item in strategy_metrics}
-                ),
+                "checkpoint_count": len({item.variant_id for item in strategy_metrics}),
                 "cost_calibration": "ENGINEERING_ASSUMPTION",
                 "actual_fill_authority": False,
             },
@@ -249,10 +303,7 @@ class HistoricalEvidenceProducer:
             command_hash=snapshot.command.command_hash,
             experiment_reference=experiment,
             evidence_kind=HistoricalEvidenceKind.PORTFOLIO_PERFORMANCE,
-            research_question=(
-                "Does the full exploratory chain retain net portfolio value after "
-                "turnover and drawdown?"
-            ),
+            research_question=("Does the full exploratory chain retain net portfolio value after turnover and drawdown?"),
             classification=_performance_finding(full),
             rationale=_performance_rationale(full),
             source_references=sources,
@@ -267,9 +318,11 @@ class HistoricalEvidenceProducer:
         )
         summary_metrics = _summary_metrics(
             owner=owner,
-            panels=panels,
-            observations=observations,
-            panel_missing=panel_missing,
+            panel_owner_count=len(panel_references),
+            observation_count=panel_summary.observation_count,
+            symbol_count=panel_summary.symbol_count,
+            panel_missing=panel_summary.missing_target_count,
+            panel_summary=panel_summary,
         )
         corpus_evidence = HistoricalResearchEvidence.create(
             run_id=run_id,
@@ -278,30 +331,31 @@ class HistoricalEvidenceProducer:
             evidence_kind=HistoricalEvidenceKind.CORPUS_SUMMARY,
             research_question="What exact coverage and missingness does this corpus contain?",
             classification=ResearchFinding.INCONCLUSIVE,
-            rationale=(
-                "Corpus summary is descriptive evidence and does not classify Alpha."
-            ),
+            rationale=("Corpus summary is descriptive evidence and does not classify Alpha."),
             source_references=sources,
             metrics=summary_metrics,
             payload={
                 "owner": owner.to_canonical_dict(),
-                "panel_owner_count": len(panels),
-                "outcome_owner_count": len(outcomes),
-                "excluded_missing_target_rows": panel_missing,
+                "panel_owner_count": len(panel_references),
+                "outcome_owner_count": len(outcome_references),
+                "excluded_missing_target_rows": panel_summary.missing_target_count,
+                "diagnostics": _diagnostic_payload(panel_summary),
+                "aggregation_runtime": {
+                    "component_batch_size": panel_summary.component_batch_size,
+                    "maximum_session_observations": panel_summary.maximum_session_observations,
+                    "whole_run_panel_materialized": False,
+                },
             },
             created_at=created_at,
         )
-        challenger = HistoricalExploratoryChallenger(self._components).train(
-            run_id=run_id
-        )
+        challenger = HistoricalExploratoryChallenger(self._components).train(run_id=run_id)
         model_evidence = HistoricalResearchEvidence.create(
             run_id=run_id,
             command_hash=snapshot.command.command_hash,
             experiment_reference=experiment,
             evidence_kind=HistoricalEvidenceKind.EXPLORATORY_MODEL,
             research_question=(
-                "Can an owner-resolved fixed regularized-linear challenger improve "
-                "T+1 10:30 prediction over the training-mean baseline?"
+                "Can an owner-resolved fixed regularized-linear challenger improve T+1 10:30 prediction over the training-mean baseline?"
             ),
             classification=_challenger_finding(challenger),
             rationale=_challenger_rationale(challenger),
@@ -326,142 +380,199 @@ class HistoricalEvidenceProducer:
         )
         return HistoricalEvidenceProductionResult(
             run_id=run_id,
-            observation_count=len(observations),
+            observation_count=panel_summary.observation_count,
             suite=suite,
             evidence=evidence,
         )
 
-    def _normalized_owner(
-        self, references: tuple[ValidationArtifactReference, ...]
-    ) -> HistoricalDataOwner:
-        matches = tuple(
-            item for item in references if item.artifact_kind == NORMALIZED_DATASET_KIND
-        )
+    def _normalized_owner(self, references: tuple[ValidationArtifactReference, ...]) -> HistoricalDataOwner:
+        matches = tuple(item for item in references if item.artifact_kind == NORMALIZED_DATASET_KIND)
         if len(matches) != 1:
             raise ValueError("Historical Evidence requires one normalized Dataset owner")
         return self._corpus.load(matches[0]).owner
 
 
-def _observations(
-    panels: tuple[HistoricalSessionComponent, ...],
-) -> tuple[tuple[AblationObservation, ...], int]:
+def _panel_observations(
+    panel: HistoricalSessionComponent,
+    previous_selected: set[str],
+) -> tuple[tuple[AblationObservation, ...], int, set[str]]:
     result: list[AblationObservation] = []
     missing = 0
-    previous_selected: set[str] = set()
-    for panel in sorted(panels, key=lambda item: item.trading_date):
-        rows = _objects(panel.payload.get("rows"), "panel rows")
-        selected = {
-            str(item["symbol"]) for item in rows if bool(item.get("selected"))
-        }
-        for row in rows:
-            realized = _optional_decimal(row.get("target_return"))
-            if realized is None:
-                missing += 1
-                continue
-            factors = _mapping(row.get("factor_values"), "factor values")
-            values = tuple(
-                sorted(
-                    (
-                        (_FACTOR_MAP[name], name, value)
-                        for name, raw in factors.items()
-                        if name in _FACTOR_MAP
-                        and (value := _optional_decimal(raw)) is not None
-                    ),
-                    key=lambda item: (item[0].value, item[1]),
-                )
-            )
-            symbol = str(row["symbol"])
-            cost = _optional_decimal(row.get("cost_return"))
-            result.append(
-                AblationObservation(
-                    observation_id=(
-                        f"{panel.component_id}:{symbol}:t-plus-one-1030"
-                    ),
-                    session_key=panel.trading_date.isoformat(),
-                    symbol=symbol,
-                    score=_optional_decimal(row.get("score")) or Decimal("0"),
-                    realized_return=realized,
-                    mfe=_optional_decimal(row.get("mfe")),
-                    mae=_optional_decimal(row.get("mae")),
-                    selected=symbol in selected,
-                    previous_selected=symbol in previous_selected,
-                    factor_values=values,
-                    cost_return=cost or Decimal("0.0021"),
-                    market_regime=str(row.get("market_regime", "NOT_ESTIMABLE")),
-                    liquidity_bucket=str(
-                        row.get("liquidity_bucket", "NOT_ESTIMABLE")
-                    ),
-                    market_cap_bucket=str(
-                        row.get("market_cap_bucket", "NOT_ESTIMABLE")
-                    ),
-                    volatility_bucket=str(
-                        row.get("volatility_bucket", "NOT_ESTIMABLE")
-                    ),
-                    theme=str(row.get("theme", "NOT_ESTIMABLE")),
-                    industry=str(row.get("industry", "NOT_ESTIMABLE")),
-                    trading_date=panel.trading_date,
-                )
-            )
-        previous_selected = selected
-    return tuple(result), missing
-
-
-def _score_functions(
-    protocol: AblationProtocol,
-    observations: tuple[AblationObservation, ...],
-) -> Mapping[str, ScoreFunction]:
-    rank_values: dict[tuple[str, FactorFamily, str], Decimal] = {}
-    by_session_factor: dict[
-        tuple[str, FactorFamily, str], list[tuple[str, Decimal]]
-    ] = {}
-    for item in observations:
-        for family, factor_id, value in item.factor_values:
-            by_session_factor.setdefault(
-                (item.session_key, family, factor_id), []
-            ).append((item.observation_id, value))
-    for key, values in by_session_factor.items():
-        ordered = sorted(values, key=lambda item: (item[1], item[0]))
-        denominator = Decimal(max(1, len(ordered) - 1))
-        for index, (observation_id, _value) in enumerate(ordered):
-            rank_values[(observation_id, key[1], key[2])] = Decimal(index) / denominator
-
-    def scorer(item: AblationObservation, variant: AblationVariant) -> Decimal:
+    rows = _objects(panel.payload.get("rows"), "panel rows")
+    selected = {str(item["symbol"]) for item in rows if bool(item.get("selected"))}
+    for row in rows:
+        realized = _optional_decimal(row.get("target_return"))
+        if realized is None:
+            missing += 1
+            continue
+        factors = _mapping(row.get("factor_values"), "factor values")
         values = tuple(
-            rank_values[(item.observation_id, family, factor_id)]
-            for family, factor_id, _raw in item.factor_values
-            if variant.includes(family, factor_id)
+            sorted(
+                (
+                    (_FACTOR_MAP[name], name, value)
+                    for name, raw in factors.items()
+                    if name in _FACTOR_MAP and (value := _optional_decimal(raw)) is not None
+                ),
+                key=lambda item: (item[0].value, item[1]),
+            )
         )
-        return (
-            Decimal("0")
-            if not values
-            else sum(values, Decimal("0")) / Decimal(len(values))
+        symbol = str(row["symbol"])
+        cost = _optional_decimal(row.get("cost_return"))
+        result.append(
+            AblationObservation(
+                observation_id=f"{panel.component_id}:{symbol}:t-plus-one-1030",
+                session_key=panel.trading_date.isoformat(),
+                symbol=symbol,
+                score=_optional_decimal(row.get("score")) or Decimal("0"),
+                realized_return=realized,
+                mfe=_optional_decimal(row.get("mfe")),
+                mae=_optional_decimal(row.get("mae")),
+                selected=symbol in selected,
+                previous_selected=symbol in previous_selected,
+                factor_values=values,
+                cost_return=cost or Decimal("0.0021"),
+                market_regime=str(row.get("market_regime", "NOT_ESTIMABLE")),
+                liquidity_bucket=str(row.get("liquidity_bucket", "NOT_ESTIMABLE")),
+                market_cap_bucket=str(row.get("market_cap_bucket", "NOT_ESTIMABLE")),
+                volatility_bucket=str(row.get("volatility_bucket", "NOT_ESTIMABLE")),
+                theme=str(row.get("theme", "NOT_ESTIMABLE")),
+                industry=str(row.get("industry", "NOT_ESTIMABLE")),
+                trading_date=panel.trading_date,
+            )
         )
+    return tuple(result), missing, selected
 
-    return {item.variant_id: scorer for item in protocol.variants}
+
+def _stream_observation_sessions(
+    repository: PostgresHistoricalMaterializationRepository,
+    *,
+    run_id: ArtifactId,
+    component_batch_size: int,
+):
+    previous_selected: set[str] = set()
+    for batch in repository.iter_for_run(
+        run_id=run_id,
+        component_kind=HistoricalComponentKind.RESEARCH_PANEL,
+        batch_size=component_batch_size,
+    ):
+        for panel in batch:
+            observations, _missing, selected = _panel_observations(panel, previous_selected)
+            previous_selected = selected
+            yield observations
 
 
-def _panel_set_reference(
-    panels: tuple[HistoricalSessionComponent, ...]
-) -> ValidationArtifactReference:
-    payload = {"panels": [item.reference.to_canonical_dict() for item in panels]}
+def _streaming_panel_summary(
+    repository: PostgresHistoricalMaterializationRepository,
+    *,
+    run_id: ArtifactId,
+    component_batch_size: int,
+) -> _StreamingPanelSummary:
+    previous_selected: set[str] = set()
+    observation_count = 0
+    missing = 0
+    session_count = 0
+    maximum_session_observations = 0
+    symbols: set[str] = set()
+    coverage = {family: 0 for family in _INCREMENTAL_FACTOR_BY_VARIANT.values()}
+    target_status_counts: Counter[str] = Counter()
+    signal_state_counts: Counter[str] = Counter()
+    signal_confirmation_counts: Counter[str] = Counter()
+    signal_reason_counts: Counter[str] = Counter()
+    forecast_status_counts: Counter[str] = Counter()
+    forecast_reason_counts: Counter[str] = Counter()
+    forecast_usable_sample_total = 0
+    forecast_usable_sample_maximum = 0
+    forecast_excluded_sample_total = 0
+    period_observation_counts: Counter[str] = Counter()
+    for batch in repository.iter_for_run(
+        run_id=run_id,
+        component_kind=HistoricalComponentKind.RESEARCH_PANEL,
+        batch_size=component_batch_size,
+    ):
+        for panel in batch:
+            observations, panel_missing, selected = _panel_observations(panel, previous_selected)
+            previous_selected = selected
+            session_count += 1
+            observation_count += len(observations)
+            missing += panel_missing
+            maximum_session_observations = max(maximum_session_observations, len(observations))
+            for row in _objects(panel.payload.get("rows"), "panel rows"):
+                target_status_counts[str(row.get("target_status", "UNKNOWN"))] += 1
+                signal_diagnostic = _mapping(
+                    row.get(
+                        "signal_diagnostic",
+                        {
+                            "state": "NOT_RECORDED_LEGACY_PANEL",
+                            "confirmation_states": {},
+                            "reason_codes": ["SIGNAL_DIAGNOSTIC_NOT_RECORDED"],
+                        },
+                    ),
+                    "signal diagnostic",
+                )
+                signal_state_counts[str(signal_diagnostic["state"])] += 1
+                for name, state in _mapping(
+                    signal_diagnostic.get("confirmation_states"),
+                    "signal confirmation states",
+                ).items():
+                    signal_confirmation_counts[f"{name}:{state}"] += 1
+                for reason in signal_diagnostic.get("reason_codes", []):
+                    signal_reason_counts[str(reason)] += 1
+                forecast_diagnostic = _mapping(
+                    row.get(
+                        "forecast_diagnostic",
+                        {
+                            "status": "NOT_RECORDED_LEGACY_PANEL",
+                            "usable_sample_count": 0,
+                            "excluded_sample_count": 0,
+                            "reason_codes": ["FORECAST_DIAGNOSTIC_NOT_RECORDED"],
+                        },
+                    ),
+                    "forecast diagnostic",
+                )
+                forecast_status_counts[str(forecast_diagnostic["status"])] += 1
+                usable = int(forecast_diagnostic["usable_sample_count"])
+                excluded = int(forecast_diagnostic["excluded_sample_count"])
+                forecast_usable_sample_total += usable
+                forecast_usable_sample_maximum = max(forecast_usable_sample_maximum, usable)
+                forecast_excluded_sample_total += excluded
+                for reason in forecast_diagnostic.get("reason_codes", []):
+                    forecast_reason_counts[str(reason)] += 1
+                period_observation_counts[panel.trading_date.strftime("%Y-%m")] += 1
+            for observation in observations:
+                symbols.add(observation.symbol)
+                observed = {family for family, _factor_id, _value in observation.factor_values}
+                for family in coverage:
+                    if family in observed:
+                        coverage[family] += 1
+    return _StreamingPanelSummary(
+        observation_count=observation_count,
+        missing_target_count=missing,
+        session_count=session_count,
+        symbol_count=len(symbols),
+        maximum_session_observations=maximum_session_observations,
+        component_batch_size=component_batch_size,
+        factor_coverage=coverage,
+        target_status_counts=dict(sorted(target_status_counts.items())),
+        signal_state_counts=dict(sorted(signal_state_counts.items())),
+        signal_confirmation_counts=dict(sorted(signal_confirmation_counts.items())),
+        signal_reason_counts=dict(sorted(signal_reason_counts.items())),
+        forecast_status_counts=dict(sorted(forecast_status_counts.items())),
+        forecast_reason_counts=dict(sorted(forecast_reason_counts.items())),
+        forecast_usable_sample_total=forecast_usable_sample_total,
+        forecast_usable_sample_maximum=forecast_usable_sample_maximum,
+        forecast_excluded_sample_total=forecast_excluded_sample_total,
+        period_observation_counts=dict(sorted(period_observation_counts.items())),
+    )
+
+
+def _panel_set_reference(panels: tuple[ValidationArtifactReference, ...]) -> ValidationArtifactReference:
+    payload = {"panels": [item.to_canonical_dict() for item in panels]}
     digest = canonical_hash(payload)
     return ValidationArtifactReference(
         "HISTORICAL_RESEARCH_PANEL_SET_BINDING",
         ArtifactId(f"historical-panel-set-{digest[7:31]}"),
         digest,
     )
-
-
-def _factor_coverage(
-    observations: tuple[AblationObservation, ...],
-) -> dict[FactorFamily, int]:
-    coverage = {family: 0 for family in _INCREMENTAL_FACTOR_BY_VARIANT.values()}
-    for item in observations:
-        observed = {family for family, _factor_id, _value in item.factor_values}
-        for family in coverage:
-            if family in observed:
-                coverage[family] += 1
-    return coverage
 
 
 def _incremental_is_estimable(
@@ -533,10 +644,7 @@ def _suite_payload(
         "factor_coverage": {
             family.value: {
                 "observation_count": factor_coverage.get(family, 0),
-                "coverage_ratio": str(
-                    Decimal(factor_coverage.get(family, 0))
-                    / Decimal(observation_count)
-                ),
+                "coverage_ratio": str(Decimal(factor_coverage.get(family, 0)) / Decimal(observation_count)),
             }
             for family in sorted(factor_coverage, key=lambda item: item.value)
         },
@@ -599,13 +707,7 @@ def _metric_set(
         value = getattr(metrics, field.name)
         if field.name == "incremental_lift" and not incremental_estimable:
             value = None
-        decimal_value = (
-            Decimal(value)
-            if isinstance(value, int)
-            else value
-            if isinstance(value, Decimal)
-            else None
-        )
+        decimal_value = Decimal(value) if isinstance(value, int) else value if isinstance(value, Decimal) else None
         assumption = (
             MetricAssumptionStatus.ENGINEERING_ASSUMPTION
             if field.name in {"cost_return", "net_return"}
@@ -618,11 +720,7 @@ def _metric_set(
                 slice_value=slice_value,
                 metric_name=field.name,
                 metric_value=decimal_value,
-                metric_status=(
-                    EvidenceMetricStatus.AVAILABLE
-                    if decimal_value is not None
-                    else EvidenceMetricStatus.NOT_ESTIMABLE
-                ),
+                metric_status=(EvidenceMetricStatus.AVAILABLE if decimal_value is not None else EvidenceMetricStatus.NOT_ESTIMABLE),
                 assumption_status=assumption,
             )
         )
@@ -630,28 +728,18 @@ def _metric_set(
 
 
 def _strategy_metrics(
-    outcomes: tuple[HistoricalSessionComponent, ...]
+    outcomes: Iterable[HistoricalSessionComponent],
 ) -> tuple[HistoricalEvidenceMetric, ...]:
-    values: dict[str, dict[str, list[Decimal]]] = {}
+    values: dict[str, dict[str, tuple[Decimal, int]]] = {}
     for component in outcomes:
-        protocol = OutcomeTargetProtocol.from_canonical_dict(
-            _mapping(component.payload.get("target_protocol"), "target protocol")
-        )
+        protocol = OutcomeTargetProtocol.from_canonical_dict(_mapping(component.payload.get("target_protocol"), "target protocol"))
         checkpoint_by_label: dict[str, str] = {}
-        target_by_id = {
-            str(item.target_id): item.checkpoint.value for item in protocol.targets
-        }
+        target_by_id = {str(item.target_id): item.checkpoint.value for item in protocol.targets}
         for raw in _objects(component.payload.get("labels"), "labels"):
             label = TargetOutcomeLabel.from_canonical_dict(raw)
-            checkpoint_by_label[str(label.label_id)] = target_by_id[
-                str(label.target.artifact_id)
-            ]
-        for result in _objects(
-            component.payload.get("strategy_economics"), "strategy economics"
-        ):
-            reference = _mapping(
-                result.get("target_label_reference"), "target label reference"
-            )
+            checkpoint_by_label[str(label.label_id)] = target_by_id[str(label.target.artifact_id)]
+        for result in _objects(component.payload.get("strategy_economics"), "strategy economics"):
+            reference = _mapping(result.get("target_label_reference"), "target label reference")
             checkpoint = checkpoint_by_label.get(str(reference.get("artifact_id")))
             if checkpoint is None:
                 raise ValueError("Strategy Economics label owner is missing")
@@ -667,7 +755,8 @@ def _strategy_metrics(
             ):
                 value = _optional_decimal(result.get(name))
                 if value is not None:
-                    bucket.setdefault(name, []).append(value)
+                    total, count = bucket.get(name, (Decimal("0"), 0))
+                    bucket[name] = total + value, count + 1
     metrics: list[HistoricalEvidenceMetric] = []
     for checkpoint, names in sorted(values.items()):
         for name in (
@@ -679,12 +768,8 @@ def _strategy_metrics(
             "mfe",
             "mae",
         ):
-            observations = names.get(name, [])
-            value = (
-                None
-                if not observations
-                else sum(observations, Decimal("0")) / Decimal(len(observations))
-            )
+            observations = names.get(name)
+            value = None if observations is None else observations[0] / Decimal(observations[1])
             metrics.append(
                 HistoricalEvidenceMetric(
                     variant_id=checkpoint,
@@ -692,11 +777,7 @@ def _strategy_metrics(
                     slice_value="ALL",
                     metric_name=name,
                     metric_value=value,
-                    metric_status=(
-                        EvidenceMetricStatus.AVAILABLE
-                        if value is not None
-                        else EvidenceMetricStatus.NOT_ESTIMABLE
-                    ),
+                    metric_status=(EvidenceMetricStatus.AVAILABLE if value is not None else EvidenceMetricStatus.NOT_ESTIMABLE),
                     assumption_status=(
                         MetricAssumptionStatus.ENGINEERING_ASSUMPTION
                         if name in {"cost_return", "net_return", "capacity_ceiling"}
@@ -710,22 +791,25 @@ def _strategy_metrics(
 def _summary_metrics(
     *,
     owner: HistoricalDataOwner,
-    panels: tuple[HistoricalSessionComponent, ...],
-    observations: tuple[AblationObservation, ...],
+    panel_owner_count: int,
+    observation_count: int,
+    symbol_count: int,
     panel_missing: int,
+    panel_summary: _StreamingPanelSummary,
 ) -> tuple[HistoricalEvidenceMetric, ...]:
     values = {
-        "session_count": Decimal(len(panels)),
-        "symbol_count": Decimal(len({item.symbol for item in observations})),
-        "sample_count": Decimal(len(observations)),
+        "session_count": Decimal(panel_owner_count),
+        "symbol_count": Decimal(symbol_count),
+        "sample_count": Decimal(observation_count),
         "missing_target_count": Decimal(panel_missing),
         "normalized_row_count": Decimal(owner.coverage.normalized_row_count),
         "source_row_count": Decimal(owner.coverage.source_row_count),
-        "provider_failure_count": Decimal(
-            sum(value for _key, value in owner.coverage.failure_counts)
-        ),
+        "provider_failure_count": Decimal(sum(value for _key, value in owner.coverage.failure_counts)),
+        "forecast_usable_sample_total": Decimal(panel_summary.forecast_usable_sample_total),
+        "forecast_usable_sample_maximum": Decimal(panel_summary.forecast_usable_sample_maximum),
+        "forecast_excluded_sample_total": Decimal(panel_summary.forecast_excluded_sample_total),
     }
-    return tuple(
+    base = tuple(
         HistoricalEvidenceMetric(
             variant_id="corpus",
             slice_kind="ALL",
@@ -737,6 +821,54 @@ def _summary_metrics(
         )
         for name, value in sorted(values.items())
     )
+    diagnostics = tuple(
+        HistoricalEvidenceMetric(
+            variant_id="corpus",
+            slice_kind=slice_kind,
+            slice_value=slice_value,
+            metric_name="observation_count",
+            metric_value=Decimal(count),
+            metric_status=EvidenceMetricStatus.AVAILABLE,
+            assumption_status=MetricAssumptionStatus.EMPIRICAL,
+        )
+        for slice_kind, counts in (
+            ("TARGET_STATUS", panel_summary.target_status_counts),
+            ("SIGNAL_STATE", panel_summary.signal_state_counts),
+            ("SIGNAL_CONFIRMATION", panel_summary.signal_confirmation_counts),
+            ("SIGNAL_REASON", panel_summary.signal_reason_counts),
+            ("FORECAST_STATUS", panel_summary.forecast_status_counts),
+            ("FORECAST_REASON", panel_summary.forecast_reason_counts),
+            ("MONTH", panel_summary.period_observation_counts),
+        )
+        for slice_value, count in sorted(counts.items())
+    )
+    return tuple(
+        sorted(
+            (*base, *diagnostics),
+            key=lambda item: (
+                item.variant_id,
+                item.slice_kind,
+                item.slice_value,
+                item.metric_name,
+            ),
+        )
+    )
+
+
+def _diagnostic_payload(summary: _StreamingPanelSummary) -> dict[str, Any]:
+    return {
+        "target_status_counts": dict(summary.target_status_counts),
+        "signal_state_counts": dict(summary.signal_state_counts),
+        "signal_confirmation_counts": dict(summary.signal_confirmation_counts),
+        "signal_reason_counts": dict(summary.signal_reason_counts),
+        "forecast_status_counts": dict(summary.forecast_status_counts),
+        "forecast_reason_counts": dict(summary.forecast_reason_counts),
+        "forecast_usable_sample_total": summary.forecast_usable_sample_total,
+        "forecast_usable_sample_maximum": summary.forecast_usable_sample_maximum,
+        "forecast_excluded_sample_total": summary.forecast_excluded_sample_total,
+        "period_observation_counts": dict(summary.period_observation_counts),
+        "corporate_action_excluded_count": summary.target_status_counts.get("CORPORATE_ACTION_EXCLUDED", 0),
+    }
 
 
 def _challenger_metrics(
@@ -747,9 +879,7 @@ def _challenger_metrics(
         "validation_session_count": Decimal(result.validation_session_count),
         "training_sample_count": Decimal(result.training_sample_count),
         "validation_sample_count": Decimal(result.validation_sample_count),
-        "excluded_missing_target_count": Decimal(
-            result.excluded_missing_target_count
-        ),
+        "excluded_missing_target_count": Decimal(result.excluded_missing_target_count),
         "validation_mse": result.validation_mse,
         "baseline_mse": result.baseline_mse,
         "validation_rank_ic": result.validation_rank_ic,
@@ -762,11 +892,7 @@ def _challenger_metrics(
             slice_value="ALL",
             metric_name=name,
             metric_value=value,
-            metric_status=(
-                EvidenceMetricStatus.AVAILABLE
-                if value is not None
-                else EvidenceMetricStatus.NOT_ESTIMABLE
-            ),
+            metric_status=(EvidenceMetricStatus.AVAILABLE if value is not None else EvidenceMetricStatus.NOT_ESTIMABLE),
             assumption_status=MetricAssumptionStatus.EMPIRICAL,
         )
         for name, value in sorted(values.items())
@@ -778,30 +904,16 @@ def _challenger_finding(result: ExploratoryChallengerResult) -> ResearchFinding:
         return ResearchFinding.NOT_ESTIMABLE
     if result.validation_mse is None or result.baseline_mse is None:
         return ResearchFinding.NOT_ESTIMABLE
-    if (
-        result.validation_mse < result.baseline_mse
-        and result.validation_rank_ic is not None
-        and result.validation_rank_ic > 0
-    ):
+    if result.validation_mse < result.baseline_mse and result.validation_rank_ic is not None and result.validation_rank_ic > 0:
         return ResearchFinding.POSITIVE
-    if (
-        result.validation_mse >= result.baseline_mse
-        and (
-            result.validation_rank_ic is None
-            or result.validation_rank_ic <= 0
-        )
-    ):
+    if result.validation_mse >= result.baseline_mse and (result.validation_rank_ic is None or result.validation_rank_ic <= 0):
         return ResearchFinding.NEGATIVE
     return ResearchFinding.INCONCLUSIVE
 
 
 def _challenger_rationale(result: ExploratoryChallengerResult) -> str:
     if result.status != "AVAILABLE":
-        return (
-            "Owner reload completed but the challenger was not estimable: "
-            + ",".join(result.reason_codes)
-            + "."
-        )
+        return "Owner reload completed but the challenger was not estimable: " + ",".join(result.reason_codes) + "."
     return (
         f"Fixed ridge used {result.training_sample_count} training and "
         f"{result.validation_sample_count} later validation samples; "
@@ -818,11 +930,7 @@ def _ablation_finding(suite: AlphaAblationSuite) -> ResearchFinding:
     if first.net_return is None or last.net_return is None:
         return ResearchFinding.NOT_ESTIMABLE
     lift = last.net_return - first.net_return
-    rank_lift = (
-        None
-        if first.rank_ic is None or last.rank_ic is None
-        else last.rank_ic - first.rank_ic
-    )
+    rank_lift = None if first.rank_ic is None or last.rank_ic is None else last.rank_ic - first.rank_ic
     if lift > 0 and rank_lift is not None and rank_lift > 0:
         return ResearchFinding.POSITIVE
     if lift <= 0 and (rank_lift is None or rank_lift <= 0):
@@ -841,14 +949,8 @@ def _ablation_rationale(suite: AlphaAblationSuite) -> str:
     )
 
 
-def _strategy_finding(
-    metrics: tuple[HistoricalEvidenceMetric, ...]
-) -> ResearchFinding:
-    nets = tuple(
-        item.metric_value
-        for item in metrics
-        if item.metric_name == "net_return" and item.metric_value is not None
-    )
+def _strategy_finding(metrics: tuple[HistoricalEvidenceMetric, ...]) -> ResearchFinding:
+    nets = tuple(item.metric_value for item in metrics if item.metric_name == "net_return" and item.metric_value is not None)
     if not nets:
         return ResearchFinding.NOT_ESTIMABLE
     if all(item > 0 for item in nets):
@@ -858,13 +960,8 @@ def _strategy_finding(
     return ResearchFinding.INCONCLUSIVE
 
 
-def _strategy_rationale(
-    metrics: tuple[HistoricalEvidenceMetric, ...]
-) -> str:
-    available = tuple(
-        item for item in metrics
-        if item.metric_name == "net_return" and item.metric_value is not None
-    )
+def _strategy_rationale(metrics: tuple[HistoricalEvidenceMetric, ...]) -> str:
+    available = tuple(item for item in metrics if item.metric_name == "net_return" and item.metric_value is not None)
     if not available:
         return "No checkpoint had estimable net Strategy Economics."
     best = max(available, key=lambda item: item.metric_value or Decimal("-Infinity"))
@@ -879,11 +976,7 @@ def _strategy_rationale(
 def _performance_finding(metrics: AblationMetrics) -> ResearchFinding:
     if metrics.net_return is None:
         return ResearchFinding.NOT_ESTIMABLE
-    return (
-        ResearchFinding.POSITIVE
-        if metrics.net_return > 0
-        else ResearchFinding.NEGATIVE
-    )
+    return ResearchFinding.POSITIVE if metrics.net_return > 0 else ResearchFinding.NEGATIVE
 
 
 def _performance_rationale(metrics: AblationMetrics) -> str:
