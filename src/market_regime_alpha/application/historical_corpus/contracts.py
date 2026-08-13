@@ -36,7 +36,8 @@ from market_regime_alpha.market_data.contracts import (
 HISTORICAL_RAW_REQUEST_SCHEMA = "historical-raw-request/v1"
 HISTORICAL_NORMALIZED_BAR_SCHEMA = "historical-normalized-bar/v1"
 HISTORICAL_PARTITION_SCHEMA_V1 = "historical-data-partition/v1"
-HISTORICAL_PARTITION_SCHEMA = "historical-data-partition/v2"
+HISTORICAL_PARTITION_SCHEMA_V2 = "historical-data-partition/v2"
+HISTORICAL_PARTITION_SCHEMA = "historical-data-partition/v3"
 HISTORICAL_OWNER_SCHEMA = "historical-data-owner/v1"
 HISTORICAL_AVAILABILITY_BASIS = "RETROSPECTIVE_EVENT_TIME"
 HISTORICAL_EVIDENCE_LIMITATIONS = (
@@ -395,6 +396,7 @@ class HistoricalDataPartition:
     def __post_init__(self) -> None:
         if self.schema_version not in {
             HISTORICAL_PARTITION_SCHEMA_V1,
+            HISTORICAL_PARTITION_SCHEMA_V2,
             HISTORICAL_PARTITION_SCHEMA,
         }:
             raise ValueError("unsupported Historical partition schema")
@@ -444,6 +446,7 @@ class HistoricalDataPartition:
             raise ValueError("Historical partition requires records")
         if schema_version not in {
             HISTORICAL_PARTITION_SCHEMA_V1,
+            HISTORICAL_PARTITION_SCHEMA_V2,
             HISTORICAL_PARTITION_SCHEMA,
         }:
             raise ValueError("unsupported Historical partition schema")
@@ -473,6 +476,7 @@ class HistoricalDataPartition:
                 first_market_date=min(first_dates),
                 last_market_date=max(last_dates),
                 symbol_bucket=symbol_bucket,
+                schema_version=schema_version,
             ),
             **cast(Any, values),
         )
@@ -653,6 +657,9 @@ class HistoricalDataOwner:
         )
         if keys != tuple(sorted(set(keys))):
             raise ValueError("Historical owner partitions must be unique and sorted")
+        relative_paths = tuple(item.relative_path for item in self.partitions)
+        if len(relative_paths) != len(set(relative_paths)):
+            raise ValueError("Historical owner partition paths must be unique")
         if self.first_market_date != min(item.first_market_date for item in self.partitions):
             raise ValueError("Historical owner first date mismatch")
         if self.last_market_date != max(item.last_market_date for item in self.partitions):
@@ -979,6 +986,7 @@ def _partition_relative_path(item: HistoricalDataPartition) -> str:
         first_market_date=item.first_market_date,
         last_market_date=item.last_market_date,
         symbol_bucket=item.symbol_bucket,
+        schema_version=item.schema_version,
     )
 
 
@@ -989,6 +997,7 @@ def _partition_path(
     first_market_date: date,
     last_market_date: date,
     symbol_bucket: int,
+    schema_version: str,
 ) -> str:
     bucket = f"{symbol_bucket:03d}"
     if artifact_kind is HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE:
@@ -999,6 +1008,16 @@ def _partition_path(
     if first_market_date.year != last_market_date.year:
         raise ValueError("Historical partition cannot cross a calendar year")
     if artifact_kind is HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE:
+        if (
+            schema_version == HISTORICAL_PARTITION_SCHEMA
+            and timeframe is not Timeframe.DAILY
+        ):
+            if first_market_date.month != last_market_date.month:
+                raise ValueError("intraday Raw partition cannot cross a month")
+            return (
+                f"{prefix}/year={year}/month={first_market_date.month:02d}/"
+                f"bucket={bucket}/part.parquet"
+            )
         return f"{prefix}/year={year}/bucket={bucket}/part.parquet"
     if timeframe is Timeframe.DAILY:
         return f"{prefix}/year={year}/bucket={bucket}/part.parquet"

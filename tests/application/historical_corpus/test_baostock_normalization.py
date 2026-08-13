@@ -18,6 +18,7 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
     HistoricalDataPartition,
     HISTORICAL_PARTITION_SCHEMA_V1,
+    HISTORICAL_PARTITION_SCHEMA_V2,
     HistoricalRawRequest,
     HistoricalTradingStatus,
     build_partitions,
@@ -569,6 +570,31 @@ def test_legacy_raw_partition_replays_start_date_projection() -> None:
         == legacy
     )
 
+
+def test_pre_e3_raw_intraday_partition_path_remains_replayable() -> None:
+    request = raw_request(timeframe=Timeframe.MINUTE_5)
+    bucket = build_partitions(
+        artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+        records=(request,),
+        bucket_count=4,
+    )[0].symbol_bucket
+    legacy = HistoricalDataPartition.create(
+        artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+        timeframe=request.timeframe,
+        symbol_bucket=bucket,
+        bucket_count=4,
+        records=(request,),
+        schema_version=HISTORICAL_PARTITION_SCHEMA_V2,
+    )
+
+    assert "/month=" not in legacy.relative_path
+    assert (
+        HistoricalDataPartition.from_reference_dict(
+            legacy.reference_dict(),
+            records=(request,),
+        )
+        == legacy
+    )
 
 def test_suspension_is_not_silently_price_filled() -> None:
     request = HistoricalRawRequest.create(

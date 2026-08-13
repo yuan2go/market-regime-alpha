@@ -63,8 +63,8 @@ def test_raw_daily_and_minute_partitions_cannot_overwrite_each_other(
         parent_reference=None,
         created_at=CREATED_AT,
         retrieved_at=RETRIEVED_AT,
-        first_market_date=partitions[0].first_market_date,
-        last_market_date=partitions[-1].last_market_date,
+        first_market_date=min(item.first_market_date for item in partitions),
+        last_market_date=max(item.last_market_date for item in partitions),
         bucket_count=4,
         partitions=partitions,
         coverage=HistoricalCorpusCoverage(
@@ -88,6 +88,53 @@ def test_raw_daily_and_minute_partitions_cannot_overwrite_each_other(
     assert len(parquet_paths) == 2
     assert any("timeframe=daily" in item for item in parquet_paths)
     assert any("timeframe=minute_5" in item for item in parquet_paths)
+
+
+def test_raw_intraday_month_partitions_have_unique_immutable_paths(
+    tmp_path: Path,
+) -> None:
+    requests = (
+        raw_request(timeframe=Timeframe.MINUTE_5, month=1),
+        raw_request(timeframe=Timeframe.MINUTE_5, month=2),
+    )
+    partitions = build_partitions(
+        artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+        records=requests,
+        bucket_count=4,
+    )
+    owner = HistoricalDataOwner.create(
+        artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+        provider_id="BAOSTOCK",
+        normalization_version=None,
+        parent_reference=None,
+        created_at=CREATED_AT,
+        retrieved_at=RETRIEVED_AT,
+        first_market_date=partitions[0].first_market_date,
+        last_market_date=partitions[-1].last_market_date,
+        bucket_count=4,
+        partitions=partitions,
+        coverage=HistoricalCorpusCoverage(
+            expected_symbols=("600000.SH",),
+            observed_symbols=("600000.SH",),
+            expected_request_count=2,
+            successful_request_count=2,
+            source_row_count=2,
+            normalized_row_count=0,
+            missing_field_counts=(),
+            failure_counts=(),
+        ),
+        limitations=(),
+    )
+
+    path = publish_historical_package(artifact_root=tmp_path, owner=owner)
+    paths = tuple(
+        sorted(item.relative_to(path).as_posix() for item in path.rglob("*.parquet"))
+    )
+
+    assert load_verified_historical_package(path).owner == owner
+    assert len(paths) == 2
+    assert "/month=01/" in paths[0]
+    assert "/month=02/" in paths[1]
 
 
 def test_atomic_publish_is_recoverable_after_registration_gap(tmp_path: Path) -> None:
