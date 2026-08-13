@@ -3,7 +3,7 @@
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Current registry of failed, blocked or insufficient research claims
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha/application/historical_corpus`, `src/market_regime_alpha/application/research_evaluation`
 
 | Claim | Current result | Evidence authority |
@@ -35,5 +35,13 @@
 | Phase E2 current Portfolio result proves general Alpha | False: gross +0.014474, assumed-cost net +0.012374 and drawdown -0.130944 cover only 19 retrospective sessions and conflict with negative checkpoint economics | 300-stock free-data exploratory corpus |
 | Phase E2 Market Cap or Industry is estimable | `NOT_ESTIMABLE`: no Decision-time share owner exists and current Industry is deliberately not backfilled | 300-stock free-data exploratory corpus |
 | Phase E2 exploratory challenger is estimable | `NOT_ESTIMABLE`: 19 temporal sessions do not meet the frozen temporal-session floor | 300-stock free-data exploratory corpus |
+| Phase E3 ETF establishes longitudinal Alpha context | `NOT_ESTIMABLE`: all 2,790 requests succeed, but every frozen `510300.SH` interval returns zero observations; no index or Daily-only substitution is allowed | 126-session longitudinal free-data corpus |
+| Phase E3 Capital, Candidate, Signal or canonical Forecast adds value | `NOT_ESTIMABLE`: ETF amount expansion is absent, Capital is insufficient in all sessions, all 37,800 Candidates are rejected and Signal/Forecast are never emitted; thresholds and Forecast floor are unchanged | 126-session longitudinal free-data corpus |
+| Phase E3 Volume, Theme or Dynamic Pool adds value | `NEGATIVE`: gross incremental lifts are -0.000156, -0.000336 and -0.000468 respectively | 37,375 owner-resolved T+1 observations |
+| Phase E3 Market Regime proves stable incremental Alpha | `INCONCLUSIVE`: gross lift is +0.000106 but the chain remains negative; the positive `RISK_ON` slice contains only two sessions | 37,375 owner-resolved T+1 observations |
+| Phase E3 full ranking chain has economic value | `NEGATIVE`: RankIC -0.032604, gross -0.001680, engineering-assumption cost 0.002100, net -0.003781 and maximum drawdown -0.39964 | 126-session longitudinal free-data corpus |
+| Any Phase E3 executable T+1 checkpoint is net profitable | `NEGATIVE`: all six checkpoints are gross-positive but net-negative after the versioned engineering-assumption cost | 224,718 non-corporate-action economics records |
+| Phase E3 fixed-ridge challenger proves canonical Forecast, Formal OOS or economics | False: MSE 0.000502153 versus baseline 0.000518944 and RankIC 0.015405 cover one exploratory temporal split; canonical Forecast remains empty | 29,729 training / 7,646 later validation observations |
+| Phase E3 corporate-action exclusions are ordinary missing returns | False: 2,082 six-checkpoint labels are explicitly unavailable because they cross a known action or one persisted coverage gap | owner-resolved corporate-action facts |
 
 Negative evidence is first-class and immutable. A failed result may motivate a new separately frozen hypothesis; it may not be reworded into success.
