@@ -179,7 +179,9 @@ Every entry separates ownership from storage and consumption. A missing writer o
   Universe scope; Historical Corpus owns raw/normalized packages and partition
   locators; the Historical Context Instrument Set owns the frozen
   `000300.SH` market-index and `510300.SH` theme-ETF roles; Historical
-  Materialization owns session components and projected Outcome labels.
+  Experiment Definition freezes the unchanged methodology before Scope;
+  Historical Materialization owns session components and projected Outcome
+  labels.
 - **Canonical Writer:** `FreeResearchUniverseOperator`,
   `HistoricalSecurityFactsOperator`, the longitudinal corpus CLI through
   `PostgresResearchValidationRepository`,
@@ -191,7 +193,8 @@ Every entry separates ownership from storage and consumption. A missing writer o
   `free_data_historical_security_fact_set`,
   `free_data_historical_security_fact`,
   `free_data_historical_security_fact_coverage_gap`,
-  `research_validation_artifact` (`HISTORICAL_CONTEXT_INSTRUMENT_SET`),
+  `research_validation_artifact` (`HISTORICAL_CONTEXT_INSTRUMENT_SET` and
+  `RESEARCH_EXPERIMENT_DEFINITION`),
   `historical_corpus_owner`, `historical_corpus_partition`,
   `historical_corpus_session_component`,
   `historical_corpus_component_source_binding` and
@@ -201,7 +204,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
   deterministic projected-label reconstruction.
 - **Evidence ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`,
   `FORMAL_OOS=false`, `CALIBRATED=false`; corporate-action absence is usable
-  only inside the persisted v3 acquisition scope and all gaps fail raw returns
+  only inside the persisted v4 acquisition scope and all gaps fail raw returns
   closed.
 
 ### Formal PIT

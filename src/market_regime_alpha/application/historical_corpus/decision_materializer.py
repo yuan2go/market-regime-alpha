@@ -436,6 +436,24 @@ class HistoricalDecisionMaterializer:
 
     def _scope_stage(self, request: ResearchDecisionSessionRequest) -> SessionStageComputation:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
+        has_timeline = any(
+            item.artifact_kind == HISTORICAL_CONSTITUENT_TIMELINE_KIND
+            for item in request.configuration_references
+        )
+        if has_timeline:
+            if self._validation is None:
+                raise ValueError(
+                    "Longitudinal Historical execution requires Experiment Authority"
+                )
+            experiment_payload = self._validation.get_payload(
+                request.experiment_definition_reference.artifact_id,
+                expected_kind="RESEARCH_EXPERIMENT_DEFINITION",
+            )
+            if (
+                canonical_hash(experiment_payload)
+                != request.experiment_definition_reference.content_hash
+            ):
+                raise ValueError("Historical Experiment Definition hash mismatch")
         base_universe, universe_reference = self._active_universe(
             request.configuration_references,
             request.trading_date,

@@ -201,6 +201,15 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         payload=context_payload,
         created_at=MATERIALIZED_AT,
     )
+    experiment_payload = {"phase-e": "integration"}
+    validation_repository.record(
+        artifact_id=ArtifactId("phase-e-experiment"),
+        artifact_hash=canonical_hash(experiment_payload),
+        artifact_kind="RESEARCH_EXPERIMENT_DEFINITION",
+        evidence_authority="ENGINEERING_ONLY",
+        payload=experiment_payload,
+        created_at=MATERIALIZED_AT,
+    )
     command = _command(
         normalized.reference,
         universe_reference,

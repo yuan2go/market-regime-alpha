@@ -147,7 +147,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 078, `historical_outcome_temporal_projection`. Expected schema
+Expected head: migration 080, `historical_experiment_definition`. Expected schema
 catalog: 257 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
@@ -161,10 +161,12 @@ Migration 068 installs Historical Corpus Authority. Migration 069 adds the
 exact-owner timeframe/date/symbol-bucket selective-read index. Migration 070
 accepts the v2 effective-dated historical constituent owner while preserving
 immutable v1 Research Universe rows.
-Migrations 071–078 add effective/publication-dated Historical Security Facts,
+Migrations 071–080 add effective/publication-dated Historical Security Facts,
 unresolved corporate-action gaps, bounded component/Outcome projections, the
-exact constituent timeline, v3 fact acquisition scope, immutable labelled
-index/ETF context and owner-bound Outcome label dates. Corporate-action
+exact constituent timeline, v4 content-verifiable fact acquisition scope,
+immutable labelled index/ETF context, owner-bound Outcome label dates and the
+exploratory Experiment Definition reloaded before longitudinal Scope.
+Corporate-action
 absence is evidence only when symbol, interval and constituent lineage are all
 inside that immutable scope.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical

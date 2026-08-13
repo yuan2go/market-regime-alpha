@@ -26,7 +26,7 @@ time, owner lineage and aggregation deterministic and bounded.
 
 ## Workstream 2: historical Security Facts
 
-- Add migrations 071–078 for immutable facts, keyset component streaming,
+- Add migrations 071–080 for immutable facts, keyset component streaming,
   exact constituent timelines and projected symbol/target Outcome labels.
 - Add canonical contracts and one PostgreSQL repository for Industry,
   published total/liquid shares, adjustment events and dividend/split/rights
@@ -68,7 +68,7 @@ time, owner lineage and aggregation deterministic and bounded.
 
 ## Workstream 5: qualification and publication
 
-- Run migrations 071–078 fresh, upgrade, idempotency and concurrency tests plus
+- Run migrations 071–080 fresh, upgrade, idempotency and concurrency tests plus
   corruption/adversarial, CLI, PostgreSQL, full pytest, docs, Ruff, mypy, build
   and `git diff --check` gates.
 - Update the sole current docs, capability/gap/roadmap and research result
