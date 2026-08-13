@@ -34,7 +34,7 @@ This free-data path remains `EXPLORATORY / PIT_INCOMPLETE`. PostgreSQL is the
 only business Authority; the Artifact Root stores immutable large bytes and is
 never scanned to select an owner.
 
-Freeze an effective-dated real historical constituent set before a Full-A run:
+Freeze an effective-dated real historical constituent set before an Index run:
 
 ```bash
 uv run continuous-research \
@@ -65,7 +65,12 @@ uv run continuous-research \
   --artifact-root /absolute/path/to/artifact-root
 ```
 
-Before execution, freeze one Free Research Universe owner, WATCHLIST or Full-A policy,
+Before execution, freeze one Free Research Universe owner and a WATCHLIST or
+`INDEX` policy. An index constituent set must never be labelled `FULL_A`; the
+materializer derives an exact membership snapshot from the historical
+constituent owner.
+
+Then freeze the
 canonical exploratory Target Protocol, Governed Experiment owner and
 `HistoricalResearchCommand`. The command binds the exact normalized Dataset,
 security master, policy, target, experiment, calendar, code revision and

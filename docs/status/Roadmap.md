@@ -77,33 +77,32 @@ calibration, prospective performance or Production qualification.
 
 ## Phase E Historical Alpha Evidence Production
 
-The representative vertical slice is complete: immutable Raw and Normalized
-owners, active Decision-Time materialization through canonical kernels, T+1
-Outcome, Panel, cumulative ablation, Strategy Economics, Portfolio Performance,
-owner-resolved challenger, durable Research Evidence, interruption recovery and
-deterministic replay all ran on a frozen real 2023-2025 BaoStock corpus.
+The representative vertical slice and its Phase E2 expansion are complete.
+Phase E2 freezes 300 real historical CSI 300 constituents plus `000300.SH` and
+`510300.SH`, keeps PostgreSQL owner/lineage Authority, and uses bounded
+timeframe/date/symbol-bucket Parquet reads for the same Canonical Decision-Time
+materialization, T+1 Outcome, Panel, cumulative ablation, Strategy Economics,
+Portfolio Performance, Research Evidence, interruption recovery and replay.
 
-The run is useful negative evidence, not completion of the whole empirical
-program. Price, Volume, Regime, Theme and Dynamic Pool were estimable; the full
-effective chain remained net negative after engineering-assumption costs.
-BaoStock returned no `510300.SH` rows, so ETF and Capital were unobserved and
-Canonical gates rejected every Candidate. ETF, Capital, Candidate, Signal and
-Forecast incremental lift is therefore `NOT_ESTIMABLE`.
+This run establishes expanded exploratory coverage, not completion of the
+empirical program. ETF, Theme and price/volume-based Capital observations now
+reach the canonical chain; Candidate, Signal and Forecast observations exist
+on the frozen methodology. Current Industry and market cap remain deliberately
+unknown/not-estimable, and the one-month minute window cannot establish
+generalization, calibrated probability, Formal OOS or economic value.
 
 Phase E priority order is now:
 
-1. Freeze a free Provider scope that supplies actual ETF/index context while
-   preserving its auxiliary, `PIT_INCOMPLETE` ceiling; do not substitute or
-   synthesize ETF facts.
-2. Expand the cross-section beyond six liquid stocks and obtain explicit
-   historical listing/ST/suspension, market-cap and industry facts so
-   survivorship and slice coverage can be measured rather than assumed.
-3. Re-run the same frozen cumulative chain without tuning to determine whether
-   Candidate/Signal/Forecast become estimable and whether any apparent
-   Regime/Volatility effects survive broader coverage.
-4. Empirically calibrate costs, fillability, impact and capacity before making
-   any economic-value claim. Continue preserving negative and inconclusive
-   outcomes.
+1. Freeze longitudinal constituent history instead of one effective-date index
+   cohort, without projecting current members into earlier periods.
+2. Obtain Decision-time published share, Industry and corporate-action owners;
+   keep absent facts unknown rather than backfilled or synthesized.
+3. Extend minute observations materially beyond 19 sessions and repeat the
+   already frozen chain without selecting the period or parameters from Phase
+   E2 outcomes.
+4. Empirically resolve costs, fillability, impact and capacity before making an
+   economic-value claim. Continue preserving negative, inconclusive and
+   not-estimable outcomes.
 
 Engineering completion still does not supply qualified Provider history,
 Formal PIT, qualified Historical Samples, pristine Formal OOS observations,

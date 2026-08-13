@@ -37,6 +37,7 @@ Documentation describes the code; it does not create implementation or evidence 
 - [Runtime Runbook](operations/Runtime-Runbook.md)
 - [ADR-010: Phase E Historical Alpha Evidence Production](architecture/decisions/ADR-010-Phase-E-Historical-Alpha-Evidence-Production.md)
 - [ADR-011: Phase E2 Selective Historical Evidence Runtime](architecture/decisions/ADR-011-Phase-E2-Selective-Historical-Evidence-Runtime.md)
+- [Phase E2 Historical Evidence Expansion Report](references/Phase-E2-Historical-Evidence-Expansion-Report.md)
 
 The Constitution remains the normative source. [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the sole current research-claim registry.
 
