@@ -726,6 +726,7 @@ def _dispatch(
                 "universe_snapshot_ids",
                 "universe_timeline_id",
                 "context_symbols",
+                "context_instruments",
                 "timeframe_ranges",
             }
         ):
@@ -817,7 +818,63 @@ def _dispatch(
             )
         else:
             stock_symbols = tuple(str(item) for item in _array_value(payload["symbols"], "symbols"))
-        context_symbols = tuple(str(item) for item in _array_value(payload.get("context_symbols", []), "context_symbols"))
+        if "context_instruments" in payload:
+            context_payload = _object_value(
+                payload["context_instruments"],
+                "context_instruments",
+            )
+            if set(context_payload) != {"market_index_symbol", "theme_etf_symbol"}:
+                raise ValueError(
+                    "context_instruments requires exact market_index_symbol and theme_etf_symbol"
+                )
+            market_index_symbol = str(context_payload["market_index_symbol"])
+            theme_etf_symbol = str(context_payload["theme_etf_symbol"])
+            if (
+                market_index_symbol != "000300.SH"
+                or theme_etf_symbol != "510300.SH"
+            ):
+                raise ValueError(
+                    "Frozen Historical Context requires 000300.SH and 510300.SH"
+                )
+            context_symbols = tuple(
+                sorted({market_index_symbol, theme_etf_symbol})
+            )
+            frozen_context_payload = {
+                "schema_version": "historical-context-instrument-set/v1",
+                "market_index_symbol": market_index_symbol,
+                "theme_etf_symbol": theme_etf_symbol,
+                "limitations": [
+                    "EXPLORATORY_CONTEXT_ONLY",
+                    "FORMAL_PIT_NOT_ESTABLISHED",
+                    "PIT_INCOMPLETE",
+                ],
+            }
+            context_hash = canonical_hash(frozen_context_payload)
+            context_reference = ValidationArtifactReference(
+                "HISTORICAL_CONTEXT_INSTRUMENT_SET",
+                ArtifactId(
+                    f"historical-context-instrument-set:{context_hash[7:]}"
+                ),
+                context_hash,
+            )
+            PostgresResearchValidationRepository(
+                factory,
+                apply_migrations=False,
+            ).record(
+                artifact_id=context_reference.artifact_id,
+                artifact_hash=context_reference.content_hash,
+                artifact_kind=context_reference.artifact_kind,
+                evidence_authority="ENGINEERING_ONLY",
+                payload=frozen_context_payload,
+                created_at=datetime.now(UTC).replace(microsecond=0),
+            )
+        else:
+            if "universe_timeline_id" in payload:
+                raise ValueError(
+                    "Longitudinal corpus acquisition requires explicit context_instruments"
+                )
+            context_symbols = tuple(str(item) for item in _array_value(payload.get("context_symbols", []), "context_symbols"))
+            context_reference = None
         symbols = tuple(sorted({*stock_symbols, *context_symbols}))
         raw = BaoStockHistoricalArchiveClient().acquire(
             symbols=symbols,
@@ -825,6 +882,11 @@ def _dispatch(
             end_date=date.fromisoformat(str(payload["end_date"])),
             timeframe_ranges=timeframe_ranges,
             bucket_count=int(payload["bucket_count"]),
+            checkpoint_root=(
+                args.artifact_root.resolve()
+                / "historical-corpus"
+                / "query-checkpoints"
+            ),
         )
         corpus = PostgresHistoricalCorpusRepository(
             factory,
@@ -841,6 +903,11 @@ def _dispatch(
             "normalized_physical_hash": normalized_package.physical_hash,
             "stock_symbol_count": len(stock_symbols),
             "context_symbols": list(sorted(set(context_symbols))),
+            "context_reference": (
+                None
+                if context_reference is None
+                else context_reference.to_canonical_dict()
+            ),
             "universe_references": [item.to_canonical_dict() for item in universe_references],
             "formal_pit": False,
             "formal_oos": False,
@@ -1174,6 +1241,9 @@ def _dispatch(
             )
         result = HistoricalSecurityFactsOperator(factory).sync(
             universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
+            universe_timeline_reference=(
+                None if timeline_id is None else timeline.reference
+            ),
             start_date=date.fromisoformat(str(payload["start_date"])),
             end_date=date.fromisoformat(str(payload["end_date"])),
             artifact_root=args.artifact_root.resolve(),
@@ -2231,6 +2301,10 @@ def _historical_runner(
             universe_repository=PostgresFreeResearchUniverseRepository(factory, apply_migrations=False),
             scope_repository=PostgresRuntimeScopeRepository(factory, apply_migrations=False),
             target_repository=PostgresTargetOutcomeRepository(factory, apply_migrations=False),
+            validation_repository=PostgresResearchValidationRepository(
+                factory,
+                apply_migrations=False,
+            ),
             historical_facts_repository=PostgresHistoricalSecurityFactsRepository(factory, apply_migrations=False),
         )
     return HistoricalResearchRunner(

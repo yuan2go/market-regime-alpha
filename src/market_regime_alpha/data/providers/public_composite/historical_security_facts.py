@@ -100,6 +100,7 @@ class BaoStockHistoricalSecurityFactsClient:
         cohort_dates: tuple[date, ...],
         start_date: date,
         end_date: date,
+        universe_scope_references: tuple[ValidationArtifactReference, ...],
         checkpoint_root: Path | None = None,
     ) -> HistoricalSecurityFactsAcquisition:
         if not symbols or symbols != tuple(sorted(set(symbols))):
@@ -286,6 +287,7 @@ class BaoStockHistoricalSecurityFactsClient:
             symbols=symbols,
             start_date=start_date,
             end_date=end_date,
+            universe_scope_references=universe_scope_references,
             responses=tuple(responses),
         )
 
@@ -415,6 +417,16 @@ def _json_hash(value: Any) -> str:
     )
 
 
+def _json_text(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
 def _quarter_end(year: int, quarter: int) -> date:
     return date(year, quarter * 3, (31, 30, 30, 31)[quarter - 1])
 
@@ -424,6 +436,7 @@ def _build_acquisition(
     symbols: tuple[str, ...],
     start_date: date,
     end_date: date,
+    universe_scope_references: tuple[ValidationArtifactReference, ...],
     responses: tuple[_FactQueryResponse, ...],
 ) -> HistoricalSecurityFactsAcquisition:
     if not responses:
@@ -469,6 +482,7 @@ def _build_acquisition(
     )
     source_by_locator = {source.locator: source for source in raw_payloads}
     facts: dict[tuple[object, ...], HistoricalSecurityFact] = {}
+    conflicted_keys: set[tuple[object, ...]] = set()
     coverage_gaps: dict[str, HistoricalSecurityFactCoverageGap] = {}
     rejected = 0
     allowed = set(symbols)
@@ -488,6 +502,8 @@ def _build_acquisition(
                 rejected += 1
                 fact = None
             if fact is None:
+                if "__provider_field_count" in row:
+                    rejected += 1
                 gap = _corporate_action_coverage_gap(
                     product=product,
                     parameters=parameters,
@@ -510,10 +526,50 @@ def _build_acquisition(
                 fact.effective_date,
             )
             if fact.fact_kind is HistoricalSecurityFactKind.DIVIDEND_EVENT:
-                key = (*key, fact.published_date, fact.values)
+                key = (*key, fact.published_date)
+            if key in conflicted_keys:
+                rejected += 1
+                gap = _corporate_action_coverage_gap(
+                    product=product,
+                    parameters=parameters,
+                    scope=scope,
+                    row=row,
+                    start_date=start_date,
+                    end_date=end_date,
+                    source_reference=reference,
+                    reason_codes=(
+                        "CORPORATE_ACTION_PROVIDER_FACT_CONFLICT",
+                        "RAW_UNADJUSTED_RETURN_FAILS_CLOSED",
+                    ),
+                )
+                if gap is not None and gap.symbol in allowed:
+                    coverage_gaps.setdefault(str(gap.gap_id), gap)
+                continue
             prior = facts.get(key)
             if prior is not None and dict(prior.values) != dict(fact.values):
-                raise AShareDataError("BaoStock historical fact values drifted for one effective key")
+                gap = _corporate_action_coverage_gap(
+                    product=product,
+                    parameters=parameters,
+                    scope=scope,
+                    row=row,
+                    start_date=start_date,
+                    end_date=end_date,
+                    source_reference=reference,
+                    reason_codes=(
+                        "CORPORATE_ACTION_PROVIDER_FACT_CONFLICT",
+                        "RAW_UNADJUSTED_RETURN_FAILS_CLOSED",
+                    ),
+                )
+                if gap is None:
+                    raise AShareDataError(
+                        "BaoStock historical fact values drifted for one effective key"
+                    )
+                rejected += 1
+                conflicted_keys.add(key)
+                facts.pop(key)
+                if gap.symbol in allowed:
+                    coverage_gaps.setdefault(str(gap.gap_id), gap)
+                continue
             facts.setdefault(key, fact)
     if not facts:
         raise AShareDataError("BaoStock historical fact acquisition returned no facts")
@@ -532,6 +588,10 @@ def _build_acquisition(
             source_manifest=manifest,
         ),
         facts=tuple(facts.values()),
+        requested_symbols=symbols,
+        acquisition_start_date=start_date,
+        acquisition_end_date=end_date,
+        universe_scope_references=universe_scope_references,
         coverage_gaps=tuple(coverage_gaps.values()),
     )
     counts: dict[str, int] = {}
@@ -558,6 +618,10 @@ def _corporate_action_coverage_gap(
     start_date: date,
     end_date: date,
     source_reference: ValidationArtifactReference,
+    reason_codes: tuple[str, ...] = (
+        "CORPORATE_ACTION_PROVIDER_ROW_UNRESOLVED",
+        "RAW_UNADJUSTED_RETURN_FAILS_CLOSED",
+    ),
 ) -> HistoricalSecurityFactCoverageGap | None:
     values = dict(parameters)
     if product.startswith("query_adjust_factor"):
@@ -576,7 +640,10 @@ def _corporate_action_coverage_gap(
     if coverage_start > coverage_end:
         return None
     raw_symbol = row.get("code")
-    symbol = _canonical_symbol(raw_symbol) if raw_symbol else scope[0]
+    try:
+        symbol = _canonical_symbol(raw_symbol) if raw_symbol else scope[0]
+    except ValueError:
+        symbol = scope[0]
     return HistoricalSecurityFactCoverageGap.create(
         fact_kind=fact_kind,
         symbol=symbol,
@@ -584,10 +651,7 @@ def _corporate_action_coverage_gap(
         coverage_end=coverage_end,
         raw_row_hash=_json_hash(dict(row)),
         source_reference=source_reference,
-        reason_codes=(
-            "CORPORATE_ACTION_PROVIDER_ROW_UNRESOLVED",
-            "RAW_UNADJUSTED_RETURN_FAILS_CLOSED",
-        ),
+        reason_codes=reason_codes,
     )
 
 
@@ -597,7 +661,16 @@ def _rows(response: dict[str, Any]) -> tuple[dict[str, str], ...]:
     fields = tuple(str(item) for item in response.get("fields", ()))
     if not fields:
         raise AShareDataError("BaoStock historical fact query returned no fields")
-    return tuple(dict(zip(fields, (str(value) for value in row), strict=True)) for row in response.get("rows", ()))
+    result: list[dict[str, str]] = []
+    for raw_row in response.get("rows", ()):
+        values = tuple(str(value) for value in raw_row)
+        row = dict(zip(fields, values, strict=False))
+        if len(values) != len(fields):
+            row["__provider_field_count"] = str(len(fields))
+            row["__provider_row_count"] = str(len(values))
+            row["__provider_extra_values"] = _json_text(values[len(fields) :])
+        result.append(row)
+    return tuple(result)
 
 
 def _fact_from_row(
@@ -606,6 +679,8 @@ def _fact_from_row(
     row: dict[str, str],
     source_reference: ValidationArtifactReference,
 ) -> HistoricalSecurityFact | None:
+    if "__provider_field_count" in row:
+        return None
     symbol = _canonical_symbol(row["code"])
     reason_codes = (
         "REAL_FREE_PROVIDER_OBSERVATION",

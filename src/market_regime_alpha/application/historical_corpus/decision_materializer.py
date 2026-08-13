@@ -46,6 +46,7 @@ from market_regime_alpha.application.research_evaluation.postgres_target_reposit
     PostgresTargetOutcomeRepository,
 )
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    BarrierOrderingOutcome,
     TargetOutcomeLabel,
     build_target_outcome_label_from_bars,
 )
@@ -65,6 +66,9 @@ from market_regime_alpha.application.research_session.kernel import (
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
 )
 from market_regime_alpha.application.research_validation.liquidity_capacity import (
     CapacityParameter,
@@ -156,6 +160,7 @@ from market_regime_alpha.universe.historical_facts import (
 from market_regime_alpha.universe.postgres_runtime_scope import PostgresRuntimeScopeRepository
 from market_regime_alpha.universe.research import (
     FreeResearchUniverseSnapshot,
+    HistoricalConstituentTimeline,
     ResearchUniverseMembershipStatus,
     ResearchUniverseSelectionBasis,
     project_free_research_universe_as_of,
@@ -179,6 +184,9 @@ NORMALIZED_DATASET_KIND = "NORMALIZED_DATASET"
 FREE_RESEARCH_UNIVERSE_KIND = "FREE_RESEARCH_UNIVERSE"
 HISTORICAL_SECURITY_FACTS_KIND = "HISTORICAL_SECURITY_FACTS"
 HISTORICAL_CONSTITUENT_TIMELINE_KIND = "HISTORICAL_CONSTITUENT_TIMELINE"
+HISTORICAL_CONTEXT_INSTRUMENT_SET_KIND = "HISTORICAL_CONTEXT_INSTRUMENT_SET"
+_FROZEN_MARKET_INDEX_SYMBOL = "000300.SH"
+_FROZEN_THEME_ETF_SYMBOL = "510300.SH"
 GLOBAL_RESEARCH_THEME_ID = "PHASE_E_GLOBAL_RESEARCH_SCOPE"
 _COMPONENT_ORDINAL = {item: index for index, item in enumerate(HistoricalComponentKind, 1)}
 
@@ -254,6 +262,7 @@ class HistoricalDecisionMaterializer:
         universe_repository: PostgresFreeResearchUniverseRepository,
         scope_repository: PostgresRuntimeScopeRepository,
         target_repository: PostgresTargetOutcomeRepository,
+        validation_repository: PostgresResearchValidationRepository | None = None,
         historical_facts_repository: PostgresHistoricalSecurityFactsRepository | None = None,
         maximum_daily_rows: int = 1_000_000,
         maximum_minute_session_rows: int = 250_000,
@@ -268,6 +277,7 @@ class HistoricalDecisionMaterializer:
         self._universes = universe_repository
         self._scopes = scope_repository
         self._targets = target_repository
+        self._validation = validation_repository
         self._historical_facts = historical_facts_repository
         self._maximum_prior_forecast_sessions = maximum_prior_forecast_sessions
         self._windows = HistoricalWindowReader(
@@ -280,12 +290,125 @@ class HistoricalDecisionMaterializer:
             tuple[ValidationArtifactReference, ...],
             tuple[tuple[date, FreeResearchUniverseSnapshot, ValidationArtifactReference], ...],
         ] = {}
+        self._timeline_cache: dict[
+            ValidationArtifactReference,
+            HistoricalConstituentTimeline,
+        ] = {}
 
     def selective_read_metrics(self) -> tuple[HistoricalReadMetrics, ...]:
         return self._windows.metrics()
 
     def window_cache_metrics(self) -> Mapping[str, int]:
         return self._windows.cache_metrics()
+
+    def _context_instruments(
+        self,
+        request: ResearchDecisionSessionRequest,
+        owner: HistoricalPackageIndex,
+        stock_symbols: tuple[str, ...],
+    ) -> tuple[str, str, ValidationArtifactReference | None]:
+        reference = _optional_reference(
+            request.configuration_references,
+            HISTORICAL_CONTEXT_INSTRUMENT_SET_KIND,
+        )
+        has_timeline = any(
+            item.artifact_kind == HISTORICAL_CONSTITUENT_TIMELINE_KIND
+            for item in request.configuration_references
+        )
+        if reference is None:
+            if has_timeline:
+                raise ValueError(
+                    "Longitudinal Historical Research requires one explicit "
+                    "HISTORICAL_CONTEXT_INSTRUMENT_SET"
+                )
+            # Replay-only compatibility for commands created before E3.
+            legacy = tuple(
+                sorted(set(owner.coverage.expected_symbols) - set(stock_symbols))
+            )
+            etf = next((item for item in legacy if _is_etf_symbol(item)), None)
+            index = next(
+                (
+                    item
+                    for item in legacy
+                    if item.endswith((".SH", ".SZ"))
+                    and item.startswith(("000", "399"))
+                ),
+                None,
+            )
+            if index is None or etf is None:
+                raise ValueError(
+                    "Legacy Historical command cannot resolve index/ETF context"
+                )
+            return index, etf, None
+        if self._validation is None:
+            raise ValueError(
+                "Historical Context Instrument Set is bound but repository is absent"
+            )
+        payload = self._validation.get_payload(
+            reference.artifact_id,
+            expected_kind=HISTORICAL_CONTEXT_INSTRUMENT_SET_KIND,
+        )
+        if canonical_hash(payload) != reference.content_hash:
+            raise ValueError("Historical Context Instrument Set hash mismatch")
+        if set(payload) != {
+            "schema_version",
+            "market_index_symbol",
+            "theme_etf_symbol",
+            "limitations",
+        } or payload["schema_version"] != "historical-context-instrument-set/v1":
+            raise ValueError("Historical Context Instrument Set payload is invalid")
+        market_index = str(payload["market_index_symbol"])
+        theme_etf = str(payload["theme_etf_symbol"])
+        if (
+            market_index != _FROZEN_MARKET_INDEX_SYMBOL
+            or theme_etf != _FROZEN_THEME_ETF_SYMBOL
+        ):
+            raise ValueError("Historical Context Instrument roles are invalid")
+        if not {market_index, theme_etf}.issubset(owner.coverage.expected_symbols):
+            raise ValueError("Historical Context Instrument is absent from Dataset")
+        if {market_index, theme_etf}.intersection(stock_symbols):
+            raise ValueError("Historical Context Instrument overlaps active equities")
+        return market_index, theme_etf, reference
+
+    def _next_session(
+        self,
+        request: ResearchDecisionSessionRequest,
+        *,
+        normalized_reference: ValidationArtifactReference,
+        symbols: tuple[str, ...],
+    ) -> date | None:
+        timeline_reference = _optional_reference(
+            request.configuration_references,
+            HISTORICAL_CONSTITUENT_TIMELINE_KIND,
+        )
+        if timeline_reference is None:
+            return self._windows.next_session(
+                normalized_reference,
+                request.trading_date,
+                symbols=symbols,
+            )
+        timeline = self._timeline_owner(timeline_reference)
+        return next(
+            (
+                item
+                for item in timeline.queried_trading_dates
+                if item > request.trading_date
+            ),
+            None,
+        )
+
+    def _timeline_owner(
+        self,
+        reference: ValidationArtifactReference,
+    ) -> HistoricalConstituentTimeline:
+        cached = self._timeline_cache.get(reference)
+        if cached is not None:
+            return cached
+        timeline = self._universes.get_timeline(reference.artifact_id)
+        if timeline.reference != reference:
+            raise ValueError("Historical constituent Timeline owner hash mismatch")
+        self._timeline_cache[reference] = timeline
+        return timeline
 
     def compute_stage(
         self,
@@ -354,10 +477,7 @@ class HistoricalDecisionMaterializer:
             )
             for symbol in stock_symbols
         )
-        facts_reference = _optional_reference(
-            request.configuration_references,
-            HISTORICAL_SECURITY_FACTS_KIND,
-        )
+        facts_reference = _historical_facts_reference(request)
         if facts_reference is not None and self._historical_facts is None:
             raise ValueError("Historical Security Facts owner is bound but repository is absent")
         if facts_reference is None:
@@ -365,6 +485,20 @@ class HistoricalDecisionMaterializer:
         else:
             facts_repository = self._historical_facts
             assert facts_repository is not None
+            facts_repository.verify_acquisition_scope(
+                facts_reference,
+                symbols=tuple(sorted(stock_symbols)),
+                universe_references=tuple(
+                    item
+                    for item in request.configuration_references
+                    if item.artifact_kind
+                    in {
+                        FREE_RESEARCH_UNIVERSE_KIND,
+                        HISTORICAL_CONSTITUENT_TIMELINE_KIND,
+                    }
+                ),
+                decision_date=request.trading_date,
+            )
             fact_projection = facts_repository.resolve_as_of(
                 facts_reference,
                 symbols=tuple(sorted(stock_symbols)),
@@ -469,7 +603,10 @@ class HistoricalDecisionMaterializer:
             raise ValueError("Historical Runtime Scope owner hash mismatch")
         stock_symbols = tuple(item.symbol for item in scope.records)
         pool_membership = {item.symbol: item.decision is RuntimeScopeDecision.INCLUDED for item in scope.records}
-        context_symbols = tuple(sorted(set(owner.coverage.expected_symbols) - set(stock_symbols)))
+        market_index_symbol, theme_etf_symbol, context_reference = (
+            self._context_instruments(request, owner, stock_symbols)
+        )
+        context_symbols = tuple(sorted({market_index_symbol, theme_etf_symbol}))
         bars = self._windows.decision_bars(
             normalized_reference,
             request.decision_time,
@@ -500,6 +637,8 @@ class HistoricalDecisionMaterializer:
             bars=bars,
             stock_symbols=stock_symbols,
             context_symbols=context_symbols,
+            market_index_symbol=market_index_symbol,
+            theme_etf_symbol=theme_etf_symbol,
             decision_time=request.decision_time,
             created_at=request.materialized_at,
             source_reference=normalized_reference,
@@ -511,36 +650,33 @@ class HistoricalDecisionMaterializer:
             request=request,
             kind=HistoricalComponentKind.MARKET_REGIME,
             source_max_event_time=source_max,
-            source_references=(feature_component.reference, normalized_reference),
+            source_references=(
+                feature_component.reference,
+                normalized_reference,
+                *((context_reference,) if context_reference is not None else ()),
+            ),
             payload=market.to_canonical_dict(),
         )
         etf_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.ETF,
             source_max_event_time=source_max,
-            source_references=(normalized_reference,),
+            source_references=(
+                normalized_reference,
+                *((context_reference,) if context_reference is not None else ()),
+            ),
             payload={
                 "context_symbols": list(context_symbols),
                 "benchmark_usage": {
-                    "market_regime": next(
-                        (item for item in context_symbols if not _is_etf_symbol(item)),
-                        next(
-                            (item for item in context_symbols if _is_etf_symbol(item)),
-                            None,
-                        ),
-                    ),
-                    "theme": next(
-                        (item for item in context_symbols if _is_etf_symbol(item)),
-                        next(
-                            (item for item in context_symbols if not _is_etf_symbol(item)),
-                            None,
-                        ),
-                    ),
+                    "market_regime": market_index_symbol,
+                    "theme": theme_etf_symbol,
                 },
                 "observations": [item.to_canonical_dict() for item in context.etf_observations],
                 "instrument_coverage": _context_instrument_coverage(
                     bars=bars,
                     context_symbols=context_symbols,
+                    market_index_symbol=market_index_symbol,
+                    theme_etf_symbol=theme_etf_symbol,
                     decision_time=request.decision_time,
                 ),
                 "status": "AVAILABLE" if context.etf_observations else "NOT_ESTIMABLE",
@@ -725,9 +861,26 @@ class HistoricalDecisionMaterializer:
         if not universe_references:
             raise ValueError("Historical session requires constituent owners")
         timeline_references = tuple(item for item in references if item.artifact_kind == HISTORICAL_CONSTITUENT_TIMELINE_KIND)
+        if not timeline_references:
+            if len(universe_references) != 1:
+                raise ValueError(
+                    "Legacy Historical session requires one exact constituent owner"
+                )
+            reference = universe_references[0]
+            snapshot = self._universes.get(reference.artifact_id)
+            if snapshot.snapshot_hash != reference.content_hash:
+                raise ValueError("Historical Security Master owner hash mismatch")
+            if (
+                snapshot.constituent_effective_date is not None
+                and snapshot.constituent_effective_date > trading_date
+            ):
+                raise ValueError(
+                    "Legacy Historical constituent owner starts after Decision session"
+                )
+            return snapshot, reference
         if len(timeline_references) != 1:
             raise ValueError("Every Historical session requires one exact cohort timeline")
-        timeline_owner = self._universes.get_timeline(timeline_references[0].artifact_id)
+        timeline_owner = self._timeline_owner(timeline_references[0])
         if (
             timeline_owner.timeline_hash != timeline_references[0].content_hash
             or tuple(
@@ -870,7 +1023,15 @@ class HistoricalDecisionMaterializer:
         signal = self._components.get(_single_reference(input_references, "HISTORICAL_SIGNAL"))
         candidate = self._components.get(_single_reference(input_references, "HISTORICAL_CANDIDATE"))
         portfolio = self._components.get(_single_reference(input_references, "HISTORICAL_PORTFOLIO"))
-        next_session = self._windows.next_session(normalized_reference, request.trading_date)
+        symbols = tuple(
+            str(item["symbol"])
+            for item in _objects(candidate.payload.get("records"), "candidate records")
+        )
+        next_session = self._next_session(
+            request,
+            normalized_reference=normalized_reference,
+            symbols=tuple(sorted(set(symbols))),
+        )
         if next_session is None:
             return SessionStageComputation(
                 status=SessionStageStatus.NOT_ESTIMABLE,
@@ -879,7 +1040,6 @@ class HistoricalDecisionMaterializer:
                 completed_at=request.materialized_at,
                 reason_codes=("T_PLUS_ONE_SESSION_NOT_IN_FROZEN_DATASET",),
             )
-        symbols = tuple(str(item["symbol"]) for item in _objects(candidate.payload.get("records"), "candidate records"))
         bars = self._windows.outcome_bars(
             normalized_reference,
             decision_time=request.decision_time,
@@ -887,10 +1047,7 @@ class HistoricalDecisionMaterializer:
             symbols=tuple(sorted(set(symbols))),
         )
         canonical = tuple(_canonical_outcome_bars(bars, next_session))
-        facts_reference = _optional_reference(
-            request.configuration_references,
-            HISTORICAL_SECURITY_FACTS_KIND,
-        )
+        facts_reference = _historical_facts_reference(request)
         if facts_reference is not None and self._historical_facts is None:
             raise ValueError("Historical Security Facts owner is bound but repository is absent")
         if facts_reference is None:
@@ -902,13 +1059,10 @@ class HistoricalDecisionMaterializer:
         else:
             facts_repository = self._historical_facts
             assert facts_repository is not None
-            actions_by_symbol = facts_repository.corporate_actions_for_symbols(
-                facts_reference,
-                symbols=tuple(sorted(set(symbols))),
-                after=request.trading_date,
-                through=next_session,
-            )
-            action_gaps_by_symbol = facts_repository.corporate_action_gaps_for_symbols(
+            (
+                actions_by_symbol,
+                action_gaps_by_symbol,
+            ) = facts_repository.corporate_action_evidence_for_symbols(
                 facts_reference,
                 symbols=tuple(sorted(set(symbols))),
                 after=request.trading_date,
@@ -922,8 +1076,6 @@ class HistoricalDecisionMaterializer:
         capacity_protocol = _capacity_protocol(request.materialized_at)
         requested_notional = Decimal("100000")
         for symbol in symbols:
-            if symbol in corporate_action_excluded_symbols:
-                continue
             reference_price = _decision_reference_price(bars, symbol, request.trading_date, request.decision_time)
             if reference_price is None:
                 continue
@@ -951,7 +1103,27 @@ class HistoricalDecisionMaterializer:
                 )
                 for target in protocol.targets
             )
+            if symbol in corporate_action_excluded_symbols:
+                exclusion_reason = (
+                    "CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE"
+                    if symbol in action_gaps_by_symbol
+                    else "RAW_UNADJUSTED_RETURN_CROSSES_CORPORATE_ACTION"
+                )
+                symbol_labels = tuple(
+                    _corporate_action_unavailable_label(
+                        label=label,
+                        target=target,
+                        reason_code=exclusion_reason,
+                    )
+                    for label, target in zip(
+                        symbol_labels,
+                        protocol.targets,
+                        strict=True,
+                    )
+                )
             labels.extend(symbol_labels)
+            if symbol in corporate_action_excluded_symbols:
+                continue
             historical_daily = _canonical_bars(
                 tuple(
                     item
@@ -1241,6 +1413,25 @@ def _optional_reference(
     if len(matches) > 1:
         raise ValueError(f"Historical session accepts at most one {artifact_kind} owner")
     return None if not matches else matches[0]
+
+
+def _historical_facts_reference(
+    request: ResearchDecisionSessionRequest,
+) -> ValidationArtifactReference | None:
+    reference = _optional_reference(
+        request.configuration_references,
+        HISTORICAL_SECURITY_FACTS_KIND,
+    )
+    has_longitudinal_timeline = any(
+        item.artifact_kind == HISTORICAL_CONSTITUENT_TIMELINE_KIND
+        for item in request.configuration_references
+    )
+    if has_longitudinal_timeline and reference is None:
+        raise ValueError(
+            "Longitudinal Historical Research requires one "
+            "HISTORICAL_SECURITY_FACTS owner"
+        )
+    return reference
 
 
 def _single_reference(references: tuple[ValidationArtifactReference, ...], artifact_kind: str) -> ValidationArtifactReference:
@@ -1636,6 +1827,8 @@ def _build_context(
     bars: tuple[HistoricalNormalizedBar, ...],
     stock_symbols: tuple[str, ...],
     context_symbols: tuple[str, ...],
+    market_index_symbol: str,
+    theme_etf_symbol: str,
     decision_time: datetime,
     created_at: datetime,
     source_reference: ValidationArtifactReference,
@@ -1666,20 +1859,14 @@ def _build_context(
     bars_by_symbol = _bars_by_symbol(bars)
     stock_series = {symbol: _daily_series(bars_by_symbol.get(symbol, ()), decision_time) for symbol in stock_symbols}
     context_series = {symbol: _daily_series(bars_by_symbol.get(symbol, ()), decision_time) for symbol in context_symbols}
-    etf_symbol = next((item for item in context_symbols if _is_etf_symbol(item)), None)
-    index_symbol = next((item for item in context_symbols if not _is_etf_symbol(item)), None)
-    market_benchmark = context_series.get(index_symbol, ()) if index_symbol is not None else ()
-    theme_benchmark = context_series.get(etf_symbol, ()) if etf_symbol is not None else ()
-    if not market_benchmark:
-        market_benchmark = theme_benchmark
-    if not theme_benchmark:
-        theme_benchmark = market_benchmark
+    market_benchmark = context_series.get(market_index_symbol, ())
+    theme_benchmark = context_series.get(theme_etf_symbol, ())
     market = _market_observation(
         bars_by_symbol=bars_by_symbol,
         stock_symbols=stock_symbols,
         stock_series=stock_series,
         benchmark=market_benchmark,
-        benchmark_id=index_symbol or etf_symbol,
+        benchmark_id=market_index_symbol,
         decision_time=decision_time,
         retrieved_at=retrieved_at,
         source_id=owner.owner_id,
@@ -1688,7 +1875,7 @@ def _build_context(
         bars_by_symbol=bars_by_symbol,
         stock_series=stock_series,
         benchmark=theme_benchmark,
-        etf_symbol=etf_symbol,
+        etf_symbol=theme_etf_symbol,
         decision_time=decision_time,
         retrieved_at=retrieved_at,
         source_id=owner.owner_id,
@@ -1720,14 +1907,17 @@ def _build_context(
         for symbol in stock_symbols
     )
     etf_amount_expansion = (
-        None if etf_symbol is None else _symbol_same_cutoff_amount_change(bars_by_symbol.get(etf_symbol, ()), decision_time)
+        _symbol_same_cutoff_amount_change(
+            bars_by_symbol.get(theme_etf_symbol, ()),
+            decision_time,
+        )
     )
     etfs = (
         ()
-        if etf_symbol is None or len(theme_benchmark) < 6 or etf_amount_expansion is None
+        if len(theme_benchmark) < 6 or etf_amount_expansion is None
         else (
             ETFObservation(
-                etf_id=etf_symbol,
+                etf_id=theme_etf_symbol,
                 theme_id=GLOBAL_RESEARCH_THEME_ID,
                 available_at=AvailabilityTime(retrieved_at),
                 source_artifact_id=owner.owner_id,
@@ -1758,8 +1948,8 @@ def _build_context(
         "symbols": [item.to_canonical_dict() for item in symbols],
         "memberships": [item.to_canonical_dict() for item in memberships],
         "etfs": [item.to_canonical_dict() for item in etfs],
-        "market_benchmark_id": index_symbol or etf_symbol,
-        "theme_benchmark_id": etf_symbol or index_symbol,
+        "market_benchmark_id": market_index_symbol,
+        "theme_benchmark_id": theme_etf_symbol,
         "created_at": created_at.isoformat(),
     }
     digest = canonical_hash(identity)
@@ -2081,13 +2271,21 @@ def _context_instrument_coverage(
     *,
     bars: tuple[HistoricalNormalizedBar, ...],
     context_symbols: tuple[str, ...],
+    market_index_symbol: str,
+    theme_etf_symbol: str,
     decision_time: datetime,
 ) -> dict[str, Any]:
     by_symbol = _bars_by_symbol(bars)
     instruments = []
     for symbol in context_symbols:
         daily = _daily_series(by_symbol.get(symbol, ()), decision_time)
-        instrument_kind = "ETF" if _is_etf_symbol(symbol) else "INDEX"
+        instrument_kind = (
+            "INDEX"
+            if symbol == market_index_symbol
+            else "ETF"
+            if symbol == theme_etf_symbol
+            else "UNKNOWN"
+        )
         instruments.append(
             {
                 "symbol": symbol,
@@ -2219,6 +2417,47 @@ def _prior_forecast_samples(
         )
     )
     return ordered, event_ends, _references(tuple(sources))
+
+
+def _corporate_action_unavailable_label(
+    *,
+    label: TargetOutcomeLabel,
+    target: TargetDefinition,
+    reason_code: str,
+) -> TargetOutcomeLabel:
+    """Retain one projected sample while failing raw corporate-action returns closed."""
+
+    reasons = {
+        item
+        for item in label.reason_codes
+        if item not in {"TARGET_COMPLETE", "TARGET_PARTIAL", "TARGET_UNAVAILABLE"}
+    }
+    reasons.update(
+        {
+            "CORPORATE_ACTION_POLICY_FAILED_CLOSED",
+            reason_code,
+            "TARGET_UNAVAILABLE",
+        }
+    )
+    return TargetOutcomeLabel.create(
+        symbol=label.symbol,
+        target=label.target,
+        label_interval_start=label.label_interval_start,
+        label_interval_end=label.label_interval_end,
+        decision_reference_price=label.decision_reference_price,
+        checkpoint_price=None,
+        mfe=None,
+        mae=None,
+        barrier_passages=tuple((item.barrier_id, None) for item in target.barriers),
+        barrier_ordering=BarrierOrderingOutcome.NOT_APPLICABLE,
+        market_conditions=(
+            *label.market_conditions,
+            OutcomeMarketCondition.CORPORATE_ACTION,
+        ),
+        availability_status=OutcomeAvailabilityStatus.UNAVAILABLE,
+        outcome_available_at=label.outcome_available_at,
+        reason_codes=tuple(reasons),
+    )
 
 
 def _strategy_policy(target: TargetDefinition, created_at: datetime) -> StrategyEconomicsPolicy:

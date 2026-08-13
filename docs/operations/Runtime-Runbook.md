@@ -46,9 +46,15 @@ uv run continuous-research \
   --artifact-root /absolute/path/to/artifact-root
 ```
 
-`historical-corpus-acquire` accepts either an explicit `symbols` list or the
-exact `universe_snapshot_id`; the latter may be combined with
-`context_symbols` for real ETF/index instruments. Optional
+`historical-corpus-acquire` accepts an explicit `symbols` list, one or more
+exact frozen Universe snapshots, or one exact longitudinal Universe Timeline.
+Longitudinal acquisition requires `context_instruments` with distinct,
+role-labelled `market_index_symbol` and `theme_etf_symbol`; the command records
+and returns the immutable Context Instrument Set reference that must be bound
+to the Historical Command. The Phase E frozen methodology accepts exactly
+`000300.SH` as the market index and `510300.SH` as the theme ETF; changing those
+roles requires a new frozen Experiment. Legacy single-snapshot acquisition may retain the
+pre-E3 `context_symbols` input only for replay compatibility. Optional
 `timeframe_ranges` freezes different Daily and 5-minute windows without an
 implicit Reader shortcut. It performs BaoStock acquisition, deterministic
 normalization, logical hashing, staging validation, atomic publish, PostgreSQL
@@ -109,6 +115,13 @@ filling data, substituting a provider or resuming under a different computation
 revision. Freeze a new Experiment and Command when code changes, and retain the
 interrupted run for audit.
 
+Commands frozen before the Phase E3 constituent timeline remain immutable.
+Terminal pre-E3 runs use `IMMUTABLE_PRE_E3_RECEIPT_VERIFICATION`: PostgreSQL
+reloads and content-validates their exact command, session and receipt chain,
+without applying current E3 materialization semantics. An incomplete pre-E3
+run requires its exact historical code revision and otherwise fails closed;
+operators must not silently resume it with E3 semantics.
+
 ## PostgreSQL Authority Only
 
 Bootstrap a dedicated local authority only with an administrator URL:
@@ -128,7 +141,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 075, `phase_e3_lineage_and_fact_gap_closure`. Expected schema
+Expected head: migration 078, `historical_outcome_temporal_projection`. Expected schema
 catalog: 257 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
@@ -142,6 +155,12 @@ Migration 068 installs Historical Corpus Authority. Migration 069 adds the
 exact-owner timeframe/date/symbol-bucket selective-read index. Migration 070
 accepts the v2 effective-dated historical constituent owner while preserving
 immutable v1 Research Universe rows.
+Migrations 071–078 add effective/publication-dated Historical Security Facts,
+unresolved corporate-action gaps, bounded component/Outcome projections, the
+exact constituent timeline, v3 fact acquisition scope, immutable labelled
+index/ETF context and owner-bound Outcome label dates. Corporate-action
+absence is evidence only when symbol, interval and constituent lineage are all
+inside that immutable scope.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.

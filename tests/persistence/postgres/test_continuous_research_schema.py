@@ -47,7 +47,7 @@ def test_migration_020_adds_exact_continuous_runtime_authorities(
         migration = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
 
     assert tables == CONTINUOUS_TABLES
-    assert migration == (75, "phase_e3_lineage_and_fact_gap_closure")
+    assert migration == (79, "historical_fact_identity_projection")
 
 
 def test_migration_020_extends_runtime_binding_scope_without_weakening_it(

@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Protocol
 
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.data.providers.public_composite.historical_security_facts import (
     BaoStockHistoricalSecurityFactsClient,
     HistoricalSecurityFactsAcquisition,
@@ -37,6 +40,7 @@ class HistoricalSecurityFactsAcquirer(Protocol):
         cohort_dates: tuple[date, ...],
         start_date: date,
         end_date: date,
+        universe_scope_references: tuple[ValidationArtifactReference, ...],
         checkpoint_root: Path | None = None,
     ) -> HistoricalSecurityFactsAcquisition: ...
 
@@ -56,6 +60,7 @@ class HistoricalSecurityFactsOperator:
         self,
         *,
         universe_snapshot_ids: tuple[ArtifactId, ...],
+        universe_timeline_reference: ValidationArtifactReference | None = None,
         start_date: date,
         end_date: date,
         artifact_root: Path,
@@ -63,6 +68,26 @@ class HistoricalSecurityFactsOperator:
         if not universe_snapshot_ids or universe_snapshot_ids != tuple(sorted(set(universe_snapshot_ids), key=str)):
             raise ValueError("Historical fact Universe owners must be ordered")
         universes = tuple(self._universes.get(snapshot_id) for snapshot_id in universe_snapshot_ids)
+        scope_references = tuple(
+            sorted(
+                (
+                    *(
+                        ValidationArtifactReference(
+                            "FREE_RESEARCH_UNIVERSE",
+                            universe.snapshot_id,
+                            universe.snapshot_hash,
+                        )
+                        for universe in universes
+                    ),
+                    *((universe_timeline_reference,) if universe_timeline_reference is not None else ()),
+                ),
+                key=lambda item: (
+                    item.artifact_kind,
+                    str(item.artifact_id),
+                    item.content_hash,
+                ),
+            )
+        )
         raw_cohort_dates = tuple(item.constituent_effective_date for item in universes)
         if any(item is None for item in raw_cohort_dates):
             raise ValueError("Historical fact Universe cohort dates are invalid")
@@ -84,6 +109,7 @@ class HistoricalSecurityFactsOperator:
             cohort_dates=cohort_dates,
             start_date=start_date,
             end_date=end_date,
+            universe_scope_references=scope_references,
             checkpoint_root=(artifact_root / "free-data-historical-security-facts" / "query-checkpoints"),
         )
         archive_root = artifact_root / "free-data-historical-security-facts" / "raw-archives"

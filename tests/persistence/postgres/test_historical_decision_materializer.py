@@ -18,6 +18,7 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 from market_regime_alpha.application.historical_corpus.decision_materializer import (
     FREE_RESEARCH_UNIVERSE_KIND,
     HistoricalDecisionMaterializer,
+    _historical_facts_reference,
 )
 from market_regime_alpha.application.historical_corpus.evidence import (
     HistoricalEvidenceKind,
@@ -48,6 +49,12 @@ from market_regime_alpha.application.historical_research.postgres_session_owner 
 from market_regime_alpha.application.historical_research.runner import (
     HistoricalResearchRunner,
 )
+from market_regime_alpha.application.controlled_operation.prospective_outcome import (
+    OutcomeAvailabilityStatus,
+)
+from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    TargetOutcomeLabel,
+)
 from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
     PostgresTargetOutcomeRepository,
 )
@@ -65,6 +72,9 @@ from market_regime_alpha.application.research_session.kernel import (
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
@@ -137,9 +147,12 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     timeline = universe_repository.publish_timeline(
         HistoricalConstituentTimeline.create(
             start_date=DECISION_DATE,
-            end_date=DECISION_DATE,
-            queried_trading_dates=(DECISION_DATE,),
-            query_effective_dates=((DECISION_DATE, DECISION_DATE),),
+            end_date=DECISION_DATE + timedelta(days=1),
+            queried_trading_dates=(DECISION_DATE, DECISION_DATE + timedelta(days=1)),
+            query_effective_dates=(
+                (DECISION_DATE, DECISION_DATE),
+                (DECISION_DATE + timedelta(days=1), DECISION_DATE),
+            ),
             cohorts=(
                 HistoricalConstituentCohort(DECISION_DATE, universe_reference),
             ),
@@ -153,13 +166,40 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         )
     )
     facts_repository = PostgresHistoricalSecurityFactsRepository(postgres_factory)
-    facts = facts_repository.publish(_historical_facts())
+    facts = facts_repository.publish(
+        _historical_facts((universe_reference, timeline.reference))
+    )
     scope_repository = PostgresRuntimeScopeRepository(postgres_factory)
     policy = scope_repository.register_policy(_policy())
     target_repository = PostgresTargetOutcomeRepository(postgres_factory)
     target_protocol = target_repository.register_protocol(
         exploratory_five_minute_multi_horizon_protocol(),
         recorded_at=MATERIALIZED_AT,
+    )
+    context_payload = {
+        "schema_version": "historical-context-instrument-set/v1",
+        "market_index_symbol": INDEX,
+        "theme_etf_symbol": ETF,
+        "limitations": [
+            "EXPLORATORY_CONTEXT_ONLY",
+            "FORMAL_PIT_NOT_ESTABLISHED",
+            "PIT_INCOMPLETE",
+        ],
+    }
+    context_hash = canonical_hash(context_payload)
+    context_reference = ValidationArtifactReference(
+        "HISTORICAL_CONTEXT_INSTRUMENT_SET",
+        ArtifactId(f"historical-context-instrument-set:{context_hash[7:]}"),
+        context_hash,
+    )
+    validation_repository = PostgresResearchValidationRepository(postgres_factory)
+    validation_repository.record(
+        artifact_id=context_reference.artifact_id,
+        artifact_hash=context_reference.content_hash,
+        artifact_kind=context_reference.artifact_kind,
+        evidence_authority="ENGINEERING_ONLY",
+        payload=context_payload,
+        created_at=MATERIALIZED_AT,
     )
     command = _command(
         normalized.reference,
@@ -173,6 +213,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
             target_protocol.protocol_hash,
         ),
         facts.reference,
+        context_reference,
     )
     journal = PostgresHistoricalResearchJournal(
         postgres_factory,
@@ -186,6 +227,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         universe_repository=universe_repository,
         scope_repository=scope_repository,
         target_repository=target_repository,
+        validation_repository=validation_repository,
         historical_facts_repository=facts_repository,
     )
     runner = HistoricalResearchRunner(
@@ -275,6 +317,8 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     )
     outcome = component_repository.get(outcome_reference)
     assert outcome.payload["available_label_count"] == (len(STOCKS) - 1) * 6
+    assert outcome.payload["not_estimated_label_count"] == 6
+    assert len(outcome.payload["labels"]) == len(STOCKS) * 6
     assert len(outcome.payload["strategy_economics"]) == (len(STOCKS) - 1) * 6
     assert outcome.payload["corporate_action_coverage"] == {
         "facts_owner_bound": True,
@@ -285,6 +329,12 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         "excluded_target_count": 6,
         "price_adjustment_basis": "RAW_UNADJUSTED_TRADABLE_PRICE_V1",
     }
+    assert outcome.payload["selective_reads"]
+    assert all(
+        item["query"]["symbol_count"] <= len(STOCKS)
+        and item["query"]["symbols_hash"].startswith("sha256:")
+        for item in outcome.payload["selective_reads"]
+    )
     for result in outcome.payload["strategy_economics"]:
         if result["net_return"] is not None:
             assert Decimal(result["net_return"]) == (Decimal(result["gross_return"]) - Decimal(result["cost_return"]))
@@ -296,6 +346,19 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert excluded["target_status"] == "CORPORATE_ACTION_EXCLUDED"
     assert outcome.payload["corporate_action_exclusions"][0]["reason_code"] == (
         "CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE"
+    )
+    action_labels = tuple(
+        TargetOutcomeLabel.from_canonical_dict(item)
+        for item in outcome.payload["labels"]
+        if item["symbol"] == STOCKS[0]
+    )
+    assert all(
+        item.availability_status is OutcomeAvailabilityStatus.UNAVAILABLE
+        for item in action_labels
+    )
+    assert all(
+        "CORPORATE_ACTION_POLICY_FAILED_CLOSED" in item.reason_codes
+        for item in action_labels
     )
     assert excluded["industry"] == "TEST_INDUSTRY"
     assert excluded["market_cap_bucket"] != "NOT_ESTIMABLE"
@@ -453,6 +516,17 @@ def test_materializer_switches_effective_dated_constituent_cohorts(
         "000002.SZ",
         "600036.SH",
     }
+    legacy, legacy_reference = materializer._active_universe(  # noqa: SLF001
+        (cohort_references[0],),
+        date(2022, 6, 10),
+    )
+    assert legacy == first
+    assert legacy_reference == cohort_references[0]
+    with pytest.raises(ValueError, match="one exact constituent owner"):
+        materializer._active_universe(  # noqa: SLF001
+            cohort_references,
+            date(2022, 6, 10),
+        )
     with pytest.raises(ValueError, match="range/cohort lineage mismatch"):
         materializer._active_universe(references, date(2021, 12, 31))  # noqa: SLF001
     with pytest.raises(ValueError, match="absent from Historical constituent scan"):
@@ -460,6 +534,41 @@ def test_materializer_switches_effective_dated_constituent_cohorts(
     incomplete = tuple(item for item in references if item.artifact_id != second.snapshot_id)
     with pytest.raises(ValueError, match="range/cohort lineage mismatch"):
         materializer._active_universe(incomplete, date(2022, 6, 13))  # noqa: SLF001
+
+
+def test_longitudinal_command_requires_historical_fact_owner() -> None:
+    reference = ValidationArtifactReference(
+        FREE_RESEARCH_UNIVERSE_KIND,
+        ArtifactId("longitudinal-facts-required-universe"),
+        canonical_hash({"longitudinal": "facts-required-universe"}),
+    )
+    timeline = ValidationArtifactReference(
+        "HISTORICAL_CONSTITUENT_TIMELINE",
+        ArtifactId("longitudinal-facts-required-timeline"),
+        canonical_hash({"longitudinal": "facts-required-timeline"}),
+    )
+    command = _command(
+        ValidationArtifactReference(
+            "NORMALIZED_DATASET",
+            ArtifactId("longitudinal-facts-required-dataset"),
+            canonical_hash({"longitudinal": "facts-required-dataset"}),
+        ),
+        reference,
+        timeline,
+        ArtifactId("longitudinal-facts-required-policy"),
+        canonical_hash({"longitudinal": "facts-required-policy"}),
+        ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            ArtifactId("longitudinal-facts-required-target"),
+            canonical_hash({"longitudinal": "facts-required-target"}),
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Longitudinal Historical Research requires",
+    ):
+        _historical_facts_reference(command.session_request(DECISION_DATE))
 
 
 def _normalized_owner(
@@ -741,6 +850,7 @@ def _command(
     policy_hash: str,
     target_protocol: ValidationArtifactReference,
     facts: ValidationArtifactReference | None = None,
+    context: ValidationArtifactReference | None = None,
 ) -> HistoricalResearchCommand:
     evidence_hash = canonical_hash({"phase-e": "integration"})
     return HistoricalResearchCommand.create(
@@ -767,6 +877,7 @@ def _command(
             universe,
             timeline,
             *((facts,) if facts is not None else ()),
+            *((context,) if context is not None else ()),
         ),
         data_authority_mode=DataAuthorityMode.FREE_RESEARCH_ARCHIVE,
         evidence_qualification=EvidenceQualification.EXPLORATORY_PIT_INCOMPLETE,
@@ -775,7 +886,9 @@ def _command(
     )
 
 
-def _historical_facts() -> HistoricalSecurityFactsOwner:
+def _historical_facts(
+    scope_references: tuple[ValidationArtifactReference, ...],
+) -> HistoricalSecurityFactsOwner:
     source = ValidationArtifactReference(
         "RAW_PROVIDER_REQUEST",
         ArtifactId("phase-e-historical-facts-source"),
@@ -834,6 +947,10 @@ def _historical_facts() -> HistoricalSecurityFactsOwner:
         ),
         raw_archive_id="phase-e-historical-facts-archive",
         facts=tuple(facts),
+        requested_symbols=STOCKS,
+        acquisition_start_date=DECISION_DATE,
+        acquisition_end_date=DECISION_DATE + timedelta(days=1),
+        universe_scope_references=scope_references,
         coverage_gaps=(
             HistoricalSecurityFactCoverageGap.create(
                 fact_kind=HistoricalSecurityFactKind.DIVIDEND_EVENT,

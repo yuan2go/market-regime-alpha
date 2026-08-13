@@ -115,14 +115,18 @@ FREE_RUNTIME_MIGRATIONS = (
     (73, "historical_constituent_timeline"),
     (74, "historical_outcome_label_projection"),
     (75, "phase_e3_lineage_and_fact_gap_closure"),
+    (76, "historical_fact_acquisition_scope"),
+    (77, "historical_context_instrument_set"),
+    (78, "historical_outcome_temporal_projection"),
+    (79, "historical_fact_identity_projection"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 76))
-    assert len({item.name for item in migrations}) == 75
+    assert tuple(item.version for item in migrations) == tuple(range(1, 80))
+    assert len({item.name for item in migrations}) == 79
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -160,6 +164,54 @@ def test_migration_075_enforces_exact_owner_hash_pairs(
     )
 
 
+def test_migration_076_projects_historical_fact_acquisition_scope(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'free_data_historical_security_fact_set'
+                """
+            ).fetchall()
+        }
+
+    assert {
+        "acquisition_start_date",
+        "acquisition_end_date",
+        "requested_symbols",
+        "universe_scope_references",
+    }.issubset(columns)
+
+
+def test_migration_078_binds_outcome_projection_to_owner_session_date(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        definition = connection.execute(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid = 'historical_corpus_outcome_label'::regclass
+              AND conname = 'historical_corpus_outcome_label_temporal_owner_fk'
+            """
+        ).fetchone()
+
+    assert definition is not None
+    assert (
+        "FOREIGN KEY (component_id, component_hash, trading_date)"
+        in str(definition[0])
+    )
+
+
 def test_missing_migration_version_is_rejected() -> None:
     migrations = (
         PostgresMigration.create(1, "one", "SELECT 1;"),
@@ -178,11 +230,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 76))
+    assert tuple(item.version for item in first) == tuple(range(1, 80))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 75
+    assert len(rows) == 79
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -370,7 +422,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         (28, "formal_pit_authority"),
         (29, "research_runtime_summary"),
     ) + FREE_RUNTIME_MIGRATIONS
-    assert applied == (75,)
+    assert applied == (78, 79)
     assert restored == account
 
 
@@ -870,6 +922,10 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (73, "historical_constituent_timeline"),
         (74, "historical_outcome_label_projection"),
         (75, "phase_e3_lineage_and_fact_gap_closure"),
+        (76, "historical_fact_acquisition_scope"),
+        (77, "historical_context_instrument_set"),
+        (78, "historical_outcome_temporal_projection"),
+        (79, "historical_fact_identity_projection"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(

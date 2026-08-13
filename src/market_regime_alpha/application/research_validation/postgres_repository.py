@@ -483,16 +483,25 @@ class PostgresResearchValidationRepository:
 
         self._factory.run_transaction(operation)
 
-    def get_payload(self, artifact_id: ArtifactId) -> dict[str, Any]:
+    def get_payload(
+        self,
+        artifact_id: ArtifactId,
+        *,
+        expected_kind: str | None = None,
+    ) -> dict[str, Any]:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT artifact_hash, payload_json FROM research_validation_artifact WHERE artifact_id = %s", (str(artifact_id),)
+                "SELECT artifact_hash, artifact_kind, payload_json "
+                "FROM research_validation_artifact WHERE artifact_id = %s",
+                (str(artifact_id),),
             ).fetchone()
-        if row is None or not isinstance(row[1], dict):
+        if row is None or not isinstance(row[2], dict):
             raise KeyError(str(artifact_id))
-        if canonical_hash(row[1]) != str(row[0]):
+        if expected_kind is not None and str(row[1]) != expected_kind:
+            raise ValueError("Research Validation artifact kind mismatch")
+        if canonical_hash(row[2]) != str(row[0]):
             raise ValueError("Research Validation stored payload diverged")
-        return row[1]
+        return row[2]
 
     def read_for_forecast(
         self,

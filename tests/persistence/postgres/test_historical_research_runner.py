@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import pytest
+
 from market_regime_alpha.application.historical_research.postgres_journal import (
+    HistoricalResearchConflict,
     HistoricalRunStatus,
 )
+from market_regime_alpha.application.historical_research.contracts import (
+    HistoricalResearchCommand,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
+from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.application.historical_research.runner import (
     HistoricalResearchRunner,
 )
@@ -117,3 +127,71 @@ def test_historical_replay_reports_owner_output_substitution(postgres_factory) -
     assert report.matched is False
     assert len(report.mismatches) == command.session_count
     assert all(item.stage is ResearchSessionStage.DECISION for item in report.mismatches)
+
+
+def test_pre_e3_terminal_run_uses_explicit_immutable_receipt_verification(
+    postgres_factory,
+) -> None:
+    values = _command().semantic_values()
+    legacy = HistoricalResearchCommand.create(
+        **{
+            **values,
+            "idempotency_key": "historical-pre-e3-immutable-v1",
+            "configuration_references": (
+                ValidationArtifactReference(
+                    "FREE_RESEARCH_UNIVERSE",
+                    ArtifactId("pre-e3-universe"),
+                    canonical_hash({"pre_e3": "universe"}),
+                ),
+                *values["configuration_references"],
+            ),
+        }
+    )
+    journal = _journal(postgres_factory, MutableClock(CREATED_AT))
+    runner = HistoricalResearchRunner(
+        journal=journal,
+        kernel=ResearchDecisionSessionKernel(DeterministicOwner()),
+    )
+    terminal = runner.run(command=legacy)
+
+    class MustNotRecomputeOwner(DeterministicOwner):
+        def compute_stage(self, **_):
+            raise AssertionError("pre-E3 replay must not apply current semantics")
+
+    verifier = HistoricalResearchRunner(
+        journal=journal,
+        kernel=ResearchDecisionSessionKernel(MustNotRecomputeOwner()),
+    )
+    report = verifier.replay(run_id=legacy.run_id)
+
+    assert terminal.status is HistoricalRunStatus.COMPLETE
+    assert report.matched is True
+    assert report.replay_mode == "IMMUTABLE_PRE_E3_RECEIPT_VERIFICATION"
+    assert verifier.resume(run_id=legacy.run_id) == terminal
+
+
+def test_pre_e3_incomplete_resume_fails_closed_without_exact_code(postgres_factory) -> None:
+    values = _command().semantic_values()
+    legacy = HistoricalResearchCommand.create(
+        **{
+            **values,
+            "idempotency_key": "historical-pre-e3-incomplete-v1",
+            "configuration_references": (
+                ValidationArtifactReference(
+                    "FREE_RESEARCH_UNIVERSE",
+                    ArtifactId("pre-e3-incomplete-universe"),
+                    canonical_hash({"pre_e3": "incomplete-universe"}),
+                ),
+                *values["configuration_references"],
+            ),
+        }
+    )
+    journal = _journal(postgres_factory, MutableClock(CREATED_AT))
+    runner = HistoricalResearchRunner(
+        journal=journal,
+        kernel=ResearchDecisionSessionKernel(DeterministicOwner()),
+    )
+    runner.run(command=legacy, max_stage_commits=1)
+
+    with pytest.raises(HistoricalResearchConflict, match="exact historical code"):
+        runner.resume(run_id=legacy.run_id)

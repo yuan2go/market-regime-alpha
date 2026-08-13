@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.universe.postgres_historical_facts import (
+    HistoricalSecurityFactsConflict,
     PostgresHistoricalSecurityFactsRepository,
 )
 from tests.universe.test_historical_security_facts import _owner
@@ -106,3 +109,39 @@ def test_historical_security_fact_gaps_are_owner_resolved_and_interval_bounded(
 
     assert len(gaps["600000.SH"]) == 1
     assert repository.get(owner.owner_id) == owner
+
+
+def test_historical_security_fact_scope_fails_absence_closed(
+    postgres_factory,
+) -> None:
+    repository = PostgresHistoricalSecurityFactsRepository(postgres_factory)
+    owner = repository.publish(_owner())
+
+    gaps = repository.corporate_action_gaps_for_symbols(
+        owner.reference,
+        symbols=("600001.SH",),
+        after=date(2025, 6, 17),
+        through=date(2025, 6, 18),
+    )
+    assert gaps["600001.SH"][0].reason_codes == (
+        "CORPORATE_ACTION_SYMBOL_OUTSIDE_ACQUISITION_SCOPE",
+        "RAW_UNADJUSTED_RETURN_FAILS_CLOSED",
+    )
+    actions, resolved_gaps = repository.corporate_action_evidence_for_symbols(
+        owner.reference,
+        symbols=("600001.SH",),
+        after=date(2025, 6, 17),
+        through=date(2025, 6, 18),
+    )
+    assert actions == {}
+    assert resolved_gaps == gaps
+    with pytest.raises(
+        HistoricalSecurityFactsConflict,
+        match="active Universe symbols",
+    ):
+        repository.verify_acquisition_scope(
+            owner.reference,
+            symbols=("600000.SH", "600001.SH"),
+            universe_references=owner.universe_scope_references,
+            decision_date=date(2025, 6, 17),
+        )

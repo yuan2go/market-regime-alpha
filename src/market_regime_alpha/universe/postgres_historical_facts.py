@@ -12,6 +12,7 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -56,10 +57,12 @@ class PostgresHistoricalSecurityFactsRepository:
                     last_effective_date, known_at, provider_id,
                     source_manifest_id, source_manifest_hash, raw_archive_id,
                     fact_count, coverage_gap_count, data_eligibility, evidence_ceiling, formal_pit,
+                    acquisition_start_date, acquisition_end_date,
+                    requested_symbols, universe_scope_references,
                     payload_json, created_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, false, %s, %s
+                    %s, %s, %s, false, %s, %s, %s, %s, %s, %s
                 ) ON CONFLICT (owner_id) DO NOTHING
                 """,
                 (
@@ -76,6 +79,23 @@ class PostgresHistoricalSecurityFactsRepository:
                     len(owner.coverage_gaps),
                     owner.data_eligibility.value,
                     owner.evidence_ceiling.value,
+                    owner.acquisition_start_date,
+                    owner.acquisition_end_date,
+                    (
+                        None
+                        if not owner.requested_symbols
+                        else Jsonb(list(owner.requested_symbols))
+                    ),
+                    (
+                        None
+                        if not owner.universe_scope_references
+                        else Jsonb(
+                            [
+                                item.to_canonical_dict()
+                                for item in owner.universe_scope_references
+                            ]
+                        )
+                    ),
                     Jsonb(owner.to_canonical_dict()),
                     owner.known_at,
                 ),
@@ -322,7 +342,17 @@ class PostgresHistoricalSecurityFactsRepository:
             raise ValueError("Historical Security Fact symbols must be ordered")
         if after >= through:
             raise ValueError("Corporate-action interval must advance")
-        self._verify_reference(reference)
+        acquisition_start, acquisition_end, acquired_symbols, _references = (
+            self._acquisition_scope(reference)
+        )
+        if (
+            after < acquisition_start
+            or through > acquisition_end
+            or not set(symbols).issubset(acquired_symbols)
+        ):
+            raise HistoricalSecurityFactsConflict(
+                "Corporate-action query is outside acquisition scope"
+            )
         with self._factory.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
@@ -348,6 +378,32 @@ class PostgresHistoricalSecurityFactsRepository:
             grouped.setdefault(str(row[0]), []).append(self._restore_fact(row[1], reference))
         return {symbol: tuple(items) for symbol, items in grouped.items()}
 
+    def verify_acquisition_scope(
+        self,
+        reference: ValidationArtifactReference,
+        *,
+        symbols: tuple[str, ...],
+        universe_references: tuple[ValidationArtifactReference, ...],
+        decision_date: date,
+    ) -> None:
+        """Require exact v3 symbol and constituent lineage before absence is evidence."""
+
+        acquisition_start, acquisition_end, acquired_symbols, acquired_references = (
+            self._acquisition_scope(reference)
+        )
+        if not acquisition_start <= decision_date <= acquisition_end:
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts do not cover the Decision date"
+            )
+        if not set(symbols).issubset(acquired_symbols):
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts do not cover the active Universe symbols"
+            )
+        if set(universe_references) != acquired_references:
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts Universe lineage is incomplete"
+            )
+
     def corporate_action_gaps_for_symbols(
         self,
         reference: ValidationArtifactReference,
@@ -362,7 +418,12 @@ class PostgresHistoricalSecurityFactsRepository:
             raise ValueError("Historical Security Fact symbols must be ordered")
         if after >= through:
             raise ValueError("Corporate-action interval must advance")
-        self._verify_reference(reference)
+        (
+            acquisition_start,
+            acquisition_end,
+            acquired_symbols,
+            _acquired_references,
+        ) = self._acquisition_scope(reference)
         with self._factory.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
@@ -391,7 +452,165 @@ class PostgresHistoricalSecurityFactsRepository:
             grouped.setdefault(str(row[0]), []).append(
                 HistoricalSecurityFactCoverageGap.from_canonical_dict(payload)
             )
+        outside_interval = after < acquisition_start or through > acquisition_end
+        for symbol in symbols:
+            if symbol in acquired_symbols and not outside_interval:
+                continue
+            reason = (
+                "CORPORATE_ACTION_SYMBOL_OUTSIDE_ACQUISITION_SCOPE"
+                if symbol not in acquired_symbols
+                else "CORPORATE_ACTION_INTERVAL_OUTSIDE_ACQUISITION_SCOPE"
+            )
+            gap = HistoricalSecurityFactCoverageGap.create(
+                fact_kind=HistoricalSecurityFactKind.ADJUSTMENT_EVENT,
+                symbol=symbol,
+                coverage_start=after,
+                coverage_end=through,
+                raw_row_hash=canonical_hash(
+                    {
+                        "facts_owner_id": str(reference.artifact_id),
+                        "facts_owner_hash": reference.content_hash,
+                        "symbol": symbol,
+                        "after": after.isoformat(),
+                        "through": through.isoformat(),
+                        "reason": reason,
+                    }
+                ),
+                source_reference=reference,
+                reason_codes=(reason, "RAW_UNADJUSTED_RETURN_FAILS_CLOSED"),
+            )
+            grouped.setdefault(symbol, []).append(gap)
         return {symbol: tuple(items) for symbol, items in grouped.items()}
+
+    def corporate_action_evidence_for_symbols(
+        self,
+        reference: ValidationArtifactReference,
+        *,
+        symbols: tuple[str, ...],
+        after: date,
+        through: date,
+    ) -> tuple[
+        Mapping[str, tuple[HistoricalSecurityFact, ...]],
+        Mapping[str, tuple[HistoricalSecurityFactCoverageGap, ...]],
+    ]:
+        """Resolve actions and fail-closed gaps without querying outside scope."""
+
+        gaps = self.corporate_action_gaps_for_symbols(
+            reference,
+            symbols=symbols,
+            after=after,
+            through=through,
+        )
+        outside_scope_symbols = {
+            symbol
+            for symbol, items in gaps.items()
+            if any(
+                reason.startswith("CORPORATE_ACTION_SYMBOL_OUTSIDE_")
+                or reason.startswith("CORPORATE_ACTION_INTERVAL_OUTSIDE_")
+                for item in items
+                for reason in item.reason_codes
+            )
+        }
+        action_symbols = tuple(sorted(set(symbols) - outside_scope_symbols))
+        actions = (
+            {}
+            if not action_symbols
+            else self.corporate_actions_for_symbols(
+                reference,
+                symbols=action_symbols,
+                after=after,
+                through=through,
+            )
+        )
+        return actions, gaps
+
+    def _acquisition_scope(
+        self,
+        reference: ValidationArtifactReference,
+    ) -> tuple[
+        date,
+        date,
+        frozenset[str],
+        frozenset[ValidationArtifactReference],
+    ]:
+        if reference.artifact_kind != "HISTORICAL_SECURITY_FACTS":
+            raise ValueError("Historical Security Facts reference kind mismatch")
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT owner_hash, acquisition_start_date,
+                       acquisition_end_date, requested_symbols,
+                       universe_scope_references,
+                       payload_json - 'owner_id' - 'owner_hash'
+                                    - 'facts' - 'coverage_gaps'
+                FROM free_data_historical_security_fact_set
+                WHERE owner_id = %s
+                """,
+                (str(reference.artifact_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(reference.artifact_id))
+        if str(row[0]) != reference.content_hash:
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts owner hash diverged"
+            )
+        if not isinstance(row[5], Mapping) or (
+            row[5].get("schema_version")
+            != "historical-security-facts-owner/v4"
+        ):
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts owner lacks a bounded v4 identity envelope"
+            )
+        if canonical_hash(dict(row[5])) != reference.content_hash:
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts identity envelope diverged"
+            )
+        if (
+            row[1] is None
+            or row[2] is None
+            or not isinstance(row[3], list)
+            or not row[3]
+            or not isinstance(row[4], list)
+            or not row[4]
+        ):
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts owner lacks v3 acquisition scope"
+            )
+        requested_symbols = tuple(str(item) for item in row[3])
+        universe_references = tuple(
+            ValidationArtifactReference.from_canonical_dict(item)
+            for item in row[4]
+            if isinstance(item, Mapping)
+        )
+        if (
+            requested_symbols != tuple(sorted(set(requested_symbols)))
+            or len(universe_references) != len(row[4])
+            or universe_references
+            != tuple(sorted(set(universe_references), key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            )))
+        ):
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts acquisition projection is invalid"
+            )
+        if (
+            row[5].get("acquisition_start_date") != row[1].isoformat()
+            or row[5].get("acquisition_end_date") != row[2].isoformat()
+            or row[5].get("requested_symbols") != list(requested_symbols)
+            or row[5].get("universe_scope_references")
+            != [item.to_canonical_dict() for item in universe_references]
+        ):
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts acquisition identity diverged"
+            )
+        return (
+            row[1],
+            row[2],
+            frozenset(requested_symbols),
+            frozenset(universe_references),
+        )
 
     def _latest(
         self,
@@ -465,7 +684,9 @@ class PostgresHistoricalSecurityFactsRepository:
     ) -> None:
         row = connection.execute(
             """
-            SELECT owner_hash, fact_count, coverage_gap_count, payload_json
+            SELECT owner_hash, fact_count, coverage_gap_count, payload_json,
+                   acquisition_start_date, acquisition_end_date,
+                   requested_symbols, universe_scope_references
             FROM free_data_historical_security_fact_set
             WHERE owner_id = %s
             """,
@@ -497,6 +718,23 @@ class PostgresHistoricalSecurityFactsRepository:
             or int(row[2]) != len(owner.coverage_gaps)
             or not isinstance(row[3], Mapping)
             or dict(row[3]) != owner.to_canonical_dict()
+            or row[4] != owner.acquisition_start_date
+            or row[5] != owner.acquisition_end_date
+            or row[6]
+            != (
+                None
+                if not owner.requested_symbols
+                else list(owner.requested_symbols)
+            )
+            or row[7]
+            != (
+                None
+                if not owner.universe_scope_references
+                else [
+                    item.to_canonical_dict()
+                    for item in owner.universe_scope_references
+                ]
+            )
             or tuple(item[0] for item in facts) != tuple(item.to_canonical_dict() for item in owner.facts)
             or tuple(item[0] for item in gaps)
             != tuple(item.to_canonical_dict() for item in owner.coverage_gaps)

@@ -6,17 +6,27 @@ from types import SimpleNamespace
 
 import pytest
 
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
+from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.providers.public_composite.historical_security_facts import (
     _build_acquisition,
     _checkpointed_fact_query,
 )
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.universe.historical_facts import (
     HistoricalSecurityFactKind,
 )
 
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
+SCOPE = ValidationArtifactReference(
+    "HISTORICAL_CONSTITUENT_TIMELINE",
+    ArtifactId("historical-fact-provider-test-timeline"),
+    canonical_hash({"scope": "historical-fact-provider-test"}),
+)
 
 
 def _response(fields: tuple[str, ...], rows: tuple[tuple[str, ...], ...]):
@@ -133,6 +143,7 @@ def test_historical_fact_provider_preserves_real_facts_and_missing_rows() -> Non
         symbols=("600000.SH",),
         start_date=date(2025, 1, 1),
         end_date=date(2025, 7, 31),
+        universe_scope_references=(SCOPE,),
         responses=responses,
     )
 
@@ -174,6 +185,7 @@ def test_historical_fact_provider_rejects_same_effective_fact_drift() -> None:
             symbols=("600000.SH",),
             start_date=date(2025, 1, 1),
             end_date=date(2025, 7, 31),
+            universe_scope_references=(SCOPE,),
             responses=responses,
         )
 
@@ -206,6 +218,7 @@ def test_historical_fact_provider_persists_unresolved_corporate_action_gap() -> 
         symbols=("600000.SH",),
         start_date=date(2025, 1, 1),
         end_date=date(2025, 7, 31),
+        universe_scope_references=(SCOPE,),
         responses=responses,
     )
 
@@ -214,6 +227,155 @@ def test_historical_fact_provider_persists_unresolved_corporate_action_gap() -> 
     assert gap.symbol == "600000.SH"
     assert gap.coverage_start == date(2025, 1, 1)
     assert gap.coverage_end == date(2025, 7, 31)
+
+
+def test_historical_fact_provider_persists_malformed_corporate_action_row_gap() -> None:
+    responses = (
+        _item(
+            "query_stock_industry:effective-date:v1",
+            _response(
+                ("updateDate", "code", "code_name", "industry", "industryClassification"),
+                (("2024-12-30", "sh.600000", "浦发银行", "银行", "证监会行业分类"),),
+            ),
+            1,
+        ),
+        (
+            "query_dividend_data:report-year:v1",
+            "baostock://query-dividend-data/sh.600000/2025/report",
+            (("code", "sh.600000"), ("year", "2025"), ("year_type", "report")),
+            ("600000.SH",),
+            NOW,
+            NOW,
+            _response(
+                ("code", "dividOperateDate", "dividCashPsBeforeTax"),
+                (("sh.600000",),),
+            ),
+        ),
+    )
+
+    acquired = _build_acquisition(
+        symbols=("600000.SH",),
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 7, 31),
+        universe_scope_references=(SCOPE,),
+        responses=responses,
+    )
+
+    assert acquired.rejected_row_count == 1
+    assert acquired.coverage_gap_count == 1
+    assert "CORPORATE_ACTION_PROVIDER_ROW_UNRESOLVED" in (
+        acquired.owner.coverage_gaps[0].reason_codes
+    )
+
+
+def test_historical_fact_provider_rejects_overlong_corporate_action_row() -> None:
+    responses = (
+        _item(
+            "query_stock_industry:effective-date:v1",
+            _response(
+                ("updateDate", "code", "code_name", "industry", "industryClassification"),
+                (("2024-12-30", "sh.600000", "浦发银行", "银行", "证监会行业分类"),),
+            ),
+            1,
+        ),
+        (
+            "query_adjust_factor:range:v1",
+            "baostock://query-adjust-factor/sh.600000/2025",
+            (
+                ("code", "sh.600000"),
+                ("end_date", "2025-07-31"),
+                ("start_date", "2025-01-01"),
+            ),
+            ("600000.SH",),
+            NOW,
+            NOW,
+            _response(
+                (
+                    "code",
+                    "dividOperateDate",
+                    "foreAdjustFactor",
+                    "backAdjustFactor",
+                    "adjustFactor",
+                ),
+                (("sh.600000", "2025-05-29", "0.95", "12.76", "12.76", "unexpected"),),
+            ),
+        ),
+    )
+
+    acquired = _build_acquisition(
+        symbols=("600000.SH",),
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 7, 31),
+        universe_scope_references=(SCOPE,),
+        responses=responses,
+    )
+
+    assert acquired.rejected_row_count == 1
+    assert acquired.coverage_gap_count == 1
+    assert not tuple(
+        item
+        for item in acquired.owner.facts
+        if item.fact_kind is HistoricalSecurityFactKind.ADJUSTMENT_EVENT
+    )
+
+
+def test_historical_fact_provider_turns_conflicting_adjustments_into_gap() -> None:
+    adjustment_fields = (
+        "code",
+        "dividOperateDate",
+        "foreAdjustFactor",
+        "backAdjustFactor",
+        "adjustFactor",
+    )
+    adjustment_parameters = (
+        ("code", "sh.600000"),
+        ("end_date", "2025-07-31"),
+        ("start_date", "2025-01-01"),
+    )
+    responses = (
+        _item(
+            "query_stock_industry:effective-date:v1",
+            _response(
+                ("updateDate", "code", "code_name", "industry", "industryClassification"),
+                (("2024-12-30", "sh.600000", "浦发银行", "银行", "证监会行业分类"),),
+            ),
+            1,
+        ),
+        *(
+            (
+                "query_adjust_factor:range:v1",
+                f"baostock://query-adjust-factor/sh.600000/{ordinal}",
+                adjustment_parameters,
+                ("600000.SH",),
+                NOW,
+                NOW,
+                _response(
+                    adjustment_fields,
+                    (("sh.600000", "2025-05-29", "0.95", "12.76", factor),),
+                ),
+            )
+            for ordinal, factor in ((1, "12.76"), (2, "12.77"))
+        ),
+    )
+
+    acquired = _build_acquisition(
+        symbols=("600000.SH",),
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 7, 31),
+        universe_scope_references=(SCOPE,),
+        responses=responses,
+    )
+
+    assert not tuple(
+        item
+        for item in acquired.owner.facts
+        if item.fact_kind is HistoricalSecurityFactKind.ADJUSTMENT_EVENT
+    )
+    assert acquired.rejected_row_count == 1
+    assert acquired.coverage_gap_count == 1
+    assert "CORPORATE_ACTION_PROVIDER_FACT_CONFLICT" in (
+        acquired.owner.coverage_gaps[0].reason_codes
+    )
 
 
 def test_historical_fact_provider_preserves_multiple_real_dividends_on_one_day() -> None:
@@ -254,6 +416,7 @@ def test_historical_fact_provider_preserves_multiple_real_dividends_on_one_day()
         symbols=("600000.SH",),
         start_date=date(2025, 1, 1),
         end_date=date(2025, 7, 31),
+        universe_scope_references=(SCOPE,),
         responses=responses,
     )
 
@@ -267,6 +430,64 @@ def test_historical_fact_provider_preserves_multiple_real_dividends_on_one_day()
         "0.56",
         "1.41",
     }
+
+
+def test_historical_fact_provider_turns_same_identity_dividend_drift_into_gap() -> None:
+    fields = (
+        "code",
+        "dividOperateDate",
+        "dividPreNoticeDate",
+        "dividPlanAnnounceDate",
+        "dividAgmPumDate",
+        "dividPlanDate",
+        "dividCashPsBeforeTax",
+        "dividStocksPs",
+        "dividReserveToStockPs",
+    )
+    responses = (
+        _item(
+            "query_stock_industry:effective-date:v1",
+            _response(
+                ("updateDate", "code", "code_name", "industry", "industryClassification"),
+                (("2024-12-30", "sh.600000", "浦发银行", "银行", "证监会行业分类"),),
+            ),
+            1,
+        ),
+        (
+            "query_dividend_data:report-year:v1",
+            "baostock://query-dividend-data/sh.600000/2025/report",
+            (("code", "sh.600000"), ("year", "2025"), ("year_type", "report")),
+            ("600000.SH",),
+            NOW,
+            NOW,
+            _response(
+                fields,
+                (
+                    ("sh.600000", "2025-05-29", "2025-01-01", "", "", "", "0.56", "0", ""),
+                    ("sh.600000", "2025-05-29", "2025-01-01", "", "", "", "0.57", "0", ""),
+                ),
+            ),
+        ),
+    )
+
+    acquired = _build_acquisition(
+        symbols=("600000.SH",),
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 7, 31),
+        universe_scope_references=(SCOPE,),
+        responses=responses,
+    )
+
+    assert not tuple(
+        item
+        for item in acquired.owner.facts
+        if item.fact_kind is HistoricalSecurityFactKind.DIVIDEND_EVENT
+    )
+    assert acquired.rejected_row_count == 1
+    assert acquired.coverage_gap_count == 1
+    assert "CORPORATE_ACTION_PROVIDER_FACT_CONFLICT" in (
+        acquired.owner.coverage_gaps[0].reason_codes
+    )
 
 
 class _QueryResult:

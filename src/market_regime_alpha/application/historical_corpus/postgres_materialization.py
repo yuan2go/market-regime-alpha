@@ -346,7 +346,15 @@ class PostgresHistoricalMaterializationRepository:
             rows = connection.execute(
                 """
                 SELECT component.component_id, component.component_hash,
-                       label.payload_json
+                       label.payload_json,
+                       (
+                           SELECT count(*) = 1
+                           FROM jsonb_array_elements(
+                               component.payload_json->'payload'->'labels'
+                           ) AS owned_label
+                           WHERE owned_label->>'label_id' = label.label_id
+                             AND owned_label = label.payload_json
+                       ) AS owner_matches
                 FROM historical_corpus_outcome_label AS label
                 JOIN historical_corpus_session_component AS component
                   ON component.component_id = label.component_id
@@ -356,7 +364,8 @@ class PostgresHistoricalMaterializationRepository:
                   AND label.trading_date < %s
                   AND label.symbol = %s
                   AND label.target_id = %s
-                ORDER BY label.trading_date, component.component_id, label.label_id
+                ORDER BY label.trading_date DESC, component.component_id DESC,
+                         label.label_id DESC
                 LIMIT %s
                 """,
                 (
@@ -364,11 +373,18 @@ class PostgresHistoricalMaterializationRepository:
                     before,
                     symbol,
                     str(target_id),
-                    maximum_labels + 1,
+                    maximum_labels,
                 ),
             ).fetchall()
-        if len(rows) > maximum_labels:
-            raise ValueError("Historical Outcome label window exceeds declared ceiling")
+        rows = sorted(rows, key=lambda row: (
+            TargetOutcomeLabel.from_canonical_dict(row[2]).label_interval_start,
+            str(row[0]),
+            str(TargetOutcomeLabel.from_canonical_dict(row[2]).label_id),
+        ))
+        if any(not bool(row[3]) for row in rows):
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome label projection diverged from owner"
+            )
         return tuple(
             (
                 ValidationArtifactReference(

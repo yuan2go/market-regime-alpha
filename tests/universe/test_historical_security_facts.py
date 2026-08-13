@@ -97,6 +97,16 @@ def _owner(*, include_gap: bool = False) -> HistoricalSecurityFactsOwner:
         ),
         raw_archive_id="historical-facts-archive",
         facts=facts,
+        requested_symbols=("600000.SH",),
+        acquisition_start_date=date(2025, 1, 1),
+        acquisition_end_date=date(2025, 12, 31),
+        universe_scope_references=(
+            ValidationArtifactReference(
+                "HISTORICAL_CONSTITUENT_TIMELINE",
+                ArtifactId("historical-facts-test-timeline"),
+                canonical_hash({"timeline": "historical-facts-test"}),
+            ),
+        ),
         coverage_gaps=(
             (
                 HistoricalSecurityFactCoverageGap.create(
@@ -117,6 +127,13 @@ def _owner(*, include_gap: bool = False) -> HistoricalSecurityFactsOwner:
 
 def test_historical_facts_resolve_only_effective_and_published_rows() -> None:
     owner = _owner()
+
+    assert owner.requested_symbols == ("600000.SH",)
+    assert owner.acquisition_start_date == date(2025, 1, 1)
+    assert owner.acquisition_end_date == date(2025, 12, 31)
+    assert owner.universe_scope_references[0].artifact_kind == (
+        "HISTORICAL_CONSTITUENT_TIMELINE"
+    )
 
     assert owner.industry_as_of("600000.SH", date(2025, 1, 2)) is not None
     early = owner.share_capital_as_of("600000.SH", date(2025, 1, 2))

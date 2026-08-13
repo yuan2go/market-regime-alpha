@@ -273,13 +273,21 @@ class HistoricalSecurityFactsOwner:
     facts: tuple[HistoricalSecurityFact, ...]
     coverage_gaps: tuple[HistoricalSecurityFactCoverageGap, ...]
     limitations: tuple[str, ...]
+    requested_symbols: tuple[str, ...] = ()
+    acquisition_start_date: date | None = None
+    acquisition_end_date: date | None = None
+    universe_scope_references: tuple[ValidationArtifactReference, ...] = ()
     data_eligibility: DataEligibility = DataEligibility.EXPLORATORY
     evidence_ceiling: PITSourceEvidenceLevel = PITSourceEvidenceLevel.PIT_INCOMPLETE
     formal_pit: bool = False
-    schema_version: str = "historical-security-facts-owner/v2"
+    schema_version: str = "historical-security-facts-owner/v4"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "historical-security-facts-owner/v2":
+        if self.schema_version not in {
+            "historical-security-facts-owner/v2",
+            "historical-security-facts-owner/v3",
+            "historical-security-facts-owner/v4",
+        }:
             raise ValueError("unsupported Historical Security Facts owner schema")
         require_sha256("Historical Security Facts owner hash", self.owner_hash)
         require_text("Historical Security Facts provider", self.provider_id)
@@ -298,6 +306,42 @@ class HistoricalSecurityFactsOwner:
             raise ValueError("Historical Security Fact coverage gaps must be ordered")
         if len({item.gap_id for item in self.coverage_gaps}) != len(self.coverage_gaps):
             raise ValueError("Historical Security Fact coverage-gap identities must be unique")
+        if self.schema_version in {
+            "historical-security-facts-owner/v3",
+            "historical-security-facts-owner/v4",
+        }:
+            if not self.requested_symbols or self.requested_symbols != tuple(
+                sorted(set(self.requested_symbols))
+            ):
+                raise ValueError(
+                    "Historical Security Fact acquisition symbols must be ordered"
+                )
+            if (
+                self.acquisition_start_date is None
+                or self.acquisition_end_date is None
+                or self.acquisition_start_date > self.acquisition_end_date
+            ):
+                raise ValueError(
+                    "Historical Security Fact acquisition range is invalid"
+                )
+            if not self.universe_scope_references or (
+                self.universe_scope_references
+                != _references(self.universe_scope_references)
+            ):
+                raise ValueError(
+                    "Historical Security Facts require exact Universe scope references"
+                )
+            if any(item.symbol not in self.requested_symbols for item in self.facts):
+                raise ValueError("Historical Security Fact is outside acquired symbols")
+            if any(
+                item.symbol not in self.requested_symbols
+                or item.coverage_start < self.acquisition_start_date
+                or item.coverage_end > self.acquisition_end_date
+                for item in self.coverage_gaps
+            ):
+                raise ValueError(
+                    "Historical Security Fact gap is outside acquisition scope"
+                )
         if any(not self.first_effective_date <= item.effective_date <= self.last_effective_date for item in self.facts):
             raise ValueError("Historical Security Fact is outside owner range")
         if any(
@@ -337,6 +381,10 @@ class HistoricalSecurityFactsOwner:
         source_manifest_reference: ValidationArtifactReference,
         raw_archive_id: str,
         facts: tuple[HistoricalSecurityFact, ...],
+        requested_symbols: tuple[str, ...],
+        acquisition_start_date: date,
+        acquisition_end_date: date,
+        universe_scope_references: tuple[ValidationArtifactReference, ...],
         coverage_gaps: tuple[HistoricalSecurityFactCoverageGap, ...] = (),
     ) -> HistoricalSecurityFactsOwner:
         ordered = tuple(sorted(facts, key=_fact_key))
@@ -350,6 +398,8 @@ class HistoricalSecurityFactsOwner:
         first_effective_date = min(range_starts)
         last_effective_date = max(range_ends)
         contracts = tuple(sorted(set(provider_contracts)))
+        ordered_symbols = tuple(sorted(set(requested_symbols)))
+        scope_references = _references(universe_scope_references)
         limitations = (
             "FORMAL_PIT_NOT_ESTABLISHED",
             "FREE_DATA_EXPLORATORY",
@@ -370,6 +420,11 @@ class HistoricalSecurityFactsOwner:
             facts=ordered,
             coverage_gaps=ordered_gaps,
             limitations=limitations,
+            requested_symbols=ordered_symbols,
+            acquisition_start_date=acquisition_start_date,
+            acquisition_end_date=acquisition_end_date,
+            universe_scope_references=scope_references,
+            schema_version="historical-security-facts-owner/v4",
         )
         owner_id, digest = content_identity("historical-security-facts", values)
         return cls(
@@ -385,6 +440,11 @@ class HistoricalSecurityFactsOwner:
             facts=ordered,
             coverage_gaps=ordered_gaps,
             limitations=limitations,
+            requested_symbols=ordered_symbols,
+            acquisition_start_date=acquisition_start_date,
+            acquisition_end_date=acquisition_end_date,
+            universe_scope_references=scope_references,
+            schema_version="historical-security-facts-owner/v4",
         )
 
     @property
@@ -407,17 +467,33 @@ class HistoricalSecurityFactsOwner:
             facts=self.facts,
             coverage_gaps=self.coverage_gaps,
             limitations=self.limitations,
+            requested_symbols=self.requested_symbols,
+            acquisition_start_date=self.acquisition_start_date,
+            acquisition_end_date=self.acquisition_end_date,
+            universe_scope_references=self.universe_scope_references,
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "owner_id": str(self.owner_id),
             "owner_hash": self.owner_hash,
             **self.identity_payload(),
         }
+        if self.schema_version == "historical-security-facts-owner/v4":
+            payload.update(
+                {
+                    "facts": [item.to_canonical_dict() for item in self.facts],
+                    "coverage_gaps": [
+                        item.to_canonical_dict() for item in self.coverage_gaps
+                    ],
+                }
+            )
+        return payload
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> HistoricalSecurityFactsOwner:
+        schema_version = str(payload["schema_version"])
         return cls(
             owner_id=ArtifactId(str(payload["owner_id"])),
             owner_hash=str(payload["owner_hash"]),
@@ -434,10 +510,49 @@ class HistoricalSecurityFactsOwner:
                 for item in payload["coverage_gaps"]
             ),
             limitations=tuple(str(item) for item in payload["limitations"]),
+            requested_symbols=(
+                tuple(str(item) for item in payload["requested_symbols"])
+                if schema_version
+                in {
+                    "historical-security-facts-owner/v3",
+                    "historical-security-facts-owner/v4",
+                }
+                else ()
+            ),
+            acquisition_start_date=(
+                date.fromisoformat(str(payload["acquisition_start_date"]))
+                if schema_version
+                in {
+                    "historical-security-facts-owner/v3",
+                    "historical-security-facts-owner/v4",
+                }
+                else None
+            ),
+            acquisition_end_date=(
+                date.fromisoformat(str(payload["acquisition_end_date"]))
+                if schema_version
+                in {
+                    "historical-security-facts-owner/v3",
+                    "historical-security-facts-owner/v4",
+                }
+                else None
+            ),
+            universe_scope_references=(
+                tuple(
+                    ValidationArtifactReference.from_canonical_dict(item)
+                    for item in payload["universe_scope_references"]
+                )
+                if schema_version
+                in {
+                    "historical-security-facts-owner/v3",
+                    "historical-security-facts-owner/v4",
+                }
+                else ()
+            ),
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
             evidence_ceiling=PITSourceEvidenceLevel(str(payload["evidence_ceiling"])),
             formal_pit=bool(payload["formal_pit"]),
-            schema_version=str(payload["schema_version"]),
+            schema_version=schema_version,
         )
 
     def industry_as_of(self, symbol: str, decision_date: date) -> HistoricalSecurityFact | None:
@@ -553,9 +668,14 @@ def _owner_payload(
     facts: tuple[HistoricalSecurityFact, ...],
     coverage_gaps: tuple[HistoricalSecurityFactCoverageGap, ...],
     limitations: tuple[str, ...],
+    requested_symbols: tuple[str, ...] = (),
+    acquisition_start_date: date | None = None,
+    acquisition_end_date: date | None = None,
+    universe_scope_references: tuple[ValidationArtifactReference, ...] = (),
+    schema_version: str = "historical-security-facts-owner/v2",
 ) -> dict[str, Any]:
-    return {
-        "schema_version": "historical-security-facts-owner/v2",
+    payload = {
+        "schema_version": schema_version,
         "first_effective_date": first_effective_date.isoformat(),
         "last_effective_date": last_effective_date.isoformat(),
         "known_at": timestamp(known_at),
@@ -570,6 +690,53 @@ def _owner_payload(
         "formal_pit": False,
         "limitations": list(limitations),
     }
+    if schema_version in {
+        "historical-security-facts-owner/v3",
+        "historical-security-facts-owner/v4",
+    }:
+        if acquisition_start_date is None or acquisition_end_date is None:
+            raise ValueError("Historical Security Fact acquisition range is required")
+        payload.update(
+            {
+                "requested_symbols": list(requested_symbols),
+                "acquisition_start_date": acquisition_start_date.isoformat(),
+                "acquisition_end_date": acquisition_end_date.isoformat(),
+                "universe_scope_references": [
+                    item.to_canonical_dict() for item in universe_scope_references
+                ],
+            }
+        )
+    if schema_version == "historical-security-facts-owner/v4":
+        payload.pop("facts")
+        payload.pop("coverage_gaps")
+        payload.update(
+            {
+                "fact_count": len(facts),
+                "facts_hash": canonical_hash(
+                    [item.to_canonical_dict() for item in facts]
+                ),
+                "coverage_gap_count": len(coverage_gaps),
+                "coverage_gaps_hash": canonical_hash(
+                    [item.to_canonical_dict() for item in coverage_gaps]
+                ),
+            }
+        )
+    return payload
+
+
+def _references(
+    values: tuple[ValidationArtifactReference, ...],
+) -> tuple[ValidationArtifactReference, ...]:
+    return tuple(
+        sorted(
+            set(values),
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    )
 
 
 def _validate_values(fact_kind: HistoricalSecurityFactKind, values: Mapping[str, str]) -> None:
