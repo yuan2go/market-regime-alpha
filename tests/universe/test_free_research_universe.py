@@ -158,7 +158,7 @@ def test_historical_constituent_snapshot_does_not_project_current_master() -> No
                 "code": "sh.600000",
                 "code_name": "浦发银行",
                 "ipoDate": "1999-11-10",
-                "outDate": "",
+                "outDate": "2026-06-30",
                 "type": "1",
                 "status": "1",
             },
@@ -177,9 +177,11 @@ def test_historical_constituent_snapshot_does_not_project_current_master() -> No
     assert "CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY" not in projected.limitations
     assert "FROZEN_HISTORICAL_CONSTITUENT_SNAPSHOT" in projected.limitations
     assert "CURRENT_CLASSIFICATION_NOT_BACKFILLED" in projected.limitations
-    assert next(
-        item for item in projected.records if item.symbol == "000001.SZ"
-    ).listing_status.value == "UNKNOWN"
+    assert next(item for item in projected.records if item.symbol == "000001.SZ").listing_status.value == "UNKNOWN"
+    delisted = next(item for item in projected.records if item.symbol == "600000.SH")
+    assert delisted.listing_status.value == "DELISTED"
+    assert delisted.membership_status is ResearchUniverseMembershipStatus.EXCLUDED
+    assert "DELISTED_BY_AS_OF_DATE" in delisted.reason_codes
 
     with pytest.raises(ValueError, match="predates frozen constituent"):
         project_free_research_universe_as_of(

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from bisect import bisect_right
-from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from math import sqrt
 from statistics import fmean, median
@@ -23,6 +21,9 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalNormalizedBar,
     HistoricalTradingStatus,
 )
+from market_regime_alpha.application.historical_corpus.historical_window import (
+    HistoricalWindowReader,
+)
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
 )
@@ -36,11 +37,7 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
 )
-from market_regime_alpha.application.historical_corpus.selective_read import (
-    HistoricalDataSlice,
-    HistoricalReadMetrics,
-    HistoricalReadQuery,
-)
+from market_regime_alpha.application.historical_corpus.selective_read import HistoricalReadMetrics
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     OutcomeAvailabilityStatus,
     OutcomeMarketCondition,
@@ -156,7 +153,9 @@ from market_regime_alpha.universe.research import (
 )
 from market_regime_alpha.universe.runtime_scope import (
     RuntimeEligibilityObservation,
+    RuntimeScopeMembershipSnapshot,
     RuntimeScopeDecision,
+    UniversePolicySelector,
     UniverseScopeKind,
     build_runtime_scope,
 )
@@ -166,6 +165,7 @@ from market_regime_alpha.strategies.entry.contracts import (
     EntryPathReasonCode,
     build_entry_path_target_contract,
 )
+
 NORMALIZED_DATASET_KIND = "NORMALIZED_DATASET"
 FREE_RESEARCH_UNIVERSE_KIND = "FREE_RESEARCH_UNIVERSE"
 GLOBAL_RESEARCH_THEME_ID = "PHASE_E_GLOBAL_RESEARCH_SCOPE"
@@ -192,9 +192,7 @@ class _HistoricalResearchContext:
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "source_manifest": self.source_manifest.to_canonical_dict(),
-            "market_observation": (
-                None if self.market_observation is None else self.market_observation.to_canonical_dict()
-            ),
+            "market_observation": (None if self.market_observation is None else self.market_observation.to_canonical_dict()),
             "theme_observations": [item.to_canonical_dict() for item in self.theme_observations],
             "symbol_observations": [item.to_canonical_dict() for item in self.symbol_observations],
             "theme_memberships": [item.to_canonical_dict() for item in self.theme_memberships],
@@ -208,21 +206,6 @@ class _HistoricalResearchContext:
             "evidence_kind": self.evidence_kind.value,
             "data_eligibility": self.data_eligibility.value,
         }
-
-
-@dataclass(frozen=True, slots=True)
-class _HistoricalDatasetIndex:
-    package: HistoricalPackageIndex
-    series: Mapping[tuple[str, Timeframe], tuple[HistoricalNormalizedBar, ...]]
-    event_ends: Mapping[tuple[str, Timeframe], tuple[datetime, ...]]
-    daily_dates: tuple[date, ...]
-    daily_read_lineage: Mapping[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class _HistoricalCachedSession:
-    records: tuple[HistoricalNormalizedBar, ...]
-    read_lineage: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,213 +253,16 @@ class HistoricalDecisionMaterializer:
         self._universes = universe_repository
         self._scopes = scope_repository
         self._targets = target_repository
-        if maximum_daily_rows <= 0 or maximum_minute_session_rows <= 0:
-            raise ValueError("Historical materializer row limits must be positive")
-        if minute_session_cache_size < 3:
-            raise ValueError("Historical minute cache must hold Decision and T+1 sessions")
-        self._maximum_daily_rows = maximum_daily_rows
-        self._maximum_minute_session_rows = maximum_minute_session_rows
-        self._minute_session_cache_size = minute_session_cache_size
-        self._dataset_indexes: dict[
-            ValidationArtifactReference, _HistoricalDatasetIndex
-        ] = {}
-        self._minute_sessions: OrderedDict[
-            tuple[ValidationArtifactReference, date],
-            _HistoricalCachedSession,
-        ] = OrderedDict()
-        self._read_metrics: list[HistoricalReadMetrics] = []
-        self._active_read_lineage: list[Mapping[str, Any]] = []
+        self._windows = HistoricalWindowReader(
+            corpus_repository,
+            maximum_daily_rows=maximum_daily_rows,
+            maximum_minute_session_rows=maximum_minute_session_rows,
+            minute_session_cache_size=minute_session_cache_size,
+        )
         self._outcome_cache: dict[date, HistoricalSessionComponent] | None = None
 
-    def _dataset(
-        self, reference: ValidationArtifactReference
-    ) -> _HistoricalDatasetIndex:
-        cached = self._dataset_indexes.get(reference)
-        if cached is not None:
-            return cached
-        package = self._corpus.open_index(reference)
-        daily_slice = self._corpus.read(
-            HistoricalReadQuery.create(
-                reference=reference,
-                timeframes=(Timeframe.DAILY,),
-                first_market_date=package.first_market_date,
-                last_market_date=package.last_market_date,
-                symbols=package.coverage.expected_symbols,
-                max_rows=self._maximum_daily_rows,
-            )
-        )
-        self._read_metrics.append(daily_slice.metrics)
-        if any(not isinstance(item, HistoricalNormalizedBar) for item in daily_slice.records):
-            raise ValueError("Historical materialization requires a normalized owner")
-        bars = tuple(
-            item
-            for item in daily_slice.records
-            if isinstance(item, HistoricalNormalizedBar)
-        )
-        grouped: dict[tuple[str, Timeframe], list[HistoricalNormalizedBar]] = {}
-        for bar in bars:
-            grouped.setdefault((bar.symbol, bar.timeframe), []).append(bar)
-        series = {
-            key: tuple(sorted(values, key=lambda item: item.event_end))
-            for key, values in grouped.items()
-        }
-        index = _HistoricalDatasetIndex(
-            package=package,
-            series=series,
-            event_ends={
-                key: tuple(item.event_end for item in values)
-                for key, values in series.items()
-            },
-            daily_dates=tuple(
-                sorted(
-                    {
-                        item.market_date
-                        for (symbol, timeframe), values in series.items()
-                        if timeframe is Timeframe.DAILY and not _is_etf_symbol(symbol)
-                        for item in values
-                    }
-                )
-            ),
-            daily_read_lineage=_historical_slice_lineage(daily_slice),
-        )
-        self._dataset_indexes[reference] = index
-        return index
-
-    def _decision_bars(
-        self,
-        reference: ValidationArtifactReference,
-        decision_time: datetime,
-    ) -> tuple[HistoricalNormalizedBar, ...]:
-        index = self._dataset(reference)
-        self._record_read_lineage(index.daily_read_lineage)
-        result: list[HistoricalNormalizedBar] = []
-        market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        for key, values in index.series.items():
-            end = bisect_right(index.event_ends[key], decision_time)
-            result.extend(values[:end])
-        current = self._minute_session(reference, market_date)
-        prior_date = next(
-            (item for item in reversed(index.daily_dates) if item < market_date),
-            None,
-        )
-        prior = () if prior_date is None else self._minute_session(reference, prior_date)
-        if not prior:
-            prior = self._prior_minute_session(reference, market_date)
-        result.extend(item for item in (*prior, *current) if item.event_end <= decision_time)
-        return tuple(sorted(result, key=_historical_bar_key))
-
-    def _next_session(
-        self, reference: ValidationArtifactReference, trading_date: date
-    ) -> date | None:
-        return next(
-            (
-                item
-                for item in self._dataset(reference).daily_dates
-                if item > trading_date
-            ),
-            None,
-        )
-
-    def _outcome_bars(
-        self,
-        reference: ValidationArtifactReference,
-        *,
-        decision_time: datetime,
-        next_session: date,
-    ) -> tuple[HistoricalNormalizedBar, ...]:
-        index = self._dataset(reference)
-        self._record_read_lineage(index.daily_read_lineage)
-        result: list[HistoricalNormalizedBar] = []
-        for values in index.series.values():
-            result.extend(
-                item
-                for item in values
-                if item.event_end <= decision_time
-                or item.market_date == next_session
-            )
-        result.extend(self._minute_session(reference, next_session))
-        return tuple(sorted(result, key=_historical_bar_key))
-
-    def _minute_session(
-        self,
-        reference: ValidationArtifactReference,
-        session_date: date,
-    ) -> tuple[HistoricalNormalizedBar, ...]:
-        key = (reference, session_date)
-        cached = self._minute_sessions.get(key)
-        if cached is not None:
-            self._minute_sessions.move_to_end(key)
-            self._record_read_lineage(cached.read_lineage)
-            return cached.records
-        package = self._dataset(reference).package
-        minute_slice = self._corpus.read(
-            HistoricalReadQuery.create(
-                reference=reference,
-                timeframes=(Timeframe.MINUTE_5,),
-                first_market_date=session_date,
-                last_market_date=session_date,
-                symbols=package.coverage.expected_symbols,
-                max_rows=self._maximum_minute_session_rows,
-            )
-        )
-        self._read_metrics.append(minute_slice.metrics)
-        if any(not isinstance(item, HistoricalNormalizedBar) for item in minute_slice.records):
-            raise ValueError("Historical minute slice contains non-bar records")
-        values = tuple(
-            item
-            for item in minute_slice.records
-            if isinstance(item, HistoricalNormalizedBar)
-        )
-        lineage = _historical_slice_lineage(minute_slice)
-        self._record_read_lineage(lineage)
-        self._minute_sessions[key] = _HistoricalCachedSession(values, lineage)
-        self._minute_sessions.move_to_end(key)
-        while len(self._minute_sessions) > self._minute_session_cache_size:
-            self._minute_sessions.popitem(last=False)
-        return values
-
-    def _prior_minute_session(
-        self,
-        reference: ValidationArtifactReference,
-        market_date: date,
-    ) -> tuple[HistoricalNormalizedBar, ...]:
-        first_date = market_date - timedelta(days=20)
-        package = self._dataset(reference).package
-        minute_slice = self._corpus.read(
-            HistoricalReadQuery.create(
-                reference=reference,
-                timeframes=(Timeframe.MINUTE_5,),
-                first_market_date=first_date,
-                last_market_date=market_date - timedelta(days=1),
-                symbols=package.coverage.expected_symbols,
-                max_rows=self._maximum_minute_session_rows,
-            )
-        )
-        self._read_metrics.append(minute_slice.metrics)
-        if any(not isinstance(item, HistoricalNormalizedBar) for item in minute_slice.records):
-            raise ValueError("Historical minute slice contains non-bar records")
-        self._record_read_lineage(_historical_slice_lineage(minute_slice))
-        grouped: dict[date, list[HistoricalNormalizedBar]] = {}
-        for item in minute_slice.records:
-            assert isinstance(item, HistoricalNormalizedBar)
-            grouped.setdefault(item.market_date, []).append(item)
-        if not grouped:
-            return ()
-        session_date = max(grouped)
-        values = tuple(sorted(grouped[session_date], key=_historical_bar_key))
-        return values
-
     def selective_read_metrics(self) -> tuple[HistoricalReadMetrics, ...]:
-        return tuple(self._read_metrics)
-
-    def _record_read_lineage(self, lineage: Mapping[str, Any]) -> None:
-        self._active_read_lineage.append(lineage)
-
-    def _stage_read_lineage_payload(self) -> list[Mapping[str, Any]]:
-        keyed = {
-            canonical_hash(item): item for item in self._active_read_lineage
-        }
-        return [keyed[key] for key in sorted(keyed)]
+        return self._windows.metrics()
 
     def compute_stage(
         self,
@@ -485,7 +271,7 @@ class HistoricalDecisionMaterializer:
         stage: ResearchSessionStage,
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
-        self._active_read_lineage = []
+        self._windows.begin_stage()
         if request.data_authority_mode is not DataAuthorityMode.FREE_RESEARCH_ARCHIVE:
             raise ValueError("Historical materializer only accepts frozen free archives")
         if stage is ResearchSessionStage.SCOPE:
@@ -511,32 +297,18 @@ class HistoricalDecisionMaterializer:
         policy = self._scopes.get_policy(request.runtime_scope_policy_id)
         if policy.policy_hash != request.runtime_scope_policy_hash:
             raise ValueError("Historical Runtime Scope Policy hash mismatch")
-        supported_selectors = {UniverseScopeKind.WATCHLIST, UniverseScopeKind.FULL_A}
+        supported_selectors = {UniverseScopeKind.WATCHLIST, UniverseScopeKind.INDEX}
         if any(item.kind not in supported_selectors for item in policy.selectors):
-            raise ValueError(
-                "Historical materialization supports frozen WATCHLIST or FULL_A scope"
-            )
-        has_full_a = any(
-            item.kind is UniverseScopeKind.FULL_A for item in policy.selectors
-        )
-        if has_full_a:
-            if (
-                base_universe.selection_basis
-                is not ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT
-            ):
-                raise ValueError(
-                    "Historical FULL_A requires a frozen historical constituent owner"
-                )
+            raise ValueError("Historical materialization supports frozen WATCHLIST or INDEX scope")
+        has_index = any(item.kind is UniverseScopeKind.INDEX for item in policy.selectors)
+        if has_index:
+            if base_universe.selection_basis is not ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT:
+                raise ValueError("Historical INDEX requires a frozen historical constituent owner")
             stock_symbols = tuple(
-                item.symbol
-                for item in base_universe.records
-                if item.membership_status
-                is ResearchUniverseMembershipStatus.INCLUDED
+                item.symbol for item in base_universe.records if item.membership_status is ResearchUniverseMembershipStatus.INCLUDED
             )
         else:
-            stock_symbols = tuple(
-                sorted({symbol for item in policy.selectors for symbol in item.symbols})
-            )
+            stock_symbols = tuple(sorted({symbol for item in policy.selectors for symbol in item.symbols}))
         projected = self._universes.publish(
             project_free_research_universe_as_of(
                 base_universe,
@@ -544,7 +316,7 @@ class HistoricalDecisionMaterializer:
                 symbols=stock_symbols,
             )
         )
-        bars = self._decision_bars(normalized_reference, request.decision_time)
+        bars = self._windows.decision_bars(normalized_reference, request.decision_time)
         observations = tuple(
             _eligibility_observation(
                 symbol=symbol,
@@ -561,14 +333,20 @@ class HistoricalDecisionMaterializer:
             built_at=request.materialized_at,
             security_master=projected,
             eligibility_observations=observations,
-            membership_snapshots=(),
+            membership_snapshots=(
+                _historical_index_membership_snapshot(
+                    selector=next(item for item in policy.selectors if item.kind is UniverseScopeKind.INDEX),
+                    universe=projected,
+                    decision_time=request.decision_time,
+                    source_reference=universe_reference,
+                ),
+            )
+            if has_index
+            else (),
             code_revision=request.code_revision,
         )
         scope = self._scopes.publish(policy=policy, receipt=scope)
-        membership = {
-            item.symbol: item.decision is RuntimeScopeDecision.INCLUDED
-            for item in scope.records
-        }
+        membership = {item.symbol: item.decision is RuntimeScopeDecision.INCLUDED for item in scope.records}
         source_max = _source_max_event_time(bars, request.decision_time)
         component = self._put_component(
             request=request,
@@ -577,32 +355,23 @@ class HistoricalDecisionMaterializer:
             source_references=(
                 normalized_reference,
                 universe_reference,
-                ValidationArtifactReference(
-                    "RESEARCH_UNIVERSE_POLICY", policy.policy_id, policy.policy_hash
-                ),
-                ValidationArtifactReference(
-                    "RUNTIME_SCOPE", scope.scope_id, scope.scope_hash
-                ),
+                ValidationArtifactReference("RESEARCH_UNIVERSE_POLICY", policy.policy_id, policy.policy_hash),
+                ValidationArtifactReference("RUNTIME_SCOPE", scope.scope_id, scope.scope_hash),
             ),
             payload={
                 "scope": scope.to_canonical_dict(),
-                "membership": [
-                    {"symbol": symbol, "included": membership[symbol]}
-                    for symbol in sorted(membership)
-                ],
+                "membership": [{"symbol": symbol, "included": membership[symbol]} for symbol in sorted(membership)],
                 "coverage": {
                     "requested": len(membership),
                     "included": sum(membership.values()),
-                    "unknown": sum(
-                        item.decision is RuntimeScopeDecision.UNKNOWN for item in scope.records
-                    ),
+                    "unknown": sum(item.decision is RuntimeScopeDecision.UNKNOWN for item in scope.records),
                 },
                 "historical_security_fact_coverage": _security_fact_coverage(
                     universe=projected,
                     observations=observations,
                     decision_date=request.trading_date,
                 ),
-                "selective_reads": self._stage_read_lineage_payload(),
+                "selective_reads": self._windows.stage_lineage_payload(),
                 "universe_selection_basis": projected.selection_basis.value,
                 "limitations": sorted(
                     {
@@ -612,11 +381,8 @@ class HistoricalDecisionMaterializer:
                                 "FROZEN_HISTORICAL_CONSTITUENT_SNAPSHOT",
                                 "CURRENT_CLASSIFICATION_NOT_BACKFILLED",
                             }
-                            if projected.selection_basis
-                            is ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT
-                            else {
-                                "CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY"
-                            }
+                            if projected.selection_basis is ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT
+                            else {"CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY"}
                         ),
                     }
                 ),
@@ -626,9 +392,7 @@ class HistoricalDecisionMaterializer:
             status=SessionStageStatus.COMPLETE,
             output_references=_references(
                 (
-                    ValidationArtifactReference(
-                        "RUNTIME_SCOPE", scope.scope_id, scope.scope_hash
-                    ),
+                    ValidationArtifactReference("RUNTIME_SCOPE", scope.scope_id, scope.scope_hash),
                     component.reference,
                 )
             ),
@@ -643,21 +407,16 @@ class HistoricalDecisionMaterializer:
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
-        owner = self._dataset(normalized_reference).package
-        bars = self._decision_bars(normalized_reference, request.decision_time)
+        owner = self._windows.index(normalized_reference).package
+        bars = self._windows.decision_bars(normalized_reference, request.decision_time)
         scope_reference = _single_reference(input_references, "RUNTIME_SCOPE")
         pool_reference = _single_reference(input_references, "HISTORICAL_DYNAMIC_POOL")
         scope = self._scopes.get(scope_reference.artifact_id)
         if scope.scope_hash != scope_reference.content_hash:
             raise ValueError("Historical Runtime Scope owner hash mismatch")
         stock_symbols = tuple(item.symbol for item in scope.records)
-        pool_membership = {
-            item.symbol: item.decision is RuntimeScopeDecision.INCLUDED
-            for item in scope.records
-        }
-        context_symbols = tuple(
-            sorted(set(owner.coverage.expected_symbols) - set(stock_symbols))
-        )
+        pool_membership = {item.symbol: item.decision is RuntimeScopeDecision.INCLUDED for item in scope.records}
+        context_symbols = tuple(sorted(set(owner.coverage.expected_symbols) - set(stock_symbols)))
         computations = _compute_features(
             owner=owner,
             bars=bars,
@@ -673,17 +432,9 @@ class HistoricalDecisionMaterializer:
             payload={
                 "features": [_feature_dict(item) for item in computations],
                 "symbol_count": len(stock_symbols),
-                "available_value_count": sum(
-                    value.state is FeatureValueState.AVAILABLE
-                    for item in computations
-                    for value in item.values
-                ),
-                "missing_value_count": sum(
-                    value.state is FeatureValueState.MISSING
-                    for item in computations
-                    for value in item.values
-                ),
-                "selective_reads": self._stage_read_lineage_payload(),
+                "available_value_count": sum(value.state is FeatureValueState.AVAILABLE for item in computations for value in item.values),
+                "missing_value_count": sum(value.state is FeatureValueState.MISSING for item in computations for value in item.values),
+                "selective_reads": self._windows.stage_lineage_payload(),
             },
         )
         context = _build_context(
@@ -697,9 +448,7 @@ class HistoricalDecisionMaterializer:
             computations=computations,
         )
         configuration = ControlledResearchPipelineConfig.create()
-        market = evaluate_market_regime_v0(
-            context, configuration.market_regime, code_revision=request.code_revision
-        )
+        market = evaluate_market_regime_v0(context, configuration.market_regime, code_revision=request.code_revision)
         market_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.MARKET_REGIME,
@@ -714,6 +463,22 @@ class HistoricalDecisionMaterializer:
             source_references=(normalized_reference,),
             payload={
                 "context_symbols": list(context_symbols),
+                "benchmark_usage": {
+                    "market_regime": next(
+                        (item for item in context_symbols if not _is_etf_symbol(item)),
+                        next(
+                            (item for item in context_symbols if _is_etf_symbol(item)),
+                            None,
+                        ),
+                    ),
+                    "theme": next(
+                        (item for item in context_symbols if _is_etf_symbol(item)),
+                        next(
+                            (item for item in context_symbols if not _is_etf_symbol(item)),
+                            None,
+                        ),
+                    ),
+                },
                 "observations": [item.to_canonical_dict() for item in context.etf_observations],
                 "instrument_coverage": _context_instrument_coverage(
                     bars=bars,
@@ -722,15 +487,11 @@ class HistoricalDecisionMaterializer:
                 ),
                 "status": "AVAILABLE" if context.etf_observations else "NOT_ESTIMABLE",
                 "reason_codes": (
-                    ["FROZEN_CONTEXT_INSTRUMENTS_RESOLVED"]
-                    if context.etf_observations
-                    else ["ETF_CONTEXT_NOT_IN_FROZEN_DATASET"]
+                    ["FROZEN_CONTEXT_INSTRUMENTS_RESOLVED"] if context.etf_observations else ["ETF_CONTEXT_NOT_IN_FROZEN_DATASET"]
                 ),
             },
         )
-        themes = evaluate_theme_rotation_v0(
-            context, configuration.theme_rotation, code_revision=request.code_revision
-        )
+        themes = evaluate_theme_rotation_v0(context, configuration.theme_rotation, code_revision=request.code_revision)
         theme_component = self._build_component(
             request=request,
             kind=HistoricalComponentKind.THEME,
@@ -790,28 +551,18 @@ class HistoricalDecisionMaterializer:
                 candidate_set=candidates,
                 configuration=signal_config,
                 symbol=item.symbol,
-                price_action_return=_feature_float(
-                    computations, item.symbol, PRICE_ACTION_FEATURE_ID, "return_3"
-                ),
-                volume_ratio=_feature_float(
-                    computations, item.symbol, CAPITAL_VOLUME_FEATURE_ID, "amount_ratio_5"
-                ),
+                price_action_return=_feature_float(computations, item.symbol, PRICE_ACTION_FEATURE_ID, "return_3"),
+                volume_ratio=_feature_float(computations, item.symbol, CAPITAL_VOLUME_FEATURE_ID, "amount_ratio_5"),
                 trend_return=_feature_float(
                     computations,
                     item.symbol,
                     MOVING_AVERAGE_FEATURE_ID,
                     "price_vs_sma20_return",
                 ),
-                price_vs_vwap_return=_feature_float(
-                    computations, item.symbol, VWAP_FEATURE_ID, "price_vs_vwap_return"
-                ),
-                overheat_return=_feature_float(
-                    computations, item.symbol, OVERHEAT_FEATURE_ID, "short_return"
-                ),
+                price_vs_vwap_return=_feature_float(computations, item.symbol, VWAP_FEATURE_ID, "price_vs_vwap_return"),
+                overheat_return=_feature_float(computations, item.symbol, OVERHEAT_FEATURE_ID, "short_return"),
                 reason_codes=("RETROSPECTIVE_EVENT_TIME",),
-                source_artifact_pairs=(
-                    (feature_component.component_id, feature_component.component_hash),
-                ),
+                source_artifact_pairs=((feature_component.component_id, feature_component.component_hash),),
                 decision_time=DecisionTime(request.decision_time),
                 created_at=request.materialized_at,
                 code_revision=request.code_revision,
@@ -831,9 +582,7 @@ class HistoricalDecisionMaterializer:
             },
         )
         forecast_config = _forecast_configuration(request.decision_time)
-        prior_outcomes = (
-            self._prior_outcomes(request.trading_date) if snapshots else ()
-        )
+        prior_outcomes = self._prior_outcomes(request.trading_date) if snapshots else ()
         forecasts = []
         used_prior_references: set[ValidationArtifactReference] = set()
         for snapshot in snapshots:
@@ -866,10 +615,7 @@ class HistoricalDecisionMaterializer:
                 "configuration": forecast_config.to_canonical_dict(),
                 "forecasts": [item.to_canonical_dict() for item in forecasts],
                 "forecast_count": len(forecasts),
-                "available_for_research_count": sum(
-                    item.forecast.forecast_status.value == "AVAILABLE_FOR_RESEARCH"
-                    for item in forecasts
-                ),
+                "available_for_research_count": sum(item.forecast.forecast_status.value == "AVAILABLE_FOR_RESEARCH" for item in forecasts),
                 "calibrated": False,
                 "formal_oos": False,
                 "formal_model_qualified": False,
@@ -896,12 +642,7 @@ class HistoricalDecisionMaterializer:
             signal_component,
             forecast_component,
         )
-        self._components.put_many(
-            tuple(
-                (item, _COMPONENT_ORDINAL[item.component_kind])
-                for item in decision_components
-            )
-        )
+        self._components.put_many(tuple((item, _COMPONENT_ORDINAL[item.component_kind]) for item in decision_components))
         return SessionStageComputation(
             status=SessionStageStatus.COMPLETE,
             output_references=_references(outputs),
@@ -916,16 +657,9 @@ class HistoricalDecisionMaterializer:
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
         protocol = self._load_target_protocol(request)
-        signal = self._components.get(
-            _single_reference(input_references, "HISTORICAL_SIGNAL")
-        )
-        forecast = self._components.get(
-            _single_reference(input_references, "HISTORICAL_FORECAST")
-        )
-        policies = tuple(
-            _strategy_policy(target, request.materialized_at)
-            for target in protocol.targets
-        )
+        signal = self._components.get(_single_reference(input_references, "HISTORICAL_SIGNAL"))
+        forecast = self._components.get(_single_reference(input_references, "HISTORICAL_FORECAST"))
+        policies = tuple(_strategy_policy(target, request.materialized_at) for target in protocol.targets)
         source_max = max(signal.source_max_event_time, forecast.source_max_event_time)
         component = self._put_component(
             request=request,
@@ -935,14 +669,15 @@ class HistoricalDecisionMaterializer:
             payload={
                 "entry": "FROZEN_DECISION_REFERENCE",
                 "holding": "T_PLUS_ONE",
-                "policies": [item.identity_payload() | {
-                    "policy_id": str(item.policy_id),
-                    "policy_hash": item.policy_hash,
-                } for item in policies],
-                "candidate_symbols": [
-                    str(item["symbol"])
-                    for item in _objects(signal.payload.get("snapshots"), "snapshots")
+                "policies": [
+                    item.identity_payload()
+                    | {
+                        "policy_id": str(item.policy_id),
+                        "policy_hash": item.policy_hash,
+                    }
+                    for item in policies
                 ],
+                "candidate_symbols": [str(item["symbol"]) for item in _objects(signal.payload.get("snapshots"), "snapshots")],
                 "cost_assumptions": {
                     "commission_bps_each_side": "3",
                     "stamp_duty_bps_sell": "5",
@@ -965,23 +700,15 @@ class HistoricalDecisionMaterializer:
         request: ResearchDecisionSessionRequest,
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
-        candidate = self._components.get(
-            _single_reference(input_references, "HISTORICAL_CANDIDATE")
-        )
-        strategy = self._components.get(
-            _single_reference(input_references, "HISTORICAL_STRATEGY")
-        )
+        candidate = self._components.get(_single_reference(input_references, "HISTORICAL_CANDIDATE"))
+        strategy = self._components.get(_single_reference(input_references, "HISTORICAL_STRATEGY"))
         records = _objects(candidate.payload.get("records"), "candidate records")
-        selected = tuple(
-            item for item in records if item.get("selection_status") == "SELECTED"
-        )
+        selected = tuple(item for item in records if item.get("selection_status") == "SELECTED")
         positions = tuple(
             {
                 "symbol": str(item["symbol"]),
                 "rank": int(item["rank"]),
-                "target_weight": (
-                    None if not selected else str(Decimal("1") / Decimal(len(selected)))
-                ),
+                "target_weight": (None if not selected else str(Decimal("1") / Decimal(len(selected)))),
                 "requested_notional": "100000",
             }
             for item in sorted(selected, key=lambda value: int(value["rank"]))
@@ -989,9 +716,7 @@ class HistoricalDecisionMaterializer:
         component = self._put_component(
             request=request,
             kind=HistoricalComponentKind.PORTFOLIO,
-            source_max_event_time=max(
-                candidate.source_max_event_time, strategy.source_max_event_time
-            ),
+            source_max_event_time=max(candidate.source_max_event_time, strategy.source_max_event_time),
             source_references=(candidate.reference, strategy.reference),
             payload={
                 "construction": "EQUAL_WEIGHT_SELECTED_CANDIDATES_V1",
@@ -1016,18 +741,12 @@ class HistoricalDecisionMaterializer:
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
-        owner = self._dataset(normalized_reference).package
+        owner = self._windows.index(normalized_reference).package
         protocol = self._load_target_protocol(request)
-        signal = self._components.get(
-            _single_reference(input_references, "HISTORICAL_SIGNAL")
-        )
-        candidate = self._components.get(
-            _single_reference(input_references, "HISTORICAL_CANDIDATE")
-        )
-        portfolio = self._components.get(
-            _single_reference(input_references, "HISTORICAL_PORTFOLIO")
-        )
-        next_session = self._next_session(normalized_reference, request.trading_date)
+        signal = self._components.get(_single_reference(input_references, "HISTORICAL_SIGNAL"))
+        candidate = self._components.get(_single_reference(input_references, "HISTORICAL_CANDIDATE"))
+        portfolio = self._components.get(_single_reference(input_references, "HISTORICAL_PORTFOLIO"))
+        next_session = self._windows.next_session(normalized_reference, request.trading_date)
         if next_session is None:
             return SessionStageComputation(
                 status=SessionStageStatus.NOT_ESTIMABLE,
@@ -1036,26 +755,19 @@ class HistoricalDecisionMaterializer:
                 completed_at=request.materialized_at,
                 reason_codes=("T_PLUS_ONE_SESSION_NOT_IN_FROZEN_DATASET",),
             )
-        bars = self._outcome_bars(
+        bars = self._windows.outcome_bars(
             normalized_reference,
             decision_time=request.decision_time,
             next_session=next_session,
         )
         canonical = tuple(_canonical_outcome_bars(bars, next_session))
-        symbols = tuple(
-            str(item["symbol"])
-            for item in _objects(
-                candidate.payload.get("records"), "candidate records"
-            )
-        )
+        symbols = tuple(str(item["symbol"]) for item in _objects(candidate.payload.get("records"), "candidate records"))
         labels: list[TargetOutcomeLabel] = []
         economics: list[StrategyEconomicsResult] = []
         capacity_protocol = _capacity_protocol(request.materialized_at)
         requested_notional = Decimal("100000")
         for symbol in symbols:
-            reference_price = _decision_reference_price(
-                bars, symbol, request.trading_date, request.decision_time
-            )
+            reference_price = _decision_reference_price(bars, symbol, request.trading_date, request.decision_time)
             if reference_price is None:
                 continue
             initial_conditions = _market_conditions(bars, symbol, next_session)
@@ -1063,9 +775,7 @@ class HistoricalDecisionMaterializer:
                 (
                     item.open
                     for item in bars
-                    if item.symbol == symbol
-                    and item.market_date == next_session
-                    and item.timeframe is Timeframe.DAILY
+                    if item.symbol == symbol and item.market_date == next_session and item.timeframe is Timeframe.DAILY
                 ),
                 None,
             )
@@ -1108,10 +818,7 @@ class HistoricalDecisionMaterializer:
                 created_at=request.materialized_at,
             )
             for label in symbol_labels:
-                target = next(
-                    item for item in protocol.targets
-                    if item.target_id == label.target.artifact_id
-                )
+                target = next(item for item in protocol.targets if item.target_id == label.target.artifact_id)
                 policy = _strategy_policy(target, request.materialized_at)
                 entry = _execution_observation(
                     phase=StrategyExecutionPhase.ENTRY,
@@ -1149,11 +856,7 @@ class HistoricalDecisionMaterializer:
                     )
                 )
         outcome_max = max(
-            (
-                item.event_end
-                for item in bars
-                if item.market_date == next_session
-            ),
+            (item.event_end for item in bars if item.market_date == next_session),
             default=request.decision_time,
         )
         component = self._put_component(
@@ -1171,18 +874,16 @@ class HistoricalDecisionMaterializer:
                 "next_session_date": next_session.isoformat(),
                 "target_protocol": protocol.to_canonical_dict(),
                 "labels": [item.to_canonical_dict() for item in labels],
-                "strategy_economics": [item.identity_payload() | {
-                    "result_id": str(item.result_id),
-                    "result_hash": item.result_hash,
-                } for item in economics],
-                "available_label_count": sum(
-                    item.availability_status is OutcomeAvailabilityStatus.COMPLETE
-                    for item in labels
-                ),
-                "not_estimated_label_count": sum(
-                    item.availability_status is not OutcomeAvailabilityStatus.COMPLETE
-                    for item in labels
-                ),
+                "strategy_economics": [
+                    item.identity_payload()
+                    | {
+                        "result_id": str(item.result_id),
+                        "result_hash": item.result_hash,
+                    }
+                    for item in economics
+                ],
+                "available_label_count": sum(item.availability_status is OutcomeAvailabilityStatus.COMPLETE for item in labels),
+                "not_estimated_label_count": sum(item.availability_status is not OutcomeAvailabilityStatus.COMPLETE for item in labels),
                 "engineering_assumptions": [
                     "COMMISSION_3_BPS_EACH_SIDE",
                     "STAMP_DUTY_5_BPS_SELL",
@@ -1191,7 +892,7 @@ class HistoricalDecisionMaterializer:
                     "PARTICIPATION_RATE_10_PERCENT",
                     "CORPORATE_ACTION_COVERAGE_INCOMPLETE_RAW_ONLY",
                 ],
-                "selective_reads": self._stage_read_lineage_payload(),
+                "selective_reads": self._windows.stage_lineage_payload(),
             },
             limitations=(
                 "CORPORATE_ACTION_COVERAGE_INCOMPLETE",
@@ -1211,36 +912,16 @@ class HistoricalDecisionMaterializer:
         request: ResearchDecisionSessionRequest,
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
-        candidate = self._components.get(
-            _single_reference(input_references, "HISTORICAL_CANDIDATE")
-        )
-        feature = self._components.get(
-            _single_reference(input_references, "HISTORICAL_FEATURE")
-        )
-        market = self._components.get(
-            _single_reference(input_references, "HISTORICAL_MARKET_REGIME")
-        )
-        etf = self._components.get(
-            _single_reference(input_references, "HISTORICAL_ETF")
-        )
-        theme = self._components.get(
-            _single_reference(input_references, "HISTORICAL_THEME")
-        )
-        capital = self._components.get(
-            _single_reference(input_references, "HISTORICAL_CAPITAL")
-        )
-        signal = self._components.get(
-            _single_reference(input_references, "HISTORICAL_SIGNAL")
-        )
-        forecast = self._components.get(
-            _single_reference(input_references, "HISTORICAL_FORECAST")
-        )
-        outcome = self._components.get(
-            _single_reference(input_references, "HISTORICAL_OUTCOME")
-        )
-        pool = self._components.get(
-            _single_reference(input_references, "HISTORICAL_DYNAMIC_POOL")
-        )
+        candidate = self._components.get(_single_reference(input_references, "HISTORICAL_CANDIDATE"))
+        feature = self._components.get(_single_reference(input_references, "HISTORICAL_FEATURE"))
+        market = self._components.get(_single_reference(input_references, "HISTORICAL_MARKET_REGIME"))
+        etf = self._components.get(_single_reference(input_references, "HISTORICAL_ETF"))
+        theme = self._components.get(_single_reference(input_references, "HISTORICAL_THEME"))
+        capital = self._components.get(_single_reference(input_references, "HISTORICAL_CAPITAL"))
+        signal = self._components.get(_single_reference(input_references, "HISTORICAL_SIGNAL"))
+        forecast = self._components.get(_single_reference(input_references, "HISTORICAL_FORECAST"))
+        outcome = self._components.get(_single_reference(input_references, "HISTORICAL_OUTCOME"))
+        pool = self._components.get(_single_reference(input_references, "HISTORICAL_DYNAMIC_POOL"))
         rows = _research_panel_rows(
             trading_date=request.trading_date,
             feature=feature,
@@ -1273,18 +954,10 @@ class HistoricalDecisionMaterializer:
             payload={
                 "rows": list(rows),
                 "row_count": len(rows),
-                "missing_target_count": sum(
-                    item["target_return"] is None for item in rows
-                ),
-                "gross_return": _mean_decimal_text(
-                    item["gross_return"] for item in rows
-                ),
-                "cost_return": _mean_decimal_text(
-                    item["cost_return"] for item in rows
-                ),
-                "net_return": _mean_decimal_text(
-                    item["net_return"] for item in rows
-                ),
+                "missing_target_count": sum(item["target_return"] is None for item in rows),
+                "gross_return": _mean_decimal_text(item["gross_return"] for item in rows),
+                "cost_return": _mean_decimal_text(item["cost_return"] for item in rows),
+                "net_return": _mean_decimal_text(item["net_return"] for item in rows),
             },
         )
         return _complete_stage(
@@ -1294,19 +967,13 @@ class HistoricalDecisionMaterializer:
             reason="HISTORICAL_RESEARCH_PANEL_MATERIALIZED",
         )
 
-    def _load_target_protocol(
-        self, request: ResearchDecisionSessionRequest
-    ) -> OutcomeTargetProtocol:
-        protocol = self._targets.get_protocol(
-            request.target_protocol_reference.artifact_id
-        )
+    def _load_target_protocol(self, request: ResearchDecisionSessionRequest) -> OutcomeTargetProtocol:
+        protocol = self._targets.get_protocol(request.target_protocol_reference.artifact_id)
         if protocol.protocol_hash != request.target_protocol_reference.content_hash:
             raise ValueError("Historical Target Protocol owner hash mismatch")
         return protocol
 
-    def _prior_outcomes(
-        self, trading_date: date
-    ) -> tuple[HistoricalSessionComponent, ...]:
+    def _prior_outcomes(self, trading_date: date) -> tuple[HistoricalSessionComponent, ...]:
         if self._outcome_cache is None:
             self._outcome_cache = {
                 item.trading_date: item
@@ -1315,11 +982,7 @@ class HistoricalDecisionMaterializer:
                     component_kind=HistoricalComponentKind.OUTCOME,
                 )
             }
-        return tuple(
-            self._outcome_cache[item]
-            for item in sorted(self._outcome_cache)
-            if item < trading_date
-        )
+        return tuple(self._outcome_cache[item] for item in sorted(self._outcome_cache) if item < trading_date)
 
     def _remember_outcome(self, component: HistoricalSessionComponent) -> None:
         if component.component_kind is not HistoricalComponentKind.OUTCOME:
@@ -1355,9 +1018,7 @@ class HistoricalDecisionMaterializer:
             payload=payload,
             limitations=limitations,
         )
-        return self._components.put(
-            component=component, ordinal=_COMPONENT_ORDINAL[kind]
-        )
+        return self._components.put(component=component, ordinal=_COMPONENT_ORDINAL[kind])
 
     def _build_component(
         self,
@@ -1387,21 +1048,42 @@ def _required_reference(
     request: ResearchDecisionSessionRequest,
     artifact_kind: str,
 ) -> ValidationArtifactReference:
-    matches = tuple(
-        item for item in request.configuration_references if item.artifact_kind == artifact_kind
-    )
+    matches = tuple(item for item in request.configuration_references if item.artifact_kind == artifact_kind)
     if len(matches) != 1:
         raise ValueError(f"Historical session requires one {artifact_kind} owner")
     return matches[0]
 
 
-def _single_reference(
-    references: tuple[ValidationArtifactReference, ...], artifact_kind: str
-) -> ValidationArtifactReference:
+def _single_reference(references: tuple[ValidationArtifactReference, ...], artifact_kind: str) -> ValidationArtifactReference:
     matches = tuple(item for item in references if item.artifact_kind == artifact_kind)
     if len(matches) != 1:
         raise ValueError(f"Historical stage requires one {artifact_kind} reference")
     return matches[0]
+
+
+def _historical_index_membership_snapshot(
+    *,
+    selector: UniversePolicySelector,
+    universe: Any,
+    decision_time: datetime,
+    source_reference: ValidationArtifactReference,
+) -> RuntimeScopeMembershipSnapshot:
+    effective_date = universe.constituent_effective_date
+    if effective_date is None:
+        raise ValueError("Historical INDEX membership lacks an effective date")
+    return RuntimeScopeMembershipSnapshot(
+        selector=selector,
+        effective_at=datetime.combine(effective_date, datetime.min.time(), tzinfo=UTC),
+        known_at=universe.known_at,
+        decisions=tuple(
+            (
+                item.symbol,
+                RuntimeScopeDecision(item.membership_status.value),
+            )
+            for item in universe.records
+        ),
+        source_reference=(universe.constituent_source_reference or source_reference),
+    )
 
 
 def _historical_bar_key(
@@ -1410,69 +1092,11 @@ def _historical_bar_key(
     return (item.symbol, item.timeframe.value, item.event_end, str(item.bar_id))
 
 
-def _latest_minute_sessions(
-    *,
-    values: tuple[HistoricalNormalizedBar, ...],
-    end: int,
-    market_date: date,
-    session_count: int,
-) -> tuple[HistoricalNormalizedBar, ...]:
-    """Return a bounded as-of tail without rescanning all historical minutes."""
-
-    start = end
-    dates: list[date] = []
-    while start > 0:
-        candidate = values[start - 1].market_date
-        if candidate > market_date:
-            start -= 1
-            continue
-        if not dates or candidate != dates[-1]:
-            if len(dates) == session_count:
-                break
-            dates.append(candidate)
-        start -= 1
-    return values[start:end]
-
-
-def _source_max_event_time(
-    bars: tuple[HistoricalNormalizedBar, ...], decision_time: datetime
-) -> datetime:
+def _source_max_event_time(bars: tuple[HistoricalNormalizedBar, ...], decision_time: datetime) -> datetime:
     admitted = tuple(item.event_end for item in bars if item.event_end <= decision_time)
     if not admitted:
         raise ValueError("Historical session has no source event by DecisionTime")
     return max(admitted)
-
-
-def _historical_slice_lineage(
-    data_slice: HistoricalDataSlice,
-) -> dict[str, Any]:
-    query = data_slice.query
-    checksums = dict(data_slice.package.checksums)
-    symbol_values = query.symbols
-    return {
-        "owner_reference": query.reference.to_canonical_dict(),
-        "query": {
-            "timeframes": [item.value for item in query.timeframes],
-            "first_market_date": query.first_market_date.isoformat(),
-            "last_market_date": query.last_market_date.isoformat(),
-            "symbol_count": None if symbol_values is None else len(symbol_values),
-            "symbols_hash": (
-                None
-                if symbol_values is None
-                else canonical_hash({"symbols": list(symbol_values)})
-            ),
-            "max_rows": query.max_rows,
-            "batch_size": query.batch_size,
-        },
-        "selected_partitions": [
-            {
-                **item.reference_dict(),
-                "physical_checksum": checksums[item.relative_path],
-            }
-            for item in data_slice.partitions
-        ],
-        "metrics": data_slice.metrics.to_canonical_dict(),
-    }
 
 
 def _eligibility_observation(
@@ -1484,11 +1108,7 @@ def _eligibility_observation(
     source_references: tuple[ValidationArtifactReference, ...],
 ) -> RuntimeEligibilityObservation:
     daily = tuple(
-        item
-        for item in bars
-        if item.symbol == symbol
-        and item.timeframe is Timeframe.DAILY
-        and item.event_end <= request.decision_time
+        item for item in bars if item.symbol == symbol and item.timeframe is Timeframe.DAILY and item.event_end <= request.decision_time
     )
     intraday = tuple(
         item
@@ -1505,11 +1125,7 @@ def _eligibility_observation(
         (item.event_end for item in (*daily, *intraday)),
         default=request.decision_time,
     )
-    included = (
-        None
-        if master is None or master.membership_status.value == "UNKNOWN"
-        else master.membership_status.value == "INCLUDED"
-    )
+    included = None if master is None or master.membership_status.value == "UNKNOWN" else master.membership_status.value == "INCLUDED"
     return RuntimeEligibilityObservation.create(
         symbol=symbol,
         observed_at=source_max,
@@ -1537,20 +1153,11 @@ def _security_fact_coverage(
     return {
         "symbol_count": len(records),
         "listing_date_available_count": len(listing_dates),
-        "delisting_date_available_count": sum(
-            item.delisting_date is not None for item in records
-        ),
-        "listing_age_available_count": sum(
-            item.listing_date is not None and item.listing_date <= decision_date
-            for item in records
-        ),
-        "listing_status_known_count": sum(
-            item.listing_status.value != "UNKNOWN" for item in records
-        ),
+        "delisting_date_available_count": sum(item.delisting_date is not None for item in records),
+        "listing_age_available_count": sum(item.listing_date is not None and item.listing_date <= decision_date for item in records),
+        "listing_status_known_count": sum(item.listing_status.value != "UNKNOWN" for item in records),
         "st_status_known_count": sum(item.is_st is not None for item in observations),
-        "suspension_status_known_count": sum(
-            item.suspended is not None for item in observations
-        ),
+        "suspension_status_known_count": sum(item.suspended is not None for item in observations),
         "market_cap_available_count": 0,
         "market_cap_status": "NOT_ESTIMABLE",
         "industry_available_count": 0,
@@ -1571,20 +1178,14 @@ def _compute_features(
     stock_symbols: tuple[str, ...],
     decision_time: datetime,
 ) -> tuple[_HistoricalFeatureComputation, ...]:
-    feature_set = canonical_technical_feature_set(
-        effective_from=datetime(1990, 1, 1, tzinfo=UTC)
-    )
+    feature_set = canonical_technical_feature_set(effective_from=datetime(1990, 1, 1, tzinfo=UTC))
     bars_by_symbol = _bars_by_symbol(bars)
     definition_by_id = {item.feature_id: item for item in feature_set.definitions}
     results: list[_HistoricalFeatureComputation] = []
     for symbol in stock_symbols:
         symbol_bars = bars_by_symbol.get(symbol, ())
         daily_rows = tuple(
-            item
-            for item in symbol_bars
-            if item.timeframe is Timeframe.DAILY
-            and item.event_end <= decision_time
-            and item.open is not None
+            item for item in symbol_bars if item.timeframe is Timeframe.DAILY and item.event_end <= decision_time and item.open is not None
         )
         minute_rows = tuple(
             item
@@ -1616,11 +1217,7 @@ def _compute_features(
                 computation = missing_technical_feature_computation(
                     feature_id=configuration.feature_id,
                     symbol=symbol,
-                    timeframe=(
-                        Timeframe.DAILY
-                        if selected == Timeframe.DAILY.value
-                        else Timeframe.MINUTE_5
-                    ),
+                    timeframe=(Timeframe.DAILY if selected == Timeframe.DAILY.value else Timeframe.MINUTE_5),
                     available_at=owner.retrieved_at,
                     configuration=configuration,
                     output_ids=tuple(item.output_id for item in definition.output_schema),
@@ -1710,8 +1307,7 @@ def _canonical_bars(
             ),
             price_limit_state=(
                 PriceLimitState.NORMAL
-                if assume_normal_price_limit
-                and item.trading_status is HistoricalTradingStatus.TRADING
+                if assume_normal_price_limit and item.trading_status is HistoricalTradingStatus.TRADING
                 else PriceLimitState.UNKNOWN
             ),
             source_artifact_id=item.bar_id,
@@ -1734,9 +1330,7 @@ def _feature_dict(item: _HistoricalFeatureComputation) -> dict[str, Any]:
             {
                 "output_id": value.output_id,
                 "state": value.state.value,
-                "value": (
-                    str(value.value) if isinstance(value.value, Decimal) else value.value
-                ),
+                "value": (str(value.value) if isinstance(value.value, Decimal) else value.value),
                 "available_at": value.available_at.isoformat(),
                 "source_bar_count": value.source_bar_count,
                 "source_bar_lineage_hash": value.source_bar_lineage_hash,
@@ -1819,21 +1413,22 @@ def _build_context(
         data_eligibility=DataEligibility.EXPLORATORY,
     )
     bars_by_symbol = _bars_by_symbol(bars)
-    stock_series = {
-        symbol: _daily_series(bars_by_symbol.get(symbol, ()), decision_time)
-        for symbol in stock_symbols
-    }
-    context_series = {
-        symbol: _daily_series(bars_by_symbol.get(symbol, ()), decision_time)
-        for symbol in context_symbols
-    }
+    stock_series = {symbol: _daily_series(bars_by_symbol.get(symbol, ()), decision_time) for symbol in stock_symbols}
+    context_series = {symbol: _daily_series(bars_by_symbol.get(symbol, ()), decision_time) for symbol in context_symbols}
     etf_symbol = next((item for item in context_symbols if _is_etf_symbol(item)), None)
-    benchmark = context_series.get(etf_symbol, ()) if etf_symbol is not None else ()
+    index_symbol = next((item for item in context_symbols if not _is_etf_symbol(item)), None)
+    market_benchmark = context_series.get(index_symbol, ()) if index_symbol is not None else ()
+    theme_benchmark = context_series.get(etf_symbol, ()) if etf_symbol is not None else ()
+    if not market_benchmark:
+        market_benchmark = theme_benchmark
+    if not theme_benchmark:
+        theme_benchmark = market_benchmark
     market = _market_observation(
         bars_by_symbol=bars_by_symbol,
         stock_symbols=stock_symbols,
         stock_series=stock_series,
-        benchmark=benchmark,
+        benchmark=market_benchmark,
+        benchmark_id=index_symbol or etf_symbol,
         decision_time=decision_time,
         retrieved_at=retrieved_at,
         source_id=owner.owner_id,
@@ -1841,17 +1436,13 @@ def _build_context(
     theme = _theme_observation(
         bars_by_symbol=bars_by_symbol,
         stock_series=stock_series,
-        benchmark=benchmark,
+        benchmark=theme_benchmark,
         etf_symbol=etf_symbol,
         decision_time=decision_time,
         retrieved_at=retrieved_at,
         source_id=owner.owner_id,
     )
-    market_returns = tuple(
-        value
-        for item in stock_series.values()
-        if (value := _return(item, 5)) is not None
-    )
+    market_returns = tuple(value for item in stock_series.values() if (value := _return(item, 5)) is not None)
     leader_series = max(
         stock_series.values(),
         key=lambda item: _return(item, 5) or float("-inf"),
@@ -1878,32 +1469,23 @@ def _build_context(
         for symbol in stock_symbols
     )
     etf_amount_expansion = (
-        None
-        if etf_symbol is None
-        else _symbol_same_cutoff_amount_change(
-            bars_by_symbol.get(etf_symbol, ()), decision_time
-        )
+        None if etf_symbol is None else _symbol_same_cutoff_amount_change(bars_by_symbol.get(etf_symbol, ()), decision_time)
     )
     etfs = (
         ()
-        if etf_symbol is None
-        or len(benchmark) < 6
-        or etf_amount_expansion is None
+        if etf_symbol is None or len(theme_benchmark) < 6 or etf_amount_expansion is None
         else (
             ETFObservation(
                 etf_id=etf_symbol,
                 theme_id=GLOBAL_RESEARCH_THEME_ID,
                 available_at=AvailabilityTime(retrieved_at),
                 source_artifact_id=owner.owner_id,
-                relative_strength=_return(benchmark, 5) or 0.0,
+                relative_strength=_return(theme_benchmark, 5) or 0.0,
                 amount_expansion=etf_amount_expansion,
             ),
         )
     )
-    memberships = tuple(
-        ThemeMembership(symbol=symbol, primary_theme_id=GLOBAL_RESEARCH_THEME_ID)
-        for symbol in stock_symbols
-    )
+    memberships = tuple(ThemeMembership(symbol=symbol, primary_theme_id=GLOBAL_RESEARCH_THEME_ID) for symbol in stock_symbols)
     daily_bars = tuple(
         ResearchDailyBar(
             symbol=item.symbol,
@@ -1925,6 +1507,8 @@ def _build_context(
         "symbols": [item.to_canonical_dict() for item in symbols],
         "memberships": [item.to_canonical_dict() for item in memberships],
         "etfs": [item.to_canonical_dict() for item in etfs],
+        "market_benchmark_id": index_symbol or etf_symbol,
+        "theme_benchmark_id": etf_symbol or index_symbol,
         "created_at": created_at.isoformat(),
     }
     digest = canonical_hash(identity)
@@ -1944,16 +1528,8 @@ def _build_context(
     )
 
 
-def _daily_series(
-    bars: tuple[HistoricalNormalizedBar, ...], decision_time: datetime
-) -> tuple[HistoricalNormalizedBar, ...]:
-    return tuple(
-        item
-        for item in bars
-        if item.timeframe is Timeframe.DAILY
-        and item.event_end <= decision_time
-        and item.close is not None
-    )
+def _daily_series(bars: tuple[HistoricalNormalizedBar, ...], decision_time: datetime) -> tuple[HistoricalNormalizedBar, ...]:
+    return tuple(item for item in bars if item.timeframe is Timeframe.DAILY and item.event_end <= decision_time and item.close is not None)
 
 
 def _bars_by_symbol(
@@ -1962,10 +1538,7 @@ def _bars_by_symbol(
     grouped: dict[str, list[HistoricalNormalizedBar]] = {}
     for item in bars:
         grouped.setdefault(item.symbol, []).append(item)
-    return {
-        symbol: tuple(sorted(values, key=_historical_bar_key))
-        for symbol, values in grouped.items()
-    }
+    return {symbol: tuple(sorted(values, key=_historical_bar_key)) for symbol, values in grouped.items()}
 
 
 def _market_observation(
@@ -1974,6 +1547,7 @@ def _market_observation(
     stock_symbols: tuple[str, ...],
     stock_series: Mapping[str, tuple[HistoricalNormalizedBar, ...]],
     benchmark: tuple[HistoricalNormalizedBar, ...],
+    benchmark_id: str | None,
     decision_time: datetime,
     retrieved_at: datetime,
     source_id: ArtifactId,
@@ -1998,29 +1572,17 @@ def _market_observation(
             intraday_returns.append(float(minutes[-1].close / prior - Decimal("1")))
             if highs and lows:
                 ranges.append((max(highs) - min(lows)) / float(prior))
-    amount_change = _same_cutoff_amount_change(
-        bars_by_symbol, stock_symbols, decision_time
-    )
+    amount_change = _same_cutoff_amount_change(bars_by_symbol, stock_symbols, decision_time)
     coverage = len(intraday_returns) / len(stock_symbols) if stock_symbols else 0.0
     return MarketObservation(
         available_at=AvailabilityTime(retrieved_at),
         source_artifact_id=source_id,
-        market_direction_return=(
-            _return(benchmark, 3) if benchmark else (fmean(returns) if returns else None)
-        ),
+        market_direction_return=(_return(benchmark, 3) if benchmark else (fmean(returns) if returns else None)),
         market_intraday_range_to_cutoff=fmean(ranges) if ranges else None,
         market_amount_change_same_cutoff=amount_change,
-        candidate_breadth_at_cutoff=(
-            sum(item > 0 for item in intraday_returns) / len(intraday_returns)
-            if intraday_returns
-            else None
-        ),
+        candidate_breadth_at_cutoff=(sum(item > 0 for item in intraday_returns) / len(intraday_returns) if intraday_returns else None),
         limit_structure_score=(
-            (
-                sum(item >= 0.095 for item in intraday_returns)
-                - sum(item <= -0.095 for item in intraday_returns)
-            )
-            / len(intraday_returns)
+            (sum(item >= 0.095 for item in intraday_returns) - sum(item <= -0.095 for item in intraday_returns)) / len(intraday_returns)
             if intraday_returns
             else None
         ),
@@ -2030,10 +1592,11 @@ def _market_observation(
                 {
                     "RETROSPECTIVE_CROSS_SECTIONAL_MARKET_CONTEXT",
                     (
-                        "SAME_CUTOFF_MINUTE_AMOUNT_AVAILABLE"
-                        if amount_change is not None
-                        else "SAME_CUTOFF_MINUTE_AMOUNT_NOT_ESTIMABLE"
+                        "REAL_INDEX_BENCHMARK"
+                        if benchmark_id is not None and not _is_etf_symbol(benchmark_id)
+                        else "ETF_OR_CROSS_SECTIONAL_MARKET_BENCHMARK"
                     ),
+                    ("SAME_CUTOFF_MINUTE_AMOUNT_AVAILABLE" if amount_change is not None else "SAME_CUTOFF_MINUTE_AMOUNT_NOT_ESTIMABLE"),
                 }
             )
         ),
@@ -2055,27 +1618,16 @@ def _theme_observation(
         return None
     benchmark_returns = {window: _return(benchmark, window) for window in (1, 3, 5, 10)}
     relative = {
-        window: fmean(
-            value - (benchmark_returns[window] or 0.0)
-            for series in eligible
-            if (value := _return(series, window)) is not None
-        )
+        window: fmean(value - (benchmark_returns[window] or 0.0) for series in eligible if (value := _return(series, window)) is not None)
         for window in (1, 3, 5, 10)
     }
     return5 = tuple(_return(series, 5) or 0.0 for series in eligible)
     amount_values = tuple(
         value
         for symbol in stock_series
-        if (
-            value := _symbol_same_cutoff_amount_change(
-                bars_by_symbol.get(symbol, ()), decision_time
-            )
-        )
-        is not None
+        if (value := _symbol_same_cutoff_amount_change(bars_by_symbol.get(symbol, ()), decision_time)) is not None
     )
-    latest_amounts = sorted(
-        (float(series[-1].amount or Decimal("0")) for series in eligible), reverse=True
-    )
+    latest_amounts = sorted((float(series[-1].amount or Decimal("0")) for series in eligible), reverse=True)
     total_amount = sum(latest_amounts)
     breadth = sum(value > 0 for value in return5) / len(return5)
     return ThemeResearchObservation(
@@ -2091,24 +1643,13 @@ def _theme_observation(
         relative_strength_10d=relative[10],
         amount_expansion=fmean(amount_values) if amount_values else None,
         etf_amount_expansion=(
-            None
-            if etf_symbol is None
-            else _symbol_same_cutoff_amount_change(
-                bars_by_symbol.get(etf_symbol, ()), decision_time
-            )
+            None if etf_symbol is None else _symbol_same_cutoff_amount_change(bars_by_symbol.get(etf_symbol, ()), decision_time)
         ),
         breadth=breadth,
-        new_high_breadth=sum(
-            float(series[-1].close or 0) >= max(float(item.close or 0) for item in series[-21:-1])
-            for series in eligible
-        )
+        new_high_breadth=sum(float(series[-1].close or 0) >= max(float(item.close or 0) for item in series[-21:-1]) for series in eligible)
         / len(eligible),
         leader_strength=max(return5) - (benchmark_returns[5] or 0.0),
-        participation_change=(
-            breadth
-            - sum((_return(series[:-1], 5) or 0.0) > 0 for series in eligible)
-            / len(eligible)
-        ),
+        participation_change=(breadth - sum((_return(series[:-1], 5) or 0.0) > 0 for series in eligible) / len(eligible)),
         rank_persistence=_cross_sectional_rank_persistence(eligible, 5),
         amount_persistence=sum(value > 0 for value in amount_values) / len(amount_values) if amount_values else None,
         capital_concentration=(sum(latest_amounts[:5]) / total_amount if total_amount > 0 else None),
@@ -2141,43 +1682,23 @@ def _symbol_observation(
     complete = len(series) >= 61
     symbol_returns = _daily_returns(series, 21)
     amount_history = tuple(
-        value
-        for end in range(max(6, len(series) - 4), len(series) + 1)
-        if (value := _amount_expansion(series[:end])) is not None
+        value for end in range(max(6, len(series) - 4), len(series) + 1) if (value := _amount_expansion(series[:end])) is not None
     )
     return SymbolResearchObservation(
         symbol=symbol,
         available_at=AvailabilityTime(retrieved_at),
         source_artifact_id=source_id,
-        symbol_relative_strength=(
-            None
-            if symbol_return is None or not market_returns
-            else symbol_return - fmean(market_returns)
-        ),
+        symbol_relative_strength=(None if symbol_return is None or not market_returns else symbol_return - fmean(market_returns)),
         symbol_amount_expansion=amount,
-        theme_participation_contribution=(
-            None if amount is None else amount / max(1, len(all_series))
-        ),
-        leader_correlation=(
-            _correlation(symbol_returns, leader_returns) if complete else None
-        ),
-        leader_lag=(
-            _correlation(symbol_returns[1:], leader_returns[:-1])
-            if complete
-            else None
-        ),
+        theme_participation_contribution=(None if amount is None else amount / max(1, len(all_series))),
+        leader_correlation=(_correlation(symbol_returns, leader_returns) if complete else None),
+        leader_lag=(_correlation(symbol_returns[1:], leader_returns[:-1]) if complete else None),
         rank_persistence=(
             None
-            if not complete
-            or symbol not in current_ranks
-            or symbol not in previous_ranks
+            if not complete or symbol not in current_ranks or symbol not in previous_ranks
             else 1.0 - abs(current_ranks[symbol] - previous_ranks[symbol])
         ),
-        amount_persistence=(
-            None
-            if not complete or not amount_history
-            else sum(item > 0 for item in amount_history) / len(amount_history)
-        ),
+        amount_persistence=(None if not complete or not amount_history else sum(item > 0 for item in amount_history) / len(amount_history)),
         liquidity_eligible=bool(series and series[-1].amount is not None),
         history_complete=complete,
         status_known=bool(series and series[-1].trading_status is not HistoricalTradingStatus.UNKNOWN),
@@ -2227,14 +1748,7 @@ def _same_cutoff_amount_change(
     decision_time: datetime,
 ) -> float | None:
     pairs = tuple(
-        pair
-        for symbol in symbols
-        if (
-            pair := _same_cutoff_amount_pair(
-                bars_by_symbol.get(symbol, ()), decision_time
-            )
-        )
-        is not None
+        pair for symbol in symbols if (pair := _same_cutoff_amount_pair(bars_by_symbol.get(symbol, ()), decision_time)) is not None
     )
     if not pairs:
         return None
@@ -2250,14 +1764,7 @@ def _same_cutoff_amount_pair(
     zone = ZoneInfo("Asia/Shanghai")
     market_date = decision_time.astimezone(zone).date()
     cutoff = decision_time.astimezone(zone).time().replace(tzinfo=None)
-    dates = sorted(
-        {
-            item.market_date
-            for item in bars
-            if item.timeframe is Timeframe.MINUTE_5
-            and item.market_date <= market_date
-        }
-    )
+    dates = sorted({item.market_date for item in bars if item.timeframe is Timeframe.MINUTE_5 and item.market_date <= market_date})
     if market_date not in dates:
         return None
     prior_dates = tuple(item for item in dates if item < market_date)
@@ -2281,9 +1788,7 @@ def _same_cutoff_amount_pair(
     return None if current is None or previous is None else (current, previous)
 
 
-def _daily_returns(
-    series: tuple[HistoricalNormalizedBar, ...], maximum: int
-) -> tuple[float, ...]:
+def _daily_returns(series: tuple[HistoricalNormalizedBar, ...], maximum: int) -> tuple[float, ...]:
     values = tuple(item.close for item in series if item.close is not None)
     return tuple(
         float(current / previous - Decimal("1"))
@@ -2301,20 +1806,14 @@ def _cross_sectional_percentile_ranks(
     values = {
         symbol: value
         for symbol, series in series_by_symbol.items()
-        if len(series) > offset
-        and (value := _return(series[:-offset] if offset else series, window))
-        is not None
+        if len(series) > offset and (value := _return(series[:-offset] if offset else series, window)) is not None
     }
     ordered = sorted(values, key=lambda symbol: (values[symbol], symbol))
     denominator = max(1, len(ordered) - 1)
-    return {
-        symbol: index / denominator for index, symbol in enumerate(ordered)
-    }
+    return {symbol: index / denominator for index, symbol in enumerate(ordered)}
 
 
-def _cross_sectional_rank_persistence(
-    series: tuple[tuple[HistoricalNormalizedBar, ...], ...], window: int
-) -> float | None:
+def _cross_sectional_rank_persistence(series: tuple[tuple[HistoricalNormalizedBar, ...], ...], window: int) -> float | None:
     by_symbol = {item[-1].symbol: item for item in series if item}
     current = _cross_sectional_percentile_ranks(by_symbol, offset=0, window=window)
     previous = _cross_sectional_percentile_ranks(by_symbol, offset=1, window=window)
@@ -2348,14 +1847,8 @@ def _context_instrument_coverage(
         )
     return {
         "instruments": instruments,
-        "etf_available_count": sum(
-            item["instrument_kind"] == "ETF" and item["status"] == "AVAILABLE"
-            for item in instruments
-        ),
-        "index_available_count": sum(
-            item["instrument_kind"] == "INDEX" and item["status"] == "AVAILABLE"
-            for item in instruments
-        ),
+        "etf_available_count": sum(item["instrument_kind"] == "ETF" and item["status"] == "AVAILABLE" for item in instruments),
+        "index_available_count": sum(item["instrument_kind"] == "INDEX" and item["status"] == "AVAILABLE" for item in instruments),
     }
 
 
@@ -2364,14 +1857,8 @@ def _correlation(left: tuple[float, ...], right: tuple[float, ...]) -> float | N
         return None
     left_mean = fmean(left)
     right_mean = fmean(right)
-    numerator = sum(
-        (x - left_mean) * (y - right_mean)
-        for x, y in zip(left, right, strict=True)
-    )
-    denominator = sqrt(
-        sum((item - left_mean) ** 2 for item in left)
-        * sum((item - right_mean) ** 2 for item in right)
-    )
+    numerator = sum((x - left_mean) * (y - right_mean) for x, y in zip(left, right, strict=True))
+    denominator = sqrt(sum((item - left_mean) ** 2 for item in left) * sum((item - right_mean) ** 2 for item in right))
     return None if denominator == 0 else numerator / denominator
 
 
@@ -2416,9 +1903,7 @@ def _forecast_configuration(decision_time: datetime) -> PathForecastConfig:
         model_id=ModelId("empirical-path-forecast-v1"),
         model_version="1.0.0-exploratory-pit-incomplete",
         decision_profile_id="phase-e-historical-decision-v1",
-        decision_time_local=decision_time.astimezone(
-            ZoneInfo("Asia/Shanghai")
-        ).strftime("%H:%M"),
+        decision_time_local=decision_time.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%H:%M"),
         timezone_name="Asia/Shanghai",
         market_scope="A_SHARE",
         allowed_side="LONG_ONLY",
@@ -2449,11 +1934,7 @@ def _prior_forecast_samples(
         if not isinstance(protocol_payload, Mapping):
             raise ValueError("Historical Outcome Target Protocol payload is missing")
         protocol = OutcomeTargetProtocol.from_canonical_dict(protocol_payload)
-        target = next(
-            item
-            for item in protocol.targets
-            if item.checkpoint is OutcomeCheckpoint.TIME_1030
-        )
+        target = next(item for item in protocol.targets if item.checkpoint is OutcomeCheckpoint.TIME_1030)
         matching = tuple(
             TargetOutcomeLabel.from_canonical_dict(item)
             for item in _objects(component.payload.get("labels"), "outcome labels")
@@ -2466,10 +1947,7 @@ def _prior_forecast_samples(
         if len(matching) != 1:
             raise ValueError("Historical Outcome label identity is ambiguous")
         label = matching[0]
-        usable = all(
-            item is not None
-            for item in (label.checkpoint_return, label.mfe, label.mae)
-        )
+        usable = all(item is not None for item in (label.checkpoint_return, label.mfe, label.mae))
         sample_identity = canonical_hash(
             {
                 "outcome_component_id": str(component.component_id),
@@ -2486,27 +1964,13 @@ def _prior_forecast_samples(
             target_id=TargetId(str(configuration.target_contract.target_id)),
             sample_decision_time=DecisionTime(label.label_interval_start),
             available_at=AvailabilityTime(label.outcome_available_at),
-            observation_status=(
-                EntryPathObservationStatus.AVAILABLE
-                if usable
-                else EntryPathObservationStatus.NOT_YET_OBSERVED
-            ),
+            observation_status=(EntryPathObservationStatus.AVAILABLE if usable else EntryPathObservationStatus.NOT_YET_OBSERVED),
             observation_reason_code=(
-                EntryPathReasonCode.OUTCOME_RESOLVED
-                if usable
-                else EntryPathReasonCode.EVIDENCE_COVERAGE_NOT_COMPLETE
+                EntryPathReasonCode.OUTCOME_RESOLVED if usable else EntryPathReasonCode.EVIDENCE_COVERAGE_NOT_COMPLETE
             ),
-            realized_mfe=(
-                None if label.mfe is None else max(0.0, float(label.mfe))
-            ),
-            realized_mae=(
-                None if label.mae is None else min(0.0, float(label.mae))
-            ),
-            realized_return=(
-                None
-                if label.checkpoint_return is None
-                else float(label.checkpoint_return)
-            ),
+            realized_mfe=(None if label.mfe is None else max(0.0, float(label.mfe))),
+            realized_mae=(None if label.mae is None else min(0.0, float(label.mae))),
+            realized_return=(None if label.checkpoint_return is None else float(label.checkpoint_return)),
             schema_version=PATH_FORECAST_SAMPLE_SCHEMA,
         )
         samples.append(sample)
@@ -2521,9 +1985,7 @@ def _prior_forecast_samples(
     return ordered, event_ends, _references(tuple(sources))
 
 
-def _strategy_policy(
-    target: TargetDefinition, created_at: datetime
-) -> StrategyEconomicsPolicy:
+def _strategy_policy(target: TargetDefinition, created_at: datetime) -> StrategyEconomicsPolicy:
     return StrategyEconomicsPolicy.create(
         policy_version=f"phase-e-{target.checkpoint.value}-engineering-cost-v1",
         prediction_target=target,
@@ -2571,32 +2033,20 @@ def _capacity_protocol(created_at: datetime) -> LiquidityCapacityProtocol:
     )
 
 
-def _canonical_outcome_bars(
-    bars: tuple[HistoricalNormalizedBar, ...], next_session: date
-) -> tuple[CanonicalMarketBar, ...]:
+def _canonical_outcome_bars(bars: tuple[HistoricalNormalizedBar, ...], next_session: date) -> tuple[CanonicalMarketBar, ...]:
     result: list[CanonicalMarketBar] = []
-    symbols = sorted(
-        {item.symbol for item in bars if item.market_date == next_session}
-    )
+    symbols = sorted({item.symbol for item in bars if item.market_date == next_session})
     for symbol in symbols:
         rows = tuple(
             sorted(
-                (
-                    item
-                    for item in bars
-                    if item.symbol == symbol
-                    and item.market_date == next_session
-                    and item.open is not None
-                ),
+                (item for item in bars if item.symbol == symbol and item.market_date == next_session and item.open is not None),
                 key=lambda item: (item.timeframe.value, item.event_start),
             )
         )
         result.extend(
             _canonical_bars(
                 rows,
-                asset_type=(
-                    AssetType.ETF if _is_etf_symbol(symbol) else AssetType.A_SHARE
-                ),
+                asset_type=(AssetType.ETF if _is_etf_symbol(symbol) else AssetType.A_SHARE),
             )
         )
     return tuple(sorted(result, key=lambda item: (item.symbol, item.event_start)))
@@ -2622,40 +2072,23 @@ def _decision_reference_price(
     daily = tuple(
         item
         for item in bars
-        if item.symbol == symbol
-        and item.timeframe is Timeframe.DAILY
-        and item.event_end <= decision_time
-        and item.close is not None
+        if item.symbol == symbol and item.timeframe is Timeframe.DAILY and item.event_end <= decision_time and item.close is not None
     )
     return None if not daily else daily[-1].close
 
 
-def _market_conditions(
-    bars: tuple[HistoricalNormalizedBar, ...], symbol: str, market_date: date
-) -> tuple[OutcomeMarketCondition, ...]:
-    selected = tuple(
-        item
-        for item in bars
-        if item.symbol == symbol and item.market_date == market_date
-    )
+def _market_conditions(bars: tuple[HistoricalNormalizedBar, ...], symbol: str, market_date: date) -> tuple[OutcomeMarketCondition, ...]:
+    selected = tuple(item for item in bars if item.symbol == symbol and item.market_date == market_date)
     if not selected:
         return (OutcomeMarketCondition.MISSING_QUOTE,)
-    if any(
-        item.trading_status is HistoricalTradingStatus.SUSPENDED
-        for item in selected
-    ):
+    if any(item.trading_status is HistoricalTradingStatus.SUSPENDED for item in selected):
         return (OutcomeMarketCondition.SUSPENDED,)
     conditions = {OutcomeMarketCondition.TRADING}
-    daily = next(
-        (item for item in selected if item.timeframe is Timeframe.DAILY), None
-    )
+    daily = next((item for item in selected if item.timeframe is Timeframe.DAILY), None)
     prior = tuple(
         item
         for item in bars
-        if item.symbol == symbol
-        and item.timeframe is Timeframe.DAILY
-        and item.market_date < market_date
-        and item.close is not None
+        if item.symbol == symbol and item.timeframe is Timeframe.DAILY and item.market_date < market_date and item.close is not None
     )
     if daily is not None and daily.open is not None and prior:
         previous_close = prior[-1].close
@@ -2692,9 +2125,7 @@ def _execution_observation(
         phase=phase,
         symbol=symbol,
         price=price,
-        market_conditions=tuple(
-            sorted(set(market_conditions), key=lambda item: item.value)
-        ),
+        market_conditions=tuple(sorted(set(market_conditions), key=lambda item: item.value)),
         effective_at=effective_at,
         available_at=available_at,
         source_reference=source_reference,
@@ -2732,40 +2163,23 @@ def _research_panel_rows(
     outcome: HistoricalSessionComponent,
 ) -> tuple[dict[str, Any], ...]:
     feature_values = _panel_feature_values(feature)
-    signal_by_symbol = {
-        str(item["symbol"]): item
-        for item in _objects(signal.payload.get("snapshots"), "signal snapshots")
-    }
+    signal_by_symbol = {str(item["symbol"]): item for item in _objects(signal.payload.get("snapshots"), "signal snapshots")}
     forecast_by_symbol = {
-        str(_mapping(item.get("forecast"), "forecast")["symbol"]): _mapping(
-            item.get("forecast"), "forecast"
-        )
+        str(_mapping(item.get("forecast"), "forecast")["symbol"]): _mapping(item.get("forecast"), "forecast")
         for item in _objects(forecast.payload.get("forecasts"), "forecasts")
     }
-    protocol = OutcomeTargetProtocol.from_canonical_dict(
-        _mapping(outcome.payload.get("target_protocol"), "target protocol")
-    )
-    target = next(
-        item
-        for item in protocol.targets
-        if item.checkpoint is OutcomeCheckpoint.TIME_1030
-    )
+    protocol = OutcomeTargetProtocol.from_canonical_dict(_mapping(outcome.payload.get("target_protocol"), "target protocol"))
+    target = next(item for item in protocol.targets if item.checkpoint is OutcomeCheckpoint.TIME_1030)
     labels = {
         label.symbol: label
-        for label in (
-            TargetOutcomeLabel.from_canonical_dict(item)
-            for item in _objects(outcome.payload.get("labels"), "outcome labels")
-        )
+        for label in (TargetOutcomeLabel.from_canonical_dict(item) for item in _objects(outcome.payload.get("labels"), "outcome labels"))
         if label.target.artifact_id == target.target_id
     }
     economics = {
         str(item["symbol"]): item
-        for item in _objects(
-            outcome.payload.get("strategy_economics"), "strategy economics"
-        )
+        for item in _objects(outcome.payload.get("strategy_economics"), "strategy economics")
         if isinstance(item.get("target_label_reference"), Mapping)
-        and str(item["target_label_reference"].get("artifact_id"))
-        in {str(label.label_id) for label in labels.values()}
+        and str(item["target_label_reference"].get("artifact_id")) in {str(label.label_id) for label in labels.values()}
     }
     market_state = str(market.payload.get("market_state", "DATA_INSUFFICIENT"))
     volatility = str(market.payload.get("market_volatility", "UNKNOWN"))
@@ -2773,16 +2187,10 @@ def _research_panel_rows(
     etf_score = (
         None
         if not etf_observations
-        else (
-            Decimal(str(etf_observations[0].get("relative_strength", 0)))
-            + Decimal(str(etf_observations[0].get("amount_expansion", 0)))
-        )
+        else (Decimal(str(etf_observations[0].get("relative_strength", 0))) + Decimal(str(etf_observations[0].get("amount_expansion", 0))))
         / Decimal("2")
     )
-    pool_membership = {
-        str(item["symbol"]): bool(item["included"])
-        for item in _objects(pool.payload.get("membership"), "pool membership")
-    }
+    pool_membership = {str(item["symbol"]): bool(item["included"]) for item in _objects(pool.payload.get("membership"), "pool membership")}
     records = _objects(candidate.payload.get("records"), "candidate records")
     rows: list[dict[str, Any]] = []
     for record in records:
@@ -2804,49 +2212,23 @@ def _research_panel_rows(
                 "factor_values": {
                     "price": _decimal_string(values.get("return_3")),
                     "volume": _decimal_string(values.get("amount_ratio_5")),
-                    "market_regime": _decimal_string(
-                        record.get("market_regime_score")
-                    ),
+                    "market_regime": _decimal_string(record.get("market_regime_score")),
                     "etf": _decimal_string(etf_score),
                     "theme": _decimal_string(record.get("theme_score")),
-                    "capital": _decimal_string(
-                        record.get("capital_evolution_score")
-                    ),
-                    "dynamic_pool": (
-                        "1" if pool_membership.get(symbol, False) else "0"
-                    ),
-                    "candidate": _decimal_string(
-                        record.get("candidate_discovery_score")
-                    ),
-                    "signal": _decimal_string(
-                        None
-                        if symbol not in signal_by_symbol
-                        else signal_by_symbol[symbol].get("signal_score")
-                    ),
+                    "capital": _decimal_string(record.get("capital_evolution_score")),
+                    "dynamic_pool": ("1" if pool_membership.get(symbol, False) else "0"),
+                    "candidate": _decimal_string(record.get("candidate_discovery_score")),
+                    "signal": _decimal_string(None if symbol not in signal_by_symbol else signal_by_symbol[symbol].get("signal_score")),
                     "forecast": _decimal_string(median_forecast),
                 },
-                "target_return": (
-                    None
-                    if label is None
-                    else _decimal_string(label.checkpoint_return)
-                ),
+                "target_return": (None if label is None else _decimal_string(label.checkpoint_return)),
                 "mfe": None if label is None else _decimal_string(label.mfe),
                 "mae": None if label is None else _decimal_string(label.mae),
-                "gross_return": (
-                    None if result is None else result.get("gross_return")
-                ),
-                "cost_return": (
-                    None if result is None else result.get("cost_return")
-                ),
-                "net_return": (
-                    None if result is None else result.get("net_return")
-                ),
-                "economics_status": (
-                    "NOT_ESTIMABLE" if result is None else str(result["status"])
-                ),
-                "capacity_ceiling": (
-                    None if capacity is None else str(capacity)
-                ),
+                "gross_return": (None if result is None else result.get("gross_return")),
+                "cost_return": (None if result is None else result.get("cost_return")),
+                "net_return": (None if result is None else result.get("net_return")),
+                "economics_status": ("NOT_ESTIMABLE" if result is None else str(result["status"])),
+                "capacity_ceiling": (None if capacity is None else str(capacity)),
                 "market_regime": market_state,
                 "liquidity_bucket": _liquidity_bucket(capacity),
                 "market_cap_bucket": "NOT_ESTIMABLE",
@@ -2878,11 +2260,7 @@ def _forecast_median(payload: Mapping[str, Any] | None) -> object:
         return None
     quantiles = _objects(payload.get("return_quantiles"), "return quantiles")
     return next(
-        (
-            item.get("return_value")
-            for item in quantiles
-            if float(item.get("probability", -1)) == 0.5
-        ),
+        (item.get("return_value") for item in quantiles if float(item.get("probability", -1)) == 0.5),
         None,
     )
 
@@ -2898,9 +2276,7 @@ def _liquidity_bucket(capacity: Decimal | None) -> str:
 
 
 def _mean_decimal_text(values: Any) -> str | None:
-    numbers = tuple(
-        Decimal(str(item)) for item in values if item is not None
-    )
+    numbers = tuple(Decimal(str(item)) for item in values if item is not None)
     return None if not numbers else str(sum(numbers, Decimal("0")) / len(numbers))
 
 

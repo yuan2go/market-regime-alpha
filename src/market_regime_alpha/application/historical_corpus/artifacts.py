@@ -59,9 +59,7 @@ class HistoricalPartitionDescriptor:
     schema_version: str | None
 
     @classmethod
-    def from_reference_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> HistoricalPartitionDescriptor:
+    def from_reference_dict(cls, payload: Mapping[str, Any]) -> HistoricalPartitionDescriptor:
         return cls(
             partition_id=ArtifactId(str(payload["partition_id"])),
             content_hash=str(payload["content_hash"]),
@@ -74,9 +72,7 @@ class HistoricalPartitionDescriptor:
             row_count=int(payload["row_count"]),
             symbol_count=int(payload["symbol_count"]),
             relative_path=str(payload["relative_path"]),
-            schema_version=(
-                None if "schema_version" not in payload else str(payload["schema_version"])
-            ),
+            schema_version=(None if "schema_version" not in payload else str(payload["schema_version"])),
         )
 
     def __post_init__(self) -> None:
@@ -159,11 +155,7 @@ def publish_historical_package(
     """Validate, hash and atomically publish one immutable owner package."""
 
     owner.verify_identity()
-    family = (
-        artifact_root.resolve()
-        / "historical-corpus"
-        / owner.artifact_kind.value.lower()
-    )
+    family = artifact_root.resolve() / "historical-corpus" / owner.artifact_kind.value.lower()
     family.mkdir(parents=True, exist_ok=True)
     final = family / str(owner.owner_id)
     if final.exists():
@@ -188,21 +180,13 @@ def publish_historical_package(
         )
         for partition in owner.partitions:
             _write_partition(stage / partition.relative_path, partition)
-        physical_files = tuple(
-            sorted(
-                item.relative_to(stage).as_posix()
-                for item in stage.rglob("*")
-                if item.is_file()
-            )
-        )
+        physical_files = tuple(sorted(item.relative_to(stage).as_posix() for item in stage.rglob("*") if item.is_file()))
         _write_json(
             stage / "SHA256SUMS.json",
             {name: _file_hash(stage / name) for name in physical_files},
         )
         _fsync_tree(stage)
-        verified = _load_verified_historical_package(
-            stage, enforce_directory_identity=False
-        )
+        verified = _load_verified_historical_package(stage, enforce_directory_identity=False)
         if verified.owner != owner:
             raise ValueError("staged Historical package semantic mismatch")
         if failure_injector is not None:
@@ -231,15 +215,10 @@ def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
     checksums_payload = _read_object(root / "SHA256SUMS.json")
     checksums = {str(name): str(digest) for name, digest in checksums_payload.items()}
     if len(checksums) != len(checksums_payload) or any(
-        not isinstance(name, str) or not isinstance(digest, str)
-        for name, digest in checksums_payload.items()
+        not isinstance(name, str) or not isinstance(digest, str) for name, digest in checksums_payload.items()
     ):
         raise ValueError("Historical checksum manifest is invalid")
-    actual_files = {
-        item.relative_to(root).as_posix()
-        for item in root.rglob("*")
-        if item.is_file()
-    }
+    actual_files = {item.relative_to(root).as_posix() for item in root.rglob("*") if item.is_file()}
     if actual_files != {*checksums, "SHA256SUMS.json"}:
         raise ValueError("Historical package exact file set mismatch")
     for name in ("manifest.json", "encoding.json"):
@@ -253,11 +232,7 @@ def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
     raw_refs = manifest.get("partitions")
     if not isinstance(raw_refs, list) or any(not isinstance(item, Mapping) for item in raw_refs):
         raise ValueError("Historical partition manifest is invalid")
-    semantic_payload = {
-        key: value
-        for key, value in manifest.items()
-        if key not in {"owner_id", "content_hash"}
-    }
+    semantic_payload = {key: value for key, value in manifest.items() if key not in {"owner_id", "content_hash"}}
     content_hash = str(manifest.get("content_hash"))
     owner_id = str(manifest.get("owner_id"))
     if canonical_hash(semantic_payload) != content_hash:
@@ -272,19 +247,14 @@ def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
         raise ValueError("Historical package logical identity mismatch")
     if root.name != owner_id:
         raise ValueError("Historical package directory identity mismatch")
-    partitions = tuple(
-        HistoricalPartitionDescriptor.from_reference_dict(item) for item in raw_refs
-    )
+    partitions = tuple(HistoricalPartitionDescriptor.from_reference_dict(item) for item in raw_refs)
     if not partitions:
         raise ValueError("Historical package index requires partitions")
     if len({str(item.partition_id) for item in partitions}) != len(partitions):
         raise ValueError("Historical package partition identities are not unique")
     artifact_kind = HistoricalArtifactKind(str(manifest["artifact_kind"]))
     bucket_count = int(manifest["bucket_count"])
-    if any(
-        item.artifact_kind is not artifact_kind or item.bucket_count != bucket_count
-        for item in partitions
-    ):
+    if any(item.artifact_kind is not artifact_kind or item.bucket_count != bucket_count for item in partitions):
         raise ValueError("Historical package partition contract mismatch")
     expected_files = {
         "manifest.json",
@@ -294,24 +264,14 @@ def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
     if set(checksums) != expected_files:
         raise ValueError("Historical checksum coverage mismatch")
     parent_payload = manifest.get("parent_reference")
-    parent_reference = (
-        None
-        if parent_payload is None
-        else ValidationArtifactReference.from_canonical_dict(parent_payload)
-    )
+    parent_reference = None if parent_payload is None else ValidationArtifactReference.from_canonical_dict(parent_payload)
     ordered_checksums = tuple(sorted(checksums.items()))
     return HistoricalPackageIndex(
         root=root,
-        reference=ValidationArtifactReference(
-            artifact_kind.value, ArtifactId(owner_id), content_hash
-        ),
+        reference=ValidationArtifactReference(artifact_kind.value, ArtifactId(owner_id), content_hash),
         artifact_kind=artifact_kind,
         provider_id=str(manifest["provider_id"]),
-        normalization_version=(
-            None
-            if manifest.get("normalization_version") is None
-            else str(manifest["normalization_version"])
-        ),
+        normalization_version=(None if manifest.get("normalization_version") is None else str(manifest["normalization_version"])),
         parent_reference=parent_reference,
         first_market_date=date.fromisoformat(str(manifest["first_market_date"])),
         last_market_date=date.fromisoformat(str(manifest["last_market_date"])),
@@ -352,24 +312,17 @@ def scan_historical_package(
             raise ValueError("Historical partition path escapes package")
         expected = checksum_by_path.get(item.relative_path)
         if expected is None or _file_hash(candidate) != expected:
-            raise ValueError(
-                f"Historical package checksum mismatch: {item.relative_path}"
-            )
+            raise ValueError(f"Historical package checksum mismatch: {item.relative_path}")
         paths.append(candidate)
         verified_bytes += candidate.stat().st_size
     projected_columns = tuple(
         sorted(
             {
-                "event_start",
                 "logical_record_schema",
                 "market_date",
                 "partition_hash",
                 "partition_id",
-                "physical_schema",
-                "record_hash",
-                "record_id",
                 "record_json",
-                "retrieved_at",
                 "symbol",
                 "timeframe",
             }
@@ -397,10 +350,10 @@ def scan_historical_package(
         batch_count += 1
         maximum_batch = max(maximum_batch, batch.num_rows)
         if len(records) + batch.num_rows > max_rows:
-            raise ValueError(
-                "Historical selective read exceeds max_rows; narrow the query"
-            )
-        for row in batch.to_pylist():
+            raise ValueError("Historical selective read exceeds max_rows; narrow the query")
+        columns = {name: batch.column(batch.schema.get_field_index(name)).to_pylist() for name in projected_columns}
+        for row_index in range(batch.num_rows):
+            row = {name: values[row_index] for name, values in columns.items()}
             descriptor = descriptor_by_id.get(str(row["partition_id"]))
             if descriptor is None or row["partition_hash"] != descriptor.content_hash:
                 raise ValueError("Historical Parquet partition identity mismatch")
@@ -427,17 +380,10 @@ def _load_verified_historical_package(
     if not root.is_dir():
         raise ValueError("Historical package path is not a directory")
     checksums_payload = _read_object(root / "SHA256SUMS.json")
-    if any(
-        not isinstance(name, str) or not isinstance(digest, str)
-        for name, digest in checksums_payload.items()
-    ):
+    if any(not isinstance(name, str) or not isinstance(digest, str) for name, digest in checksums_payload.items()):
         raise ValueError("Historical checksum manifest is invalid")
     checksums = {str(name): str(digest) for name, digest in checksums_payload.items()}
-    actual_files = {
-        item.relative_to(root).as_posix()
-        for item in root.rglob("*")
-        if item.is_file()
-    }
+    actual_files = {item.relative_to(root).as_posix() for item in root.rglob("*") if item.is_file()}
     if actual_files != {*checksums, "SHA256SUMS.json"}:
         raise ValueError("Historical package exact file set mismatch")
     for name, digest in checksums.items():
@@ -450,9 +396,7 @@ def _load_verified_historical_package(
     raw_refs = manifest.get("partitions")
     if not isinstance(raw_refs, list) or any(not isinstance(item, Mapping) for item in raw_refs):
         raise ValueError("Historical partition manifest is invalid")
-    partitions = tuple(
-        _read_partition(root=root, reference=item) for item in raw_refs
-    )
+    partitions = tuple(_read_partition(root=root, reference=item) for item in raw_refs)
     owner = HistoricalDataOwner.from_canonical_dict(manifest, partitions=partitions)
     if (
         encoding.get("logical_owner_id") != str(owner.owner_id)
@@ -549,11 +493,7 @@ def _read_partition(
         reference,
         records=tuple(records),
     )
-    if any(
-        row["partition_id"] != str(partition.partition_id)
-        or row["partition_hash"] != partition.content_hash
-        for row in rows
-    ):
+    if any(row["partition_id"] != str(partition.partition_id) or row["partition_hash"] != partition.content_hash for row in rows):
         raise ValueError("Historical Parquet partition identity mismatch")
     return partition
 
@@ -571,7 +511,7 @@ def _event_start(item: HistoricalRawRequest | HistoricalNormalizedBar) -> str | 
 
 
 def _decode_record(row: Mapping[str, Any]) -> HistoricalRawRequest | HistoricalNormalizedBar:
-    if row["physical_schema"] != HISTORICAL_PARQUET_SCHEMA:
+    if "physical_schema" in row and row["physical_schema"] != HISTORICAL_PARQUET_SCHEMA:
         raise ValueError("Historical Parquet row schema mismatch")
     payload = json.loads(str(row["record_json"]))
     schema = str(row["logical_record_schema"])
@@ -582,15 +522,16 @@ def _decode_record(row: Mapping[str, Any]) -> HistoricalRawRequest | HistoricalN
         record = HistoricalNormalizedBar.from_canonical_dict(payload)
     else:
         raise ValueError("unsupported Historical logical record schema")
-    if (
-        str(_record_id(record)) != row["record_id"]
-        or record.content_hash != row["record_hash"]
-        or record.symbol != row["symbol"]
-        or record.timeframe.value != row["timeframe"]
-        or _record_date(record).isoformat() != row["market_date"]
-        or record.retrieved_at.isoformat() != row["retrieved_at"]
-        or _event_start(record) != row["event_start"]
-    ):
+    expected_projection = {
+        "record_id": str(_record_id(record)),
+        "record_hash": record.content_hash,
+        "symbol": record.symbol,
+        "timeframe": record.timeframe.value,
+        "market_date": _record_date(record).isoformat(),
+        "retrieved_at": record.retrieved_at.isoformat(),
+        "event_start": _event_start(record),
+    }
+    if any(name in row and row[name] != expected for name, expected in expected_projection.items()):
         raise ValueError("Historical Parquet row projection mismatch")
     return record
 
