@@ -235,28 +235,34 @@ class HistoricalWindowReader:
         )
         if first > last:
             return (), ()
-        by_symbol: dict[str, list[HistoricalNormalizedBar]] = {symbol: [] for symbol in requested_symbols}
+        data_slice = self._read_normalized(
+            HistoricalReadQuery.create(
+                reference=reference,
+                timeframes=(Timeframe.DAILY,),
+                first_market_date=first,
+                last_market_date=last,
+                symbols=requested_symbols,
+                max_rows=self._maximum_daily_rows,
+            ),
+            record_lineage=False,
+        )
+        self._record_lineage(_slice_lineage(data_slice))
+        by_symbol: dict[str, list[HistoricalNormalizedBar]] = {
+            symbol: [] for symbol in requested_symbols
+        }
         dates: set[date] = set()
-        for year, month in reversed(_month_keys(first, last)):
-            cached = self._daily_month(
-                reference,
-                year,
-                month,
-                requested_symbols,
-            )
-            self._record_lineage(cached.read_lineage)
-            for item in reversed(cached.records):
-                values = by_symbol.get(item.symbol)
-                if (
-                    values is not None
-                    and item.timeframe is Timeframe.DAILY
-                    and item.market_date <= last
-                    and len(values) < self._daily_history_sessions
-                ):
-                    values.append(item)
-                    dates.add(item.market_date)
-            if all(len(values) >= self._daily_history_sessions for values in by_symbol.values()):
-                break
+        daily_records = tuple(
+            item
+            for item in data_slice.records
+            if isinstance(item, HistoricalNormalizedBar)
+            and item.timeframe is Timeframe.DAILY
+            and item.market_date <= last
+        )
+        for item in reversed(sorted(daily_records, key=_bar_key)):
+            values = by_symbol.get(item.symbol)
+            if values is not None and len(values) < self._daily_history_sessions:
+                values.append(item)
+                dates.add(item.market_date)
         records = tuple(item for symbol in requested_symbols for item in by_symbol[symbol])
         return tuple(sorted(records, key=_bar_key)), tuple(sorted(dates))
 

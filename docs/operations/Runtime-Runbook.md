@@ -102,6 +102,12 @@ reloads exact command/session/receipt/component owners. Feature through Forecast
 can see only rows with `event_end <= DecisionTime`; next-session bars enter only
 Outcome.
 
+Daily feature history uses one predicate-pushed read whose first date is capped
+at 180 calendar days before the Decision date and whose per-symbol result is
+then capped at the frozen 61-session Canonical requirement. A sparse, newly
+listed or suspended symbol therefore remains explicitly history-insufficient;
+it cannot force a scan back to the beginning of a multi-year package.
+
 After a terminal run, `historical-evidence --run-id ... --artifact-root ...`
 persists Corpus Summary, cumulative Alpha Ablation, Strategy Economics,
 Portfolio Performance and owner-resolved Exploratory Model evidence. Repeating

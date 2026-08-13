@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from market_regime_alpha.application.historical_corpus.historical_window import (
     HistoricalDatasetWindowIndex,
     HistoricalWindowReader,
-    _CachedDailyMonth,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -34,18 +33,25 @@ def test_sparse_symbol_daily_window_never_scans_before_declared_bound() -> None:
             last_market_date=date(2025, 7, 14),
         )
     )
-    reads: list[tuple[int, int]] = []
+    queries = []
 
-    def sparse_month(
-        _reference: ValidationArtifactReference,
-        year: int,
-        month: int,
-        _symbols: tuple[str, ...],
-    ) -> _CachedDailyMonth:
-        reads.append((year, month))
-        return _CachedDailyMonth(records=(), daily_dates=(), read_lineage={})
+    class Metrics:
+        @staticmethod
+        def to_canonical_dict() -> dict[str, object]:
+            return {}
 
-    reader._daily_month = sparse_month  # type: ignore[method-assign]  # noqa: SLF001
+    def sparse_read(query, *, record_lineage):
+        assert record_lineage is False
+        queries.append(query)
+        return SimpleNamespace(
+            query=query,
+            package=SimpleNamespace(reference=reference, checksums=()),
+            partitions=(),
+            records=(),
+            metrics=Metrics(),
+        )
+
+    reader._read_normalized = sparse_read  # type: ignore[method-assign]  # noqa: SLF001
     records, dates = reader._daily_window(  # noqa: SLF001
         reference,
         date(2025, 7, 14),
@@ -54,12 +60,6 @@ def test_sparse_symbol_daily_window_never_scans_before_declared_bound() -> None:
 
     assert records == ()
     assert dates == ()
-    assert reads == [
-        (2025, 7),
-        (2025, 6),
-        (2025, 5),
-        (2025, 4),
-        (2025, 3),
-        (2025, 2),
-        (2025, 1),
-    ]
+    assert len(queries) == 1
+    assert queries[0].first_market_date == date(2025, 1, 16)
+    assert queries[0].last_market_date == date(2025, 7, 14)
