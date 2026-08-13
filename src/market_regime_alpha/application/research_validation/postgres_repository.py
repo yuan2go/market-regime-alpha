@@ -24,6 +24,9 @@ from market_regime_alpha.application.research_validation.formal_protocol_compone
 )
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleDataset
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleQualification
+from market_regime_alpha.application.research_validation.formal_protocol import (
+    ResearchExperimentDefinition,
+)
 from market_regime_alpha.core.identity import ArtifactId, TargetId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.forecasting.path import PathForecastSample
@@ -64,6 +67,7 @@ class PostgresResearchValidationRepository:
             "HISTORICAL_SAMPLE_DATASET",
             "PANEL_ENRICHMENT",
             "THRESHOLD_POLICY",
+            "RESEARCH_EXPERIMENT_DEFINITION",
         }:
             raise ValueError(
                 f"{artifact_kind} requires its typed owner-specific writer"
@@ -110,6 +114,54 @@ class PostgresResearchValidationRepository:
                 raise ValueError("Research Validation artifact identity conflict")
 
         self._factory.run_transaction(operation)
+
+    def record_historical_experiment_definition(
+        self,
+        definition: ResearchExperimentDefinition,
+        *,
+        recorded_at: datetime,
+    ) -> ResearchExperimentDefinition:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                definition.definition_id,
+                definition.definition_hash,
+                "RESEARCH_EXPERIMENT_DEFINITION",
+                "EXPLORATORY",
+                definition.identity_payload(),
+                recorded_at,
+            )
+        )
+        return self.get_historical_experiment_definition(
+            definition.definition_id
+        )
+
+    def get_historical_experiment_definition(
+        self,
+        definition_id: ArtifactId,
+    ) -> ResearchExperimentDefinition:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT artifact_hash, artifact_kind, payload_json "
+                "FROM research_validation_artifact WHERE artifact_id = %s",
+                (str(definition_id),),
+            ).fetchone()
+        if (
+            row is None
+            or str(row[1]) != "RESEARCH_EXPERIMENT_DEFINITION"
+            or not isinstance(row[2], dict)
+        ):
+            raise KeyError(str(definition_id))
+        definition = ResearchExperimentDefinition.from_canonical_dict(
+            {
+                "definition_id": str(definition_id),
+                "definition_hash": str(row[0]),
+                **row[2],
+            }
+        )
+        if definition.definition_hash != canonical_hash(row[2]):
+            raise ValueError("Historical Experiment Definition owner hash drift")
+        return definition
 
     def record_feature_definition_set(
         self, definition_set: FeatureDefinitionSet

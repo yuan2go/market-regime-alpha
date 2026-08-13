@@ -9,9 +9,11 @@ from market_regime_alpha.application.historical_research.contracts import (
     HistoricalResearchCommand,
 )
 from market_regime_alpha.application.historical_research.postgres_journal import (
+    E3_LONGITUDINAL_RUNTIME_CONTRACT,
     HistoricalResearchConflict,
     HistoricalRunSnapshot,
     HistoricalRunStatus,
+    PRE_E3_RUNTIME_CONTRACT,
     PostgresHistoricalResearchJournal,
 )
 from market_regime_alpha.application.research_session.kernel import (
@@ -113,23 +115,12 @@ class HistoricalResearchRunner:
     ) -> HistoricalRunSnapshot:
         if max_stage_commits is not None and max_stage_commits <= 0:
             raise ValueError("max_stage_commits must be positive")
-        snapshot = self._journal.get_run(run_id)
-        if _is_pre_e3_archive_command(snapshot.command):
-            if snapshot.status in {
-                HistoricalRunStatus.COMPLETE,
-                HistoricalRunStatus.COMPLETE_WITH_BLOCKS,
-            }:
-                return snapshot
-            raise HistoricalResearchConflict(
-                "Pre-E3 incomplete runs require their exact historical code revision; "
-                "current materialization is intentionally not substituted"
-            )
         return self._drain(run_id, max_stage_commits=max_stage_commits)
 
     def replay(self, *, run_id: ArtifactId) -> HistoricalReplayReport:
         snapshot = self._journal.get_run(run_id)
         mismatches: list[HistoricalReplayMismatch] = []
-        legacy = _is_pre_e3_archive_command(snapshot.command)
+        legacy = snapshot.runtime_contract_version == PRE_E3_RUNTIME_CONTRACT
         if legacy and snapshot.status not in {
             HistoricalRunStatus.COMPLETE,
             HistoricalRunStatus.COMPLETE_WITH_BLOCKS,
@@ -204,7 +195,22 @@ class HistoricalResearchRunner:
         max_stage_commits: int | None,
     ) -> HistoricalRunSnapshot:
         committed = 0
-        command = self._journal.get_run(run_id).command
+        snapshot = self._journal.get_run(run_id)
+        if snapshot.runtime_contract_version == PRE_E3_RUNTIME_CONTRACT:
+            if snapshot.status in {
+                HistoricalRunStatus.COMPLETE,
+                HistoricalRunStatus.COMPLETE_WITH_BLOCKS,
+            }:
+                return snapshot
+            raise HistoricalResearchConflict(
+                "Pre-E3 incomplete runs require their exact historical code revision; "
+                "current materialization is intentionally not substituted"
+            )
+        if snapshot.runtime_contract_version != E3_LONGITUDINAL_RUNTIME_CONTRACT:
+            raise HistoricalResearchConflict(
+                "Historical Runtime contract version is unsupported"
+            )
+        command = snapshot.command
         while max_stage_commits is None or committed < max_stage_commits:
             claim = self._journal.claim_next(run_id)
             if claim is None:
@@ -226,11 +232,3 @@ __all__ = [
     "HistoricalReplayReport",
     "HistoricalResearchRunner",
 ]
-
-
-def _is_pre_e3_archive_command(command: HistoricalResearchCommand) -> bool:
-    kinds = {item.artifact_kind for item in command.configuration_references}
-    return (
-        "FREE_RESEARCH_UNIVERSE" in kinds
-        and "HISTORICAL_CONSTITUENT_TIMELINE" not in kinds
-    )

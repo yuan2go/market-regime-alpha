@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
+import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -10,6 +12,10 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.universe.postgres_historical_facts import (
     HistoricalSecurityFactsConflict,
     PostgresHistoricalSecurityFactsRepository,
+)
+from market_regime_alpha.universe.historical_facts import (
+    HistoricalSecurityFact,
+    HistoricalSecurityFactKind,
 )
 from tests.universe.test_historical_security_facts import _owner
 
@@ -144,4 +150,82 @@ def test_historical_security_fact_scope_fails_absence_closed(
             symbols=("600000.SH", "600001.SH"),
             universe_references=owner.universe_scope_references,
             decision_date=date(2025, 6, 17),
+        )
+
+
+def test_historical_security_fact_projection_rejects_non_member_child(
+    postgres_factory,
+) -> None:
+    repository = PostgresHistoricalSecurityFactsRepository(postgres_factory)
+    owner = repository.publish(_owner())
+    extra = HistoricalSecurityFact.create(
+        fact_kind=HistoricalSecurityFactKind.INDUSTRY,
+        symbol="600000.SH",
+        effective_date=date(2025, 1, 1),
+        published_date=None,
+        values={"industry": "INJECTED", "classification": "INJECTED"},
+        source_reference=owner.facts[0].source_reference,
+    )
+
+    with postgres_factory.connection() as connection, pytest.raises(
+        psycopg.errors.RaiseException,
+        match="not a member of its owner",
+    ):
+        connection.execute(
+            """
+            INSERT INTO free_data_historical_security_fact(
+                owner_id, owner_hash, fact_id, fact_hash, symbol,
+                fact_kind, effective_date, published_date,
+                source_artifact_kind, source_artifact_id,
+                source_content_hash, payload_json
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                str(owner.owner_id),
+                owner.owner_hash,
+                str(extra.fact_id),
+                extra.fact_hash,
+                extra.symbol,
+                extra.fact_kind.value,
+                extra.effective_date,
+                extra.published_date,
+                extra.source_reference.artifact_kind,
+                str(extra.source_reference.artifact_id),
+                extra.source_reference.content_hash,
+                Jsonb(extra.to_canonical_dict()),
+            ),
+        )
+
+
+def test_historical_security_fact_projection_detects_missing_child(
+    postgres_factory,
+) -> None:
+    owner = PostgresHistoricalSecurityFactsRepository(postgres_factory).publish(_owner())
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            "ALTER TABLE free_data_historical_security_fact "
+            "DISABLE TRIGGER free_data_historical_security_fact_no_update"
+        )
+        connection.execute(
+            "DELETE FROM free_data_historical_security_fact "
+            "WHERE owner_id = %s AND fact_id = %s",
+            (str(owner.owner_id), str(owner.facts[0].fact_id)),
+        )
+        connection.execute(
+            "ALTER TABLE free_data_historical_security_fact "
+            "ENABLE TRIGGER free_data_historical_security_fact_no_update"
+        )
+
+    repository = PostgresHistoricalSecurityFactsRepository(
+        postgres_factory,
+        apply_migrations=False,
+    )
+    with pytest.raises(
+        HistoricalSecurityFactsConflict,
+        match="bounded projection digest diverged",
+    ):
+        repository.resolve_as_of(
+            owner.reference,
+            symbols=("600000.SH",),
+            decision_date=date(2025, 1, 2),
         )

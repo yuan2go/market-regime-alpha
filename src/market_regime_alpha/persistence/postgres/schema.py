@@ -341,6 +341,14 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
             "free_data_historical_security_fact_gap_no_update",
         ),
         (
+            "free_data_historical_security_fact",
+            "free_data_historical_security_fact_membership",
+        ),
+        (
+            "free_data_historical_security_fact_coverage_gap",
+            "free_data_historical_security_fact_gap_membership",
+        ),
+        (
             "historical_research_run",
             "historical_research_run_identity_immutable",
         ),

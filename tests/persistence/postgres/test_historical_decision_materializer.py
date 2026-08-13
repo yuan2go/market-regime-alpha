@@ -27,6 +27,9 @@ from market_regime_alpha.application.historical_corpus.evidence import (
 from market_regime_alpha.application.historical_corpus.evidence_producer import (
     HistoricalEvidenceProducer,
 )
+from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    create_phase_e3_historical_experiment,
+)
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
 )
@@ -201,14 +204,19 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         payload=context_payload,
         created_at=MATERIALIZED_AT,
     )
-    experiment_payload = {"phase-e": "integration"}
-    validation_repository.record(
-        artifact_id=ArtifactId("phase-e-experiment"),
-        artifact_hash=canonical_hash(experiment_payload),
-        artifact_kind="RESEARCH_EXPERIMENT_DEFINITION",
-        evidence_authority="ENGINEERING_ONLY",
-        payload=experiment_payload,
-        created_at=MATERIALIZED_AT,
+    with pytest.raises(ValueError, match="typed owner-specific writer"):
+        validation_repository.record(
+            artifact_id=ArtifactId("arbitrary-experiment-json"),
+            artifact_hash=canonical_hash({"phase-e": "arbitrary"}),
+            artifact_kind="RESEARCH_EXPERIMENT_DEFINITION",
+            evidence_authority="ENGINEERING_ONLY",
+            payload={"phase-e": "arbitrary"},
+            created_at=MATERIALIZED_AT,
+        )
+    experiment = create_phase_e3_historical_experiment(target_protocol)
+    validation_repository.record_historical_experiment_definition(
+        experiment,
+        recorded_at=MATERIALIZED_AT,
     )
     command = _command(
         normalized.reference,
@@ -223,6 +231,15 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         ),
         facts.reference,
         context_reference,
+        ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            experiment.definition_id,
+            experiment.definition_hash,
+        ),
+        (
+            experiment.feature_reference,
+            experiment.cost_policy_reference,
+        ),
     )
     journal = PostgresHistoricalResearchJournal(
         postgres_factory,
@@ -860,6 +877,8 @@ def _command(
     target_protocol: ValidationArtifactReference,
     facts: ValidationArtifactReference | None = None,
     context: ValidationArtifactReference | None = None,
+    experiment: ValidationArtifactReference | None = None,
+    methodology_references: tuple[ValidationArtifactReference, ...] = (),
 ) -> HistoricalResearchCommand:
     evidence_hash = canonical_hash({"phase-e": "integration"})
     return HistoricalResearchCommand.create(
@@ -876,15 +895,20 @@ def _command(
         decision_policy_id=ArtifactId("phase-e-decision-policy"),
         decision_policy_hash=evidence_hash,
         target_protocol_reference=target_protocol,
-        experiment_definition_reference=ValidationArtifactReference(
-            "RESEARCH_EXPERIMENT_DEFINITION",
-            ArtifactId("phase-e-experiment"),
-            evidence_hash,
+        experiment_definition_reference=(
+            experiment
+            if experiment is not None
+            else ValidationArtifactReference(
+                "RESEARCH_EXPERIMENT_DEFINITION",
+                ArtifactId("phase-e-experiment"),
+                evidence_hash,
+            )
         ),
         configuration_references=(
             normalized,
             universe,
             timeline,
+            *methodology_references,
             *((facts,) if facts is not None else ()),
             *((context,) if context is not None else ()),
         ),

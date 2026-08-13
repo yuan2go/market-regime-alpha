@@ -57,9 +57,15 @@ def test_sparse_symbol_daily_window_never_scans_before_declared_bound() -> None:
         date(2025, 7, 14),
         symbols=("688999.SH",),
     )
+    repeated = reader._daily_window(  # noqa: SLF001
+        reference,
+        date(2025, 7, 14),
+        symbols=("688999.SH",),
+    )
 
     assert records == ()
     assert dates == ()
+    assert repeated == (records, dates)
     assert len(queries) == 1
     assert queries[0].first_market_date == date(2025, 1, 16)
     assert queries[0].last_market_date == date(2025, 7, 14)

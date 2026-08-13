@@ -24,6 +24,11 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 from market_regime_alpha.application.historical_corpus.historical_window import (
     HistoricalWindowReader,
 )
+from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    PHASE_E3_TIMEZONE,
+    phase_e3_cost_policy_reference,
+    verify_phase_e3_historical_experiment,
+)
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
 )
@@ -445,15 +450,24 @@ class HistoricalDecisionMaterializer:
                 raise ValueError(
                     "Longitudinal Historical execution requires Experiment Authority"
                 )
-            experiment_payload = self._validation.get_payload(
-                request.experiment_definition_reference.artifact_id,
-                expected_kind="RESEARCH_EXPERIMENT_DEFINITION",
+            experiment = self._validation.get_historical_experiment_definition(
+                request.experiment_definition_reference.artifact_id
             )
             if (
-                canonical_hash(experiment_payload)
+                experiment.definition_hash
                 != request.experiment_definition_reference.content_hash
             ):
                 raise ValueError("Historical Experiment Definition hash mismatch")
+            target_protocol = self._load_target_protocol(request)
+            verify_phase_e3_historical_experiment(
+                experiment,
+                target_protocol=target_protocol,
+                decision_local_time=request.decision_time.astimezone(
+                    ZoneInfo(PHASE_E3_TIMEZONE)
+                ).time(),
+                timezone_name=PHASE_E3_TIMEZONE,
+                configuration_references=request.configuration_references,
+            )
         base_universe, universe_reference = self._active_universe(
             request.configuration_references,
             request.trading_date,
@@ -558,6 +572,11 @@ class HistoricalDecisionMaterializer:
                 universe_reference,
                 ValidationArtifactReference("RESEARCH_UNIVERSE_POLICY", policy.policy_id, policy.policy_hash),
                 ValidationArtifactReference("RUNTIME_SCOPE", scope.scope_id, scope.scope_hash),
+                *((
+                    request.experiment_definition_reference,
+                    experiment.feature_reference,
+                    experiment.cost_policy_reference,
+                ) if has_timeline else ()),
                 *((facts_reference,) if facts_reference is not None else ()),
             ),
             payload={
@@ -602,7 +621,17 @@ class HistoricalDecisionMaterializer:
                     component.reference,
                 )
             ),
-            input_references=_references((normalized_reference, universe_reference)),
+            input_references=_references(
+                (
+                    normalized_reference,
+                    universe_reference,
+                    *((
+                        request.experiment_definition_reference,
+                        experiment.feature_reference,
+                        experiment.cost_policy_reference,
+                    ) if has_timeline else ()),
+                )
+            ),
             completed_at=request.materialized_at,
             reason_codes=("HISTORICAL_DECISION_SCOPE_MATERIALIZED",),
         )
@@ -960,7 +989,11 @@ class HistoricalDecisionMaterializer:
             request=request,
             kind=HistoricalComponentKind.STRATEGY,
             source_max_event_time=source_max,
-            source_references=(signal.reference, forecast.reference),
+            source_references=(
+                signal.reference,
+                forecast.reference,
+                phase_e3_cost_policy_reference(),
+            ),
             payload={
                 "entry": "FROZEN_DECISION_REFERENCE",
                 "holding": "T_PLUS_ONE",
@@ -980,6 +1013,9 @@ class HistoricalDecisionMaterializer:
                     "impact_coefficient_bps": "8",
                     "participation_rate": "0.1",
                 },
+                "cost_policy_reference": (
+                    phase_e3_cost_policy_reference().to_canonical_dict()
+                ),
             },
             limitations=("COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",),
         )

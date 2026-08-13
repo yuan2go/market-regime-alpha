@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from hashlib import sha256
 from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
@@ -12,7 +13,7 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -45,6 +46,7 @@ class PostgresHistoricalSecurityFactsRepository:
         apply_migrations: bool = True,
     ) -> None:
         self._factory = factory
+        self._verified_record_sets: set[tuple[ArtifactId, str]] = set()
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
 
@@ -285,7 +287,7 @@ class PostgresHistoricalSecurityFactsRepository:
 
         if not symbols or symbols != tuple(sorted(set(symbols))):
             raise ValueError("Historical Security Fact symbols must be ordered")
-        self._verify_reference(reference)
+        self._acquisition_scope(reference)
         with self._factory.connection(read_only=True) as connection:
             industry_rows = connection.execute(
                 """
@@ -565,6 +567,7 @@ class PostgresHistoricalSecurityFactsRepository:
             raise HistoricalSecurityFactsConflict(
                 "Historical Security Facts identity envelope diverged"
             )
+        self._verify_record_set(reference, dict(row[5]))
         if (
             row[1] is None
             or row[2] is None
@@ -611,6 +614,66 @@ class PostgresHistoricalSecurityFactsRepository:
             frozenset(requested_symbols),
             frozenset(universe_references),
         )
+
+    def _verify_record_set(
+        self,
+        reference: ValidationArtifactReference,
+        identity_envelope: Mapping[str, Any],
+    ) -> None:
+        """Verify the bounded query projection once against its owner digests."""
+
+        cache_key = (reference.artifact_id, reference.content_hash)
+        if cache_key in self._verified_record_sets:
+            return
+        expected_fact_count = identity_envelope.get("fact_count")
+        expected_gap_count = identity_envelope.get("coverage_gap_count")
+        expected_fact_hash = identity_envelope.get("facts_hash")
+        expected_gap_hash = identity_envelope.get("coverage_gaps_hash")
+        if (
+            isinstance(expected_fact_count, bool)
+            or not isinstance(expected_fact_count, int)
+            or expected_fact_count <= 0
+            or isinstance(expected_gap_count, bool)
+            or not isinstance(expected_gap_count, int)
+            or expected_gap_count < 0
+            or not isinstance(expected_fact_hash, str)
+            or not isinstance(expected_gap_hash, str)
+        ):
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts record-set digest is invalid"
+            )
+        with self._factory.connection(read_only=True) as connection:
+            fact_count, fact_hash = _stream_projection_digest(
+                connection,
+                """
+                SELECT payload_json
+                FROM free_data_historical_security_fact
+                WHERE owner_id = %s AND owner_hash = %s
+                ORDER BY symbol, effective_date, fact_kind,
+                         published_date NULLS FIRST, fact_id
+                """,
+                reference,
+            )
+            gap_count, gap_hash = _stream_projection_digest(
+                connection,
+                """
+                SELECT payload_json
+                FROM free_data_historical_security_fact_coverage_gap
+                WHERE owner_id = %s AND owner_hash = %s
+                ORDER BY symbol, coverage_start, coverage_end, fact_kind, gap_id
+                """,
+                reference,
+            )
+        if (
+            fact_count != expected_fact_count
+            or fact_hash != expected_fact_hash
+            or gap_count != expected_gap_count
+            or gap_hash != expected_gap_hash
+        ):
+            raise HistoricalSecurityFactsConflict(
+                "Historical Security Facts bounded projection digest diverged"
+            )
+        self._verified_record_sets.add(cache_key)
 
     def _latest(
         self,
@@ -740,6 +803,35 @@ class PostgresHistoricalSecurityFactsRepository:
             != tuple(item.to_canonical_dict() for item in owner.coverage_gaps)
         ):
             raise HistoricalSecurityFactsConflict("Historical Security Facts PostgreSQL projection conflict")
+
+
+def _stream_projection_digest(
+    connection: Any,
+    query: str,
+    reference: ValidationArtifactReference,
+) -> tuple[int, str]:
+    """Hash an ordered JSON projection without retaining its object graph."""
+
+    digest = sha256()
+    digest.update(b"[")
+    count = 0
+    with connection.cursor() as cursor:
+        cursor.execute(
+            query,
+            (str(reference.artifact_id), reference.content_hash),
+        )
+        while batch := cursor.fetchmany(512):
+            for row in batch:
+                if not isinstance(row[0], Mapping):
+                    raise HistoricalSecurityFactsConflict(
+                        "Historical Security Facts child payload is invalid"
+                    )
+                if count:
+                    digest.update(b",")
+                digest.update(canonical_json(dict(row[0])).encode("utf-8"))
+                count += 1
+    digest.update(b"]")
+    return count, f"sha256:{digest.hexdigest()}"
 
 
 __all__ = [

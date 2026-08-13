@@ -47,6 +47,13 @@ class _CachedMinuteSession:
     read_lineage: Mapping[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class _CachedDailyWindow:
+    records: tuple[HistoricalNormalizedBar, ...]
+    daily_dates: tuple[date, ...]
+    read_lineage: Mapping[str, Any]
+
+
 class HistoricalWindowReader:
     """Own selective reads, bounded caches and their exact persisted lineage."""
 
@@ -60,6 +67,7 @@ class HistoricalWindowReader:
         daily_history_sessions: int = 61,
         daily_month_cache_size: int = 9,
         maximum_daily_lookback_calendar_days: int = 180,
+        daily_window_cache_size: int = 3,
     ) -> None:
         if maximum_daily_rows <= 0 or maximum_minute_session_rows <= 0:
             raise ValueError("Historical window row limits must be positive")
@@ -73,6 +81,10 @@ class HistoricalWindowReader:
             raise ValueError(
                 "Historical Daily lookback must allow the 61-session Canonical window"
             )
+        if daily_window_cache_size < 3:
+            raise ValueError(
+                "Historical Daily window cache must cover adjacent stages/sessions"
+            )
         self._repository = repository
         self._maximum_daily_rows = maximum_daily_rows
         self._maximum_minute_session_rows = maximum_minute_session_rows
@@ -82,6 +94,7 @@ class HistoricalWindowReader:
         self._maximum_daily_lookback_calendar_days = (
             maximum_daily_lookback_calendar_days
         )
+        self._daily_window_cache_size = daily_window_cache_size
         self._indexes: dict[ValidationArtifactReference, HistoricalDatasetWindowIndex] = {}
         self._daily_months: OrderedDict[
             tuple[ValidationArtifactReference, int, int, tuple[str, ...]],
@@ -90,6 +103,10 @@ class HistoricalWindowReader:
         self._minute_sessions: OrderedDict[
             tuple[ValidationArtifactReference, date, tuple[str, ...]],
             _CachedMinuteSession,
+        ] = OrderedDict()
+        self._daily_windows: OrderedDict[
+            tuple[ValidationArtifactReference, date, tuple[str, ...]],
+            _CachedDailyWindow,
         ] = OrderedDict()
         self._aggregate_metrics: HistoricalReadMetrics | None = None
         self._physical_read_count = 0
@@ -208,6 +225,11 @@ class HistoricalWindowReader:
             "daily_lookback_calendar_day_limit": (
                 self._maximum_daily_lookback_calendar_days
             ),
+            "daily_window_cache_limit": self._daily_window_cache_size,
+            "daily_window_cache_entries": len(self._daily_windows),
+            "daily_window_cached_row_count": sum(
+                len(item.records) for item in self._daily_windows.values()
+            ),
             "daily_month_cache_entries": len(self._daily_months),
             "daily_cached_row_count": sum(len(item.records) for item in self._daily_months.values()),
             "minute_session_cache_limit": self._minute_session_cache_size,
@@ -227,6 +249,12 @@ class HistoricalWindowReader:
         requested_symbols = tuple(sorted(set(symbols)))
         if not requested_symbols:
             raise ValueError("Historical Daily window requires symbols")
+        cache_key = (reference, market_date, requested_symbols)
+        cached_window = self._daily_windows.get(cache_key)
+        if cached_window is not None:
+            self._daily_windows.move_to_end(cache_key)
+            self._record_lineage(cached_window.read_lineage)
+            return cached_window.records, cached_window.daily_dates
         package = self.index(reference).package
         last = min(package.last_market_date, market_date)
         first = max(
@@ -246,7 +274,8 @@ class HistoricalWindowReader:
             ),
             record_lineage=False,
         )
-        self._record_lineage(_slice_lineage(data_slice))
+        read_lineage = _slice_lineage(data_slice)
+        self._record_lineage(read_lineage)
         by_symbol: dict[str, list[HistoricalNormalizedBar]] = {
             symbol: [] for symbol in requested_symbols
         }
@@ -263,8 +292,26 @@ class HistoricalWindowReader:
             if values is not None and len(values) < self._daily_history_sessions:
                 values.append(item)
                 dates.add(item.market_date)
-        records = tuple(item for symbol in requested_symbols for item in by_symbol[symbol])
-        return tuple(sorted(records, key=_bar_key)), tuple(sorted(dates))
+        records = tuple(
+            sorted(
+                (
+                    item
+                    for symbol in requested_symbols
+                    for item in by_symbol[symbol]
+                ),
+                key=_bar_key,
+            )
+        )
+        daily_dates = tuple(sorted(dates))
+        self._daily_windows[cache_key] = _CachedDailyWindow(
+            records,
+            daily_dates,
+            read_lineage,
+        )
+        self._daily_windows.move_to_end(cache_key)
+        while len(self._daily_windows) > self._daily_window_cache_size:
+            self._daily_windows.popitem(last=False)
+        return records, daily_dates
 
     def _daily_month(
         self,

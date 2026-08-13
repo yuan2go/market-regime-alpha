@@ -147,7 +147,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 080, `historical_experiment_definition`. Expected schema
+Expected head: migration 082, `historical_fact_projection_membership`. Expected schema
 catalog: 257 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS

@@ -5,12 +5,7 @@ import pytest
 from market_regime_alpha.application.historical_research.postgres_journal import (
     HistoricalResearchConflict,
     HistoricalRunStatus,
-)
-from market_regime_alpha.application.historical_research.contracts import (
-    HistoricalResearchCommand,
-)
-from market_regime_alpha.application.research_validation.common import (
-    ValidationArtifactReference,
+    PRE_E3_RUNTIME_CONTRACT,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.application.historical_research.runner import (
@@ -29,6 +24,25 @@ from tests.persistence.postgres.test_historical_research_journal import (
     MutableClock,
     _journal,
 )
+
+
+def _mark_as_migrated_pre_e3(postgres_factory, run_id: ArtifactId) -> None:
+    """Model migration 081's durable classification of an already-existing run."""
+
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            "ALTER TABLE historical_research_run "
+            "DISABLE TRIGGER historical_research_run_identity_immutable"
+        )
+        connection.execute(
+            "UPDATE historical_research_run SET runtime_contract_version = %s "
+            "WHERE run_id = %s",
+            (PRE_E3_RUNTIME_CONTRACT, str(run_id)),
+        )
+        connection.execute(
+            "ALTER TABLE historical_research_run "
+            "ENABLE TRIGGER historical_research_run_identity_immutable"
+        )
 
 
 def test_historical_runner_resumes_and_replays_without_mutation(postgres_factory) -> None:
@@ -132,27 +146,15 @@ def test_historical_replay_reports_owner_output_substitution(postgres_factory) -
 def test_pre_e3_terminal_run_uses_explicit_immutable_receipt_verification(
     postgres_factory,
 ) -> None:
-    values = _command().semantic_values()
-    legacy = HistoricalResearchCommand.create(
-        **{
-            **values,
-            "idempotency_key": "historical-pre-e3-immutable-v1",
-            "configuration_references": (
-                ValidationArtifactReference(
-                    "FREE_RESEARCH_UNIVERSE",
-                    ArtifactId("pre-e3-universe"),
-                    canonical_hash({"pre_e3": "universe"}),
-                ),
-                *values["configuration_references"],
-            ),
-        }
-    )
+    legacy = _command()
     journal = _journal(postgres_factory, MutableClock(CREATED_AT))
     runner = HistoricalResearchRunner(
         journal=journal,
         kernel=ResearchDecisionSessionKernel(DeterministicOwner()),
     )
     terminal = runner.run(command=legacy)
+    _mark_as_migrated_pre_e3(postgres_factory, legacy.run_id)
+    terminal = journal.get_run(legacy.run_id)
 
     class MustNotRecomputeOwner(DeterministicOwner):
         def compute_stage(self, **_):
@@ -171,27 +173,16 @@ def test_pre_e3_terminal_run_uses_explicit_immutable_receipt_verification(
 
 
 def test_pre_e3_incomplete_resume_fails_closed_without_exact_code(postgres_factory) -> None:
-    values = _command().semantic_values()
-    legacy = HistoricalResearchCommand.create(
-        **{
-            **values,
-            "idempotency_key": "historical-pre-e3-incomplete-v1",
-            "configuration_references": (
-                ValidationArtifactReference(
-                    "FREE_RESEARCH_UNIVERSE",
-                    ArtifactId("pre-e3-incomplete-universe"),
-                    canonical_hash({"pre_e3": "incomplete-universe"}),
-                ),
-                *values["configuration_references"],
-            ),
-        }
-    )
+    legacy = _command()
     journal = _journal(postgres_factory, MutableClock(CREATED_AT))
     runner = HistoricalResearchRunner(
         journal=journal,
         kernel=ResearchDecisionSessionKernel(DeterministicOwner()),
     )
     runner.run(command=legacy, max_stage_commits=1)
+    _mark_as_migrated_pre_e3(postgres_factory, legacy.run_id)
 
     with pytest.raises(HistoricalResearchConflict, match="exact historical code"):
         runner.resume(run_id=legacy.run_id)
+    with pytest.raises(HistoricalResearchConflict, match="exact historical code"):
+        runner.run(command=legacy)

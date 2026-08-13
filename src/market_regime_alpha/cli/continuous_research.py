@@ -728,6 +728,7 @@ def _dispatch(
                 "context_symbols",
                 "context_instruments",
                 "timeframe_ranges",
+                "acquisition_id",
             }
         ):
             raise ValueError(
@@ -745,6 +746,11 @@ def _dispatch(
         )
         if len(symbol_sources) != 1:
             raise ValueError("historical-corpus-acquire requires exactly one symbol source")
+        acquisition_id = payload.get("acquisition_id")
+        if not isinstance(acquisition_id, str) or not acquisition_id.strip():
+            raise ValueError(
+                "historical-corpus-acquire requires an explicit acquisition_id"
+            )
         timeframe_ranges_payload = payload.get("timeframe_ranges")
         timeframe_ranges = None
         if timeframe_ranges_payload is not None:
@@ -887,6 +893,7 @@ def _dispatch(
                 / "historical-corpus"
                 / "query-checkpoints"
             ),
+            acquisition_id=acquisition_id,
         )
         corpus = PostgresHistoricalCorpusRepository(
             factory,

@@ -138,6 +138,28 @@ class _HangingLoginBaoStock(_FakeBaoStock):
         return _Response([], [])
 
 
+class _AuthenticationExpiresOnceBaoStock(_FakeBaoStock):
+    def __init__(self) -> None:
+        super().__init__()
+        self.login_count = 0
+        self.expired = False
+
+    def login(self, **_: str) -> _Response:
+        self.login_count += 1
+        return _Response([], [])
+
+    def query_history_k_data_plus(
+        self,
+        code: str,
+        fields: str,
+        **parameters: str,
+    ) -> _Response:
+        if not self.expired:
+            self.expired = True
+            return _Response([], [], error_code="10001001", error_msg="用户未登录")
+        return super().query_history_k_data_plus(code, fields, **parameters)
+
+
 def test_acquisition_splits_requests_by_year_and_preserves_true_retrieval() -> None:
     provider = _FakeBaoStock()
     retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
@@ -269,6 +291,7 @@ def test_acquisition_checkpoints_completed_requests_for_exact_resume(
         "end_date": date(2025, 1, 31),
         "bucket_count": 4,
         "checkpoint_root": tmp_path / "checkpoints",
+        "acquisition_id": "checkpoint-repeat-v1",
     }
 
     first = client.acquire(**values)
@@ -277,7 +300,11 @@ def test_acquisition_checkpoints_completed_requests_for_exact_resume(
 
     assert repeated == first
     assert len(provider.queries) == query_count
-    checkpoints = tuple((tmp_path / "checkpoints").glob("*.json"))
+    checkpoints = tuple(
+        path
+        for path in (tmp_path / "checkpoints").glob("*/*.json")
+        if path.name != "acquisition-manifest.json"
+    )
     assert len(checkpoints) == 2
     checkpoints[0].write_text("{}\n", encoding="utf-8")
     with pytest.raises(AShareDataError, match="identity drift"):
@@ -302,17 +329,26 @@ def test_acquisition_resumes_after_transport_interruption_with_exact_owner(
         ).acquire(
             **values,
             checkpoint_root=tmp_path / "resumed",
+            acquisition_id="interrupted-resume-v1",
         )
 
     resumed_provider = _FakeBaoStock()
     resumed = BaoStockHistoricalArchiveClient(
         clock=lambda: retrieved_at,
         baostock_module=resumed_provider,
-    ).acquire(**values, checkpoint_root=tmp_path / "resumed")
+    ).acquire(
+        **values,
+        checkpoint_root=tmp_path / "resumed",
+        acquisition_id="interrupted-resume-v1",
+    )
     uninterrupted = BaoStockHistoricalArchiveClient(
         clock=lambda: retrieved_at,
         baostock_module=_FakeBaoStock(),
-    ).acquire(**values, checkpoint_root=tmp_path / "uninterrupted")
+    ).acquire(
+        **values,
+        checkpoint_root=tmp_path / "uninterrupted",
+        acquisition_id="uninterrupted-v1",
+    )
 
     assert resumed == uninterrupted
     assert len(resumed_provider.queries) == 2
@@ -400,6 +436,48 @@ def test_acquisition_bounds_login_wall_clock() -> None:
             start_date=date(2025, 1, 1),
             end_date=date(2025, 1, 31),
         )
+
+
+def test_acquisition_reauthenticates_once_without_archiving_auth_failure(
+    tmp_path,
+) -> None:
+    provider = _AuthenticationExpiresOnceBaoStock()
+    owner = BaoStockHistoricalArchiveClient(
+        baostock_module=provider,
+    ).acquire(
+        symbols=("600000.SH",),
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 31),
+        checkpoint_root=tmp_path,
+        acquisition_id="reauthentication-v1",
+    )
+
+    assert provider.login_count == 2
+    assert owner.coverage.successful_request_count == 2
+    assert all(
+        item.provider_error_code != "10001001"
+        for partition in owner.partitions
+        for item in partition.records
+        if isinstance(item, HistoricalRawRequest)
+    )
+
+
+def test_checkpoint_scope_isolated_by_explicit_acquisition_id(tmp_path) -> None:
+    provider = _FakeBaoStock()
+    client = BaoStockHistoricalArchiveClient(baostock_module=provider)
+    values = {
+        "symbols": ("600000.SH",),
+        "start_date": date(2025, 1, 1),
+        "end_date": date(2025, 1, 31),
+        "checkpoint_root": tmp_path,
+    }
+
+    client.acquire(**values, acquisition_id="experiment-a")
+    first_query_count = len(provider.queries)
+    client.acquire(**values, acquisition_id="experiment-b")
+
+    assert len(provider.queries) == first_query_count * 2
+    assert len(tuple(tmp_path.glob("*/acquisition-manifest.json"))) == 2
 
 
 def test_normalization_preserves_retrieval_clock_and_missingness() -> None:

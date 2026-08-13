@@ -34,7 +34,7 @@ from market_regime_alpha.market_data.contracts import Timeframe
 
 
 BAOSTOCK_HISTORICAL_PROVIDER_ID = "BAOSTOCK_QUERY_HISTORY_K_DATA_PLUS"
-_BAOSTOCK_TRANSPORT_ERROR_CODES = frozenset({"10002007", "CLIENT_EXCEPTION"})
+_BAOSTOCK_AUTHENTICATION_ERROR_CODES = frozenset({"10001001"})
 BAOSTOCK_RAW_LIMITATIONS = (
     "BAOSTOCK_LIBRARY_RESULT_REENCODED_NOT_TRANSPORT_BYTES",
     "HISTORICAL_AVAILABLE_TIME_NOT_PROVIDED",
@@ -109,6 +109,7 @@ class BaoStockHistoricalArchiveClient:
         timeframe_ranges: Mapping[Timeframe, tuple[date, date]] | None = None,
         bucket_count: int = 16,
         checkpoint_root: Path | None = None,
+        acquisition_id: str | None = None,
     ) -> HistoricalDataOwner:
         ordered_symbols = tuple(sorted(set(symbols)))
         ordered_timeframes = tuple(sorted(set(timeframes), key=lambda item: item.value))
@@ -123,6 +124,12 @@ class BaoStockHistoricalArchiveClient:
             raise ValueError("BaoStock archive supports DAILY and MINUTE_5")
         if bucket_count <= 0:
             raise ValueError("Historical acquisition bucket_count must be positive")
+        if checkpoint_root is not None and not (
+            acquisition_id is not None and acquisition_id.strip()
+        ):
+            raise ValueError(
+                "checkpointed Historical acquisition requires acquisition_id"
+            )
         ranges = {
             timeframe: (start_date, end_date) for timeframe in ordered_timeframes
         }
@@ -150,6 +157,29 @@ class BaoStockHistoricalArchiveClient:
         ) * len(ordered_symbols)
         if request_count > self._maximum_source_requests:
             raise ValueError("Historical acquisition exceeds declared request ceiling")
+        checkpoint_directory = None
+        if checkpoint_root is not None:
+            acquisition_manifest = {
+                "schema_version": "baostock-historical-acquisition-manifest/v1",
+                "acquisition_id": acquisition_id,
+                "provider_id": BAOSTOCK_HISTORICAL_PROVIDER_ID,
+                "symbols": list(ordered_symbols),
+                "timeframe_ranges": {
+                    timeframe.value: {
+                        "start_date": ranges[timeframe][0].isoformat(),
+                        "end_date": ranges[timeframe][1].isoformat(),
+                    }
+                    for timeframe in ordered_timeframes
+                },
+                "bucket_count": bucket_count,
+            }
+            checkpoint_directory = (
+                checkpoint_root / canonical_hash(acquisition_manifest)[7:]
+            )
+            _ensure_acquisition_manifest(
+                checkpoint_directory,
+                acquisition_manifest,
+            )
         bs = self._module()
         user_id, password = baostock_credentials()
         previous_timeout = socket.getdefaulttimeout()
@@ -172,16 +202,46 @@ class BaoStockHistoricalArchiveClient:
                     for timeframe in ordered_timeframes:
                         for request_start, request_end in request_ranges[timeframe]:
                             request = self._checkpointed_acquire_one(
-                                checkpoint_root=checkpoint_root,
+                                checkpoint_root=checkpoint_directory,
                                 bs=bs,
                                 symbol=symbol,
                                 timeframe=timeframe,
                                 start_date=request_start,
                                 end_date=request_end,
                             )
-                            if request.provider_error_code in _BAOSTOCK_TRANSPORT_ERROR_CODES:
+                            if request.provider_error_code in (
+                                _BAOSTOCK_AUTHENTICATION_ERROR_CODES
+                            ):
+                                with redirect_stdout(StringIO()):
+                                    self._timed_logout(bs)
+                                    relogin = self._timed_login(
+                                        bs,
+                                        user_id=user_id,
+                                        password=password,
+                                    )
+                                if str(getattr(relogin, "error_code", "0")) != "0":
+                                    raise AShareDataError(
+                                        "BaoStock reauthentication failed during acquisition"
+                                    )
+                                request = self._checkpointed_acquire_one(
+                                    checkpoint_root=checkpoint_directory,
+                                    bs=bs,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    start_date=request_start,
+                                    end_date=request_end,
+                                )
+                            if request.provider_error_code in (
+                                _BAOSTOCK_AUTHENTICATION_ERROR_CODES
+                            ):
                                 raise AShareDataError(
-                                    "BaoStock transport failed; partial corpus is not publishable"
+                                    "BaoStock authentication expired after bounded retry; "
+                                    "partial corpus is not publishable"
+                                )
+                            if request.provider_error_code is not None:
+                                raise AShareDataError(
+                                    "BaoStock Provider request failed with "
+                                    f"{request.provider_error_code}; partial corpus is not publishable"
                                 )
                             source_row_count += len(request.rows)
                             if source_row_count > self._maximum_source_rows:
@@ -267,7 +327,7 @@ class BaoStockHistoricalArchiveClient:
         if checkpoint.exists():
             return _load_request_checkpoint(checkpoint, identity)
         response = self._timed_acquire_one(**values)
-        if response.provider_error_code in _BAOSTOCK_TRANSPORT_ERROR_CODES:
+        if response.provider_error_code is not None:
             return response
         envelope = {
             "schema_version": "baostock-historical-request-checkpoint/v1",
@@ -477,6 +537,52 @@ __all__ = [
 
 class _BaoStockRequestTimeout(BaseException):
     """Escape Provider code that catches ordinary socket exceptions."""
+
+
+def _ensure_acquisition_manifest(
+    checkpoint_root: Path,
+    manifest: Mapping[str, Any],
+) -> None:
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
+    path = checkpoint_root / "acquisition-manifest.json"
+    envelope = {
+        "manifest": dict(manifest),
+        "manifest_hash": canonical_hash(dict(manifest)),
+    }
+    if path.exists():
+        try:
+            durable = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AShareDataError(
+                "Historical acquisition checkpoint manifest is unreadable"
+            ) from exc
+        if durable != envelope:
+            raise AShareDataError(
+                "Historical acquisition checkpoint manifest identity drift"
+            )
+        return
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".acquisition-manifest.",
+        suffix=".tmp",
+        dir=checkpoint_root,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(canonical_json(envelope))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary_name, path)
+        except FileExistsError:
+            durable = json.loads(path.read_text(encoding="utf-8"))
+            if durable != envelope:
+                raise AShareDataError(
+                    "Historical acquisition checkpoint manifest identity drift"
+                )
+        _fsync_directory(checkpoint_root)
+    finally:
+        Path(temporary_name).unlink(missing_ok=True)
 
 
 def _request_ranges(
