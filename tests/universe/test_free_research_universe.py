@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
+
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -9,8 +11,10 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.universe.research import (
     FreeDataEvidenceOrigin,
+    ResearchUniverseSelectionBasis,
     ResearchUniverseMembershipStatus,
     build_free_research_universe_snapshot,
+    build_historical_constituent_universe_snapshot,
     project_free_research_universe_as_of,
 )
 
@@ -124,3 +128,63 @@ def test_retrospective_projection_can_freeze_exact_selector_subset() -> None:
     )
     assert projected.source_manifest_reference == source.source_manifest_reference
     assert "FROZEN_SELECTOR_SUBSET_PROJECTION" in projected.limitations
+
+
+def test_historical_constituent_snapshot_does_not_project_current_master() -> None:
+    constituent_source = ValidationArtifactReference(
+        "HISTORICAL_CONSTITUENT_SNAPSHOT",
+        ArtifactId("hs300-2026-06-15"),
+        canonical_hash({"hs300": "2026-06-15"}),
+    )
+    snapshot = build_historical_constituent_universe_snapshot(
+        effective_date=date(2026, 6, 15),
+        known_at=KNOWN_AT,
+        provider_id="provider-baostock-public",
+        provider_contract="baostock-query-hs300-stocks/v1",
+        source_manifest_reference=ValidationArtifactReference(
+            "SOURCE_MANIFEST",
+            ArtifactId("historical-universe-manifest"),
+            canonical_hash({"manifest": "historical"}),
+        ),
+        constituent_source_reference=constituent_source,
+        raw_archive_id="historical-hs300-archive",
+        evidence_origin=FreeDataEvidenceOrigin.REAL_FREE_PROVIDER_OBSERVATION,
+        constituent_rows=(
+            {"updateDate": "2026-06-15", "code": "sh.600000", "code_name": "浦发银行"},
+            {"updateDate": "2026-06-15", "code": "sz.000001", "code_name": "平安银行"},
+        ),
+        security_master_rows=(
+            {
+                "code": "sh.600000",
+                "code_name": "浦发银行",
+                "ipoDate": "1999-11-10",
+                "outDate": "2026-06-30",
+                "type": "1",
+                "status": "1",
+            },
+        ),
+    )
+
+    projected = project_free_research_universe_as_of(
+        snapshot,
+        as_of_date=date(2026, 7, 1),
+    )
+
+    assert snapshot.selection_basis is ResearchUniverseSelectionBasis.HISTORICAL_CONSTITUENT_SNAPSHOT
+    assert snapshot.included_count == 2
+    assert projected.known_at == KNOWN_AT
+    assert projected.constituent_source_reference == constituent_source
+    assert "CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY" not in projected.limitations
+    assert "FROZEN_HISTORICAL_CONSTITUENT_SNAPSHOT" in projected.limitations
+    assert "CURRENT_CLASSIFICATION_NOT_BACKFILLED" in projected.limitations
+    assert next(item for item in projected.records if item.symbol == "000001.SZ").listing_status.value == "UNKNOWN"
+    delisted = next(item for item in projected.records if item.symbol == "600000.SH")
+    assert delisted.listing_status.value == "DELISTED"
+    assert delisted.membership_status is ResearchUniverseMembershipStatus.EXCLUDED
+    assert "DELISTED_BY_AS_OF_DATE" in delisted.reason_codes
+
+    with pytest.raises(ValueError, match="predates frozen constituent"):
+        project_free_research_universe_as_of(
+            snapshot,
+            as_of_date=date(2026, 6, 14),
+        )

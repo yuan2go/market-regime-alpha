@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 from datetime import UTC, date, datetime
 from io import StringIO
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
@@ -83,6 +83,7 @@ class BaoStockHistoricalArchiveClient:
             Timeframe.DAILY,
             Timeframe.MINUTE_5,
         ),
+        timeframe_ranges: Mapping[Timeframe, tuple[date, date]] | None = None,
         bucket_count: int = 16,
     ) -> HistoricalDataOwner:
         ordered_symbols = tuple(sorted(set(symbols)))
@@ -98,6 +99,24 @@ class BaoStockHistoricalArchiveClient:
             raise ValueError("BaoStock archive supports DAILY and MINUTE_5")
         if bucket_count <= 0:
             raise ValueError("Historical acquisition bucket_count must be positive")
+        ranges = {
+            timeframe: (start_date, end_date) for timeframe in ordered_timeframes
+        }
+        if timeframe_ranges is not None:
+            if set(timeframe_ranges) != set(ordered_timeframes):
+                raise ValueError(
+                    "Historical timeframe ranges must exactly cover timeframes"
+                )
+            ranges = dict(timeframe_ranges)
+        for timeframe, (range_start, range_end) in ranges.items():
+            if range_start > range_end:
+                raise ValueError(
+                    f"Historical {timeframe.value} acquisition range is reversed"
+                )
+            if range_start < start_date or range_end > end_date:
+                raise ValueError(
+                    "Historical timeframe range exceeds owner acquisition range"
+                )
         bs = self._module()
         user_id, password = baostock_credentials()
         with redirect_stdout(StringIO()):
@@ -110,9 +129,10 @@ class BaoStockHistoricalArchiveClient:
         try:
             for symbol in ordered_symbols:
                 for timeframe in ordered_timeframes:
-                    for year in range(start_date.year, end_date.year + 1):
-                        request_start = max(start_date, date(year, 1, 1))
-                        request_end = min(end_date, date(year, 12, 31))
+                    range_start, range_end = ranges[timeframe]
+                    for year in range(range_start.year, range_end.year + 1):
+                        request_start = max(range_start, date(year, 1, 1))
+                        request_end = min(range_end, date(year, 12, 31))
                         requests.append(
                             self._acquire_one(
                                 bs=bs,

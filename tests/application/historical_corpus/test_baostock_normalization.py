@@ -130,6 +130,53 @@ def test_acquisition_splits_requests_by_year_and_preserves_true_retrieval() -> N
     )
 
 
+def test_acquisition_uses_exact_per_timeframe_windows() -> None:
+    provider = _FakeBaoStock()
+    retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+
+    owner = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=provider,
+    ).acquire(
+        symbols=("600000.SH",),
+        start_date=date(2025, 1, 1),
+        end_date=date(2026, 7, 14),
+        timeframes=(Timeframe.DAILY, Timeframe.MINUTE_5),
+        timeframe_ranges={
+            Timeframe.DAILY: (date(2025, 1, 1), date(2026, 7, 14)),
+            Timeframe.MINUTE_5: (date(2026, 6, 14), date(2026, 7, 14)),
+        },
+        bucket_count=4,
+    )
+
+    assert owner.coverage.expected_request_count == 3
+    minute_queries = [
+        item for item in provider.queries if item["frequency"] == "5"
+    ]
+    assert minute_queries == [
+        {
+            "code": "sh.600000",
+            "fields": "date,time,code,open,high,low,close,volume,amount,adjustflag",
+            "start_date": "2026-06-14",
+            "end_date": "2026-07-14",
+            "frequency": "5",
+            "adjustflag": "3",
+        }
+    ]
+    assert len(provider.queries) == 3
+    requests = tuple(
+        record for partition in owner.partitions for record in partition.records
+    )
+    assert all(isinstance(item, HistoricalRawRequest) for item in requests)
+    assert all(item.retrieved_at == retrieved_at for item in requests)
+    assert all(
+        "BAOSTOCK_LIBRARY_RESULT_REENCODED_NOT_TRANSPORT_BYTES"
+        in item.limitations
+        for item in requests
+        if isinstance(item, HistoricalRawRequest)
+    )
+
+
 def test_normalization_preserves_retrieval_clock_and_missingness() -> None:
     provider = _FakeBaoStock()
     retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)

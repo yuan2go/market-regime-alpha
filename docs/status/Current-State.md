@@ -89,7 +89,8 @@ deterministic replay and truthful Runtime boundaries. It is an engineering
 status only and does not establish Alpha, Formal PIT, Formal OOS, Strategy
 proof, Production readiness or trading authority.
 
-Phase E now has one real representative historical-evidence vertical slice.
+The Phase E Pilot established one real representative historical-evidence
+vertical slice.
 PostgreSQL remains the sole business Authority for exact owner identity, logical
 and physical hashes, Artifact Root locator, schema/version, provenance,
 coverage, availability metadata, sessions, experiments and results. The
@@ -111,7 +112,7 @@ minute ST status is absent for 209,376 rows. Retrieval time remains the true
 2026 archive time; historical trading dates are only retrospective event time.
 Every artifact and result remains `EXPLORATORY` and `PIT_INCOMPLETE`.
 
-The representative run actively materializes 667 historical Decision Sessions
+The Pilot run actively materializes 667 historical Decision Sessions
 from 2023-04-03 through 2025-12-30 and uses 2025-12-31 only for T+1 Outcome. It
 persists 667 exact owners for each of 13 Feature/State/Pool/Candidate/Signal/
 Forecast/Strategy/Portfolio/Outcome/Panel kinds, producing 4,002 panel samples
@@ -151,6 +152,38 @@ is `POSITIVE`. This is not a Formal OOS, calibrated, model-qualified or economic
 value claim. Negative, inconclusive and not-estimable findings are persisted in
 the same PostgreSQL Research Evidence registry.
 
+Phase E2 now adds an expanded frozen CSI 300 cross-section without changing the
+Pilot identities or qualification ceiling. One real effective-dated historical
+constituent owner supplies 300 equities; `000300.SH` and `510300.SH` supply real
+index/ETF context. A PostgreSQL partition access index resolves only exact
+timeframe/date/symbol-bucket Parquet partitions. Selected files are checksum
+verified, predicates and a seven-column projection are pushed into Arrow, and
+bounded batches reconstruct and revalidate exact record identities. Decision
+materialization retains one Daily projection and an LRU of previous/current/T+1
+minute windows instead of loading the entire package object graph.
+
+The Phase E2 corpus contains 110,845 Daily and 302,928 5-minute records across
+302 instruments and 256 normalized partitions. Its 19 Decision Sessions persist
+5,700 Panel rows; ten T+1 10:30 targets remain explicitly missing and 5,690 are
+estimable. Historical listing date/status, listing age, ST and trading status
+are resolved for all 300 equities. Delisting is projected by effective date and
+tested, although no member of this live cohort has a delisting fact. Industry
+remains `UNKNOWN` and market cap `NOT_ESTIMABLE`; current classification and
+synthetic share facts are never projected backwards. The frozen Runtime Scope
+is correctly an `INDEX` selector, not `FULL_A`.
+
+The expanded run consumes `000300.SH` in Market Regime and `510300.SH` in Theme;
+Capital records existing price/volume model inference for 300 symbols without
+claiming hidden institutional intent. Candidate observations cover all 5,700
+rows and Canonical Signal/Forecast observations occur on the unchanged frozen
+methodology. Exact ablation and economics findings are recorded in the
+[Phase E2 report](../references/Phase-E2-Historical-Evidence-Expansion-Report.md).
+An interrupted public CLI run resumed to 19/19 sessions and 114/114 stage
+receipts with zero swap, and exact replay matches. A separate uninterrupted
+PostgreSQL execution produces identical ordered Session, Receipt, Component,
+source-binding, Evidence and metric hash sets. All Phase E2 facts remain
+`EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_OOS=false` and `CALIBRATED=false`.
+
 Canonical source acquisition is exposed through `SourceFreezeService`; the
 DailyLoop is retained only as its identity-compatible adapter. Controlled
 package recovery and Feature recovery use exact PostgreSQL/receipt locators and
@@ -189,11 +222,11 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 638 | broad modular monolith; size alone is not a defect |
+| Python source files | 640 | broad modular monolith; size alone is not a defect |
 | Python test files | 468 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 68 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL migrations | 70 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
 | PostgreSQL Authority-schema tables | 251 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 251 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |

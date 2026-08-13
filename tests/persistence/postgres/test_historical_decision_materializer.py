@@ -75,7 +75,7 @@ from market_regime_alpha.universe.postgres_runtime_scope import (
 )
 from market_regime_alpha.universe.research import (
     FreeDataEvidenceOrigin,
-    build_free_research_universe_snapshot,
+    build_historical_constituent_universe_snapshot,
 )
 from market_regime_alpha.universe.runtime_scope import (
     UniversePolicySelector,
@@ -98,6 +98,7 @@ STOCKS = (
     "601318.SH",
 )
 ETF = "510300.SH"
+INDEX = "000300.SH"
 
 
 def test_existing_historical_runner_actively_materializes_and_replays(
@@ -141,9 +142,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         postgres_factory,
         clock=MutableClock(MATERIALIZED_AT),
     )
-    component_repository = PostgresHistoricalMaterializationRepository(
-        postgres_factory
-    )
+    component_repository = PostgresHistoricalMaterializationRepository(postgres_factory)
     materializer = HistoricalDecisionMaterializer(
         run_id=command.run_id,
         corpus_repository=corpus,
@@ -172,10 +171,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         ResearchSessionStage.DECISION,
     )
     assert partial.sessions[0].receipts[-1].status is SessionStageStatus.COMPLETE
-    decision_kinds = {
-        item.artifact_kind
-        for item in partial.sessions[0].receipts[-1].output_references
-    }
+    decision_kinds = {item.artifact_kind for item in partial.sessions[0].receipts[-1].output_references}
     assert {
         "HISTORICAL_FEATURE",
         "HISTORICAL_MARKET_REGIME",
@@ -186,23 +182,49 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         "HISTORICAL_SIGNAL",
     }.issubset(decision_kinds)
     signal_reference = next(
-        item
-        for item in partial.sessions[0].receipts[-1].output_references
-        if item.artifact_kind == "HISTORICAL_SIGNAL"
+        item for item in partial.sessions[0].receipts[-1].output_references if item.artifact_kind == "HISTORICAL_SIGNAL"
     )
     signal = component_repository.get(signal_reference)
+    feature_reference = next(
+        item for item in partial.sessions[0].receipts[-1].output_references if item.artifact_kind == "HISTORICAL_FEATURE"
+    )
+    feature = component_repository.get(feature_reference)
+    feature_value = feature.payload["features"][0]["values"][0]
+    assert feature_value["source_bar_count"] >= 0
+    assert feature_value["source_bar_lineage_hash"].startswith("sha256:")
+    assert "source_bar_ids" not in feature_value
+    assert "source_bar_hashes" not in feature_value
+    pool_reference = next(
+        item for item in partial.sessions[0].receipts[0].output_references if item.artifact_kind == "HISTORICAL_DYNAMIC_POOL"
+    )
+    pool = component_repository.get(pool_reference)
+    security_coverage = pool.payload["historical_security_fact_coverage"]
+    assert security_coverage["listing_date_available_count"] == len(STOCKS)
+    assert security_coverage["listing_age_available_count"] == len(STOCKS)
+    assert security_coverage["market_cap_status"] == "NOT_ESTIMABLE"
+    assert security_coverage["industry_status"] == "UNKNOWN"
+    assert pool.payload["selective_reads"]
+    assert any(read["selected_partitions"] for read in pool.payload["selective_reads"])
+    for read in pool.payload["selective_reads"]:
+        assert read["metrics"]["predicate_pushdown"] is True
+        assert read["metrics"]["maximum_batch_row_count"] <= read["query"]["batch_size"]
+        assert all(item["physical_checksum"].startswith("sha256:") for item in read["selected_partitions"])
     market_reference = next(
-        item
-        for item in partial.sessions[0].receipts[-1].output_references
-        if item.artifact_kind == "HISTORICAL_MARKET_REGIME"
+        item for item in partial.sessions[0].receipts[-1].output_references if item.artifact_kind == "HISTORICAL_MARKET_REGIME"
     )
     market = component_repository.get(market_reference)
     candidate_reference = next(
-        item
-        for item in partial.sessions[0].receipts[-1].output_references
-        if item.artifact_kind == "HISTORICAL_CANDIDATE"
+        item for item in partial.sessions[0].receipts[-1].output_references if item.artifact_kind == "HISTORICAL_CANDIDATE"
     )
     candidate = component_repository.get(candidate_reference)
+    etf_reference = next(item for item in partial.sessions[0].receipts[-1].output_references if item.artifact_kind == "HISTORICAL_ETF")
+    etf = component_repository.get(etf_reference)
+    assert etf.payload["instrument_coverage"]["etf_available_count"] == 1
+    assert etf.payload["instrument_coverage"]["index_available_count"] == 1
+    assert etf.payload["benchmark_usage"] == {
+        "market_regime": INDEX,
+        "theme": ETF,
+    }
     assert market.payload["market_state"] != "DATA_INSUFFICIENT"
     assert "MARKET_REGIME_DATA_INSUFFICIENT" not in market.payload["reason_codes"]
     assert len(candidate.payload["records"]) == len(STOCKS)
@@ -211,18 +233,14 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert resumed.sessions[0].receipts[-1].stage is ResearchSessionStage.PERFORMANCE
     assert resumed.sessions[0].receipts[-1].status is SessionStageStatus.COMPLETE
     outcome_reference = next(
-        item
-        for item in resumed.sessions[0].receipts[-2].output_references
-        if item.artifact_kind == "HISTORICAL_OUTCOME"
+        item for item in resumed.sessions[0].receipts[-2].output_references if item.artifact_kind == "HISTORICAL_OUTCOME"
     )
     outcome = component_repository.get(outcome_reference)
     assert outcome.payload["available_label_count"] == len(STOCKS) * 6
     assert len(outcome.payload["strategy_economics"]) == len(STOCKS) * 6
     for result in outcome.payload["strategy_economics"]:
         if result["net_return"] is not None:
-            assert Decimal(result["net_return"]) == (
-                Decimal(result["gross_return"]) - Decimal(result["cost_return"])
-            )
+            assert Decimal(result["net_return"]) == (Decimal(result["gross_return"]) - Decimal(result["cost_return"]))
     panel_reference = resumed.sessions[0].receipts[-1].output_references[0]
     panel = component_repository.get(panel_reference)
     assert panel.payload["row_count"] == len(STOCKS)
@@ -243,17 +261,9 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         HistoricalEvidenceKind.PORTFOLIO_PERFORMANCE,
         HistoricalEvidenceKind.EXPLORATORY_MODEL,
     }
-    ablation = next(
-        item
-        for item in produced.evidence
-        if item.evidence_kind is HistoricalEvidenceKind.ALPHA_ABLATION
-    )
+    ablation = next(item for item in produced.evidence if item.evidence_kind is HistoricalEvidenceKind.ALPHA_ABLATION)
     assert ablation.classification is ResearchFinding.INCONCLUSIVE
-    model = next(
-        item
-        for item in produced.evidence
-        if item.evidence_kind is HistoricalEvidenceKind.EXPLORATORY_MODEL
-    )
+    model = next(item for item in produced.evidence if item.evidence_kind is HistoricalEvidenceKind.EXPLORATORY_MODEL)
     assert model.classification is ResearchFinding.NOT_ESTIMABLE
     assert model.payload["owner_resolved_training_matrix"] is True
     repeated = HistoricalEvidenceProducer(
@@ -276,7 +286,7 @@ def _normalized_owner(
 ) -> HistoricalDataOwner:
     records: list[HistoricalNormalizedBar] = []
     start = DECISION_DATE - timedelta(days=75)
-    symbols = (*STOCKS, ETF)
+    symbols = (*STOCKS, INDEX, ETF)
     for symbol_index, symbol in enumerate(symbols):
         price = Decimal("10") + Decimal(symbol_index)
         for index in range(70):
@@ -315,19 +325,10 @@ def _normalized_owner(
         prior_close = price * (Decimal("1.002") ** 69)
         prior_intraday_date = DECISION_DATE - timedelta(days=1)
         prior_intraday_starts = tuple(
-            datetime.combine(prior_intraday_date, time(1, 30), tzinfo=UTC)
-            + timedelta(minutes=5 * index)
-            for index in range(24)
-        ) + tuple(
-            datetime.combine(prior_intraday_date, time(5, 0), tzinfo=UTC)
-            + timedelta(minutes=5 * index)
-            for index in range(24)
-        )
+            datetime.combine(prior_intraday_date, time(1, 30), tzinfo=UTC) + timedelta(minutes=5 * index) for index in range(24)
+        ) + tuple(datetime.combine(prior_intraday_date, time(5, 0), tzinfo=UTC) + timedelta(minutes=5 * index) for index in range(24))
         for minute_index, event_start in enumerate(prior_intraday_starts):
-            close = prior_close * (
-                Decimal("0.995")
-                + Decimal(minute_index + 1) / Decimal("20000")
-            )
+            close = prior_close * (Decimal("0.995") + Decimal(minute_index + 1) / Decimal("20000"))
             volume = Decimal(15_000 + symbol_index * 500 + minute_index * 50)
             records.append(
                 HistoricalNormalizedBar.create(
@@ -424,20 +425,11 @@ def _normalized_owner(
                 limitations=("PIT_INCOMPLETE",),
             )
         )
-        starts = tuple(
-            datetime.combine(next_date, time(1, 30), tzinfo=UTC)
-            + timedelta(minutes=5 * index)
-            for index in range(24)
-        ) + tuple(
-            datetime.combine(next_date, time(5, 0), tzinfo=UTC)
-            + timedelta(minutes=5 * index)
-            for index in range(24)
+        starts = tuple(datetime.combine(next_date, time(1, 30), tzinfo=UTC) + timedelta(minutes=5 * index) for index in range(24)) + tuple(
+            datetime.combine(next_date, time(5, 0), tzinfo=UTC) + timedelta(minutes=5 * index) for index in range(24)
         )
         for minute_index, event_start in enumerate(starts):
-            close = prior_close * (
-                Decimal("1.001")
-                + Decimal(minute_index + 1) / Decimal("10000")
-            )
+            close = prior_close * (Decimal("1.001") + Decimal(minute_index + 1) / Decimal("10000"))
             records.append(
                 HistoricalNormalizedBar.create(
                     symbol=symbol,
@@ -497,19 +489,32 @@ def _normalized_owner(
 
 
 def _universe():
-    return build_free_research_universe_snapshot(
-        as_of_date=DECISION_DATE,
+    return build_historical_constituent_universe_snapshot(
+        effective_date=DECISION_DATE,
         known_at=MATERIALIZED_AT,
         provider_id="provider-baostock-public",
-        provider_contract="baostock-query-stock-basic-all/v1",
+        provider_contract="baostock-historical-constituent/v1",
         source_manifest_reference=ValidationArtifactReference(
             "SOURCE_MANIFEST",
             ArtifactId("phase-e-security-master-manifest"),
             canonical_hash({"security-master": "phase-e"}),
         ),
+        constituent_source_reference=ValidationArtifactReference(
+            "RAW_PROVIDER_REQUEST",
+            ArtifactId("phase-e-historical-constituents"),
+            canonical_hash({"constituents": "phase-e"}),
+        ),
         raw_archive_id="phase-e-security-master-raw",
         evidence_origin=FreeDataEvidenceOrigin.ENGINEERING_FIXTURE,
-        rows=tuple(
+        constituent_rows=tuple(
+            {
+                "code": f"{symbol[-2:].lower()}.{symbol[:6]}",
+                "code_name": symbol,
+                "updateDate": DECISION_DATE.isoformat(),
+            }
+            for symbol in STOCKS
+        ),
+        security_master_rows=tuple(
             {
                 "code": f"{symbol[-2:].lower()}.{symbol[:6]}",
                 "code_name": symbol,
@@ -528,9 +533,9 @@ def _policy():
         policy_version="phase-e-test/v1",
         selectors=(
             UniversePolicySelector(
-                kind=UniverseScopeKind.WATCHLIST,
-                selector_id="phase-e-stock-scope",
-                symbols=STOCKS,
+                kind=UniverseScopeKind.INDEX,
+                selector_id="phase-e-historical-constituent-scope",
+                symbols=(),
             ),
         ),
         minimum_history_sessions=60,
