@@ -138,6 +138,11 @@ class _HangingLoginBaoStock(_FakeBaoStock):
         return _Response([], [])
 
 
+class _FailingLoginBaoStock(_FakeBaoStock):
+    def login(self, **_: str) -> _Response:
+        raise AssertionError("complete checkpoint recovery must not log in")
+
+
 class _AuthenticationExpiresOnceBaoStock(_FakeBaoStock):
     def __init__(self) -> None:
         super().__init__()
@@ -309,6 +314,31 @@ def test_acquisition_checkpoints_completed_requests_for_exact_resume(
     checkpoints[0].write_text("{}\n", encoding="utf-8")
     with pytest.raises(AShareDataError, match="identity drift"):
         client.acquire(**values)
+
+
+def test_complete_checkpoint_recovery_does_not_require_provider_login(
+    tmp_path,
+) -> None:
+    retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+    values = {
+        "symbols": ("600000.SH",),
+        "start_date": date(2025, 1, 1),
+        "end_date": date(2025, 1, 31),
+        "bucket_count": 4,
+        "checkpoint_root": tmp_path,
+        "acquisition_id": "offline-owner-publication-v1",
+    }
+    expected = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=_FakeBaoStock(),
+    ).acquire(**values)
+
+    recovered = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=_FailingLoginBaoStock(),
+    ).acquire(**values)
+
+    assert recovered == expected
 
 
 def test_acquisition_resumes_after_transport_interruption_with_exact_owner(

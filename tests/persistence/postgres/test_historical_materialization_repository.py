@@ -159,8 +159,16 @@ def test_prior_outcome_projection_keeps_newest_bounded_window(
         target_id=target.artifact_id,
         maximum_labels=2,
     )
+    projected_batch = repository.list_outcome_labels_for_symbols_before(
+        run_id=command.run_id,
+        before=date(2020, 1, 5),
+        symbols=("600000.SH",),
+        target_id=target.artifact_id,
+        maximum_labels_per_symbol=2,
+    )
 
     assert tuple(item[1] for item in projected) == tuple(labels[-2:])
+    assert projected_batch == {"600000.SH": projected}
 
     with postgres_factory.connection() as connection:
         owner = connection.execute(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import psycopg
 import pytest
@@ -169,7 +169,7 @@ def test_historical_security_fact_projection_rejects_non_member_child(
 
     with postgres_factory.connection() as connection, pytest.raises(
         psycopg.errors.RaiseException,
-        match="not a member of its owner",
+        match="not an exact member of its owner",
     ):
         connection.execute(
             """
@@ -195,6 +195,51 @@ def test_historical_security_fact_projection_rejects_non_member_child(
                 Jsonb(extra.to_canonical_dict()),
             ),
         )
+
+
+def test_historical_security_fact_projection_binds_publication_date(
+    postgres_factory,
+) -> None:
+    owner = PostgresHistoricalSecurityFactsRepository(postgres_factory).publish(
+        _owner()
+    )
+    fact = next(item for item in owner.facts if item.published_date is not None)
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with postgres_factory.connection() as connection:
+            connection.execute(
+                "ALTER TABLE free_data_historical_security_fact "
+                "DISABLE TRIGGER free_data_historical_security_fact_no_update"
+            )
+            connection.execute(
+                "DELETE FROM free_data_historical_security_fact "
+                "WHERE owner_id = %s AND fact_id = %s",
+                (str(owner.owner_id), str(fact.fact_id)),
+            )
+            connection.execute(
+                """
+                INSERT INTO free_data_historical_security_fact(
+                    owner_id, owner_hash, fact_id, fact_hash, symbol,
+                    fact_kind, effective_date, published_date,
+                    source_artifact_kind, source_artifact_id,
+                    source_content_hash, payload_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    str(owner.owner_id),
+                    owner.owner_hash,
+                    str(fact.fact_id),
+                    fact.fact_hash,
+                    fact.symbol,
+                    fact.fact_kind.value,
+                    fact.effective_date,
+                    fact.published_date - timedelta(days=1),
+                    fact.source_reference.artifact_kind,
+                    str(fact.source_reference.artifact_id),
+                    fact.source_reference.content_hash,
+                    Jsonb(fact.to_canonical_dict()),
+                ),
+            )
 
 
 def test_historical_security_fact_projection_detects_missing_child(

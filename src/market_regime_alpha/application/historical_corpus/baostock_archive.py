@@ -184,36 +184,49 @@ class BaoStockHistoricalArchiveClient:
         user_id, password = baostock_credentials()
         previous_timeout = socket.getdefaulttimeout()
         socket.setdefaulttimeout(self._timeout_seconds)
+        logged_in = False
         try:
-            with redirect_stdout(StringIO()):
-                login = self._timed_login(
-                    bs,
-                    user_id=user_id,
-                    password=password,
-                )
-            if str(getattr(login, "error_code", "0")) != "0":
-                raise AShareDataError(
-                    f"BaoStock login failed: {getattr(login, 'error_msg', 'unknown')}"
-                )
             requests: list[HistoricalRawRequest] = []
             source_row_count = 0
             try:
                 for symbol in ordered_symbols:
                     for timeframe in ordered_timeframes:
                         for request_start, request_end in request_ranges[timeframe]:
-                            request = self._checkpointed_acquire_one(
+                            request = self._load_existing_checkpoint(
                                 checkpoint_root=checkpoint_directory,
-                                bs=bs,
                                 symbol=symbol,
                                 timeframe=timeframe,
                                 start_date=request_start,
                                 end_date=request_end,
                             )
+                            if request is None:
+                                if not logged_in:
+                                    with redirect_stdout(StringIO()):
+                                        login = self._timed_login(
+                                            bs,
+                                            user_id=user_id,
+                                            password=password,
+                                        )
+                                    if str(getattr(login, "error_code", "0")) != "0":
+                                        raise AShareDataError(
+                                            "BaoStock login failed: "
+                                            f"{getattr(login, 'error_msg', 'unknown')}"
+                                        )
+                                    logged_in = True
+                                request = self._checkpointed_acquire_one(
+                                    checkpoint_root=checkpoint_directory,
+                                    bs=bs,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    start_date=request_start,
+                                    end_date=request_end,
+                                )
                             if request.provider_error_code in (
                                 _BAOSTOCK_AUTHENTICATION_ERROR_CODES
                             ):
                                 with redirect_stdout(StringIO()):
-                                    self._timed_logout(bs)
+                                    if logged_in:
+                                        self._timed_logout(bs)
                                     relogin = self._timed_login(
                                         bs,
                                         user_id=user_id,
@@ -223,6 +236,7 @@ class BaoStockHistoricalArchiveClient:
                                     raise AShareDataError(
                                         "BaoStock reauthentication failed during acquisition"
                                     )
+                                logged_in = True
                                 request = self._checkpointed_acquire_one(
                                     checkpoint_root=checkpoint_directory,
                                     bs=bs,
@@ -250,8 +264,9 @@ class BaoStockHistoricalArchiveClient:
                                 )
                             requests.append(request)
             finally:
-                with redirect_stdout(StringIO()):
-                    self._timed_logout(bs)
+                if logged_in:
+                    with redirect_stdout(StringIO()):
+                        self._timed_logout(bs)
         finally:
             socket.setdefaulttimeout(previous_timeout)
         partitions = build_partitions(
@@ -304,22 +319,7 @@ class BaoStockHistoricalArchiveClient:
         checkpoint_root: Path | None,
         **values: Any,
     ) -> HistoricalRawRequest:
-        identity = {
-            "provider_id": BAOSTOCK_HISTORICAL_PROVIDER_ID,
-            "symbol": str(values["symbol"]),
-            "timeframe": values["timeframe"].value,
-            "start_date": values["start_date"].isoformat(),
-            "end_date": values["end_date"].isoformat(),
-            "fields": ",".join(
-                _DAILY_FIELDS
-                if values["timeframe"] is Timeframe.DAILY
-                else _MINUTE_FIELDS
-            ),
-            "frequency": (
-                "d" if values["timeframe"] is Timeframe.DAILY else "5"
-            ),
-            "adjustflag": "3",
-        }
+        identity = _request_identity(**values)
         if checkpoint_root is None:
             return self._timed_acquire_one(**values)
         checkpoint_root.mkdir(parents=True, exist_ok=True)
@@ -357,6 +357,20 @@ class BaoStockHistoricalArchiveClient:
             _fsync_directory(checkpoint_root)
         finally:
             Path(temporary_name).unlink(missing_ok=True)
+        return _load_request_checkpoint(checkpoint, identity)
+
+    def _load_existing_checkpoint(
+        self,
+        *,
+        checkpoint_root: Path | None,
+        **values: Any,
+    ) -> HistoricalRawRequest | None:
+        if checkpoint_root is None:
+            return None
+        identity = _request_identity(**values)
+        checkpoint = checkpoint_root / f"{canonical_hash(identity)[7:]}.json"
+        if not checkpoint.exists():
+            return None
         return _load_request_checkpoint(checkpoint, identity)
 
     def _timed_login(self, bs: Any, **credentials: str) -> Any:
@@ -537,6 +551,23 @@ __all__ = [
 
 class _BaoStockRequestTimeout(BaseException):
     """Escape Provider code that catches ordinary socket exceptions."""
+
+
+def _request_identity(**values: Any) -> dict[str, str]:
+    timeframe = values["timeframe"]
+    if not isinstance(timeframe, Timeframe):
+        raise ValueError("Historical checkpoint timeframe is invalid")
+    fields = _DAILY_FIELDS if timeframe is Timeframe.DAILY else _MINUTE_FIELDS
+    return {
+        "provider_id": BAOSTOCK_HISTORICAL_PROVIDER_ID,
+        "symbol": str(values["symbol"]),
+        "timeframe": timeframe.value,
+        "start_date": values["start_date"].isoformat(),
+        "end_date": values["end_date"].isoformat(),
+        "fields": ",".join(fields),
+        "frequency": "d" if timeframe is Timeframe.DAILY else "5",
+        "adjustflag": "3",
+    }
 
 
 def _ensure_acquisition_manifest(

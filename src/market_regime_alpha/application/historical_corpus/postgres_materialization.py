@@ -340,62 +340,96 @@ class PostgresHistoricalMaterializationRepository:
     ) -> tuple[tuple[ValidationArtifactReference, TargetOutcomeLabel], ...]:
         """Project only one symbol/Target history for Forecast sampling."""
 
-        if maximum_labels <= 0:
+        return self.list_outcome_labels_for_symbols_before(
+            run_id=run_id,
+            before=before,
+            symbols=(symbol,),
+            target_id=target_id,
+            maximum_labels_per_symbol=maximum_labels,
+        )[symbol]
+
+    def list_outcome_labels_for_symbols_before(
+        self,
+        *,
+        run_id: ArtifactId,
+        before: date,
+        symbols: tuple[str, ...],
+        target_id: ArtifactId,
+        maximum_labels_per_symbol: int,
+    ) -> Mapping[
+        str,
+        tuple[tuple[ValidationArtifactReference, TargetOutcomeLabel], ...],
+    ]:
+        """Project a bounded multi-symbol Forecast sample window in one read."""
+
+        if not symbols or symbols != tuple(sorted(set(symbols))):
+            raise ValueError("Historical Outcome symbols must be ordered")
+        if maximum_labels_per_symbol <= 0:
             raise ValueError("Historical Outcome label limit must be positive")
         with self._factory.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
-                SELECT component.component_id, component.component_hash,
-                       label.payload_json,
-                       (
-                           SELECT count(*) = 1
-                           FROM jsonb_array_elements(
-                               component.payload_json->'payload'->'labels'
-                           ) AS owned_label
-                           WHERE owned_label->>'label_id' = label.label_id
-                             AND owned_label = label.payload_json
-                       ) AS owner_matches
-                FROM historical_corpus_outcome_label AS label
-                JOIN historical_corpus_session_component AS component
-                  ON component.component_id = label.component_id
-                 AND component.component_hash = label.component_hash
-                WHERE component.run_id = %s
-                  AND component.component_kind = 'OUTCOME'
-                  AND label.trading_date < %s
-                  AND label.symbol = %s
-                  AND label.target_id = %s
-                ORDER BY label.trading_date DESC, component.component_id DESC,
-                         label.label_id DESC
-                LIMIT %s
+                WITH ranked_labels AS (
+                    SELECT label.symbol, component.component_id,
+                           component.component_hash, label.payload_json,
+                           (
+                               SELECT count(*) = 1
+                               FROM jsonb_array_elements(
+                                   component.payload_json->'payload'->'labels'
+                               ) AS owned_label
+                               WHERE owned_label->>'label_id' = label.label_id
+                                 AND owned_label = label.payload_json
+                           ) AS owner_matches,
+                           row_number() OVER (
+                               PARTITION BY label.symbol
+                               ORDER BY label.trading_date DESC,
+                                        component.component_id DESC,
+                                        label.label_id DESC
+                           ) AS sample_ordinal
+                    FROM historical_corpus_outcome_label AS label
+                    JOIN historical_corpus_session_component AS component
+                      ON component.component_id = label.component_id
+                     AND component.component_hash = label.component_hash
+                    WHERE component.run_id = %s
+                      AND component.component_kind = 'OUTCOME'
+                      AND label.trading_date < %s
+                      AND label.symbol = ANY(%s)
+                      AND label.target_id = %s
+                )
+                SELECT symbol, component_id, component_hash, payload_json,
+                       owner_matches
+                FROM ranked_labels
+                WHERE sample_ordinal <= %s
+                ORDER BY symbol, sample_ordinal DESC, component_id, payload_json->>'label_id'
                 """,
                 (
                     str(run_id),
                     before,
-                    symbol,
+                    list(symbols),
                     str(target_id),
-                    maximum_labels,
+                    maximum_labels_per_symbol,
                 ),
             ).fetchall()
-        rows = sorted(rows, key=lambda row: (
-            TargetOutcomeLabel.from_canonical_dict(row[2]).label_interval_start,
-            str(row[0]),
-            str(TargetOutcomeLabel.from_canonical_dict(row[2]).label_id),
-        ))
-        if any(not bool(row[3]) for row in rows):
+        if any(not bool(row[4]) for row in rows):
             raise HistoricalMaterializationConflict(
                 "Historical Outcome label projection diverged from owner"
             )
-        return tuple(
-            (
-                ValidationArtifactReference(
-                    "HISTORICAL_OUTCOME",
-                    ArtifactId(str(row[0])),
-                    str(row[1]),
-                ),
-                TargetOutcomeLabel.from_canonical_dict(row[2]),
+        grouped: dict[
+            str,
+            list[tuple[ValidationArtifactReference, TargetOutcomeLabel]],
+        ] = {symbol: [] for symbol in symbols}
+        for row in rows:
+            grouped[str(row[0])].append(
+                (
+                    ValidationArtifactReference(
+                        "HISTORICAL_OUTCOME",
+                        ArtifactId(str(row[1])),
+                        str(row[2]),
+                    ),
+                    TargetOutcomeLabel.from_canonical_dict(row[3]),
+                )
             )
-            for row in rows
-        )
+        return {symbol: tuple(grouped[symbol]) for symbol in symbols}
 
     def list_references_for_run(
         self,

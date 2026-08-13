@@ -133,11 +133,24 @@ class ResearchExperimentDefinition:
             "randomness_algorithm",
         ):
             require_text(name, str(getattr(self, name)))
-        if self.schema_version != "research-experiment-definition/v1":
+        if self.schema_version not in {
+            "research-experiment-definition/v1",
+            "research-experiment-definition/v2",
+        }:
             raise ValueError("unsupported Research Experiment Definition schema")
-        if self.feature_reference.artifact_kind != "FEATURE_DEFINITION_SET":
+        expected_feature_kind = (
+            "FEATURE_DEFINITION_SET"
+            if self.schema_version == "research-experiment-definition/v1"
+            else "FEATURE_SET_CONFIGURATION"
+        )
+        if self.feature_reference.artifact_kind != expected_feature_kind:
             raise ValueError("Experiment feature reference kind mismatch")
-        if self.cost_policy_reference.artifact_kind != "SHADOW_PORTFOLIO_POLICY":
+        expected_cost_kind = (
+            "SHADOW_PORTFOLIO_POLICY"
+            if self.schema_version == "research-experiment-definition/v1"
+            else "HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET"
+        )
+        if self.cost_policy_reference.artifact_kind != expected_cost_kind:
             raise ValueError("Experiment cost policy reference kind mismatch")
         if (
             not self.target_references
@@ -182,6 +195,7 @@ class ResearchExperimentDefinition:
     @classmethod
     def create(cls, **values: Any) -> ResearchExperimentDefinition:
         normalized = dict(values)
+        normalized.setdefault("schema_version", "research-experiment-definition/v1")
         for name in (
             "target_references",
             "allowed_model_families",
@@ -202,7 +216,7 @@ class ResearchExperimentDefinition:
             **{
                 name: getattr(self, name)
                 for name in self.__dataclass_fields__
-                if name not in {"definition_id", "definition_hash", "schema_version"}
+                if name not in {"definition_id", "definition_hash"}
             }
         )
 
@@ -1237,7 +1251,9 @@ def _formal_protocol_payload(
 
 def _experiment_payload(**values: Any) -> dict[str, Any]:
     return {
-        "schema_version": "research-experiment-definition/v1",
+        "schema_version": values.get(
+            "schema_version", "research-experiment-definition/v1"
+        ),
         "research_question": values["research_question"],
         "hypothesis": values["hypothesis"],
         "decision_time_policy": values["decision_time_policy"],

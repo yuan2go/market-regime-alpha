@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from hashlib import sha256
 from typing import Any, Mapping
+from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
@@ -815,7 +816,10 @@ def _stream_projection_digest(
     digest = sha256()
     digest.update(b"[")
     count = 0
-    with connection.cursor() as cursor:
+    with connection.cursor(
+        name=f"historical_fact_digest_{uuid4().hex}"
+    ) as cursor:
+        cursor.itersize = 512
         cursor.execute(
             query,
             (str(reference.artifact_id), reference.content_hash),

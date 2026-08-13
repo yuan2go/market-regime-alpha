@@ -26,7 +26,6 @@ from market_regime_alpha.application.historical_corpus.historical_window import 
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     PHASE_E3_TIMEZONE,
-    phase_e3_cost_policy_reference,
     verify_phase_e3_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
@@ -76,22 +75,16 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
     PostgresResearchValidationRepository,
 )
 from market_regime_alpha.application.research_validation.liquidity_capacity import (
-    CapacityParameter,
-    CapacityValueProvenance,
     LiquidityCapacityAssessment,
-    LiquidityCapacityProtocol,
+)
+from market_regime_alpha.application.research_validation.historical_economics import (
+    HistoricalStrategyEconomicsPolicySet,
 )
 from market_regime_alpha.application.strategy_shadow.economics import (
-    StrategyEconomicsPolicy,
     StrategyEconomicsResult,
-    StrategyEntryKind,
     StrategyExecutionObservation,
     StrategyExecutionPhase,
-    StrategyExitKind,
     evaluate_strategy_economics,
-)
-from market_regime_alpha.application.strategy_shadow.portfolio import (
-    ShadowParameterProvenance,
 )
 from market_regime_alpha.core.identity import (
     ArtifactId,
@@ -299,6 +292,10 @@ class HistoricalDecisionMaterializer:
             ValidationArtifactReference,
             HistoricalConstituentTimeline,
         ] = {}
+        self._economics_policy_cache: dict[
+            ValidationArtifactReference,
+            HistoricalStrategyEconomicsPolicySet,
+        ] = {}
 
     def selective_read_metrics(self) -> tuple[HistoricalReadMetrics, ...]:
         return self._windows.metrics()
@@ -459,15 +456,40 @@ class HistoricalDecisionMaterializer:
             ):
                 raise ValueError("Historical Experiment Definition hash mismatch")
             target_protocol = self._load_target_protocol(request)
+            feature_owner = self._validation.get_feature_set_configuration(
+                experiment.feature_reference.artifact_id
+            )
+            economics_owner = (
+                self._validation.get_historical_strategy_economics_policy_set(
+                    experiment.cost_policy_reference.artifact_id
+                )
+            )
+            for reference in (
+                request.experiment_definition_reference,
+                experiment.feature_reference,
+                experiment.cost_policy_reference,
+            ):
+                if (
+                    self._validation.get_artifact_recorded_at(reference)
+                    > request.materialized_at
+                ):
+                    raise ValueError(
+                        "Historical frozen methodology was recorded after materialization"
+                    )
             verify_phase_e3_historical_experiment(
                 experiment,
                 target_protocol=target_protocol,
+                feature_owner=feature_owner,
+                economics_owner=economics_owner,
                 decision_local_time=request.decision_time.astimezone(
                     ZoneInfo(PHASE_E3_TIMEZONE)
                 ).time(),
                 timezone_name=PHASE_E3_TIMEZONE,
                 configuration_references=request.configuration_references,
             )
+            self._economics_policy_cache[
+                request.experiment_definition_reference
+            ] = economics_owner
         base_universe, universe_reference = self._active_universe(
             request.configuration_references,
             request.trading_date,
@@ -827,15 +849,21 @@ class HistoricalDecisionMaterializer:
         forecast_target = next(item for item in target_protocol.targets if item.checkpoint is OutcomeCheckpoint.TIME_1030)
         forecasts = []
         used_prior_references: set[ValidationArtifactReference] = set()
+        forecast_symbols = tuple(sorted(item.symbol for item in snapshots))
+        prior_labels_by_symbol = (
+            {}
+            if not forecast_symbols
+            else self._components.list_outcome_labels_for_symbols_before(
+                run_id=self._run_id,
+                before=request.trading_date,
+                symbols=forecast_symbols,
+                target_id=forecast_target.target_id,
+                maximum_labels_per_symbol=self._maximum_prior_forecast_sessions,
+            )
+        )
         for snapshot in snapshots:
             samples, event_ends, source_references = _prior_forecast_samples(
-                prior_labels=self._components.list_outcome_labels_before(
-                    run_id=self._run_id,
-                    before=request.trading_date,
-                    symbol=snapshot.symbol,
-                    target_id=forecast_target.target_id,
-                    maximum_labels=self._maximum_prior_forecast_sessions,
-                ),
+                prior_labels=prior_labels_by_symbol[snapshot.symbol],
                 symbol=snapshot.symbol,
                 configuration=forecast_config,
             )
@@ -981,9 +1009,26 @@ class HistoricalDecisionMaterializer:
         input_references: tuple[ValidationArtifactReference, ...],
     ) -> SessionStageComputation:
         protocol = self._load_target_protocol(request)
+        economics_owner = self._economics_policy_set(request, protocol)
         signal = self._components.get(_single_reference(input_references, "HISTORICAL_SIGNAL"))
         forecast = self._components.get(_single_reference(input_references, "HISTORICAL_FORECAST"))
-        policies = tuple(_strategy_policy(target, request.materialized_at) for target in protocol.targets)
+        policies = tuple(
+            economics_owner.policy_for_reference(
+                ValidationArtifactReference(
+                    "OUTCOME_TARGET_DEFINITION",
+                    target.target_id,
+                    target.target_hash,
+                )
+            )
+            for target in protocol.targets
+        )
+        cost_values = {
+            item.name: item.value for item in policies[0].parameters
+        }
+        capacity_values = {
+            item.name: item.value
+            for item in economics_owner.capacity_protocol.parameters
+        }
         source_max = max(signal.source_max_event_time, forecast.source_max_event_time)
         component = self._put_component(
             request=request,
@@ -992,7 +1037,7 @@ class HistoricalDecisionMaterializer:
             source_references=(
                 signal.reference,
                 forecast.reference,
-                phase_e3_cost_policy_reference(),
+                economics_owner.reference,
             ),
             payload={
                 "entry": "FROZEN_DECISION_REFERENCE",
@@ -1007,14 +1052,20 @@ class HistoricalDecisionMaterializer:
                 ],
                 "candidate_symbols": [str(item["symbol"]) for item in _objects(signal.payload.get("snapshots"), "snapshots")],
                 "cost_assumptions": {
-                    "commission_bps_each_side": "3",
-                    "stamp_duty_bps_sell": "5",
-                    "spread_slippage_bps_each_side": "5",
-                    "impact_coefficient_bps": "8",
-                    "participation_rate": "0.1",
+                    "commission_bps_each_side": str(cost_values["commission_bps"]),
+                    "stamp_duty_bps_sell": str(cost_values["stamp_duty_bps"]),
+                    "spread_slippage_bps_each_side": str(
+                        cost_values["spread_slippage_bps"]
+                    ),
+                    "impact_coefficient_bps": str(
+                        capacity_values["impact_coefficient_bps"]
+                    ),
+                    "participation_rate": str(
+                        capacity_values["participation_rate"]
+                    ),
                 },
                 "cost_policy_reference": (
-                    phase_e3_cost_policy_reference().to_canonical_dict()
+                    economics_owner.reference.to_canonical_dict()
                 ),
             },
             limitations=("COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",),
@@ -1025,6 +1076,48 @@ class HistoricalDecisionMaterializer:
             output=component.reference,
             reason="HISTORICAL_STRATEGY_POLICY_FROZEN",
         )
+
+    def _economics_policy_set(
+        self,
+        request: ResearchDecisionSessionRequest,
+        target_protocol: OutcomeTargetProtocol,
+    ) -> HistoricalStrategyEconomicsPolicySet:
+        cached = self._economics_policy_cache.get(
+            request.experiment_definition_reference
+        )
+        if cached is not None:
+            return cached
+        if self._validation is None:
+            raise ValueError(
+                "Historical Strategy Economics requires Experiment Authority"
+            )
+        experiment = self._validation.get_historical_experiment_definition(
+            request.experiment_definition_reference.artifact_id
+        )
+        if (
+            experiment.definition_hash
+            != request.experiment_definition_reference.content_hash
+            or experiment.cost_policy_reference
+            not in request.configuration_references
+        ):
+            raise ValueError("Historical Strategy Economics Experiment binding mismatch")
+        owner = self._validation.get_historical_strategy_economics_policy_set(
+            experiment.cost_policy_reference.artifact_id
+        )
+        if (
+            owner.reference != experiment.cost_policy_reference
+            or owner.target_protocol_reference.artifact_id
+            != target_protocol.protocol_id
+            or owner.target_protocol_reference.content_hash
+            != target_protocol.protocol_hash
+            or self._validation.get_artifact_recorded_at(owner.reference)
+            > request.materialized_at
+        ):
+            raise ValueError("Historical Strategy Economics owner binding mismatch")
+        self._economics_policy_cache[
+            request.experiment_definition_reference
+        ] = owner
+        return owner
 
     def _portfolio_stage(
         self,
@@ -1074,6 +1167,7 @@ class HistoricalDecisionMaterializer:
         normalized_reference = _required_reference(request, NORMALIZED_DATASET_KIND)
         owner = self._windows.index(normalized_reference).package
         protocol = self._load_target_protocol(request)
+        economics_owner = self._economics_policy_set(request, protocol)
         signal = self._components.get(_single_reference(input_references, "HISTORICAL_SIGNAL"))
         candidate = self._components.get(_single_reference(input_references, "HISTORICAL_CANDIDATE"))
         portfolio = self._components.get(_single_reference(input_references, "HISTORICAL_PORTFOLIO"))
@@ -1127,7 +1221,7 @@ class HistoricalDecisionMaterializer:
         )
         labels: list[TargetOutcomeLabel] = []
         economics: list[StrategyEconomicsResult] = []
-        capacity_protocol = _capacity_protocol(request.materialized_at)
+        capacity_protocol = economics_owner.capacity_protocol
         requested_notional = Decimal("100000")
         for symbol in symbols:
             reference_price = _decision_reference_price(bars, symbol, request.trading_date, request.decision_time)
@@ -1202,7 +1296,13 @@ class HistoricalDecisionMaterializer:
             )
             for label in symbol_labels:
                 target = next(item for item in protocol.targets if item.target_id == label.target.artifact_id)
-                policy = _strategy_policy(target, request.materialized_at)
+                policy = economics_owner.policy_for_reference(
+                    ValidationArtifactReference(
+                        "OUTCOME_TARGET_DEFINITION",
+                        target.target_id,
+                        target.target_hash,
+                    )
+                )
                 entry = _execution_observation(
                     phase=StrategyExecutionPhase.ENTRY,
                     symbol=symbol,
@@ -1252,6 +1352,7 @@ class HistoricalDecisionMaterializer:
                 signal.reference,
                 portfolio.reference,
                 request.target_protocol_reference,
+                economics_owner.reference,
                 *((facts_reference,) if facts_reference is not None else ()),
             ),
             payload={
@@ -2511,54 +2612,6 @@ def _corporate_action_unavailable_label(
         availability_status=OutcomeAvailabilityStatus.UNAVAILABLE,
         outcome_available_at=label.outcome_available_at,
         reason_codes=tuple(reasons),
-    )
-
-
-def _strategy_policy(target: TargetDefinition, created_at: datetime) -> StrategyEconomicsPolicy:
-    return StrategyEconomicsPolicy.create(
-        policy_version=f"phase-e-{target.checkpoint.value}-engineering-cost-v1",
-        prediction_target=target,
-        entry_kind=StrategyEntryKind.FROZEN_DECISION_REFERENCE,
-        exit_kind=StrategyExitKind.FIXED_TIME,
-        fixed_exit_checkpoint=target.checkpoint,
-        barrier_id=None,
-        forecast_raw_score_threshold=None,
-        lot_size=100,
-        t_plus_one=True,
-        parameters={
-            "commission_bps": (
-                Decimal("3"),
-                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-            ),
-            "stamp_duty_bps": (
-                Decimal("5"),
-                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-            ),
-            "spread_slippage_bps": (
-                Decimal("5"),
-                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
-            ),
-        },
-        created_at=created_at,
-    )
-
-
-def _capacity_protocol(created_at: datetime) -> LiquidityCapacityProtocol:
-    return LiquidityCapacityProtocol.create(
-        protocol_version="phase-e-capacity-engineering-v1",
-        parameters=tuple(
-            CapacityParameter(
-                name,
-                value,
-                CapacityValueProvenance.ENGINEERING_ASSUMPTION,
-            )
-            for name, value in (
-                ("impact_coefficient_bps", Decimal("8")),
-                ("participation_rate", Decimal("0.1")),
-                ("slippage_bps", Decimal("5")),
-            )
-        ),
-        created_at=created_at,
     )
 
 

@@ -13,6 +13,9 @@ from market_regime_alpha.application.research_validation.calibration import (
     CalibrationPartition,
     CalibrationProtocol,
 )
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.application.research_validation.factor_extraction import ResearchPanelEnrichment
 from market_regime_alpha.application.research_validation.factor_research import FactorResearchCatalog
 from market_regime_alpha.application.research_validation.formal_evaluation import (
@@ -21,6 +24,10 @@ from market_regime_alpha.application.research_validation.formal_evaluation impor
 from market_regime_alpha.application.research_validation.formal_protocol_components import (
     FeatureDefinitionSet,
     ThresholdPolicy,
+)
+from market_regime_alpha.application.research_validation.historical_economics import (
+    HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET_KIND,
+    HistoricalStrategyEconomicsPolicySet,
 )
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleDataset
 from market_regime_alpha.application.research_validation.samples import HistoricalSampleQualification
@@ -31,6 +38,7 @@ from market_regime_alpha.core.identity import ArtifactId, TargetId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.forecasting.path import PathForecastSample
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.features.spine import FeatureSetConfiguration
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 
@@ -62,9 +70,11 @@ class PostgresResearchValidationRepository:
         if artifact_kind in {
             "FACTOR_RESEARCH_CATALOG",
             "FEATURE_DEFINITION_SET",
+            "FEATURE_SET_CONFIGURATION",
             "FORMAL_EVALUATION_PROTOCOL",
             "FORMAL_HYPOTHESIS_FAMILY_EVALUATION_RESULT",
             "HISTORICAL_SAMPLE_DATASET",
+            HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET_KIND,
             "PANEL_ENRICHMENT",
             "THRESHOLD_POLICY",
             "RESEARCH_EXPERIMENT_DEFINITION",
@@ -163,6 +173,64 @@ class PostgresResearchValidationRepository:
             raise ValueError("Historical Experiment Definition owner hash drift")
         return definition
 
+    def get_artifact_recorded_at(
+        self,
+        reference: ValidationArtifactReference,
+    ) -> datetime:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT artifact_hash, artifact_kind, created_at "
+                "FROM research_validation_artifact WHERE artifact_id = %s",
+                (str(reference.artifact_id),),
+            ).fetchone()
+        if row is None or (
+            str(row[0]) != reference.content_hash
+            or str(row[1]) != reference.artifact_kind
+        ):
+            raise KeyError(str(reference.artifact_id))
+        if not isinstance(row[2], datetime):
+            raise ValueError("Research Validation owner time is malformed")
+        return row[2]
+
+    def _get_typed_artifact(
+        self,
+        *,
+        artifact_id: ArtifactId,
+        artifact_kind: str,
+        id_field: str,
+        hash_field: str,
+        restore: Any,
+    ) -> Any:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT artifact_hash, artifact_kind, payload_json "
+                "FROM research_validation_artifact WHERE artifact_id = %s",
+                (str(artifact_id),),
+            ).fetchone()
+        if (
+            row is None
+            or str(row[1]) != artifact_kind
+            or not isinstance(row[2], Mapping)
+        ):
+            raise KeyError(str(artifact_id))
+        artifact_hash = str(row[0])
+        payload = dict(row[2])
+        if artifact_hash != canonical_hash(payload):
+            raise ValueError(f"{artifact_kind} owner hash drift")
+        restored = restore(
+            {
+                id_field: str(artifact_id),
+                hash_field: artifact_hash,
+                **payload,
+            }
+        )
+        if (
+            getattr(restored, id_field) != artifact_id
+            or getattr(restored, hash_field) != artifact_hash
+        ):
+            raise ValueError(f"{artifact_kind} owner identity drift")
+        return restored
+
     def record_feature_definition_set(
         self, definition_set: FeatureDefinitionSet
     ) -> None:
@@ -176,6 +244,76 @@ class PostgresResearchValidationRepository:
                 definition_set.identity_payload(),
                 definition_set.locked_at,
             )
+        )
+
+    def get_feature_definition_set(
+        self, definition_set_id: ArtifactId
+    ) -> FeatureDefinitionSet:
+        return self._get_typed_artifact(
+            artifact_id=definition_set_id,
+            artifact_kind="FEATURE_DEFINITION_SET",
+            id_field="definition_set_id",
+            hash_field="definition_set_hash",
+            restore=FeatureDefinitionSet.from_canonical_dict,
+        )
+
+    def record_feature_set_configuration(
+        self,
+        configuration: FeatureSetConfiguration,
+        *,
+        recorded_at: datetime,
+    ) -> FeatureSetConfiguration:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                configuration.feature_set_id,
+                configuration.content_hash,
+                "FEATURE_SET_CONFIGURATION",
+                "ENGINEERING_ONLY",
+                configuration.semantic_payload(),
+                recorded_at,
+            )
+        )
+        return self.get_feature_set_configuration(configuration.feature_set_id)
+
+    def get_feature_set_configuration(
+        self, feature_set_id: ArtifactId
+    ) -> FeatureSetConfiguration:
+        return self._get_typed_artifact(
+            artifact_id=feature_set_id,
+            artifact_kind="FEATURE_SET_CONFIGURATION",
+            id_field="feature_set_id",
+            hash_field="content_hash",
+            restore=FeatureSetConfiguration.from_canonical_dict,
+        )
+
+    def record_historical_strategy_economics_policy_set(
+        self, policy_set: HistoricalStrategyEconomicsPolicySet
+    ) -> HistoricalStrategyEconomicsPolicySet:
+        self._factory.run_transaction(
+            lambda connection: self._insert_artifact(
+                connection,
+                policy_set.policy_set_id,
+                policy_set.policy_set_hash,
+                HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET_KIND,
+                "ENGINEERING_ONLY",
+                policy_set.identity_payload(),
+                policy_set.created_at,
+            )
+        )
+        return self.get_historical_strategy_economics_policy_set(
+            policy_set.policy_set_id
+        )
+
+    def get_historical_strategy_economics_policy_set(
+        self, policy_set_id: ArtifactId
+    ) -> HistoricalStrategyEconomicsPolicySet:
+        return self._get_typed_artifact(
+            artifact_id=policy_set_id,
+            artifact_kind=HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET_KIND,
+            id_field="policy_set_id",
+            hash_field="policy_set_hash",
+            restore=HistoricalStrategyEconomicsPolicySet.from_canonical_dict,
         )
 
     def record_threshold_policy(self, policy: ThresholdPolicy) -> None:

@@ -11,7 +11,9 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.historical_research.contracts import (
+    E3_HISTORICAL_RUNTIME_CONTRACT,
     HistoricalResearchCommand,
+    PRE_E3_HISTORICAL_RUNTIME_CONTRACT,
 )
 from market_regime_alpha.application.research_session.contracts import (
     ResearchDecisionSessionRequest,
@@ -30,8 +32,8 @@ from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 
 
 DEFAULT_HISTORICAL_STAGE_LEASE = timedelta(minutes=10)
-PRE_E3_RUNTIME_CONTRACT = "PRE_E3_IMMUTABLE_RECEIPTS_V1"
-E3_LONGITUDINAL_RUNTIME_CONTRACT = "E3_LONGITUDINAL_V1"
+PRE_E3_RUNTIME_CONTRACT = PRE_E3_HISTORICAL_RUNTIME_CONTRACT
+E3_LONGITUDINAL_RUNTIME_CONTRACT = E3_HISTORICAL_RUNTIME_CONTRACT
 Clock = Callable[[], datetime]
 
 
@@ -130,11 +132,12 @@ class PostgresHistoricalResearchJournal:
                     runtime_scope_policy_id, runtime_scope_policy_hash,
                     target_protocol_id, target_protocol_hash,
                     experiment_definition_id, experiment_definition_hash,
-                    data_authority_mode, evidence_qualification, status, version,
+                    data_authority_mode, evidence_qualification,
+                    runtime_contract_version, status, version,
                     command_json, created_at, updated_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
                     'PENDING', 1, %s, %s, %s
                 ) ON CONFLICT DO NOTHING
                 """,
@@ -154,6 +157,7 @@ class PostgresHistoricalResearchJournal:
                     command.experiment_definition_reference.content_hash,
                     command.data_authority_mode.value,
                     command.evidence_qualification.value,
+                    command.runtime_contract_version,
                     Jsonb(command.to_canonical_dict()),
                     command.created_at,
                     now,
@@ -490,6 +494,10 @@ class PostgresHistoricalResearchJournal:
         command = HistoricalResearchCommand.from_canonical_dict(row[4])
         if str(row[0]) != command.command_hash or command.run_id != run_id:
             raise HistoricalResearchConflict("Historical run owner hash diverged")
+        if str(row[1]) != command.runtime_contract_version:
+            raise HistoricalResearchConflict(
+                "Historical run contract projection diverged from command identity"
+            )
         receipts_by_session: dict[
             ArtifactId, list[ResearchSessionStageReceipt]
         ] = {}

@@ -1,19 +1,22 @@
-"""Frozen Phase E3 methodology bound to the longitudinal Historical command.
+"""Typed owners for the frozen Phase E3 longitudinal methodology.
 
-The owner is deliberately narrow: changing any feature, threshold, target,
-cost, or evaluation choice produces a different Experiment Definition and
-requires a new explicitly coded experiment contract.
+Changing a feature, threshold, Target, cost, capacity, or evaluation choice
+produces a different content-addressed owner and Experiment Definition.  The
+module intentionally freezes only the currently consumed Historical policy;
+it is not a second feature or Strategy implementation.
 """
 
 from __future__ import annotations
 
-from datetime import time
-from typing import Any
+from datetime import UTC, datetime, time
+from decimal import Decimal
 
 from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
+    TargetDefinition,
 )
 from market_regime_alpha.application.research_validation.common import (
+    ENGINEERING_LIMITATIONS,
     ValidationArtifactReference,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
@@ -21,77 +24,77 @@ from market_regime_alpha.application.research_validation.formal_protocol import 
     ResearchExperimentDefinition,
     SearchBudget,
 )
-from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.application.research_validation.historical_economics import (
+    HistoricalStrategyEconomicsPolicySet,
+)
+from market_regime_alpha.application.research_validation.liquidity_capacity import (
+    CapacityParameter,
+    CapacityValueProvenance,
+    LiquidityCapacityProtocol,
+)
+from market_regime_alpha.application.strategy_shadow.economics import (
+    StrategyEconomicsPolicy,
+    StrategyEntryKind,
+    StrategyExitKind,
+)
+from market_regime_alpha.application.strategy_shadow.portfolio import (
+    ShadowParameterProvenance,
+)
+from market_regime_alpha.features.technical.catalog import canonical_technical_feature_set
+from market_regime_alpha.features.spine import FeatureSetConfiguration
 
 
 PHASE_E3_DECISION_LOCAL_TIME = time(14, 55)
 PHASE_E3_TIMEZONE = "Asia/Shanghai"
+_FEATURE_EFFECTIVE_FROM = datetime(1990, 1, 1, tzinfo=UTC)
 
 
-def phase_e3_feature_methodology_payload() -> dict[str, Any]:
-    return {
-        "schema_version": "phase-e3-canonical-feature-methodology/v1",
-        "chain": [
-            "PRICE",
-            "VOLUME",
-            "MARKET_REGIME",
-            "ETF",
-            "THEME",
-            "CAPITAL",
-            "DYNAMIC_POOL",
-            "CANDIDATE",
-            "SIGNAL",
-            "FORECAST",
-        ],
-        "forecast_minimum_usable_samples": 20,
-        "signal_threshold_policy": "UNCHANGED_FROM_PHASE_E2",
-        "tuning_after_phase_e2": False,
-    }
+def create_phase_e3_feature_configuration() -> FeatureSetConfiguration:
+    return canonical_technical_feature_set(effective_from=_FEATURE_EFFECTIVE_FROM)
 
 
-def phase_e3_strategy_economics_payload() -> dict[str, Any]:
-    return {
-        "schema_version": "phase-e3-strategy-economics-policy/v1",
-        "commission_bps_each_side": "3",
-        "stamp_duty_bps_sell": "5",
-        "spread_slippage_bps_each_side": "5",
-        "impact_coefficient_bps": "8",
-        "participation_rate": "0.1",
-        "commission_provenance": "ENGINEERING_ASSUMPTION",
-        "stamp_duty_provenance": "ENGINEERING_ASSUMPTION",
-        "slippage_provenance": "ENGINEERING_ASSUMPTION",
-        "impact_provenance": "ENGINEERING_ASSUMPTION",
-        "fillability_provenance": "ENGINEERING_ASSUMPTION",
-        "capacity_provenance": "ENGINEERING_ASSUMPTION",
-    }
-
-
-def phase_e3_feature_reference() -> ValidationArtifactReference:
-    payload = phase_e3_feature_methodology_payload()
-    digest = canonical_hash(payload)
-    return ValidationArtifactReference(
-        "FEATURE_DEFINITION_SET",
-        ArtifactId(f"phase-e3-feature-methodology:{digest[7:]}"),
-        digest,
+def create_phase_e3_strategy_economics_policy_set(
+    *,
+    target_protocol: OutcomeTargetProtocol,
+    created_at: datetime,
+) -> HistoricalStrategyEconomicsPolicySet:
+    policies = tuple(
+        _strategy_policy(target, created_at) for target in target_protocol.targets
     )
-
-
-def phase_e3_cost_policy_reference() -> ValidationArtifactReference:
-    payload = phase_e3_strategy_economics_payload()
-    digest = canonical_hash(payload)
-    return ValidationArtifactReference(
-        "SHADOW_PORTFOLIO_POLICY",
-        ArtifactId(f"phase-e3-strategy-economics-policy:{digest[7:]}"),
-        digest,
+    return HistoricalStrategyEconomicsPolicySet.create(
+        policy_set_version="phase-e3-unchanged-phase-e2-economics-v1",
+        target_protocol_reference=ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            target_protocol.protocol_id,
+            target_protocol.protocol_hash,
+        ),
+        strategy_policies=policies,
+        capacity_protocol=_capacity_protocol(created_at),
+        created_at=created_at,
+        limitations=tuple(
+            sorted(
+                {
+                    *ENGINEERING_LIMITATIONS,
+                    "COST_AND_FILLABILITY_ENGINEERING_ASSUMPTIONS",
+                    "NOT_EMPIRICALLY_CALIBRATED",
+                }
+            )
+        ),
     )
 
 
 def create_phase_e3_historical_experiment(
     target_protocol: OutcomeTargetProtocol,
+    *,
+    locked_at: datetime,
 ) -> ResearchExperimentDefinition:
     """Create the sole unchanged Phase E2 methodology admitted by Phase E3."""
 
+    feature_owner = create_phase_e3_feature_configuration()
+    economics_owner = create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=locked_at,
+    )
     return ResearchExperimentDefinition.create(
         research_question=(
             "Does the unchanged Phase E alpha chain retain incremental ranking "
@@ -110,8 +113,12 @@ def create_phase_e3_historical_experiment(
             )
             for item in target_protocol.targets
         ),
-        feature_reference=phase_e3_feature_reference(),
-        feature_version="phase-e3-unchanged-phase-e2-canonical-v1",
+        feature_reference=ValidationArtifactReference(
+            "FEATURE_SET_CONFIGURATION",
+            feature_owner.feature_set_id,
+            feature_owner.content_hash,
+        ),
+        feature_version=feature_owner.feature_set_version,
         allowed_model_families=("CANONICAL_HISTORICAL_FORECAST",),
         hyperparameter_space=(
             HyperparameterDomain("frozen_configuration", ("phase-e2-v1",)),
@@ -132,7 +139,8 @@ def create_phase_e3_historical_experiment(
         oos_unlock_policy="FORMAL_OOS_LOCKED_CLOSED",
         randomness_algorithm="DETERMINISTIC_CANONICAL_KERNELS",
         random_seeds=(20260813,),
-        cost_policy_reference=phase_e3_cost_policy_reference(),
+        cost_policy_reference=economics_owner.reference,
+        schema_version="research-experiment-definition/v2",
     )
 
 
@@ -140,17 +148,29 @@ def verify_phase_e3_historical_experiment(
     definition: ResearchExperimentDefinition,
     *,
     target_protocol: OutcomeTargetProtocol,
+    feature_owner: FeatureSetConfiguration,
+    economics_owner: HistoricalStrategyEconomicsPolicySet,
     decision_local_time: time,
     timezone_name: str,
     configuration_references: tuple[ValidationArtifactReference, ...],
 ) -> None:
-    """Fail closed unless the command binds the exact frozen methodology."""
+    """Fail closed unless owner reload proves the exact frozen methodology."""
 
-    expected = create_phase_e3_historical_experiment(target_protocol)
+    expected = create_phase_e3_historical_experiment(
+        target_protocol,
+        locked_at=economics_owner.created_at,
+    )
     if definition != expected:
         raise ValueError(
             "Longitudinal Historical Experiment diverges from the frozen Phase E3 methodology"
         )
+    if feature_owner != create_phase_e3_feature_configuration():
+        raise ValueError("Longitudinal Historical Feature owner diverged")
+    if economics_owner != create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=economics_owner.created_at,
+    ):
+        raise ValueError("Longitudinal Historical Economics owner diverged")
     if (
         decision_local_time != PHASE_E3_DECISION_LOCAL_TIME
         or timezone_name != PHASE_E3_TIMEZONE
@@ -166,13 +186,63 @@ def verify_phase_e3_historical_experiment(
         )
 
 
+def _strategy_policy(
+    target: TargetDefinition,
+    created_at: datetime,
+) -> StrategyEconomicsPolicy:
+    return StrategyEconomicsPolicy.create(
+        policy_version=f"phase-e-{target.checkpoint.value}-engineering-cost-v1",
+        prediction_target=target,
+        entry_kind=StrategyEntryKind.FROZEN_DECISION_REFERENCE,
+        exit_kind=StrategyExitKind.FIXED_TIME,
+        fixed_exit_checkpoint=target.checkpoint,
+        barrier_id=None,
+        forecast_raw_score_threshold=None,
+        lot_size=100,
+        t_plus_one=True,
+        parameters={
+            "commission_bps": (
+                Decimal("3"),
+                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+            ),
+            "stamp_duty_bps": (
+                Decimal("5"),
+                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+            ),
+            "spread_slippage_bps": (
+                Decimal("5"),
+                ShadowParameterProvenance.ENGINEERING_ASSUMPTION,
+            ),
+        },
+        created_at=created_at,
+    )
+
+
+def _capacity_protocol(created_at: datetime) -> LiquidityCapacityProtocol:
+    return LiquidityCapacityProtocol.create(
+        protocol_version="phase-e-capacity-engineering-v1",
+        parameters=tuple(
+            CapacityParameter(
+                name,
+                value,
+                CapacityValueProvenance.ENGINEERING_ASSUMPTION,
+            )
+            for name, value in (
+                ("impact_coefficient_bps", Decimal("8")),
+                ("participation_rate", Decimal("0.1")),
+                ("slippage_bps", Decimal("5")),
+            )
+        ),
+        created_at=created_at,
+    )
+
+
 __all__ = [
+    "HistoricalStrategyEconomicsPolicySet",
     "PHASE_E3_DECISION_LOCAL_TIME",
     "PHASE_E3_TIMEZONE",
+    "create_phase_e3_feature_configuration",
     "create_phase_e3_historical_experiment",
-    "phase_e3_cost_policy_reference",
-    "phase_e3_feature_methodology_payload",
-    "phase_e3_feature_reference",
-    "phase_e3_strategy_economics_payload",
+    "create_phase_e3_strategy_economics_policy_set",
     "verify_phase_e3_historical_experiment",
 ]

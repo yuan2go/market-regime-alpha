@@ -28,7 +28,9 @@ from market_regime_alpha.application.historical_corpus.evidence_producer import 
     HistoricalEvidenceProducer,
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    create_phase_e3_feature_configuration,
     create_phase_e3_historical_experiment,
+    create_phase_e3_strategy_economics_policy_set,
 )
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
@@ -213,7 +215,22 @@ def test_existing_historical_runner_actively_materializes_and_replays(
             payload={"phase-e": "arbitrary"},
             created_at=MATERIALIZED_AT,
         )
-    experiment = create_phase_e3_historical_experiment(target_protocol)
+    feature_owner = create_phase_e3_feature_configuration()
+    economics_owner = create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=MATERIALIZED_AT,
+    )
+    validation_repository.record_feature_set_configuration(
+        feature_owner,
+        recorded_at=MATERIALIZED_AT,
+    )
+    validation_repository.record_historical_strategy_economics_policy_set(
+        economics_owner
+    )
+    experiment = create_phase_e3_historical_experiment(
+        target_protocol,
+        locked_at=MATERIALIZED_AT,
+    )
     validation_repository.record_historical_experiment_definition(
         experiment,
         recorded_at=MATERIALIZED_AT,

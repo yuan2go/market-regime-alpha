@@ -5,9 +5,10 @@ import pytest
 from market_regime_alpha.application.historical_research.postgres_journal import (
     HistoricalResearchConflict,
     HistoricalRunStatus,
-    PRE_E3_RUNTIME_CONTRACT,
 )
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.historical_research.contracts import (
+    HistoricalResearchCommand,
+)
 from market_regime_alpha.application.historical_research.runner import (
     HistoricalResearchRunner,
 )
@@ -22,27 +23,25 @@ from tests.application.historical_research.test_contracts import CREATED_AT, _co
 from tests.application.research_session.test_kernel import DeterministicOwner
 from tests.persistence.postgres.test_historical_research_journal import (
     MutableClock,
+    _receipt,
     _journal,
 )
 
 
-def _mark_as_migrated_pre_e3(postgres_factory, run_id: ArtifactId) -> None:
-    """Model migration 081's durable classification of an already-existing run."""
-
-    with postgres_factory.connection() as connection:
-        connection.execute(
-            "ALTER TABLE historical_research_run "
-            "DISABLE TRIGGER historical_research_run_identity_immutable"
-        )
-        connection.execute(
-            "UPDATE historical_research_run SET runtime_contract_version = %s "
-            "WHERE run_id = %s",
-            (PRE_E3_RUNTIME_CONTRACT, str(run_id)),
-        )
-        connection.execute(
-            "ALTER TABLE historical_research_run "
-            "ENABLE TRIGGER historical_research_run_identity_immutable"
-        )
+def _legacy_command() -> HistoricalResearchCommand:
+    payload = _command().to_canonical_dict()
+    payload.pop("runtime_contract_version")
+    payload["schema_version"] = "historical-research-command/v1"
+    payload.pop("run_id")
+    payload.pop("command_hash")
+    digest = canonical_hash(payload)
+    return HistoricalResearchCommand.from_canonical_dict(
+        {
+            "run_id": f"historical-research-run-{digest[7:31]}",
+            "command_hash": digest,
+            **payload,
+        }
+    )
 
 
 def test_historical_runner_resumes_and_replays_without_mutation(postgres_factory) -> None:
@@ -146,14 +145,16 @@ def test_historical_replay_reports_owner_output_substitution(postgres_factory) -
 def test_pre_e3_terminal_run_uses_explicit_immutable_receipt_verification(
     postgres_factory,
 ) -> None:
-    legacy = _command()
+    legacy = _legacy_command()
     journal = _journal(postgres_factory, MutableClock(CREATED_AT))
-    runner = HistoricalResearchRunner(
-        journal=journal,
-        kernel=ResearchDecisionSessionKernel(DeterministicOwner()),
-    )
-    terminal = runner.run(command=legacy)
-    _mark_as_migrated_pre_e3(postgres_factory, legacy.run_id)
+    journal.create_or_get(legacy)
+    kernel = ResearchDecisionSessionKernel(DeterministicOwner())
+    while claim := journal.claim_next(legacy.run_id):
+        receipts = kernel.run_next(
+            request=legacy.session_request(claim.trading_date),
+            completed_prefix=claim.completed_prefix,
+        )
+        journal.record_stage(claim=claim, receipt=receipts[-1])
     terminal = journal.get_run(legacy.run_id)
 
     class MustNotRecomputeOwner(DeterministicOwner):
@@ -173,14 +174,16 @@ def test_pre_e3_terminal_run_uses_explicit_immutable_receipt_verification(
 
 
 def test_pre_e3_incomplete_resume_fails_closed_without_exact_code(postgres_factory) -> None:
-    legacy = _command()
+    legacy = _legacy_command()
     journal = _journal(postgres_factory, MutableClock(CREATED_AT))
     runner = HistoricalResearchRunner(
         journal=journal,
         kernel=ResearchDecisionSessionKernel(DeterministicOwner()),
     )
-    runner.run(command=legacy, max_stage_commits=1)
-    _mark_as_migrated_pre_e3(postgres_factory, legacy.run_id)
+    journal.create_or_get(legacy)
+    claim = journal.claim_next(legacy.run_id)
+    assert claim is not None
+    journal.record_stage(claim=claim, receipt=_receipt(legacy, claim))
 
     with pytest.raises(HistoricalResearchConflict, match="exact historical code"):
         runner.resume(run_id=legacy.run_id)
