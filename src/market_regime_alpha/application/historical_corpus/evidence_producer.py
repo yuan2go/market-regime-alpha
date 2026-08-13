@@ -8,8 +8,8 @@ from dataclasses import dataclass, fields
 from decimal import Decimal
 from typing import Any, Mapping
 
-from market_regime_alpha.application.historical_corpus.contracts import (
-    HistoricalDataOwner,
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    HistoricalPackageIndex,
 )
 from market_regime_alpha.application.historical_corpus.decision_materializer import (
     NORMALIZED_DATASET_KIND,
@@ -335,7 +335,7 @@ class HistoricalEvidenceProducer:
             source_references=sources,
             metrics=summary_metrics,
             payload={
-                "owner": owner.to_canonical_dict(),
+                "owner": dict(owner.manifest),
                 "panel_owner_count": len(panel_references),
                 "outcome_owner_count": len(outcome_references),
                 "excluded_missing_target_rows": panel_summary.missing_target_count,
@@ -385,11 +385,14 @@ class HistoricalEvidenceProducer:
             evidence=evidence,
         )
 
-    def _normalized_owner(self, references: tuple[ValidationArtifactReference, ...]) -> HistoricalDataOwner:
+    def _normalized_owner(
+        self,
+        references: tuple[ValidationArtifactReference, ...],
+    ) -> HistoricalPackageIndex:
         matches = tuple(item for item in references if item.artifact_kind == NORMALIZED_DATASET_KIND)
         if len(matches) != 1:
             raise ValueError("Historical Evidence requires one normalized Dataset owner")
-        return self._corpus.load(matches[0]).owner
+        return self._corpus.open_index(matches[0])
 
 
 def _panel_observations(
@@ -790,7 +793,7 @@ def _strategy_metrics(
 
 def _summary_metrics(
     *,
-    owner: HistoricalDataOwner,
+    owner: HistoricalPackageIndex,
     panel_owner_count: int,
     observation_count: int,
     symbol_count: int,

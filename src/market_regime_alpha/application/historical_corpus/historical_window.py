@@ -105,7 +105,7 @@ class HistoricalWindowReader:
             _CachedMinuteSession,
         ] = OrderedDict()
         self._daily_windows: OrderedDict[
-            tuple[ValidationArtifactReference, date, tuple[str, ...]],
+            tuple[ValidationArtifactReference, datetime, tuple[str, ...]],
             _CachedDailyWindow,
         ] = OrderedDict()
         self._aggregate_metrics: HistoricalReadMetrics | None = None
@@ -135,10 +135,10 @@ class HistoricalWindowReader:
         market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
         daily, daily_dates = self._daily_window(
             reference,
-            market_date,
+            decision_time,
             symbols=symbols,
         )
-        result.extend(item for item in daily if item.event_end <= decision_time)
+        result.extend(daily)
         requested_symbols = tuple(sorted(set(symbols)))
         current = self._minute_session(reference, market_date, requested_symbols)
         prior_date = next(
@@ -190,10 +190,9 @@ class HistoricalWindowReader:
         next_session: date,
         symbols: tuple[str, ...],
     ) -> tuple[HistoricalNormalizedBar, ...]:
-        market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
         daily, _dates = self._daily_window(
             reference,
-            market_date,
+            decision_time,
             symbols=symbols,
         )
         requested_symbols = tuple(sorted(set(symbols)))
@@ -242,14 +241,15 @@ class HistoricalWindowReader:
     def _daily_window(
         self,
         reference: ValidationArtifactReference,
-        market_date: date,
+        decision_time: datetime,
         *,
         symbols: tuple[str, ...],
     ) -> tuple[tuple[HistoricalNormalizedBar, ...], tuple[date, ...]]:
+        market_date = decision_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
         requested_symbols = tuple(sorted(set(symbols)))
         if not requested_symbols:
             raise ValueError("Historical Daily window requires symbols")
-        cache_key = (reference, market_date, requested_symbols)
+        cache_key = (reference, decision_time, requested_symbols)
         cached_window = self._daily_windows.get(cache_key)
         if cached_window is not None:
             self._daily_windows.move_to_end(cache_key)
@@ -286,6 +286,7 @@ class HistoricalWindowReader:
             if isinstance(item, HistoricalNormalizedBar)
             and item.timeframe is Timeframe.DAILY
             and item.market_date <= last
+            and item.event_end <= decision_time
         )
         for item in reversed(sorted(daily_records, key=_bar_key)):
             values = by_symbol.get(item.symbol)
