@@ -22,7 +22,7 @@ from market_regime_alpha.application.controlled_operation.research_input import 
 from market_regime_alpha.core.identity import ArtifactId, FeatureDefinitionId
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.contracts import DataEligibility
-from market_regime_alpha.evidence.canonical import canonical_json
+from market_regime_alpha.evidence.canonical import canonical_json, require_sha256
 from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.features.materialization_v2 import VerifiedFeatureBundleV2
 from market_regime_alpha.features.technical.catalog import (
@@ -48,6 +48,7 @@ from market_regime_alpha.research.market_regime.contracts import (
 )
 from market_regime_alpha.research.market_regime.model import evaluate_market_regime_v0
 from market_regime_alpha.research.platform_v2.artifact import ResearchLayerStatus
+from market_regime_alpha.research.platform_v2.inputs import ResearchContextView
 from market_regime_alpha.research.theme_rotation.contracts import (
     RotationState,
     ThemeRotationSnapshot,
@@ -74,6 +75,18 @@ _QUALIFIED_CAPITAL = {
     CapitalEvolutionState.DIFFUSION,
     CapitalEvolutionState.ACCELERATION,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedCandidateFeature:
+    """One typed Feature value resolved from an exact immutable owner."""
+
+    artifact_id: ArtifactId
+    content_hash: str
+    value: float | None
+
+    def __post_init__(self) -> None:
+        require_sha256("Candidate Feature content hash", self.content_hash)
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,12 +377,69 @@ def discover_controlled_candidates(
     dynamic_pool_membership: Mapping[str, bool] | None = None,
     dynamic_pool_reference: tuple[ArtifactId, str] | None = None,
 ) -> CandidateSet:
+    resolved: dict[tuple[str, str, str], ResolvedCandidateFeature] = {}
+    for symbol in inputs.operational_universe.symbols:
+        for feature_id, output_id in (
+            (PRICE_ACTION_FEATURE_ID, "return_3"),
+            (CAPITAL_VOLUME_FEATURE_ID, "amount_ratio_5"),
+        ):
+            artifact, value = _decimal_feature(
+                static_feature_bundle,
+                symbol,
+                feature_id,
+                output_id,
+            )
+            if artifact is not None:
+                resolved[(symbol, feature_id, output_id)] = ResolvedCandidateFeature(
+                    artifact_id=artifact.artifact_id,
+                    content_hash=artifact.content_hash,
+                    value=value,
+                )
+    return discover_controlled_candidates_from_resolved_features(
+        inputs=inputs,
+        universe_symbols=inputs.operational_universe.symbols,
+        resolved_features=resolved,
+        feature_bundle_reference=(
+            static_feature_bundle.artifact.bundle_id,
+            static_feature_bundle.artifact.content_hash,
+        ),
+        decision_time=DecisionTime(static_feature_bundle.artifact.decision_time),
+        market_regime=market_regime,
+        theme_rotation=theme_rotation,
+        capital_evolution=capital_evolution,
+        configuration=configuration,
+        code_revision=code_revision,
+        dynamic_pool_membership=dynamic_pool_membership,
+        dynamic_pool_reference=dynamic_pool_reference,
+    )
+
+
+def discover_controlled_candidates_from_resolved_features(
+    *,
+    inputs: ResearchContextView,
+    universe_symbols: tuple[str, ...],
+    resolved_features: Mapping[tuple[str, str, str], ResolvedCandidateFeature],
+    feature_bundle_reference: tuple[ArtifactId, str],
+    decision_time: DecisionTime,
+    market_regime: MarketRegimeSnapshot,
+    theme_rotation: ThemeRotationSnapshot,
+    capital_evolution: CapitalEvolutionSnapshot,
+    configuration: ControlledCandidateDiscoveryConfig,
+    code_revision: str,
+    dynamic_pool_membership: Mapping[str, bool] | None = None,
+    dynamic_pool_reference: tuple[ArtifactId, str] | None = None,
+) -> CandidateSet:
+    """Run the canonical Candidate gates over owner-resolved Feature values."""
+
+    if universe_symbols != tuple(sorted(set(universe_symbols))):
+        raise ValueError("Candidate Universe symbols must be unique and sorted")
+    require_sha256("Candidate Feature bundle hash", feature_bundle_reference[1])
     if (dynamic_pool_membership is None) != (dynamic_pool_reference is None):
         raise ValueError(
             "Dynamic Pool membership and lineage reference must be supplied together"
         )
     if dynamic_pool_membership is not None and set(dynamic_pool_membership) != set(
-        inputs.operational_universe.symbols
+        universe_symbols
     ):
         raise ValueError("Dynamic Pool must preserve the complete Universe cross section")
     theme_by_id = {item.theme_id: item for item in theme_rotation.themes}
@@ -377,14 +447,29 @@ def discover_controlled_candidates(
     membership_by_symbol = {item.symbol: item for item in inputs.theme_memberships}
     observations = {item.symbol: item for item in inputs.symbol_observations}
     records: list[CandidateRecord] = []
-    for symbol in inputs.operational_universe.symbols:
+    for symbol in universe_symbols:
         membership = membership_by_symbol.get(symbol)
         observation = observations.get(symbol)
         theme = theme_by_id.get(membership.primary_theme_id) if membership else None
         capital = capital_by_symbol.get(symbol)
-        price_artifact, price = _decimal_feature(static_feature_bundle, symbol, PRICE_ACTION_FEATURE_ID, "return_3")
-        volume_artifact, volume = _decimal_feature(static_feature_bundle, symbol, CAPITAL_VOLUME_FEATURE_ID, "amount_ratio_5")
-        input_ids = tuple(item.artifact_id for item in (price_artifact, volume_artifact) if item is not None)
+        price_feature = resolved_features.get(
+            (symbol, PRICE_ACTION_FEATURE_ID, "return_3")
+        )
+        volume_feature = resolved_features.get(
+            (symbol, CAPITAL_VOLUME_FEATURE_ID, "amount_ratio_5")
+        )
+        price = price_feature.value if price_feature is not None else None
+        volume = volume_feature.value if volume_feature is not None else None
+        input_ids = tuple(
+            sorted(
+                {
+                    item.artifact_id
+                    for item in (price_feature, volume_feature)
+                    if item is not None
+                },
+                key=str,
+            )
+        )
         feature_ids = tuple(FeatureDefinitionId(value) for value in (PRICE_ACTION_FEATURE_ID, CAPITAL_VOLUME_FEATURE_ID))
         reasons: tuple[str, ...]
         state = CandidateSelectionStatus.DATA_INSUFFICIENT
@@ -499,7 +584,7 @@ def discover_controlled_candidates(
     }
     lineage: dict[ArtifactId, str] = {
         inputs.input_bundle_id: inputs.content_hash,
-        static_feature_bundle.artifact.bundle_id: static_feature_bundle.artifact.content_hash,
+        feature_bundle_reference[0]: feature_bundle_reference[1],
         market_regime.envelope.artifact_id: market_regime.envelope.content_hash,
         theme_rotation.envelope.artifact_id: theme_rotation.envelope.content_hash,
         capital_evolution.envelope.artifact_id: capital_evolution.envelope.content_hash,
@@ -507,7 +592,9 @@ def discover_controlled_candidates(
     if dynamic_pool_reference is not None:
         pool_id, pool_hash = dynamic_pool_reference
         lineage[pool_id] = pool_hash
-    by_id = {item.artifact.artifact_id: item.artifact.content_hash for item in static_feature_bundle.artifacts}
+    by_id = {
+        item.artifact_id: item.content_hash for item in resolved_features.values()
+    }
     for record in finalized:
         for artifact_id in record.input_artifact_ids:
             lineage[artifact_id] = by_id[artifact_id]
@@ -515,8 +602,8 @@ def discover_controlled_candidates(
     envelope = ArtifactEnvelope.create(
         artifact_type="CONTROLLED_CANDIDATE_SET",
         artifact_payload=payload,
-        decision_date=static_feature_bundle.artifact.decision_time.date(),
-        decision_time=DecisionTime(static_feature_bundle.artifact.decision_time),
+        decision_date=decision_time.value.date(),
+        decision_time=decision_time,
         created_at=inputs.created_at,
         code_revision=code_revision,
         configuration_id=configuration.configuration_id,
@@ -722,8 +809,10 @@ def _fsync_directory(root: Path) -> None:
 __all__ = [
     "ControlledPlatformResearchRunner",
     "ControlledResearchArtifact",
+    "ResolvedCandidateFeature",
     "VerifiedControlledResearchArtifact",
     "discover_controlled_candidates",
+    "discover_controlled_candidates_from_resolved_features",
     "load_verified_controlled_research_artifact",
     "publish_controlled_research_artifact",
 ]

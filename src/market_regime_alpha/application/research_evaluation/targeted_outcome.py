@@ -355,6 +355,41 @@ def _build_label(
     fallback_available_at: datetime,
     next_session_date: date,
 ) -> TargetOutcomeLabel:
+    return build_target_outcome_label_from_bars(
+        symbol=symbol_observation.symbol,
+        decision_frozen_at=decision.decision_frozen_at,
+        decision_reference_price=symbol_observation.decision_reference_price,
+        target=target,
+        protocol=protocol,
+        bars=bars,
+        fallback_available_at=fallback_available_at,
+        next_session_date=next_session_date,
+        initial_market_conditions=symbol_observation.market_conditions,
+        fallback_open=symbol_observation.next_open,
+    )
+
+
+def build_target_outcome_label_from_bars(
+    *,
+    symbol: str,
+    decision_frozen_at: datetime,
+    decision_reference_price: Decimal,
+    target: TargetDefinition,
+    protocol: OutcomeTargetProtocol,
+    bars: tuple[CanonicalMarketBar, ...],
+    fallback_available_at: datetime,
+    next_session_date: date,
+    initial_market_conditions: tuple[OutcomeMarketCondition, ...] = (),
+    fallback_open: Decimal | None = None,
+) -> TargetOutcomeLabel:
+    """Build one canonical Target label from owner-resolved market bars.
+
+    The Shadow settlement and Historical corpus adapters deliberately share
+    this numerical/tradability kernel.  Callers own only subject resolution and
+    lineage; checkpoint, excursion, barrier and missingness semantics stay
+    canonical here.
+    """
+
     zone = ZoneInfo(protocol.timezone_name)
     end_time = _checkpoint_time(target.checkpoint)
     interval_end = datetime.combine(next_session_date, end_time, zone).astimezone(UTC)
@@ -363,7 +398,9 @@ def _build_label(
             (
                 item
                 for item in bars
-                if item.symbol == symbol_observation.symbol and item.market_date == next_session_date and item.event_end <= interval_end
+                if item.symbol == symbol
+                and item.market_date == next_session_date
+                and item.event_end <= interval_end
             ),
             key=lambda item: item.event_start,
         )
@@ -375,9 +412,9 @@ def _build_label(
         minutes=intraday,
         daily=daily,
         zone=zone,
-        fallback_open=symbol_observation.next_open,
+        fallback_open=fallback_open,
     )
-    conditions = set(symbol_observation.market_conditions)
+    conditions = set(initial_market_conditions)
     reasons: set[str] = set()
     missing_required = {
         data_kind
@@ -389,7 +426,11 @@ def _build_label(
             )
             or (
                 data_kind == "FACTUAL_OUTCOME_V1"
-                and symbol_observation.next_open is None
+                and fallback_open is None
+            )
+            or (
+                data_kind == "NORMALIZED_DAILY_OPEN"
+                and fallback_open is None
             )
         )
     }
@@ -399,8 +440,9 @@ def _build_label(
     suspended = any(
         item.trading_status is TradingStatus.SUSPENDED for item in selected
     )
-    unknown_status = any(
-        item.trading_status is TradingStatus.UNKNOWN for item in selected
+    unknown_status = (
+        OutcomeMarketCondition.TRADING not in conditions
+        and any(item.trading_status is TradingStatus.UNKNOWN for item in selected)
     )
     if suspended:
         conditions.add(OutcomeMarketCondition.SUSPENDED)
@@ -430,14 +472,14 @@ def _build_label(
     mfe = (
         None
         if not target.compute_mfe_mae or not relevant
-        else (max(item.high for item in relevant) - symbol_observation.decision_reference_price)
-        / symbol_observation.decision_reference_price
+        else (max(item.high for item in relevant) - decision_reference_price)
+        / decision_reference_price
     )
     mae = (
         None
         if not target.compute_mfe_mae or not relevant
-        else (min(item.low for item in relevant) - symbol_observation.decision_reference_price)
-        / symbol_observation.decision_reference_price
+        else (min(item.low for item in relevant) - decision_reference_price)
+        / decision_reference_price
     )
     available = max((fallback_available_at, *(item.available_at for item in selected)))
     # Missing/unavailable is a factual result available when the archived
@@ -452,7 +494,7 @@ def _build_label(
     )
     barrier_ordering = _barrier_ordering(
         relevant,
-        symbol_observation.decision_reference_price,
+        decision_reference_price,
         target.barriers,
     )
     if barrier_ordering is BarrierOrderingOutcome.AMBIGUOUS_NOT_OBSERVABLE:
@@ -461,16 +503,21 @@ def _build_label(
             status = OutcomeAvailabilityStatus.PARTIAL
     reasons.add(f"TARGET_{status.value}")
     return TargetOutcomeLabel.create(
-        symbol=symbol_observation.symbol,
-        target=RuntimeArtifactReference("OUTCOME_TARGET", target.target_id, target.target_hash),
-        label_interval_start=decision.decision_frozen_at,
+        symbol=symbol,
+        target=RuntimeArtifactReference(
+            "OUTCOME_TARGET_DEFINITION", target.target_id, target.target_hash
+        ),
+        label_interval_start=decision_frozen_at,
         label_interval_end=interval_end,
-        decision_reference_price=symbol_observation.decision_reference_price,
+        decision_reference_price=decision_reference_price,
         checkpoint_price=checkpoint_price,
         mfe=mfe,
         mae=mae,
         barrier_passages=tuple(
-            (barrier.barrier_id, _first_passage(relevant, symbol_observation.decision_reference_price, barrier))
+            (
+                barrier.barrier_id,
+                _first_passage(relevant, decision_reference_price, barrier),
+            )
             for barrier in target.barriers
         ),
         barrier_ordering=barrier_ordering,

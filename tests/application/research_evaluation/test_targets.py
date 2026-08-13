@@ -19,6 +19,7 @@ from market_regime_alpha.application.research_evaluation.targeted_outcome import
     TargetOutcomeLabel,
     TargetedShadowOutcome,
     _build_label,
+    build_target_outcome_label_from_bars,
 )
 from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
     PostgresTargetOutcomeRepository,
@@ -31,6 +32,7 @@ from market_regime_alpha.application.research_evaluation.targets import (
     TargetDefinition,
     canonical_target_horizon,
     engineering_multi_horizon_protocol,
+    exploratory_five_minute_multi_horizon_protocol,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.market_data.contracts import (
@@ -56,6 +58,7 @@ def _minute_bar(
     low: Decimal = Decimal("9.9"),
     timeframe: Timeframe = Timeframe.MINUTE_1,
     adjustment_mode: AdjustmentMode = AdjustmentMode.RAW,
+    trading_status: TradingStatus = TradingStatus.TRADING,
 ) -> CanonicalMarketBar:
     adjusted = adjustment_mode is not AdjustmentMode.RAW
     return CanonicalMarketBar.create(
@@ -80,7 +83,7 @@ def _minute_bar(
         adjustment_factor=Decimal("1.2") if adjusted else Decimal("1"),
         adjustment_factor_id=ArtifactId("adjustment-factor") if adjusted else None,
         adjustment_factor_hash=HASH if adjusted else None,
-        trading_status=TradingStatus.TRADING,
+        trading_status=trading_status,
         price_limit_state=PriceLimitState.NORMAL,
         source_artifact_id=ArtifactId("source"),
         source_content_hash=HASH,
@@ -354,6 +357,45 @@ def test_target_builder_excludes_bars_after_the_label_interval() -> None:
     assert label.checkpoint_price == Decimal("10.05")
     assert label.mfe == Decimal("0.01")
     assert dict(label.barrier_passages)["UP_2_PERCENT"] is None
+
+
+def test_target_builder_accepts_complete_minutes_when_session_trading_is_known() -> None:
+    protocol = exploratory_five_minute_multi_horizon_protocol()
+    target = next(
+        item
+        for item in protocol.targets
+        if item.checkpoint is OutcomeCheckpoint.TIME_1030
+    )
+    starts = tuple(
+        datetime(2026, 8, 11, 1, 30, tzinfo=UTC) + timedelta(minutes=5 * index)
+        for index in range(12)
+    )
+
+    label = build_target_outcome_label_from_bars(
+        symbol="600000.SH",
+        decision_frozen_at=datetime(2026, 8, 10, 6, 55, tzinfo=UTC),
+        decision_reference_price=Decimal("10"),
+        target=target,
+        protocol=protocol,
+        bars=tuple(
+            _minute_bar(
+                start=start,
+                close=Decimal("10.2"),
+                high=Decimal("10.2"),
+                low=Decimal("10"),
+                timeframe=Timeframe.MINUTE_5,
+                trading_status=TradingStatus.UNKNOWN,
+            )
+            for start in starts
+        ),
+        fallback_available_at=datetime(2026, 8, 11, 7, 1, tzinfo=UTC),
+        next_session_date=date(2026, 8, 11),
+        initial_market_conditions=(OutcomeMarketCondition.TRADING,),
+    )
+
+    assert label.availability_status is OutcomeAvailabilityStatus.COMPLETE
+    assert label.checkpoint_price == Decimal("10.2")
+    assert "TARGET_TRADING_STATUS_UNKNOWN" not in label.reason_codes
 
 
 def test_target_builder_fails_closed_on_corporate_action_adjustment() -> None:

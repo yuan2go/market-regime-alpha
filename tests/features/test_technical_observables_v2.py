@@ -17,6 +17,7 @@ from market_regime_alpha.features.technical.catalog import (
 from market_regime_alpha.features.technical.observables import (
     FeatureValueState,
     compute_technical_feature,
+    compute_retrospective_technical_feature,
 )
 from market_regime_alpha.market_data import (
     AdjustmentMode,
@@ -165,6 +166,75 @@ def test_price_action_returns_and_ranges_use_explicit_endpoints() -> None:
     assert values["high_low_range"].value == Decimal("0.036697247706")
     assert values["close_location_value"].value == Decimal("0")
     assert "intraday_return_to_decision_time" not in values
+
+
+def test_retrospective_adapter_preserves_true_retrieval_clock_without_future_events() -> None:
+    bars = _daily_bars(11)
+    retrieved_at = datetime(2026, 8, 12, 1, 0, tzinfo=UTC)
+    retrospective = tuple(
+        CanonicalMarketBar.create(
+            symbol=bar.symbol,
+            exchange=bar.exchange,
+            asset_type=bar.asset_type,
+            timeframe=bar.timeframe,
+            market_date=bar.market_date,
+            event_start=bar.event_start,
+            event_end=bar.event_end,
+            available_at=retrieved_at,
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            previous_close=bar.previous_close,
+            volume=bar.volume,
+            volume_unit=bar.volume_unit,
+            amount=bar.amount,
+            turnover_rate=bar.turnover_rate,
+            adjustment_mode=bar.adjustment_mode,
+            adjustment_factor=bar.adjustment_factor,
+            trading_status=bar.trading_status,
+            price_limit_state=bar.price_limit_state,
+            source_artifact_id=bar.source_artifact_id,
+            source_content_hash=bar.source_content_hash,
+        )
+        for bar in bars
+    )
+    decision_time = datetime(2026, 1, 12, 7, 0, tzinfo=UTC)
+
+    try:
+        compute_technical_feature(
+            feature_id=PRICE_ACTION_FEATURE_ID,
+            bars=retrospective,
+            configuration=_config(PRICE_ACTION_FEATURE_ID),
+            decision_time=decision_time,
+        )
+    except ValueError as exc:
+        assert "available after DecisionTime" in str(exc)
+    else:
+        raise AssertionError("Live feature path accepted retrospectively retrieved bars")
+
+    result = compute_retrospective_technical_feature(
+        feature_id=PRICE_ACTION_FEATURE_ID,
+        bars=retrospective,
+        configuration=_config(PRICE_ACTION_FEATURE_ID),
+        decision_time=decision_time,
+    )
+
+    assert result.available_at == retrieved_at
+    assert "PIT_INCOMPLETE" in result.limitations
+    assert "RETROSPECTIVE_EVENT_TIME" in result.limitations
+
+    try:
+        compute_retrospective_technical_feature(
+            feature_id=PRICE_ACTION_FEATURE_ID,
+            bars=(*retrospective, _daily_bars(13)[-1]),
+            configuration=_config(PRICE_ACTION_FEATURE_ID),
+            decision_time=decision_time,
+        )
+    except ValueError as exc:
+        assert "event exceeds DecisionTime" in str(exc)
+    else:
+        raise AssertionError("retrospective feature path accepted a future event")
 
 
 def test_current_session_minute_evidence_uses_session_open_not_last_bar_open() -> None:

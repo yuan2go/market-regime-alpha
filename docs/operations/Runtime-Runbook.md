@@ -28,6 +28,67 @@ uv run model-governance --help
 uv run pit-authority --help
 ```
 
+## Phase E Historical Corpus
+
+This free-data path remains `EXPLORATORY / PIT_INCOMPLETE`. PostgreSQL is the
+only business Authority; the Artifact Root stores immutable large bytes and is
+never scanned to select an owner.
+
+`historical-corpus-acquire` accepts exactly `symbols`, `start_date`, `end_date`
+and `bucket_count`. It performs BaoStock acquisition, deterministic
+normalization, logical hashing, staging validation, atomic publish, PostgreSQL
+registration and exact reload. Empty provider results, rejected rows and
+missing fields remain in coverage.
+
+```bash
+uv run continuous-research \
+  --database-url "$MARKET_REGIME_ALPHA_DATABASE_URL" \
+  --application-schema market_regime_alpha \
+  --principal-id "$MRA_PRINCIPAL_ID" \
+  historical-corpus-acquire \
+  --input phase-e-acquire.json \
+  --artifact-root /absolute/path/to/artifact-root
+```
+
+Before execution, freeze one Free Research Universe owner, WATCHLIST policy,
+canonical exploratory Target Protocol, Governed Experiment owner and
+`HistoricalResearchCommand`. The command binds the exact normalized Dataset,
+security master, policy, target, experiment, calendar, code revision and
+DecisionTime. Historical `retrieved_at` is never rewritten to the trading date.
+
+For `FREE_RESEARCH_ARCHIVE`, run, resume and replay require the same explicit
+Artifact Root:
+
+```bash
+uv run continuous-research ... historical-run \
+  --input phase-e-run.json --artifact-root /absolute/path/to/artifact-root
+uv run continuous-research ... historical-resume \
+  --run-id historical-research-run-... \
+  --artifact-root /absolute/path/to/artifact-root
+uv run continuous-research ... historical-replay \
+  --run-id historical-research-run-... \
+  --artifact-root /absolute/path/to/artifact-root
+```
+
+`historical-run` input is exactly `command` plus nullable
+`max_stage_commits`; a bounded value is the supported interruption test. Resume
+reloads exact command/session/receipt/component owners. Feature through Forecast
+can see only rows with `event_end <= DecisionTime`; next-session bars enter only
+Outcome.
+
+After a terminal run, `historical-evidence --run-id ... --artifact-root ...`
+persists Corpus Summary, cumulative Alpha Ablation, Strategy Economics,
+Portfolio Performance and owner-resolved Exploratory Model evidence. Repeating
+the command returns the same identities. Negative, inconclusive and
+not-estimable findings remain durable. Costs, fillability, impact and capacity
+are `ENGINEERING_ASSUMPTION` until calibrated; temporal validation is not Formal
+OOS.
+
+Never repair a failed run by scanning directories, choosing `latest`, silently
+filling data, substituting a provider or resuming under a different computation
+revision. Freeze a new Experiment and Command when code changes, and retain the
+interrupted run for audit.
+
 ## PostgreSQL Authority Only
 
 Bootstrap a dedicated local authority only with an administrator URL:
@@ -47,7 +108,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 067, `phase_d_correctness_lineage`. Expected schema
+Expected head: migration 068, `phase_e_historical_corpus`. Expected schema
 catalog: 244 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS

@@ -195,6 +195,28 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-run.json",
         ]
     )
+    historical_acquire = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-corpus-acquire",
+            "--input",
+            "historical-corpus.json",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
+    historical_evidence = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-evidence",
+            "--run-id",
+            "historical-run-1",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
     performance_build = build_parser().parse_args(
         [
             "--database-url",
@@ -374,6 +396,8 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert portfolio_replay.operation == "portfolio-shadow-replay"
     assert runtime_scope.operation == "runtime-scope-build"
     assert historical_run.operation == "historical-run"
+    assert historical_acquire.operation == "historical-corpus-acquire"
+    assert historical_evidence.operation == "historical-evidence"
     assert performance_build.operation == "performance-build"
     assert model_train.operation == "model-train"
     assert model_execute.operation == "model-execute"

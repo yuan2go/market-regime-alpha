@@ -288,6 +288,114 @@ def build_free_research_universe_snapshot(
     )
 
 
+def project_free_research_universe_as_of(
+    snapshot: FreeResearchUniverseSnapshot,
+    *,
+    as_of_date: date,
+    symbols: tuple[str, ...] | None = None,
+) -> FreeResearchUniverseSnapshot:
+    """Project retrieved listing dates without rewriting the true known-at clock."""
+
+    selected = None if symbols is None else tuple(sorted(set(symbols)))
+    if selected is not None and not selected:
+        raise ValueError("Research Universe projection symbols must not be empty")
+    projected = tuple(
+        _project_record_as_of(item, as_of_date=as_of_date)
+        for item in snapshot.records
+        if selected is None or item.symbol in selected
+    )
+    if not projected:
+        raise ValueError("Research Universe projection has no Security Master records")
+    limitations = tuple(
+        sorted(
+            {
+                *snapshot.limitations,
+                "CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY",
+                "HISTORICAL_AVAILABILITY_NOT_PROVIDED",
+                "PIT_INCOMPLETE",
+                *(
+                    ("FROZEN_SELECTOR_SUBSET_PROJECTION",)
+                    if selected is not None
+                    else ()
+                ),
+            }
+        )
+    )
+    values = {
+        "schema_version": snapshot.schema_version,
+        "as_of_date": as_of_date.isoformat(),
+        "known_at": timestamp(snapshot.known_at),
+        "provider_id": snapshot.provider_id,
+        "provider_contract": snapshot.provider_contract,
+        "source_manifest_reference": snapshot.source_manifest_reference.to_canonical_dict(),
+        "raw_archive_id": snapshot.raw_archive_id,
+        "evidence_origin": FreeDataEvidenceOrigin.ARCHIVED_REPLAY.value,
+        "records": [item.to_canonical_dict() for item in projected],
+        "data_eligibility": DataEligibility.EXPLORATORY.value,
+        "evidence_ceiling": PITSourceEvidenceLevel.PIT_INCOMPLETE.value,
+        "formal_pit": False,
+        "limitations": list(limitations),
+    }
+    snapshot_id, digest = content_identity("free-research-universe", values)
+    return FreeResearchUniverseSnapshot(
+        snapshot_id=snapshot_id,
+        snapshot_hash=digest,
+        as_of_date=as_of_date,
+        known_at=snapshot.known_at,
+        provider_id=snapshot.provider_id,
+        provider_contract=snapshot.provider_contract,
+        source_manifest_reference=snapshot.source_manifest_reference,
+        raw_archive_id=snapshot.raw_archive_id,
+        evidence_origin=FreeDataEvidenceOrigin.ARCHIVED_REPLAY,
+        records=projected,
+        data_eligibility=DataEligibility.EXPLORATORY,
+        evidence_ceiling=PITSourceEvidenceLevel.PIT_INCOMPLETE,
+        formal_pit=False,
+        limitations=limitations,
+    )
+
+
+def _project_record_as_of(
+    item: FreeResearchUniverseRecord,
+    *,
+    as_of_date: date,
+) -> FreeResearchUniverseRecord:
+    reasons = {
+        "CURRENT_SECURITY_MASTER_PROJECTED_RETROSPECTIVELY",
+        "HISTORICAL_AVAILABILITY_NOT_PROVIDED",
+    }
+    if item.provider_security_type != "1":
+        membership = ResearchUniverseMembershipStatus.EXCLUDED
+        listing = SecurityMasterListingStatus.UNKNOWN
+        reasons.add("NOT_A_SHARE_SECURITY_TYPE")
+    elif item.listing_date is None:
+        membership = ResearchUniverseMembershipStatus.UNKNOWN
+        listing = SecurityMasterListingStatus.UNKNOWN
+        reasons.add("LISTING_DATE_UNKNOWN")
+    elif item.listing_date > as_of_date:
+        membership = ResearchUniverseMembershipStatus.EXCLUDED
+        listing = SecurityMasterListingStatus.UNKNOWN
+        reasons.add("NOT_YET_LISTED_AS_OF_DATE")
+    elif item.delisting_date is not None and item.delisting_date <= as_of_date:
+        membership = ResearchUniverseMembershipStatus.EXCLUDED
+        listing = SecurityMasterListingStatus.DELISTED
+        reasons.add("DELISTED_BY_AS_OF_DATE")
+    else:
+        membership = ResearchUniverseMembershipStatus.INCLUDED
+        listing = SecurityMasterListingStatus.LISTED
+        reasons.add("LISTED_BY_RETRIEVED_IPO_OUT_DATES")
+    return FreeResearchUniverseRecord(
+        symbol=item.symbol,
+        security_name=item.security_name,
+        provider_security_type=item.provider_security_type,
+        listing_date=item.listing_date,
+        delisting_date=item.delisting_date,
+        listing_status=listing,
+        membership_status=membership,
+        reason_codes=tuple(sorted(reasons)),
+    )
+
+
 def _record_from_baostock(
     row: Mapping[str, Any], *, as_of_date: date
 ) -> FreeResearchUniverseRecord:
@@ -364,4 +472,5 @@ __all__ = [
     "ResearchUniverseMembershipStatus",
     "SecurityMasterListingStatus",
     "build_free_research_universe_snapshot",
+    "project_free_research_universe_as_of",
 ]

@@ -3,15 +3,17 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current capability and evidence-ceiling matrix
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-13
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 | Capability | Engineering state | Current Authority / ceiling |
 |---|---|---|
 | Continuous scheduling, lease, fence, recovery | Implemented | one PostgreSQL Runtime; Research/Shadow only for free data |
 | BaoStock/Tencent acquisition and archive | Implemented | recorded exploratory evidence, not Formal PIT |
+| Historical Raw/Normalized Artifact Root | Operational engineering complete | PostgreSQL owns exact locator, logical/physical hash, schema, coverage and lineage; immutable Parquet bytes are resolved only through the owner and fully verified; Raw partition v1 replay is preserved and v2 records complete request intervals |
 | Full A-share Research Universe → Runtime Scope | Operational engineering complete | immutable Policy/receipt; captured overlapping free Operational Universe inputs retain all provenance and combine eligibility conservatively; `UNKNOWN` is not runnable; `PIT_INCOMPLETE` |
 | Multi-session Historical Runner | Operational engineering complete | shared Decision Session Kernel plus PostgreSQL lease/fence/CAS Journal, typed blocked stages, resume/report and exact Experiment → Strategy → Portfolio → Outcome → Performance owner replay; exploratory only, not Formal OOS |
+| Historical Decision-Time materialization | Representative corpus complete | 667 real sessions actively produce exact Feature/State/Pool/Candidate/Signal/Forecast/Outcome/Panel owners with separate Decision and T+1 clocks; canonical kernels are reused; free history remains retrospective `PIT_INCOMPLETE` |
 | ETF/Index/Industry/Theme Reference | Engineering complete | Declared/Derived/Proxy are distinct, versioned and lineage-bound; free mappings remain Proxy |
 | Dataset and Feature materialization | Implemented | canonical content-addressed artifacts |
 | Formal PIT mechanics | Implemented mechanics | real qualified Provider/fact coverage absent |
@@ -34,6 +36,7 @@
 | Prospective attestation | Implemented mechanics | owner-checked, always `prospective_proven=false` |
 | Evaluation Dataset / Panel V2 / Factor Extraction | Implemented | immutable engineering evidence |
 | Factor catalog / de-dup / ablation / liquidity-capacity | Implemented harness | versioned lineage and provenance; exploratory assumptions are not facts or calibration |
+| Historical Research Evidence registry | Operational on representative corpus | exact Dataset/Experiment/Feature/Target/Model lineage and POSITIVE/NEGATIVE/INCONCLUSIVE/NOT_ESTIMABLE findings persist append-only; missing ETF/Capital/Candidate/Signal/Forecast lift is explicitly `NOT_ESTIMABLE` |
 | Calibration | Qualification owner implemented, evidence absent | exact Forecast/Label/Target and FIT/VALIDATION/Locked-OOS bindings are replayed from PostgreSQL; no Formal OOS input exists and every current result remains `calibrated=false` |
 | Formal Evaluation / Locked OOS | Family owner writer and two-level consumption Authority implemented, evidence absent | one immutable Hypothesis Family contains all registered Targets and the metric/slice/sensitivity/fold catalog; each raw subject/session/outcome path unlocks once, Target observations consume within that first family, and correction spans the complete family including `NOT_ESTIMABLE` planned folds; revisions or Model/Forecast/Dataset/Protocol substitution cannot make raw OOS pristine; no current qualified PIT/sample observations |
 | Entry research / Holding / Exit qualification | Owner writer implemented, evidence absent | replays Locked-OOS Strategy Shadow Entry→Fill→Position→Exit→Outcome, economic/provenance floors and independent approval; no Canonical `ENTER` unlock |

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from enum import Enum
@@ -44,6 +44,13 @@ _SHANGHAI = ZoneInfo("Asia/Shanghai")
 class FeatureValueState(str, Enum):
     AVAILABLE = "AVAILABLE"
     MISSING = "MISSING"
+
+
+class TechnicalFeatureEvidenceBasis(str, Enum):
+    """Availability contract applied before the shared numerical kernel."""
+
+    DECISION_AVAILABLE = "DECISION_AVAILABLE"
+    RETROSPECTIVE_EVENT_TIME = "RETROSPECTIVE_EVENT_TIME"
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,13 +154,73 @@ def compute_technical_feature(
     configuration: FeatureConfiguration,
     decision_time: datetime,
 ) -> TechnicalFeatureComputation:
+    """Compute a Live-compatible feature from evidence available by DecisionTime."""
+
+    return _compute_technical_feature(
+        feature_id=feature_id,
+        bars=bars,
+        configuration=configuration,
+        decision_time=decision_time,
+        evidence_basis=TechnicalFeatureEvidenceBasis.DECISION_AVAILABLE,
+    )
+
+
+def compute_retrospective_technical_feature(
+    *,
+    feature_id: str,
+    bars: tuple[CanonicalMarketBar, ...],
+    configuration: FeatureConfiguration,
+    decision_time: datetime,
+) -> TechnicalFeatureComputation:
+    """Compute exploratory history without pretending retrieval occurred in the past.
+
+    The numerical kernel is identical to the Live path.  Only the admission rule
+    differs: every source event must have ended by DecisionTime, while the source
+    ``available_at`` remains its true (possibly later) retrieval timestamp.
+    """
+
+    computation = _compute_technical_feature(
+        feature_id=feature_id,
+        bars=bars,
+        configuration=configuration,
+        decision_time=decision_time,
+        evidence_basis=TechnicalFeatureEvidenceBasis.RETROSPECTIVE_EVENT_TIME,
+    )
+    return replace(
+        computation,
+        limitations=tuple(
+            sorted(
+                {
+                    *computation.limitations,
+                    "EXPLORATORY",
+                    "FORMAL_OOS_FALSE",
+                    "PIT_INCOMPLETE",
+                    "RETROSPECTIVE_EVENT_TIME",
+                }
+            )
+        ),
+    )
+
+
+def _compute_technical_feature(
+    *,
+    feature_id: str,
+    bars: tuple[CanonicalMarketBar, ...],
+    configuration: FeatureConfiguration,
+    decision_time: datetime,
+    evidence_basis: TechnicalFeatureEvidenceBasis,
+) -> TechnicalFeatureComputation:
     configuration.verify_identity()
     require_utc_second("decision_time", decision_time)
     if configuration.feature_id != feature_id:
         raise ValueError("Feature Configuration does not match requested feature")
     if configuration.effective_from > decision_time:
         raise ValueError("Feature Configuration is not effective at DecisionTime")
-    ordered = _validate_bars(bars=bars, decision_time=decision_time)
+    ordered = _validate_bars(
+        bars=bars,
+        decision_time=decision_time,
+        evidence_basis=evidence_basis,
+    )
     dispatch: dict[
         str,
         Callable[
@@ -1012,14 +1079,25 @@ def _compute_overheat(
 
 
 def _validate_bars(
-    *, bars: tuple[CanonicalMarketBar, ...], decision_time: datetime
+    *,
+    bars: tuple[CanonicalMarketBar, ...],
+    decision_time: datetime,
+    evidence_basis: TechnicalFeatureEvidenceBasis,
 ) -> tuple[CanonicalMarketBar, ...]:
     if not bars:
         raise ValueError("technical feature computation requires market bars")
     for bar in bars:
         bar.verify_identity()
-        if bar.available_at > decision_time:
+        if (
+            evidence_basis is TechnicalFeatureEvidenceBasis.DECISION_AVAILABLE
+            and bar.available_at > decision_time
+        ):
             raise ValueError("technical feature input became available after DecisionTime")
+        if (
+            evidence_basis is TechnicalFeatureEvidenceBasis.RETROSPECTIVE_EVENT_TIME
+            and bar.event_end > decision_time
+        ):
+            raise ValueError("retrospective feature input event exceeds DecisionTime")
     ordered = tuple(sorted(bars, key=lambda item: (item.event_start, str(item.bar_id))))
     if ordered != bars:
         raise ValueError("technical feature bars must be deterministically sorted")
@@ -1096,7 +1174,7 @@ def _result(
         feature_id=feature_id,
         symbol=bars[-1].symbol,
         timeframe=bars[-1].timeframe,
-        available_at=bars[-1].available_at,
+        available_at=max(item.available_at for item in bars),
         configuration_id=configuration.configuration_id,
         configuration_hash=configuration.configuration_hash,
         values=tuple(sorted(values, key=lambda item: item.output_id)),
@@ -1113,7 +1191,7 @@ def _available(
         output_id=output_id,
         state=FeatureValueState.AVAILABLE,
         value=value,
-        available_at=bars[-1].available_at,
+        available_at=max(item.available_at for item in bars),
         source_bar_ids=tuple(item.bar_id for item in bars),
         source_bar_hashes=tuple(item.content_hash for item in bars),
         missing_reason_codes=(),
@@ -1129,7 +1207,7 @@ def _missing(
         output_id=output_id,
         state=FeatureValueState.MISSING,
         value=None,
-        available_at=bars[-1].available_at,
+        available_at=max(item.available_at for item in bars),
         source_bar_ids=tuple(item.bar_id for item in bars),
         source_bar_hashes=tuple(item.content_hash for item in bars),
         missing_reason_codes=tuple(sorted(reasons)),

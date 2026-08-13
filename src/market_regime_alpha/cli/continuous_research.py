@@ -75,6 +75,27 @@ from market_regime_alpha.application.governance.access_control import (
 from market_regime_alpha.application.historical_research.contracts import (
     HistoricalResearchCommand,
 )
+from market_regime_alpha.application.historical_corpus.baostock_archive import (
+    BaoStockHistoricalArchiveClient,
+)
+from market_regime_alpha.application.historical_corpus.decision_materializer import (
+    HistoricalDecisionMaterializer,
+)
+from market_regime_alpha.application.historical_corpus.evidence_producer import (
+    HistoricalEvidenceProducer,
+)
+from market_regime_alpha.application.historical_corpus.normalization import (
+    normalize_baostock_archive,
+)
+from market_regime_alpha.application.historical_corpus.postgres_evidence import (
+    PostgresHistoricalEvidenceRepository,
+)
+from market_regime_alpha.application.historical_corpus.postgres_materialization import (
+    PostgresHistoricalMaterializationRepository,
+)
+from market_regime_alpha.application.historical_corpus.postgres_repository import (
+    PostgresHistoricalCorpusRepository,
+)
 from market_regime_alpha.application.historical_research.postgres_journal import (
     DEFAULT_HISTORICAL_STAGE_LEASE,
     HistoricalRunSnapshot,
@@ -89,8 +110,14 @@ from market_regime_alpha.application.historical_research.runner import (
 from market_regime_alpha.application.research_session.kernel import (
     ResearchDecisionSessionKernel,
 )
+from market_regime_alpha.application.research_session.contracts import (
+    DataAuthorityMode,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
+)
+from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
+    PostgresTargetOutcomeRepository,
 )
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
@@ -152,9 +179,6 @@ from market_regime_alpha.application.research_validation.research_model import (
 from market_regime_alpha.application.research_validation.qualification import (
     FormalEvaluationObservationBinding,
     FormalOOSQualificationPolicy,
-)
-from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
-    PostgresTargetOutcomeRepository,
 )
 from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
@@ -248,6 +272,12 @@ from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
+from market_regime_alpha.universe.postgres_research import (
+    PostgresFreeResearchUniverseRepository,
+)
+from market_regime_alpha.universe.postgres_runtime_scope import (
+    PostgresRuntimeScopeRepository,
+)
 from market_regime_alpha.universe.runtime_scope import ResearchUniversePolicy
 from market_regime_alpha.universe.runtime_scope_operator import (
     PostgresRuntimeScopeOperator,
@@ -435,13 +465,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run a frozen Historical Research range through the shared session kernel.",
     )
     historical_run.add_argument("--input", type=Path, required=True)
+    historical_run.add_argument("--artifact-root", type=Path)
     historical_resume = subparsers.add_parser("historical-resume")
     historical_resume.add_argument("--run-id", required=True)
     historical_resume.add_argument("--max-stage-commits", type=int)
+    historical_resume.add_argument("--artifact-root", type=Path)
     historical_report = subparsers.add_parser("historical-report")
     historical_report.add_argument("--run-id", required=True)
     historical_replay = subparsers.add_parser("historical-replay")
     historical_replay.add_argument("--run-id", required=True)
+    historical_replay.add_argument("--artifact-root", type=Path)
+    historical_acquire = subparsers.add_parser(
+        "historical-corpus-acquire",
+        help="Acquire, normalize, atomically publish and register frozen BaoStock data.",
+    )
+    historical_acquire.add_argument("--input", type=Path, required=True)
+    historical_acquire.add_argument("--artifact-root", type=Path, required=True)
+    historical_evidence = subparsers.add_parser(
+        "historical-evidence",
+        help="Produce owner-resolved Ablation, Economics and exploratory Model evidence.",
+    )
+    historical_evidence.add_argument("--run-id", required=True)
+    historical_evidence.add_argument("--artifact-root", type=Path, required=True)
     performance_build = subparsers.add_parser(
         "performance-build",
         help="Build immutable multi-period Performance/Attribution from Portfolio Shadow.",
@@ -659,6 +704,45 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "historical-corpus-acquire":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"symbols", "start_date", "end_date", "bucket_count"}:
+            raise ValueError(
+                "historical-corpus-acquire requires symbols, start_date, "
+                "end_date and bucket_count"
+            )
+        raw = BaoStockHistoricalArchiveClient().acquire(
+            symbols=tuple(
+                sorted(
+                    {
+                        str(item)
+                        for item in _array_value(payload["symbols"], "symbols")
+                    }
+                )
+            ),
+            start_date=date.fromisoformat(str(payload["start_date"])),
+            end_date=date.fromisoformat(str(payload["end_date"])),
+            bucket_count=int(payload["bucket_count"]),
+        )
+        corpus = PostgresHistoricalCorpusRepository(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+            apply_migrations=False,
+        )
+        raw_package = corpus.publish_and_register(raw)
+        normalized_package = corpus.publish_and_register(
+            normalize_baostock_archive(raw_package.owner)
+        )
+        return {
+            "operation": "HISTORICAL_CORPUS_ACQUIRE",
+            "raw_owner": raw_package.owner.to_canonical_dict(),
+            "normalized_owner": normalized_package.owner.to_canonical_dict(),
+            "raw_physical_hash": raw_package.physical_hash,
+            "normalized_physical_hash": normalized_package.physical_hash,
+            "formal_pit": False,
+            "formal_oos": False,
+            "data_eligibility": "EXPLORATORY",
+        }
     if args.operation == "runtime-scope-build":
         payload = _load_json_object(args.input)
         expected = {
@@ -724,12 +808,6 @@ def _dispatch(
             lease_duration=DEFAULT_HISTORICAL_STAGE_LEASE,
             apply_migrations=False,
         )
-        historical_runner = HistoricalResearchRunner(
-            journal=historical_journal,
-            kernel=ResearchDecisionSessionKernel(
-                PostgresHistoricalSessionOwner(factory)
-            ),
-        )
         if args.operation == "historical-run":
             payload = _load_json_object(args.input)
             if set(payload) != {"command", "max_stage_commits"}:
@@ -738,6 +816,12 @@ def _dispatch(
                 )
             command = HistoricalResearchCommand.from_canonical_dict(
                 _object_value(payload["command"], "command")
+            )
+            historical_runner = _historical_runner(
+                factory=factory,
+                journal=historical_journal,
+                command=command,
+                artifact_root=args.artifact_root,
             )
             raw_limit = payload["max_stage_commits"]
             historical_snapshot = historical_runner.run(
@@ -750,6 +834,18 @@ def _dispatch(
                 "HISTORICAL_RUN", historical_snapshot
             )
         run_id = ArtifactId(args.run_id)
+        if args.operation == "historical-report":
+            return _historical_snapshot_payload(
+                "HISTORICAL_REPORT",
+                historical_journal.get_run(run_id),
+            )
+        command = historical_journal.get_run(run_id).command
+        historical_runner = _historical_runner(
+            factory=factory,
+            journal=historical_journal,
+            command=command,
+            artifact_root=args.artifact_root,
+        )
         if args.operation == "historical-resume":
             return _historical_snapshot_payload(
                 "HISTORICAL_RESUME",
@@ -758,14 +854,37 @@ def _dispatch(
                     max_stage_commits=args.max_stage_commits,
                 ),
             )
-        if args.operation == "historical-report":
-            return _historical_snapshot_payload(
-                "HISTORICAL_REPORT",
-                historical_journal.get_run(run_id),
-            )
         return {
             "operation": "HISTORICAL_REPLAY",
             **historical_runner.replay(run_id=run_id).to_canonical_dict(),
+        }
+    if args.operation == "historical-evidence":
+        run_id = ArtifactId(args.run_id)
+        historical_journal = PostgresHistoricalResearchJournal(
+            factory,
+            clock=_operational_now,
+            lease_duration=DEFAULT_HISTORICAL_STAGE_LEASE,
+            apply_migrations=False,
+        )
+        produced = HistoricalEvidenceProducer(
+            journal=historical_journal,
+            corpus_repository=PostgresHistoricalCorpusRepository(
+                factory,
+                artifact_root=args.artifact_root.resolve(),
+                apply_migrations=False,
+            ),
+            component_repository=PostgresHistoricalMaterializationRepository(
+                factory, apply_migrations=False
+            ),
+            evidence_repository=PostgresHistoricalEvidenceRepository(
+                factory, apply_migrations=False
+            ),
+        ).produce(run_id=run_id)
+        return {
+            "operation": "HISTORICAL_EVIDENCE",
+            "run_id": str(run_id),
+            "observation_count": produced.observation_count,
+            "evidence": [item.to_canonical_dict() for item in produced.evidence],
         }
     if args.operation == "performance-build":
         payload = _load_json_object(args.input)
@@ -2102,6 +2221,51 @@ def _instant(value: str) -> datetime:
     return instant
 
 
+def _historical_runner(
+    *,
+    factory: PostgresConnectionFactory,
+    journal: PostgresHistoricalResearchJournal,
+    command: HistoricalResearchCommand,
+    artifact_root: Path | None,
+) -> HistoricalResearchRunner:
+    archive_materializer = None
+    if command.data_authority_mode is DataAuthorityMode.FREE_RESEARCH_ARCHIVE:
+        if artifact_root is None:
+            raise ValueError(
+                "FREE_RESEARCH_ARCHIVE Historical execution requires --artifact-root"
+            )
+        archive_materializer = HistoricalDecisionMaterializer(
+            run_id=command.run_id,
+            corpus_repository=PostgresHistoricalCorpusRepository(
+                factory,
+                artifact_root=artifact_root.resolve(),
+                apply_migrations=False,
+            ),
+            component_repository=PostgresHistoricalMaterializationRepository(
+                factory, apply_migrations=False
+            ),
+            universe_repository=PostgresFreeResearchUniverseRepository(
+                factory, apply_migrations=False
+            ),
+            scope_repository=PostgresRuntimeScopeRepository(
+                factory, apply_migrations=False
+            ),
+            target_repository=PostgresTargetOutcomeRepository(
+                factory, apply_migrations=False
+            ),
+        )
+    return HistoricalResearchRunner(
+        journal=journal,
+        kernel=ResearchDecisionSessionKernel(
+            PostgresHistoricalSessionOwner(
+                factory,
+                archive_materializer=archive_materializer,
+                apply_migrations=False,
+            )
+        ),
+    )
+
+
 def _require_principal_actor(
     args: argparse.Namespace,
     payload: Mapping[str, Any],
@@ -2133,6 +2297,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "research-universe-sync",
         "runtime-scope-build",
         "historical-run",
+        "historical-corpus-acquire",
     }:
         return SecurityPermission.RUN_RESEARCH
     if operation == "model-train":
@@ -2147,6 +2312,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "qualification-calibration",
         "qualification-shadow",
         "qualification-status",
+        "historical-evidence",
     }:
         return SecurityPermission.RECORD_RESEARCH_EVIDENCE
     if operation in {"resume", "historical-resume"}:
