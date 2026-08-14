@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from market_regime_alpha.application.continuous_research.journal import (
     ChildReferenceDisposition,
@@ -65,6 +65,38 @@ class CanonicalDagNodeStatus(str, Enum):
     BLOCKED = "BLOCKED"
     FAILED = "FAILED"
     REUSED = "REUSED"
+
+
+def _lineage_scoped_feedback_rows(
+    rows: Sequence[Sequence[Any]],
+    *,
+    seed_artifact_ids: set[str],
+) -> tuple[Sequence[Any], ...]:
+    """Return only feedback transitively sourced from the inspected cycle.
+
+    Feedback is strategy-version scoped in its owner table.  A run inspection is
+    narrower: it may expose only artifacts descending from Outcomes in that run's
+    cycle, even when the same Strategy Version also ran in another cycle.
+    """
+
+    visible_ids = set(seed_artifact_ids)
+    remaining = list(rows)
+    visible: list[Sequence[Any]] = []
+    while remaining:
+        progressed = False
+        next_remaining: list[Sequence[Any]] = []
+        for row in remaining:
+            source_ids = {str(source) for source in row[4]}
+            if source_ids & visible_ids:
+                visible.append(row)
+                visible_ids.add(str(row[0]))
+                progressed = True
+            else:
+                next_remaining.append(row)
+        if not progressed:
+            break
+        remaining = next_remaining
+    return tuple(visible)
 
 
 @dataclass(frozen=True, slots=True)
@@ -605,7 +637,7 @@ class PostgresCanonicalRuntimeQuery:
                 """,
                 (str(cycle[0]),),
             ).fetchall()
-            feedback = connection.execute(
+            feedback_rows = connection.execute(
                 """
                 SELECT artifact_id, artifact_hash, artifact_kind,
                        strategy_version_id, source_artifact_ids,
@@ -618,6 +650,11 @@ class PostgresCanonicalRuntimeQuery:
                 """,
                 (str(cycle[0]),),
             ).fetchall()
+
+        feedback = _lineage_scoped_feedback_rows(
+            feedback_rows,
+            seed_artifact_ids={str(row[0]) for row in outcomes},
+        )
 
         cycle_node = CanonicalDagNode.create(
             node_type=CanonicalDagNodeType.STRATEGY,
@@ -669,7 +706,11 @@ class PostgresCanonicalRuntimeQuery:
                 owner="CROSS_STRATEGY_PORTFOLIO",
                 artifact_id=str(portfolio[0]),
                 content_hash=str(portfolio[1]),
-                status=(CanonicalDagNodeStatus.AVAILABLE if str(portfolio[2]) == "ACCEPTED" else CanonicalDagNodeStatus.PARTIAL),
+                status=(
+                    CanonicalDagNodeStatus.AVAILABLE
+                    if str(portfolio[2]) in {"ACCEPTED", "NO_ACTION"}
+                    else CanonicalDagNodeStatus.PARTIAL
+                ),
                 observed_at=portfolio[4],
                 parent_node_ids=tuple(item.node_id for item in run_nodes.values()),
                 details={
