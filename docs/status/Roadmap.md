@@ -8,12 +8,21 @@
 
 ## Multi-Strategy convergence
 
-The migration-085/086 engineering slices are complete: stable Strategy
+The migration-085–087 engineering slices are complete: stable Strategy
 Contract/Version/Run identities, shared Overnight/Swing execution, explicit
 Candidate gate attribution, simple cross-strategy Portfolio/Risk, observed-Fill
 strategy sleeves, multi-horizon Path Outcomes, version-scoped feedback,
 Continuous/Historical/Replay wiring and runtime inspection all use the existing
 PostgreSQL modular monolith and control planes.
+
+Accepted Portfolio lines now create Strategy-authorized intents in the existing
+manual ledger. A single action may accumulate multiple observed partial Fills;
+corrections reproject allocation, physical Position and Strategy sleeve, and a
+corrected realized Outcome supersedes rather than overwrites its predecessor.
+Executable quantity is lot/T+1/budget aware, holding age uses the canonical PIT
+Calendar, and stale prices fail closed. The existing `decision-system` CLI is
+the operator surface for intent, Fill and recovery; there is no execution
+scheduler or broker path.
 
 Account-bound Continuous execution now restores owner-resolved Strategy sleeve
 state across sessions, settles fully closed observed-Fill lifecycles, and freezes

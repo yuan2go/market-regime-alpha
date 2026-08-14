@@ -53,7 +53,7 @@ Future families may include ETF rotation, theme rotation, trend following, mean 
 
 The principal architectural constraint for the next phase is **business and research convergence, not further governance expansion**. PostgreSQL Authority, PIT, replay, evidence identity, recovery, and qualification remain core. New authorities, receipts, protocol wrappers, orchestrators, or runtime planes require a concrete correctness or operational failure mode before they are added.
 
-### 1.1 Implementation convergence through migration 086
+### 1.1 Implementation convergence through migration 087
 
 The first executable convergence slice is now installed. One stable Strategy
 Registry contains `OVERNIGHT` and `SWING_STATE`; both run through the same
@@ -75,10 +75,23 @@ Position owner or Runtime. When an account is explicitly bound, the Continuous
 Strategy child resolves each open sleeve from immutable observed-Fill
 allocations and manual account price observations before invoking the same
 `MultiStrategyRuntime`. Quantity and average cost come from Fill facts;
-current/peak price and trading-session age come from available account
-observations; add/reduce counters and all lineage are rebuilt from exact
-Proposal/Fill allocations. The resulting owner-resolved states are frozen in
-the cycle input, so recovery and replay do not depend on caller-created state.
+current/peak price come from account observations, while holding age and T+1
+availability use the exact canonical PIT Trading Calendar and Fill occurrence.
+Add/reduce counters and all lineage are rebuilt from exact Proposal/Fill
+allocations. The resulting owner-resolved states are frozen in the cycle input,
+so recovery and replay do not depend on caller-created state.
+
+Migration 087 closes the accepted Portfolio line to observed execution seam by
+embedding an immutable Strategy execution authorization in the existing manual
+trade ledger. The application bridge validates exact Portfolio, Proposal,
+Strategy Version, account, symbol, side, Calendar and quantity lineage; converts
+weight to A-share lot-aware quantity; and routes every observed partial or
+corrected Fill through the existing Fill and physical Position authorities.
+Strategy allocations are recoverable from that authorization. Realized Strategy
+Outcome corrections append a new revision that supersedes exactly one earlier
+economic fact; historical revisions remain queryable while inspection returns
+only current heads. No second execution, Position, Outcome, scheduler or Runtime
+authority was introduced.
 
 The existing Strategy Shadow entry path now treats the canonical Overnight
 `StrategyProposal` as its decision input whenever the Multi-Strategy cycle
@@ -869,7 +882,10 @@ Only after the first two families prove the platform contract, add ETF rotation,
 
 ### Phase 10 — Future Broker Automation
 
-Only after separate operational qualification, add broker order state, reconciliation, duplicate-order prevention, partial fill/cancel handling, limits and kill switches.
+Only after separate operational qualification, add broker order state,
+broker-side reconciliation, duplicate-order prevention, cancellation handling,
+limits and kill switches. The manual observed-Fill ledger already supports
+partial and corrected Fills; that engineering fact grants no broker authority.
 
 ---
 
