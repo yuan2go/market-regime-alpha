@@ -24,7 +24,6 @@ from market_regime_alpha.application.continuous_research.ports import (
 )
 from market_regime_alpha.application.continuous_research.multi_strategy import (
     MultiStrategyContinuousAdapter,
-    freeze_strategy_decision_prices,
 )
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     load_controlled_runtime_configuration,
@@ -423,14 +422,8 @@ class CanonicalFreeDataResearchComposition:
             candidate_set=candidate_set,
             dataset_reference=persisted.dataset,
             upstream=owner_results[-1],
-            decision_prices=(
-                ()
-                if decision is None
-                else freeze_strategy_decision_prices(
-                    dataset=decision.minute_dataset,
-                    symbols=tuple(item.symbol for item in candidate_set.records),
-                    decision_time=request.as_of_time,
-                )
+            decision_price_dataset=(
+                None if decision is None else decision.minute_dataset.artifact
             ),
         )
         return (*owner_results, strategy_result)

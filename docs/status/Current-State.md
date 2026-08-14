@@ -74,15 +74,18 @@ was added.
 Migration 088 makes that bridge aggregate-safe without adding an execution
 ledger. New Strategy intents resolve the exact latest decision-time Manual
 Account Observation, its latest complete `RECONCILED` report, and the full
-reloadable canonical one-minute Market Bar frozen in the Strategy cycle; the
-caller no longer supplies an observation or sizing price. PostgreSQL locks the
+reloadable canonical one-minute Market Bar plus its complete Dataset owner
+payload frozen in the Strategy cycle; Dataset hash and Bar membership are
+reverified and the caller no longer supplies an observation or sizing price. PostgreSQL locks the
 account, Proposal and Intent scopes in one order, then reconstructs Proposal
 effective Fill/reservation/remaining quantity, account cash and available-sell
 reservations, unobserved Fill/correction deltas, and projected
-gross/symbol/Strategy exposure from the existing facts. Cancel/reject releases
+gross/symbol exposure plus current marked allocated-Strategy-sleeve exposure
+from signed quantity deltas at owner-resolved marks. Position/Outcome recovery
+shares the account transaction boundary with Fill allocation/correction. Cancel/reject releases
 unused authority, replacement consumes only remaining authority, cancellation
 can still receive a late observed Fill, and correction-driven Outcome heads are
-monotonic by their effective Fill head. Operator inspection exposes the active
+serialized with Fill correction and monotonic by their effective Fill head. Operator inspection exposes the active
 intents and exact Portfolio/account/reconciliation/price/Dataset/Calendar
 lineage. Formal qualification, Production and Broker states remain unchanged.
 

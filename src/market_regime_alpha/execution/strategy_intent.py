@@ -91,8 +91,6 @@ class StrategyExecutionAuthorization:
             self.intended_quantity % self.lot_size
         ):
             raise ValueError("executable quantity must use the declared lot size")
-        if self.action == "EXIT" and self.intended_quantity != self.recommended_quantity:
-            raise ValueError("EXIT quantity must close all currently available shares")
         override = self.intended_quantity != self.recommended_quantity
         if override != (self.override_reason is not None):
             raise ValueError("operator override quantity and reason must be paired")

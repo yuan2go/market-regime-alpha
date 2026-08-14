@@ -65,8 +65,10 @@ realized Outcome owners with exact Strategy execution authorization and
 append-only Outcome supersession. Migration 088 adds owner-resolved account
 reconciliation and canonical Market Bar/Dataset projections, the Proposal
 quantity ceiling and active-account indexes to `manual_trade_records`. The full
-Canonical Market Bar payload is frozen in the append-only Strategy cycle and
-reloaded/hash-verified before sizing; the projection cannot substitute price.
+Canonical Market Data Dataset owner (artifact, adjustment policy and partitions)
+and selected Market Bar are frozen in the append-only Strategy cycle. Sizing
+reconstructs the Dataset, verifies its ID/hash and exact Bar membership, then
+checks the projected price/times; the projection cannot substitute price.
 Reservations and post-observation Fill/correction deltas are reconstructed from
 the existing ManualTrade and Fill facts under PostgreSQL transaction locks, so
 088 adds no table or Authority. The migrations extend the existing

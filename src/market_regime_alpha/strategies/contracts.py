@@ -19,6 +19,11 @@ from market_regime_alpha.evidence.canonical import (
     require_text,
 )
 from market_regime_alpha.market_data import CanonicalMarketBar, Timeframe
+from market_regime_alpha.market_data.adjustment import PriceAdjustmentPolicy
+from market_regime_alpha.market_data.dataset import (
+    MarketDataDatasetArtifact,
+    MarketDataPartition,
+)
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 
@@ -594,23 +599,33 @@ def _strategy_position_payload(**values: Any) -> dict[str, Any]:
 
 @dataclass(frozen=True, slots=True)
 class StrategyDecisionPrice:
-    """Frozen decision-time projection of an existing canonical Market Bar."""
+    """Frozen decision-time projection with its reloadable Dataset owner."""
 
     price_owner_reference: RuntimeArtifactReference
     source_dataset_reference: RuntimeArtifactReference
+    source_dataset_owner: MarketDataDatasetArtifact
     price_owner: CanonicalMarketBar
     symbol: str
     price: Decimal
     observed_at: datetime
     available_at: datetime
     freshness_expires_at: datetime
-    schema_version: str = "strategy-decision-price/v1"
+    schema_version: str = "strategy-decision-price/v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "strategy-decision-price/v1":
+        if self.schema_version != "strategy-decision-price/v2":
             raise ValueError("unsupported Strategy Decision Price schema")
         if self.price_owner_reference.reference_kind != "CANONICAL_MARKET_BAR":
             raise ValueError("Strategy price owner must be a Canonical Market Bar")
+        if self.source_dataset_reference.reference_kind != "MARKET_DATA_DATASET":
+            raise ValueError("Strategy price source must be a Market Data Dataset")
+        self.source_dataset_owner.verify_identity()
+        if self.source_dataset_reference != RuntimeArtifactReference(
+            "MARKET_DATA_DATASET",
+            ArtifactId(str(self.source_dataset_owner.dataset_id)),
+            self.source_dataset_owner.content_hash,
+        ):
+            raise ValueError("Strategy price Dataset owner identity mismatch")
         self.price_owner.verify_identity()
         duration = self.price_owner.timeframe.duration
         if self.price_owner.timeframe is not Timeframe.MINUTE_1 or duration is None:
@@ -621,6 +636,13 @@ class StrategyDecisionPrice:
             self.price_owner.content_hash,
         ):
             raise ValueError("Strategy decision price owner identity mismatch")
+        owner_matches = tuple(
+            item
+            for item in self.source_dataset_owner.iter_bars()
+            if item.bar_id == self.price_owner.bar_id
+        )
+        if owner_matches != (self.price_owner,):
+            raise ValueError("Strategy price owner is not a member of its Dataset")
         require_text("symbol", self.symbol)
         if self.price <= 0:
             raise ValueError("Strategy decision price must be positive")
@@ -649,6 +671,14 @@ class StrategyDecisionPrice:
             "schema_version": self.schema_version,
             "price_owner_reference": self.price_owner_reference.to_canonical_dict(),
             "source_dataset_reference": self.source_dataset_reference.to_canonical_dict(),
+            "source_dataset_owner": {
+                "artifact": self.source_dataset_owner.to_canonical_dict(),
+                "adjustment_policy": self.source_dataset_owner.adjustment_policy.to_canonical_dict(),
+                "partitions": [
+                    item.to_canonical_dict()
+                    for item in self.source_dataset_owner.partitions
+                ],
+            },
             "price_owner": self.price_owner.to_canonical_dict(),
             "symbol": self.symbol,
             "price": str(self.price),
@@ -659,9 +689,22 @@ class StrategyDecisionPrice:
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StrategyDecisionPrice:
+        owner_payload = _mapping(payload["source_dataset_owner"])
+        partitions = tuple(
+            MarketDataPartition.from_canonical_dict(_mapping(item))
+            for item in _sequence(owner_payload["partitions"])
+        )
+        adjustment_policy = PriceAdjustmentPolicy.from_canonical_dict(
+            _mapping(owner_payload["adjustment_policy"])
+        )
         return cls(
             price_owner_reference=_reference(payload["price_owner_reference"]),
             source_dataset_reference=_reference(payload["source_dataset_reference"]),
+            source_dataset_owner=MarketDataDatasetArtifact.from_canonical_dict(
+                _mapping(owner_payload["artifact"]),
+                partitions=partitions,
+                adjustment_policy=adjustment_policy,
+            ),
             price_owner=CanonicalMarketBar.from_canonical_dict(
                 _mapping(payload["price_owner"])
             ),
@@ -701,6 +744,7 @@ class StrategyRuntimeInput:
             item.observed_at > self.decision_time
             or item.available_at > self.decision_time
             or item.freshness_expires_at < self.decision_time
+            or item.source_dataset_owner.decision_time != self.decision_time
             for item in prices
         ):
             raise ValueError("Strategy decision price must be available and fresh at decision time")

@@ -69,8 +69,9 @@ quantity without rewriting history. BUY authorization includes physical
 exposure, active reservations and Fill/correction cash deltas not yet present in
 the exact account observation. SELL/Exit remains risk-reducing and bypasses
 gross-increase ceilings, but cannot exceed owner-resolved available quantity.
-The sizing price is the reloadable canonical one-minute Market Bar frozen by the
-Strategy cycle, not a caller field.
+The sizing price is the canonical one-minute Market Bar frozen by the Strategy
+cycle together with its complete reloadable Market Data Dataset owner. Execution
+reverifies Dataset identity and exact Bar membership; price is not a caller field.
 
 For free-data operation, retrospective decisions and later outcomes additionally
 feed an immutable Historical Sample Dataset in PostgreSQL. The Registry Reader

@@ -8,10 +8,9 @@ import json
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from market_regime_alpha.core.identity import FillId, ManualTradeId
+from market_regime_alpha.core.identity import ArtifactId, FillId, ManualTradeId
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import canonical_hash
-from market_regime_alpha.market_data import CanonicalMarketBar
 from market_regime_alpha.execution.manual import (
     Fill,
     FillKind,
@@ -21,6 +20,9 @@ from market_regime_alpha.execution.manual import (
     STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     TradeSide,
     validate_manual_trade_transition,
+)
+from market_regime_alpha.execution.strategy_intent import (
+    StrategyExecutionAuthorization,
 )
 from market_regime_alpha.portfolio.lifecycle import (
     PortfolioDecision,
@@ -34,6 +36,12 @@ from market_regime_alpha.persistence.postgres.native_repository import (
     NativePostgresRepository,
     PostgresConnection,
     acquire_scope_lock,
+)
+from market_regime_alpha.strategies.contracts import StrategyDecisionPrice
+from market_regime_alpha.strategies.sleeves import (
+    FillAllocationBatch,
+    effective_fill_allocation_batches,
+    project_strategy_sleeves,
 )
 
 
@@ -354,7 +362,7 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
         with self._connect() as connection:
             return _fills_for_trade(connection, trade_id)
 
-    def proposal_effective_filled_quantity(self, proposal_id: object) -> int:
+    def proposal_effective_filled_quantity(self, proposal_id: ArtifactId) -> int:
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -371,7 +379,7 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
         self,
         *,
         account_id: str,
-        proposal_id: object,
+        proposal_id: ArtifactId,
     ) -> dict[str, Any]:
         with self._connect() as connection:
             proposal_rows = connection.execute(
@@ -429,13 +437,25 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
                 raise ValueError("Strategy Account Observation projection is missing")
             position_rows = connection.execute(
                 """
-                SELECT symbol, observed_market_value
+                SELECT symbol, total_quantity, observed_market_value
                 FROM manual_position_observation
                 WHERE observation_id = %s
                 """,
                 (str(authorization.account_observation_reference.artifact_id),),
             ).fetchall()
-            physical_by_symbol = {str(item["symbol"]): Decimal(str(item["observed_market_value"])) for item in position_rows}
+            physical_by_symbol = {
+                str(item["symbol"]): Decimal(str(item["observed_market_value"]))
+                for item in position_rows
+            }
+            observation_marks = {
+                str(item["symbol"]): (
+                    Decimal("0")
+                    if int(item["total_quantity"]) == 0
+                    else Decimal(str(item["observed_market_value"]))
+                    / Decimal(int(item["total_quantity"]))
+                )
+                for item in position_rows
+            }
             reserved_by_symbol: dict[str, Decimal] = {}
             for item in account_trades:
                 item_authorization = item.strategy_execution_authorization
@@ -444,10 +464,20 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
                 reserved_by_symbol[item.symbol] = reserved_by_symbol.get(item.symbol, Decimal("0")) + (
                     Decimal(max(0, item.intended_quantity - item.filled_quantity)) * item_authorization.reference_price
                 )
-            unobserved_by_symbol = _unobserved_buy_fill_notional_by_symbol(
+            latest_account_marks = {
+                item.symbol: item.strategy_execution_authorization.reference_price
+                for item in account_trades
+                if item.strategy_execution_authorization is not None
+            }
+            unobserved_by_symbol = _marked_unobserved_fill_notional_by_symbol(
                 connection,
                 account_id,
                 observation_as_of=observation_row["as_of_time"],
+                mark_prices={
+                    **latest_account_marks,
+                    **observation_marks,
+                    authorization.symbol: authorization.reference_price,
+                },
             )
             projected_gross_notional = (
                 sum(physical_by_symbol.values(), Decimal("0"))
@@ -470,15 +500,24 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
                 if item.strategy_execution_authorization is not None
                 and item.strategy_execution_authorization.strategy_version_reference == authorization.strategy_version_reference
             )
-            strategy_filled_notional = sum(
-                (
-                    Decimal(item.filled_quantity)
-                    * item.strategy_execution_authorization.reference_price
-                    * (Decimal("1") if item.side is TradeSide.BUY else Decimal("-1"))
-                    for item in strategy_trades
-                    if item.strategy_execution_authorization is not None
+            latest_strategy_marks = {
+                item.symbol: item.strategy_execution_authorization.reference_price
+                for item in strategy_trades
+                if item.strategy_execution_authorization is not None
+            }
+            sleeve_quantities = _strategy_sleeve_quantities(
+                connection,
+                account_id=account_id,
+            )
+            strategy_filled_notional = _marked_strategy_sleeve_notional(
+                sleeve_quantities=sleeve_quantities,
+                strategy_version_id=str(
+                    authorization.strategy_version_reference.artifact_id
                 ),
-                Decimal("0"),
+                target_symbol=authorization.symbol,
+                target_price=authorization.reference_price,
+                observation_marks=observation_marks,
+                latest_strategy_marks=latest_strategy_marks,
             )
             strategy_reserved_notional = sum(
                 (
@@ -516,7 +555,8 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
                     "gross_weight": str(projected_gross_notional / authorization.account_nav),
                     "symbol_weight": str(projected_symbol_notional / authorization.account_nav),
                     "strategy_weight": str(
-                        (max(Decimal("0"), strategy_filled_notional) + strategy_reserved_notional) / authorization.account_nav
+                        (strategy_filled_notional + strategy_reserved_notional)
+                        / authorization.account_nav
                     ),
                 },
                 "portfolio_reference": authorization.portfolio_decision_reference.to_canonical_dict(),
@@ -968,14 +1008,8 @@ def _validate_strategy_aggregate_authority(
 
 def _validate_strategy_price_owner(
     cycle_payload_value: object,
-    authorization: object,
+    authorization: StrategyExecutionAuthorization,
 ) -> None:
-    from market_regime_alpha.execution.strategy_intent import (
-        StrategyExecutionAuthorization,
-    )
-
-    if not isinstance(authorization, StrategyExecutionAuthorization):
-        raise TypeError("Strategy price validation requires authorization")
     cycle_payload = _object_payload(cycle_payload_value)
     runtime_input = cycle_payload.get("runtime_input")
     if not isinstance(runtime_input, dict):
@@ -986,42 +1020,24 @@ def _validate_strategy_price_owner(
     matching = tuple(item for item in prices if isinstance(item, dict) and item.get("symbol") == authorization.symbol)
     if len(matching) != 1:
         raise ValueError("Strategy Price owner symbol mismatch")
-    price = matching[0]
-    owner = price.get("price_owner_reference")
-    source = price.get("source_dataset_reference")
-    owner_payload = price.get("price_owner")
-    if (
-        not isinstance(owner, dict)
-        or not isinstance(source, dict)
-        or not isinstance(owner_payload, dict)
-    ):
-        raise ValueError("Strategy Price owner lineage is invalid")
-    price_owner = CanonicalMarketBar.from_canonical_dict(owner_payload)
+    price = StrategyDecisionPrice.from_canonical_dict(matching[0])
     source_reference = authorization.price_source_reference
     if source_reference is None:
         raise ValueError("Strategy Price Dataset lineage is missing")
-    observed_at = datetime.fromisoformat(str(price.get("observed_at")))
-    available_at = datetime.fromisoformat(str(price.get("available_at")))
-    freshness_expires_at = datetime.fromisoformat(str(price.get("freshness_expires_at")))
     if (
-        owner != authorization.price_reference.to_canonical_dict()
-        or source != source_reference.to_canonical_dict()
-        or str(price_owner.bar_id) != str(authorization.price_reference.artifact_id)
-        or price_owner.content_hash != authorization.price_reference.content_hash
-        or price_owner.symbol != authorization.symbol
-        or price_owner.close != authorization.reference_price
-        or price_owner.event_end != authorization.price_observed_at
-        or price_owner.available_at != authorization.price_available_at
-        or Decimal(str(price.get("price"))) != authorization.reference_price
-        or observed_at != authorization.price_observed_at
-        or available_at != authorization.price_available_at
+        price.price_owner_reference != authorization.price_reference
+        or price.source_dataset_reference != source_reference
+        or price.symbol != authorization.symbol
+        or price.price != authorization.reference_price
+        or price.observed_at != authorization.price_observed_at
+        or price.available_at != authorization.price_available_at
     ):
         raise ValueError("Strategy Price owner binding mismatch")
-    if observed_at > authorization.decision_time:
+    if price.observed_at > authorization.decision_time:
         raise ValueError("Strategy Price owner is from the future")
-    if available_at > authorization.decision_time:
+    if price.available_at > authorization.decision_time:
         raise ValueError("Strategy Price owner was unavailable at decision time")
-    if freshness_expires_at < authorization.decision_time:
+    if price.freshness_expires_at < authorization.decision_time:
         raise ValueError("Strategy Price owner is stale")
 
 
@@ -1094,13 +1110,22 @@ def _validate_projected_post_trade_exposure(
     maximum_symbol = Decimal(str(policy["maximum_symbol_weight"]))
     positions = connection.execute(
         """
-        SELECT symbol, observed_market_value
+        SELECT symbol, total_quantity, observed_market_value
         FROM manual_position_observation
         WHERE observation_id = %s
         """,
         (str(authorization.account_observation_reference.artifact_id),),
     ).fetchall()
     physical_by_symbol = {str(item["symbol"]): Decimal(str(item["observed_market_value"])) for item in positions}
+    observation_marks = {
+        str(item["symbol"]): (
+            Decimal("0")
+            if int(item["total_quantity"]) == 0
+            else Decimal(str(item["observed_market_value"]))
+            / Decimal(int(item["total_quantity"]))
+        )
+        for item in positions
+    }
     reserved_by_symbol: dict[str, Decimal] = {}
     for item in trades:
         item_authorization = item.strategy_execution_authorization
@@ -1109,10 +1134,20 @@ def _validate_projected_post_trade_exposure(
         reserved_by_symbol[item.symbol] = reserved_by_symbol.get(item.symbol, Decimal("0")) + (
             Decimal(max(0, item.intended_quantity - item.filled_quantity)) * item_authorization.reference_price
         )
-    unobserved_by_symbol = _unobserved_buy_fill_notional_by_symbol(
+    latest_account_marks = {
+        item.symbol: item.strategy_execution_authorization.reference_price
+        for item in trades
+        if item.strategy_execution_authorization is not None
+    }
+    unobserved_by_symbol = _marked_unobserved_fill_notional_by_symbol(
         connection,
         authorization.account_id,
         observation_as_of=observation_as_of,
+        mark_prices={
+            **latest_account_marks,
+            **observation_marks,
+            authorization.symbol: authorization.reference_price,
+        },
     )
     proposed = Decimal(record.intended_quantity) * authorization.reference_price
     symbol_notional = (
@@ -1153,17 +1188,27 @@ def _validate_projected_post_trade_exposure(
         item
         for item in trades
         if item.strategy_execution_authorization is not None
-        and item.strategy_execution_authorization.strategy_version_reference == authorization.strategy_version_reference
+        and item.strategy_execution_authorization.strategy_version_reference
+        == authorization.strategy_version_reference
     )
-    filled_strategy_notional = sum(
-        (
-            Decimal(item.filled_quantity)
-            * item.strategy_execution_authorization.reference_price
-            * (Decimal("1") if item.side is TradeSide.BUY else Decimal("-1"))
-            for item in strategy_trades
-            if item.strategy_execution_authorization is not None
+    sleeve_quantities = _strategy_sleeve_quantities(
+        connection,
+        account_id=authorization.account_id,
+    )
+    latest_strategy_marks = {
+        item.symbol: item.strategy_execution_authorization.reference_price
+        for item in strategy_trades
+        if item.strategy_execution_authorization is not None
+    }
+    filled_strategy_notional = _marked_strategy_sleeve_notional(
+        sleeve_quantities=sleeve_quantities,
+        strategy_version_id=str(
+            authorization.strategy_version_reference.artifact_id
         ),
-        Decimal("0"),
+        target_symbol=authorization.symbol,
+        target_price=authorization.reference_price,
+        observation_marks=observation_marks,
+        latest_strategy_marks=latest_strategy_marks,
     )
     active_strategy_buy_notional = sum(
         (
@@ -1173,28 +1218,144 @@ def _validate_projected_post_trade_exposure(
         ),
         Decimal("0"),
     )
-    projected_strategy_notional = max(Decimal("0"), filled_strategy_notional) + active_strategy_buy_notional + proposed
+    projected_strategy_notional = (
+        filled_strategy_notional + active_strategy_buy_notional + proposed
+    )
     if projected_strategy_notional / authorization.account_nav > strategy_budget:
         raise ValueError("Projected post-trade Strategy exposure exceeds Strategy Contract")
 
 
-def _unobserved_buy_fill_notional_by_symbol(
+def _marked_unobserved_fill_notional_by_symbol(
     connection: PostgresConnection,
     account_id: str,
     *,
     observation_as_of: datetime,
+    mark_prices: dict[str, Decimal],
 ) -> dict[str, Decimal]:
-    revisions = _effective_fill_revisions(
-        connection,
-        account_id=account_id,
-        side=TradeSide.BUY,
-        observation_as_of=observation_as_of,
-    )
+    quantities: dict[str, int] = {}
+    for side, sign in (
+        (TradeSide.BUY, 1),
+        (TradeSide.SELL, -1),
+    ):
+        revisions = _effective_fill_revisions(
+            connection,
+            account_id=account_id,
+            side=side,
+            observation_as_of=observation_as_of,
+        )
+        for current, at_observation in revisions:
+            delta = sign * (
+                current.quantity
+                - (0 if at_observation is None else at_observation.quantity)
+            )
+            quantities[current.symbol] = quantities.get(current.symbol, 0) + delta
     result: dict[str, Decimal] = {}
-    for current, at_observation in revisions:
-        delta = _fill_notional(current) - _fill_notional(at_observation)
-        result[current.symbol] = result.get(current.symbol, Decimal("0")) + delta
+    for symbol, quantity in quantities.items():
+        mark = mark_prices.get(symbol)
+        if mark is None or mark <= 0:
+            raise ValueError(
+                "DATA_INSUFFICIENT: unobserved Fill has no owner-resolved mark"
+            )
+        result[symbol] = Decimal(quantity) * mark
     return result
+
+
+def _strategy_sleeve_quantities(
+    connection: PostgresConnection,
+    *,
+    account_id: str,
+) -> dict[tuple[str, str], int]:
+    """Reload allocated effective Fills and fail closed on allocation lag."""
+
+    batch_rows = connection.execute(
+        """
+        SELECT payload_json
+        FROM strategy_fill_allocation_batch
+        WHERE account_id = %s
+        ORDER BY created_at, batch_id
+        """,
+        (account_id,),
+    ).fetchall()
+    batches = tuple(
+        FillAllocationBatch.from_canonical_dict(
+            _object_payload(item["payload_json"])
+        )
+        for item in batch_rows
+    )
+    fill_rows = connection.execute(
+        """
+        SELECT f.fill_json
+        FROM manual_fills AS f
+        JOIN manual_trade_records AS t
+          ON t.manual_trade_id = f.manual_trade_id
+        WHERE f.account_id = %s AND t.authority_route = 'STRATEGY'
+        ORDER BY f.recorded_at, f.fill_id
+        """,
+        (account_id,),
+    ).fetchall()
+    fills = tuple(
+        Fill.from_canonical_dict(_object_payload(item["fill_json"]))
+        for item in fill_rows
+    )
+    executions = {
+        item.fill_id: item for item in fills if item.fill_kind is FillKind.EXECUTION
+    }
+    corrections = {
+        item.correction_of_fill_id: item
+        for item in fills
+        if item.fill_kind is FillKind.CORRECTION
+    }
+    effective_fills = {
+        (
+            str(current.fill_id),
+            canonical_hash(current.to_canonical_dict()),
+        )
+        for fill_id, original in executions.items()
+        for current in (corrections.get(fill_id, original),)
+    }
+    effective_batches = effective_fill_allocation_batches(batches)
+    allocated_fills = {
+        (str(item.source_fill_id), item.source_fill_hash)
+        for item in effective_batches
+    }
+    if effective_fills != allocated_fills:
+        raise ValueError(
+            "RECONCILIATION_REQUIRED: effective Strategy Fill allocation is incomplete"
+        )
+    return {
+        (
+            str(item.strategy_version_reference.artifact_id),
+            item.symbol,
+        ): item.quantity
+        for item in project_strategy_sleeves(batches)
+        if item.quantity > 0
+    }
+
+
+def _marked_strategy_sleeve_notional(
+    *,
+    sleeve_quantities: dict[tuple[str, str], int],
+    strategy_version_id: str,
+    target_symbol: str,
+    target_price: Decimal,
+    observation_marks: dict[str, Decimal],
+    latest_strategy_marks: dict[str, Decimal],
+) -> Decimal:
+    notional = Decimal("0")
+    for (version_id, symbol), quantity in sleeve_quantities.items():
+        if version_id != strategy_version_id:
+            continue
+        mark = (
+            target_price
+            if symbol == target_symbol
+            else observation_marks.get(symbol, latest_strategy_marks.get(symbol))
+        )
+        if mark is None or mark <= 0:
+            raise ValueError(
+                "DATA_INSUFFICIENT: Strategy sleeve has no owner-resolved mark"
+            )
+        notional += Decimal(quantity) * mark
+    return notional
 
 
 def _effective_fill_revisions(

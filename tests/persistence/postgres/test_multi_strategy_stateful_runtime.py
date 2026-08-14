@@ -54,6 +54,7 @@ from market_regime_alpha.application.trading_lifecycle.strategy_execution import
 )
 from market_regime_alpha.cli.decision_system import main as decision_system_main
 from market_regime_alpha.core.identity import ArtifactId, DatasetId, ManualTradeId
+from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.data.pit_authority import PITArtifactReference
 from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
 from market_regime_alpha.data.postgres_trading_calendar import (
@@ -80,6 +81,9 @@ from market_regime_alpha.market_data import (
     AssetType,
     CanonicalMarketBar,
     Exchange,
+    FormalPitStatus,
+    MarketDataDatasetArtifact,
+    PriceAdjustmentPolicy,
     PriceLimitState,
     Timeframe,
     TradingStatus,
@@ -94,7 +98,6 @@ from market_regime_alpha.strategies.contracts import (
     CanonicalStrategyAction,
     MultiStrategyCycle,
     StrategyFamily,
-    StrategyDecisionPrice,
     StrategyProposal,
 )
 from market_regime_alpha.strategies.defaults import (
@@ -162,15 +165,21 @@ def _seed_calendar(
 
 def _adapter(
     factory: PostgresConnectionFactory,
+    *,
+    portfolio_policy: CrossStrategyPortfolioPolicy | None = None,
 ) -> MultiStrategyContinuousAdapter:
     return MultiStrategyContinuousAdapter(
         repository=PostgresMultiStrategyRepository(
             factory,
             apply_migrations=False,
         ),
-        portfolio_policy=CrossStrategyPortfolioPolicy(
-            maximum_gross_weight=Decimal("0.50"),
-            maximum_symbol_weight=Decimal("0.20"),
+        portfolio_policy=(
+            CrossStrategyPortfolioPolicy(
+                maximum_gross_weight=Decimal("0.50"),
+                maximum_symbol_weight=Decimal("0.20"),
+            )
+            if portfolio_policy is None
+            else portfolio_policy
         ),
         strategy_shadow_repository=PostgresStrategyShadowRepository(
             factory,
@@ -264,7 +273,8 @@ def _execute_day(
     day: int,
     calendar: RuntimeArtifactReference,
     *,
-    decision_prices: tuple[StrategyDecisionPrice, ...] | None = None,
+    decision_price_bars: tuple[CanonicalMarketBar, ...] | None = None,
+    portfolio_policy: CrossStrategyPortfolioPolicy | None = None,
 ) -> tuple[MultiStrategyCycle, CrossStrategyPortfolioDecision]:
     default_bar = _decision_price_bar(
         day=day,
@@ -272,25 +282,35 @@ def _execute_day(
         observed_at=SESSION_TIMES[day],
         available_at=SESSION_TIMES[day],
     )
-    default_price = StrategyDecisionPrice(
-        price_owner_reference=RuntimeArtifactReference(
-            "CANONICAL_MARKET_BAR",
-            default_bar.bar_id,
-            default_bar.content_hash,
-        ),
-        source_dataset_reference=RuntimeArtifactReference(
-            "MARKET_DATA_DATASET",
-            ArtifactId(f"stateful-price-dataset-{day}"),
-            canonical_hash({"stateful_price_dataset": day}),
-        ),
-        price_owner=default_bar,
-        symbol=SYMBOL,
-        price=Decimal("10.00"),
-        observed_at=SESSION_TIMES[day],
-        available_at=SESSION_TIMES[day],
-        freshness_expires_at=SESSION_TIMES[day] + timedelta(minutes=1),
+    price_bars = (
+        (default_bar,) if decision_price_bars is None else decision_price_bars
     )
-    result = _adapter(factory).execute(
+    price_dataset = MarketDataDatasetArtifact.create(
+        decision_time=SESSION_TIMES[day],
+        created_at=max(
+            SESSION_TIMES[day],
+            *(item.available_at for item in price_bars),
+        ),
+        bars=price_bars,
+        expected_symbols=tuple(sorted({item.symbol for item in price_bars})),
+        expected_timeframes=(Timeframe.MINUTE_1,),
+        adjustment_policy=PriceAdjustmentPolicy.create(
+            policy_version="stateful-price-raw-v1",
+            mode=AdjustmentMode.RAW,
+            factors=(),
+            limitations=(),
+        ),
+        source_manifest_references=(
+            (
+                ArtifactId(f"stateful-price-manifest-{day}"),
+                canonical_hash({"stateful_price_manifest": day}),
+            ),
+        ),
+        data_eligibility=DataEligibility.EXPLORATORY,
+        formal_pit_status=FormalPitStatus.FORMAL_PIT_NOT_ESTABLISHED,
+        limitations=("ENGINEERING_FIXTURE_ONLY",),
+    )
+    result = _adapter(factory, portfolio_policy=portfolio_policy).execute(
         request=_request(day, calendar),
         candidate_set=_candidate_set(),
         dataset_reference=RuntimeArtifactReference(
@@ -299,7 +319,7 @@ def _execute_day(
             HASH,
         ),
         upstream=_upstream(day),
-        decision_prices=((default_price,) if decision_prices is None else decision_prices),
+        decision_price_dataset=price_dataset,
     )
     repository = PostgresMultiStrategyRepository(factory, apply_migrations=False)
     if result.child_artifact_id is None:
@@ -316,6 +336,7 @@ def _decision_price_bar(
     symbol: str,
     observed_at: datetime,
     available_at: datetime,
+    price: Decimal = Decimal("10.00"),
 ) -> CanonicalMarketBar:
     return CanonicalMarketBar.create(
         symbol=symbol,
@@ -326,14 +347,14 @@ def _decision_price_bar(
         event_start=observed_at - timedelta(minutes=1),
         event_end=observed_at,
         available_at=available_at,
-        open=Decimal("10.00"),
-        high=Decimal("10.00"),
-        low=Decimal("10.00"),
-        close=Decimal("10.00"),
-        previous_close=Decimal("10.00"),
+        open=price,
+        high=price,
+        low=price,
+        close=price,
+        previous_close=price,
         volume=Decimal("10000"),
         volume_unit=VolumeUnit.SHARES,
-        amount=Decimal("100000"),
+        amount=price * Decimal("10000"),
         turnover_rate=None,
         adjustment_mode=AdjustmentMode.RAW,
         adjustment_factor=Decimal("1"),
@@ -368,6 +389,7 @@ def _observe(
     quantity: int,
     price: str,
     available_cash: str = "50000",
+    total_equity: str = "100000",
     as_of_time: datetime | None = None,
     fill_ledger_complete: bool = True,
 ) -> ManualAccountObservation:
@@ -390,7 +412,7 @@ def _observe(
         account_id=ACCOUNT,
         trading_date=observed_at.astimezone(TZ).date(),
         as_of_time=observed_at,
-        total_equity=Decimal("100000"),
+        total_equity=Decimal(total_equity),
         available_cash=Decimal(available_cash),
         frozen_cash=Decimal("0"),
         source="MANUAL_ACCOUNT_AUTHORITY",
@@ -822,18 +844,47 @@ def test_postgres_canonical_partial_fill_correction_recovery_and_replay(
     assert swing_initial.supersedes_outcome_reference is None
 
     corrected_target = remaining_exit_fills[-1]
-    _, correction, _, corrected_outcomes = restarted_execution.record_fill(
-        swing_exit.manual_trade_id,
-        external_fill_id="stateful-external-swing-exit-correction",
-        quantity=corrected_target.quantity,
-        price=9.1,
-        fees=4.0,
-        occurred_at=corrected_target.occurred_at,
-        recorded_at=SESSION_TIMES[6] + timedelta(minutes=1),
-        actor="stateful-operator",
-        reason="correct observed exit economics",
-        idempotency_key="stateful-fill-swing-exit-correction",
-        correction_of_fill_id=corrected_target.fill_id,
+    correction_barrier = Barrier(2)
+
+    def correct_exit_fill() -> tuple[
+        ManualTradeRecord,
+        Fill,
+        tuple[object, ...],
+        tuple[object, ...],
+    ]:
+        correction_barrier.wait()
+        return restarted_execution.record_fill(
+            swing_exit.manual_trade_id,
+            external_fill_id="stateful-external-swing-exit-correction",
+            quantity=corrected_target.quantity,
+            price=9.1,
+            fees=4.0,
+            occurred_at=corrected_target.occurred_at,
+            recorded_at=SESSION_TIMES[6] + timedelta(minutes=1),
+            actor="stateful-operator",
+            reason="correct observed exit economics",
+            idempotency_key="stateful-fill-swing-exit-correction",
+            correction_of_fill_id=corrected_target.fill_id,
+        )
+
+    def settle_while_correcting() -> tuple[object, ...]:
+        correction_barrier.wait()
+        return shadow.settle_multi_strategy_outcomes(
+            account_id=ACCOUNT,
+            decision_time=SESSION_TIMES[6] + timedelta(minutes=2),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        correction_future = executor.submit(correct_exit_fill)
+        settlement_future = executor.submit(settle_while_correcting)
+    _, correction, _, _ = correction_future.result()
+    try:
+        settlement_future.result()
+    except ValueError as exc:
+        assert "RECONCILIATION_REQUIRED" in str(exc)
+    corrected_outcomes = shadow.settle_multi_strategy_outcomes(
+        account_id=ACCOUNT,
+        decision_time=SESSION_TIMES[6] + timedelta(minutes=2),
     )
     assert correction.correction_of_fill_id == corrected_target.fill_id
     swing_corrected = next(
@@ -1110,6 +1161,98 @@ def test_partial_fill_cancel_correction_and_replacement_use_remaining_authority(
         )
 
 
+def test_partial_exit_cancel_replacement_consumes_only_remaining_authority(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    calendar = _seed_calendar(postgres_factory)
+    PostgresMultiStrategyRepository(postgres_factory).register(
+        canonical_exploratory_strategy_registry(),
+        created_at=SESSION_TIMES[0],
+    )
+    service = StrategyExecutionApplicationService(
+        postgres_factory,
+        account_id=ACCOUNT,
+    )
+    _observe(postgres_factory, day=0, quantity=0, price="0")
+    day0, portfolio0 = _execute_day(postgres_factory, 0, calendar)
+    entry = _intent(
+        service,
+        day=0,
+        portfolio=portfolio0,
+        proposal=_proposal(
+            day0,
+            family=StrategyFamily.OVERNIGHT,
+            action=CanonicalStrategyAction.ENTER,
+        ),
+        calendar=calendar,
+        quantity=200,
+        key="exit-replacement-entry",
+    )
+    _partial_fills(
+        service,
+        trade=entry,
+        day=0,
+        quantities=(200,),
+        price=10.0,
+        key="exit-replacement-entry",
+    )
+
+    _observe(postgres_factory, day=1, quantity=200, price="10.00")
+    day1, portfolio1 = _execute_day(postgres_factory, 1, calendar)
+    exit_proposal = _proposal(
+        day1,
+        family=StrategyFamily.OVERNIGHT,
+        action=CanonicalStrategyAction.EXIT,
+    )
+    first_exit = _intent(
+        service,
+        day=1,
+        portfolio=portfolio1,
+        proposal=exit_proposal,
+        calendar=calendar,
+        quantity=200,
+        key="exit-replacement-a",
+    )
+    partial, _, _, _ = service.record_fill(
+        first_exit.manual_trade_id,
+        external_fill_id="exit-replacement-fill-a",
+        quantity=100,
+        price=10.0,
+        fees=1.0,
+        occurred_at=SESSION_TIMES[1] + timedelta(minutes=1),
+        recorded_at=SESSION_TIMES[1] + timedelta(minutes=1, seconds=1),
+        actor="stateful-operator",
+        reason="partial EXIT Fill",
+        idempotency_key="exit-replacement-fill-a",
+    )
+    service.mark_intent_state(
+        first_exit.manual_trade_id,
+        expected_version=partial.version,
+        state=ManualOrderState.CANCELLED,
+        actor="stateful-operator",
+        reason="replace unfilled EXIT remainder",
+        changed_at=SESSION_TIMES[1] + timedelta(minutes=2),
+        idempotency_key="exit-replacement-cancel-a",
+    )
+    replacement = service.create_intent(
+        portfolio_decision_id=portfolio1.decision_id,
+        proposal_id=exit_proposal.proposal_id,
+        trading_calendar_reference=calendar,
+        lot_size=100,
+        actor="stateful-operator",
+        reason="replace remaining EXIT authority",
+        created_at=SESSION_TIMES[1] + timedelta(minutes=2, seconds=1),
+        idempotency_key="exit-replacement-b",
+        operator_quantity=100,
+        override_reason="replacement consumes only unfilled EXIT authority",
+    )
+    assert replacement.intended_quantity == 100
+    inspection = service.inspect_proposal_execution(exit_proposal.proposal_id)
+    assert inspection["effective_filled_quantity"] == 100
+    assert inspection["reserved_quantity"] == 100
+    assert inspection["remaining_quantity"] == 0
+
+
 def test_account_cash_reservation_rejects_reuse_and_release_restores_budget(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -1178,6 +1321,67 @@ def test_account_cash_reservation_rejects_reuse_and_release_restores_budget(
         key="cash-b-released",
     )
     assert second.state is ManualOrderState.RECORDED
+
+
+def test_same_symbol_reservations_across_strategies_share_symbol_budget(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    calendar = _seed_calendar(postgres_factory)
+    PostgresMultiStrategyRepository(postgres_factory).register(
+        canonical_exploratory_strategy_registry(),
+        created_at=SESSION_TIMES[0],
+    )
+    _observe(
+        postgres_factory,
+        day=0,
+        quantity=200,
+        price="10.00",
+        available_cash="50000",
+    )
+    cycle, portfolio = _execute_day(
+        postgres_factory,
+        0,
+        calendar,
+        portfolio_policy=CrossStrategyPortfolioPolicy(
+            maximum_gross_weight=Decimal("0.50"),
+            maximum_symbol_weight=Decimal("0.10"),
+        ),
+    )
+    service = StrategyExecutionApplicationService(
+        postgres_factory,
+        account_id=ACCOUNT,
+    )
+    first = _intent(
+        service,
+        day=0,
+        portfolio=portfolio,
+        proposal=_proposal(
+            cycle,
+            family=StrategyFamily.OVERNIGHT,
+            action=CanonicalStrategyAction.ENTER,
+        ),
+        calendar=calendar,
+        quantity=None,
+        key="cross-strategy-symbol-a",
+    )
+    assert first.intended_quantity > 0
+    with pytest.raises(
+        ValueError,
+        match="Projected post-trade symbol exposure",
+    ):
+        _intent(
+            service,
+            day=0,
+            portfolio=portfolio,
+            proposal=_proposal(
+                cycle,
+                family=StrategyFamily.SWING_STATE,
+                action=CanonicalStrategyAction.ENTER,
+            ),
+            calendar=calendar,
+            quantity=None,
+            key="cross-strategy-symbol-b",
+        )
 
 
 def test_concurrent_account_cash_reservation_serializes_across_proposals(
@@ -1378,6 +1582,105 @@ def test_fill_cancel_race_preserves_fill_and_reconstructs_remaining_authority(
     )
 
 
+def test_fill_correction_and_position_resolution_share_account_boundary(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    calendar = _seed_calendar(postgres_factory)
+    PostgresMultiStrategyRepository(postgres_factory).register(
+        canonical_exploratory_strategy_registry(),
+        created_at=SESSION_TIMES[0],
+    )
+    service = StrategyExecutionApplicationService(
+        postgres_factory,
+        account_id=ACCOUNT,
+    )
+    _observe(postgres_factory, day=0, quantity=0, price="0")
+    cycle, portfolio = _execute_day(postgres_factory, 0, calendar)
+    proposal = _proposal(
+        cycle,
+        family=StrategyFamily.SWING_STATE,
+        action=CanonicalStrategyAction.ENTER,
+    )
+    intent = _intent(
+        service,
+        day=0,
+        portfolio=portfolio,
+        proposal=proposal,
+        calendar=calendar,
+        quantity=200,
+        key="position-correction-entry",
+    )
+    _, execution_fill, _, _ = service.record_fill(
+        intent.manual_trade_id,
+        external_fill_id="position-correction-execution",
+        quantity=100,
+        price=10.0,
+        fees=1.0,
+        occurred_at=SESSION_TIMES[0] + timedelta(minutes=1),
+        recorded_at=SESSION_TIMES[0] + timedelta(minutes=1, seconds=1),
+        actor="stateful-operator",
+        reason="partial Fill before correction race",
+        idempotency_key="position-correction-execution",
+    )
+    _observe(postgres_factory, day=1, quantity=200, price="10.00")
+    barrier = Barrier(2)
+
+    def correct_fill() -> None:
+        barrier.wait()
+        StrategyExecutionApplicationService(
+            postgres_factory,
+            account_id=ACCOUNT,
+        ).record_fill(
+            intent.manual_trade_id,
+            external_fill_id="position-correction-head",
+            quantity=200,
+            price=10.0,
+            fees=2.0,
+            occurred_at=execution_fill.occurred_at,
+            recorded_at=SESSION_TIMES[1] + timedelta(minutes=1),
+            actor="stateful-operator",
+            reason="correct effective position quantity",
+            idempotency_key="position-correction-head",
+            correction_of_fill_id=execution_fill.fill_id,
+        )
+
+    def resolve_position() -> tuple[object, ...]:
+        barrier.wait()
+        return PostgresStrategyShadowRepository(
+            postgres_factory,
+            apply_migrations=False,
+        ).resolve_multi_strategy_positions(
+            account_id=ACCOUNT,
+            decision_time=SESSION_TIMES[1] + timedelta(minutes=2),
+            trading_calendar_reference=calendar,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        correction_future = executor.submit(correct_fill)
+        position_future = executor.submit(resolve_position)
+    correction_future.result()
+    try:
+        position_future.result()
+    except ValueError as exc:
+        assert "RECONCILIATION_REQUIRED" in str(exc)
+    current = PostgresStrategyShadowRepository(
+        postgres_factory,
+        apply_migrations=False,
+    ).resolve_multi_strategy_positions(
+        account_id=ACCOUNT,
+        decision_time=SESSION_TIMES[1] + timedelta(minutes=2),
+        trading_calendar_reference=calendar,
+    )
+    matched = next(
+        item
+        for item in current
+        if item.strategy_version_id
+        == proposal.strategy_version_reference.artifact_id
+        and item.symbol == SYMBOL
+    )
+    assert matched.quantity == 200
+
+
 def test_existing_physical_exposure_blocks_new_buy(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -1411,6 +1714,222 @@ def test_existing_physical_exposure_blocks_new_buy(
             calendar=calendar,
             quantity=100,
             key="exposure-blocked-enter",
+        )
+
+
+def test_strategy_budget_marks_allocated_sleeve_at_current_owner_price(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    calendar = _seed_calendar(postgres_factory)
+    PostgresMultiStrategyRepository(postgres_factory).register(
+        canonical_exploratory_strategy_registry(),
+        created_at=SESSION_TIMES[0],
+    )
+    service = StrategyExecutionApplicationService(
+        postgres_factory,
+        account_id=ACCOUNT,
+    )
+    _observe(
+        postgres_factory,
+        day=0,
+        quantity=0,
+        price="0",
+        available_cash="500000",
+        total_equity="1000000",
+    )
+    day0, portfolio0 = _execute_day(postgres_factory, 0, calendar)
+    swing_entry = _intent(
+        service,
+        day=0,
+        portfolio=portfolio0,
+        proposal=_proposal(
+            day0,
+            family=StrategyFamily.SWING_STATE,
+            action=CanonicalStrategyAction.ENTER,
+        ),
+        calendar=calendar,
+        quantity=None,
+        key="current-sleeve-mark-entry",
+    )
+    _partial_fills(
+        service,
+        trade=swing_entry,
+        day=0,
+        quantities=(swing_entry.intended_quantity,),
+        price=10.0,
+        key="current-sleeve-mark-entry",
+    )
+    _observe(
+        postgres_factory,
+        day=1,
+        quantity=swing_entry.intended_quantity,
+        price="10.00",
+        available_cash="500000",
+        total_equity="1000000",
+    )
+    day1, _ = _execute_day(postgres_factory, 1, calendar)
+    assert _action(day1, StrategyFamily.SWING_STATE) is CanonicalStrategyAction.HOLD
+
+    current_price = Decimal("250000") / Decimal(swing_entry.intended_quantity)
+    _observe(
+        postgres_factory,
+        day=2,
+        quantity=swing_entry.intended_quantity,
+        price=str(current_price),
+        available_cash="500000",
+        total_equity="1000000",
+    )
+    current_bar = _decision_price_bar(
+        day=2,
+        symbol=SYMBOL,
+        observed_at=SESSION_TIMES[2],
+        available_at=SESSION_TIMES[2],
+        price=current_price,
+    )
+    day2, portfolio2 = _execute_day(
+        postgres_factory,
+        2,
+        calendar,
+        decision_price_bars=(current_bar,),
+        portfolio_policy=CrossStrategyPortfolioPolicy(
+            maximum_gross_weight=Decimal("1.00"),
+            maximum_symbol_weight=Decimal("1.00"),
+        ),
+    )
+    assert _action(day2, StrategyFamily.SWING_STATE) is CanonicalStrategyAction.ADD
+    with pytest.raises(
+        ValueError,
+        match="Projected post-trade Strategy exposure",
+    ):
+        _intent(
+            service,
+            day=2,
+            portfolio=portfolio2,
+            proposal=_proposal(
+                day2,
+                family=StrategyFamily.SWING_STATE,
+                action=CanonicalStrategyAction.ADD,
+            ),
+            calendar=calendar,
+            quantity=100,
+            key="current-sleeve-mark-add",
+        )
+
+
+def test_unobserved_sell_uses_owner_mark_quantity_delta_for_exposure(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    calendar = _seed_calendar(postgres_factory)
+    repository = PostgresMultiStrategyRepository(postgres_factory)
+    repository.register(
+        canonical_exploratory_strategy_registry(),
+        created_at=SESSION_TIMES[0],
+    )
+    service = StrategyExecutionApplicationService(
+        postgres_factory,
+        account_id=ACCOUNT,
+    )
+    _observe(postgres_factory, day=0, quantity=0, price="0")
+    day0, portfolio0 = _execute_day(postgres_factory, 0, calendar)
+    entry = _intent(
+        service,
+        day=0,
+        portfolio=portfolio0,
+        proposal=_proposal(
+            day0,
+            family=StrategyFamily.OVERNIGHT,
+            action=CanonicalStrategyAction.ENTER,
+        ),
+        calendar=calendar,
+        quantity=100,
+        key="sell-mark-entry",
+    )
+    _partial_fills(
+        service,
+        trade=entry,
+        day=0,
+        quantities=(100,),
+        price=10.0,
+        key="sell-mark-entry",
+    )
+
+    _observe(postgres_factory, day=1, quantity=100, price="10.00")
+    second_symbol = "000002.SZ"
+    day1_bars = (
+        _decision_price_bar(
+            day=1,
+            symbol=SYMBOL,
+            observed_at=SESSION_TIMES[1],
+            available_at=SESSION_TIMES[1],
+        ),
+        _decision_price_bar(
+            day=1,
+            symbol=second_symbol,
+            observed_at=SESSION_TIMES[1],
+            available_at=SESSION_TIMES[1],
+        ),
+    )
+    day1, portfolio1 = _execute_day(
+        postgres_factory,
+        1,
+        calendar,
+        decision_price_bars=day1_bars,
+        portfolio_policy=CrossStrategyPortfolioPolicy(
+            maximum_gross_weight=Decimal("0.08"),
+            maximum_symbol_weight=Decimal("0.08"),
+        ),
+    )
+    exit_intent = _intent(
+        service,
+        day=1,
+        portfolio=portfolio1,
+        proposal=_proposal(
+            day1,
+            family=StrategyFamily.OVERNIGHT,
+            action=CanonicalStrategyAction.EXIT,
+        ),
+        calendar=calendar,
+        quantity=100,
+        key="sell-mark-exit",
+    )
+    service.record_fill(
+        exit_intent.manual_trade_id,
+        external_fill_id="sell-mark-exit-fill",
+        quantity=50,
+        price=20.0,
+        fees=0.0,
+        occurred_at=SESSION_TIMES[1] + timedelta(minutes=1),
+        recorded_at=SESSION_TIMES[1] + timedelta(minutes=1, seconds=1),
+        actor="stateful-operator",
+        reason="SELL Fill price differs from owner mark",
+        idempotency_key="sell-mark-exit-fill",
+    )
+    accepted_line = next(
+        item
+        for item in portfolio1.lines
+        if item.symbol == second_symbol
+        and item.action is CanonicalStrategyAction.ENTER
+        and item.accepted_weight > 0
+    )
+    buy_proposal = next(
+        item
+        for run in day1.runs
+        for item in run.proposals
+        if item.proposal_id == accepted_line.proposal_reference.artifact_id
+    )
+    with pytest.raises(
+        ValueError,
+        match="Projected post-trade gross exposure",
+    ):
+        service.create_intent(
+            portfolio_decision_id=portfolio1.decision_id,
+            proposal_id=buy_proposal.proposal_id,
+            trading_calendar_reference=calendar,
+            lot_size=100,
+            actor="stateful-operator",
+            reason="exercise owner-marked post-SELL exposure",
+            created_at=SESSION_TIMES[1] + timedelta(minutes=2),
+            idempotency_key="sell-mark-second-symbol-buy",
         )
 
 
@@ -1473,11 +1992,11 @@ def test_overlimit_account_allows_owner_resolved_risk_reducing_exit(
 
 
 @pytest.mark.parametrize(
-    ("symbol", "observed_delta", "available_delta", "expires_delta", "message"),
+    ("symbol", "observed_delta", "available_delta", "message"),
     (
-        ("000002.SZ", timedelta(0), timedelta(0), timedelta(minutes=1), "Price owner is not exact"),
-        (SYMBOL, timedelta(minutes=-5), timedelta(minutes=-5), timedelta(minutes=-4), "available and fresh"),
-        (SYMBOL, timedelta(minutes=1), timedelta(minutes=1), timedelta(minutes=2), "available and fresh"),
+        ("000002.SZ", timedelta(0), timedelta(0), "Price owner is not exact"),
+        (SYMBOL, timedelta(minutes=-5), timedelta(minutes=-5), "Price owner is not exact"),
+        (SYMBOL, timedelta(minutes=1), timedelta(minutes=1), "after DecisionTime"),
     ),
 )
 def test_strategy_execution_rejects_wrong_symbol_stale_and_future_price_owner(
@@ -1485,7 +2004,6 @@ def test_strategy_execution_rejects_wrong_symbol_stale_and_future_price_owner(
     symbol: str,
     observed_delta: timedelta,
     available_delta: timedelta,
-    expires_delta: timedelta,
     message: str,
 ) -> None:
     calendar = _seed_calendar(postgres_factory)
@@ -1502,38 +2020,20 @@ def test_strategy_execution_rejects_wrong_symbol_stale_and_future_price_owner(
         observed_at=observed_at,
         available_at=available_at,
     )
-    price = StrategyDecisionPrice(
-        price_owner_reference=RuntimeArtifactReference(
-            "CANONICAL_MARKET_BAR",
-            price_bar.bar_id,
-            price_bar.content_hash,
-        ),
-        source_dataset_reference=RuntimeArtifactReference(
-            "MARKET_DATA_DATASET",
-            ArtifactId("price-case-dataset"),
-            canonical_hash({"price_case_dataset": True}),
-        ),
-        price_owner=price_bar,
-        symbol=symbol,
-        price=Decimal("10.00"),
-        observed_at=observed_at,
-        available_at=available_at,
-        freshness_expires_at=SESSION_TIMES[0] + expires_delta,
-    )
-    if symbol == SYMBOL:
+    if observed_at > SESSION_TIMES[0] or available_at > SESSION_TIMES[0]:
         with pytest.raises(ValueError, match=message):
             _execute_day(
                 postgres_factory,
                 0,
                 calendar,
-                decision_prices=(price,),
+                decision_price_bars=(price_bar,),
             )
         return
     cycle, portfolio = _execute_day(
         postgres_factory,
         0,
         calendar,
-        decision_prices=(price,),
+        decision_price_bars=(price_bar,),
     )
     with pytest.raises(ValueError, match=message):
         _intent(

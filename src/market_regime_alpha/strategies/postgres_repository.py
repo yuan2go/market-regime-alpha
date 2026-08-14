@@ -479,6 +479,11 @@ class PostgresMultiStrategyRepository:
 
     def save_fill_allocation(self, batch: FillAllocationBatch) -> FillAllocationBatch:
         def operation(connection: Any) -> None:
+            acquire_scope_lock(
+                connection,
+                namespace="strategy-execution-account",
+                identity=batch.account_id,
+            )
             fill_row = connection.execute(
                 "SELECT fill_json FROM manual_fills WHERE fill_id = %s",
                 (str(batch.source_fill_id),),

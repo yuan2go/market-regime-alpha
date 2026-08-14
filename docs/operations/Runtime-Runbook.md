@@ -191,6 +191,12 @@ Proposal and Intent advisory locks serialize remaining-quantity, cash,
 available-sell and projected-exposure reconstruction from existing
 ManualTrade/Fill/Position facts. It adds indexes and constraints but no table,
 reservation ledger, Price Authority, Position Authority or Broker path.
+Unobserved BUY/SELL exposure uses signed effective-Fill quantity deltas marked
+by existing decision/account owners; Fill allocation and Position/Outcome
+recovery use the same account lock so correction cannot publish a torn head.
+The Strategy cycle carries the complete existing Market Data Dataset owner
+payload; execution reconstructs and hash-verifies that owner and exact Bar
+membership rather than trusting the decision-price projection alone.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.
@@ -420,7 +426,8 @@ operator path from an accepted Multi-Strategy Portfolio line to the existing
 manual Fill/allocation owners. The intent input binds Portfolio, Proposal,
 account and PIT Calendar; the service resolves the latest eligible, exact-time,
 complete reconciled account fact and the Strategy cycle's canonical Market Bar
-price. It does not accept a caller account-observation ID or reference price. A
+price after reconstructing its full Dataset owner and verifying Bar membership.
+It does not accept a caller account-observation ID or reference price. A
 quantity override may only reduce the recommendation and requires a reason.
 `update-strategy-intent` records CANCELLED/REJECTED/UNKNOWN or reconciliation
 states with CAS; unused reservations are released. Read-only inspection reports
