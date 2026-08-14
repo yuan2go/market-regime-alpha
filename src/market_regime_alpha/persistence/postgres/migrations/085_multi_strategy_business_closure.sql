@@ -1,5 +1,22 @@
 -- Canonical multi-Strategy business facts behind the existing Runtime and PostgreSQL authority.
 
+ALTER TABLE continuous_child_run
+DROP CONSTRAINT continuous_child_run_child_kind_check;
+
+ALTER TABLE continuous_child_run
+ADD CONSTRAINT continuous_child_run_child_kind_check
+CHECK (
+    child_kind IN (
+        'DAILY_DATASET',
+        'FEATURE_MATERIALIZATION',
+        'STATE_SYSTEM',
+        'CONTROLLED_OPERATION',
+        'CANONICAL_LIFECYCLE',
+        'DECISION_SYSTEM',
+        'STRATEGY_RUNTIME'
+    )
+);
+
 CREATE TABLE strategy_contract (
     contract_id text PRIMARY KEY,
     contract_hash text NOT NULL CHECK (contract_hash ~ '^sha256:[0-9a-f]{64}$'),

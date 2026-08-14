@@ -45,6 +45,11 @@ class CanonicalDagNodeType(str, Enum):
     SIGNAL = "SIGNAL"
     FORECAST = "FORECAST"
     SUMMARY = "SUMMARY"
+    STRATEGY = "STRATEGY"
+    PORTFOLIO = "PORTFOLIO"
+    PATH_OUTCOME = "PATH_OUTCOME"
+    ATTRIBUTION = "ATTRIBUTION"
+    QUALIFICATION = "QUALIFICATION"
     SHADOW_SESSION = "SHADOW_SESSION"
     SHADOW_DECISION = "SHADOW_DECISION"
     OUTCOME = "OUTCOME"
@@ -346,6 +351,19 @@ class PostgresCanonicalRuntimeQuery:
             operation="INSPECT_SUMMARY",
         )
 
+    def inspect_strategy(self, run_id: ArtifactId) -> dict[str, Any]:
+        return self._typed_projection(
+            run_id,
+            (
+                CanonicalDagNodeType.STRATEGY,
+                CanonicalDagNodeType.PORTFOLIO,
+                CanonicalDagNodeType.PATH_OUTCOME,
+                CanonicalDagNodeType.ATTRIBUTION,
+                CanonicalDagNodeType.QUALIFICATION,
+            ),
+            operation="INSPECT_STRATEGY",
+        )
+
     def _typed_projection(
         self,
         run_id: ArtifactId,
@@ -500,26 +518,220 @@ class PostgresCanonicalRuntimeQuery:
                 )
             )
         summary_parent = stage_nodes.get(StateResearchStage.FORECAST, previous)
-        nodes.append(
-            CanonicalDagNode.create(
-                node_type=CanonicalDagNodeType.SUMMARY,
-                owner="DECISION_SYSTEM",
-                artifact_id=str(summary.summary_id),
-                content_hash=summary.content_hash,
-                status=CanonicalDagNodeStatus.AVAILABLE,
-                observed_at=summary.created_at,
-                parent_node_ids=(summary_parent.node_id,),
-                reason_codes=summary.reason_codes,
-                details={
-                    "tick_id": str(tick_id),
-                    "runtime_mode": summary.runtime_mode.value,
-                    "outcome": summary.outcome.value,
-                    "revision": summary.revision,
-                    "evidence_ceiling": summary.evidence_ceiling.value,
-                    "data_eligibility": summary.data_eligibility.value,
-                },
+        summary_node = CanonicalDagNode.create(
+            node_type=CanonicalDagNodeType.SUMMARY,
+            owner="DECISION_SYSTEM",
+            artifact_id=str(summary.summary_id),
+            content_hash=summary.content_hash,
+            status=CanonicalDagNodeStatus.AVAILABLE,
+            observed_at=summary.created_at,
+            parent_node_ids=(summary_parent.node_id,),
+            reason_codes=summary.reason_codes,
+            details={
+                "tick_id": str(tick_id),
+                "runtime_mode": summary.runtime_mode.value,
+                "outcome": summary.outcome.value,
+                "revision": summary.revision,
+                "evidence_ceiling": summary.evidence_ceiling.value,
+                "data_eligibility": summary.data_eligibility.value,
+            },
+        )
+        nodes.append(summary_node)
+        nodes.extend(
+            self._strategy_nodes(
+                run_id=run_id,
+                tick_id=tick_id,
+                parent=summary_node,
             )
         )
+        return tuple(nodes)
+
+    def _strategy_nodes(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+        parent: CanonicalDagNode,
+    ) -> tuple[CanonicalDagNode, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            cycle = connection.execute(
+                """
+                SELECT cycle_id, cycle_hash, origin, created_at
+                FROM multi_strategy_cycle
+                WHERE parent_run_id = %s AND parent_tick_id = %s
+                """,
+                (str(run_id), str(tick_id)),
+            ).fetchone()
+            if cycle is None:
+                return ()
+            runs = connection.execute(
+                """
+                SELECT r.run_id, r.run_hash, r.strategy_version_id,
+                       v.family, r.status, r.created_at,
+                       (SELECT count(*) FROM strategy_gate_attribution g
+                        WHERE g.run_id = r.run_id),
+                       (SELECT count(*) FROM strategy_gate_attribution g
+                        WHERE g.run_id = r.run_id
+                          AND g.eligibility_status = 'ELIGIBLE'),
+                       (SELECT count(*) FROM strategy_proposal p
+                        WHERE p.run_id = r.run_id)
+                FROM strategy_run r
+                JOIN strategy_version v
+                  ON v.version_id = r.strategy_version_id
+                 AND v.version_hash = r.strategy_version_hash
+                WHERE r.cycle_id = %s
+                ORDER BY r.run_id
+                """,
+                (str(cycle[0]),),
+            ).fetchall()
+            portfolio = connection.execute(
+                """
+                SELECT decision_id, decision_hash, status,
+                       gross_accepted_weight, created_at
+                FROM cross_strategy_portfolio_decision
+                WHERE cycle_id = %s
+                """,
+                (str(cycle[0]),),
+            ).fetchone()
+            outcomes = connection.execute(
+                """
+                SELECT outcome_id, outcome_hash, strategy_run_id,
+                       strategy_version_id, target_id, horizon_sessions,
+                       mfe, mae, barrier_ordering, created_at
+                FROM strategy_path_outcome
+                WHERE strategy_run_id IN (
+                    SELECT run_id FROM strategy_run WHERE cycle_id = %s
+                ) ORDER BY created_at, outcome_id
+                """,
+                (str(cycle[0]),),
+            ).fetchall()
+            feedback = connection.execute(
+                """
+                SELECT artifact_id, artifact_hash, artifact_kind,
+                       strategy_version_id, source_artifact_ids,
+                       status, payload_json, created_at
+                FROM strategy_feedback_artifact
+                WHERE strategy_version_id IN (
+                    SELECT strategy_version_id FROM strategy_run
+                    WHERE cycle_id = %s
+                ) ORDER BY created_at, artifact_id
+                """,
+                (str(cycle[0]),),
+            ).fetchall()
+
+        cycle_node = CanonicalDagNode.create(
+            node_type=CanonicalDagNodeType.STRATEGY,
+            owner="MULTI_STRATEGY_RUNTIME",
+            artifact_id=str(cycle[0]),
+            content_hash=str(cycle[1]),
+            status=CanonicalDagNodeStatus.AVAILABLE,
+            observed_at=cycle[3],
+            parent_node_ids=(parent.node_id,),
+            details={
+                "tick_id": str(tick_id),
+                "origin": str(cycle[2]),
+                "strategy_run_count": len(runs),
+            },
+        )
+        nodes = [cycle_node]
+        run_nodes: dict[str, CanonicalDagNode] = {}
+        version_nodes: dict[str, list[CanonicalDagNode]] = {}
+        for row in runs:
+            node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.STRATEGY,
+                owner="MULTI_STRATEGY_RUNTIME",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=(CanonicalDagNodeStatus.AVAILABLE if str(row[4]) == "COMPLETED" else CanonicalDagNodeStatus.PARTIAL),
+                observed_at=row[5],
+                parent_node_ids=(cycle_node.node_id,),
+                reason_codes=(() if str(row[4]) == "COMPLETED" else ("STRATEGY_INPUT_DATA_INSUFFICIENT",)),
+                details={
+                    "tick_id": str(tick_id),
+                    "strategy_version_id": str(row[2]),
+                    "family": str(row[3]),
+                    "run_status": str(row[4]),
+                    "gate_count": int(row[6]),
+                    "eligible_count": int(row[7]),
+                    "proposal_count": int(row[8]),
+                },
+            )
+            nodes.append(node)
+            run_nodes[str(row[0])] = node
+            version_nodes.setdefault(str(row[2]), []).append(node)
+        artifact_nodes: dict[str, CanonicalDagNode] = {
+            str(cycle[0]): cycle_node,
+            **run_nodes,
+        }
+        if portfolio is not None:
+            portfolio_node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.PORTFOLIO,
+                owner="CROSS_STRATEGY_PORTFOLIO",
+                artifact_id=str(portfolio[0]),
+                content_hash=str(portfolio[1]),
+                status=(CanonicalDagNodeStatus.AVAILABLE if str(portfolio[2]) == "ACCEPTED" else CanonicalDagNodeStatus.PARTIAL),
+                observed_at=portfolio[4],
+                parent_node_ids=tuple(item.node_id for item in run_nodes.values()),
+                details={
+                    "tick_id": str(tick_id),
+                    "portfolio_status": str(portfolio[2]),
+                    "gross_accepted_weight": str(portfolio[3]),
+                    "production_authorized": False,
+                },
+            )
+            nodes.append(portfolio_node)
+            artifact_nodes[str(portfolio[0])] = portfolio_node
+        for row in outcomes:
+            outcome_node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.PATH_OUTCOME,
+                owner="STRATEGY_OUTCOME",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=CanonicalDagNodeStatus.AVAILABLE,
+                observed_at=row[9],
+                parent_node_ids=(run_nodes[str(row[2])].node_id,),
+                details={
+                    "tick_id": str(tick_id),
+                    "strategy_version_id": str(row[3]),
+                    "target_id": str(row[4]),
+                    "horizon_sessions": int(row[5]),
+                    "mfe": str(row[6]),
+                    "mae": str(row[7]),
+                    "barrier_ordering": str(row[8]),
+                },
+            )
+            nodes.append(outcome_node)
+            artifact_nodes[str(row[0])] = outcome_node
+        for row in feedback:
+            payload = row[6] if isinstance(row[6], dict) else {}
+            source_parents = tuple(artifact_nodes[str(source)].node_id for source in row[4] if str(source) in artifact_nodes)
+            if not source_parents:
+                source_parents = tuple(item.node_id for item in version_nodes.get(str(row[3]), []))
+            kind = str(row[2])
+            node = CanonicalDagNode.create(
+                node_type=(
+                    CanonicalDagNodeType.ATTRIBUTION
+                    if kind in {"ATTRIBUTION", "CHALLENGER_EVALUATION"}
+                    else CanonicalDagNodeType.QUALIFICATION
+                ),
+                owner="STRATEGY_FEEDBACK",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=(CanonicalDagNodeStatus.AVAILABLE if str(row[5]) == "EXPLORATORY" else CanonicalDagNodeStatus.BLOCKED),
+                observed_at=row[7],
+                parent_node_ids=source_parents,
+                reason_codes=tuple(str(item) for item in payload.get("findings", [])),
+                details={
+                    "tick_id": str(tick_id),
+                    "strategy_version_id": str(row[3]),
+                    "feedback_kind": kind,
+                    "feedback_status": str(row[5]),
+                    "metrics": payload.get("metrics", []),
+                    "production_authorized": False,
+                },
+            )
+            nodes.append(node)
+            artifact_nodes[str(row[0])] = node
         return tuple(nodes)
 
     def _shadow_nodes(

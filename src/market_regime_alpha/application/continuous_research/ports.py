@@ -219,9 +219,7 @@ class ProviderAcquisitionResult:
 
 
 class ProviderAcquisitionPort(Protocol):
-    def acquire(
-        self, request: ProviderAcquisitionRequest
-    ) -> ProviderAcquisitionResult: ...
+    def acquire(self, request: ProviderAcquisitionRequest) -> ProviderAcquisitionResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +245,8 @@ class ChildExecutionRequest:
     input_references: tuple[RuntimeArtifactReference, ...]
     configuration_references: tuple[RuntimeArtifactReference, ...]
     authority_mode: RuntimeAuthorityMode = RuntimeAuthorityMode.PRODUCTION
+    run_hash: str | None = None
+    tick_hash: str | None = None
 
     def __post_init__(self) -> None:
         for label, value in (
@@ -275,8 +275,13 @@ class ChildExecutionRequest:
             ("source_manifest_hash", self.source_manifest_hash),
             ("evidence_commit_hash", self.evidence_commit_hash),
             ("decision_hash", self.decision_hash),
+            ("run_hash", self.run_hash),
+            ("tick_hash", self.tick_hash),
         ):
-            require_sha256(label, content_hash)
+            if content_hash is not None:
+                require_sha256(label, content_hash)
+        if (self.run_hash is None) != (self.tick_hash is None):
+            raise ValueError("Continuous Run/Tick hashes must be paired")
         _require_reference_set("input", self.input_references)
         _require_reference_set("configuration", self.configuration_references)
 
@@ -297,13 +302,8 @@ class ChildExecutionRequest:
                 "evidence_commit_hash": self.evidence_commit_hash,
                 "decision_id": str(self.decision_id),
                 "decision_hash": self.decision_hash,
-                "input_references": [
-                    item.to_canonical_dict() for item in self.input_references
-                ],
-                "configuration_references": [
-                    item.to_canonical_dict()
-                    for item in self.configuration_references
-                ],
+                "input_references": [item.to_canonical_dict() for item in self.input_references],
+                "configuration_references": [item.to_canonical_dict() for item in self.configuration_references],
                 "authority_mode": self.authority_mode.value,
             }
         )
@@ -332,13 +332,9 @@ class ChildExecutionResult:
 
 
 class ContinuousResearchChildPort(Protocol):
-    def lookup_children(
-        self, request: ChildExecutionRequest
-    ) -> tuple[ChildExecutionResult, ...] | None: ...
+    def lookup_children(self, request: ChildExecutionRequest) -> tuple[ChildExecutionResult, ...] | None: ...
 
-    def execute_children(
-        self, request: ChildExecutionRequest
-    ) -> tuple[ChildExecutionResult, ...]: ...
+    def execute_children(self, request: ChildExecutionRequest) -> tuple[ChildExecutionResult, ...]: ...
 
 
 def _reference_key(reference: RuntimeArtifactReference) -> tuple[str, str, str]:
@@ -349,9 +345,7 @@ def _reference_key(reference: RuntimeArtifactReference) -> tuple[str, str, str]:
     )
 
 
-def _require_reference_set(
-    label: str, references: tuple[RuntimeArtifactReference, ...]
-) -> None:
+def _require_reference_set(label: str, references: tuple[RuntimeArtifactReference, ...]) -> None:
     keys = tuple(_reference_key(item) for item in references)
     if not references or keys != tuple(sorted(set(keys))):
         raise ValueError(f"{label} references must be non-empty, unique, and sorted")

@@ -31,6 +31,9 @@ from market_regime_alpha.application.continuous_research.policy import (
 from market_regime_alpha.application.continuous_research.postgres_journal import (
     PostgresContinuousResearchJournal,
 )
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
 from market_regime_alpha.application.continuous_research.replay import (
     replay_continuous_research,
 )
@@ -104,6 +107,9 @@ from market_regime_alpha.application.historical_research.postgres_journal import
     DEFAULT_HISTORICAL_STAGE_LEASE,
     HistoricalRunSnapshot,
     PostgresHistoricalResearchJournal,
+)
+from market_regime_alpha.application.historical_research.multi_strategy import (
+    MultiStrategyHistoricalAdapter,
 )
 from market_regime_alpha.application.historical_research.postgres_session_owner import (
     PostgresHistoricalSessionOwner,
@@ -275,6 +281,15 @@ from market_regime_alpha.persistence.postgres.connection import (
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from market_regime_alpha.strategies.defaults import (
+    canonical_exploratory_strategy_registry,
+)
+from market_regime_alpha.strategies.portfolio import (
+    CrossStrategyPortfolioPolicy,
+)
+from market_regime_alpha.strategies.postgres_repository import (
+    PostgresMultiStrategyRepository,
+)
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 from market_regime_alpha.universe.postgres_research import (
     PostgresFreeResearchUniverseRepository,
@@ -308,6 +323,7 @@ _INSPECT_OPERATIONS = (
     "inspect-minute",
     "inspect-model-selection",
     "inspect-summary",
+    "inspect-strategy",
     "trace",
     "metrics",
 )
@@ -748,9 +764,7 @@ def _dispatch(
             raise ValueError("historical-corpus-acquire requires exactly one symbol source")
         acquisition_id = payload.get("acquisition_id")
         if not isinstance(acquisition_id, str) or not acquisition_id.strip():
-            raise ValueError(
-                "historical-corpus-acquire requires an explicit acquisition_id"
-            )
+            raise ValueError("historical-corpus-acquire requires an explicit acquisition_id")
         timeframe_ranges_payload = payload.get("timeframe_ranges")
         timeframe_ranges = None
         if timeframe_ranges_payload is not None:
@@ -830,21 +844,12 @@ def _dispatch(
                 "context_instruments",
             )
             if set(context_payload) != {"market_index_symbol", "theme_etf_symbol"}:
-                raise ValueError(
-                    "context_instruments requires exact market_index_symbol and theme_etf_symbol"
-                )
+                raise ValueError("context_instruments requires exact market_index_symbol and theme_etf_symbol")
             market_index_symbol = str(context_payload["market_index_symbol"])
             theme_etf_symbol = str(context_payload["theme_etf_symbol"])
-            if (
-                market_index_symbol != "000300.SH"
-                or theme_etf_symbol != "510300.SH"
-            ):
-                raise ValueError(
-                    "Frozen Historical Context requires 000300.SH and 510300.SH"
-                )
-            context_symbols = tuple(
-                sorted({market_index_symbol, theme_etf_symbol})
-            )
+            if market_index_symbol != "000300.SH" or theme_etf_symbol != "510300.SH":
+                raise ValueError("Frozen Historical Context requires 000300.SH and 510300.SH")
+            context_symbols = tuple(sorted({market_index_symbol, theme_etf_symbol}))
             frozen_context_payload = {
                 "schema_version": "historical-context-instrument-set/v1",
                 "market_index_symbol": market_index_symbol,
@@ -858,9 +863,7 @@ def _dispatch(
             context_hash = canonical_hash(frozen_context_payload)
             context_reference = ValidationArtifactReference(
                 "HISTORICAL_CONTEXT_INSTRUMENT_SET",
-                ArtifactId(
-                    f"historical-context-instrument-set:{context_hash[7:]}"
-                ),
+                ArtifactId(f"historical-context-instrument-set:{context_hash[7:]}"),
                 context_hash,
             )
             PostgresResearchValidationRepository(
@@ -876,9 +879,7 @@ def _dispatch(
             )
         else:
             if "universe_timeline_id" in payload:
-                raise ValueError(
-                    "Longitudinal corpus acquisition requires explicit context_instruments"
-                )
+                raise ValueError("Longitudinal corpus acquisition requires explicit context_instruments")
             context_symbols = tuple(str(item) for item in _array_value(payload.get("context_symbols", []), "context_symbols"))
             context_reference = None
         symbols = tuple(sorted({*stock_symbols, *context_symbols}))
@@ -888,11 +889,7 @@ def _dispatch(
             end_date=date.fromisoformat(str(payload["end_date"])),
             timeframe_ranges=timeframe_ranges,
             bucket_count=int(payload["bucket_count"]),
-            checkpoint_root=(
-                args.artifact_root.resolve()
-                / "historical-corpus"
-                / "query-checkpoints"
-            ),
+            checkpoint_root=(args.artifact_root.resolve() / "historical-corpus" / "query-checkpoints"),
             acquisition_id=acquisition_id,
         )
         corpus = PostgresHistoricalCorpusRepository(
@@ -910,11 +907,7 @@ def _dispatch(
             "normalized_physical_hash": normalized_package.physical_hash,
             "stock_symbol_count": len(stock_symbols),
             "context_symbols": list(sorted(set(context_symbols))),
-            "context_reference": (
-                None
-                if context_reference is None
-                else context_reference.to_canonical_dict()
-            ),
+            "context_reference": (None if context_reference is None else context_reference.to_canonical_dict()),
             "universe_references": [item.to_canonical_dict() for item in universe_references],
             "formal_pit": False,
             "formal_oos": False,
@@ -1220,46 +1213,25 @@ def _dispatch(
         common = {"start_date", "end_date"}
         if set(payload) == {*common, "universe_timeline_id"}:
             timeline_id = ArtifactId(str(payload["universe_timeline_id"]))
-            timeline = PostgresFreeResearchUniverseRepository(
-                factory, apply_migrations=False
-            ).get_timeline(timeline_id)
-            raw_ids = tuple(
-                sorted(
-                    str(item.snapshot_reference.artifact_id)
-                    for item in timeline.cohorts
-                )
-            )
+            timeline = PostgresFreeResearchUniverseRepository(factory, apply_migrations=False).get_timeline(timeline_id)
+            raw_ids = tuple(sorted(str(item.snapshot_reference.artifact_id) for item in timeline.cohorts))
         elif set(payload) == {*common, "universe_snapshot_ids"}:
             timeline_id = None
-            raw_ids = tuple(
-                str(item)
-                for item in _array_value(
-                    payload["universe_snapshot_ids"], "universe_snapshot_ids"
-                )
-            )
+            raw_ids = tuple(str(item) for item in _array_value(payload["universe_snapshot_ids"], "universe_snapshot_ids"))
         else:
-            raise ValueError(
-                "historical-security-facts-sync requires one exact Universe "
-                "timeline or cohort owner set and range"
-            )
+            raise ValueError("historical-security-facts-sync requires one exact Universe timeline or cohort owner set and range")
         if not raw_ids or raw_ids != tuple(sorted(set(raw_ids))):
-            raise ValueError(
-                "historical Security Fact Universe IDs must be ordered and unique"
-            )
+            raise ValueError("historical Security Fact Universe IDs must be ordered and unique")
         result = HistoricalSecurityFactsOperator(factory).sync(
             universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
-            universe_timeline_reference=(
-                None if timeline_id is None else timeline.reference
-            ),
+            universe_timeline_reference=(None if timeline_id is None else timeline.reference),
             start_date=date.fromisoformat(str(payload["start_date"])),
             end_date=date.fromisoformat(str(payload["end_date"])),
             artifact_root=args.artifact_root.resolve(),
         )
         return {
             **result,
-            "universe_timeline_id": (
-                None if timeline_id is None else str(timeline_id)
-            ),
+            "universe_timeline_id": (None if timeline_id is None else str(timeline_id)),
         }
     if args.operation == "research-universe-replay":
         return FreeResearchUniverseOperator(factory).replay(
@@ -1667,6 +1639,7 @@ def _dispatch(
             "inspect-minute": query.inspect_minute,
             "inspect-model-selection": query.inspect_model_selection,
             "inspect-summary": query.inspect_summary,
+            "inspect-strategy": query.inspect_strategy,
         }[args.operation]
         return operation_method(run_id)
     run_id = ArtifactId(args.run_id)
@@ -1879,6 +1852,7 @@ def _run_due(
         model_selector=ControlledRuntimeModelSelector(repositories.model_governance()),
         summary_repository=repositories.decision_system(clock=runtime_clock),
         state_repository=repositories.state_system(clock=runtime_clock),
+        strategy_repository=repositories.multi_strategy(),
         clock=runtime_clock,
     )
     tick_runner = ContinuousResearchTickRunner(
@@ -2297,14 +2271,18 @@ def _historical_runner(
     if command.data_authority_mode is DataAuthorityMode.FREE_RESEARCH_ARCHIVE:
         if artifact_root is None:
             raise ValueError("FREE_RESEARCH_ARCHIVE Historical execution requires --artifact-root")
-        archive_materializer = HistoricalDecisionMaterializer(
+        component_repository = PostgresHistoricalMaterializationRepository(
+            factory,
+            apply_migrations=False,
+        )
+        base_materializer = HistoricalDecisionMaterializer(
             run_id=command.run_id,
             corpus_repository=PostgresHistoricalCorpusRepository(
                 factory,
                 artifact_root=artifact_root.resolve(),
                 apply_migrations=False,
             ),
-            component_repository=PostgresHistoricalMaterializationRepository(factory, apply_migrations=False),
+            component_repository=component_repository,
             universe_repository=PostgresFreeResearchUniverseRepository(factory, apply_migrations=False),
             scope_repository=PostgresRuntimeScopeRepository(factory, apply_migrations=False),
             target_repository=PostgresTargetOutcomeRepository(factory, apply_migrations=False),
@@ -2313,6 +2291,28 @@ def _historical_runner(
                 apply_migrations=False,
             ),
             historical_facts_repository=PostgresHistoricalSecurityFactsRepository(factory, apply_migrations=False),
+        )
+        strategy_repository = PostgresMultiStrategyRepository(
+            factory,
+            apply_migrations=False,
+        )
+        strategy_repository.register(
+            canonical_exploratory_strategy_registry(),
+            created_at=command.created_at,
+        )
+        archive_materializer = MultiStrategyHistoricalAdapter(
+            delegate=base_materializer,
+            component_repository=component_repository,
+            strategy_repository=strategy_repository,
+            parent_run_reference=RuntimeArtifactReference(
+                "HISTORICAL_RESEARCH_RUN",
+                command.run_id,
+                command.command_hash,
+            ),
+            portfolio_policy=CrossStrategyPortfolioPolicy(
+                maximum_gross_weight=Decimal("0.50"),
+                maximum_symbol_weight=Decimal("0.20"),
+            ),
         )
     return HistoricalResearchRunner(
         journal=journal,

@@ -20,6 +20,10 @@ from market_regime_alpha.strategies.contracts import (
     StrategyRegistry,
     StrategyVersion,
 )
+from market_regime_alpha.strategies.feedback import (
+    StrategyFeedbackArtifact,
+    StrategyFeedbackKind,
+)
 from market_regime_alpha.strategies.path_outcomes import StrategyPathOutcome
 from market_regime_alpha.strategies.portfolio import (
     CrossStrategyPortfolioDecision,
@@ -285,6 +289,24 @@ class PostgresMultiStrategyRepository:
             _verify_cycle_children(connection, cycle)
         return cycle
 
+    def get_cycle_for_tick(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+    ) -> MultiStrategyCycle:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT cycle_id FROM multi_strategy_cycle
+                WHERE parent_run_id = %s AND parent_tick_id = %s
+                """,
+                (str(run_id), str(tick_id)),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"{run_id}:{tick_id}")
+        return self.get_cycle(ArtifactId(str(row[0])))
+
     def save_portfolio(
         self,
         decision: CrossStrategyPortfolioDecision,
@@ -540,6 +562,98 @@ class PostgresMultiStrategyRepository:
             raise KeyError(str(outcome_id))
         return StrategyPathOutcome.from_canonical_dict(_payload(row[0]))
 
+    def list_path_outcomes(
+        self,
+        *,
+        strategy_version_id: ArtifactId,
+    ) -> tuple[StrategyPathOutcome, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM strategy_path_outcome
+                WHERE strategy_version_id = %s
+                ORDER BY decision_time, outcome_id
+                """,
+                (str(strategy_version_id),),
+            ).fetchall()
+        return tuple(StrategyPathOutcome.from_canonical_dict(_payload(row[0])) for row in rows)
+
+    def save_feedback(
+        self,
+        artifact: StrategyFeedbackArtifact,
+    ) -> StrategyFeedbackArtifact:
+        def operation(connection: Any) -> None:
+            payload = artifact.to_canonical_dict()
+            connection.execute(
+                """
+                INSERT INTO strategy_feedback_artifact(
+                    artifact_id, artifact_hash, artifact_kind,
+                    strategy_version_id, strategy_version_hash,
+                    source_artifact_ids, status, production_authorized,
+                    payload_json, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, false, %s, %s)
+                ON CONFLICT (artifact_id) DO NOTHING
+                """,
+                (
+                    str(artifact.artifact_id),
+                    artifact.artifact_hash,
+                    artifact.artifact_kind.value,
+                    str(artifact.strategy_version_reference.artifact_id),
+                    artifact.strategy_version_reference.content_hash,
+                    [str(item.artifact_id) for item in artifact.source_references],
+                    artifact.status.value,
+                    Jsonb(payload),
+                    artifact.created_at,
+                ),
+            )
+            _require_stored_payload(
+                connection,
+                table="strategy_feedback_artifact",
+                id_column="artifact_id",
+                identity=str(artifact.artifact_id),
+                hash_column="artifact_hash",
+                expected_hash=artifact.artifact_hash,
+                expected_payload=payload,
+            )
+
+        self._factory.run_transaction(operation)
+        return self.get_feedback(artifact.artifact_id)
+
+    def get_feedback(self, artifact_id: ArtifactId) -> StrategyFeedbackArtifact:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM strategy_feedback_artifact
+                WHERE artifact_id = %s
+                """,
+                (str(artifact_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(artifact_id))
+        return StrategyFeedbackArtifact.from_canonical_dict(_payload(row[0]))
+
+    def list_feedback(
+        self,
+        *,
+        strategy_version_id: ArtifactId,
+        artifact_kind: StrategyFeedbackKind | None = None,
+    ) -> tuple[StrategyFeedbackArtifact, ...]:
+        parameters: tuple[object, ...] = (str(strategy_version_id),)
+        kind_clause = ""
+        if artifact_kind is not None:
+            kind_clause = " AND artifact_kind = %s"
+            parameters = (*parameters, artifact_kind.value)
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT payload_json FROM strategy_feedback_artifact
+                WHERE strategy_version_id = %s{kind_clause}
+                ORDER BY created_at, artifact_id
+                """,
+                parameters,
+            ).fetchall()
+        return tuple(StrategyFeedbackArtifact.from_canonical_dict(_payload(row[0])) for row in rows)
+
 
 def _verify_cycle_children(connection: Any, cycle: MultiStrategyCycle) -> None:
     run_rows = connection.execute(
@@ -593,6 +707,7 @@ def _require_stored_payload(
         "strategy_fill_allocation_batch",
         "strategy_fill_allocation",
         "strategy_path_outcome",
+        "strategy_feedback_artifact",
     }
     if table not in allowed:
         raise ValueError("unsupported immutable payload table")

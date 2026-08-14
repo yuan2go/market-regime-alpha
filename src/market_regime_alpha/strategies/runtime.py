@@ -177,7 +177,10 @@ class MultiStrategyRuntime:
     def execute(self, runtime_input: StrategyRuntimeInput) -> MultiStrategyCycle:
         if runtime_input.authority_mode is RuntimeAuthorityMode.PRODUCTION:
             raise RuntimeError("PRODUCTION_AUTHORIZED_FALSE")
-        cycle_id = MultiStrategyCycle.identity(runtime_input)
+        cycle_id = MultiStrategyCycle.identity(
+            runtime_input,
+            tuple(strategy_reference(item) for item in self._registry.active_versions),
+        )
         candidates = {item.symbol: item for item in runtime_input.candidate_set.records}
         runs = tuple(
             self._execute_version(

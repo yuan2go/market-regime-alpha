@@ -465,6 +465,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             model_selector=ControlledRuntimeModelSelector(repositories.model_governance()),
             summary_repository=summary_repository,
             state_repository=state_repository,
+            strategy_repository=repositories.multi_strategy(),
             clock=lambda: runtime_now[0],
         )
         return ContinuousResearchTickRunner(
@@ -564,7 +565,11 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert summary.no_position_mutation_from_shadow
     assert summary.evidence_ceiling.value == "FREE_DATA_EXPLORATORY"
     assert replay_continuous_research(journal, command.run_id).integrity_status == "VERIFIED"
-    inspection = PostgresCanonicalRuntimeQuery(postgres_factory, clock=lambda: runtime_now[0]).inspect_run(command.run_id)
+    runtime_query = PostgresCanonicalRuntimeQuery(
+        postgres_factory,
+        clock=lambda: runtime_now[0],
+    )
+    inspection = runtime_query.inspect_run(command.run_id)
     projected_types = {item.node_type for item in inspection.nodes}
     assert {
         CanonicalDagNodeType.DATASET,
@@ -575,10 +580,28 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         CanonicalDagNodeType.SIGNAL,
         CanonicalDagNodeType.FORECAST,
         CanonicalDagNodeType.SUMMARY,
+        CanonicalDagNodeType.STRATEGY,
+        CanonicalDagNodeType.PORTFOLIO,
     } <= projected_types
     assert (CanonicalDagNodeType.MINUTE in projected_types) is liquidity_eligible
-    trace = PostgresRuntimeObservability(postgres_factory, clock=lambda: runtime_now[0]).trace_run(command.run_id)
+    strategy_projection = runtime_query.inspect_strategy(command.run_id)
+    assert strategy_projection["decision_recomputed"] is False
+    strategy_nodes = inspection.nodes_of_type(CanonicalDagNodeType.STRATEGY)
+    assert {item.details.get("family") for item in strategy_nodes if item.details.get("family") is not None} == {"OVERNIGHT", "SWING_STATE"}
+    observability = PostgresRuntimeObservability(
+        postgres_factory,
+        clock=lambda: runtime_now[0],
+    )
+    trace = observability.trace_run(command.run_id)
     assert any(item["stage"] == "SUMMARY" for item in trace["observations"])
+    assert {item["stage"] for item in trace["observations"] if item["stage"].startswith("STRATEGY:")} == {
+        "STRATEGY:OVERNIGHT",
+        "STRATEGY:SWING_STATE",
+    }
+    strategy_metrics = observability.metrics(command.run_id)["strategy_runtime"]
+    assert strategy_metrics["cycle_count"] == 1
+    assert strategy_metrics["run_count"] == 2
+    assert strategy_metrics["portfolio_decision_count"] == 1
     assert trace["decision_input"] is False
     if authority_mode is RuntimeAuthorityMode.SHADOW:
         shadow_repository = PostgresShadowResearchRepository(postgres_factory, clock=lambda: runtime_now[0])

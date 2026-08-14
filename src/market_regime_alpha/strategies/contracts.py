@@ -663,12 +663,27 @@ class MultiStrategyCycle:
             raise ValueError("Multi-Strategy Cycle versions must be unique and sorted")
         if any(item.cycle_id != self.cycle_id for item in self.runs):
             raise ValueError("Strategy Run belongs to another cycle")
+        if self.cycle_id != self.identity(
+            self.runtime_input,
+            tuple(item.strategy_version_reference for item in self.runs),
+        ):
+            raise ValueError("Multi-Strategy Cycle identity omits Strategy Version set")
         if canonical_hash(self.identity_payload()) != self.cycle_hash:
             raise ValueError("Multi-Strategy Cycle hash mismatch")
 
     @staticmethod
-    def identity(runtime_input: StrategyRuntimeInput) -> ArtifactId:
-        digest = canonical_hash({"schema_version": "multi-strategy-cycle-seed/v1", **runtime_input.to_canonical_dict()})
+    def identity(
+        runtime_input: StrategyRuntimeInput,
+        strategy_version_references: tuple[RuntimeArtifactReference, ...],
+    ) -> ArtifactId:
+        versions = _references(strategy_version_references)
+        digest = canonical_hash(
+            {
+                "schema_version": "multi-strategy-cycle-seed/v2",
+                "runtime_input": runtime_input.to_canonical_dict(),
+                "strategy_version_references": [item.to_canonical_dict() for item in versions],
+            }
+        )
         return ArtifactId(f"multi-strategy-cycle:{digest[7:]}")
 
     @classmethod
