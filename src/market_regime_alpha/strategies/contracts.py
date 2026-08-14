@@ -338,6 +338,12 @@ class StrategyPositionState:
     sessions_held: int
     add_count: int = 0
     reduce_count: int = 0
+    account_id: str | None = None
+    strategy_version_hash: str | None = None
+    state_reference: RuntimeArtifactReference | None = None
+    source_allocation_references: tuple[RuntimeArtifactReference, ...] = ()
+    source_fill_references: tuple[RuntimeArtifactReference, ...] = ()
+    price_observation_references: tuple[RuntimeArtifactReference, ...] = ()
 
     def __post_init__(self) -> None:
         require_text("symbol", self.symbol)
@@ -347,23 +353,93 @@ class StrategyPositionState:
             raise ValueError("Strategy current price must be positive")
         if min(self.sessions_held, self.add_count, self.reduce_count) < 0:
             raise ValueError("Strategy position counters cannot be negative")
+        lineage = (
+            self.source_allocation_references,
+            self.source_fill_references,
+            self.price_observation_references,
+        )
+        for label, references in zip(
+            ("allocation", "Fill", "price observation"),
+            lineage,
+            strict=True,
+        ):
+            keys = tuple(
+                (item.reference_kind, str(item.artifact_id), item.content_hash)
+                for item in references
+            )
+            if keys != tuple(sorted(set(keys))):
+                raise ValueError(f"Strategy position {label} lineage must be sorted and unique")
+        has_owner_lineage = any(
+            value is not None
+            for value in (
+                self.account_id,
+                self.strategy_version_hash,
+                self.state_reference,
+            )
+        ) or any(lineage)
+        if has_owner_lineage:
+            if not self.account_id:
+                raise ValueError("owner-resolved Strategy position requires account")
+            require_sha256("strategy_version_hash", self.strategy_version_hash or "")
+            if not self.source_allocation_references or not self.source_fill_references:
+                raise ValueError("owner-resolved Strategy position requires Fill lineage")
+            if self.state_reference is None:
+                raise ValueError("owner-resolved Strategy position requires state reference")
+            digest = canonical_hash(self.identity_payload())
+            if (
+                self.state_reference.reference_kind != "STRATEGY_SHADOW_POSITION_STATE"
+                or self.state_reference.content_hash != digest
+                or str(self.state_reference.artifact_id)
+                != f"strategy-shadow-position-state:{digest[7:]}"
+            ):
+                raise ValueError("owner-resolved Strategy position identity mismatch")
+
+    @classmethod
+    def owner_resolved(cls, **values: Any) -> StrategyPositionState:
+        values.pop("state_reference", None)
+        values.setdefault("add_count", 0)
+        values.setdefault("reduce_count", 0)
+        values.setdefault("source_allocation_references", ())
+        values.setdefault("source_fill_references", ())
+        values.setdefault("price_observation_references", ())
+        digest = canonical_hash(_strategy_position_payload(**values))
+        return cls(
+            **values,
+            state_reference=RuntimeArtifactReference(
+                "STRATEGY_SHADOW_POSITION_STATE",
+                ArtifactId(f"strategy-shadow-position-state:{digest[7:]}"),
+                digest,
+            ),
+        )
+
+    def identity_payload(self) -> dict[str, Any]:
+        return _strategy_position_payload(
+            strategy_version_id=self.strategy_version_id,
+            symbol=self.symbol,
+            quantity=self.quantity,
+            average_cost=self.average_cost,
+            current_price=self.current_price,
+            peak_price=self.peak_price,
+            sessions_held=self.sessions_held,
+            add_count=self.add_count,
+            reduce_count=self.reduce_count,
+            account_id=self.account_id,
+            strategy_version_hash=self.strategy_version_hash,
+            source_allocation_references=self.source_allocation_references,
+            source_fill_references=self.source_fill_references,
+            price_observation_references=self.price_observation_references,
+        )
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
-            "strategy_version_id": str(self.strategy_version_id),
-            "symbol": self.symbol,
-            "quantity": str(self.quantity),
-            "average_cost": str(self.average_cost),
-            "current_price": None if self.current_price is None else str(self.current_price),
-            "peak_price": str(self.peak_price),
-            "sessions_held": self.sessions_held,
-            "add_count": self.add_count,
-            "reduce_count": self.reduce_count,
-        }
+        payload = self.identity_payload()
+        if self.state_reference is not None:
+            payload["state_reference"] = self.state_reference.to_canonical_dict()
+        return payload
 
     @classmethod
     def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StrategyPositionState:
         current_price = payload["current_price"]
+        state_reference = payload.get("state_reference")
         return cls(
             strategy_version_id=ArtifactId(str(payload["strategy_version_id"])),
             symbol=str(payload["symbol"]),
@@ -374,7 +450,61 @@ class StrategyPositionState:
             sessions_held=int(payload["sessions_held"]),
             add_count=int(payload["add_count"]),
             reduce_count=int(payload["reduce_count"]),
+            account_id=(None if payload.get("account_id") is None else str(payload["account_id"])),
+            strategy_version_hash=(
+                None
+                if payload.get("strategy_version_hash") is None
+                else str(payload["strategy_version_hash"])
+            ),
+            state_reference=(None if state_reference is None else _reference(state_reference)),
+            source_allocation_references=tuple(
+                _reference(item)
+                for item in _sequence(payload.get("source_allocation_references", []))
+            ),
+            source_fill_references=tuple(
+                _reference(item)
+                for item in _sequence(payload.get("source_fill_references", []))
+            ),
+            price_observation_references=tuple(
+                _reference(item)
+                for item in _sequence(payload.get("price_observation_references", []))
+            ),
         )
+
+
+def _strategy_position_payload(**values: Any) -> dict[str, Any]:
+    current_price = values["current_price"]
+    payload = {
+        "strategy_version_id": str(values["strategy_version_id"]),
+        "symbol": values["symbol"],
+        "quantity": str(values["quantity"]),
+        "average_cost": str(values["average_cost"]),
+        "current_price": None if current_price is None else str(current_price),
+        "peak_price": str(values["peak_price"]),
+        "sessions_held": values["sessions_held"],
+        "add_count": values["add_count"],
+        "reduce_count": values["reduce_count"],
+    }
+    if values.get("account_id") is not None:
+        payload.update(
+            {
+                "account_id": values["account_id"],
+                "strategy_version_hash": values["strategy_version_hash"],
+                "source_allocation_references": [
+                    item.to_canonical_dict()
+                    for item in values["source_allocation_references"]
+                ],
+                "source_fill_references": [
+                    item.to_canonical_dict()
+                    for item in values["source_fill_references"]
+                ],
+                "price_observation_references": [
+                    item.to_canonical_dict()
+                    for item in values["price_observation_references"]
+                ],
+            }
+        )
+    return payload
 
 
 @dataclass(frozen=True, slots=True)

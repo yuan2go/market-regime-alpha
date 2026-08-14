@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 import json
 from typing import Any
 
@@ -461,6 +462,13 @@ class PostgresMultiStrategyRepository:
                         allocation.strategy_version_reference.content_hash
                     ),
                 )
+                _require_executable_allocation(
+                    connection,
+                    proposal_id=allocation.proposal_reference.artifact_id,
+                    proposal_hash=allocation.proposal_reference.content_hash,
+                    symbol=batch.symbol,
+                    side=batch.side.value,
+                )
                 allocation_payload = allocation.to_canonical_dict()
                 connection.execute(
                     """
@@ -732,6 +740,37 @@ def _require_proposal_version(
     ).fetchone()
     if row is None:
         raise ValueError("Proposal/Version lineage is not owner-resolved")
+
+
+def _require_executable_allocation(
+    connection: Any,
+    *,
+    proposal_id: ArtifactId,
+    proposal_hash: str,
+    symbol: str,
+    side: str,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT p.action, p.symbol, l.accepted_weight
+        FROM strategy_proposal AS p
+        JOIN cross_strategy_portfolio_line AS l
+          ON l.proposal_id = p.proposal_id
+         AND l.proposal_hash = p.proposal_hash
+        WHERE p.proposal_id = %s AND p.proposal_hash = %s
+        FOR SHARE OF p, l
+        """,
+        (str(proposal_id), proposal_hash),
+    ).fetchone()
+    if row is None or Decimal(str(row[2])) == 0:
+        raise ValueError("Fill allocation requires an accepted Portfolio line")
+    if str(row[1]) != symbol:
+        raise ValueError("Fill symbol does not match Strategy Proposal")
+    action = str(row[0])
+    if (side == "BUY" and action not in {"ENTER", "ADD"}) or (
+        side == "SELL" and action not in {"REDUCE", "EXIT"}
+    ):
+        raise ValueError("Fill side does not match Strategy action")
 
 
 def _require_path_outcome_lineage(

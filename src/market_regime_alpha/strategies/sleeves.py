@@ -275,7 +275,7 @@ def allocate_observed_fill(
 def project_strategy_sleeves(
     batches: tuple[FillAllocationBatch, ...],
 ) -> tuple[StrategySleevePosition, ...]:
-    effective = _effective_batches(batches)
+    effective = effective_fill_allocation_batches(batches)
     states: dict[
         tuple[str, str, str],
         tuple[RuntimeArtifactReference, int, Decimal, list[ArtifactId], list[FillId]],
@@ -341,7 +341,7 @@ def project_strategy_sleeves(
     )
 
 
-def _effective_batches(
+def effective_fill_allocation_batches(
     batches: tuple[FillAllocationBatch, ...],
 ) -> tuple[FillAllocationBatch, ...]:
     executions: dict[FillId, FillAllocationBatch] = {}
@@ -410,5 +410,6 @@ __all__ = [
     "FillAllocationBatch",
     "StrategySleevePosition",
     "allocate_observed_fill",
+    "effective_fill_allocation_batches",
     "project_strategy_sleeves",
 ]

@@ -374,6 +374,13 @@ def _add_run_arguments(command: argparse.ArgumentParser) -> None:
         default=Decimal("10000000"),
     )
     command.add_argument("--provider-timeout-seconds", type=float, default=8.0)
+    command.add_argument(
+        "--strategy-account-id",
+        help=(
+            "Resolve Strategy sleeve state from observed Fill allocations and "
+            "manual account observations for this account."
+        ),
+    )
     command.add_argument("--historical-sample-lookback-calendar-days", type=int, default=180)
     command.add_argument("--historical-sample-maximum-per-symbol", type=int, default=60)
 
@@ -1853,6 +1860,12 @@ def _run_due(
         summary_repository=repositories.decision_system(clock=runtime_clock),
         state_repository=repositories.state_system(clock=runtime_clock),
         strategy_repository=repositories.multi_strategy(),
+        strategy_shadow_repository=(
+            None
+            if args.strategy_account_id is None
+            else repositories.strategy_shadow()
+        ),
+        strategy_account_id=args.strategy_account_id,
         clock=runtime_clock,
     )
     tick_runner = ContinuousResearchTickRunner(

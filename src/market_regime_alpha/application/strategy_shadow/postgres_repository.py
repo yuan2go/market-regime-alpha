@@ -23,6 +23,12 @@ from market_regime_alpha.application.strategy_shadow.observation_builder import 
     ObservationKind,
     ShadowObservationReceipt,
 )
+from market_regime_alpha.application.strategy_shadow.multi_strategy_lifecycle import (
+    project_strategy_position_states,
+)
+from market_regime_alpha.application.decision_system.contracts import (
+    ManualAccountObservation,
+)
 from market_regime_alpha.application.strategy_shadow.postgres_observations import (
     PostgresShadowObservationRepository,
 )
@@ -32,6 +38,11 @@ from market_regime_alpha.application.research_validation.common import (
 )
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
+from market_regime_alpha.strategies.contracts import (
+    CanonicalStrategyAction,
+    StrategyPositionState,
+)
+from market_regime_alpha.strategies.sleeves import FillAllocationBatch
 
 
 class PostgresStrategyShadowRepository:
@@ -164,6 +175,79 @@ class PostgresStrategyShadowRepository:
                 (trading_date,),
             ).fetchall()
         return tuple(self.get(ArtifactId(str(row[0]))) for row in rows)
+
+    def resolve_multi_strategy_positions(
+        self,
+        *,
+        account_id: str,
+        decision_time: datetime,
+    ) -> tuple[StrategyPositionState, ...]:
+        """Resolve state from Fill allocations and manual account marks.
+
+        Callers select only the account and Decision Time; quantities, prices,
+        counters and lineage are all reloaded from their PostgreSQL owners.
+        """
+
+        with self._factory.connection(read_only=True) as connection:
+            batch_rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM strategy_fill_allocation_batch
+                WHERE account_id = %s AND created_at <= %s
+                ORDER BY created_at, batch_id
+                """,
+                (account_id, decision_time),
+            ).fetchall()
+            observation_rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM manual_account_observation
+                WHERE account_id = %s AND as_of_time <= %s
+                ORDER BY trading_date, revision
+                """,
+                (account_id, decision_time),
+            ).fetchall()
+            batches = tuple(
+                FillAllocationBatch.from_canonical_dict(_dict_payload(row[0]))
+                for row in batch_rows
+            )
+            proposal_references = {
+                allocation.proposal_reference.artifact_id: allocation.proposal_reference
+                for batch in batches
+                for allocation in batch.allocations
+            }
+            proposal_rows = (
+                ()
+                if not proposal_references
+                else connection.execute(
+                    """
+                    SELECT proposal_id, proposal_hash, action
+                    FROM strategy_proposal
+                    WHERE proposal_id = ANY(%s)
+                    """,
+                    ([str(item) for item in proposal_references],),
+                ).fetchall()
+            )
+        actions: dict[ArtifactId, CanonicalStrategyAction] = {}
+        for row in proposal_rows:
+            proposal_id = ArtifactId(str(row[0]))
+            expected = proposal_references.get(proposal_id)
+            if expected is None or str(row[1]) != expected.content_hash:
+                raise ValueError("Strategy Proposal owner identity mismatch")
+            actions[proposal_id] = CanonicalStrategyAction(str(row[2]))
+        if set(actions) != set(proposal_references):
+            raise ValueError("Strategy Fill lineage references a missing Proposal")
+        observations = tuple(
+            ManualAccountObservation.from_canonical_dict(_dict_payload(row[0]))
+            for row in observation_rows
+        )
+        return project_strategy_position_states(
+            account_id=account_id,
+            decision_time=decision_time,
+            batches=batches,
+            proposal_actions=actions,
+            observations=observations,
+        )
 
     def get_artifact(
         self,
@@ -588,3 +672,9 @@ class PostgresStrategyShadowRepository:
         if present and present != typed_markers:
             raise ValueError("Strategy Shadow Entry typed lineage payload is incomplete")
         return present == typed_markers
+
+
+def _dict_payload(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("PostgreSQL owner payload must be an object")
+    return value

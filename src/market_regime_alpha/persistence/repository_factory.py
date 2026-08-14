@@ -152,6 +152,13 @@ class RepositoryFactory:
 
         return PostgresMultiStrategyRepository(self._postgres)
 
+    def strategy_shadow(self):
+        from market_regime_alpha.application.strategy_shadow.postgres_repository import (
+            PostgresStrategyShadowRepository,
+        )
+
+        return PostgresStrategyShadowRepository(self._postgres)
+
     def decision(self):
         return PostgresDecisionLifecycleRepository(self._postgres)
 
