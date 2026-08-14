@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -33,9 +34,13 @@ from market_regime_alpha.strategies.contracts import (
     StrategyFamily,
     StrategyPositionState,
     StrategyRegistry,
+    StrategyRunStatus,
     StrategyRunOrigin,
     StrategyRuntimeInput,
     StrategyVersion,
+)
+from market_regime_alpha.strategies.defaults import (
+    canonical_exploratory_strategy_registry,
 )
 from market_regime_alpha.strategies.runtime import MultiStrategyRuntime
 
@@ -114,18 +119,21 @@ def _candidate(
     )
 
 
-def _candidate_set() -> CandidateSet:
-    records = (
-        _candidate("000001.SZ", CandidateSelectionStatus.SELECTED, score=0.80, rank=1),
-        _candidate("000002.SZ", CandidateSelectionStatus.SELECTED, score=0.70, rank=2),
-        _candidate("000003.SZ", CandidateSelectionStatus.REJECTED, score=0.60, rank=None),
-        _candidate(
-            "000004.SZ",
-            CandidateSelectionStatus.DATA_INSUFFICIENT,
-            score=None,
-            rank=None,
-        ),
-    )
+def _candidate_set(
+    records: tuple[CandidateRecord, ...] | None = None,
+) -> CandidateSet:
+    if records is None:
+        records = (
+            _candidate("000001.SZ", CandidateSelectionStatus.SELECTED, score=0.80, rank=1),
+            _candidate("000002.SZ", CandidateSelectionStatus.SELECTED, score=0.70, rank=2),
+            _candidate("000003.SZ", CandidateSelectionStatus.REJECTED, score=0.60, rank=None),
+            _candidate(
+                "000004.SZ",
+                CandidateSelectionStatus.DATA_INSUFFICIENT,
+                score=None,
+                rank=None,
+            ),
+        )
     payload = {
         "records": [item.to_canonical_dict() for item in records],
         "minimum_candidate_population": 2,
@@ -253,6 +261,44 @@ def test_historical_replay_uses_identical_strategy_semantics() -> None:
     assert historical_actions == replay_actions
     assert historical.runtime_input.origin is StrategyRunOrigin.HISTORICAL
     assert replay.runtime_input.origin is StrategyRunOrigin.REPLAY
+
+
+def test_empty_candidate_population_is_explicitly_data_insufficient() -> None:
+    registry = _registry()
+    runtime_input = replace(
+        _runtime_input(registry.active_versions),
+        candidate_set=_candidate_set(()),
+        positions=(),
+    )
+
+    cycle = MultiStrategyRuntime(registry).execute(runtime_input)
+
+    assert all(
+        run.status is StrategyRunStatus.DATA_INSUFFICIENT
+        for run in cycle.runs
+    )
+    assert all(run.gate_attributions == () for run in cycle.runs)
+    assert all(
+        "STRATEGY_CANDIDATE_POPULATION_EMPTY" in run.reason_codes
+        for run in cycle.runs
+    )
+
+
+def test_strategy_policy_identity_does_not_depend_on_process_decimal_context() -> None:
+    registry = canonical_exploratory_strategy_registry()
+    runtime_input = replace(
+        _runtime_input(registry.active_versions),
+        positions=(),
+    )
+
+    with localcontext() as context:
+        context.prec = 8
+        low_precision = MultiStrategyRuntime(registry).execute(runtime_input)
+    with localcontext() as context:
+        context.prec = 50
+        high_precision = MultiStrategyRuntime(registry).execute(runtime_input)
+
+    assert low_precision == high_precision
 
 
 def test_production_mode_fails_closed_without_strategy_qualification() -> None:

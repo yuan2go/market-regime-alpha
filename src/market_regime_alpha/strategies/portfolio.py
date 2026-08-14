@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from enum import Enum
 from typing import Any, Mapping
 
@@ -23,6 +23,9 @@ class CrossStrategyPortfolioStatus(str, Enum):
     ACCEPTED = "ACCEPTED"
     PARTIAL = "PARTIAL"
     NO_ACTION = "NO_ACTION"
+
+
+_PORTFOLIO_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,10 +112,11 @@ class CrossStrategyPortfolioDecision:
         proposal_ids = tuple(str(item.proposal_reference.artifact_id) for item in self.lines)
         if proposal_ids != tuple(sorted(set(proposal_ids))):
             raise ValueError("Portfolio lines must be proposal-sorted and unique")
-        actual_gross = sum(
-            (max(Decimal("0"), item.accepted_weight) for item in self.lines),
-            Decimal("0"),
-        )
+        with localcontext(_PORTFOLIO_DECIMAL_CONTEXT):
+            actual_gross = sum(
+                (max(Decimal("0"), item.accepted_weight) for item in self.lines),
+                Decimal("0"),
+            )
         if actual_gross != self.gross_accepted_weight:
             raise ValueError("Portfolio gross weight mismatch")
         if actual_gross > self.policy.maximum_gross_weight:
@@ -162,6 +166,15 @@ class CrossStrategyPortfolioDecision:
 
 
 def build_cross_strategy_portfolio(
+    *,
+    cycle: MultiStrategyCycle,
+    policy: CrossStrategyPortfolioPolicy,
+) -> CrossStrategyPortfolioDecision:
+    with localcontext(_PORTFOLIO_DECIMAL_CONTEXT):
+        return _build_cross_strategy_portfolio(cycle=cycle, policy=policy)
+
+
+def _build_cross_strategy_portfolio(
     *,
     cycle: MultiStrategyCycle,
     policy: CrossStrategyPortfolioPolicy,

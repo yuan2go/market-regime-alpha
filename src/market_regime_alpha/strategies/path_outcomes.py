@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from enum import Enum
 from typing import Any, Mapping
 
@@ -25,6 +25,9 @@ class BarrierOrderingOutcome(str, Enum):
     STOP_BEFORE_TARGET = "STOP_BEFORE_TARGET"
     NEITHER = "NEITHER"
     NOT_OBSERVABLE = "NOT_OBSERVABLE"
+
+
+_PATH_OUTCOME_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +173,44 @@ class StrategyPathOutcome:
 
 
 def measure_strategy_path(
+    *,
+    strategy_version_reference: RuntimeArtifactReference,
+    strategy_run_reference: RuntimeArtifactReference,
+    dataset_reference: RuntimeArtifactReference,
+    target_reference: RuntimeArtifactReference,
+    symbol: str,
+    decision_time: datetime,
+    reference_price: Decimal,
+    target_return: Decimal,
+    stop_return: Decimal,
+    continuation_return: Decimal,
+    failure_return: Decimal,
+    observations: tuple[PathPriceObservation, ...],
+    exit_time: datetime | None,
+    exit_price: Decimal | None,
+    measured_at: datetime,
+) -> StrategyPathOutcome:
+    with localcontext(_PATH_OUTCOME_DECIMAL_CONTEXT):
+        return _measure_strategy_path(
+            strategy_version_reference=strategy_version_reference,
+            strategy_run_reference=strategy_run_reference,
+            dataset_reference=dataset_reference,
+            target_reference=target_reference,
+            symbol=symbol,
+            decision_time=decision_time,
+            reference_price=reference_price,
+            target_return=target_return,
+            stop_return=stop_return,
+            continuation_return=continuation_return,
+            failure_return=failure_return,
+            observations=observations,
+            exit_time=exit_time,
+            exit_price=exit_price,
+            measured_at=measured_at,
+        )
+
+
+def _measure_strategy_path(
     *,
     strategy_version_reference: RuntimeArtifactReference,
     strategy_run_reference: RuntimeArtifactReference,

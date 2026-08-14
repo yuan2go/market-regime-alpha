@@ -23,6 +23,7 @@ from market_regime_alpha.strategies.contracts import (
 from market_regime_alpha.strategies.feedback import (
     StrategyFeedbackArtifact,
     StrategyFeedbackKind,
+    StrategyFeedbackStatus,
 )
 from market_regime_alpha.strategies.path_outcomes import StrategyPathOutcome
 from market_regime_alpha.strategies.portfolio import (
@@ -345,15 +346,23 @@ class PostgresMultiStrategyRepository:
                 expected_payload=payload,
             )
             for line in decision.lines:
+                _require_proposal_version(
+                    connection,
+                    proposal_id=line.proposal_reference.artifact_id,
+                    proposal_hash=line.proposal_reference.content_hash,
+                    strategy_version_id=line.strategy_version_reference.artifact_id,
+                    strategy_version_hash=line.strategy_version_reference.content_hash,
+                )
                 line_payload = line.to_canonical_dict()
                 line_id = f"cross-strategy-line:{canonical_hash({'decision_id': str(decision.decision_id), 'line': line_payload})[7:]}"
                 connection.execute(
                     """
                     INSERT INTO cross_strategy_portfolio_line(
                         line_id, decision_id, proposal_id, proposal_hash,
-                        strategy_version_id, symbol, requested_weight,
+                        strategy_version_id, strategy_version_hash,
+                        symbol, requested_weight,
                         accepted_weight, payload_json, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (line_id) DO NOTHING
                     """,
                     (
@@ -362,6 +371,7 @@ class PostgresMultiStrategyRepository:
                         str(line.proposal_reference.artifact_id),
                         line.proposal_reference.content_hash,
                         str(line.strategy_version_reference.artifact_id),
+                        line.strategy_version_reference.content_hash,
                         line.symbol,
                         line.requested_weight,
                         line.accepted_weight,
@@ -440,6 +450,17 @@ class PostgresMultiStrategyRepository:
                 expected_payload=payload,
             )
             for allocation in batch.allocations:
+                _require_proposal_version(
+                    connection,
+                    proposal_id=allocation.proposal_reference.artifact_id,
+                    proposal_hash=allocation.proposal_reference.content_hash,
+                    strategy_version_id=(
+                        allocation.strategy_version_reference.artifact_id
+                    ),
+                    strategy_version_hash=(
+                        allocation.strategy_version_reference.content_hash
+                    ),
+                )
                 allocation_payload = allocation.to_canonical_dict()
                 connection.execute(
                     """
@@ -503,6 +524,7 @@ class PostgresMultiStrategyRepository:
 
     def save_path_outcome(self, outcome: StrategyPathOutcome) -> StrategyPathOutcome:
         def operation(connection: Any) -> None:
+            _require_path_outcome_lineage(connection, outcome)
             payload = outcome.to_canonical_dict()
             connection.execute(
                 """
@@ -583,6 +605,7 @@ class PostgresMultiStrategyRepository:
         artifact: StrategyFeedbackArtifact,
     ) -> StrategyFeedbackArtifact:
         def operation(connection: Any) -> None:
+            _require_feedback_lineage(connection, artifact)
             payload = artifact.to_canonical_dict()
             connection.execute(
                 """
@@ -683,6 +706,178 @@ def _verify_cycle_children(connection: Any, cycle: MultiStrategyCycle) -> None:
             raise ValueError("Strategy Run gate projection mismatch")
         if tuple(_payload(row[0]) for row in proposal_rows) != tuple(item.to_canonical_dict() for item in run.proposals):
             raise ValueError("Strategy Run proposal projection mismatch")
+
+
+def _require_proposal_version(
+    connection: Any,
+    *,
+    proposal_id: ArtifactId,
+    proposal_hash: str,
+    strategy_version_id: ArtifactId,
+    strategy_version_hash: str,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT 1 FROM strategy_proposal
+        WHERE proposal_id = %s AND proposal_hash = %s
+          AND strategy_version_id = %s AND strategy_version_hash = %s
+        FOR SHARE
+        """,
+        (
+            str(proposal_id),
+            proposal_hash,
+            str(strategy_version_id),
+            strategy_version_hash,
+        ),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Proposal/Version lineage is not owner-resolved")
+
+
+def _require_path_outcome_lineage(
+    connection: Any,
+    outcome: StrategyPathOutcome,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT r.run_hash, r.strategy_version_id, r.strategy_version_hash,
+               c.dataset_id, c.dataset_hash, c.decision_time,
+               sc.payload_json
+        FROM strategy_run r
+        JOIN multi_strategy_cycle c
+          ON c.cycle_id = r.cycle_id AND c.cycle_hash = r.cycle_hash
+        JOIN strategy_version v
+          ON v.version_id = r.strategy_version_id
+         AND v.version_hash = r.strategy_version_hash
+        JOIN strategy_contract sc
+          ON sc.contract_id = v.contract_id
+         AND sc.contract_hash = v.contract_hash
+        WHERE r.run_id = %s
+        FOR SHARE OF r, c, v, sc
+        """,
+        (str(outcome.strategy_run_reference.artifact_id),),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Path Outcome requires an owner-resolved Strategy Run")
+    if (
+        str(row[0]) != outcome.strategy_run_reference.content_hash
+        or str(row[1]) != str(outcome.strategy_version_reference.artifact_id)
+        or str(row[2]) != outcome.strategy_version_reference.content_hash
+    ):
+        raise ValueError("Path Outcome Run/Version lineage is not owner-resolved")
+    if (
+        str(row[3]) != str(outcome.dataset_reference.artifact_id)
+        or str(row[4]) != outcome.dataset_reference.content_hash
+    ):
+        raise ValueError("Path Outcome Dataset lineage is not owner-resolved")
+    if row[5] != outcome.decision_time:
+        raise ValueError("Path Outcome Decision Time differs from its Strategy Cycle")
+    contract = _payload(row[6])
+    target_references = contract.get("target_references")
+    if (
+        not isinstance(target_references, list)
+        or outcome.target_reference.to_canonical_dict() not in target_references
+    ):
+        raise ValueError("Path Outcome Target is not owned by its Strategy Contract")
+    horizons = contract.get("horizon_sessions")
+    if not isinstance(horizons, list) or outcome.horizon_sessions not in {
+        int(value) for value in horizons
+    }:
+        raise ValueError("Path Outcome horizon is not owned by its Strategy Contract")
+
+
+def _require_feedback_lineage(
+    connection: Any,
+    artifact: StrategyFeedbackArtifact,
+) -> None:
+    if artifact.artifact_kind is StrategyFeedbackKind.QUALIFICATION_DECISION and any(
+        value == "true" for _, value in artifact.metrics
+    ):
+        raise ValueError(
+            "positive qualification evidence must be owner-resolved, not caller asserted"
+        )
+
+    if artifact.artifact_kind is StrategyFeedbackKind.ATTRIBUTION:
+        if artifact.status is StrategyFeedbackStatus.NOT_ESTIMABLE:
+            if artifact.source_references != (artifact.strategy_version_reference,):
+                raise ValueError(
+                    "NOT_ESTIMABLE Attribution must source its exact Strategy Version"
+                )
+            return
+        if any(
+            item.reference_kind != "STRATEGY_PATH_OUTCOME"
+            for item in artifact.source_references
+        ):
+            raise ValueError("Attribution requires Path Outcome sources")
+        for source in artifact.source_references:
+            row = connection.execute(
+                """
+                SELECT created_at FROM strategy_path_outcome
+                WHERE outcome_id = %s AND outcome_hash = %s
+                  AND strategy_version_id = %s AND strategy_version_hash = %s
+                FOR SHARE
+                """,
+                (
+                    str(source.artifact_id),
+                    source.content_hash,
+                    str(artifact.strategy_version_reference.artifact_id),
+                    artifact.strategy_version_reference.content_hash,
+                ),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    "Attribution Path Outcome/Version lineage is not owner-resolved"
+                )
+            if artifact.created_at < row[0]:
+                raise ValueError("Attribution predates its stored Path Outcome")
+        return
+
+    expected_kinds = (
+        {"STRATEGY_ATTRIBUTION"}
+        if artifact.artifact_kind is StrategyFeedbackKind.CHALLENGER_EVALUATION
+        else {"STRATEGY_ATTRIBUTION", "STRATEGY_CHALLENGER_EVALUATION"}
+    )
+    source_kinds = {item.reference_kind for item in artifact.source_references}
+    expected_count = 2
+    if len(artifact.source_references) != expected_count or source_kinds != expected_kinds:
+        raise ValueError("Strategy Feedback source kinds do not match artifact kind")
+
+    source_versions: list[tuple[str, str, str]] = []
+    for source in artifact.source_references:
+        row = connection.execute(
+            """
+            SELECT f.artifact_kind, f.strategy_version_id,
+                   f.strategy_version_hash, f.created_at, v.family
+            FROM strategy_feedback_artifact f
+            JOIN strategy_version v
+              ON v.version_id = f.strategy_version_id
+             AND v.version_hash = f.strategy_version_hash
+            WHERE f.artifact_id = %s AND f.artifact_hash = %s
+            FOR SHARE OF f, v
+            """,
+            (str(source.artifact_id), source.content_hash),
+        ).fetchone()
+        if row is None or source.reference_kind != f"STRATEGY_{row[0]}":
+            raise ValueError("Strategy Feedback source is not owner-resolved")
+        if artifact.created_at < row[3]:
+            raise ValueError("Strategy Feedback predates a stored source")
+        source_versions.append((str(row[1]), str(row[2]), str(row[4])))
+
+    artifact_version = (
+        str(artifact.strategy_version_reference.artifact_id),
+        artifact.strategy_version_reference.content_hash,
+    )
+    if artifact.artifact_kind is StrategyFeedbackKind.CHALLENGER_EVALUATION:
+        if len(set(source_versions)) != 2:
+            raise ValueError("Challenger sources must be distinct Strategy Versions")
+        if len({item[2] for item in source_versions}) != 1:
+            raise ValueError("Challenger sources must belong to one Strategy Family")
+        if artifact_version not in {(item[0], item[1]) for item in source_versions}:
+            raise ValueError("Challenger artifact must bind its Challenger Version")
+        return
+
+    if any((item[0], item[1]) != artifact_version for item in source_versions):
+        raise ValueError("Qualification sources must bind its exact Strategy Version")
 
 
 def _require_stored_payload(

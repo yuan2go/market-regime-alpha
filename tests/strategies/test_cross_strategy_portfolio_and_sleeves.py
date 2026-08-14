@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 import pytest
 
@@ -173,6 +173,26 @@ def test_portfolio_gross_is_the_exact_sum_of_accepted_fractional_lines() -> None
         ),
         Decimal("0"),
     )
+
+
+def test_portfolio_identity_does_not_depend_on_process_decimal_context() -> None:
+    registry = canonical_exploratory_strategy_registry()
+    cycle = MultiStrategyRuntime(registry).execute(
+        replace(_runtime_input(registry.active_versions), positions=())
+    )
+    policy = CrossStrategyPortfolioPolicy(
+        maximum_gross_weight=Decimal("0.50"),
+        maximum_symbol_weight=Decimal("0.20"),
+    )
+
+    with localcontext() as context:
+        context.prec = 8
+        low_precision = build_cross_strategy_portfolio(cycle=cycle, policy=policy)
+    with localcontext() as context:
+        context.prec = 50
+        high_precision = build_cross_strategy_portfolio(cycle=cycle, policy=policy)
+
+    assert low_precision == high_precision
 
 
 def test_strategy_sleeves_can_only_be_projected_from_fully_allocated_observed_fill() -> None:

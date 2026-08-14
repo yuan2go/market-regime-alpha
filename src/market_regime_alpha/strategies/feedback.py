@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from enum import Enum
 from typing import Any, Mapping
 
@@ -33,6 +33,9 @@ class StrategyFeedbackStatus(str, Enum):
     EXPLORATORY = "EXPLORATORY"
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
     NOT_QUALIFIED = "NOT_QUALIFIED"
+
+
+_FEEDBACK_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,8 +164,25 @@ def attribute_path_outcomes(
     outcomes: tuple[StrategyPathOutcome, ...],
     created_at: datetime,
 ) -> StrategyFeedbackArtifact:
+    with localcontext(_FEEDBACK_DECIMAL_CONTEXT):
+        return _attribute_path_outcomes(
+            strategy_version_reference=strategy_version_reference,
+            outcomes=outcomes,
+            created_at=created_at,
+        )
+
+
+def _attribute_path_outcomes(
+    *,
+    strategy_version_reference: RuntimeArtifactReference,
+    outcomes: tuple[StrategyPathOutcome, ...],
+    created_at: datetime,
+) -> StrategyFeedbackArtifact:
+    canonical_datetime(created_at)
     if any(item.strategy_version_reference != strategy_version_reference for item in outcomes):
         raise ValueError("Attribution cannot cross Strategy Version boundaries")
+    if outcomes and created_at < max(item.measured_at for item in outcomes):
+        raise ValueError("Attribution cannot be created before its Path Outcome")
     if not outcomes:
         return StrategyFeedbackArtifact.create(
             artifact_kind=StrategyFeedbackKind.ATTRIBUTION,
@@ -209,10 +229,27 @@ def evaluate_strategy_challenger(
     challenger: StrategyFeedbackArtifact,
     created_at: datetime,
 ) -> StrategyFeedbackArtifact:
+    with localcontext(_FEEDBACK_DECIMAL_CONTEXT):
+        return _evaluate_strategy_challenger(
+            incumbent=incumbent,
+            challenger=challenger,
+            created_at=created_at,
+        )
+
+
+def _evaluate_strategy_challenger(
+    *,
+    incumbent: StrategyFeedbackArtifact,
+    challenger: StrategyFeedbackArtifact,
+    created_at: datetime,
+) -> StrategyFeedbackArtifact:
+    canonical_datetime(created_at)
     if incumbent.artifact_kind is not StrategyFeedbackKind.ATTRIBUTION or challenger.artifact_kind is not StrategyFeedbackKind.ATTRIBUTION:
         raise ValueError("Challenger evaluation requires Attribution inputs")
     if incumbent.strategy_version_reference == challenger.strategy_version_reference:
         raise ValueError("Challenger must be a different Strategy Version")
+    if created_at < max(incumbent.created_at, challenger.created_at):
+        raise ValueError("Challenger cannot be created before its Attribution")
     comparable = set(dict(incumbent.metrics)).intersection(dict(challenger.metrics))
     deltas = tuple(
         (
@@ -249,10 +286,13 @@ def decide_strategy_qualification(
     prospective_evidence: bool,
     created_at: datetime,
 ) -> StrategyFeedbackArtifact:
+    canonical_datetime(created_at)
     if attribution.strategy_version_reference != strategy_version_reference or (
         challenger_evaluation.strategy_version_reference != strategy_version_reference
     ):
         raise ValueError("Qualification inputs must bind one Strategy Version")
+    if created_at < max(attribution.created_at, challenger_evaluation.created_at):
+        raise ValueError("Qualification cannot be created before its feedback inputs")
     checks = {
         "CALIBRATED": calibrated,
         "FORMAL_OOS": formal_oos,

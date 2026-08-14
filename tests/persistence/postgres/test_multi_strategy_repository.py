@@ -26,7 +26,9 @@ from market_regime_alpha.strategies.path_outcomes import (
     measure_strategy_path,
 )
 from market_regime_alpha.strategies.feedback import (
+    StrategyFeedbackArtifact,
     StrategyFeedbackKind,
+    StrategyFeedbackStatus,
 )
 from market_regime_alpha.strategies.feedback_service import (
     close_strategy_feedback_loop,
@@ -237,11 +239,16 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         ),
     )
     run = next(item for item in cycle.runs if registry.family_for(item) is StrategyFamily.SWING_STATE)
+    run_version = next(
+        item
+        for item in registry.versions
+        if item.version_id == run.strategy_version_reference.artifact_id
+    )
     outcome = measure_strategy_path(
         strategy_version_reference=run.strategy_version_reference,
         strategy_run_reference=RuntimeArtifactReference("STRATEGY_RUN", run.run_id, run.run_hash),
         dataset_reference=cycle.runtime_input.dataset_reference,
-        target_reference=_reference("TARGET_DEFINITION", "swing-path"),
+        target_reference=registry.contract_for(run_version).target_references[0],
         symbol="000001.SZ",
         decision_time=NOW,
         reference_price=Decimal("10"),
@@ -251,8 +258,8 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         failure_return=Decimal("-0.01"),
         observations=(
             PathPriceObservation(
-                observed_at=NOW + timedelta(days=1),
-                session_offset=1,
+                observed_at=NOW + timedelta(days=3),
+                session_offset=3,
                 high=Decimal("10.30"),
                 low=Decimal("9.90"),
                 close=Decimal("10.20"),
@@ -260,7 +267,7 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         ),
         exit_time=None,
         exit_price=None,
-        measured_at=NOW + timedelta(days=2),
+        measured_at=NOW + timedelta(days=4),
     )
 
     assert repository.save_fill_allocation(batch) == batch
@@ -288,9 +295,8 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
             challenger_run.run_hash,
         ),
         dataset_reference=challenger_cycle.runtime_input.dataset_reference,
-        target_reference=_reference(
-            "TARGET_DEFINITION",
-            "swing-challenger-path",
+        target_reference=(
+            challenger_registry.contract_for(challenger_version).target_references[0]
         ),
         symbol="000001.SZ",
         decision_time=NOW,
@@ -301,8 +307,8 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         failure_return=Decimal("-0.01"),
         observations=(
             PathPriceObservation(
-                observed_at=NOW + timedelta(days=1),
-                session_offset=1,
+                observed_at=NOW + timedelta(days=3),
+                session_offset=3,
                 high=Decimal("10.25"),
                 low=Decimal("9.95"),
                 close=Decimal("10.15"),
@@ -310,7 +316,7 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         ),
         exit_time=None,
         exit_price=None,
-        measured_at=NOW + timedelta(days=2),
+        measured_at=NOW + timedelta(days=4),
     )
     repository.save_path_outcome(challenger_outcome)
     feedback = close_strategy_feedback_loop(
@@ -322,7 +328,7 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         calibrated=False,
         net_economics_established=False,
         prospective_evidence=False,
-        created_at=NOW + timedelta(days=3),
+        created_at=NOW + timedelta(days=5),
     )
     assert repository.list_fill_allocations(account_id="account-a") == (batch,)
     assert repository.get_path_outcome(outcome.outcome_id) == outcome
@@ -361,3 +367,174 @@ def test_fill_allocation_rejects_forged_or_unpersisted_physical_fill(
 
     with pytest.raises(ValueError, match="observed Fill"):
         repository.save_fill_allocation(batch)
+
+
+def test_path_outcome_rejects_cross_strategy_run_version_lineage(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    registry, cycle, _ = _cycle_and_portfolio()
+    repository = PostgresMultiStrategyRepository(postgres_factory)
+    repository.register(registry, created_at=NOW)
+    repository.save_cycle(cycle)
+    swing_run = next(
+        item
+        for item in cycle.runs
+        if registry.family_for(item) is StrategyFamily.SWING_STATE
+    )
+    overnight_run = next(
+        item
+        for item in cycle.runs
+        if registry.family_for(item) is StrategyFamily.OVERNIGHT
+    )
+    swing_contract = registry.contract_for(
+        next(
+            item
+            for item in registry.versions
+            if item.version_id
+            == swing_run.strategy_version_reference.artifact_id
+        )
+    )
+    mismatched = measure_strategy_path(
+        strategy_version_reference=overnight_run.strategy_version_reference,
+        strategy_run_reference=RuntimeArtifactReference(
+            "STRATEGY_RUN",
+            swing_run.run_id,
+            swing_run.run_hash,
+        ),
+        dataset_reference=cycle.runtime_input.dataset_reference,
+        target_reference=swing_contract.target_references[0],
+        symbol="000001.SZ",
+        decision_time=NOW,
+        reference_price=Decimal("10"),
+        target_return=Decimal("0.02"),
+        stop_return=Decimal("0.02"),
+        continuation_return=Decimal("0.01"),
+        failure_return=Decimal("-0.01"),
+        observations=(
+            PathPriceObservation(
+                observed_at=NOW + timedelta(days=3),
+                session_offset=3,
+                high=Decimal("10.30"),
+                low=Decimal("9.90"),
+                close=Decimal("10.20"),
+            ),
+        ),
+        exit_time=None,
+        exit_price=None,
+        measured_at=NOW + timedelta(days=4),
+    )
+
+    with pytest.raises(ValueError, match="Run/Version lineage"):
+        repository.save_path_outcome(mismatched)
+
+
+def test_fill_allocation_rejects_proposal_from_another_strategy_version(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    registry, cycle, portfolio = _cycle_and_portfolio()
+    repository = PostgresMultiStrategyRepository(postgres_factory)
+    repository.register(registry, created_at=NOW)
+    repository.save_cycle(cycle)
+    repository.save_portfolio(portfolio, created_at=NOW)
+    fill = _fill()
+    _seed_fill(postgres_factory, fill)
+    first, second = tuple(
+        item for item in portfolio.lines if item.symbol == "000001.SZ"
+    )
+    cross_bound = allocate_observed_fill(
+        fill=fill,
+        allocations=(
+            (
+                first.strategy_version_reference,
+                second.proposal_reference,
+                60,
+            ),
+            (
+                second.strategy_version_reference,
+                first.proposal_reference,
+                40,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Proposal/Version lineage"):
+        repository.save_fill_allocation(cross_bound)
+
+
+def test_feedback_service_rejects_caller_asserted_positive_qualification(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    registry, cycle, _ = _cycle_and_portfolio()
+    challenger_registry = _with_swing_challenger(registry)
+    repository = PostgresMultiStrategyRepository(postgres_factory)
+    repository.register(challenger_registry, created_at=NOW)
+    incumbent = next(
+        item
+        for item in cycle.runs
+        if registry.family_for(item) is StrategyFamily.SWING_STATE
+    )
+    challenger = next(
+        item
+        for item in challenger_registry.versions
+        if challenger_registry.contract_for(item).strategy_id
+        == StrategyId("swing-state-challenger")
+    )
+
+    with pytest.raises(ValueError, match="owner-resolved"):
+        close_strategy_feedback_loop(
+            repository=repository,
+            incumbent_version_reference=incumbent.strategy_version_reference,
+            challenger_version_reference=RuntimeArtifactReference(
+                "STRATEGY_VERSION",
+                challenger.version_id,
+                challenger.version_hash,
+            ),
+            formal_pit=True,
+            formal_oos=True,
+            calibrated=True,
+            net_economics_established=True,
+            prospective_evidence=True,
+            created_at=NOW + timedelta(days=3),
+        )
+
+
+def test_feedback_repository_rejects_cross_strategy_or_positive_caller_lineage(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    registry = _registry()
+    repository = PostgresMultiStrategyRepository(postgres_factory)
+    repository.register(registry, created_at=NOW)
+    first, second = registry.active_versions
+    first_reference = RuntimeArtifactReference(
+        "STRATEGY_VERSION",
+        first.version_id,
+        first.version_hash,
+    )
+    second_reference = RuntimeArtifactReference(
+        "STRATEGY_VERSION",
+        second.version_id,
+        second.version_hash,
+    )
+    contaminated = StrategyFeedbackArtifact.create(
+        artifact_kind=StrategyFeedbackKind.ATTRIBUTION,
+        strategy_version_reference=first_reference,
+        source_references=(second_reference,),
+        status=StrategyFeedbackStatus.NOT_ESTIMABLE,
+        metrics=(("outcome_count", "0"),),
+        findings=("PATH_OUTCOME_NOT_AVAILABLE",),
+        created_at=NOW + timedelta(days=1),
+    )
+    caller_positive = StrategyFeedbackArtifact.create(
+        artifact_kind=StrategyFeedbackKind.QUALIFICATION_DECISION,
+        strategy_version_reference=first_reference,
+        source_references=(first_reference,),
+        status=StrategyFeedbackStatus.NOT_QUALIFIED,
+        metrics=(("formal_pit", "true"),),
+        findings=("PRODUCTION_AUTHORIZED_FALSE",),
+        created_at=NOW + timedelta(days=1),
+    )
+
+    with pytest.raises(ValueError, match="exact Strategy Version"):
+        repository.save_feedback(contaminated)
+    with pytest.raises(ValueError, match="owner-resolved"):
+        repository.save_feedback(caller_positive)

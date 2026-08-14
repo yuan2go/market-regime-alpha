@@ -38,7 +38,10 @@ multi-horizon Path Outcome kernel and PostgreSQL owner record MFE, MAE,
 target-before-stop, time-to-MFE, continuation/failure, post-exit opportunity loss
 and avoided drawdown. The executable Outcome→Attribution→Challenger→Qualification
 service is scoped by exact Strategy Version, never mutates a Champion and remains
-fail-closed. Automatic longitudinal path materialization and feedback scheduling
+fail-closed. Its write path reloads Proposal/Run/Dataset/Target and feedback
+source lineage by exact owner ID/hash/version, rejects caller-asserted positive
+qualification flags, and uses a fixed Decimal context for replay-stable
+identities. Automatic longitudinal path materialization and feedback scheduling
 are not yet part of the historical operator.
 
 Phase C engineering adds an immutable Formal Research Protocol with exact

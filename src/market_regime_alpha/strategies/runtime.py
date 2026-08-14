@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -30,6 +30,9 @@ from market_regime_alpha.strategies.contracts import (
     StrategyVersion,
     strategy_reference,
 )
+
+
+_STRATEGY_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +178,10 @@ class MultiStrategyRuntime:
         }
 
     def execute(self, runtime_input: StrategyRuntimeInput) -> MultiStrategyCycle:
+        with localcontext(_STRATEGY_DECIMAL_CONTEXT):
+            return self._execute(runtime_input)
+
+    def _execute(self, runtime_input: StrategyRuntimeInput) -> MultiStrategyCycle:
         if runtime_input.authority_mode is RuntimeAuthorityMode.PRODUCTION:
             raise RuntimeError("PRODUCTION_AUTHORIZED_FALSE")
         cycle_id = MultiStrategyCycle.identity(
@@ -258,8 +265,21 @@ class MultiStrategyRuntime:
                 )
         status = (
             StrategyRunStatus.DATA_INSUFFICIENT
-            if gates and all(item.eligibility_status is StrategyEligibilityStatus.NOT_ESTIMABLE for item in gates)
+            if not gates
+            or all(
+                item.eligibility_status is StrategyEligibilityStatus.NOT_ESTIMABLE
+                for item in gates
+            )
             else StrategyRunStatus.COMPLETED
+        )
+        reason_code = (
+            "STRATEGY_CANDIDATE_POPULATION_EMPTY"
+            if not gates
+            else (
+                "STRATEGY_INPUT_DATA_INSUFFICIENT"
+                if status is StrategyRunStatus.DATA_INSUFFICIENT
+                else "STRATEGY_RUN_COMPLETED"
+            )
         )
         return StrategyRun.create(
             run_id=run_id,
@@ -272,9 +292,7 @@ class MultiStrategyRuntime:
             status=status,
             gate_attributions=tuple(gates),
             proposals=tuple(proposals),
-            reason_codes=(
-                "STRATEGY_INPUT_DATA_INSUFFICIENT" if status is StrategyRunStatus.DATA_INSUFFICIENT else "STRATEGY_RUN_COMPLETED",
-            ),
+            reason_codes=(reason_code,),
         )
 
 

@@ -107,6 +107,9 @@ CREATE TABLE strategy_run (
     ),
     created_at timestamptz NOT NULL,
     UNIQUE (run_id, run_hash),
+    UNIQUE (
+        run_id, run_hash, strategy_version_id, strategy_version_hash
+    ),
     UNIQUE (cycle_id, strategy_version_id),
     FOREIGN KEY (cycle_id, cycle_hash)
         REFERENCES multi_strategy_cycle(cycle_id, cycle_hash) ON DELETE RESTRICT,
@@ -157,6 +160,10 @@ CREATE TABLE strategy_proposal (
     ),
     created_at timestamptz NOT NULL,
     UNIQUE (proposal_id, proposal_hash),
+    UNIQUE (
+        proposal_id, proposal_hash,
+        strategy_version_id, strategy_version_hash
+    ),
     FOREIGN KEY (run_id) REFERENCES strategy_run(run_id) ON DELETE RESTRICT,
     FOREIGN KEY (strategy_version_id, strategy_version_hash)
         REFERENCES strategy_version(version_id, version_hash) ON DELETE RESTRICT
@@ -199,6 +206,7 @@ CREATE TABLE cross_strategy_portfolio_line (
     proposal_id text NOT NULL,
     proposal_hash text NOT NULL,
     strategy_version_id text NOT NULL,
+    strategy_version_hash text NOT NULL,
     symbol text NOT NULL,
     requested_weight numeric NOT NULL,
     accepted_weight numeric NOT NULL,
@@ -207,15 +215,22 @@ CREATE TABLE cross_strategy_portfolio_line (
     UNIQUE (decision_id, proposal_id),
     FOREIGN KEY (decision_id)
         REFERENCES cross_strategy_portfolio_decision(decision_id) ON DELETE RESTRICT,
-    FOREIGN KEY (proposal_id, proposal_hash)
-        REFERENCES strategy_proposal(proposal_id, proposal_hash) ON DELETE RESTRICT
+    FOREIGN KEY (
+        proposal_id, proposal_hash,
+        strategy_version_id, strategy_version_hash
+    ) REFERENCES strategy_proposal(
+        proposal_id, proposal_hash,
+        strategy_version_id, strategy_version_hash
+    ) ON DELETE RESTRICT
 );
 
 CREATE INDEX cross_strategy_portfolio_line_decision_idx
 ON cross_strategy_portfolio_line(decision_id, symbol);
 
 CREATE INDEX cross_strategy_portfolio_line_proposal_idx
-ON cross_strategy_portfolio_line(proposal_id, proposal_hash);
+ON cross_strategy_portfolio_line(
+    proposal_id, proposal_hash, strategy_version_id, strategy_version_hash
+);
 
 CREATE TABLE strategy_fill_allocation_batch (
     batch_id text PRIMARY KEY,
@@ -263,8 +278,13 @@ CREATE TABLE strategy_fill_allocation (
         REFERENCES strategy_fill_allocation_batch(batch_id) ON DELETE RESTRICT,
     FOREIGN KEY (strategy_version_id, strategy_version_hash)
         REFERENCES strategy_version(version_id, version_hash) ON DELETE RESTRICT,
-    FOREIGN KEY (proposal_id, proposal_hash)
-        REFERENCES strategy_proposal(proposal_id, proposal_hash) ON DELETE RESTRICT
+    FOREIGN KEY (
+        proposal_id, proposal_hash,
+        strategy_version_id, strategy_version_hash
+    ) REFERENCES strategy_proposal(
+        proposal_id, proposal_hash,
+        strategy_version_id, strategy_version_hash
+    ) ON DELETE RESTRICT
 );
 
 CREATE INDEX strategy_fill_allocation_batch_idx
@@ -274,7 +294,9 @@ CREATE INDEX strategy_fill_allocation_version_idx
 ON strategy_fill_allocation(strategy_version_id, strategy_version_hash);
 
 CREATE INDEX strategy_fill_allocation_proposal_idx
-ON strategy_fill_allocation(proposal_id, proposal_hash);
+ON strategy_fill_allocation(
+    proposal_id, proposal_hash, strategy_version_id, strategy_version_hash
+);
 
 CREATE TABLE strategy_path_outcome (
     outcome_id text PRIMARY KEY,
@@ -304,14 +326,21 @@ CREATE TABLE strategy_path_outcome (
     created_at timestamptz NOT NULL,
     UNIQUE (outcome_id, outcome_hash),
     UNIQUE (strategy_run_id, target_id, symbol),
-    FOREIGN KEY (strategy_run_id, strategy_run_hash)
-        REFERENCES strategy_run(run_id, run_hash) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        strategy_run_id, strategy_run_hash,
+        strategy_version_id, strategy_version_hash
+    ) REFERENCES strategy_run(
+        run_id, run_hash,
+        strategy_version_id, strategy_version_hash
+    ) ON DELETE RESTRICT,
     FOREIGN KEY (strategy_version_id, strategy_version_hash)
         REFERENCES strategy_version(version_id, version_hash) ON DELETE RESTRICT
 );
 
 CREATE INDEX strategy_path_outcome_run_idx
-ON strategy_path_outcome(strategy_run_id, strategy_run_hash);
+ON strategy_path_outcome(
+    strategy_run_id, strategy_run_hash, strategy_version_id, strategy_version_hash
+);
 
 CREATE INDEX strategy_path_outcome_version_idx
 ON strategy_path_outcome(strategy_version_id, strategy_version_hash, horizon_sessions);

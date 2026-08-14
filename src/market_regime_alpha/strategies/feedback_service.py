@@ -32,6 +32,19 @@ def close_strategy_feedback_loop(
 ) -> tuple[StrategyFeedbackArtifact, ...]:
     """Persist Attribution, Challenger Evaluation, and fail-closed Qualification."""
 
+    if any(
+        (
+            formal_pit,
+            formal_oos,
+            calibrated,
+            net_economics_established,
+            prospective_evidence,
+        )
+    ):
+        raise ValueError(
+            "positive qualification evidence must be owner-resolved, not caller asserted"
+        )
+
     registry = repository.load_registry()
     versions = {(item.version_id, item.version_hash): item for item in registry.versions}
     incumbent_version = versions.get(
@@ -83,11 +96,11 @@ def close_strategy_feedback_loop(
             strategy_version_reference=challenger_version_reference,
             attribution=challenger,
             challenger_evaluation=comparison,
-            formal_pit=formal_pit,
-            formal_oos=formal_oos,
-            calibrated=calibrated,
-            net_economics_established=net_economics_established,
-            prospective_evidence=prospective_evidence,
+            formal_pit=False,
+            formal_oos=False,
+            calibrated=False,
+            net_economics_established=False,
+            prospective_evidence=False,
             created_at=created_at,
         )
     )

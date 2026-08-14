@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 import pytest
 
@@ -83,6 +83,12 @@ def test_outcome_attribution_is_strictly_strategy_scoped() -> None:
             outcomes=(outcome_a, outcome_b),
             created_at=NOW + timedelta(days=3),
         )
+    with pytest.raises(ValueError, match="before its Path Outcome"):
+        attribute_path_outcomes(
+            strategy_version_reference=version_a,
+            outcomes=(outcome_a,),
+            created_at=NOW + timedelta(days=1),
+        )
 
 
 def test_challenger_and_qualification_remain_exploratory_and_fail_closed() -> None:
@@ -131,3 +137,44 @@ def test_challenger_and_qualification_remain_exploratory_and_fail_closed() -> No
         "PROSPECTIVE_EVIDENCE_NOT_ESTABLISHED",
         "PRODUCTION_AUTHORIZED_FALSE",
     }
+
+    with pytest.raises(ValueError, match="before its Attribution"):
+        evaluate_strategy_challenger(
+            incumbent=incumbent,
+            challenger=challenger,
+            created_at=NOW + timedelta(days=2),
+        )
+    with pytest.raises(ValueError, match="before its feedback inputs"):
+        decide_strategy_qualification(
+            strategy_version_reference=challenger_version,
+            attribution=challenger,
+            challenger_evaluation=comparison,
+            formal_pit=False,
+            formal_oos=False,
+            calibrated=False,
+            net_economics_established=False,
+            prospective_evidence=False,
+            created_at=NOW + timedelta(days=3),
+        )
+
+
+def test_feedback_identity_does_not_depend_on_process_decimal_context() -> None:
+    version = _reference("STRATEGY_VERSION", "context-version")
+    outcomes = (_outcome(version, suffix="3", close="10.123456789"),)
+
+    with localcontext() as context:
+        context.prec = 8
+        low_precision = attribute_path_outcomes(
+            strategy_version_reference=version,
+            outcomes=outcomes,
+            created_at=NOW + timedelta(days=3),
+        )
+    with localcontext() as context:
+        context.prec = 50
+        high_precision = attribute_path_outcomes(
+            strategy_version_reference=version,
+            outcomes=outcomes,
+            created_at=NOW + timedelta(days=3),
+        )
+
+    assert low_precision == high_precision

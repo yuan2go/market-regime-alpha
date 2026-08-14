@@ -134,7 +134,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
   `multi_strategy_cycle`, `strategy_run`, `strategy_gate_attribution`,
   `strategy_proposal`, `cross_strategy_portfolio_decision`,
   `cross_strategy_portfolio_line`, `strategy_fill_allocation_batch`,
-  `strategy_fill_allocation_line`, `strategy_path_outcome` and
+  `strategy_fill_allocation`, `strategy_path_outcome` and
   `strategy_feedback_artifact`.
 - **Runtime caller:** one `STRATEGY_RUNTIME` child in Continuous Research and the
   `STRATEGY`/`PORTFOLIO` stages of the existing Historical Session Kernel.
@@ -142,9 +142,14 @@ Every entry separates ownership from storage and consumption. A missing writer o
   challenger and qualification projections; no broker writer.
 - **Replay mechanism:** reload exact cycle payload and Strategy Version
   ID/hash set, rerun pure strategy/Portfolio kernels, and compare exact hashes.
+- **Lineage enforcement:** composite PostgreSQL constraints plus transactional
+  owner reload bind Proposal→Version, Fill Allocation→Proposal/Version,
+  Path Outcome→Run/Version/Dataset/Decision Time/Target/Horizon, and every
+  feedback source by exact ID/hash/version and non-decreasing evidence time.
 - **Evidence ceiling:** deterministic engineering evidence. Free input remains
   `EXPLORATORY`/`PIT_INCOMPLETE`; qualification cannot become positive without
-  Formal PIT/OOS/calibration/economics/prospective owner evidence.
+  Formal PIT/OOS/calibration/economics/prospective owner evidence. Caller
+  booleans cannot assert those positive facts.
 - **Legacy replacement:** it is the canonical multi-family Strategy seam. Older
   Strategy Shadow/Portfolio Shadow ledgers remain active compatibility and
   specialized simulation consumers until their consumer inventory permits
