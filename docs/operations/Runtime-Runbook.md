@@ -147,8 +147,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 084, `historical_feature_configuration_owner`. Expected schema
-catalog: 257 tables. Migrations 052–067 add Formal Protocol bindings and
+Expected head: migration 085, `multi_strategy_business_closure`. Expected schema
+catalog: 269 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -169,6 +169,13 @@ exploratory Experiment Definition reloaded before longitudinal Scope.
 Corporate-action
 absence is evidence only when symbol, interval and constituent lineage are all
 inside that immutable scope.
+Migrations 081–084 complete longitudinal Historical fact, feature and
+configuration ownership. Migration 085 adds stable Strategy Contracts/Versions,
+shared cycles/runs/gates/proposals, cross-strategy Portfolio decisions,
+observed-Fill allocation, Path Outcomes and typed feedback. It also admits the
+bounded `STRATEGY_RUNTIME` child to the existing Continuous Journal; it does not
+create a scheduler, broker path, physical Position writer or Production
+authorization.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.
@@ -199,6 +206,7 @@ uv run continuous-research recovery-audit --help
 uv run continuous-research report-day --help
 uv run continuous-research replay-day --help
 uv run continuous-research inspect-run --help
+uv run continuous-research inspect-strategy --help
 uv run continuous-research replay --help
 ```
 
@@ -218,6 +226,22 @@ Shadow. Before a due Research/Shadow decision it also attempts the bounded
 BaoStock Historical Sample build. No samples remains a valid fail-closed
 Forecast result. An already-available `UNQUALIFIED` Registry Dataset permits an
 exploratory, uncalibrated Forecast. Production never receives that provider.
+
+After a completed run, inspect the two families and the cross-strategy decision
+through the read-only projection:
+
+```bash
+uv run continuous-research inspect-strategy \
+  --database-url "$MARKET_REGIME_ALPHA_DATABASE_URL" \
+  --schema "$MARKET_REGIME_ALPHA_DATABASE_SCHEMA" \
+  --principal-id "$MARKET_REGIME_ALPHA_PRINCIPAL_ID" \
+  --run-id CONTINUOUS_RUN_ID
+```
+
+The result must show exact cycle/run/version hashes, gate and proposal counts,
+Portfolio status and any lineage-scoped Path Outcome/feedback artifacts. A
+`DATA_INSUFFICIENT` run and a `NO_ACTION` Portfolio are valid available facts.
+Inspection is read-only and cannot recompute or promote a decision.
 
 The free-data operational sequence is:
 

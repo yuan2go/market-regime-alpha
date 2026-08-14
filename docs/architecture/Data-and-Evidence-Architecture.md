@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical data, time and evidence rules
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha/data`, `src/market_regime_alpha/market_data`, `src/market_regime_alpha/evidence`, `src/market_regime_alpha/data/postgres_pit_authority.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Evidence is not a reference
@@ -42,14 +42,31 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 067 and checksummed.
+- Packaged migrations are contiguous from 001 through 085 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
 - Immutable evidence tables reject update/delete.
 - Migration 046 makes Research Validation incapable of persisting qualification, Production authorization or non-owner-resolved Formal OOS states.
 
-The schema catalog currently contains 244 tables. That count includes immutable authorities, workflow journals, read models and projections; table count alone is not an Authority count. Migrations 047–057 add exploratory sample, Research Universe, Portfolio Shadow and fail-closed Phase C owners. Migrations 058–059 add label-value-blind Locked rosters, immutable PIT Universe membership projections, exact Dataset lineage and pre-read Locked-OOS scope bindings. Migrations 060–064 extend those owners with explicit research-validity semantics, exploratory model execution, Runtime Scope/Historical journals, observations and performance. Migration 065 names the global Artifact-root locator contract for new Controlled packages. Migration 066 adds fail-closed Formal Execution assessment records without granting Provider, trading or Production authority. Migration 067 adds forward-only exact Strategy/Portfolio lineage projections and temporal/owner constraints while leaving pre-067 rows legacy-unbound. None weakens migration 046 or creates a second Calendar/PIT/Forecast/Evaluation owner.
+The schema catalog currently contains 269 tables. That count includes immutable
+owners, workflow journals, read models and projections; table count alone is not
+an Authority count. Migrations 047–067 establish the fail-closed Phase C/Phase D
+owners and exact Strategy/Portfolio lineage. Migrations 068–084 establish the
+Historical Corpus, selective-read, effective-dated reference and longitudinal
+feature-configuration owners. Migration 085 adds the minimal Strategy business
+facts needed for the shared Overnight/Swing runtime, cross-strategy Portfolio,
+observed-Fill allocation, Path Outcomes and feedback. It extends the existing
+Continuous child constraint with `STRATEGY_RUNTIME`; it creates neither another
+scheduler nor another Position owner. None weakens migration 046 or creates a
+second Calendar/PIT/Forecast/Evaluation owner.
+
+Strategy evidence is keyed by exact Strategy Version and retains Dataset, PIT,
+Universe, Decision Time, Target/Horizon, cost, evaluation, code and configuration
+references. A run-level inspection additionally follows Outcome/feedback source
+lineage so another cycle of the same Strategy Version cannot appear in the
+inspected cycle. Identity and lineage prevent contamination; they do not prove
+the underlying research claim.
 
 ## Replay
 

@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical research/strategy responsibility split
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha/application/research_evaluation`, `src/market_regime_alpha/application/research_validation`, `src/market_regime_alpha/application/shadow_research`, `src/market_regime_alpha/application/strategy_shadow`
 
 ## Lifecycle
@@ -12,6 +12,10 @@
 Research Universe Policy / immutable Runtime Scope
 -> Canonical Dataset / Feature / State / Candidate / Signal / Forecast
 -> ResearchDailySummary
+-> shared MultiStrategyRuntime
+   -> Overnight action/proposal
+   -> Swing Entry/Hold/Add/Reduce/Exit action/proposal
+-> simple cross-strategy Portfolio/Risk baseline
 -> Research Shadow decision
 -> factual multi-target Outcome
 -> Evaluation Dataset and complete Panel V2
@@ -31,6 +35,20 @@ Shared Decision Session Kernel. `HistoricalResearchRunner` journals each
 session/stage in PostgreSQL, resumes under lease/fence, and replays exact owner
 hashes. It is exploratory Historical Research, not a second daily Runtime and
 not Formal OOS.
+
+Candidate eligibility/ranking is upstream evidence, not an Entry decision. Each
+Strategy Run records every input symbol's terminal eligibility and policy reason
+before it may emit a proposal. This makes an empty or starved sample observable.
+The current deterministic Path Outcome kernel supports short and multi-session
+MFE/MAE, target-before-stop, time-to-MFE, continuation/failure, post-exit
+opportunity loss and avoided drawdown. Automatic longitudinal outcome production
+and scheduled feedback are still pending empirical work.
+
+Observed manual Fill remains the sole source of physical Position. An immutable
+Fill Allocation may attribute that quantity to Strategy Version sleeves; it
+cannot allocate more than the physical Fill or sell a sleeve below zero. The
+cross-strategy Portfolio remains a proposal/risk decision and never manufactures
+an Order or Fill.
 
 For free-data operation, retrospective decisions and later outcomes additionally
 feed an immutable Historical Sample Dataset in PostgreSQL. The Registry Reader

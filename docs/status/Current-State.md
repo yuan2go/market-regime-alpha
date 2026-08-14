@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole current implementation-status document
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations`, `tests`
 
 ## Implemented engineering boundary
@@ -13,6 +13,33 @@ The system is a PostgreSQL-only modular monolith with one Continuous Research Ru
 Phase B engineering also includes daily cross-sectional evaluation science, tie-aware RankIC, label-aware purging/embargo, explicit `NOT_ESTIMABLE`, calibration method harnesses and a PostgreSQL Portfolio Shadow ledger. The legacy multi-session PathForecast still cannot be reused as a T+1 Target Forecast, so that mismatch remains truthfully `NOT_ESTIMABLE`. Phase D adds explicit confidence-interval versus null-test semantics, deterministic statistical simulations, and Target-bound Forecast kernels without changing that identity. Every probability result remains `calibrated=false`. Portfolio Shadow records per-value provenance for market facts and assumptions alongside Cash, Order Intent, Shadow Fill, Shadow Position, NAV, exposure, turnover, cost, capacity, drawdown and attribution while enforcing A-share T+1, 100-share lots, suspension, price-limit and continuous-auction constraints. Append-only Principal/Role/Approval/Audit governance serializes bootstrap and last-Admin invariants; every Continuous CLI invocation is resource-bound and audited, and non-Admin Shadow/recovery mutation requires an exact independent approval. Production-mode mutation is rejected before Journal writes. A recovery audit is available through the same CLI. External authentication is not bound, so the caller-supplied Principal ID is not an authenticated identity proof.
 
 Actual positions derive only from observed manual fills. The system creates no broker order and does not automatically mutate actual positions.
+
+Migration 085 closes the first executable multi-strategy business slice. One
+stable registry supplies `OVERNIGHT` and `SWING_STATE` Strategy Versions to a
+shared `MultiStrategyRuntime`. The same policy kernel is invoked by one
+`STRATEGY_RUNTIME` child of Continuous Research and by the existing Historical
+Session Kernel; Replay keeps its origin explicit and recomputes the same action
+semantics. Every cycle persists Strategy Runs, complete gate/rejection
+attribution, proposals and one simple cross-strategy Portfolio decision. A new
+strategy therefore supplies a Strategy Version and policy implementation, not a
+new scheduler, database, Candidate owner or Production control plane.
+
+Candidate no longer carries Entry semantics in this path. Overnight emits
+short-horizon `ENTER`/`HOLD`/`EXIT`; Swing consumes explicit sleeve state and can
+emit `ENTER`/`HOLD`/`ADD`/`REDUCE`/`EXIT`. A model-blocked empty CandidateSet is
+persisted and produces `DATA_INSUFFICIENT` runs for both families rather than a
+silently missing sample. The cross-strategy Portfolio supports deterministic
+Top-K equal/score baselines, budgets, gross/single-name limits and opposing-intent
+attribution; it creates no Order, Fill or physical Position.
+
+Strategy sleeves are derived only from immutable allocations of already
+persisted observed manual Fills and reconcile to physical quantity. The
+multi-horizon Path Outcome kernel and PostgreSQL owner record MFE, MAE,
+target-before-stop, time-to-MFE, continuation/failure, post-exit opportunity loss
+and avoided drawdown. The executable Outcome→Attribution→Challenger→Qualification
+service is scoped by exact Strategy Version, never mutates a Champion and remains
+fail-closed. Automatic longitudinal path materialization and feedback scheduling
+are not yet part of the historical operator.
 
 Phase C engineering adds an immutable Formal Research Protocol with exact
 canonical-owner bindings (including full Frozen Trading Calendar replay), OutcomeTarget-bound forecasts, frozen-calendar
@@ -255,7 +282,11 @@ Locked-OOS consumption, Formal OOS, Calibration qualification, Phase C stage or
 Production Admission evidence. This is a negative/absent evidence result, not a
 Provider-quality or Alpha conclusion.
 
-Migrations 047–067 add free retrospective evidence, exploratory Research Universe, Portfolio Shadow, exact Locked-OOS roster and PIT Universe bindings, the Phase C owners, Phase D research execution journals, the authoritative locator contract, fail-closed Formal Execution assessments and forward-only exact Strategy/Portfolio lineage projections described above. They do not alter migration 046, which removes reference-only
+Migrations 047–084 add free retrospective evidence, exploratory Research Universe,
+Portfolio Shadow, exact Locked-OOS/PIT lineage, Phase C owners, Phase D research
+journals and the longitudinal Historical Corpus owners. Migration 085 adds the
+multi-strategy business closure described above. They do not alter migration
+046, which removes reference-only
 qualification paths from the current architecture:
 
 - Research Validation PostgreSQL rows cannot be qualified, Production-authorized or claim Formal OOS Authority;
@@ -271,12 +302,12 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 640 | broad modular monolith; size alone is not a defect |
-| Python test files | 468 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 657 | broad modular monolith; size alone is not a defect |
+| Python test files | 479 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 70 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 251 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes Authority owners, journals and projections, not 251 independent business Authorities |
+| PostgreSQL migrations | 85 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 269 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes owners, journals and projections, not 269 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |
@@ -312,6 +343,10 @@ research_model_runtime_available = true
 phase_d_engineering_complete = true
 phase_e_representative_corpus_complete = true
 historical_corpus_replay_verified = true
+multi_strategy_runtime_engineering_complete = true
+overnight_and_swing_shared_semantics_verified = true
+multi_horizon_path_kernel_engineering_complete = true
+automatic_longitudinal_path_materialization = false
 exploratory_alpha_established = false
 strategy_economic_value_established = false
 formal_model_qualified = false

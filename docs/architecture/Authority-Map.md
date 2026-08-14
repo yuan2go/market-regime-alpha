@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
@@ -27,8 +27,9 @@
 | Model Governance | One: `PostgresModelGovernanceRepository`; Model Registry lifecycle remains a subordinate registry history in the same governance schema. |
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
+| Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. It is a bounded child of the existing runtimes. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 257 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 269 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -116,6 +117,38 @@ Every entry separates ownership from storage and consumption. A missing writer o
   valid terminal evidence and never become Formal OOS.
 - **Legacy replacement:** no legacy backtest or `daily_research` writer may
   become a parallel journal or Authority.
+
+### Multi-Strategy Runtime and business facts
+
+- **Domain / Capability:** Strategy / stable registration, execution, Portfolio,
+  Fill attribution, Path Outcome and feedback.
+- **Classification:** bounded Business and Research Evidence Authority; not a
+  top-level Runtime Authority and not a Production Admission owner.
+- **Owner:** Multi-Strategy bounded context.
+- **Canonical Writer:** `PostgresMultiStrategyRepository` through the shared
+  `MultiStrategyRuntime`, cross-strategy Portfolio kernel, Fill allocation
+  service, path measurement kernel and feedback service.
+- **Reader:** repository exact reload/replay plus `continuous-research
+  inspect-strategy`, canonical DAG, trace and metrics.
+- **PostgreSQL tables:** `strategy_contract`, `strategy_version`,
+  `multi_strategy_cycle`, `strategy_run`, `strategy_gate_attribution`,
+  `strategy_proposal`, `cross_strategy_portfolio_decision`,
+  `cross_strategy_portfolio_line`, `strategy_fill_allocation_batch`,
+  `strategy_fill_allocation_line`, `strategy_path_outcome` and
+  `strategy_feedback_artifact`.
+- **Runtime caller:** one `STRATEGY_RUNTIME` child in Continuous Research and the
+  `STRATEGY`/`PORTFOLIO` stages of the existing Historical Session Kernel.
+- **Downstream consumer:** read-only Portfolio/Risk, Path Outcome, attribution,
+  challenger and qualification projections; no broker writer.
+- **Replay mechanism:** reload exact cycle payload and Strategy Version
+  ID/hash set, rerun pure strategy/Portfolio kernels, and compare exact hashes.
+- **Evidence ceiling:** deterministic engineering evidence. Free input remains
+  `EXPLORATORY`/`PIT_INCOMPLETE`; qualification cannot become positive without
+  Formal PIT/OOS/calibration/economics/prospective owner evidence.
+- **Legacy replacement:** it is the canonical multi-family Strategy seam. Older
+  Strategy Shadow/Portfolio Shadow ledgers remain active compatibility and
+  specialized simulation consumers until their consumer inventory permits
+  deletion; they are not a second all-day runtime.
 
 ### Source freeze and Dataset
 

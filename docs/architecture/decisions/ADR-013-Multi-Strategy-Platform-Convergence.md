@@ -8,7 +8,7 @@
 
 ## Context
 
-The repository already has one PostgreSQL-centered Continuous Research control plane, owner-resolved Candidate artifacts, multi-checkpoint T+1 Targets, Strategy Shadow, Portfolio Shadow, fill-derived physical Position, historical session/replay infrastructure, and fail-closed qualification owners. It does not yet have a canonical Strategy Contract/Version/Run identity, two independently scoped Strategy Families, strategy-scoped evidence, a cross-strategy Portfolio decision, physical-Fill allocation to strategy sleeves, or one operator query spanning those facts.
+At the decision point, the repository already had one PostgreSQL-centered Continuous Research control plane, owner-resolved Candidate artifacts, multi-checkpoint T+1 Targets, Strategy Shadow, Portfolio Shadow, fill-derived physical Position, historical session/replay infrastructure, and fail-closed qualification owners. It lacked a canonical Strategy Contract/Version/Run identity, two independently scoped Strategy Families, strategy-scoped evidence, a cross-strategy Portfolio decision, physical-Fill allocation to strategy sleeves, and one operator query spanning those facts. Migration 085 and the shared runtime now implement that selected design; this paragraph records the pre-decision gap rather than current status.
 
 Extending the existing T+1 `StrategyShadowPolicy` for every family would keep strategy identity, Candidate selection, Entry, holding policy, and simulation coupled. Creating a second multi-strategy runtime would duplicate scheduling, recovery, and authority. The selected path is therefore to add one deep Multi-Strategy module behind the existing Continuous and historical/replay seams.
 

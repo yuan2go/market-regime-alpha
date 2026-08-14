@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical implementation architecture
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha/cli/continuous_research.py`, `src/market_regime_alpha/application/continuous_research`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Shape
@@ -49,8 +49,19 @@ BaoStock/Tencent recorded provider evidence
    -> uncalibrated exploratory PathForecast
    -> optional Canonical Lifecycle child
 -> ResearchDailySummary
+-> MultiStrategyRuntime child
+   -> Overnight Strategy Run
+   -> Swing State Strategy Run
+   -> Cross-strategy Portfolio Decision
 -> Continuous child receipts and terminal tick
 ```
+
+The Strategy child is part of the existing tick fence. It reloads the exact
+Candidate fact and stable Strategy Versions, records the complete gate/action
+funnel, and persists one Portfolio decision. It creates no Order, Fill, or
+physical Position. A model-blocked empty CandidateSet is itself a durable State
+owner fact, so both strategies record `DATA_INSUFFICIENT` instead of silently
+disappearing from the research sample.
 
 Before the decision child, the Research/Shadow composition may retrospectively
 build exact-14:55 BaoStock decisions, T+1 multi-horizon outcomes and PathForecast
@@ -70,6 +81,11 @@ Runtime. `HistoricalResearchRunner` advances a shared Decision Session Kernel
 through a PostgreSQL lease/fence/stage journal and can resume or replay the same
 Runtime Scope, Experiment and Target identities. Research-model and performance
 operators use the same database and remain exploratory.
+
+The Historical `STRATEGY` and `PORTFOLIO` stages call the same
+`MultiStrategyRuntime` and PostgreSQL repository as the Continuous child.
+`HISTORICAL`, `REPLAY`, and `SHADOW` remain explicit origins in lineage, while
+the strategy-policy/action semantics are shared.
 
 The post-runtime chain is orchestrated by thin commands on the same runtime and
 the existing PostgreSQL owners; it is not a second scheduler or daily writer:
