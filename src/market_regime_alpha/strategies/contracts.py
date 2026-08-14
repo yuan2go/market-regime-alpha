@@ -361,6 +361,21 @@ class StrategyPositionState:
             "reduce_count": self.reduce_count,
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StrategyPositionState:
+        current_price = payload["current_price"]
+        return cls(
+            strategy_version_id=ArtifactId(str(payload["strategy_version_id"])),
+            symbol=str(payload["symbol"]),
+            quantity=Decimal(str(payload["quantity"])),
+            average_cost=Decimal(str(payload["average_cost"])),
+            current_price=(None if current_price is None else Decimal(str(current_price))),
+            peak_price=Decimal(str(payload["peak_price"])),
+            sessions_held=int(payload["sessions_held"]),
+            add_count=int(payload["add_count"]),
+            reduce_count=int(payload["reduce_count"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyRuntimeInput:
@@ -400,6 +415,22 @@ class StrategyRuntimeInput:
             "configuration_reference": self.configuration_reference.to_canonical_dict(),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StrategyRuntimeInput:
+        candidate_payload = _mapping(payload["candidate_set"])
+        return cls(
+            origin=StrategyRunOrigin(str(payload["origin"])),
+            authority_mode=RuntimeAuthorityMode(str(payload["authority_mode"])),
+            parent_run_reference=_reference(payload["parent_run_reference"]),
+            parent_tick_reference=_reference(payload["parent_tick_reference"]),
+            candidate_set=CandidateSet.from_canonical_dict(dict(candidate_payload)),
+            dataset_reference=_reference(payload["dataset_reference"]),
+            decision_time=datetime.fromisoformat(str(payload["decision_time"])),
+            positions=tuple(StrategyPositionState.from_canonical_dict(_mapping(item)) for item in _sequence(payload["positions"])),
+            code_reference=_reference(payload["code_reference"]),
+            configuration_reference=_reference(payload["configuration_reference"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class GateAttribution:
@@ -426,6 +457,18 @@ class GateAttribution:
             "action": self.action.value,
             "reason_codes": list(self.reason_codes),
         }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> GateAttribution:
+        rank = payload["rank"]
+        return cls(
+            symbol=str(payload["symbol"]),
+            eligibility_status=StrategyEligibilityStatus(str(payload["eligibility_status"])),
+            candidate_status=str(payload["candidate_status"]),
+            rank=None if rank is None else int(rank),
+            action=CanonicalStrategyAction(str(payload["action"])),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +539,24 @@ class StrategyProposal:
             **self.identity_payload(),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StrategyProposal:
+        utility_score = payload["utility_score"]
+        return cls(
+            proposal_id=ArtifactId(str(payload["proposal_id"])),
+            proposal_hash=str(payload["proposal_hash"]),
+            strategy_run_id=ArtifactId(str(payload["strategy_run_id"])),
+            strategy_version_reference=_reference(payload["strategy_version_reference"]),
+            candidate_reference=_reference(payload["candidate_reference"]),
+            symbol=str(payload["symbol"]),
+            action=CanonicalStrategyAction(str(payload["action"])),
+            desired_weight=Decimal(str(payload["desired_weight"])),
+            utility_score=(None if utility_score is None else Decimal(str(utility_score))),
+            reason_codes=_strings(payload["reason_codes"]),
+            limitations=_strings(payload["limitations"]),
+            schema_version=str(payload["schema_version"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyRun:
@@ -564,6 +625,26 @@ class StrategyRun:
     def to_canonical_dict(self) -> dict[str, Any]:
         return {"run_hash": self.run_hash, **self.identity_payload()}
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StrategyRun:
+        return cls(
+            run_id=ArtifactId(str(payload["run_id"])),
+            run_hash=str(payload["run_hash"]),
+            cycle_id=ArtifactId(str(payload["cycle_id"])),
+            strategy_version_reference=_reference(payload["strategy_version_reference"]),
+            origin=StrategyRunOrigin(str(payload["origin"])),
+            authority_mode=RuntimeAuthorityMode(str(payload["authority_mode"])),
+            decision_time=datetime.fromisoformat(str(payload["decision_time"])),
+            input_hash=str(payload["input_hash"]),
+            status=StrategyRunStatus(str(payload["status"])),
+            gate_attributions=tuple(
+                GateAttribution.from_canonical_dict(_mapping(item)) for item in _sequence(payload["gate_attributions"])
+            ),
+            proposals=tuple(StrategyProposal.from_canonical_dict(_mapping(item)) for item in _sequence(payload["proposals"])),
+            reason_codes=_strings(payload["reason_codes"]),
+            schema_version=str(payload["schema_version"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class MultiStrategyCycle:
@@ -629,6 +710,17 @@ class MultiStrategyCycle:
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {"cycle_hash": self.cycle_hash, **self.identity_payload()}
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> MultiStrategyCycle:
+        return cls(
+            cycle_id=ArtifactId(str(payload["cycle_id"])),
+            cycle_hash=str(payload["cycle_hash"]),
+            runtime_input=StrategyRuntimeInput.from_canonical_dict(_mapping(payload["runtime_input"])),
+            runs=tuple(StrategyRun.from_canonical_dict(_mapping(item)) for item in _sequence(payload["runs"])),
+            created_at=datetime.fromisoformat(str(payload["created_at"])),
+            schema_version=str(payload["schema_version"]),
+        )
 
 
 def strategy_reference(version: StrategyVersion) -> RuntimeArtifactReference:
@@ -801,6 +893,18 @@ def _pairs(value: object) -> tuple[tuple[str, str], ...]:
             raise ValueError("expected pair")
         pairs.append((str(item[0]), str(item[1])))
     return tuple(pairs)
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("expected object")
+    return value
+
+
+def _sequence(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise ValueError("expected array")
+    return value
 
 
 __all__ = [

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -81,6 +81,18 @@ class FillAllocation:
             **self.identity_payload(),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> FillAllocation:
+        return cls(
+            allocation_id=ArtifactId(str(payload["allocation_id"])),
+            allocation_hash=str(payload["allocation_hash"]),
+            fill_reference=_reference(payload["fill_reference"]),
+            strategy_version_reference=_reference(payload["strategy_version_reference"]),
+            proposal_reference=_reference(payload["proposal_reference"]),
+            allocated_quantity=int(payload["allocated_quantity"]),
+            schema_version=str(payload["schema_version"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class FillAllocationBatch:
@@ -148,6 +160,27 @@ class FillAllocationBatch:
             "batch_hash": self.batch_hash,
             **self.identity_payload(),
         }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> FillAllocationBatch:
+        correction = payload["correction_of_fill_id"]
+        return cls(
+            batch_id=ArtifactId(str(payload["batch_id"])),
+            batch_hash=str(payload["batch_hash"]),
+            source_fill_id=FillId(str(payload["source_fill_id"])),
+            source_fill_hash=str(payload["source_fill_hash"]),
+            correction_of_fill_id=(None if correction is None else FillId(str(correction))),
+            account_id=str(payload["account_id"]),
+            symbol=str(payload["symbol"]),
+            side=TradeSide(str(payload["side"])),
+            quantity=int(payload["quantity"]),
+            price=Decimal(str(payload["price"])),
+            fees=Decimal(str(payload["fees"])),
+            occurred_at=datetime.fromisoformat(str(payload["occurred_at"])),
+            recorded_at=datetime.fromisoformat(str(payload["recorded_at"])),
+            allocations=tuple(FillAllocation.from_canonical_dict(_mapping(item)) for item in _sequence(payload["allocations"])),
+            schema_version=str(payload["schema_version"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +385,24 @@ def _allocation_payload(
         "proposal_reference": proposal_reference.to_canonical_dict(),
         "allocated_quantity": allocated_quantity,
     }
+
+
+def _reference(value: object) -> RuntimeArtifactReference:
+    if not isinstance(value, Mapping):
+        raise ValueError("expected Artifact reference")
+    return RuntimeArtifactReference.from_canonical_dict(value)
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("expected object")
+    return value
+
+
+def _sequence(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise ValueError("expected array")
+    return value
 
 
 __all__ = [

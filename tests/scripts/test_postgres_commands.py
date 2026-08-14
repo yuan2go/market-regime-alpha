@@ -90,16 +90,19 @@ def test_apply_migrations_honors_explicit_application_schema(
     postgres_factory: PostgresConnectionFactory,
     capsys,
 ) -> None:
-    assert apply_migrations_main(
-        [
-            "--database-url",
-            os.environ[TEST_DATABASE_URL_ENV],
-            "--database-schema",
-            postgres_factory.application_schema,
-        ]
-    ) == 0
+    assert (
+        apply_migrations_main(
+            [
+                "--database-url",
+                os.environ[TEST_DATABASE_URL_ENV],
+                "--database-schema",
+                postgres_factory.application_schema,
+            ]
+        )
+        == 0
+    )
     output = json.loads(capsys.readouterr().out)
 
     assert output["postgres_schema"] == postgres_factory.application_schema
-    assert output["latest_migration"] == 84
+    assert output["latest_migration"] == 85
     assert output["authority_table_count"] == 257

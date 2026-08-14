@@ -542,8 +542,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert by_stage[StateResearchStage.FORECAST].result is ResearchStageResult.RESEARCH_QUALIFIED
         assert forecast_sample_provider.loaded_batches
         assert all(
-            "HISTORICAL_SAMPLE_DATASET_LOADED" in item.reason_codes
-            and "HISTORICAL_SAMPLE_QUALIFICATION_UNQUALIFIED" in item.limitations
+            "HISTORICAL_SAMPLE_DATASET_LOADED" in item.reason_codes and "HISTORICAL_SAMPLE_QUALIFICATION_UNQUALIFIED" in item.limitations
             for item in forecast_sample_provider.loaded_batches
         )
         assert minute_calls
@@ -753,35 +752,27 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 artifact_root=tmp_path / "rejected-evaluation-panels-v2",
                 created_at=multi_target_available_at,
             )
-        panel, enrichment, panel_path, enrichment_path = (
-            shadow_operations.build_enriched_evaluation(
-                decision_id=frozen.decision_id,
-                targeted_outcome_id=operational_settlement.targeted_outcome_v2.settlement_id,
-                target_protocol_id=target_protocol.protocol_id,
-                dynamic_pool=dynamic_pool,
-                candidate_set=execution.decision.candidate_set,
-                state_policy_references=frozen.state_policy_references,
-                dataset=execution.preparation.controlled_preparation.daily_dataset,
-                feature_bundle=(
-                    execution.preparation.controlled_preparation.static_feature_bundle
-                ),
-                signal_run=execution.decision.signal.artifact,
-                forecasts=tuple(
-                    item.artifact.forecast for item in execution.decision.forecasts
-                ),
-                state_sources=(),
-                artifact_root=tmp_path / "evaluation-panels-v2",
-                created_at=multi_target_available_at,
-            )
+        panel, enrichment, panel_path, enrichment_path = shadow_operations.build_enriched_evaluation(
+            decision_id=frozen.decision_id,
+            targeted_outcome_id=operational_settlement.targeted_outcome_v2.settlement_id,
+            target_protocol_id=target_protocol.protocol_id,
+            dynamic_pool=dynamic_pool,
+            candidate_set=execution.decision.candidate_set,
+            state_policy_references=frozen.state_policy_references,
+            dataset=execution.preparation.controlled_preparation.daily_dataset,
+            feature_bundle=(execution.preparation.controlled_preparation.static_feature_bundle),
+            signal_run=execution.decision.signal.artifact,
+            forecasts=tuple(item.artifact.forecast for item in execution.decision.forecasts),
+            state_sources=(),
+            artifact_root=tmp_path / "evaluation-panels-v2",
+            created_at=multi_target_available_at,
         )
         assert panel_path.exists()
         assert enrichment_path.exists()
         assert enrichment.panel_reference.artifact_id == panel.panel_id
         assert panel.row_count == len(dynamic_pool.members)
         assert panel.slices[0].state_policy_references == frozen.state_policy_references
-        calibration_engineering = PostgresPathForecastCalibrationOperator(
-            postgres_factory
-        ).run(
+        calibration_engineering = PostgresPathForecastCalibrationOperator(postgres_factory).run(
             target_protocol=target_protocol,
             through_date=command.trading_date,
             created_at=multi_target_available_at,
@@ -798,22 +789,14 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         ).get_payload(ArtifactId(hypothesis["hypothesis_artifact_id"]))
         assert persisted_hypothesis["status"] == "NOT_ESTIMABLE"
         assert persisted_hypothesis["reason_codes"]
-        assert persisted_hypothesis["partition_policy"][
-            "minimum_validation_samples"
-        ] == 1
-        assert persisted_hypothesis["partition_policy"]["policy_hash"] == (
-            calibration_engineering["partition_policy_hash"]
-        )
+        assert persisted_hypothesis["partition_policy"]["minimum_validation_samples"] == 1
+        assert persisted_hypothesis["partition_policy"]["policy_hash"] == (calibration_engineering["partition_policy_hash"])
         assert persisted_hypothesis["calibrated"] is False
         assert persisted_hypothesis["formal_oos"] is False
         strategy_observed_at = multi_target_available_at + timedelta(seconds=1)
         lineage = ShadowOwnerLineageRequest(
-            decision_reference=ValidationArtifactReference(
-                "SHADOW_DECISION", frozen.decision_id, frozen.decision_hash
-            ),
-            panel_reference=ValidationArtifactReference(
-                "RESEARCH_PANEL_V2", panel.panel_id, panel.panel_hash
-            ),
+            decision_reference=ValidationArtifactReference("SHADOW_DECISION", frozen.decision_id, frozen.decision_hash),
+            panel_reference=ValidationArtifactReference("RESEARCH_PANEL_V2", panel.panel_id, panel.panel_hash),
             candidate_reference=ValidationArtifactReference(
                 "CANDIDATE_SET",
                 execution.decision.candidate_set.envelope.artifact_id,
@@ -877,12 +860,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             lineage=lineage,
         )
         assert strategy_result["status"] == "SETTLED"
-        assert strategy_operator.run_auto(
-            trading_date=command.trading_date,
-            observed_at=strategy_observed_at,
-            policy=observation_policy,
-            lineage=lineage,
-        ) == strategy_result
+        assert (
+            strategy_operator.run_auto(
+                trading_date=command.trading_date,
+                observed_at=strategy_observed_at,
+                policy=observation_policy,
+                lineage=lineage,
+            )
+            == strategy_result
+        )
         strategy_replay = strategy_operator.replay(ArtifactId(strategy_result["session_id"]))
         assert strategy_replay["status"] == "SETTLED"
         assert strategy_replay["event_count"] == 8
@@ -952,20 +938,21 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         )
         assert portfolio_result["status"] == "RECORDED"
         assert portfolio_result["shadow_fill_is_real_fill"] is False
-        assert portfolio_operator.run_auto(
-            research_trading_date=command.trading_date,
-            trading_date=next_session_date,
-            observed_at=strategy_observed_at,
-            portfolio_id=None,
-            initial_cash=Decimal("1000000"),
-            policy=portfolio_policy,
-            observation_policy=observation_policy,
-            lineage=lineage,
-            strategy_reference=strategy_reference,
-        )["status"] == "RECOVERED_IDEMPOTENT"
-        portfolio_replay = portfolio_operator.replay(
-            ArtifactId(str(portfolio_result["portfolio_id"]))
+        assert (
+            portfolio_operator.run_auto(
+                research_trading_date=command.trading_date,
+                trading_date=next_session_date,
+                observed_at=strategy_observed_at,
+                portfolio_id=None,
+                initial_cash=Decimal("1000000"),
+                policy=portfolio_policy,
+                observation_policy=observation_policy,
+                lineage=lineage,
+                strategy_reference=strategy_reference,
+            )["status"]
+            == "RECOVERED_IDEMPOTENT"
         )
+        portfolio_replay = portfolio_operator.replay(ArtifactId(str(portfolio_result["portfolio_id"])))
         assert portfolio_replay["state_count"] == 1
         assert portfolio_replay["shadow_position_is_real_position"] is False
         with postgres_factory.connection(read_only=True) as connection:
@@ -1034,9 +1021,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         )
         assert approval_decision.production_authorized is False
         assert len(access.audit_events(reader=approver.principal_id)) == 5
-        recovery_audit = PostgresRecoveryAudit(postgres_factory).inspect(
-            checked_at=strategy_observed_at + timedelta(days=2, seconds=5)
-        )
+        recovery_audit = PostgresRecoveryAudit(postgres_factory).inspect(checked_at=strategy_observed_at + timedelta(days=2, seconds=5))
         assert recovery_audit.issues == ()
         assert recovery_audit.portfolio_replay_verified_count == 1
         report = shadow_operations.report(shadow_command.session_id)
@@ -1114,7 +1099,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 84
+        assert recovery.migration_head == 85
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),
@@ -1662,9 +1647,7 @@ def _seed_historical_registry(
     return _TrackingHistoricalRegistryPathForecastSampleProvider(repository)
 
 
-class _TrackingHistoricalRegistryPathForecastSampleProvider(
-    HistoricalRegistryPathForecastSampleProvider
-):
+class _TrackingHistoricalRegistryPathForecastSampleProvider(HistoricalRegistryPathForecastSampleProvider):
     def __init__(self, reader) -> None:
         super().__init__(reader)
         self.loaded_batches: list[PathForecastSampleBatch] = []

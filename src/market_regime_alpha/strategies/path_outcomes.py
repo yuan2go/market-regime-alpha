@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -134,6 +134,39 @@ class StrategyPathOutcome:
             "outcome_hash": self.outcome_hash,
             **self.identity_payload(),
         }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> StrategyPathOutcome:
+        exit_time = payload["exit_time"]
+        exit_price = payload["exit_price"]
+        opportunity_loss = payload["post_exit_opportunity_loss"]
+        avoided_drawdown = payload["avoided_drawdown"]
+        return cls(
+            outcome_id=ArtifactId(str(payload["outcome_id"])),
+            outcome_hash=str(payload["outcome_hash"]),
+            strategy_version_reference=_reference(payload["strategy_version_reference"]),
+            strategy_run_reference=_reference(payload["strategy_run_reference"]),
+            dataset_reference=_reference(payload["dataset_reference"]),
+            target_reference=_reference(payload["target_reference"]),
+            symbol=str(payload["symbol"]),
+            decision_time=datetime.fromisoformat(str(payload["decision_time"])),
+            horizon_sessions=int(payload["horizon_sessions"]),
+            reference_price=Decimal(str(payload["reference_price"])),
+            terminal_return=Decimal(str(payload["terminal_return"])),
+            mfe=Decimal(str(payload["mfe"])),
+            mae=Decimal(str(payload["mae"])),
+            barrier_ordering=BarrierOrderingOutcome(str(payload["barrier_ordering"])),
+            time_to_mfe_seconds=int(payload["time_to_mfe_seconds"]),
+            trend_continuation=_boolean(payload["trend_continuation"]),
+            failure=_boolean(payload["failure"]),
+            exit_time=(None if exit_time is None else datetime.fromisoformat(str(exit_time))),
+            exit_price=None if exit_price is None else Decimal(str(exit_price)),
+            post_exit_opportunity_loss=(None if opportunity_loss is None else Decimal(str(opportunity_loss))),
+            avoided_drawdown=(None if avoided_drawdown is None else Decimal(str(avoided_drawdown))),
+            measured_at=datetime.fromisoformat(str(payload["measured_at"])),
+            limitations=_strings(payload["limitations"]),
+            schema_version=str(payload["schema_version"]),
+        )
 
 
 def measure_strategy_path(
@@ -312,6 +345,24 @@ def _outcome_payload(**values: Any) -> dict[str, Any]:
         "measured_at": canonical_datetime(values["measured_at"]),
         "limitations": list(values["limitations"]),
     }
+
+
+def _reference(value: object) -> RuntimeArtifactReference:
+    if not isinstance(value, Mapping):
+        raise ValueError("expected Artifact reference")
+    return RuntimeArtifactReference.from_canonical_dict(value)
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("expected string array")
+    return tuple(value)
+
+
+def _boolean(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("expected boolean")
+    return value
 
 
 __all__ = [

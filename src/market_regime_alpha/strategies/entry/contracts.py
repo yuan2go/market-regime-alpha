@@ -25,23 +25,13 @@ from market_regime_alpha.core.time import AsOfTime, AvailabilityTime, DecisionTi
 ENTRY_PATH_TARGET_SCHEMA_VERSION = "entry-path-target-v1"
 ENTRY_PATH_OBSERVATION_SCHEMA_VERSION = "entry-path-observation-v2"
 ENTRY_PATH_MATERIALIZATION_SCHEMA_VERSION = "entry-path-materialization-v2"
-NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1 = (
-    "NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1"
-)
-DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1 = (
-    "DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1"
-)
-DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1 = (
-    "DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1"
-)
+NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1 = "NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1"
+DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1 = "DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1"
+DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1 = "DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1"
 
 
 def _require_text(label: str, value: str) -> None:
-    if (
-        not isinstance(value, str)
-        or not value.strip()
-        or value != value.strip()
-    ):
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise ValueError(f"{label} must be a non-empty trimmed string")
 
 
@@ -84,12 +74,8 @@ class EntryPathReasonCode(str, Enum):
     """Versioned audit reason for a valid Entry path observation state."""
 
     OUTCOME_RESOLVED = "OUTCOME_RESOLVED"
-    DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED = (
-        "DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED"
-    )
-    HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH = (
-        "HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH"
-    )
+    DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED = "DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED"
+    HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH = "HORIZON_EXHAUSTED_WITHOUT_BARRIER_TOUCH"
     FUTURE_DAILY_BAR_MISSING = "FUTURE_DAILY_BAR_MISSING"
     HORIZON_NOT_COMPLETE = "HORIZON_NOT_COMPLETE"
     EVIDENCE_NOT_YET_AVAILABLE = "EVIDENCE_NOT_YET_AVAILABLE"
@@ -105,12 +91,8 @@ class EntryBarrierSpec:
     horizon_sessions: int
     price_adjustment_basis: str
     target_start_convention: str = NEXT_TRADING_SESSION_OPEN_AFTER_DECISION_V1
-    reference_price_convention: str = (
-        DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1
-    )
-    path_ordering_convention: str = (
-        DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1
-    )
+    reference_price_convention: str = DECISION_TIME_1455_SNAPSHOT_REFERENCE_PRICE_V1
+    path_ordering_convention: str = DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1
     schema_version: str = ENTRY_PATH_TARGET_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -118,9 +100,7 @@ class EntryBarrierSpec:
             ("upper_return", self.upper_return),
             ("lower_return", self.lower_return),
         ):
-            if isinstance(numeric_value, bool) or not math.isfinite(
-                float(numeric_value)
-            ):
+            if isinstance(numeric_value, bool) or not math.isfinite(float(numeric_value)):
                 raise ValueError(f"{label} must be finite and non-boolean")
         if self.upper_return <= 0.0:
             raise ValueError("upper_return must be positive")
@@ -197,10 +177,7 @@ class EntryPathObservation:
             ("lower_price", self.lower_price),
         ):
             _require_optional_positive_price(label, value)
-        price_presence = tuple(
-            value is not None
-            for value in (self.reference_price, self.upper_price, self.lower_price)
-        )
+        price_presence = tuple(value is not None for value in (self.reference_price, self.upper_price, self.lower_price))
         if any(price_presence) and not all(price_presence):
             raise ValueError("reference and barrier prices must be present together")
         if all(price_presence):
@@ -278,17 +255,11 @@ class EntryPathObservation:
             raise ValueError("non-AVAILABLE Entry path observation must not carry outcome")
         if self.status is EntryPathObservationStatus.AMBIGUOUS:
             self._require_prices_event_and_observed()
-            if (
-                self.trigger_type
-                is not EntryPathTriggerType.INTRADAY_DUAL_TOUCH_UNORDERED
-            ):
+            if self.trigger_type is not EntryPathTriggerType.INTRADAY_DUAL_TOUCH_UNORDERED:
                 raise ValueError("AMBIGUOUS observation requires dual-touch trigger")
             if self.first_missing_session_date is not None:
                 raise ValueError("AMBIGUOUS observation cannot carry a missing session")
-            if (
-                self.reason_code
-                is not EntryPathReasonCode.DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED
-            ):
+            if self.reason_code is not EntryPathReasonCode.DAILY_BAR_DUAL_TOUCH_ORDER_UNRESOLVED:
                 raise ValueError("AMBIGUOUS observation reason_code is inconsistent")
             return
         if self.status is EntryPathObservationStatus.MISSING:
@@ -315,10 +286,7 @@ class EntryPathObservation:
             raise ValueError("NOT_YET_OBSERVED observation reason_code is inconsistent")
 
     def _require_prices(self) -> None:
-        if any(
-            value is None
-            for value in (self.reference_price, self.upper_price, self.lower_price)
-        ):
+        if any(value is None for value in (self.reference_price, self.upper_price, self.lower_price)):
             raise ValueError("observation state requires reference and barrier prices")
 
     def _require_prices_and_observed(self) -> None:
@@ -384,15 +352,10 @@ class EntryPathTargetMaterialization:
             raise ValueError("schema_version must be entry-path-materialization-v2")
         _require_text("observation_schema_version", self.observation_schema_version)
         if self.observation_schema_version != ENTRY_PATH_OBSERVATION_SCHEMA_VERSION:
-            raise ValueError(
-                "observation_schema_version must be entry-path-observation-v2"
-            )
+            raise ValueError("observation_schema_version must be entry-path-observation-v2")
         if not isinstance(self.readiness_policy_id, ArtifactId):
             raise TypeError("readiness_policy_id must be an ArtifactId")
-        if (
-            self.consumed_coverage_assertion_id is not None
-            and not isinstance(self.consumed_coverage_assertion_id, ArtifactId)
-        ):
+        if self.consumed_coverage_assertion_id is not None and not isinstance(self.consumed_coverage_assertion_id, ArtifactId):
             raise TypeError("consumed_coverage_assertion_id must be an ArtifactId or None")
         for label, values in (
             ("entry_reference_evidence_ids", self.entry_reference_evidence_ids),
@@ -414,18 +377,13 @@ class EntryPathTargetMaterialization:
         if tuple(sorted(symbols)) != symbols:
             raise ValueError("Entry path observations must be sorted by symbol")
         if len(self.entry_reference_evidence_ids) != len(self.observations):
-            raise ValueError(
-                "entry_reference_evidence_ids must match observation cardinality"
-            )
+            raise ValueError("entry_reference_evidence_ids must match observation cardinality")
         for observation in self.observations:
             if not isinstance(observation, EntryPathObservation):
                 raise TypeError("observations must contain EntryPathObservation values")
             if observation.schema_version != self.observation_schema_version:
                 raise ValueError("observations must use the declared Observation schema")
-            if (
-                observation.observed_at is not None
-                and observation.observed_at.value > self.materialized_at.value
-            ):
+            if observation.observed_at is not None and observation.observed_at.value > self.materialized_at.value:
                 raise ValueError("Target observed_at cannot follow materialized_at")
 
 

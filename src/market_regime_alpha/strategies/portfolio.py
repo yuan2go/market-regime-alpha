@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -42,6 +42,13 @@ class CrossStrategyPortfolioPolicy:
             "maximum_symbol_weight": str(self.maximum_symbol_weight),
         }
 
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> CrossStrategyPortfolioPolicy:
+        return cls(
+            maximum_gross_weight=Decimal(str(payload["maximum_gross_weight"])),
+            maximum_symbol_weight=Decimal(str(payload["maximum_symbol_weight"])),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CrossStrategyPortfolioLine:
@@ -71,6 +78,18 @@ class CrossStrategyPortfolioLine:
             "accepted_weight": str(self.accepted_weight),
             "reason_codes": list(self.reason_codes),
         }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> CrossStrategyPortfolioLine:
+        return cls(
+            strategy_version_reference=_reference(payload["strategy_version_reference"]),
+            proposal_reference=_reference(payload["proposal_reference"]),
+            symbol=str(payload["symbol"]),
+            action=CanonicalStrategyAction(str(payload["action"])),
+            requested_weight=Decimal(str(payload["requested_weight"])),
+            accepted_weight=Decimal(str(payload["accepted_weight"])),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +145,20 @@ class CrossStrategyPortfolioDecision:
             "decision_hash": self.decision_hash,
             **self.identity_payload(),
         }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> CrossStrategyPortfolioDecision:
+        return cls(
+            decision_id=ArtifactId(str(payload["decision_id"])),
+            decision_hash=str(payload["decision_hash"]),
+            cycle_reference=_reference(payload["cycle_reference"]),
+            policy=CrossStrategyPortfolioPolicy.from_canonical_dict(_mapping(payload["policy"])),
+            status=CrossStrategyPortfolioStatus(str(payload["status"])),
+            gross_accepted_weight=Decimal(str(payload["gross_accepted_weight"])),
+            lines=tuple(CrossStrategyPortfolioLine.from_canonical_dict(_mapping(item)) for item in _sequence(payload["lines"])),
+            limitations=_strings(payload["limitations"]),
+            schema_version=str(payload["schema_version"]),
+        )
 
 
 def build_cross_strategy_portfolio(
@@ -230,6 +263,30 @@ def _line(
         accepted_weight=accepted_weight,
         reason_codes=reason_codes,
     )
+
+
+def _reference(value: object) -> RuntimeArtifactReference:
+    if not isinstance(value, Mapping):
+        raise ValueError("expected Artifact reference")
+    return RuntimeArtifactReference.from_canonical_dict(value)
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("expected object")
+    return value
+
+
+def _sequence(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise ValueError("expected array")
+    return value
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("expected string array")
+    return tuple(value)
 
 
 __all__ = [
