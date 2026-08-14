@@ -235,6 +235,11 @@ class StrategyExecutionApplicationService:
             lot_size=lot_size,
             operator_quantity=operator_quantity,
             override_reason=override_reason,
+            replacement_authority=(
+                self._execution_repository.proposal_has_execution_history(
+                    proposal_id
+                )
+            ),
             decision_time=proposal_decision_time,
             created_at=created_at,
         )
