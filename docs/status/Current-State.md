@@ -71,6 +71,21 @@ Missing or stale Swing prices return explicit fail-closed actions. No broker,
 new scheduler, mutable Strategy Position table or parallel Shadow decision path
 was added.
 
+Migration 088 makes that bridge aggregate-safe without adding an execution
+ledger. New Strategy intents resolve the exact latest decision-time Manual
+Account Observation, its latest complete `RECONCILED` report, and the full
+reloadable canonical one-minute Market Bar frozen in the Strategy cycle; the
+caller no longer supplies an observation or sizing price. PostgreSQL locks the
+account, Proposal and Intent scopes in one order, then reconstructs Proposal
+effective Fill/reservation/remaining quantity, account cash and available-sell
+reservations, unobserved Fill/correction deltas, and projected
+gross/symbol/Strategy exposure from the existing facts. Cancel/reject releases
+unused authority, replacement consumes only remaining authority, cancellation
+can still receive a late observed Fill, and correction-driven Outcome heads are
+monotonic by their effective Fill head. Operator inspection exposes the active
+intents and exact Portfolio/account/reconciliation/price/Dataset/Calendar
+lineage. Formal qualification, Production and Broker states remain unchanged.
+
 Phase C engineering adds an immutable Formal Research Protocol with exact
 canonical-owner bindings (including full Frozen Trading Calendar replay), OutcomeTarget-bound forecasts, frozen-calendar
 purge/embargo, Provider-by-Contract-by-Fact qualification decisions,
@@ -318,7 +333,8 @@ journals and the longitudinal Historical Corpus owners. Migration 085 adds the
 multi-strategy business closure; migration 086 adds its observed-Fill state and
 realized-Outcome closure; migration 087 adds Strategy-authorized manual intent,
 partial/corrected Fill reconciliation and Outcome supersession to those existing
-owners. They do not alter migration
+owners; migration 088 adds aggregate Proposal/account cash/exposure enforcement
+and owner-resolved price/account lineage without a new table. They do not alter migration
 046, which removes reference-only
 qualification paths from the current architecture:
 

@@ -53,7 +53,7 @@ Future families may include ETF rotation, theme rotation, trend following, mean 
 
 The principal architectural constraint for the next phase is **business and research convergence, not further governance expansion**. PostgreSQL Authority, PIT, replay, evidence identity, recovery, and qualification remain core. New authorities, receipts, protocol wrappers, orchestrators, or runtime planes require a concrete correctness or operational failure mode before they are added.
 
-### 1.1 Implementation convergence through migration 087
+### 1.1 Implementation convergence through migration 088
 
 The first executable convergence slice is now installed. One stable Strategy
 Registry contains `OVERNIGHT` and `SWING_STATE`; both run through the same
@@ -92,6 +92,20 @@ Outcome corrections append a new revision that supersedes exactly one earlier
 economic fact; historical revisions remain queryable while inspection returns
 only current heads. No second execution, Position, Outcome, scheduler or Runtime
 authority was introduced.
+
+Migration 088 closes aggregate execution authority on that same ledger. The
+Strategy cycle freezes the full reloadable canonical one-minute bar owner used
+for sizing, while the application resolves the exact latest decision-time
+Manual Account Observation and its latest complete `RECONCILED` report; callers
+no longer choose price or account snapshots. Under one PostgreSQL transaction,
+locks are acquired in account → Proposal → Intent order and the existing
+ManualTrade/Fill facts reconstruct Proposal filled/reserved/remaining quantity,
+account cash and available-sell reservations, and projected post-trade
+gross/symbol/Strategy exposure. Cancel/reject releases unused reservations,
+late Fill and correction facts remain append-only, and replacement intents may
+consume only the currently remaining Proposal authority. Migration 088 adds
+lineage/projection columns and indexes, not a reservation table or second
+execution/Price/Position Authority.
 
 The existing Strategy Shadow entry path now treats the canonical Overnight
 `StrategyProposal` as its decision input whenever the Multi-Strategy cycle

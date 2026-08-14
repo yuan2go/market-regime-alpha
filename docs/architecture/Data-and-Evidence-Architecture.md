@@ -42,7 +42,7 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 087 and checksummed.
+- Packaged migrations are contiguous from 001 through 088 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
@@ -62,7 +62,14 @@ Strategy Shadow owner. Strategy sleeve state remains a deterministic projection
 of Fill allocations, the exact PIT Trading Calendar and account observations,
 not a second Position table. Migration 087 extends the existing ManualTrade and
 realized Outcome owners with exact Strategy execution authorization and
-append-only Outcome supersession. It adds no table or Authority. The migrations extend the existing
+append-only Outcome supersession. Migration 088 adds owner-resolved account
+reconciliation and canonical Market Bar/Dataset projections, the Proposal
+quantity ceiling and active-account indexes to `manual_trade_records`. The full
+Canonical Market Bar payload is frozen in the append-only Strategy cycle and
+reloaded/hash-verified before sizing; the projection cannot substitute price.
+Reservations and post-observation Fill/correction deltas are reconstructed from
+the existing ManualTrade and Fill facts under PostgreSQL transaction locks, so
+088 adds no table or Authority. The migrations extend the existing
 Continuous child constraint with `STRATEGY_RUNTIME`; it creates neither another
 scheduler nor another Position owner. None weakens migration 046 or creates a
 second Calendar/PIT/Forecast/Evaluation owner.

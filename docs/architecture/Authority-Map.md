@@ -411,11 +411,11 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Domain / Capability:** Execution and Position / observed manual records and fill-derived books.
 - **Classification:** Business Authority for actual execution facts and Position state.
 - **Owner:** Manual Execution and Position Book bounded contexts.
-- **Canonical Writer:** PostgreSQL manual execution, traceability and Position Book repositories. `StrategyExecutionApplicationService` validates exact accepted Portfolio/Proposal authority before calling those writers.
+- **Canonical Writer:** PostgreSQL manual execution, traceability and Position Book repositories. `StrategyExecutionApplicationService` resolves exact accepted Portfolio/Proposal, latest complete account/reconciliation, canonical Market Bar/Dataset and Calendar owners before calling those writers. Account/Proposal/Intent advisory locks serialize aggregate quantity, cash, available-sell and post-trade exposure checks on the existing ManualTrade/Fill ledger.
 - **Reader:** manual record/fill, traceability and Position Book Readers.
 - **Repository:** `PostgresManualExecutionRepository`, `PostgresTraceableManualExecutionRepository` and Position Book repository.
 - **PostgreSQL tables:** `execution_commands`, `manual_trade_records`, `manual_trade_events`, `manual_fills`, `position_books`, `position_book_events`, `traceable_manual_trade_bindings`.
-- **Artifact / Receipt:** Manual Trade Record, observed Fill and fill-derived Position Book event/snapshot.
+- **Artifact / Receipt:** Manual Trade Record with Strategy execution authorization, observed Fill and fill-derived Position Book event/snapshot. Proposal remaining authority and cash/exposure reservations are reconstructible projections, not new receipts or ledgers.
 - **Runtime caller:** explicit human record/import, including bounded `decision-system` Strategy intent/observed-Fill/recovery commands; no automatic broker caller.
 - **Downstream consumer:** Strategy Fill allocation, reconciliation, complete-account Portfolio/Risk, Holding and Exit assessment.
 - **Replay mechanism:** append-only manual ledger and Position Book event replay.

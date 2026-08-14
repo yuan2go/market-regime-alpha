@@ -147,7 +147,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 087, `strategy_execution_integrity`. Expected schema
+Expected head: migration 088, `portfolio_execution_authority`. Expected schema
 catalog: 270 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
@@ -185,6 +185,12 @@ existing ManualTrade ledger and adds append-only realized Outcome revisions.
 It adds no table: partial/corrected observed Fills still use `manual_fills`,
 physical Position still comes only from the Fill projector, and Strategy sleeves
 remain allocation projections.
+Migration 088 extends those same rows with exact reconciliation and canonical
+Market Bar/Dataset lineage plus the Proposal quantity ceiling. Account,
+Proposal and Intent advisory locks serialize remaining-quantity, cash,
+available-sell and projected-exposure reconstruction from existing
+ManualTrade/Fill/Position facts. It adds indexes and constraints but no table,
+reservation ledger, Price Authority, Position Authority or Broker path.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.
@@ -408,11 +414,18 @@ uv run model-governance access-decide-approval --help
 
 `decision-system` is manual-account decision support. In addition to account and
 decision commands, `create-strategy-intent --input`,
-`record-strategy-fill --input` and `recover-strategy-execution` form the bounded
+`update-strategy-intent --input`, `record-strategy-fill --input`,
+`recover-strategy-execution` and `inspect-strategy-execution` form the bounded
 operator path from an accepted Multi-Strategy Portfolio line to the existing
-manual Fill/allocation owners. The intent input must bind exact Portfolio,
-Proposal, account-observation and PIT Calendar references; a quantity override
-may only reduce the recommendation and requires a reason. Recovery is safe after
+manual Fill/allocation owners. The intent input binds Portfolio, Proposal,
+account and PIT Calendar; the service resolves the latest eligible, exact-time,
+complete reconciled account fact and the Strategy cycle's canonical Market Bar
+price. It does not accept a caller account-observation ID or reference price. A
+quantity override may only reduce the recommendation and requires a reason.
+`update-strategy-intent` records CANCELLED/REJECTED/UNKNOWN or reconciliation
+states with CAS; unused reservations are released. Read-only inspection reports
+authorized/reserved/filled/remaining quantity, active intents, account reserved
+cash, projected exposure and all owner references. Recovery is safe after
 a persisted Fill because it reconstructs missing allocations and Outcome heads
 from immutable facts. These commands do not create a broker Order or grant
 automatic execution authority.

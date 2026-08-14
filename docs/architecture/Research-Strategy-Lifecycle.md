@@ -16,7 +16,8 @@ Research Universe Policy / immutable Runtime Scope
    -> Overnight action/proposal
    -> Swing Entry/Hold/Add/Reduce/Exit action/proposal
 -> simple cross-strategy Portfolio/Risk baseline
--> Strategy Shadow simulated lifecycle or observed manual Fill
+-> account-aware Proposal remaining/exposure authorization
+-> Strategy Shadow simulated lifecycle or owner-resolved Manual Intent/Fill
    -> immutable Strategy Fill Allocation
    -> owner-resolved Strategy Sleeve State on the next session
    -> fill-derived realized Strategy Outcome after full Exit
@@ -57,6 +58,19 @@ current/peak price, sessions held, add/reduce counts, exact Strategy Version and
 Proposal/Fill lineage. Same-session marks update price but do not age a sleeve.
 The frozen cycle input is the replay boundary; callers cannot supply those
 values through the production composition.
+
+For an accepted Strategy Proposal, command idempotency and aggregate execution
+authority are separate invariants. PostgreSQL reconstructs
+`authorized - effective filled - active reserved = remaining executable` under
+account → Proposal → Intent locks, so a different idempotency key cannot reuse
+the same Proposal or cash. Terminal cancellation/rejection releases the unused
+reservation for a replacement; late Fill and correction facts revise effective
+quantity without rewriting history. BUY authorization includes physical
+exposure, active reservations and Fill/correction cash deltas not yet present in
+the exact account observation. SELL/Exit remains risk-reducing and bypasses
+gross-increase ceilings, but cannot exceed owner-resolved available quantity.
+The sizing price is the reloadable canonical one-minute Market Bar frozen by the
+Strategy cycle, not a caller field.
 
 For free-data operation, retrospective decisions and later outcomes additionally
 feed an immutable Historical Sample Dataset in PostgreSQL. The Registry Reader
