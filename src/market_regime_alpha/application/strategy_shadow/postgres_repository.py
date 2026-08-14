@@ -24,7 +24,9 @@ from market_regime_alpha.application.strategy_shadow.observation_builder import 
     ShadowObservationReceipt,
 )
 from market_regime_alpha.application.strategy_shadow.multi_strategy_lifecycle import (
+    FillDerivedStrategyOutcome,
     project_strategy_position_states,
+    settle_fill_derived_strategy_outcomes,
 )
 from market_regime_alpha.application.decision_system.contracts import (
     ManualAccountObservation,
@@ -40,6 +42,7 @@ from market_regime_alpha.persistence.postgres.connection import PostgresConnecti
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.strategies.contracts import (
     CanonicalStrategyAction,
+    MultiStrategyCycle,
     StrategyPositionState,
 )
 from market_regime_alpha.strategies.sleeves import FillAllocationBatch
@@ -248,6 +251,241 @@ class PostgresStrategyShadowRepository:
             proposal_actions=actions,
             observations=observations,
         )
+
+    def settle_multi_strategy_outcomes(
+        self,
+        *,
+        account_id: str,
+        decision_time: datetime,
+    ) -> tuple[FillDerivedStrategyOutcome, ...]:
+        """Recover and persist every completed allocated-Fill lifecycle."""
+
+        with self._factory.connection(read_only=True) as connection:
+            batch_rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM strategy_fill_allocation_batch
+                WHERE account_id = %s AND created_at <= %s
+                ORDER BY created_at, batch_id
+                """,
+                (account_id, decision_time),
+            ).fetchall()
+            batches = tuple(
+                FillAllocationBatch.from_canonical_dict(_dict_payload(row[0]))
+                for row in batch_rows
+            )
+            proposal_references = {
+                allocation.proposal_reference.artifact_id: allocation.proposal_reference
+                for batch in batches
+                for allocation in batch.allocations
+            }
+            proposal_rows = (
+                ()
+                if not proposal_references
+                else connection.execute(
+                    """
+                    SELECT p.proposal_id, p.proposal_hash, p.action,
+                           p.strategy_version_id, p.symbol, c.payload_json
+                    FROM strategy_proposal AS p
+                    JOIN strategy_run AS r ON r.run_id = p.run_id
+                    JOIN multi_strategy_cycle AS c ON c.cycle_id = r.cycle_id
+                    WHERE p.proposal_id = ANY(%s)
+                    """,
+                    ([str(item) for item in proposal_references],),
+                ).fetchall()
+            )
+        actions: dict[ArtifactId, CanonicalStrategyAction] = {}
+        pre_exit_states: dict[ArtifactId, StrategyPositionState] = {}
+        for row in proposal_rows:
+            proposal_id = ArtifactId(str(row[0]))
+            expected = proposal_references.get(proposal_id)
+            if expected is None or str(row[1]) != expected.content_hash:
+                raise ValueError("Strategy Proposal owner identity mismatch")
+            action = CanonicalStrategyAction(str(row[2]))
+            actions[proposal_id] = action
+            if action is not CanonicalStrategyAction.EXIT:
+                continue
+            cycle = MultiStrategyCycle.from_canonical_dict(_dict_payload(row[5]))
+            matched = tuple(
+                state
+                for state in cycle.runtime_input.positions
+                if str(state.strategy_version_id) == str(row[3])
+                and state.symbol == str(row[4])
+            )
+            if len(matched) != 1 or matched[0].state_reference is None:
+                raise ValueError("EXIT Proposal lacks owner-resolved pre-exit state")
+            pre_exit_states[proposal_id] = matched[0]
+        if set(actions) != set(proposal_references):
+            raise ValueError("Strategy Fill lineage references a missing Proposal")
+        outcomes = settle_fill_derived_strategy_outcomes(
+            account_id=account_id,
+            decision_time=decision_time,
+            batches=batches,
+            proposal_actions=actions,
+            pre_exit_states=pre_exit_states,
+        )
+        if outcomes:
+            self._factory.run_transaction(
+                lambda connection: self._save_multi_strategy_outcomes(
+                    connection,
+                    outcomes,
+                )
+            )
+        return tuple(
+            self.get_multi_strategy_outcome(outcome.outcome_id)
+            for outcome in outcomes
+        )
+
+    def get_multi_strategy_outcome(
+        self,
+        outcome_id: ArtifactId,
+    ) -> FillDerivedStrategyOutcome:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM strategy_realized_outcome
+                WHERE outcome_id = %s
+                """,
+                (str(outcome_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(outcome_id))
+        return FillDerivedStrategyOutcome.from_canonical_dict(
+            _dict_payload(row[0])
+        )
+
+    @staticmethod
+    def _save_multi_strategy_outcomes(
+        connection: Any,
+        outcomes: tuple[FillDerivedStrategyOutcome, ...],
+    ) -> None:
+        for outcome in outcomes:
+            PostgresStrategyShadowRepository._verify_multi_strategy_outcome_lineage(
+                connection,
+                outcome,
+            )
+            payload = outcome.to_canonical_dict()
+            connection.execute(
+                """
+                INSERT INTO strategy_realized_outcome(
+                    outcome_id, outcome_hash, account_id,
+                    strategy_version_id, strategy_version_hash,
+                    entry_proposal_id, entry_proposal_hash,
+                    exit_proposal_id, exit_proposal_hash,
+                    pre_exit_state_id, pre_exit_state_hash,
+                    symbol, opened_at, closed_at, invested_notional,
+                    gross_pnl, total_cost, net_pnl, net_return,
+                    source_allocation_ids, source_fill_ids,
+                    production_authorized, payload_json, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    false, %s, %s
+                ) ON CONFLICT (outcome_id) DO NOTHING
+                """,
+                (
+                    str(outcome.outcome_id),
+                    outcome.outcome_hash,
+                    outcome.account_id,
+                    str(outcome.strategy_version_reference.artifact_id),
+                    outcome.strategy_version_reference.content_hash,
+                    str(outcome.entry_proposal_reference.artifact_id),
+                    outcome.entry_proposal_reference.content_hash,
+                    str(outcome.exit_proposal_reference.artifact_id),
+                    outcome.exit_proposal_reference.content_hash,
+                    str(outcome.pre_exit_state_reference.artifact_id),
+                    outcome.pre_exit_state_reference.content_hash,
+                    outcome.symbol,
+                    outcome.opened_at,
+                    outcome.closed_at,
+                    outcome.invested_notional,
+                    outcome.gross_pnl,
+                    outcome.total_cost,
+                    outcome.net_pnl,
+                    outcome.net_return,
+                    [
+                        str(item.artifact_id)
+                        for item in outcome.source_allocation_references
+                    ],
+                    [
+                        str(item.artifact_id)
+                        for item in outcome.source_fill_references
+                    ],
+                    Jsonb(payload),
+                    outcome.settled_at,
+                ),
+            )
+            stored = connection.execute(
+                """
+                SELECT outcome_hash, payload_json, production_authorized
+                FROM strategy_realized_outcome WHERE outcome_id = %s
+                """,
+                (str(outcome.outcome_id),),
+            ).fetchone()
+            if (
+                stored is None
+                or str(stored[0]) != outcome.outcome_hash
+                or stored[1] != payload
+                or bool(stored[2])
+            ):
+                raise ValueError("Strategy Outcome immutable identity conflict")
+
+    @staticmethod
+    def _verify_multi_strategy_outcome_lineage(
+        connection: Any,
+        outcome: FillDerivedStrategyOutcome,
+    ) -> None:
+        for proposal, action in (
+            (outcome.entry_proposal_reference, "ENTER"),
+            (outcome.exit_proposal_reference, "EXIT"),
+        ):
+            row = connection.execute(
+                """
+                SELECT action, strategy_version_id, strategy_version_hash, symbol
+                FROM strategy_proposal
+                WHERE proposal_id = %s AND proposal_hash = %s
+                FOR SHARE
+                """,
+                (str(proposal.artifact_id), proposal.content_hash),
+            ).fetchone()
+            if row is None or (
+                str(row[0]) != action
+                or str(row[1])
+                != str(outcome.strategy_version_reference.artifact_id)
+                or str(row[2])
+                != outcome.strategy_version_reference.content_hash
+                or str(row[3]) != outcome.symbol
+            ):
+                raise ValueError("Strategy Outcome Proposal lineage mismatch")
+        allocation_rows = connection.execute(
+            """
+            SELECT a.allocation_id, a.allocation_hash,
+                   b.source_fill_id, b.source_fill_hash, b.account_id
+            FROM strategy_fill_allocation AS a
+            JOIN strategy_fill_allocation_batch AS b ON b.batch_id = a.batch_id
+            WHERE a.allocation_id = ANY(%s)
+            FOR SHARE OF a, b
+            """,
+            ([str(item.artifact_id) for item in outcome.source_allocation_references],),
+        ).fetchall()
+        actual_allocations = {
+            (str(row[0]), str(row[1])) for row in allocation_rows
+        }
+        expected_allocations = {
+            (str(item.artifact_id), item.content_hash)
+            for item in outcome.source_allocation_references
+        }
+        actual_fills = {(str(row[2]), str(row[3])) for row in allocation_rows}
+        expected_fills = {
+            (str(item.artifact_id), item.content_hash)
+            for item in outcome.source_fill_references
+        }
+        if (
+            actual_allocations != expected_allocations
+            or actual_fills != expected_fills
+            or any(str(row[4]) != outcome.account_id for row in allocation_rows)
+        ):
+            raise ValueError("Strategy Outcome Fill lineage mismatch")
 
     def get_artifact(
         self,

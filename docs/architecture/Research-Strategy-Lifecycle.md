@@ -16,6 +16,10 @@ Research Universe Policy / immutable Runtime Scope
    -> Overnight action/proposal
    -> Swing Entry/Hold/Add/Reduce/Exit action/proposal
 -> simple cross-strategy Portfolio/Risk baseline
+-> Strategy Shadow simulated lifecycle or observed manual Fill
+   -> immutable Strategy Fill Allocation
+   -> owner-resolved Strategy Sleeve State on the next session
+   -> fill-derived realized Strategy Outcome after full Exit
 -> Research Shadow decision
 -> factual multi-target Outcome
 -> Evaluation Dataset and complete Panel V2
@@ -24,7 +28,6 @@ Research Universe Policy / immutable Runtime Scope
 -> calibration fit/evaluation (not calibrated)
 -> locked-partition metric computation (not Formal OOS Authority)
 -> Entry research
--> Strategy Shadow Entry/Fill/Position
 -> Portfolio Shadow Cash/NAV/Exposure/Cost/Attribution
 -> Holding/Exit engineering assessment
 -> blocked Production Admission projection
@@ -48,7 +51,12 @@ Observed manual Fill remains the sole source of physical Position. An immutable
 Fill Allocation may attribute that quantity to Strategy Version sleeves; it
 cannot allocate more than the physical Fill or sell a sleeve below zero. The
 cross-strategy Portfolio remains a proposal/risk decision and never manufactures
-an Order or Fill.
+an Order or Fill. On each account-bound Continuous tick, the existing Strategy
+Shadow PostgreSQL owner reconstructs open sleeve quantity, average cost,
+current/peak price, sessions held, add/reduce counts, exact Strategy Version and
+Proposal/Fill lineage. Same-session marks update price but do not age a sleeve.
+The frozen cycle input is the replay boundary; callers cannot supply those
+values through the production composition.
 
 For free-data operation, retrospective decisions and later outcomes additionally
 feed an immutable Historical Sample Dataset in PostgreSQL. The Registry Reader
@@ -71,7 +79,21 @@ qualification or empirical validation.
   independently frozen policy; current evidence does not.
 - Entry research evaluates Candidate-only, Candidate+Signal, Candidate+Forecast and Candidate+Intraday variants. Its strongest output is `SHADOW_ENTER`; Canonical Entry still has no `ENTER` state.
 - Research Shadow freezes what the research system knew and later binds factual outcomes. It has no simulated account or execution ledger.
-- Strategy Shadow owns an isolated simulated Entry/Fill/Position/Holding/Exit session. The free-data operator uses a selected-Candidate pass-through with no score threshold and a T+1 fixed-time observation contract, not tuned model parameters. Later invocations reload Entry/Fill/Position and append Holding/Exit observations until settlement. Every stored artifact has `real_trading_mutation=false`.
+- Strategy Shadow owns the isolated simulated Entry/Fill/Position/Holding/Exit
+  session and the observed-Fill Strategy sleeve projection. When a canonical
+  Multi-Strategy cycle exists, the free-data Shadow Entry is downstream of the
+  exact Overnight `StrategyProposal`; a non-Entry gate yields `NO_ACTION`
+  instead of a second Candidate-to-Entry decision. Candidate pass-through is
+  retained only for historical rows/ticks with no Multi-Strategy cycle. Later
+  invocations reload simulated Entry/Fill/Position artifacts and append
+  Holding/Exit observations until settlement. Simulated artifacts keep
+  `real_trading_mutation=false`; physical Position still comes only from the
+  manual Fill owner.
+- A fully closed observed-Fill allocation chain persists one immutable realized
+  Strategy Outcome with exact account/version, entry/exit Proposal, pre-exit
+  state, allocation and Fill lineage. It reconciles gross, costs and net cash
+  flows for ENTER/ADD/REDUCE/EXIT. It is not a market Path Outcome and grants no
+  Alpha, PIT, OOS, economic-support or Production status.
 - Portfolio Shadow owns an independent simulated Cash/Order Intent/Fill/Position/NAV ledger under the same Strategy Shadow boundary. Top1/3/5 Equal/Score/Risk policies and all cost/capacity inputs carry explicit provenance; T+1, 100-share lots, suspension, price limits and continuous-auction constraints fail closed. It cannot write actual account or Position authorities.
 - Performance/Attribution reloads the immutable Portfolio Shadow chain and emits
   content-addressed metric, monthly/yearly return and attribution rows. Missing
@@ -201,5 +223,5 @@ contract-only Position Review. The last boundary remains fail-closed.
 - no formal OOS result;
 - no calibrated probability;
 - no Entry authorization;
-- no actual Fill or Position from Strategy Shadow;
+- no actual Fill or physical Position from simulated Strategy Shadow artifacts;
 - no authenticated operator or broker readiness proof; engineering RBAC is not authentication or Production Admission.

@@ -44,6 +44,18 @@ qualification flags, and uses a fixed Decimal context for replay-stable
 identities. Automatic longitudinal path materialization and feedback scheduling
 are not yet part of the historical operator.
 
+Migration 086 completes the account-bound stateful lifecycle on the same
+Continuous Strategy child and existing Strategy Shadow owner. Before each
+decision, PostgreSQL rebuilds open Strategy sleeve state from effective Fill
+allocations, exact Proposal actions and available manual account observations;
+it does not reset session age, peak price, add/reduce counters or lineage on
+composition restart. Overnight can therefore ENTER, restore and EXIT, while
+Swing can ENTER, HOLD, ADD, HOLD, REDUCE and EXIT across sessions. The final
+observed EXIT settles one immutable fill-derived realized Strategy Outcome;
+retries and concurrent settlement reload the same identity. The older T+1
+Shadow Entry path consumes the canonical Overnight Proposal when present and
+no longer independently re-decides Entry from Candidate in that scope.
+
 Phase C engineering adds an immutable Formal Research Protocol with exact
 canonical-owner bindings (including full Frozen Trading Calendar replay), OutcomeTarget-bound forecasts, frozen-calendar
 purge/embargo, Provider-by-Contract-by-Fact qualification decisions,
@@ -288,7 +300,8 @@ Provider-quality or Alpha conclusion.
 Migrations 047–084 add free retrospective evidence, exploratory Research Universe,
 Portfolio Shadow, exact Locked-OOS/PIT lineage, Phase C owners, Phase D research
 journals and the longitudinal Historical Corpus owners. Migration 085 adds the
-multi-strategy business closure described above. They do not alter migration
+multi-strategy business closure; migration 086 adds its observed-Fill state and
+realized-Outcome closure. They do not alter migration
 046, which removes reference-only
 qualification paths from the current architecture:
 
@@ -305,12 +318,12 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 657 | broad modular monolith; size alone is not a defect |
-| Python test files | 479 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 658 | broad modular monolith; size alone is not a defect |
+| Python test files | 481 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 85 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
-| PostgreSQL Authority-schema tables | 269 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes owners, journals and projections, not 269 independent business Authorities |
+| PostgreSQL migrations | 86 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL Authority-schema tables | 270 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes owners, journals and projections, not 270 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
 | Artifact/Receipt class names | 84 | immutable contracts across bounded contexts |

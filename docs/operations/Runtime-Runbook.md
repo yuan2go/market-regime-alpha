@@ -147,8 +147,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 085, `multi_strategy_business_closure`. Expected schema
-catalog: 269 tables. Migrations 052–067 add Formal Protocol bindings and
+Expected head: migration 086, `stateful_strategy_lifecycle`. Expected schema
+catalog: 270 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -176,6 +176,10 @@ observed-Fill allocation, Path Outcomes and typed feedback. It also admits the
 bounded `STRATEGY_RUNTIME` child to the existing Continuous Journal; it does not
 create a scheduler, broker path, physical Position writer or Production
 authorization.
+Migration 086 adds one immutable fill-derived realized Strategy Outcome table.
+Open Strategy sleeve state remains reconstructed from existing Proposal, Fill
+allocation and manual account observation owners; no Position table, scheduler
+or execution Authority was added.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.
@@ -243,6 +247,21 @@ Portfolio status and any lineage-scoped Path Outcome/feedback artifacts. A
 `DATA_INSUFFICIENT` run and a `NO_ACTION` Portfolio are valid available facts.
 Inspection is read-only and cannot recompute or promote a decision.
 
+For a stateful account-bound Shadow tick, pass the same account identity to the
+canonical operation:
+
+```bash
+uv run continuous-research run-due \
+  --strategy-account-id "$MARKET_REGIME_ALPHA_STRATEGY_ACCOUNT_ID" \
+  ...
+```
+
+This makes the Strategy child resolve sleeve state from PostgreSQL observed
+Fill allocations and manual account observations before policy execution.
+Omitting the option preserves stateless research compatibility; it must not be
+used for claims about cross-session Position decisions. `inspect-strategy`
+reports the frozen position states and any fill-derived realized Outcomes.
+
 The free-data operational sequence is:
 
 ```text
@@ -276,7 +295,10 @@ retries reload its PostgreSQL-owned identities and immutable packages without
 calling the Provider again.
 
 `strategy-day` resolves the settled Research Shadow, Panel and Candidate from
-PostgreSQL. Its observation file must explicitly provide every quantity,
+PostgreSQL. When the tick has a Multi-Strategy cycle, its Entry creation also
+requires and records the exact canonical Overnight ENTER Proposal; otherwise it
+returns `NO_ACTION` instead of independently re-deciding Entry. Its observation
+file must explicitly provide every quantity,
 price, fillability, cost, holding/exit value and each value's provenance as
 `OBSERVED_FACT`, `ENGINEERING_ASSUMPTION`, `CALIBRATED_PARAMETER` or
 `OPERATOR_INPUT`; no result-affecting numeric default is supplied. It advances

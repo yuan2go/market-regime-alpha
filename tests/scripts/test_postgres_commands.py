@@ -81,7 +81,7 @@ def test_status_and_runbook_keep_authority_ceiling_explicit() -> None:
         "production_ready = false",
     ):
         assert declaration in status
-    assert "Expected head: migration 085" in runbook
+    assert "Expected head: migration 086" in runbook
     assert "Production qualification is currently forced closed" in runbook
     assert "no alternate persistent backend" in runbook
 
@@ -104,5 +104,5 @@ def test_apply_migrations_honors_explicit_application_schema(
     output = json.loads(capsys.readouterr().out)
 
     assert output["postgres_schema"] == postgres_factory.application_schema
-    assert output["latest_migration"] == 85
-    assert output["authority_table_count"] == 269
+    assert output["latest_migration"] == 86
+    assert output["authority_table_count"] == 270

@@ -26,10 +26,10 @@
 | Outcome Authority | One factual Shadow outcome family: target protocol plus targeted/prospective settlements in PostgreSQL. Diagnostic trade outcomes remain strategy/evaluation artifacts, not actual Position truth. |
 | Model Governance | One: `PostgresModelGovernanceRepository`; Model Registry lifecycle remains a subordinate registry history in the same governance schema. |
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
-| Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
-| Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. It is a bounded child of the existing runtimes. |
+| Strategy Shadow | Owns the isolated simulated lifecycle plus Strategy sleeve projection and fill-derived realized Strategy Outcomes. Simulated artifacts never write actual fills or physical positions; sleeve quantity is derived from manual Fill allocations. |
+| Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. The existing Strategy Shadow owner resolves state/outcomes from those facts. It is a bounded child of the existing runtimes. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 269 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 270 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 

@@ -390,6 +390,7 @@ class PostgresCanonicalRuntimeQuery:
                 CanonicalDagNodeType.STRATEGY,
                 CanonicalDagNodeType.PORTFOLIO,
                 CanonicalDagNodeType.PATH_OUTCOME,
+                CanonicalDagNodeType.OUTCOME,
                 CanonicalDagNodeType.ATTRIBUTION,
                 CanonicalDagNodeType.QUALIFICATION,
             ),
@@ -588,7 +589,7 @@ class PostgresCanonicalRuntimeQuery:
         with self._factory.connection(read_only=True) as connection:
             cycle = connection.execute(
                 """
-                SELECT cycle_id, cycle_hash, origin, created_at
+                SELECT cycle_id, cycle_hash, origin, created_at, payload_json
                 FROM multi_strategy_cycle
                 WHERE parent_run_id = %s AND parent_tick_id = %s
                 """,
@@ -637,6 +638,23 @@ class PostgresCanonicalRuntimeQuery:
                 """,
                 (str(cycle[0]),),
             ).fetchall()
+            realized_outcomes = connection.execute(
+                """
+                SELECT o.outcome_id, o.outcome_hash, p.run_id,
+                       o.strategy_version_id, o.account_id, o.symbol,
+                       o.invested_notional, o.gross_pnl, o.total_cost,
+                       o.net_pnl, o.net_return, o.created_at,
+                       o.pre_exit_state_id
+                FROM strategy_realized_outcome AS o
+                JOIN strategy_proposal AS p
+                  ON p.proposal_id = o.exit_proposal_id
+                 AND p.proposal_hash = o.exit_proposal_hash
+                WHERE p.run_id IN (
+                    SELECT run_id FROM strategy_run WHERE cycle_id = %s
+                ) ORDER BY o.created_at, o.outcome_id
+                """,
+                (str(cycle[0]),),
+            ).fetchall()
             feedback_rows = connection.execute(
                 """
                 SELECT artifact_id, artifact_hash, artifact_kind,
@@ -656,6 +674,13 @@ class PostgresCanonicalRuntimeQuery:
             seed_artifact_ids={str(row[0]) for row in outcomes},
         )
 
+        cycle_payload = cycle[4] if isinstance(cycle[4], dict) else {}
+        runtime_input = cycle_payload.get("runtime_input", {})
+        position_states = (
+            runtime_input.get("positions", [])
+            if isinstance(runtime_input, dict)
+            else []
+        )
         cycle_node = CanonicalDagNode.create(
             node_type=CanonicalDagNodeType.STRATEGY,
             owner="MULTI_STRATEGY_RUNTIME",
@@ -668,6 +693,8 @@ class PostgresCanonicalRuntimeQuery:
                 "tick_id": str(tick_id),
                 "origin": str(cycle[2]),
                 "strategy_run_count": len(runs),
+                "position_state_count": len(position_states),
+                "position_states": position_states,
             },
         )
         nodes = [cycle_node]
@@ -739,6 +766,31 @@ class PostgresCanonicalRuntimeQuery:
                     "mfe": str(row[6]),
                     "mae": str(row[7]),
                     "barrier_ordering": str(row[8]),
+                },
+            )
+            nodes.append(outcome_node)
+            artifact_nodes[str(row[0])] = outcome_node
+        for row in realized_outcomes:
+            outcome_node = CanonicalDagNode.create(
+                node_type=CanonicalDagNodeType.OUTCOME,
+                owner="STRATEGY_SHADOW_FILL_LEDGER",
+                artifact_id=str(row[0]),
+                content_hash=str(row[1]),
+                status=CanonicalDagNodeStatus.AVAILABLE,
+                observed_at=row[11],
+                parent_node_ids=(run_nodes[str(row[2])].node_id,),
+                details={
+                    "tick_id": str(tick_id),
+                    "strategy_version_id": str(row[3]),
+                    "account_id": str(row[4]),
+                    "symbol": str(row[5]),
+                    "invested_notional": str(row[6]),
+                    "gross_pnl": str(row[7]),
+                    "total_cost": str(row[8]),
+                    "net_pnl": str(row[9]),
+                    "net_return": str(row[10]),
+                    "pre_exit_state_id": str(row[12]),
+                    "production_authorized": False,
                 },
             )
             nodes.append(outcome_node)

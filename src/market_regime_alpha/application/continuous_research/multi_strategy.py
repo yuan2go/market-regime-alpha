@@ -141,6 +141,10 @@ class MultiStrategyContinuousAdapter:
     def _positions(self, *, decision_time: datetime) -> tuple[StrategyPositionState, ...]:
         if self._account_id is None or self._strategy_shadow_repository is None:
             return ()
+        self._strategy_shadow_repository.settle_multi_strategy_outcomes(
+            account_id=self._account_id,
+            decision_time=decision_time,
+        )
         return self._strategy_shadow_repository.resolve_multi_strategy_positions(
             account_id=self._account_id,
             decision_time=decision_time,

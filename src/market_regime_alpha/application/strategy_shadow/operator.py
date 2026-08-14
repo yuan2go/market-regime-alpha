@@ -80,6 +80,13 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
+from market_regime_alpha.strategies.contracts import (
+    CanonicalStrategyAction,
+    StrategyFamily,
+)
+from market_regime_alpha.strategies.postgres_repository import (
+    PostgresMultiStrategyRepository,
+)
 
 
 _RESULT_VALUE_FIELDS = frozenset(
@@ -278,6 +285,21 @@ class StrategyShadowDayOperator:
                 reason_codes=assessment.reason_codes,
                 assessment_id=str(assessment.assessment_id),
             )
+        canonical_cycle, canonical_proposal = self._canonical_overnight_entry_proposal(
+            run_id=decision.run_id,
+            tick_id=decision.tick_id,
+            symbol=candidate.symbol,
+        )
+        if canonical_cycle and canonical_proposal is None:
+            return _result(
+                operation="STRATEGY_DAY",
+                status="NO_ACTION",
+                reason_codes=(
+                    "LEGACY_ENTRY_SUPERSEDED_BY_MULTI_STRATEGY",
+                    "MULTI_STRATEGY_OVERNIGHT_ENTER_NOT_PROPOSED",
+                ),
+                assessment_id=str(assessment.assessment_id),
+            )
 
         policy = StrategyShadowPolicy.create(
             policy_version="free-data-t-plus-one-shadow-v1",
@@ -358,6 +380,11 @@ class StrategyShadowDayOperator:
                             panel_reference,
                             *(
                                 ()
+                                if canonical_proposal is None
+                                else (canonical_proposal,)
+                            ),
+                            *(
+                                ()
                                 if observation_receipt_reference is None
                                 else (observation_receipt_reference,)
                             ),
@@ -383,6 +410,7 @@ class StrategyShadowDayOperator:
                 ),
                 occurred_at=observation.observed_at,
             )
+
         fill = self._optional_restored_artifact(
             session.session_id,
             StrategyShadowArtifactKind.FILL,
@@ -559,6 +587,51 @@ class StrategyShadowDayOperator:
             outcome=outcome,
             holding=holding,
             exit_assessment=exit_assessment,
+        )
+
+    def _canonical_overnight_entry_proposal(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+        symbol: str,
+    ) -> tuple[bool, ValidationArtifactReference | None]:
+        repository = PostgresMultiStrategyRepository(
+            self._factory,
+            apply_migrations=False,
+        )
+        try:
+            cycle = repository.get_cycle_for_tick(run_id=run_id, tick_id=tick_id)
+        except KeyError:
+            return False, None
+        registry = repository.load_registry()
+        run = next(
+            item
+            for item in cycle.runs
+            if registry.family_for(item) is StrategyFamily.OVERNIGHT
+        )
+        gate = next(
+            (item for item in run.gate_attributions if item.symbol == symbol),
+            None,
+        )
+        if gate is None or gate.action is not CanonicalStrategyAction.ENTER:
+            return True, None
+        proposals = tuple(
+            item
+            for item in run.proposals
+            if item.symbol == symbol
+            and item.action is CanonicalStrategyAction.ENTER
+        )
+        if len(proposals) != 1:
+            raise ValueError("canonical Overnight Entry Proposal must be unique")
+        proposal = proposals[0]
+        return (
+            True,
+            ValidationArtifactReference(
+                "STRATEGY_PROPOSAL",
+                proposal.proposal_id,
+                proposal.proposal_hash,
+            ),
         )
 
     def run_auto(

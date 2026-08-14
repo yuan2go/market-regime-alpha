@@ -174,7 +174,7 @@ def test_migration_085_upgrades_084_forward_only_and_installs_business_tables(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:84]).apply_all(postgres_factory)
 
-    applied = PostgresMigrator().apply_all(postgres_factory)
+    applied = PostgresMigrator(migrations=migrations[:85]).apply_all(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
         tables = {
@@ -198,6 +198,28 @@ def test_migration_085_upgrades_084_forward_only_and_installs_business_tables(
         }
     assert tuple((item.version, item.name) for item in applied) == ((85, "multi_strategy_business_closure"),)
     assert len(tables) == 12
+
+
+def test_migration_086_upgrades_085_with_one_fill_derived_outcome_table(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:85]).apply_all(postgres_factory)
+
+    applied = PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        table = connection.execute(
+            """
+            SELECT tablename FROM pg_catalog.pg_tables
+            WHERE schemaname = current_schema()
+              AND tablename = 'strategy_realized_outcome'
+            """
+        ).fetchone()
+    assert tuple((item.version, item.name) for item in applied) == (
+        (86, "stateful_strategy_lifecycle"),
+    )
+    assert table == ("strategy_realized_outcome",)
 
 
 def test_registry_cycle_portfolio_and_replay_are_transactional_and_idempotent(
