@@ -174,6 +174,16 @@ class RepositoryFactory:
     def manual_execution(self):
         return PostgresManualExecutionRepository(self._postgres)
 
+    def strategy_execution(self, *, account_id: str):
+        from market_regime_alpha.application.trading_lifecycle.strategy_execution import (
+            StrategyExecutionApplicationService,
+        )
+
+        return StrategyExecutionApplicationService(
+            self._postgres,
+            account_id=account_id,
+        )
+
     def traceable_execution(self):
         return PostgresTraceableManualExecutionRepository(self._postgres)
 
@@ -240,6 +250,13 @@ class RepositoryFactory:
             artifact_resolver=artifact_resolver,
             provider_policy=provider_policy,
         )
+
+    def trading_calendar_snapshot(self):
+        from market_regime_alpha.data.postgres_trading_calendar import (
+            PostgresPITTradingCalendarSnapshotRepository,
+        )
+
+        return PostgresPITTradingCalendarSnapshotRepository(self._postgres)
 
     def experiment_governance(self):
         return PostgresExperimentGovernanceRepository(self._postgres)

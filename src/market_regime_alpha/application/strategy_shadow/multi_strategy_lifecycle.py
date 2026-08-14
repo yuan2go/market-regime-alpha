@@ -8,7 +8,7 @@ Multi-Strategy cycle freezes the resulting state for replay.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
@@ -21,6 +21,7 @@ from market_regime_alpha.application.decision_system.contracts import (
     ManualPositionObservation,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import (
     canonical_datetime,
     canonical_hash,
@@ -30,6 +31,7 @@ from market_regime_alpha.evidence.canonical import (
 from market_regime_alpha.execution.manual import TradeSide
 from market_regime_alpha.strategies.contracts import (
     CanonicalStrategyAction,
+    PriceFreshnessStatus,
     StrategyPositionState,
 )
 from market_regime_alpha.strategies.sleeves import (
@@ -48,6 +50,12 @@ _BUY_ACTIONS = frozenset(
 _SELL_ACTIONS = frozenset(
     {CanonicalStrategyAction.REDUCE, CanonicalStrategyAction.EXIT}
 )
+
+
+@dataclass(slots=True)
+class _StrategyLot:
+    quantity: int
+    trade_date: date
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,12 +79,27 @@ class FillDerivedStrategyOutcome:
     source_fill_references: tuple[RuntimeArtifactReference, ...]
     settled_at: datetime
     limitations: tuple[str, ...]
-    schema_version: str = "fill-derived-strategy-outcome/v1"
+    revision: int = 1
+    supersedes_outcome_reference: RuntimeArtifactReference | None = None
+    schema_version: str = "fill-derived-strategy-outcome/v2"
 
     def __post_init__(self) -> None:
         require_sha256("outcome_hash", self.outcome_hash)
         require_text("account_id", self.account_id)
         require_text("symbol", self.symbol)
+        if self.schema_version not in {
+            "fill-derived-strategy-outcome/v1",
+            "fill-derived-strategy-outcome/v2",
+        }:
+            raise ValueError("unsupported Fill-derived Strategy Outcome schema")
+        if self.revision < 1 or (self.revision == 1) != (
+            self.supersedes_outcome_reference is None
+        ):
+            raise ValueError("Strategy Outcome revision lineage is invalid")
+        if self.schema_version == "fill-derived-strategy-outcome/v1" and (
+            self.revision != 1 or self.supersedes_outcome_reference is not None
+        ):
+            raise ValueError("V1 Strategy Outcome cannot carry revision lineage")
         canonical_datetime(self.opened_at)
         canonical_datetime(self.closed_at)
         canonical_datetime(self.settled_at)
@@ -110,7 +133,9 @@ class FillDerivedStrategyOutcome:
             normalized["source_fill_references"]
         )
         normalized["limitations"] = tuple(sorted(set(normalized["limitations"])))
-        normalized.setdefault("schema_version", "fill-derived-strategy-outcome/v1")
+        normalized.setdefault("revision", 1)
+        normalized.setdefault("supersedes_outcome_reference", None)
+        normalized.setdefault("schema_version", "fill-derived-strategy-outcome/v2")
         digest = canonical_hash(_strategy_outcome_payload(**normalized))
         return cls(
             outcome_id=ArtifactId(f"strategy-realized-outcome:{digest[7:]}"),
@@ -137,6 +162,8 @@ class FillDerivedStrategyOutcome:
             source_fill_references=self.source_fill_references,
             settled_at=self.settled_at,
             limitations=self.limitations,
+            revision=self.revision,
+            supersedes_outcome_reference=self.supersedes_outcome_reference,
             schema_version=self.schema_version,
         )
 
@@ -176,6 +203,12 @@ class FillDerivedStrategyOutcome:
             ),
             settled_at=datetime.fromisoformat(str(payload["settled_at"])),
             limitations=tuple(str(item) for item in _sequence(payload["limitations"])),
+            revision=int(payload.get("revision", 1)),
+            supersedes_outcome_reference=(
+                None
+                if payload.get("supersedes_outcome_reference") is None
+                else _reference(payload["supersedes_outcome_reference"])
+            ),
             schema_version=str(payload["schema_version"]),
         )
 
@@ -184,6 +217,7 @@ def project_strategy_position_states(
     *,
     account_id: str,
     decision_time: datetime,
+    trading_calendar: TradingCalendarArtifact,
     batches: tuple[FillAllocationBatch, ...],
     proposal_actions: Mapping[ArtifactId, CanonicalStrategyAction],
     observations: tuple[ManualAccountObservation, ...],
@@ -205,11 +239,12 @@ def project_strategy_position_states(
         observations=observations,
     )
     with localcontext(_STATE_DECIMAL_CONTEXT):
-        sleeves = project_strategy_sleeves(effective)
+        sleeves = project_strategy_sleeves(available_batches)
         states = tuple(
             _state_for_sleeve(
                 account_id=account_id,
                 decision_time=decision_time,
+                trading_calendar=trading_calendar,
                 sleeve_version_id=sleeve.strategy_version_reference.artifact_id,
                 sleeve_version_hash=sleeve.strategy_version_reference.content_hash,
                 symbol=sleeve.symbol,
@@ -268,9 +303,17 @@ def settle_fill_derived_strategy_outcomes(
             for batch, allocation, action in facts:
                 allocated_quantity = allocation.allocated_quantity
                 if action is CanonicalStrategyAction.ENTER:
-                    if quantity != 0:
-                        raise ValueError("ENTER Fill cannot replace an open Strategy sleeve")
-                    active = []
+                    if quantity == 0:
+                        active = []
+                    elif any(
+                        prior_action is CanonicalStrategyAction.ENTER
+                        and prior_allocation.proposal_reference
+                        != allocation.proposal_reference
+                        for _, prior_allocation, prior_action in active
+                    ):
+                        raise ValueError(
+                            "ENTER Fill cannot replace an open Strategy sleeve"
+                        )
                 elif not active:
                     raise ValueError("Strategy lifecycle action has no ENTER Fill")
                 if batch.side is TradeSide.BUY:
@@ -282,10 +325,8 @@ def settle_fill_derived_strategy_outcomes(
                 active.append((batch, allocation, action))
                 if action is CanonicalStrategyAction.REDUCE and quantity == 0:
                     raise ValueError("REDUCE Fill cannot close Strategy sleeve")
-                if action is not CanonicalStrategyAction.EXIT:
+                if action is not CanonicalStrategyAction.EXIT or quantity != 0:
                     continue
-                if quantity != 0:
-                    raise ValueError("EXIT Fill must close Strategy sleeve")
                 pre_exit = pre_exit_states.get(
                     allocation.proposal_reference.artifact_id
                 )
@@ -430,6 +471,7 @@ def _state_for_sleeve(
     *,
     account_id: str,
     decision_time: datetime,
+    trading_calendar: TradingCalendarArtifact,
     sleeve_version_id: ArtifactId,
     sleeve_version_hash: str,
     symbol: str,
@@ -441,15 +483,16 @@ def _state_for_sleeve(
 ) -> StrategyPositionState:
     if average_cost is None:
         raise ValueError("open Strategy sleeve requires average cost")
-    scoped = tuple(
+    history = tuple(
         (batch, allocation, proposal_actions[allocation.proposal_reference.artifact_id])
         for batch in effective
         for allocation in batch.allocations
         if allocation.strategy_version_reference.artifact_id == sleeve_version_id
         and batch.symbol == symbol
     )
+    scoped = _current_open_lifecycle(history)
     entries = tuple(
-        batch.recorded_at
+        batch.occurred_at
         for batch, _, action in scoped
         if action is CanonicalStrategyAction.ENTER
     )
@@ -457,6 +500,15 @@ def _state_for_sleeve(
         raise ValueError("open Strategy sleeve has no ENTER Fill lineage")
     entry_time = min(entries)
     entry_trading_date = entry_time.astimezone(_TRADING_TIME_ZONE).date()
+    if not trading_calendar.contains(entry_trading_date):
+        raise ValueError("ENTER Fill occurrence is outside the canonical Trading Calendar")
+    decision_local_date = decision_time.astimezone(_TRADING_TIME_ZONE).date()
+    session_dates = tuple(
+        item for item in trading_calendar.trading_dates if item <= decision_local_date
+    )
+    if not session_dates:
+        raise ValueError("Decision Time precedes the canonical Trading Calendar")
+    decision_session_date = session_dates[-1]
     marks = tuple(
         (observation, position)
         for observation in observations
@@ -469,6 +521,16 @@ def _state_for_sleeve(
     prices = tuple(_observed_price(position) for _, position in marks)
     current_price = None if not prices else prices[-1]
     peak_price = max((average_cost, *prices))
+    price_observed_at = None if not marks else marks[-1][0].as_of_time
+    if not marks:
+        price_freshness = PriceFreshnessStatus.NOT_ESTIMABLE
+    elif (
+        decision_local_date in trading_calendar.trading_dates
+        and marks[-1][0].trading_date == decision_local_date
+    ):
+        price_freshness = PriceFreshnessStatus.FRESH
+    else:
+        price_freshness = PriceFreshnessStatus.STALE
     allocation_references = _references(
         RuntimeArtifactReference(
             "STRATEGY_FILL_ALLOCATION",
@@ -497,23 +559,111 @@ def _state_for_sleeve(
         average_cost=average_cost,
         current_price=current_price,
         peak_price=peak_price,
-        sessions_held=len(
+        sessions_held=sum(
+            entry_trading_date < trade_date <= decision_session_date
+            for trade_date in trading_calendar.trading_dates
+        ),
+        add_count=len(
             {
-                observation.trading_date
-                for observation, _ in marks
-                if observation.trading_date > entry_trading_date
+                allocation.proposal_reference.artifact_id
+                for _, allocation, action in scoped
+                if action is CanonicalStrategyAction.ADD
             }
         ),
-        add_count=sum(
-            action is CanonicalStrategyAction.ADD for _, _, action in scoped
-        ),
-        reduce_count=sum(
-            action is CanonicalStrategyAction.REDUCE for _, _, action in scoped
+        reduce_count=len(
+            {
+                allocation.proposal_reference.artifact_id
+                for _, allocation, action in scoped
+                if action is CanonicalStrategyAction.REDUCE
+            }
         ),
         source_allocation_references=allocation_references,
         source_fill_references=fill_references,
         price_observation_references=observation_references,
+        available_quantity=Decimal(
+            _available_quantity(
+                scoped=scoped,
+                trading_calendar=trading_calendar,
+                decision_session_date=decision_session_date,
+            )
+        ),
+        entry_time=entry_time,
+        price_observed_at=price_observed_at,
+        price_freshness=price_freshness,
+        trading_calendar_reference=RuntimeArtifactReference(
+            "TRADING_CALENDAR",
+            trading_calendar.artifact_id,
+            trading_calendar.content_hash,
+        ),
     )
+
+
+def _current_open_lifecycle(
+    facts: tuple[
+        tuple[FillAllocationBatch, FillAllocation, CanonicalStrategyAction], ...
+    ],
+) -> tuple[
+    tuple[FillAllocationBatch, FillAllocation, CanonicalStrategyAction], ...
+]:
+    active: list[
+        tuple[FillAllocationBatch, FillAllocation, CanonicalStrategyAction]
+    ] = []
+    quantity = 0
+    for fact in facts:
+        batch, allocation, action = fact
+        if quantity == 0:
+            if action is not CanonicalStrategyAction.ENTER:
+                raise ValueError("open Strategy lifecycle must begin with ENTER")
+            active = []
+        if batch.side is TradeSide.BUY:
+            quantity += allocation.allocated_quantity
+        else:
+            quantity -= allocation.allocated_quantity
+        if quantity < 0:
+            raise ValueError("Strategy lifecycle quantity cannot become negative")
+        active.append(fact)
+        if quantity == 0:
+            active = []
+    if not active:
+        raise ValueError("open Strategy sleeve has no active lifecycle")
+    return tuple(active)
+
+
+def _available_quantity(
+    *,
+    scoped: tuple[
+        tuple[FillAllocationBatch, FillAllocation, CanonicalStrategyAction], ...
+    ],
+    trading_calendar: TradingCalendarArtifact,
+    decision_session_date: date,
+) -> int:
+    lots: list[_StrategyLot] = []
+    for batch, allocation, _ in scoped:
+        quantity = allocation.allocated_quantity
+        if batch.side is TradeSide.BUY:
+            trade_date = batch.occurred_at.astimezone(_TRADING_TIME_ZONE).date()
+            if not trading_calendar.contains(trade_date):
+                raise ValueError("BUY Fill occurrence is outside the canonical Trading Calendar")
+            lots.append(_StrategyLot(quantity=quantity, trade_date=trade_date))
+            continue
+        remaining = quantity
+        for lot in lots:
+            consumed = min(lot.quantity, remaining)
+            lot.quantity -= consumed
+            remaining -= consumed
+            if remaining == 0:
+                break
+        if remaining:
+            raise ValueError("Strategy SELL Fill exceeds open sleeve lots")
+    dates = trading_calendar.trading_dates
+    available = 0
+    for lot in lots:
+        if lot.quantity == 0:
+            continue
+        sellable = next((item for item in dates if item > lot.trade_date), None)
+        if sellable is not None and sellable <= decision_session_date:
+            available += lot.quantity
+    return available
 
 
 def _observed_price(position: ManualPositionObservation) -> Decimal:
@@ -539,7 +689,7 @@ def _references(
 
 
 def _strategy_outcome_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": values["schema_version"],
         "account_id": values["account_id"],
         "strategy_version_reference": values[
@@ -572,6 +722,17 @@ def _strategy_outcome_payload(**values: Any) -> dict[str, Any]:
         "settled_at": canonical_datetime(values["settled_at"]),
         "limitations": list(values["limitations"]),
     }
+    if values["schema_version"] == "fill-derived-strategy-outcome/v2":
+        supersedes = values["supersedes_outcome_reference"]
+        payload.update(
+            {
+                "revision": values["revision"],
+                "supersedes_outcome_reference": (
+                    None if supersedes is None else supersedes.to_canonical_dict()
+                ),
+            }
+        )
+    return payload
 
 
 def _reference(value: object) -> RuntimeArtifactReference:

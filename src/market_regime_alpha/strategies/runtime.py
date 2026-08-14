@@ -18,6 +18,7 @@ from market_regime_alpha.strategies.contracts import (
     CanonicalStrategyAction,
     GateAttribution,
     MultiStrategyCycle,
+    PriceFreshnessStatus,
     StrategyContract,
     StrategyEligibilityStatus,
     StrategyFamily,
@@ -125,6 +126,18 @@ class _SwingStatePolicy(_StrategyPolicy):
                 CanonicalStrategyAction.NO_ACTION,
                 Decimal("0"),
                 ("SWING_CURRENT_PRICE_NOT_ESTIMABLE",),
+            )
+        if position.price_freshness is PriceFreshnessStatus.NOT_ESTIMABLE:
+            return _PolicyDecision(
+                CanonicalStrategyAction.NO_ACTION,
+                Decimal("0"),
+                ("SWING_CURRENT_PRICE_NOT_ESTIMABLE",),
+            )
+        if position.price_freshness is PriceFreshnessStatus.STALE:
+            return _PolicyDecision(
+                CanonicalStrategyAction.NO_ACTION,
+                Decimal("0"),
+                ("SWING_CURRENT_PRICE_STALE",),
             )
         return_since_entry = position.current_price / position.average_cost - Decimal("1")
         stop_loss = Decimal(parameters.get("stop_loss", "0.08"))

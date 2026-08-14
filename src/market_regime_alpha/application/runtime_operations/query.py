@@ -644,13 +644,18 @@ class PostgresCanonicalRuntimeQuery:
                        o.strategy_version_id, o.account_id, o.symbol,
                        o.invested_notional, o.gross_pnl, o.total_cost,
                        o.net_pnl, o.net_return, o.created_at,
-                       o.pre_exit_state_id
+                       o.pre_exit_state_id, o.revision,
+                       o.supersedes_outcome_id, o.supersedes_outcome_hash
                 FROM strategy_realized_outcome AS o
                 JOIN strategy_proposal AS p
                   ON p.proposal_id = o.exit_proposal_id
                  AND p.proposal_hash = o.exit_proposal_hash
                 WHERE p.run_id IN (
                     SELECT run_id FROM strategy_run WHERE cycle_id = %s
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM strategy_realized_outcome AS successor
+                    WHERE successor.supersedes_outcome_id = o.outcome_id
+                      AND successor.supersedes_outcome_hash = o.outcome_hash
                 ) ORDER BY o.created_at, o.outcome_id
                 """,
                 (str(cycle[0]),),
@@ -790,6 +795,13 @@ class PostgresCanonicalRuntimeQuery:
                     "net_pnl": str(row[9]),
                     "net_return": str(row[10]),
                     "pre_exit_state_id": str(row[12]),
+                    "revision": int(row[13]),
+                    "supersedes_outcome_id": (
+                        None if row[14] is None else str(row[14])
+                    ),
+                    "supersedes_outcome_hash": (
+                        None if row[15] is None else str(row[15])
+                    ),
                     "production_authorized": False,
                 },
             )

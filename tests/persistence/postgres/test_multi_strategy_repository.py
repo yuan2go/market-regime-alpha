@@ -12,17 +12,11 @@ import pytest
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
-from market_regime_alpha.application.decision_system.contracts import (
-    ManualAccountObservation,
-    ManualPositionObservation,
+from market_regime_alpha.core.identity import (
+    FillId,
+    ManualTradeId,
+    StrategyId,
 )
-from market_regime_alpha.application.decision_system.postgres_repository import (
-    PostgresDecisionSystemRepository,
-)
-from market_regime_alpha.application.strategy_shadow.postgres_repository import (
-    PostgresStrategyShadowRepository,
-)
-from market_regime_alpha.core.identity import FillId, ManualTradeId, StrategyId
 from market_regime_alpha.execution.manual import FILL_SCHEMA, Fill, FillKind, TradeSide
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
@@ -206,7 +200,9 @@ def test_migration_086_upgrades_085_with_one_fill_derived_outcome_table(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:85]).apply_all(postgres_factory)
 
-    applied = PostgresMigrator().apply_all(postgres_factory)
+    applied = PostgresMigrator(migrations=migrations[:86]).apply_all(
+        postgres_factory
+    )
 
     with postgres_factory.connection(read_only=True) as connection:
         table = connection.execute(
@@ -220,6 +216,51 @@ def test_migration_086_upgrades_085_with_one_fill_derived_outcome_table(
         (86, "stateful_strategy_lifecycle"),
     )
     assert table == ("strategy_realized_outcome",)
+
+
+def test_migration_087_upgrades_086_without_a_parallel_ledger(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:86]).apply_all(postgres_factory)
+
+    applied = PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        strategy_columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'manual_trade_records'
+                  AND column_name LIKE 'strategy_%'
+                """
+            ).fetchall()
+        }
+        outcome_columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'strategy_realized_outcome'
+                  AND column_name IN (
+                    'revision', 'supersedes_outcome_id',
+                    'supersedes_outcome_hash'
+                  )
+                """
+            ).fetchall()
+        }
+    assert tuple((item.version, item.name) for item in applied) == (
+        (87, "strategy_execution_integrity"),
+    )
+    assert "strategy_authorization_id" in strategy_columns
+    assert outcome_columns == {
+        "revision",
+        "supersedes_outcome_id",
+        "supersedes_outcome_hash",
+    }
 
 
 def test_registry_cycle_portfolio_and_replay_are_transactional_and_idempotent(
@@ -244,7 +285,7 @@ def test_registry_cycle_portfolio_and_replay_are_transactional_and_idempotent(
             connection.execute("UPDATE strategy_proposal SET desired_weight = 0 WHERE true")
 
 
-def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
+def test_legacy_unbound_fill_is_rejected_while_path_outcome_lineage_reloads(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     registry, cycle, portfolio = _cycle_and_portfolio()
@@ -302,7 +343,8 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         measured_at=NOW + timedelta(days=4),
     )
 
-    assert repository.save_fill_allocation(batch) == batch
+    with pytest.raises(ValueError, match="Strategy-authorized"):
+        repository.save_fill_allocation(batch)
     assert repository.save_path_outcome(outcome) == outcome
     challenger_registry = _with_swing_challenger(registry)
     repository.register(challenger_registry, created_at=NOW)
@@ -362,7 +404,7 @@ def test_fill_allocation_and_path_outcome_reload_with_exact_strategy_lineage(
         prospective_evidence=False,
         created_at=NOW + timedelta(days=5),
     )
-    assert repository.list_fill_allocations(account_id="account-a") == (batch,)
+    assert repository.list_fill_allocations(account_id="account-a") == ()
     assert repository.get_path_outcome(outcome.outcome_id) == outcome
     assert repository.list_feedback(
         strategy_version_id=run.strategy_version_reference.artifact_id,
@@ -520,75 +562,6 @@ def test_fill_allocation_rejects_side_that_disagrees_with_strategy_action(
 
     with pytest.raises(ValueError, match="Fill side does not match Strategy action"):
         repository.save_fill_allocation(batch)
-
-
-def test_strategy_shadow_owner_rebuilds_state_from_postgres_facts_after_restart(
-    postgres_factory: PostgresConnectionFactory,
-) -> None:
-    registry, cycle, portfolio = _cycle_and_portfolio()
-    strategy_repository = PostgresMultiStrategyRepository(postgres_factory)
-    strategy_repository.register(registry, created_at=NOW)
-    strategy_repository.save_cycle(cycle)
-    strategy_repository.save_portfolio(portfolio, created_at=NOW)
-    fill = _fill()
-    _seed_fill(postgres_factory, fill)
-    entry_line = next(
-        item
-        for item in portfolio.lines
-        if item.symbol == "000001.SZ" and item.action.value == "ENTER"
-    )
-    batch = allocate_observed_fill(
-        fill=fill,
-        allocations=((entry_line.strategy_version_reference, entry_line.proposal_reference, 100),),
-    )
-    strategy_repository.save_fill_allocation(batch)
-    observation_time = NOW + timedelta(days=1, hours=1)
-    observation = ManualAccountObservation.create(
-        account_id="account-a",
-        trading_date=(NOW + timedelta(days=1)).date(),
-        as_of_time=observation_time,
-        total_equity=Decimal("100000"),
-        available_cash=Decimal("50000"),
-        frozen_cash=Decimal("0"),
-        source="MANUAL_ACCOUNT_AUTHORITY",
-        actor="operator",
-        reason="restart proof",
-        notes="",
-        idempotency_key="stateful-restart-observation",
-        revision=1,
-        previous_observation_id=None,
-        positions=(
-            ManualPositionObservation(
-                symbol="000001.SZ",
-                total_quantity=100,
-                available_quantity=100,
-                frozen_quantity=0,
-                average_cost=Decimal("10"),
-                observed_market_value=Decimal("1075"),
-            ),
-        ),
-        created_at=observation_time,
-    )
-    PostgresDecisionSystemRepository(postgres_factory).record_manual_observation(
-        observation
-    )
-
-    restarted = PostgresStrategyShadowRepository(
-        postgres_factory,
-        apply_migrations=False,
-    )
-    states = restarted.resolve_multi_strategy_positions(
-        account_id="account-a",
-        decision_time=observation_time,
-    )
-
-    assert len(states) == 1
-    assert states[0].current_price == Decimal("10.75")
-    assert states[0].peak_price == Decimal("10.75")
-    assert states[0].sessions_held == 1
-    assert states[0].add_count == 0
-    assert states[0].reduce_count == 0
-    assert states[0].state_reference is not None
 
 
 def test_feedback_service_rejects_caller_asserted_positive_qualification(

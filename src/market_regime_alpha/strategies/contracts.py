@@ -37,6 +37,12 @@ class CanonicalStrategyAction(str, Enum):
     EXIT = "EXIT"
 
 
+class PriceFreshnessStatus(str, Enum):
+    FRESH = "FRESH"
+    STALE = "STALE"
+    NOT_ESTIMABLE = "NOT_ESTIMABLE"
+
+
 class PortfolioWeightingMethod(str, Enum):
     EQUAL = "EQUAL"
     SCORE = "SCORE"
@@ -344,6 +350,11 @@ class StrategyPositionState:
     source_allocation_references: tuple[RuntimeArtifactReference, ...] = ()
     source_fill_references: tuple[RuntimeArtifactReference, ...] = ()
     price_observation_references: tuple[RuntimeArtifactReference, ...] = ()
+    available_quantity: Decimal | None = None
+    entry_time: datetime | None = None
+    price_observed_at: datetime | None = None
+    price_freshness: PriceFreshnessStatus | None = None
+    trading_calendar_reference: RuntimeArtifactReference | None = None
 
     def __post_init__(self) -> None:
         require_text("symbol", self.symbol)
@@ -353,6 +364,32 @@ class StrategyPositionState:
             raise ValueError("Strategy current price must be positive")
         if min(self.sessions_held, self.add_count, self.reduce_count) < 0:
             raise ValueError("Strategy position counters cannot be negative")
+        execution_state = (
+            self.available_quantity,
+            self.entry_time,
+            self.price_freshness,
+            self.trading_calendar_reference,
+        )
+        if any(value is not None for value in execution_state):
+            if any(value is None for value in execution_state):
+                raise ValueError(
+                    "owner-resolved Strategy execution state must be complete"
+                )
+            assert self.available_quantity is not None
+            assert self.entry_time is not None
+            assert self.price_freshness is not None
+            if not Decimal("0") <= self.available_quantity <= self.quantity:
+                raise ValueError("Strategy available quantity is invalid")
+            canonical_datetime(self.entry_time)
+            if self.price_freshness is PriceFreshnessStatus.NOT_ESTIMABLE:
+                if self.current_price is not None or self.price_observed_at is not None:
+                    raise ValueError(
+                        "NOT_ESTIMABLE Strategy price cannot carry a current mark"
+                    )
+            elif self.current_price is None or self.price_observed_at is None:
+                raise ValueError("fresh/stale Strategy price requires an observed mark")
+            if self.price_observed_at is not None:
+                canonical_datetime(self.price_observed_at)
         lineage = (
             self.source_allocation_references,
             self.source_fill_references,
@@ -428,6 +465,11 @@ class StrategyPositionState:
             source_allocation_references=self.source_allocation_references,
             source_fill_references=self.source_fill_references,
             price_observation_references=self.price_observation_references,
+            available_quantity=self.available_quantity,
+            entry_time=self.entry_time,
+            price_observed_at=self.price_observed_at,
+            price_freshness=self.price_freshness,
+            trading_calendar_reference=self.trading_calendar_reference,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -469,6 +511,31 @@ class StrategyPositionState:
                 _reference(item)
                 for item in _sequence(payload.get("price_observation_references", []))
             ),
+            available_quantity=(
+                None
+                if payload.get("available_quantity") is None
+                else Decimal(str(payload["available_quantity"]))
+            ),
+            entry_time=(
+                None
+                if payload.get("entry_time") is None
+                else datetime.fromisoformat(str(payload["entry_time"]))
+            ),
+            price_observed_at=(
+                None
+                if payload.get("price_observed_at") is None
+                else datetime.fromisoformat(str(payload["price_observed_at"]))
+            ),
+            price_freshness=(
+                None
+                if payload.get("price_freshness") is None
+                else PriceFreshnessStatus(str(payload["price_freshness"]))
+            ),
+            trading_calendar_reference=(
+                None
+                if payload.get("trading_calendar_reference") is None
+                else _reference(payload["trading_calendar_reference"])
+            ),
         )
 
 
@@ -502,6 +569,23 @@ def _strategy_position_payload(**values: Any) -> dict[str, Any]:
                     item.to_canonical_dict()
                     for item in values["price_observation_references"]
                 ],
+            }
+        )
+    if values.get("available_quantity") is not None:
+        price_freshness = values["price_freshness"]
+        payload.update(
+            {
+                "available_quantity": str(values["available_quantity"]),
+                "entry_time": canonical_datetime(values["entry_time"]),
+                "price_observed_at": (
+                    None
+                    if values["price_observed_at"] is None
+                    else canonical_datetime(values["price_observed_at"])
+                ),
+                "price_freshness": price_freshness.value,
+                "trading_calendar_reference": values[
+                    "trading_calendar_reference"
+                ].to_canonical_dict(),
             }
         )
     return payload
@@ -1057,6 +1141,7 @@ __all__ = [
     "GateAttribution",
     "MultiStrategyCycle",
     "PortfolioWeightingMethod",
+    "PriceFreshnessStatus",
     "StrategyContract",
     "StrategyEligibilityStatus",
     "StrategyFamily",

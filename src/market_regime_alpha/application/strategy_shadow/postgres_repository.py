@@ -7,6 +7,15 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
+from market_regime_alpha.application.decision_system.contracts import (
+    ManualAccountObservation,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.application.strategy_shadow.contracts import (
     ShadowEntry,
     StrategyShadowPolicy,
@@ -28,18 +37,18 @@ from market_regime_alpha.application.strategy_shadow.multi_strategy_lifecycle im
     project_strategy_position_states,
     settle_fill_derived_strategy_outcomes,
 )
-from market_regime_alpha.application.decision_system.contracts import (
-    ManualAccountObservation,
-)
 from market_regime_alpha.application.strategy_shadow.postgres_observations import (
     PostgresShadowObservationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.application.research_validation.common import (
-    ValidationArtifactReference,
+from market_regime_alpha.data.postgres_trading_calendar import (
+    PostgresPITTradingCalendarSnapshotRepository,
 )
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
+from market_regime_alpha.persistence.postgres.native_repository import (
+    acquire_scope_lock,
+)
 from market_regime_alpha.strategies.contracts import (
     CanonicalStrategyAction,
     MultiStrategyCycle,
@@ -184,12 +193,22 @@ class PostgresStrategyShadowRepository:
         *,
         account_id: str,
         decision_time: datetime,
+        trading_calendar_reference: RuntimeArtifactReference,
     ) -> tuple[StrategyPositionState, ...]:
         """Resolve state from Fill allocations and manual account marks.
 
         Callers select only the account and Decision Time; quantities, prices,
         counters and lineage are all reloaded from their PostgreSQL owners.
         """
+
+        if trading_calendar_reference.reference_kind != "TRADING_CALENDAR":
+            raise ValueError("Strategy state requires a Trading Calendar reference")
+        trading_calendar = PostgresPITTradingCalendarSnapshotRepository(
+            self._factory,
+            apply_migrations=False,
+        ).get(trading_calendar_reference.artifact_id)
+        if trading_calendar.content_hash != trading_calendar_reference.content_hash:
+            raise ValueError("Strategy Trading Calendar owner identity mismatch")
 
         with self._factory.connection(read_only=True) as connection:
             batch_rows = connection.execute(
@@ -250,6 +269,7 @@ class PostgresStrategyShadowRepository:
             batches=batches,
             proposal_actions=actions,
             observations=observations,
+            trading_calendar=trading_calendar,
         )
 
     def settle_multi_strategy_outcomes(
@@ -324,17 +344,15 @@ class PostgresStrategyShadowRepository:
             proposal_actions=actions,
             pre_exit_states=pre_exit_states,
         )
+        persisted = outcomes
         if outcomes:
-            self._factory.run_transaction(
+            persisted = self._factory.run_transaction(
                 lambda connection: self._save_multi_strategy_outcomes(
                     connection,
                     outcomes,
                 )
             )
-        return tuple(
-            self.get_multi_strategy_outcome(outcome.outcome_id)
-            for outcome in outcomes
-        )
+        return persisted
 
     def get_multi_strategy_outcome(
         self,
@@ -358,8 +376,45 @@ class PostgresStrategyShadowRepository:
     def _save_multi_strategy_outcomes(
         connection: Any,
         outcomes: tuple[FillDerivedStrategyOutcome, ...],
-    ) -> None:
+    ) -> tuple[FillDerivedStrategyOutcome, ...]:
+        persisted: list[FillDerivedStrategyOutcome] = []
         for outcome in outcomes:
+            scope = (
+                f"{outcome.account_id}:"
+                f"{outcome.strategy_version_reference.artifact_id}:"
+                f"{outcome.symbol}:{outcome.entry_proposal_reference.artifact_id}"
+            )
+            acquire_scope_lock(
+                connection,
+                namespace="strategy-realized-outcome",
+                identity=scope,
+            )
+            head_row = connection.execute(
+                """
+                SELECT payload_json
+                FROM strategy_realized_outcome
+                WHERE account_id = %s AND strategy_version_id = %s
+                  AND symbol = %s AND entry_proposal_id = %s
+                ORDER BY revision DESC LIMIT 1
+                FOR SHARE
+                """,
+                (
+                    outcome.account_id,
+                    str(outcome.strategy_version_reference.artifact_id),
+                    outcome.symbol,
+                    str(outcome.entry_proposal_reference.artifact_id),
+                ),
+            ).fetchone()
+            if head_row is not None:
+                head = FillDerivedStrategyOutcome.from_canonical_dict(
+                    _dict_payload(head_row[0])
+                )
+                if _outcome_economic_payload(head) == _outcome_economic_payload(
+                    outcome
+                ):
+                    persisted.append(head)
+                    continue
+                outcome = _superseding_outcome(outcome, head)
             PostgresStrategyShadowRepository._verify_multi_strategy_outcome_lineage(
                 connection,
                 outcome,
@@ -376,11 +431,12 @@ class PostgresStrategyShadowRepository:
                     symbol, opened_at, closed_at, invested_notional,
                     gross_pnl, total_cost, net_pnl, net_return,
                     source_allocation_ids, source_fill_ids,
+                    revision, supersedes_outcome_id, supersedes_outcome_hash,
                     production_authorized, payload_json, created_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    false, %s, %s
+                    %s, %s, %s, false, %s, %s
                 ) ON CONFLICT (outcome_id) DO NOTHING
                 """,
                 (
@@ -411,6 +467,17 @@ class PostgresStrategyShadowRepository:
                         str(item.artifact_id)
                         for item in outcome.source_fill_references
                     ],
+                    outcome.revision,
+                    (
+                        str(outcome.supersedes_outcome_reference.artifact_id)
+                        if outcome.supersedes_outcome_reference is not None
+                        else None
+                    ),
+                    (
+                        outcome.supersedes_outcome_reference.content_hash
+                        if outcome.supersedes_outcome_reference is not None
+                        else None
+                    ),
                     Jsonb(payload),
                     outcome.settled_at,
                 ),
@@ -429,6 +496,8 @@ class PostgresStrategyShadowRepository:
                 or bool(stored[2])
             ):
                 raise ValueError("Strategy Outcome immutable identity conflict")
+            persisted.append(outcome)
+        return tuple(persisted)
 
     @staticmethod
     def _verify_multi_strategy_outcome_lineage(
@@ -910,6 +979,51 @@ class PostgresStrategyShadowRepository:
         if present and present != typed_markers:
             raise ValueError("Strategy Shadow Entry typed lineage payload is incomplete")
         return present == typed_markers
+
+
+def _outcome_economic_payload(
+    outcome: FillDerivedStrategyOutcome,
+) -> dict[str, object]:
+    payload = outcome.identity_payload()
+    for field in (
+        "schema_version",
+        "settled_at",
+        "revision",
+        "supersedes_outcome_reference",
+    ):
+        payload.pop(field, None)
+    return payload
+
+
+def _superseding_outcome(
+    candidate: FillDerivedStrategyOutcome,
+    previous: FillDerivedStrategyOutcome,
+) -> FillDerivedStrategyOutcome:
+    return FillDerivedStrategyOutcome.create(
+        account_id=candidate.account_id,
+        strategy_version_reference=candidate.strategy_version_reference,
+        entry_proposal_reference=candidate.entry_proposal_reference,
+        exit_proposal_reference=candidate.exit_proposal_reference,
+        pre_exit_state_reference=candidate.pre_exit_state_reference,
+        symbol=candidate.symbol,
+        opened_at=candidate.opened_at,
+        closed_at=candidate.closed_at,
+        invested_notional=candidate.invested_notional,
+        gross_pnl=candidate.gross_pnl,
+        total_cost=candidate.total_cost,
+        net_pnl=candidate.net_pnl,
+        net_return=candidate.net_return,
+        source_allocation_references=candidate.source_allocation_references,
+        source_fill_references=candidate.source_fill_references,
+        settled_at=candidate.settled_at,
+        limitations=candidate.limitations,
+        revision=previous.revision + 1,
+        supersedes_outcome_reference=RuntimeArtifactReference(
+            "STRATEGY_REALIZED_OUTCOME",
+            previous.outcome_id,
+            previous.outcome_hash,
+        ),
+    )
 
 
 def _dict_payload(value: object) -> dict[str, Any]:

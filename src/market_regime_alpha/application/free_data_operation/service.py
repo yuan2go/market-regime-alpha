@@ -66,6 +66,13 @@ from market_regime_alpha.data.providers.public_composite import (
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
     load_verified_public_source_stage_artifact,
 )
+from market_regime_alpha.data.pit_artifact_authority import (
+    CanonicalPITArtifactAuthorityResolver,
+)
+from market_regime_alpha.data.pit_authority import (
+    PITArtifactKind,
+    PITArtifactReference,
+)
 from market_regime_alpha.data.free_operational_policy import (
     FreeOperationalEvidencePolicy,
 )
@@ -309,6 +316,39 @@ class FreeDataOperationService:
         active_configuration = load_controlled_runtime_configuration(
             active_configuration_path
         )
+        calendar_reference = PITArtifactReference(
+            PITArtifactKind.TRADING_CALENDAR.value,
+            prepared.calendar.artifact_id,
+            prepared.calendar.content_hash,
+        )
+        calendar_snapshots = self._repositories.trading_calendar_snapshot()
+        try:
+            owner_calendar = calendar_snapshots.get(prepared.calendar.artifact_id)
+        except KeyError:
+            self._repositories.pit_authority(
+                clock=self._clock,
+                artifact_resolver=CanonicalPITArtifactAuthorityResolver(
+                    artifact_roots={
+                        PITArtifactKind.TRADING_CALENDAR: (
+                            prepared.paths.trading_calendar.parent
+                        ),
+                    }
+                ),
+            ).resolve_artifact(
+                calendar_reference,
+                actor="FREE_DATA_CONTINUOUS_RUNTIME",
+                reason=(
+                    "resolve exact controlled Trading Calendar for Strategy state"
+                ),
+                idempotency_key=(
+                    "free-data-calendar:"
+                    f"{prepared.calendar.artifact_id}:"
+                    f"{prepared.calendar.content_hash}"
+                ),
+            )
+            owner_calendar = calendar_snapshots.record(prepared.calendar)
+        if owner_calendar != prepared.calendar:
+            raise ValueError("FreeData Trading Calendar owner identity mismatch")
         controlled_policy = free_data_decision_time_operation_policy()
         controlled_command = ControlledOperationCommand.create(
             idempotency_key=idempotency_key,

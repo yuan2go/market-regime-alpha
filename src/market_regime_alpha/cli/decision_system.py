@@ -43,6 +43,7 @@ from market_regime_alpha.application.decision_system.window import (
     DecisionWindowBlocked,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import FillId, ManualTradeId
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionUnavailable,
 )
@@ -90,6 +91,12 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_proposal.add_argument("--proposal-id", required=True)
     inspect_risk = commands.add_parser("inspect-risk-decision")
     inspect_risk.add_argument("--risk-decision-id", required=True)
+    for name in ("create-strategy-intent", "record-strategy-fill"):
+        command = commands.add_parser(name)
+        command.add_argument("--input", type=Path, required=True)
+    recover_strategy = commands.add_parser("recover-strategy-execution")
+    recover_strategy.add_argument("--trade-id", required=True)
+    recover_strategy.add_argument("--decision-time", required=True)
     return parser
 
 
@@ -100,7 +107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise _CLIError("explicit --database-url is required")
         with RepositoryFactory(settings_from_namespace(args, dotenv_path=Path("/nonexistent"))) as repositories:
             output = _dispatch(args, repositories)
-        _emit({**output, **_authority_ceiling()})
+        _emit({**output, **_authority_ceiling(args.operation)})
         return SUCCESS
     except PostgresConnectionUnavailable as exc:
         _emit_error("DBAUTH-001", "DATABASE_UNAVAILABLE", exc)
@@ -258,6 +265,107 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
             "operation": "INSPECT_RISK_DECISION",
             "status": "FOUND",
             "risk_decision": repository.get_risk_decision(ArtifactId(args.risk_decision_id)).to_canonical_dict(),
+        }
+    if operation == "create-strategy-intent":
+        payload = _object(_read_json(args.input))
+        _fields(
+            payload,
+            {
+                "portfolio_decision_id", "proposal_id", "account_observation_id",
+                "trading_calendar_reference", "reference_price", "lot_size",
+                "actor", "reason", "created_at", "idempotency_key",
+                "operator_quantity", "override_reason",
+            },
+            "Strategy execution intent",
+            optional={"operator_quantity", "override_reason"},
+        )
+        observation = repository.get_manual_observation(
+            ArtifactId(_text(payload, "account_observation_id"))
+        )
+        trade = repositories.strategy_execution(
+            account_id=observation.account_id
+        ).create_intent(
+            portfolio_decision_id=ArtifactId(
+                _text(payload, "portfolio_decision_id")
+            ),
+            proposal_id=ArtifactId(_text(payload, "proposal_id")),
+            account_observation_id=observation.observation_id,
+            trading_calendar_reference=_reference(
+                _object(payload["trading_calendar_reference"])
+            ),
+            reference_price=_decimal(payload["reference_price"]),
+            lot_size=_integer(payload, "lot_size"),
+            actor=_text(payload, "actor"),
+            reason=_text(payload, "reason"),
+            created_at=_instant(payload["created_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+            operator_quantity=_optional_integer(payload.get("operator_quantity")),
+            override_reason=_optional_text(payload.get("override_reason")),
+        )
+        return {
+            "operation": "CREATE_STRATEGY_INTENT",
+            "status": trade.state.value,
+            "manual_trade": trade.to_canonical_dict(),
+            "manual_intent_created": True,
+        }
+    if operation == "record-strategy-fill":
+        payload = _object(_read_json(args.input))
+        _fields(
+            payload,
+            {
+                "trade_id", "external_fill_id", "quantity", "price", "fees",
+                "occurred_at", "recorded_at", "actor", "reason",
+                "idempotency_key", "correction_of_fill_id",
+            },
+            "Strategy observed Fill",
+            optional={"correction_of_fill_id"},
+        )
+        trade_id = ManualTradeId(_text(payload, "trade_id"))
+        current = repositories.manual_execution().get_trade(trade_id)
+        trade, fill, batches, outcomes = repositories.strategy_execution(
+            account_id=current.account_id
+        ).record_fill(
+            trade_id,
+            external_fill_id=_text(payload, "external_fill_id"),
+            quantity=_integer(payload, "quantity"),
+            price=float(_decimal(payload["price"])),
+            fees=float(_decimal(payload["fees"])),
+            occurred_at=_instant(payload["occurred_at"]),
+            recorded_at=_instant(payload["recorded_at"]),
+            actor=_text(payload, "actor"),
+            reason=_text(payload, "reason"),
+            idempotency_key=_text(payload, "idempotency_key"),
+            correction_of_fill_id=(
+                None
+                if payload.get("correction_of_fill_id") is None
+                else FillId(_text(payload, "correction_of_fill_id"))
+            ),
+        )
+        return {
+            "operation": "RECORD_STRATEGY_FILL",
+            "status": trade.state.value,
+            "manual_trade": trade.to_canonical_dict(),
+            "fill": fill.to_canonical_dict(),
+            "allocation_batches": [item.to_canonical_dict() for item in batches],
+            "realized_outcomes": [item.to_canonical_dict() for item in outcomes],
+            "observed_fill_recorded": True,
+        }
+    if operation == "recover-strategy-execution":
+        trade_id = ManualTradeId(args.trade_id)
+        current = repositories.manual_execution().get_trade(trade_id)
+        trade, batches, outcomes = repositories.strategy_execution(
+            account_id=current.account_id
+        ).recover_trade(
+            trade_id,
+            decision_time=_instant(args.decision_time),
+        )
+        return {
+            "operation": "RECOVER_STRATEGY_EXECUTION",
+            "status": "RECOVERED",
+            "manual_trade": trade.to_canonical_dict(),
+            "allocation_batches": [item.to_canonical_dict() for item in batches],
+            "realized_outcomes": [item.to_canonical_dict() for item in outcomes],
+            "strategy_allocation_reconciled": True,
         }
     raise _CLIError("unsupported Decision System operation")
 
@@ -525,6 +633,18 @@ def _integer(payload: Mapping[str, Any], name: str) -> int:
     return parsed
 
 
+def _optional_integer(value: object) -> int | None:
+    if value is None:
+        return None
+    return _integer({"value": value}, "value")
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return _text({"value": value}, "value")
+
+
 def _decimal(value: object) -> Decimal:
     if isinstance(value, float) or isinstance(value, bool):
         raise _CLIError("Decimal values must be encoded as strings or integers")
@@ -566,13 +686,13 @@ def _instant(value: object) -> datetime:
     return instant
 
 
-def _authority_ceiling() -> dict[str, bool | str]:
+def _authority_ceiling(operation: str | None = None) -> dict[str, bool | str]:
     return {
         "authority": "RESEARCH_MANUAL_DECISION_SUPPORT",
         "entry_authority_granted": False,
         "order_created": False,
-        "fill_created": False,
-        "position_mutated": False,
+        "fill_created": operation == "record-strategy-fill",
+        "position_mutated": operation == "record-strategy-fill",
         "broker_called": False,
     }
 
